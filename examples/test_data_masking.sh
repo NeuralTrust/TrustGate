@@ -24,6 +24,73 @@ GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
         {
             "name": "data_masking",
             "enabled": true,
+            "stage": "pre_request",
+            "priority": 1,
+            "settings": {
+                "similarity_threshold": 0.8,
+                "predefined_entities": [
+                    {
+                        "entity": "credit_card",
+                        "enabled": true,
+                        "mask_with": "[MASKED_CC]",
+                        "preserve_len": false
+                    },
+                    {
+                        "entity": "email",
+                        "enabled": true,
+                        "mask_with": "[MASKED_EMAIL]",
+                        "preserve_len": false
+                    },
+                    {
+                        "entity": "iban",
+                        "enabled": true,
+                        "mask_with": "[MASKED_IBAN]",
+                        "preserve_len": false
+                    },
+                    {
+                        "entity": "swift_bic",
+                        "enabled": true,
+                        "mask_with": "[MASKED_BIC]",
+                        "preserve_len": false
+                    },
+                    {
+                        "entity": "crypto_wallet",
+                        "enabled": true,
+                        "mask_with": "[MASKED_WALLET]",
+                        "preserve_len": false
+                    },
+                    {
+                        "entity": "tax_id",
+                        "enabled": true,
+                        "mask_with": "[MASKED_TAX_ID]",
+                        "preserve_len": true
+                    },
+                    {
+                        "entity": "key_pattern",
+                        "enabled": true,
+                        "mask_with": "[MASKED_KEY]",
+                        "preserve_len": false
+                    },
+                    {
+                        "entity": "mask_pattern",
+                        "enabled": true,
+                        "mask_with": "[MASKED_VALUE]",
+                        "preserve_len": false
+                    }
+                ],
+                "rules": [
+                    {
+                        "pattern": "secret_key",
+                        "type": "keyword",
+                        "mask_with": "****",
+                        "preserve_len": true
+                    }
+                ]
+            }
+        },
+        {
+            "name": "data_masking",
+            "enabled": true,
             "stage": "pre_response",
             "priority": 1,
             "settings": {
