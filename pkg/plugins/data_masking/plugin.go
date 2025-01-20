@@ -37,6 +37,8 @@ const (
 	CryptoWallet  PredefinedEntity = "crypto_wallet"
 	TaxID         PredefinedEntity = "tax_id"
 	RoutingNumber PredefinedEntity = "routing_number"
+	KeyPattern    PredefinedEntity = "key_pattern"
+	MaskPattern   PredefinedEntity = "mask_pattern"
 )
 
 // predefinedEntityPatterns maps entity types to their regex patterns
@@ -55,6 +57,8 @@ var predefinedEntityPatterns = map[PredefinedEntity]string{
 	CryptoWallet:  `\b(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b`,
 	TaxID:         `\b\d{2}[-\s]?\d{7}\b`,
 	RoutingNumber: `\b\d{9}\b`,
+	KeyPattern:    `(?i).*key.*`,
+	MaskPattern:   `(?i).*mask.*`,
 }
 
 // defaultEntityMasks defines default masking for pre-defined entities
@@ -73,6 +77,8 @@ var defaultEntityMasks = map[PredefinedEntity]string{
 	CryptoWallet:  "[MASKED_WALLET]",
 	TaxID:         "[MASKED_TAX_ID]",
 	RoutingNumber: "[MASKED_ROUTING]",
+	KeyPattern:    "[MASKED_KEY]",
+	MaskPattern:   "[MASKED_VALUE]",
 }
 
 type DataMaskingPlugin struct {

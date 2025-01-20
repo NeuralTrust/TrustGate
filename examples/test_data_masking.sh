@@ -64,6 +64,18 @@ GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
                         "enabled": true,
                         "mask_with": "[MASKED_TAX_ID]",
                         "preserve_len": true
+                    },
+                    {
+                        "entity": "key_pattern",
+                        "enabled": true,
+                        "mask_with": "[MASKED_KEY]",
+                        "preserve_len": false
+                    },
+                    {
+                        "entity": "mask_pattern",
+                        "enabled": true,
+                        "mask_with": "[MASKED_VALUE]",
+                        "preserve_len": false
                     }
                 ],
                 "rules": [
@@ -179,7 +191,7 @@ echo -e "\n${GREEN}6. Testing data masking...${NC}"
 
 # Test all masking patterns
 echo -e "\n${GREEN}6.1 Testing all masking patterns...${NC}"
-RESPONSE=$(curl -s -w "\n%{http_code}" "$PROXY_URL/post" \
+RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
     -H "X-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
@@ -194,13 +206,11 @@ RESPONSE=$(curl -s -w "\n%{http_code}" "$PROXY_URL/post" \
         "similar_secrets": "secret_keys_here"
     }')
 
-HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-BODY=$(echo "$RESPONSE" | head -n1)
+HTTP_CODE=$(echo "$RESPONSE" | grep "STATUS_CODE:" | cut -d':' -f2)
+BODY=$(echo "$RESPONSE" | sed '$d')
 
 if [ "$HTTP_CODE" == "200" ]; then
     echo -e "${GREEN}Request successful${NC}"
-    echo "Response body:"
-    echo "$BODY" | jq '.'
     
     # Check each pattern
     PATTERNS=(
@@ -230,6 +240,8 @@ if [ "$HTTP_CODE" == "200" ]; then
         "[MASKED_BIC]"
         "[MASKED_WALLET]"
         "[MASKED_TAX_ID]"
+        "[MASKED_KEY]"
+        "[MASKED_VALUE]"
     )
     
     for mask in "${MASKS[@]}"; do
@@ -241,12 +253,11 @@ if [ "$HTTP_CODE" == "200" ]; then
     done
 else
     echo -e "${RED}Request failed with status code: $HTTP_CODE${NC}"
-    echo "Response: $BODY"
 fi
 
 # Test fuzzy matching
 echo -e "\n${GREEN}6.2 Testing fuzzy matching...${NC}"
-RESPONSE=$(curl -s -w "\n%{http_code}" "$PROXY_URL/post" \
+RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
     -H "X-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
@@ -255,13 +266,11 @@ RESPONSE=$(curl -s -w "\n%{http_code}" "$PROXY_URL/post" \
         "notes": "Testing fuzzy matching"
     }')
 
-HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-BODY=$(echo "$RESPONSE" | head -n1)
+HTTP_CODE=$(echo "$RESPONSE" | grep "STATUS_CODE:" | cut -d':' -f2)
+BODY=$(echo "$RESPONSE" | sed '$d')
 
 if [ "$HTTP_CODE" == "200" ]; then
     echo -e "${GREEN}Request successful${NC}"
-    echo "Response body:"
-    echo "$BODY" | jq '.'
     
     # Check fuzzy matches
     FUZZY_TERMS=("sekret_key" "secret-key")
@@ -274,7 +283,6 @@ if [ "$HTTP_CODE" == "200" ]; then
     done
 else
     echo -e "${RED}Request failed with status code: $HTTP_CODE${NC}"
-    echo "Response: $BODY"
 fi
 
 echo -e "\n${GREEN}Data masking tests completed${NC}" 
