@@ -116,9 +116,10 @@ UPSTREAM_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/upstreams" 
     "name": "echo-upstream-'$(date +%s)'",
     "algorithm": "round-robin",
     "targets": [{
-        "host": "postman-echo.com",
+        "host": "httpbin.org",
         "port": 443,
         "protocol": "https",
+        "path": "/post",
         "weight": 100,
         "priority": 1
     }],
