@@ -273,8 +273,11 @@ RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
         "similar_secrets": "secret_keys_here"
     }')
 
-HTTP_CODE=$(echo "$RESPONSE" | grep "STATUS_CODE:" | cut -d':' -f2)
+# Extract body and status code from response
 BODY=$(echo "$RESPONSE" | sed '$d')
+
+
+HTTP_CODE=$(echo "$RESPONSE" | grep "STATUS_CODE:" | cut -d':' -f2)
 
 if [ "$HTTP_CODE" == "200" ]; then
     echo -e "${GREEN}Request successful${NC}"
@@ -290,7 +293,7 @@ if [ "$HTTP_CODE" == "200" ]; then
         "this_is_secret"
         "secret_keys_here"
     )
-    
+  
     for pattern in "${PATTERNS[@]}"; do
         if echo "$BODY" | grep -q "$pattern"; then
             echo -e "${RED}WARNING: Pattern '$pattern' was not masked${NC}"
@@ -333,8 +336,11 @@ RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
         "notes": "Testing fuzzy matching"
     }')
 
-HTTP_CODE=$(echo "$RESPONSE" | grep "STATUS_CODE:" | cut -d':' -f2)
+# Extract body and status code from response
 BODY=$(echo "$RESPONSE" | sed '$d')
+
+
+HTTP_CODE=$(echo "$RESPONSE" | grep "STATUS_CODE:" | cut -d':' -f2)
 
 if [ "$HTTP_CODE" == "200" ]; then
     echo -e "${GREEN}Request successful${NC}"

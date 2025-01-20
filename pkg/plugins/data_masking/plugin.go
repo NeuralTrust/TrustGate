@@ -2,6 +2,7 @@ package data_masking
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -37,8 +38,6 @@ const (
 	CryptoWallet  PredefinedEntity = "crypto_wallet"
 	TaxID         PredefinedEntity = "tax_id"
 	RoutingNumber PredefinedEntity = "routing_number"
-	KeyPattern    PredefinedEntity = "key_pattern"
-	MaskPattern   PredefinedEntity = "mask_pattern"
 )
 
 // predefinedEntityPatterns maps entity types to their regex patterns
@@ -57,8 +56,6 @@ var predefinedEntityPatterns = map[PredefinedEntity]string{
 	CryptoWallet:  `\b(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b`,
 	TaxID:         `\b\d{2}[-\s]?\d{7}\b`,
 	RoutingNumber: `\b\d{9}\b`,
-	KeyPattern:    `(?i).*key.*`,
-	MaskPattern:   `(?i).*mask.*`,
 }
 
 // defaultEntityMasks defines default masking for pre-defined entities
@@ -77,8 +74,6 @@ var defaultEntityMasks = map[PredefinedEntity]string{
 	CryptoWallet:  "[MASKED_WALLET]",
 	TaxID:         "[MASKED_TAX_ID]",
 	RoutingNumber: "[MASKED_ROUTING]",
-	KeyPattern:    "[MASKED_KEY]",
-	MaskPattern:   "[MASKED_VALUE]",
 }
 
 type DataMaskingPlugin struct {
@@ -272,24 +267,6 @@ func (p *DataMaskingPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 	p.keywords = make(map[string]string)
 	p.regexRules = make(map[string]*regexp.Regexp)
 
-	// Add custom rules
-	for _, rule := range config.Rules {
-		maskValue := rule.MaskWith
-		if maskValue == "" {
-			maskValue = DefaultMaskChar
-		}
-
-		if rule.Type == "keyword" {
-			p.keywords[rule.Pattern] = maskValue
-		} else if rule.Type == "regex" {
-			regex, err := regexp.Compile(rule.Pattern)
-			if err != nil {
-				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", rule.Pattern, err)
-			}
-			p.regexRules[maskValue] = regex
-		}
-	}
-
 	// Add predefined entity rules
 	for _, entity := range config.PredefinedEntities {
 		if !entity.Enabled {
@@ -311,61 +288,172 @@ func (p *DataMaskingPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile predefined pattern for entity %s: %v", entity.Entity, err)
 		}
-		p.regexRules[maskValue] = regex
+		p.regexRules[pattern] = regex
+		p.keywords[pattern] = maskValue
+	}
+
+	// Add custom rules
+	for _, rule := range config.Rules {
+		maskValue := rule.MaskWith
+		if maskValue == "" {
+			maskValue = DefaultMaskChar
+		}
+
+		if rule.Type == "keyword" {
+			p.keywords[rule.Pattern] = maskValue
+		} else if rule.Type == "regex" {
+			regex, err := regexp.Compile(rule.Pattern)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", rule.Pattern, err)
+			}
+			p.regexRules[rule.Pattern] = regex
+			p.keywords[rule.Pattern] = maskValue
+		}
 	}
 
 	// Process request body if in PreRequest stage
 	if req != nil && len(req.Body) > 0 {
-		content := string(req.Body)
-		maskedContent := content
-
-		// Apply fuzzy keyword masking
-		for {
-			foundWord, keyword, maskWith, found := p.findSimilarKeyword(maskedContent, threshold)
-			if !found {
-				break
+		var jsonData interface{}
+		if err := json.Unmarshal(req.Body, &jsonData); err == nil {
+			// If it's valid JSON, process it as JSON
+			maskedData := p.maskJSONData(jsonData, threshold)
+			maskedJSON, err := json.Marshal(maskedData)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal masked JSON: %v", err)
 			}
-			maskedContent = strings.ReplaceAll(maskedContent, foundWord, p.maskContent(foundWord, keyword, maskWith, true))
+			req.Body = maskedJSON
+		} else {
+			// If it's not JSON, process it as plain text
+			content := string(req.Body)
+			maskedContent := p.maskPlainText(content, threshold)
+			req.Body = []byte(maskedContent)
 		}
-
-		// Apply regex masking
-		for maskWith, regex := range p.regexRules {
-			maskedContent = regex.ReplaceAllStringFunc(maskedContent, func(match string) string {
-				return p.maskContent(match, regex.String(), maskWith, true)
-			})
-		}
-
-		// Update request with masked content
-		req.Body = []byte(maskedContent)
 	}
 
 	// Process response body if in PreResponse stage
 	if resp != nil && len(resp.Body) > 0 {
-		content := string(resp.Body)
-		maskedContent := content
-
-		// Apply fuzzy keyword masking
-		for {
-			foundWord, keyword, maskWith, found := p.findSimilarKeyword(maskedContent, threshold)
-			if !found {
-				break
+		var jsonData interface{}
+		if err := json.Unmarshal(resp.Body, &jsonData); err == nil {
+			// If it's valid JSON, process it as JSON
+			maskedData := p.maskJSONData(jsonData, threshold)
+			maskedJSON, err := json.Marshal(maskedData)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal masked JSON: %v", err)
 			}
-			maskedContent = strings.ReplaceAll(maskedContent, foundWord, p.maskContent(foundWord, keyword, maskWith, true))
+			resp.Body = maskedJSON
+		} else {
+			// If it's not JSON, process it as plain text
+			content := string(resp.Body)
+			maskedContent := p.maskPlainText(content, threshold)
+			resp.Body = []byte(maskedContent)
 		}
-
-		// Apply regex masking
-		for maskWith, regex := range p.regexRules {
-			maskedContent = regex.ReplaceAllStringFunc(maskedContent, func(match string) string {
-				return p.maskContent(match, regex.String(), maskWith, true)
-			})
-		}
-
-		// Update response with masked content
-		resp.Body = []byte(maskedContent)
 	}
 
 	return &types.PluginResponse{
 		StatusCode: 200,
 		Message:    "Content masked successfully",
 	}, nil
+}
+
+// maskPlainText processes plain text content and applies masking rules
+func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64) string {
+	maskedContent := content
+
+	// Split content into words to handle fuzzy matching
+	words := strings.Fields(content)
+	for i, word := range words {
+		// Check for fuzzy matches first
+		for keyword, maskWith := range p.keywords {
+			if _, isRegex := p.regexRules[keyword]; !isRegex {
+				similarity := calculateSimilarity(word, keyword)
+				if similarity >= threshold {
+					words[i] = maskWith
+					break
+				}
+			}
+		}
+	}
+	maskedContent = strings.Join(words, " ")
+
+	// Apply regex masking after fuzzy matching
+	for pattern, regex := range p.regexRules {
+		// Try to identify the entity type from the pattern
+		for entityType, entityPattern := range predefinedEntityPatterns {
+			if pattern == entityPattern {
+				maskedContent = regex.ReplaceAllString(maskedContent, defaultEntityMasks[entityType])
+				break
+			}
+		}
+	}
+
+	return maskedContent
+}
+
+// maskJSONData recursively processes JSON data and masks sensitive information
+func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64) interface{} {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		result := make(map[string]interface{})
+		for key, value := range v {
+			switch val := value.(type) {
+			case string:
+				maskedValue := val
+				// Split the string into words for fuzzy matching
+				words := strings.Fields(val)
+				needsMasking := false
+
+				// Check for fuzzy matches first
+				for i, word := range words {
+					for keyword, maskWith := range p.keywords {
+						if _, isRegex := p.regexRules[keyword]; !isRegex {
+							similarity := calculateSimilarity(word, keyword)
+							if similarity >= threshold {
+								words[i] = maskWith
+								needsMasking = true
+								break
+							}
+						}
+					}
+				}
+
+				if needsMasking {
+					maskedValue = strings.Join(words, " ")
+				}
+
+				// Check for predefined entities if no fuzzy match was found
+				if maskedValue == val {
+					for pattern, regex := range p.regexRules {
+						if regex.MatchString(val) {
+							// Find the corresponding entity type
+							for entityType, entityPattern := range predefinedEntityPatterns {
+								if pattern == entityPattern {
+									maskedValue = defaultEntityMasks[entityType]
+									break
+								}
+							}
+						}
+					}
+				}
+
+				// Check for sensitive keywords in the key name
+				if maskedValue == val && (strings.Contains(strings.ToLower(key), "secret") || strings.Contains(strings.ToLower(key), "key")) {
+					maskedValue = "[MASKED_KEY]"
+				}
+				result[key] = maskedValue
+			default:
+				result[key] = p.maskJSONData(value, threshold)
+			}
+		}
+		return result
+	case []interface{}:
+		result := make([]interface{}, len(v))
+		for i, value := range v {
+			result[i] = p.maskJSONData(value, threshold)
+		}
+		return result
+	case string:
+		return p.maskPlainText(v, threshold)
+	default:
+		return v
+	}
 }
