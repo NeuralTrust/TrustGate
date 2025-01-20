@@ -275,8 +275,6 @@ RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
 
 # Extract body and status code from response
 BODY=$(echo "$RESPONSE" | sed '$d')
-
-
 HTTP_CODE=$(echo "$RESPONSE" | grep "STATUS_CODE:" | cut -d':' -f2)
 
 if [ "$HTTP_CODE" == "200" ]; then

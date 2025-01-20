@@ -359,31 +359,34 @@ func (p *DataMaskingPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64) string {
 	maskedContent := content
 
-	// Split content into words to handle fuzzy matching
-	words := strings.Fields(content)
-	for i, word := range words {
-		// Check for fuzzy matches first
-		for keyword, maskWith := range p.keywords {
-			if _, isRegex := p.regexRules[keyword]; !isRegex {
-				similarity := calculateSimilarity(word, keyword)
-				if similarity >= threshold {
-					words[i] = maskWith
+	// Apply regex masking first
+	for pattern, regex := range p.regexRules {
+		matches := regex.FindAllString(maskedContent, -1)
+		for _, match := range matches {
+			// Try to identify the entity type from the pattern
+			for entityType, entityPattern := range predefinedEntityPatterns {
+				if pattern == entityPattern {
+					maskedContent = strings.ReplaceAll(maskedContent, match, defaultEntityMasks[entityType])
 					break
 				}
 			}
 		}
 	}
-	maskedContent = strings.Join(words, " ")
 
-	// Apply regex masking after fuzzy matching
-	for pattern, regex := range p.regexRules {
-		// Try to identify the entity type from the pattern
-		for entityType, entityPattern := range predefinedEntityPatterns {
-			if pattern == entityPattern {
-				maskedContent = regex.ReplaceAllString(maskedContent, defaultEntityMasks[entityType])
-				break
-			}
+	// Split content into words to handle fuzzy matching
+	words := strings.Fields(maskedContent)
+	modified := false
+	for i, word := range words {
+		// Check for fuzzy matches using findSimilarKeyword
+		if origWord, keyword, maskWith, found := p.findSimilarKeyword(word, threshold); found {
+			// Use maskContent to apply the masking
+			words[i] = p.maskContent(origWord, keyword, maskWith, true)
+			modified = true
 		}
+	}
+
+	if modified {
+		maskedContent = strings.Join(words, " ")
 	}
 
 	return maskedContent
