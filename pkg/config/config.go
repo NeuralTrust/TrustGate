@@ -2,8 +2,9 @@ package config
 
 import (
 	"fmt"
+	"os"
 
-	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // MetricsConfig holds configuration for metrics collection
@@ -12,10 +13,8 @@ type MetricsConfig struct {
 	RetentionDays     int  `yaml:"retention_days"`
 	EnableLatency     bool `yaml:"enable_latency"`
 	EnableUpstream    bool `yaml:"enable_upstream"`
-	EnableBandwidth   bool `yaml:"enable_bandwidth"`
 	EnableConnections bool `yaml:"enable_connections"`
 	EnablePerRoute    bool `yaml:"enable_per_route"`
-	EnableDetailed    bool `yaml:"enable_detailed_status"`
 }
 
 // Config represents the main configuration structure
@@ -29,13 +28,13 @@ type Config struct {
 
 // ServerConfig holds server configuration
 type ServerConfig struct {
-	AdminPort   int    `mapstructure:"admin_port"`
-	ProxyPort   int    `mapstructure:"proxy_port"`
-	MetricsPort int    `mapstructure:"metrics_port"`
-	Type        string `mapstructure:"type"`
-	Port        int    `mapstructure:"port"`
-	BaseDomain  string `mapstructure:"base_domain"`
-	Host        string `mapstructure:"host"`
+	AdminPort   int    `yaml:"admin_port"`
+	ProxyPort   int    `yaml:"proxy_port"`
+	MetricsPort int    `yaml:"metrics_port"`
+	Type        string `yaml:"type"`
+	Port        int    `yaml:"port"`
+	BaseDomain  string `yaml:"base_domain"`
+	Host        string `yaml:"host"`
 }
 
 // DatabaseConfig holds database configuration
@@ -62,21 +61,17 @@ var (
 
 // Load loads the configuration from config files
 func Load() error {
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath(".")
-	viper.AddConfigPath("./config")
-
-	// Set defaults
-	setDefaults()
-
-	// Read the config file
-	if err := viper.ReadInConfig(); err != nil {
+	// Read config file directly from the config directory
+	data, err := os.ReadFile("./config/config.yaml")
+	if err != nil {
+		// Try to get current working directory for debugging
+		cwd, _ := os.Getwd()
+		fmt.Printf("Working directory: %s\n", cwd)
 		return fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Unmarshal the config
-	if err := viper.Unmarshal(&globalConfig); err != nil {
+	// Unmarshal YAML directly
+	if err := yaml.Unmarshal(data, &globalConfig); err != nil {
 		return fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
@@ -86,22 +81,7 @@ func Load() error {
 		return fmt.Errorf("failed to load provider config: %w", err)
 	}
 	globalConfig.Providers = *providerConfig
-
 	return nil
-}
-
-// setDefaults sets default values for configuration
-func setDefaults() {
-	viper.SetDefault("server.admin_port", 8080)
-	viper.SetDefault("server.proxy_port", 8081)
-	viper.SetDefault("server.base_domain", "example.com")
-
-	viper.SetDefault("database.port", 5432)
-	viper.SetDefault("database.sslmode", "disable")
-
-	viper.SetDefault("redis.port", 6379)
-	viper.SetDefault("redis.password", "")
-	viper.SetDefault("redis.db", 0)
 }
 
 // GetConfig returns the global configuration

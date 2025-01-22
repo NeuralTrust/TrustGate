@@ -79,6 +79,37 @@ TrustGate consists of two main components:
    - Load balancing
    - Plugin execution
 
+## 📊 Monitoring
+
+TrustGate provides comprehensive monitoring through Prometheus metrics:
+
+```yaml
+# config.yaml
+metrics:
+  enabled: true                # Enable metrics collection
+  enable_latency: true        # Basic latency metrics
+  enable_upstream: true       # Upstream latency tracking
+  enable_connections: true    # Connection tracking
+  enable_per_route: true     # Per-route metrics
+```
+
+### Key Metrics
+- `trustgate_requests_total` - Request counts by gateway, method, and status
+- `trustgate_latency_ms` - Overall request processing time
+- `trustgate_detailed_latency_ms` - Granular latency by service/route
+- `trustgate_upstream_latency_ms` - Upstream service latency
+- `trustgate_connections` - Active connection tracking
+
+### Prometheus Configuration
+```yaml
+scrape_configs:
+  - job_name: 'trustgate'
+    static_configs:
+      - targets: ['localhost:9090']
+```
+
+For detailed metrics documentation, dashboards, and advanced queries, see our [Monitoring Guide](https://docs.neuraltrust.ai/monitoring).
+
 ## 🔌 Plugins
 
 Extend functionality with plugins:
@@ -96,8 +127,10 @@ type Plugin interface {
 - Rate Limiter
 - Token Rate Limiter
 - External API Call
+- Data Masking (Pre-defined entities, custom keywords, regex)
+- Prompt Moderation (keywords, regex)
 
-### 🔜 Coming Soon Plugins
+### 🔜 Work in progress (Coming Soon)
 
 #### Security
 - **Jailbreak Protection**
@@ -110,23 +143,12 @@ type Plugin interface {
   - Legacy toxicity detection methods
 
 - **Prompt Moderation**
-  - Keywords & REGEX filtering
   - Topic detection (accepted/denied)
-
-- **Data Masking**
-  - Pre-defined entity masking
-  - Custom data masking (keywords, regex patterns)
 
 - **Network Security**
   - CORS protection
   - SQL Injection prevention
   - Cross-site injection protection
-
-- **Load Balancing**
-  - Weight-based routing
-  - Round-robin distribution
-  - Prompt templates support
-
 
 ## 🤝 Contributing
 

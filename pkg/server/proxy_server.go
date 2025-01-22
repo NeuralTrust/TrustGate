@@ -92,10 +92,8 @@ func NewProxyServer(config *config.Config, cache *cache.Cache, repo *database.Re
 	metricsConfig := metrics.MetricsConfig{
 		EnableLatency:         config.Metrics.EnableLatency,
 		EnableUpstreamLatency: config.Metrics.EnableUpstream,
-		EnableBandwidth:       config.Metrics.EnableBandwidth,
 		EnableConnections:     config.Metrics.EnableConnections,
 		EnablePerRoute:        config.Metrics.EnablePerRoute,
-		EnableDetailedStatus:  config.Metrics.EnableDetailed,
 	}
 	metrics.Initialize(metricsConfig)
 
@@ -326,9 +324,6 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 
 	// Get gateway data with plugins
 	gatewayData, err := s.getGatewayData(ctx, gatewayID)
-	s.logger.WithFields(logrus.Fields{
-		"gatewayData": gatewayData,
-	}).Debug("Gateway data")
 	reqCtx.Metadata["gateway_data"] = gatewayData
 
 	if err != nil {
@@ -380,8 +375,8 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 			}
 			matchingRule = &modelRule
 			// Store rule and service info in context for metrics
-			c.Set("route_id", rule.ID)
-			c.Set("service_id", rule.ServiceID)
+			c.Set(middleware.RouteIDKey, rule.ID)
+			c.Set(middleware.ServiceIDKey, rule.ServiceID)
 			break
 		}
 	}
@@ -517,10 +512,22 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 		}
 	}
 	duration := time.Since(start).Milliseconds()
-	metrics.GatewayRequestLatency.WithLabelValues(
-		gatewayID,
-		c.Request.URL.Path,
-	).Observe(float64(duration))
+
+	if metrics.Config.EnableLatency {
+		metrics.GatewayRequestLatency.WithLabelValues(
+			gatewayID,
+			c.Request.URL.Path,
+		).Observe(float64(duration))
+	}
+
+	if metrics.Config.EnablePerRoute {
+		metrics.GatewayDetailedLatency.WithLabelValues(
+			gatewayID,
+			matchingRule.ServiceID,
+			matchingRule.ID,
+		).Observe(float64(duration))
+	}
+
 	// Write the response body
 	c.Data(respCtx.StatusCode, "application/json", respCtx.Body)
 }

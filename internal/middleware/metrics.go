@@ -2,12 +2,19 @@ package middleware
 
 import (
 	"fmt"
-	"time"
+	"strconv"
 
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/sirupsen/logrus"
 
 	"github.com/gin-gonic/gin"
+)
+
+// Define constant keys for context values
+const (
+	GatewayIDKey = "gateway_id"
+	ServiceIDKey = "service_id"
+	RouteIDKey   = "route_id"
 )
 
 type MetricsMiddleware struct {
@@ -22,36 +29,24 @@ func NewMetricsMiddleware(logger *logrus.Logger) *MetricsMiddleware {
 
 func (m *MetricsMiddleware) MetricsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		start := time.Now()
-		gatewayID := c.GetString(GatewayContextKey)
+		// Get gateway ID using GetString to avoid type assertions
+		gatewayID := c.GetString(GatewayIDKey)
+		if gatewayID == "" {
+			m.logger.Error("Gateway ID not found in context")
+			c.Next()
+			return
+		}
 
 		// Record connections if enabled
 		if metrics.Config.EnableConnections {
 			metrics.GatewayConnections.WithLabelValues(gatewayID, "active").Inc()
 		}
 
+		// Process request
 		c.Next()
 
-		// Always record basic latency
-		duration := float64(time.Since(start).Milliseconds())
-		metrics.GatewayRequestLatency.WithLabelValues(
-			gatewayID,
-			"total",
-		).Observe(duration)
-
-		// Record detailed metrics if enabled
-		if metrics.Config.EnablePerRoute {
-			service := c.GetString("service_id")
-			route := c.GetString("route_id")
-			metrics.GatewayDetailedLatency.WithLabelValues(
-				gatewayID,
-				service,
-				route,
-			).Observe(duration)
-		}
-
 		// Always record request total
-		status := metrics.GetStatusClass(fmt.Sprint(c.Writer.Status()))
+		status := GetStatusClass(fmt.Sprint(c.Writer.Status()))
 		metrics.GatewayRequestTotal.WithLabelValues(
 			gatewayID,
 			c.Request.Method,
@@ -63,4 +58,10 @@ func (m *MetricsMiddleware) MetricsMiddleware() gin.HandlerFunc {
 			metrics.GatewayConnections.WithLabelValues(gatewayID, "active").Dec()
 		}
 	}
+}
+
+// GetStatusClass returns either the specific status code or its class (e.g., "2xx")
+func GetStatusClass(status string) string {
+	code, _ := strconv.Atoi(status)
+	return fmt.Sprintf("%dxx", code/100)
 }

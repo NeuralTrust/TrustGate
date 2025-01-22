@@ -7,11 +7,10 @@ server:
 metrics:
   enabled: true
   enable_latency: true        # Basic latency metrics
-  enable_upstream: false      # Upstream latency (high cardinality)
-  enable_bandwidth: false     # Bandwidth metrics (high volume)
-  enable_connections: false   # Connection tracking
-  enable_per_route: false    # Per-route metrics (high cardinality)
-  enable_detailed_status: false # Detailed status codes
+  enable_upstream: true      # Upstream latency (high cardinality)
+  enable_connections: true   # Connection tracking
+  enable_per_route: true    # Per-route metrics (high cardinality)
+  enable_detailed_status: true # Detailed status codes
 
 database:
   host: localhost

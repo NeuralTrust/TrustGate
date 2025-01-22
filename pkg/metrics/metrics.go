@@ -1,9 +1,6 @@
 package metrics
 
 import (
-	"fmt"
-	"strconv"
-
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -70,13 +67,14 @@ var (
 		append(commonLabels, "state"),
 	)
 
+	// Update GatewayUpstreamLatency to use consistent labels
 	GatewayUpstreamLatency = promauto.With(registerer).NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "trustgate_upstream_latency_ms",
 			Help:    "Upstream service latency in milliseconds",
 			Buckets: latencyBuckets,
 		},
-		append(commonLabels, serviceLabels...),
+		append(commonLabels, routeLabels...), // Use existing label definitions
 	)
 )
 
@@ -87,7 +85,6 @@ type MetricsConfig struct {
 	EnableBandwidth       bool // Bandwidth metrics (can be high volume)
 	EnableConnections     bool // Connection tracking (can impact performance)
 	EnablePerRoute        bool // Per-route metrics (high cardinality)
-	EnableDetailedStatus  bool // Detailed status codes (vs. status classes)
 }
 
 // DefaultMetricsConfig returns default metrics configuration with safe defaults
@@ -98,7 +95,6 @@ func DefaultMetricsConfig() MetricsConfig {
 		EnableBandwidth:       false, // Disabled by default (high volume)
 		EnableConnections:     false, // Disabled by default (performance impact)
 		EnablePerRoute:        false, // Disabled by default (high cardinality)
-		EnableDetailedStatus:  false, // Disabled by default (use status classes instead)
 	}
 }
 
@@ -110,18 +106,8 @@ func Initialize(cfg MetricsConfig) {
 	Config = cfg
 	registry.MustRegister(
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		collectors.NewGoCollector(),
 	)
 
 	prometheus.DefaultRegisterer = registry
 	prometheus.DefaultGatherer = registry
-}
-
-// GetStatusClass returns either the specific status code or its class (e.g., "2xx")
-func GetStatusClass(status string) string {
-	if !Config.EnableDetailedStatus {
-		code, _ := strconv.Atoi(status)
-		return fmt.Sprintf("%dxx", code/100)
-	}
-	return status
 }
