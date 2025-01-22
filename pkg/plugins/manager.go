@@ -16,6 +16,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/prompt_moderation"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/token_rate_limiter"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_detection"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
@@ -72,6 +73,10 @@ func InitializePlugins(cache *cache.Cache, logger *logrus.Logger) {
 	if err := manager.RegisterPlugin(data_masking.NewDataMaskingPlugin(logger)); err != nil {
 		logger.WithError(err).Error("Failed to register data masking plugin")
 	}
+
+	if err := manager.RegisterPlugin(toxicity_detection.NewToxicityDetectionPlugin(logger)); err != nil {
+		logger.WithError(err).Error("Failed to register toxicity detection plugin")
+	}
 }
 
 // ValidatePlugin validates a plugin configuration
@@ -81,9 +86,17 @@ func (m *Manager) ValidatePlugin(name string, config types.PluginConfig) error {
 		return fmt.Errorf("unknown plugin: %s", name)
 	}
 
-	if validator, ok := plugin.(pluginiface.PluginValidator); ok {
-		return validator.ValidateConfig(config)
+	validator, ok := plugin.(pluginiface.PluginValidator)
+	if !ok {
+		m.logger.Warnf("Plugin %s does not implement PluginValidator interface", name)
+		return nil
 	}
+
+	if err := validator.ValidateConfig(config); err != nil {
+		m.logger.WithError(err).Errorf("Plugin %s validation failed", name)
+		return err
+	}
+
 	return nil
 }
 
@@ -96,7 +109,13 @@ func (m *Manager) RegisterPlugin(plugin pluginiface.Plugin) error {
 		return fmt.Errorf("plugin %s already registered", name)
 	}
 
+	// Ensure the plugin implements the validator interface if it needs validation
+	if _, ok := plugin.(pluginiface.PluginValidator); !ok {
+		m.logger.Warnf("Plugin %s does not implement PluginValidator interface", name)
+	}
+
 	m.plugins[name] = plugin
+	m.logger.Infof("Successfully registered plugin: %s", name)
 	return nil
 }
 
