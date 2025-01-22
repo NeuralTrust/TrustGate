@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	// Version is the current version of AI Gateway CE
+	// Version is the current version of TrustGate
 	Version = "0.1.0"
 
 	// GitCommit is the git commit hash, injected at build time

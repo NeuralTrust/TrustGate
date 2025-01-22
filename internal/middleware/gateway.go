@@ -38,14 +38,6 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 			host = c.Request.Host
 		}
 
-		m.logger.WithFields(logrus.Fields{
-			"host":       host,
-			"baseDomain": m.baseDomain,
-			"path":       c.Request.URL.Path,
-			"method":     c.Request.Method,
-			"headers":    c.Request.Header,
-		}).Debug("Processing request")
-
 		// Skip middleware for system endpoints
 		if strings.HasPrefix(c.Request.URL.Path, "/__/") {
 			c.Next()
@@ -64,18 +56,11 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 			m.logger.WithFields(logrus.Fields{
 				"host":       host,
 				"baseDomain": m.baseDomain,
-				"headers":    c.Request.Header,
 			}).Error("Failed to extract subdomain")
 			c.JSON(400, gin.H{"error": "Invalid gateway identifier"})
 			c.Abort()
 			return
 		}
-
-		m.logger.WithFields(logrus.Fields{
-			"host":      host,
-			"subdomain": subdomain,
-			"path":      c.Request.URL.Path,
-		}).Debug("Extracted subdomain")
 
 		// Try to get gateway ID from cache first
 		key := fmt.Sprintf("subdomain:%s", subdomain)
@@ -85,10 +70,7 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 				// If not in cache, try to get from database
 				gateway, err := m.repo.GetGatewayBySubdomain(c.Request.Context(), subdomain)
 				if err != nil {
-					m.logger.WithFields(logrus.Fields{
-						"subdomain": subdomain,
-						"error":     err.Error(),
-					}).Error("Gateway not found in database")
+					m.logger.WithError(err).Error("Failed to get gateway from database")
 					c.JSON(404, gin.H{"error": "Gateway not found"})
 					c.Abort()
 					return
@@ -100,7 +82,7 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 					m.logger.WithError(err).Error("Failed to cache gateway ID")
 				}
 			} else {
-				m.logger.WithError(err).Error("Failed to get gateway ID")
+				m.logger.WithError(err).Error("Failed to get gateway ID from cache")
 				c.JSON(500, gin.H{"error": "Internal server error"})
 				c.Abort()
 				return
@@ -112,14 +94,9 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 		ctx := context.WithValue(c.Request.Context(), common.GatewayContextKey, gatewayID)
 		c.Request = c.Request.WithContext(ctx)
 
-		m.logger.WithFields(logrus.Fields{
-			"subdomain": subdomain,
-			"gatewayID": gatewayID,
-			"path":      c.Request.URL.Path,
-		}).Debug("Found gateway")
-
 		c.Next()
 	}
+
 }
 
 func (m *GatewayMiddleware) extractSubdomain(host string) string {

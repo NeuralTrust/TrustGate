@@ -159,14 +159,23 @@ echo -e "\n${GREEN}6. Testing different rate limit types...${NC}"
 
 # Test IP-based rate limit
 echo -e "\n${GREEN}6.1 Testing IP-based rate limit (limit: 5/min)...${NC}"
-for i in {1..6}; do
-    RESPONSE=$(curl -s -w "\n%{http_code}" "$PROXY_URL/path2" \
+for i in {1..1}; do
+    echo "Making request $i..."
+    start_time=$(date +%s.%N)
+    
+    RESPONSE=$(curl -s -w "\n%{http_code}\n%{time_total}" "$PROXY_URL/path2" \
         -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
         -H "X-API-Key: ${API_KEY}" \
         -H "X-Real-IP: 192.168.1.1")
     
-    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    duration=$(echo "$RESPONSE" | tail -n1)
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n2 | head -n1)
     BODY=$(echo "$RESPONSE" | head -n1)
+    end_time=$(date +%s.%N)
+    total_time=$(echo "$end_time - $start_time" | bc)
+    
+    echo -e "Request duration (curl): ${duration}s"
+    echo -e "Total script duration: ${total_time}s"
     
     if [ "$HTTP_CODE" == "200" ]; then
         echo -e "${GREEN}IP-based Request $i: Success${NC}"

@@ -23,11 +23,12 @@ fi
 # Configuration
 ADMIN_URL=${ADMIN_URL:-"http://localhost:8080/api/v1"}
 PROXY_URL=${PROXY_URL:-"http://localhost:8081"}
+BASE_DOMAIN=${BASE_DOMAIN:-"example.com"}
+SUBDOMAIN="benchmark"
 CONCURRENT_USERS=50
-TOTAL_REQUESTS=10000
 DURATION="30s"
 
-echo -e "${BLUE}AI Gateway Benchmark Tool${NC}\n"
+echo -e "${BLUE}TrustGate Benchmark Tool${NC}\n"
 
 # Test 1: System endpoint (ping)
 echo -e "${GREEN}Testing system ping endpoint...${NC}"
@@ -38,37 +39,106 @@ hey -z ${DURATION} \
     -cpus 2 \
     "${PROXY_URL}/__/ping"
 
-# Create test tenant first
-echo -e "${GREEN}Creating test tenant...${NC}"
-TENANT_RESPONSE=$(curl -s -X POST "$ADMIN_URL/tenants" \
+# Create test gateway
+echo -e "${GREEN}Creating test gateway...${NC}"
+GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "Benchmark Tenant",
-    "subdomain": "benchmark",
-    "tier": "premium"
+    "name": "Benchmark Gateway",
+    "subdomain": "benchmark"
   }')
 
-TENANT_ID=$(echo $TENANT_RESPONSE | jq -r '.id')
-API_KEY=$(echo $TENANT_RESPONSE | jq -r '.api_key')
+GATEWAY_ID=$(echo $GATEWAY_RESPONSE | jq -r '.id')
 
-echo -e "Tenant ID: $TENANT_ID"
-echo -e "API Key: $API_KEY"
+if [ "$GATEWAY_ID" == "null" ] || [ -z "$GATEWAY_ID" ]; then
+    echo -e "${RED}Failed to create gateway. Response: $GATEWAY_RESPONSE${NC}"
+    exit 1
+fi
 
-# Create forwarding rule
-echo -e "${GREEN}Creating forwarding rule...${NC}"
-RULE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/tenants/$TENANT_ID/rules" \
-  -H "Authorization: Bearer $API_KEY" \
+echo "Gateway created with ID: $GATEWAY_ID"
+
+# Create API key
+echo -e "\n${GREEN}Creating API key...${NC}"
+API_KEY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/keys" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Benchmark Key",
+    "expires_at": "2026-01-01T00:00:00Z"
+  }')
+
+API_KEY=$(echo $API_KEY_RESPONSE | jq -r '.key')
+
+if [ "$API_KEY" == "null" ] || [ -z "$API_KEY" ]; then
+    echo -e "${RED}Failed to create API key. Response: $API_KEY_RESPONSE${NC}"
+    exit 1
+fi
+
+echo "API Key created: $API_KEY"
+
+# Create upstream
+echo -e "\n${GREEN}Creating upstream...${NC}"
+UPSTREAM_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/upstreams" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ping-upstream-'$(date +%s)'",
+    "algorithm": "round-robin",
+    "targets": [{
+        "host": "localhost",
+        "port": 8081,
+        "protocol": "http",
+        "weight": 100,
+        "priority": 1
+    }],
+    "health_checks": {
+        "passive": true,
+        "threshold": 3,
+        "interval": 60
+    }
+}')
+
+UPSTREAM_ID=$(echo $UPSTREAM_RESPONSE | jq -r '.id')
+
+if [ "$UPSTREAM_ID" == "null" ] || [ -z "$UPSTREAM_ID" ]; then
+    echo -e "${RED}Failed to create upstream. Response: $UPSTREAM_RESPONSE${NC}"
+    exit 1
+fi
+
+echo "Upstream created with ID: $UPSTREAM_ID"
+
+# Create service
+echo -e "\n${GREEN}Creating service...${NC}"
+SERVICE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/services" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ping-service-'$(date +%s)'",
+    "type": "upstream",
+    "description": "Ping test service",
+    "upstream_id": "'$UPSTREAM_ID'"
+}')
+
+SERVICE_ID=$(echo $SERVICE_RESPONSE | jq -r '.id')
+
+if [ "$SERVICE_ID" == "null" ] || [ -z "$SERVICE_ID" ]; then
+    echo -e "${RED}Failed to create service. Response: $SERVICE_RESPONSE${NC}"
+    exit 1
+fi
+
+echo "Service created with ID: $SERVICE_ID"
+
+# Create rule
+echo -e "\n${GREEN}Creating rule...${NC}"
+RULE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/rules" \
   -H "Content-Type: application/json" \
   -d '{
     "path": "/test",
-    "target": "http://localhost:8081/__/ping",
+    "service_id": "'$SERVICE_ID'",
     "methods": ["GET"],
     "strip_path": true,
-    "public": true
-  }')
+    "active": true
+}')
 
-# Verify the rule was created
-echo -e "Rule Response: $RULE_RESPONSE"
+# Wait for configuration to propagate
+sleep 2
 
 # Test 2: Forwarded ping endpoint
 echo -e "${GREEN}Testing forwarded ping endpoint...${NC}"
@@ -77,5 +147,7 @@ hey -z ${DURATION} \
     -c ${CONCURRENT_USERS} \
     -disable-keepalive \
     -cpus 2 \
+    -H "X-API-Key: ${API_KEY}" \
+    -H "Host: benchmark.example.com" \
     -host "benchmark.example.com" \
     "${PROXY_URL}/test"
