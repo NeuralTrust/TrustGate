@@ -64,6 +64,25 @@ func (h *ConsoleHook) Levels() []logrus.Level {
 	return logrus.AllLevels
 }
 
+// Get server type safely
+func getServerType() string {
+	if len(os.Args) > 1 {
+		return os.Args[1]
+	}
+	return "proxy" // default to proxy server
+}
+
+func initializeServer(cfg *config.Config, cache *cache.Cache, repo *database.Repository, logger *logrus.Logger) server.Server {
+	serverType := getServerType()
+
+	switch serverType {
+	case "admin":
+		return server.NewAdminServer(cfg, cache, repo, logger)
+	default:
+		return server.NewProxyServer(cfg, cache, repo, logger, false)
+	}
+}
+
 func main() {
 	// Initialize logger
 	logger := logrus.New()
@@ -80,11 +99,8 @@ func main() {
 		logger.SetLevel(logrus.DebugLevel)
 	}
 
-	// Determine server type from command line
-	serverType := "proxy"
-	if len(os.Args) > 1 {
-		serverType = os.Args[1]
-	}
+	// Get server type once at the start
+	serverType := getServerType()
 
 	// Set up logging to file
 	var logFile string
@@ -165,21 +181,8 @@ func main() {
 	// Initialize repository
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
 
-	var srv server.Server
-	switch serverType {
-	case "admin":
-		srv = server.NewAdminServer(cfg, cacheInstance, repo, logger)
-	case "proxy":
-		srv = server.NewProxyServer(
-			cfg,
-			cacheInstance,
-			repo,
-			logger,
-			false, // debug mode
-		)
-	default:
-		logger.Fatalf("Unknown server type: %s", serverType)
-	}
+	// Create and initialize the server
+	srv := initializeServer(cfg, cacheInstance, repo, logger)
 
 	if err := srv.Run(); err != nil {
 		logger.Fatalf("Server failed: %v", err)

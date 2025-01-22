@@ -25,6 +25,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
@@ -34,16 +35,18 @@ import (
 
 type ProxyServer struct {
 	*BaseServer
-	repo          *database.Repository
-	pluginManager *plugins.Manager
-	gatewayCache  *common.TTLMap
-	rulesCache    *common.TTLMap
-	pluginCache   *common.TTLMap
-	skipAuthCheck bool
-	httpClient    *http.Client
-	loadBalancers sync.Map // map[string]*loadbalancer.LoadBalancer
-	providers     map[string]config.ProviderConfig
-	lbFactory     loadbalancer.Factory
+	repo              *database.Repository
+	pluginManager     *plugins.Manager
+	gatewayCache      *common.TTLMap
+	rulesCache        *common.TTLMap
+	pluginCache       *common.TTLMap
+	skipAuthCheck     bool
+	httpClient        *http.Client
+	loadBalancers     sync.Map // map[string]*loadbalancer.LoadBalancer
+	providers         map[string]config.ProviderConfig
+	lbFactory         loadbalancer.Factory
+	gatewayMiddleware *middleware.GatewayMiddleware
+	metricsMiddleware *middleware.MetricsMiddleware
 }
 
 // Cache TTLs
@@ -77,7 +80,23 @@ func getGatewayDataFromCache(value interface{}) (*types.GatewayData, error) {
 	return data, nil
 }
 
+// Add at the top of the file with other constants
+const (
+	HealthPath      = "/health"
+	AdminHealthPath = "/__/health"
+	PingPath        = "/__/ping"
+)
+
 func NewProxyServer(config *config.Config, cache *cache.Cache, repo *database.Repository, logger *logrus.Logger, skipAuthCheck bool, extraPlugins ...pluginiface.Plugin) *ProxyServer {
+	// Initialize metrics with config from yaml
+	metricsConfig := metrics.MetricsConfig{
+		EnableLatency:         config.Metrics.EnableLatency,
+		EnableUpstreamLatency: config.Metrics.EnableUpstream,
+		EnableConnections:     config.Metrics.EnableConnections,
+		EnablePerRoute:        config.Metrics.EnablePerRoute,
+	}
+	metrics.Initialize(metricsConfig)
+
 	// Initialize plugins
 	plugins.InitializePlugins(cache, logger)
 	manager := plugins.GetManager()
@@ -87,17 +106,22 @@ func NewProxyServer(config *config.Config, cache *cache.Cache, repo *database.Re
 	rulesCache := cache.CreateTTLMap("rules", RulesCacheTTL)
 	pluginCache := cache.CreateTTLMap("plugin", PluginCacheTTL)
 
+	// Create middleware instance
+	gatewayMiddleware := middleware.NewGatewayMiddleware(logger, cache, repo, config.Server.BaseDomain)
+	metricsMiddleware := middleware.NewMetricsMiddleware(logger)
 	s := &ProxyServer{
-		BaseServer:    NewBaseServer(config, cache, repo, logger),
-		repo:          repo,
-		pluginManager: manager,
-		gatewayCache:  gatewayCache,
-		rulesCache:    rulesCache,
-		pluginCache:   pluginCache,
-		skipAuthCheck: skipAuthCheck,
-		httpClient:    &http.Client{},
-		providers:     config.Providers.Providers,
-		lbFactory:     loadbalancer.NewBaseFactory(),
+		BaseServer:        NewBaseServer(config, cache, repo, logger),
+		repo:              repo,
+		pluginManager:     manager,
+		gatewayCache:      gatewayCache,
+		rulesCache:        rulesCache,
+		pluginCache:       pluginCache,
+		skipAuthCheck:     skipAuthCheck,
+		httpClient:        &http.Client{},
+		providers:         config.Providers.Providers,
+		lbFactory:         loadbalancer.NewBaseFactory(),
+		gatewayMiddleware: gatewayMiddleware,
+		metricsMiddleware: metricsMiddleware,
 	}
 
 	// Register extra plugins with error handling
@@ -113,6 +137,9 @@ func NewProxyServer(config *config.Config, cache *cache.Cache, repo *database.Re
 	// Subscribe to gateway events
 	go s.subscribeToEvents()
 
+	// Setup metrics endpoint using BaseServer's implementation
+	s.BaseServer.setupMetricsEndpoint()
+
 	return s
 }
 
@@ -124,72 +151,102 @@ func (s *ProxyServer) Run() error {
 	// Set Gin to release mode
 	gin.SetMode(gin.ReleaseMode)
 
-	// Create a new router group for all routes
-	baseGroup := s.router.Group("")
+	// Create a new router
+	router := gin.New()
 
-	// Add fasthttp context middleware
-	baseGroup.Use(func(c *gin.Context) {
-		// Create a new fasthttp context
-		fctx := fasthttp.RequestCtx{}
-		// Store both fasthttp context and the response writer
-		ctx := context.WithValue(c.Request.Context(), common.LoggerKey, s.logger)
-		ctx = context.WithValue(ctx, common.FastHTTPKey, &fctx)
-		ctx = context.WithValue(ctx, common.ResponseWriterKey, c.Writer)
-		c.Request = c.Request.WithContext(ctx)
-		c.Next()
+	// Add recovery and our custom middleware at the router level
+	router.Use(
+		gin.Recovery(),
+		func(c *gin.Context) {
+			// Skip middleware for system routes
+			path := c.Request.URL.Path
+			if path == AdminHealthPath || path == HealthPath || path == PingPath {
+				c.Next()
+				return
+			}
+
+			// Create and initialize fasthttp context
+			fctx := &fasthttp.RequestCtx{}
+			fctx.Request.SetRequestURI(c.Request.URL.String())
+			fctx.Request.Header.SetMethod(c.Request.Method)
+			fctx.Request.SetHost(c.Request.Host)
+
+			// Copy headers
+			for k, v := range c.Request.Header {
+				for _, val := range v {
+					fctx.Request.Header.Add(k, val)
+				}
+			}
+
+			// Set up context
+			ctx := context.WithValue(c.Request.Context(), common.LoggerKey, s.logger)
+			ctx = context.WithValue(ctx, common.FastHTTPKey, fctx)
+			ctx = context.WithValue(ctx, common.ResponseWriterKey, c.Writer)
+			c.Request = c.Request.WithContext(ctx)
+
+			// Apply gateway middleware
+			s.gatewayMiddleware.IdentifyGateway()(c)
+			if c.IsAborted() {
+				return
+			}
+
+			// Apply metrics middleware
+			s.metricsMiddleware.MetricsMiddleware()(c)
+			if c.IsAborted() {
+				return
+			}
+
+			// Apply auth middleware if needed
+			// Apply auth middleware if needed
+			if !s.skipAuthCheck && !isPublicRoute(c, s.cache) {
+				authMiddleware := middleware.NewAuthMiddleware(s.logger, s.repo)
+				authMiddleware.ValidateAPIKey()(c)
+			}
+
+			c.Next()
+		},
+	)
+
+	// Register system routes
+	router.GET(AdminHealthPath, func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "ok",
+			"time":   time.Now().Format(time.RFC3339),
+		})
 	})
 
-	// Add system routes handler to the base group
-	baseGroup.Use(func(c *gin.Context) {
-		path := c.Request.URL.Path
-
-		// Handle system routes
-		switch path {
-		case "/__/health", "/health":
-			c.JSON(http.StatusOK, gin.H{
-				"status": "ok",
-				"time":   time.Now().Format(time.RFC3339),
-			})
-			c.Abort()
-			return
-		case "/__/ping":
-			c.JSON(http.StatusOK, gin.H{
-				"message": "pong",
-			})
-			c.Abort()
-			return
-		}
-
-		// Continue to next middleware for non-system routes
-		c.Next()
+	router.GET(HealthPath, func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "ok",
+			"time":   time.Now().Format(time.RFC3339),
+		})
 	})
 
-	// Create a new group for non-system routes
-	apiGroup := baseGroup.Group("")
-
-	// Add gateway identification middleware and auth middleware to the API group
-	gatewayMiddleware := middleware.NewGatewayMiddleware(s.logger, s.cache, s.repo, s.config.Server.BaseDomain)
-	authMiddleware := middleware.NewAuthMiddleware(s.logger, s.repo)
-
-	apiGroup.Use(gatewayMiddleware.IdentifyGateway())
-	apiGroup.Use(func(c *gin.Context) {
-		if !s.skipAuthCheck && !isPublicRoute(c, s.cache) {
-			authMiddleware.ValidateAPIKey()(c)
-		}
+	router.GET(PingPath, func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "pong",
+		})
 	})
 
-	// Add catch-all route for proxying to the API group
-	apiGroup.Any("/*path", s.HandleForward)
+	// Register catch-all route for all other paths
+	router.NoRoute(s.HandleForward)
 
-	// Start the server
-	return s.router.Run(fmt.Sprintf(":%d", s.config.Server.ProxyPort))
+	return router.Run(fmt.Sprintf(":%d", s.config.Server.ProxyPort))
 }
 
 func (s *ProxyServer) HandleForward(c *gin.Context) {
+	// Skip handling for system routes
+	path := c.Request.URL.Path
+	if path == AdminHealthPath || path == HealthPath || path == PingPath {
+		c.Next()
+		return
+	}
+
+	start := time.Now()
+
 	// Add logger to context
 	ctx := context.WithValue(c.Request.Context(), common.LoggerKey, s.logger)
 
-	path := c.Request.URL.Path
 	method := c.Request.Method
 
 	// Get gateway ID from context
@@ -205,9 +262,6 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
-	s.logger.WithFields(logrus.Fields{
-		"gatewayID": gatewayID,
-	}).Debug("Gateway ID")
 
 	// Get metadata from gin context
 	var metadata map[string]interface{}
@@ -270,9 +324,6 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 
 	// Get gateway data with plugins
 	gatewayData, err := s.getGatewayData(ctx, gatewayID)
-	s.logger.WithFields(logrus.Fields{
-		"gatewayData": gatewayData,
-	}).Debug("Gateway data")
 	reqCtx.Metadata["gateway_data"] = gatewayData
 
 	if err != nil {
@@ -323,6 +374,9 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 				UpdatedAt:     time.Now().Format(time.RFC3339),
 			}
 			matchingRule = &modelRule
+			// Store rule and service info in context for metrics
+			c.Set(middleware.RouteIDKey, rule.ID)
+			c.Set(middleware.ServiceIDKey, rule.ServiceID)
 			break
 		}
 	}
@@ -362,11 +416,22 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 		return
 	}
 	// Forward the request
+	startTime := time.Now()
 	response, err := s.forwardRequest(reqCtx, matchingRule)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to forward request")
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to forward request"})
 		return
+	}
+
+	// Record upstream latency if available
+	if metrics.Config.EnableUpstreamLatency {
+		upstreamLatency := float64(time.Since(startTime).Milliseconds())
+		metrics.GatewayUpstreamLatency.WithLabelValues(
+			gatewayID,
+			matchingRule.ServiceID,
+			matchingRule.ID,
+		).Observe(upstreamLatency)
 	}
 
 	// Copy response to response context
@@ -445,6 +510,22 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 		for _, v := range values {
 			c.Header(k, v)
 		}
+	}
+	duration := time.Since(start).Milliseconds()
+
+	if metrics.Config.EnableLatency {
+		metrics.GatewayRequestLatency.WithLabelValues(
+			gatewayID,
+			c.Request.URL.Path,
+		).Observe(float64(duration))
+	}
+
+	if metrics.Config.EnablePerRoute {
+		metrics.GatewayDetailedLatency.WithLabelValues(
+			gatewayID,
+			matchingRule.ServiceID,
+			matchingRule.ID,
+		).Observe(float64(duration))
 	}
 
 	// Write the response body
