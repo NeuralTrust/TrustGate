@@ -44,15 +44,14 @@ func (m *AuthMiddleware) ValidateAPIKey() gin.HandlerFunc {
 
 		if apiKey == "" {
 			m.logger.Debug("No API key provided")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "API key required"})
-			c.Abort()
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "API key required"})
 			return
 		}
 
 		// Get gateway ID from context
 		gatewayID, err := getContextValue[string](c.Request.Context(), common.GatewayContextKey)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid gateway ID"})
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid gateway ID"})
 			return
 		}
 
@@ -60,15 +59,13 @@ func (m *AuthMiddleware) ValidateAPIKey() gin.HandlerFunc {
 		valid, err := m.db.ValidateAPIKey(c.Request.Context(), gatewayID, apiKey)
 		if err != nil {
 			m.logger.WithError(err).Error("Database error during API key validation")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-			c.Abort()
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 			return
 		}
 
 		if !valid {
 			m.logger.Debug("Invalid API key")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
-			c.Abort()
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
 
@@ -85,11 +82,6 @@ func (m *AuthMiddleware) ValidateAPIKey() gin.HandlerFunc {
 		// Set in request context for plugins
 		ctx := context.WithValue(c.Request.Context(), common.MetadataKey, metadata)
 		c.Request = c.Request.WithContext(ctx)
-
-		m.logger.WithFields(logrus.Fields{
-			"api_key":  apiKey,
-			"metadata": metadata,
-		}).Debug("API key validated and stored in context")
 
 		c.Next()
 	}

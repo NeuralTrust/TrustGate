@@ -18,8 +18,7 @@ GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "API Key Test Gateway",
-    "subdomain": "apikey-test-28",
-    "tier": "basic"
+    "subdomain": "apikey-test-'$(date +%s)'"
   }')
 
 # Extract fields from response
@@ -37,7 +36,7 @@ API_KEY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/keys" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Test Key",
-    "expires_at": null
+    "expires_at": "2026-01-22T18:55:12+01:00"
   }')
 
 API_KEY=$(echo $API_KEY_RESPONSE | jq -r '.key')
@@ -47,45 +46,96 @@ if [ -z "$API_KEY" ] || [ "$API_KEY" = "null" ]; then
     exit 1
 fi
 
-# 3. Create a simple forwarding rule
-echo -e "${GREEN}3. Creating forwarding rule...${NC}"
+# 3. Create upstream
+echo -e "${GREEN}3. Creating upstream...${NC}"
+UPSTREAM_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/upstreams" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "httpbin-upstream-'$(date +%s)'",
+    "algorithm": "round-robin",
+    "targets": [{
+        "host": "httpbin.org",
+        "port": 443,
+        "protocol": "https",
+        "weight": 100,
+        "priority": 1
+    }],
+    "health_checks": {
+        "passive": true,
+        "threshold": 3,
+        "interval": 60
+    }
+}')
+
+UPSTREAM_ID=$(echo $UPSTREAM_RESPONSE | jq -r '.id')
+
+if [ "$UPSTREAM_ID" == "null" ] || [ -z "$UPSTREAM_ID" ]; then
+    echo -e "${RED}Failed to create upstream. Response: $UPSTREAM_RESPONSE${NC}"
+    exit 1
+fi
+
+echo "Upstream created with ID: $UPSTREAM_ID"
+
+# 4. Create service
+echo -e "${GREEN}4. Creating service...${NC}"
+SERVICE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/services" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "httpbin-service-'$(date +%s)'",
+    "type": "upstream",
+    "description": "HTTPBin test service",
+    "upstream_id": "'$UPSTREAM_ID'"
+  }')
+
+SERVICE_ID=$(echo $SERVICE_RESPONSE | jq -r '.id')
+
+if [ "$SERVICE_ID" == "null" ] || [ -z "$SERVICE_ID" ]; then
+    echo -e "${RED}Failed to create service. Response: $SERVICE_RESPONSE${NC}"
+    exit 1
+fi
+
+echo "Service created with ID: $SERVICE_ID"
+
+# 5. Create a forwarding rule
+echo -e "${GREEN}5. Creating forwarding rule...${NC}"
 RULE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/rules" \
-  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "path": "/test",
-    "targets": [{"url": "https://httpbin.org/get"}],
+    "service_id": "'$SERVICE_ID'",
     "methods": ["GET"],
-    "strip_path": true
+    "strip_path": true,
+    "active": true
   }')
 
+# Wait for configuration to propagate
 sleep 2
 
-# 4. Test with valid API key
-echo -e "\n${GREEN}4. Testing with valid API key...${NC}"
+# 6. Test with valid API key
+echo -e "\n${GREEN}6. Testing with valid API key...${NC}"
 VALID_RESPONSE=$(curl -s -w "\n%{http_code}" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
     -H "Authorization: Bearer ${API_KEY}" \
-    "${PROXY_URL}/test")
+    "${PROXY_URL}/test/get")
 
 VALID_STATUS=$(echo "$VALID_RESPONSE" | tail -n1)
 echo -e "Valid key status code: ${VALID_STATUS}"
 
-# 5. Test with invalid API key
-echo -e "\n${GREEN}5. Testing with invalid API key...${NC}"
+# 7. Test with invalid API key
+echo -e "\n${GREEN}7. Testing with invalid API key...${NC}"
 INVALID_RESPONSE=$(curl -s -w "\n%{http_code}" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
     -H "Authorization: Bearer invalid_key" \
-    "${PROXY_URL}/test")
+    "${PROXY_URL}/test/get")
 
 INVALID_STATUS=$(echo "$INVALID_RESPONSE" | tail -n1)
 echo -e "Invalid key status code: ${INVALID_STATUS}"
 
-# 6. Test with no API key
-echo -e "\n${GREEN}6. Testing with no API key...${NC}"
+# 8. Test with no API key
+echo -e "\n${GREEN}8. Testing with no API key...${NC}"
 NO_KEY_RESPONSE=$(curl -s -w "\n%{http_code}" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    "${PROXY_URL}/test")
+    "${PROXY_URL}/test/get")
 
 NO_KEY_STATUS=$(echo "$NO_KEY_RESPONSE" | tail -n1)
 echo -e "No key status code: ${NO_KEY_STATUS}"

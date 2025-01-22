@@ -17,7 +17,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 
-	"github.com/NeuralTrust/TrustGate/internal/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -109,6 +109,7 @@ func NewProxyServer(config *config.Config, cache *cache.Cache, repo *database.Re
 	// Create middleware instance
 	gatewayMiddleware := middleware.NewGatewayMiddleware(logger, cache, repo, config.Server.BaseDomain)
 	metricsMiddleware := middleware.NewMetricsMiddleware(logger)
+
 	s := &ProxyServer{
 		BaseServer:        NewBaseServer(config, cache, repo, logger),
 		repo:              repo,
@@ -154,58 +155,67 @@ func (s *ProxyServer) Run() error {
 	// Create a new router
 	router := gin.New()
 
-	// Add recovery and our custom middleware at the router level
-	router.Use(
-		gin.Recovery(),
-		func(c *gin.Context) {
-			// Skip middleware for system routes
-			path := c.Request.URL.Path
-			if path == AdminHealthPath || path == HealthPath || path == PingPath {
-				c.Next()
-				return
+	// Create auth middleware
+	authMiddleware := middleware.NewAuthMiddleware(s.logger, s.repo)
+
+	// Create a combined middleware handler
+	mainHandler := func(c *gin.Context) {
+		// Skip middleware for system routes
+		path := c.Request.URL.Path
+		if path == AdminHealthPath || path == HealthPath || path == PingPath {
+			s.logger.Debug("Skipping middleware for system route: ", path)
+			return // Let the specific route handler take care of it
+		}
+
+		// Create and initialize fasthttp context
+		fctx := &fasthttp.RequestCtx{}
+		fctx.Request.SetRequestURI(c.Request.URL.String())
+		fctx.Request.Header.SetMethod(c.Request.Method)
+		fctx.Request.SetHost(c.Request.Host)
+
+		// Copy headers
+		for k, v := range c.Request.Header {
+			for _, val := range v {
+				fctx.Request.Header.Add(k, val)
 			}
+		}
 
-			// Create and initialize fasthttp context
-			fctx := &fasthttp.RequestCtx{}
-			fctx.Request.SetRequestURI(c.Request.URL.String())
-			fctx.Request.Header.SetMethod(c.Request.Method)
-			fctx.Request.SetHost(c.Request.Host)
+		// Set up context
+		ctx := context.WithValue(c.Request.Context(), common.LoggerKey, s.logger)
+		ctx = context.WithValue(ctx, common.FastHTTPKey, fctx)
+		ctx = context.WithValue(ctx, common.ResponseWriterKey, c.Writer)
+		c.Request = c.Request.WithContext(ctx)
 
-			// Copy headers
-			for k, v := range c.Request.Header {
-				for _, val := range v {
-					fctx.Request.Header.Add(k, val)
+		// Apply gateway middleware first to set up gateway context
+		s.gatewayMiddleware.IdentifyGateway()(c)
+		if c.IsAborted() {
+			s.logger.Debug("Request aborted by gateway middleware")
+			return
+		}
+
+		// Apply metrics middleware
+		s.metricsMiddleware.MetricsMiddleware()(c)
+		if c.IsAborted() {
+			s.logger.Debug("Request aborted by metrics middleware")
+			return
+		}
+
+		if !s.skipAuthCheck {
+			isPublic := isPublicRoute(c, s.cache)
+			if !isPublic {
+				authHandler := authMiddleware.ValidateAPIKey()
+				authHandler(c)
+				if c.IsAborted() {
+					return
 				}
 			}
+		}
 
-			// Set up context
-			ctx := context.WithValue(c.Request.Context(), common.LoggerKey, s.logger)
-			ctx = context.WithValue(ctx, common.FastHTTPKey, fctx)
-			ctx = context.WithValue(ctx, common.ResponseWriterKey, c.Writer)
-			c.Request = c.Request.WithContext(ctx)
-
-			// Apply gateway middleware
-			s.gatewayMiddleware.IdentifyGateway()(c)
-			if c.IsAborted() {
-				return
-			}
-
-			// Apply metrics middleware
-			s.metricsMiddleware.MetricsMiddleware()(c)
-			if c.IsAborted() {
-				return
-			}
-
-			// Apply auth middleware if needed
-			// Apply auth middleware if needed
-			if !s.skipAuthCheck && !isPublicRoute(c, s.cache) {
-				authMiddleware := middleware.NewAuthMiddleware(s.logger, s.repo)
-				authMiddleware.ValidateAPIKey()(c)
-			}
-
-			c.Next()
-		},
-	)
+		// Only proceed with HandleForward if not aborted
+		if !c.IsAborted() {
+			s.HandleForward(c)
+		}
+	}
 
 	// Register system routes
 	router.GET(AdminHealthPath, func(c *gin.Context) {
@@ -228,13 +238,19 @@ func (s *ProxyServer) Run() error {
 		})
 	})
 
-	// Register catch-all route for all other paths
-	router.NoRoute(s.HandleForward)
+	// Register the main handler for all non-system routes
+	router.NoRoute(mainHandler)
 
 	return router.Run(fmt.Sprintf(":%d", s.config.Server.ProxyPort))
 }
 
 func (s *ProxyServer) HandleForward(c *gin.Context) {
+	// Check if request was already aborted
+	if c.IsAborted() {
+		s.logger.Debug("Skipping HandleForward for aborted request")
+		return
+	}
+
 	// Skip handling for system routes
 	path := c.Request.URL.Path
 	if path == AdminHealthPath || path == HealthPath || path == PingPath {
@@ -534,28 +550,23 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 
 // Helper function to check if a route is public
 func isPublicRoute(c *gin.Context, cache *cache.Cache) bool {
-	gatewayID, exists := c.Get(middleware.GatewayContextKey)
+	path := c.Request.URL.Path
+	if strings.HasPrefix(path, "/__/") || path == "/health" {
+		return true
+	}
+
+	// Get gateway data from context
+	gatewayData, exists := c.Get("gateway_data")
 	if !exists {
 		return false
 	}
 
-	// Get rules for gateway
-	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
-	rulesJSON, err := cache.Get(c, rulesKey)
-	if err != nil {
-		return false
-	}
-
-	var rules []models.ForwardingRule
-	if err := json.Unmarshal([]byte(rulesJSON), &rules); err != nil {
-		return false
-	}
-
-	// Check if any matching rule is public
-	path := c.Request.URL.Path
-	for _, rule := range rules {
-		if rule.Active && strings.HasPrefix(path, rule.Path) {
-			return rule.Public
+	// Check if the route is marked as public in the gateway rules
+	if data, ok := gatewayData.(*types.GatewayData); ok {
+		for _, rule := range data.Rules {
+			if rule.Path == path && rule.Public {
+				return true
+			}
 		}
 	}
 
