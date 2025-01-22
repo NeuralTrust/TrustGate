@@ -1,13 +1,16 @@
 server:
   admin_port: 8080
+  metrics_port: 9090
   proxy_port: 8081
   base_domain: example.com
 
-redis:
-  host: localhost
-  port: 6379
-  password: ""
-  db: 0
+metrics:
+  enabled: true
+  enable_latency: true        # Basic latency metrics
+  enable_upstream: true      # Upstream latency (high cardinality)
+  enable_connections: true   # Connection tracking
+  enable_per_route: true    # Per-route metrics (high cardinality)
+  enable_detailed_status: true # Detailed status codes
 
 database:
   host: localhost
@@ -16,3 +19,9 @@ database:
   password: postgres
   dbname: ai_gateway
   ssl_mode: disable 
+
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0

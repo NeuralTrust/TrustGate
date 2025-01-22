@@ -1,11 +1,14 @@
 package server
 
 import (
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sirupsen/logrus"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -19,11 +22,12 @@ type Server interface {
 }
 
 type BaseServer struct {
-	config *config.Config
-	cache  *cache.Cache
-	repo   *database.Repository
-	logger *logrus.Logger
-	router *gin.Engine
+	config         *config.Config
+	cache          *cache.Cache
+	repo           *database.Repository
+	logger         *logrus.Logger
+	router         *gin.Engine
+	metricsStarted bool
 }
 
 func init() {
@@ -71,4 +75,47 @@ func (s *BaseServer) runServer(addr string) error {
 		s.setupHealthCheck()
 	}
 	return s.router.Run(addr)
+}
+
+func (s *BaseServer) setupMetricsEndpoint() {
+	// Only start metrics server once
+	if s.metricsStarted {
+		return
+	}
+	s.metricsStarted = true
+
+	// Create a new router for metrics
+	metricsRouter := gin.New()
+	metricsRouter.Use(gin.Recovery())
+
+	// Add prometheus metrics endpoint
+	metricsRouter.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	// Start metrics server on a different port
+	go func() {
+		if err := metricsRouter.Run(fmt.Sprintf(":%d", s.config.Server.MetricsPort)); err != nil {
+			if !strings.Contains(err.Error(), "address already in use") {
+				s.logger.WithError(err).Error("Failed to start metrics server")
+			}
+		}
+	}()
+}
+
+// InitializeMetrics sets up the metrics endpoint if needed
+func (s *BaseServer) InitializeMetrics() {
+	// Only initialize metrics if this is not a proxy server
+	if !s.isProxyServer() {
+		s.setupMetricsEndpoint()
+	}
+}
+
+// Run implements the Server interface
+func (s *BaseServer) Run() error {
+	var port int
+	if s.isProxyServer() {
+		port = s.config.Server.ProxyPort
+	} else {
+		port = s.config.Server.AdminPort
+	}
+	return s.runServer(fmt.Sprintf(":%d", port))
 }
