@@ -65,7 +65,10 @@ func Load() error {
 	data, err := os.ReadFile("./config/config.yaml")
 	if err != nil {
 		// Try to get current working directory for debugging
-		cwd, _ := os.Getwd()
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to read config file and get working directory: %w", err)
+		}
 		fmt.Printf("Working directory: %s\n", cwd)
 		return fmt.Errorf("failed to read config file: %w", err)
 	}

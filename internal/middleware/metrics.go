@@ -62,6 +62,9 @@ func (m *MetricsMiddleware) MetricsMiddleware() gin.HandlerFunc {
 
 // GetStatusClass returns either the specific status code or its class (e.g., "2xx")
 func GetStatusClass(status string) string {
-	code, _ := strconv.Atoi(status)
+	code, err := strconv.Atoi(status)
+	if err != nil {
+		return "5xx" // Return server error class if status code is invalid
+	}
 	return fmt.Sprintf("%dxx", code/100)
 }

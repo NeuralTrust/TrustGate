@@ -19,8 +19,6 @@ var (
 	// Additional labels for detailed metrics
 	routeLabels = []string{"service", "route"}
 
-	serviceLabels = []string{"service"}
-
 	// Latency buckets in milliseconds (similar to Kong's approach)
 	latencyBuckets = []float64{
 		5, 10, 25, // Fast responses (5-25ms)
