@@ -17,7 +17,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 
-	"github.com/NeuralTrust/TrustGate/internal/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -109,6 +109,7 @@ func NewProxyServer(config *config.Config, cache *cache.Cache, repo *database.Re
 	// Create middleware instance
 	gatewayMiddleware := middleware.NewGatewayMiddleware(logger, cache, repo, config.Server.BaseDomain)
 	metricsMiddleware := middleware.NewMetricsMiddleware(logger)
+
 	s := &ProxyServer{
 		BaseServer:        NewBaseServer(config, cache, repo, logger),
 		repo:              repo,
