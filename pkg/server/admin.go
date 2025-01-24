@@ -228,14 +228,14 @@ func (s *AdminServer) getGatewayHandler(c *gin.Context) {
 			"user_agent": c.Request.UserAgent(),
 			"referer":    c.Request.Referer(),
 		}).Error("Invalid gateway ID")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid gateway ID"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Get gateway handler: Invalid gateway ID"})
 		return
 	}
 
 	// Validate UUID format
 	if _, err := uuid.Parse(gatewayID); err != nil {
 		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Invalid UUID format")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid gateway ID format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Get gateway handler: Invalid gateway ID format"})
 		return
 	}
 
