@@ -129,6 +129,7 @@ type Plugin interface {
 - External API Call
 - Data Masking (Pre-defined entities, custom keywords, regex)
 - Prompt Moderation (keywords, regex)
+- Toxicity Detection (Open AI Moderation API)
 
 ### 🔜 Work in progress (Coming Soon)
 
@@ -139,8 +140,7 @@ type Plugin interface {
   - GCP Prompt Guard
 
 - **Toxicity Detection**
-  - Open AI Moderation API integration
-  - Legacy toxicity detection methods
+  - Azure Content Safety API
 
 - **Prompt Moderation**
   - Topic detection (accepted/denied)
