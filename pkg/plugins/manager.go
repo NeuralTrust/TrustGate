@@ -16,6 +16,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/prompt_moderation"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/token_rate_limiter"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_azure"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_detection"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
@@ -76,6 +77,10 @@ func InitializePlugins(cache *cache.Cache, logger *logrus.Logger) {
 
 	if err := manager.RegisterPlugin(toxicity_detection.NewToxicityDetectionPlugin(logger)); err != nil {
 		logger.WithError(err).Error("Failed to register toxicity detection plugin")
+	}
+
+	if err := manager.RegisterPlugin(toxicity_azure.NewToxicityAzurePlugin(logger)); err != nil {
+		logger.WithError(err).Error("Failed to register toxicity azure plugin")
 	}
 }
 
