@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -61,8 +63,17 @@ var (
 
 // Load loads the configuration from config files
 func Load() error {
-	// Read config file directly from the config directory
-	data, err := os.ReadFile("./config/config.yaml")
+	// Get config path from environment variable or use default
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = "./config/config.yaml"
+	}
+
+	// Clean and validate the path
+	configPath = filepath.Clean(configPath)
+
+	// Read config file
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		// Try to get current working directory for debugging
 		cwd, err := os.Getwd()
@@ -70,7 +81,7 @@ func Load() error {
 			return fmt.Errorf("failed to read config file and get working directory: %w", err)
 		}
 		fmt.Printf("Working directory: %s\n", cwd)
-		return fmt.Errorf("failed to read config file: %w", err)
+		return fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
 
 	// Unmarshal YAML directly
@@ -84,7 +95,66 @@ func Load() error {
 		return fmt.Errorf("failed to load provider config: %w", err)
 	}
 	globalConfig.Providers = *providerConfig
+
+	// Override with environment variables if present
+	loadEnvOverrides()
+
 	return nil
+}
+
+// loadEnvOverrides overrides config values with environment variables if present
+func loadEnvOverrides() {
+	// Database overrides
+	if host := os.Getenv("DB_HOST"); host != "" {
+		globalConfig.Database.Host = host
+	}
+	if port := os.Getenv("DB_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			globalConfig.Database.Port = p
+		}
+	}
+	if user := os.Getenv("DB_USER"); user != "" {
+		globalConfig.Database.User = user
+	}
+	if pass := os.Getenv("DB_PASSWORD"); pass != "" {
+		globalConfig.Database.Password = pass
+	}
+	if name := os.Getenv("DB_NAME"); name != "" {
+		globalConfig.Database.DBName = name
+	}
+
+	// Redis overrides
+	if host := os.Getenv("REDIS_HOST"); host != "" {
+		globalConfig.Redis.Host = host
+	}
+	if port := os.Getenv("REDIS_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			globalConfig.Redis.Port = p
+		}
+	}
+	if pass := os.Getenv("REDIS_PASSWORD"); pass != "" {
+		globalConfig.Redis.Password = pass
+	}
+
+	// Server overrides
+	if port := os.Getenv("ADMIN_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			globalConfig.Server.AdminPort = p
+		}
+	}
+	if port := os.Getenv("PROXY_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			globalConfig.Server.ProxyPort = p
+		}
+	}
+	if port := os.Getenv("METRICS_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			globalConfig.Server.MetricsPort = p
+		}
+	}
+	if host := os.Getenv("BASE_DOMAIN"); host != "" {
+		globalConfig.Server.BaseDomain = host
+	}
 }
 
 // GetConfig returns the global configuration
