@@ -8,6 +8,7 @@ services:
     environment:
       - SERVER_TYPE=admin
       - GIN_MODE=release
+      - DB_PASSWORD=${DB_PASSWORD}
     ports:
       - "8080:8080"
     depends_on:
@@ -26,6 +27,7 @@ services:
     environment:
       - SERVER_TYPE=proxy
       - GIN_MODE=release
+      - DB_PASSWORD=${DB_PASSWORD}
     ports:
       - "8081:8081"
     depends_on:

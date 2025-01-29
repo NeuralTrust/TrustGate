@@ -1,6 +1,15 @@
 #!/bin/sh
 set -e
 
+# Check required environment variables
+if [ -z "$DB_PASSWORD" ]; then
+    echo "Error: DB_PASSWORD environment variable is required"
+    exit 1
+fi
+
+# Replace database password in config
+sed -i "s/\${DB_PASSWORD}/${DB_PASSWORD}/g" /app/config/config.yaml
+
 # Wait for dependencies if needed
 wait_for_service() {
     host="$1"

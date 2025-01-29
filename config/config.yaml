@@ -15,13 +15,12 @@ metrics:
 database:
   host: localhost
   port: 5432
-  user: postgres
-  password: postgres
-  dbname: ai_gateway
+  user: trustgate
+  password: ${DB_PASSWORD}
+  dbname: trustgate
   ssl_mode: disable 
 
 redis:
   host: localhost
   port: 6379
-  password: ""
   db: 0
