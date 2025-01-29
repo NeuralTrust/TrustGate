@@ -41,6 +41,8 @@ COPY config/ /app/config/
 
 # Set environment variables
 ENV GIN_MODE=release
+ENV DB_PASSWORD=${DB_PASSWORD}
+ENV REDIS_PASSWORD=${REDIS_PASSWORD}
 
 # Add entrypoint script
 COPY scripts/docker-entrypoint.sh /app/
