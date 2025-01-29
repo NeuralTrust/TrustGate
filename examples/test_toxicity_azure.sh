@@ -6,11 +6,12 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 # Check for required environment variables
-if [ -z "$AZURE_API_KEY" ] || [ -z "$AZURE_ENDPOINT" ]; then
-    echo -e "${RED}Error: AZURE_API_KEY and AZURE_ENDPOINT must be set${NC}"
+if [ -z "$AZURE_API_KEY" ] || [ -z "$AZURE_TEXT_ENDPOINT" ] || [ -z "$AZURE_IMAGE_ENDPOINT" ]; then
+    echo -e "${RED}Error: AZURE_API_KEY, AZURE_TEXT_ENDPOINT, and AZURE_IMAGE_ENDPOINT must be set${NC}"
     echo "Please set the following environment variables:"
     echo "export AZURE_API_KEY='your-api-key'"
-    echo "export AZURE_ENDPOINT='https://YOUR_REGION.api.cognitive.microsoft.com/contentsafety/text'"
+    echo "export AZURE_TEXT_ENDPOINT='https://YOUR_REGION.api.cognitive.microsoft.com/contentsafety/text/analyze'"
+    echo "export AZURE_IMAGE_ENDPOINT='https://YOUR_REGION.api.cognitive.microsoft.com/contentsafety/image/analyze'"
     exit 1
 fi
 
@@ -18,15 +19,15 @@ fi
 ADMIN_URL=${ADMIN_URL:-"http://localhost:8080/api/v1"}
 PROXY_URL=${PROXY_URL:-"http://localhost:8081"}
 BASE_DOMAIN=${BASE_DOMAIN:-"example.com"}
-SUBDOMAIN="toxicity-azure-$(date +%s)"
+SUBDOMAIN="toxicity-azure-image-$(date +%s)"
 
-echo -e "${GREEN}Testing Azure Content Safety Plugin${NC}\n"
+echo -e "${GREEN}Testing Azure Content Safety Image Plugin${NC}\n"
 
-# Create gateway with message field configuration
-echo -e "${GREEN}1. Creating gateway with message field configuration...${NC}"
-GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
-  -H "Content-Type: application/json" \
-  -d '{
+# Create gateway with image field configuration
+echo -e "${GREEN}1. Creating gateway with image field configuration...${NC}"
+
+# Create the gateway configuration JSON
+GATEWAY_CONFIG='{
     "name": "Azure Content Safety Gateway",
     "subdomain": "'$SUBDOMAIN'",
     "required_plugins": [
@@ -36,25 +37,38 @@ GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
             "stage": "pre_request",
             "priority": 1,
             "settings": {
-                "api_key": "'${AZURE_API_KEY}'",
-                "azure_endpoint": "'${AZURE_ENDPOINT}'",
+                "api_key": "'$AZURE_API_KEY'",
+                "endpoints": {
+                    "text": "'$AZURE_TEXT_ENDPOINT'",
+                    "image": "'$AZURE_IMAGE_ENDPOINT'"
+                },
                 "output_type": "FourSeverityLevels",
-                "severity_level": 2,
-                "text_path": "message",
+                "content_types": [{
+                    "type": "text",
+                    "path": "text"
+                },
+                {
+                    "type": "image",
+                    "path": "image_data"
+                }],
                 "actions": {
                     "type": "block",
                     "message": "Content violates safety guidelines"
                 },
-                "categories": [
-                    "Hate",
-                    "Violence",
-                    "SelfHarm",
-                    "Sexual"
-                ]
+                "category_severity": {
+                    "Hate": 0,
+                    "Violence": 0,
+                    "SelfHarm": 2,
+                    "Sexual": 2
+                }
             }
         }
     ]
-}')
+}'
+
+GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
+  -H "Content-Type: application/json" \
+  -d "$GATEWAY_CONFIG")
 
 # Extract gateway details
 GATEWAY_ID=$(echo $GATEWAY_RESPONSE | jq -r '.id')
@@ -151,28 +165,23 @@ RULE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/rules" \
 # Wait for configuration to propagate
 sleep 2
 
-# Define test cases
-TEST_CASES=(
-    "Let us discuss dating and relationships in a respectful way"
-    "I will brutally murder you and your entire family in the most gruesome way possible"
-    "I hate all people from that country, they are subhuman and deserve to die"
-)
+# Test cases
+echo -e "\n${GREEN}6. Testing different content types...${NC}"
 
-# Test each case
-for i in "${!TEST_CASES[@]}"; do
-    case_num=$((i + 1))
-    text_content="${TEST_CASES[$i]}"
+# Test 1: Test image content
+echo -e "\n${GREEN}6.1 Testing image content...${NC}"
+TEST_IMAGE="./assets/test_imgs/test-violent-image.jpg"
+if [ ! -f "$TEST_IMAGE" ]; then
+    echo -e "${RED}Image file not found: $TEST_IMAGE${NC}"
+else
+    IMAGE_BASE64=$(base64 -i "$TEST_IMAGE" | tr -d '\n')
+    JSON_PAYLOAD=$(jq -n --arg img "$IMAGE_BASE64" '{"image_data": $img}')
     
-    echo -e "\n${GREEN}6.$case_num Testing case $case_num: ${NC}"
-    echo "Content: $text_content"
-    
-    # Send request with message field
     RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
         -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
         -H "X-API-Key: ${API_KEY}" \
         -H "Content-Type: application/json" \
-        -d "{\"message\": \"$text_content\"}")
-    
+        -d "$JSON_PAYLOAD")
     # Extract status code
     HTTP_CODE=$(echo "$RESPONSE" | grep "STATUS_CODE:" | cut -d':' -f2)
     # Extract body (everything before STATUS_CODE line)
@@ -181,19 +190,47 @@ for i in "${!TEST_CASES[@]}"; do
     echo -e "\n${GREEN}Response Status Code: $HTTP_CODE${NC}"
     
     if [ "$HTTP_CODE" == "200" ]; then
-        echo -e "${GREEN}Content passed moderation${NC}"
-        echo -e "\nMessage Data:"
-        echo "$BODY" | jq '.json.message'
+        echo -e "${GREEN}Image passed moderation${NC}"
     elif [ "$HTTP_CODE" == "400" ]; then
-        echo -e "${RED}Content blocked by moderation${NC}"
-        echo -e "\nError: $(echo "$BODY" | jq -r '.error')"
+        echo -e "${RED}Image blocked by moderation${NC}"
+        ERROR_MSG=$(echo "$BODY" | jq -r '.error')
+        echo -e "${RED}$ERROR_MSG${NC}"
     else
         echo -e "${RED}Unexpected status code: $HTTP_CODE${NC}"
-        echo "Response body:"
-        echo "$BODY"
     fi
     
     echo -e "\n----------------------------------------"
-done
+fi
 
-echo -e "\n${GREEN}Content safety tests completed${NC}" 
+# Test 2: Test text content
+echo -e "\n${GREEN}6.2 Testing text content...${NC}"
+TEXT_PAYLOAD='{
+    "text": "This is a test message containing potentially harmful content: I hate everyone and want to cause violence."
+}'
+
+echo -e "\n${GREEN}Sending text content for moderation...${NC}"
+RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
+    -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
+    -H "X-API-Key: ${API_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "$TEXT_PAYLOAD")
+
+# Extract status code
+HTTP_CODE=$(echo "$RESPONSE" | grep "STATUS_CODE:" | cut -d':' -f2)
+# Extract body (everything before STATUS_CODE line)
+BODY=$(echo "$RESPONSE" | sed -n '1,/STATUS_CODE/p' | sed '$d')
+
+echo -e "\n${GREEN}Response Status Code: $HTTP_CODE${NC}"
+
+if [ "$HTTP_CODE" == "200" ]; then
+    echo -e "${GREEN}Text passed moderation${NC}"
+elif [ "$HTTP_CODE" == "400" ]; then
+    echo -e "${RED}Text blocked by moderation${NC}"
+    #ERROR_MSG=$(echo "$BODY" | jq -r '.error')
+    echo -e "${RED}$ERROR_MSG${NC}"
+else
+    echo -e "${RED}Unexpected status code: $HTTP_CODE${NC}"
+fi
+
+echo -e "\n----------------------------------------"
+echo -e "\n${GREEN}Content safety tests completed${NC}"
