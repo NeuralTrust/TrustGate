@@ -51,13 +51,6 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 			return
 		}
 
-		m.logger.WithFields(logrus.Fields{
-			"host":        host,
-			"baseDomain":  m.baseDomain,
-			"requestPath": c.Request.URL.Path,
-			"method":      c.Request.Method,
-		}).Debug("Looking up gateway by subdomain")
-
 		subdomain := m.extractSubdomain(host)
 		if subdomain == "" {
 			m.logger.WithFields(logrus.Fields{
@@ -68,15 +61,6 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-
-		// Add more detailed debug logging
-		m.logger.WithFields(logrus.Fields{
-			"subdomain":   subdomain,
-			"host":        host,
-			"baseDomain":  m.baseDomain,
-			"requestPath": c.Request.URL.Path,
-			"method":      c.Request.Method,
-		}).Debug("Looking up gateway by subdomain")
 
 		// Try to get gateway ID from cache first
 		key := fmt.Sprintf("subdomain:%s", subdomain)
@@ -118,13 +102,6 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 				return
 			}
 		}
-
-		// Log successful gateway identification
-		m.logger.WithFields(logrus.Fields{
-			"subdomain": subdomain,
-			"gatewayID": gatewayID,
-			"path":      c.Request.URL.Path,
-		}).Debug("Successfully identified gateway")
 
 		// Set gateway ID in both gin context and request context
 		c.Set(GatewayContextKey, gatewayID)
