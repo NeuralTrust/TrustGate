@@ -51,6 +51,13 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 			return
 		}
 
+		m.logger.WithFields(logrus.Fields{
+			"host":        host,
+			"baseDomain":  m.baseDomain,
+			"requestPath": c.Request.URL.Path,
+			"method":      c.Request.Method,
+		}).Debug("Looking up gateway by subdomain")
+
 		subdomain := m.extractSubdomain(host)
 		if subdomain == "" {
 			m.logger.WithFields(logrus.Fields{
@@ -62,15 +69,31 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 			return
 		}
 
+		// Add more detailed debug logging
+		m.logger.WithFields(logrus.Fields{
+			"subdomain":   subdomain,
+			"host":        host,
+			"baseDomain":  m.baseDomain,
+			"requestPath": c.Request.URL.Path,
+			"method":      c.Request.Method,
+		}).Debug("Looking up gateway by subdomain")
+
 		// Try to get gateway ID from cache first
 		key := fmt.Sprintf("subdomain:%s", subdomain)
 		gatewayID, err := m.cache.Get(c, key)
 		if err != nil {
 			if err.Error() == "redis: nil" {
 				// If not in cache, try to get from database
+				m.logger.WithField("subdomain", subdomain).Debug("Cache miss, querying database")
+
 				gateway, err := m.repo.GetGatewayBySubdomain(c.Request.Context(), subdomain)
 				if err != nil {
-					m.logger.WithError(err).Error("Failed to get gateway from database")
+					m.logger.WithFields(logrus.Fields{
+						"subdomain": subdomain,
+						"error":     err,
+						"errorType": fmt.Sprintf("%T", err),
+						"host":      host,
+					}).Error("Failed to get gateway from database")
 					c.JSON(404, gin.H{"error": "Gateway not found"})
 					c.Abort()
 					return
@@ -79,15 +102,29 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 				gatewayID = gateway.ID
 				// Cache the gateway ID
 				if err := m.cache.Set(c.Request.Context(), key, gateway.ID, 24*time.Hour); err != nil {
-					m.logger.WithError(err).Error("Failed to cache gateway ID")
+					m.logger.WithFields(logrus.Fields{
+						"error":     err,
+						"key":       key,
+						"gatewayID": gateway.ID,
+					}).Error("Failed to cache gateway ID")
 				}
 			} else {
-				m.logger.WithError(err).Error("Failed to get gateway ID from cache")
+				m.logger.WithFields(logrus.Fields{
+					"error": err,
+					"key":   key,
+				}).Error("Failed to get gateway ID from cache")
 				c.JSON(500, gin.H{"error": "Internal server error"})
 				c.Abort()
 				return
 			}
 		}
+
+		// Log successful gateway identification
+		m.logger.WithFields(logrus.Fields{
+			"subdomain": subdomain,
+			"gatewayID": gatewayID,
+			"path":      c.Request.URL.Path,
+		}).Debug("Successfully identified gateway")
 
 		// Set gateway ID in both gin context and request context
 		c.Set(GatewayContextKey, gatewayID)
@@ -96,7 +133,6 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 
 		c.Next()
 	}
-
 }
 
 func (m *GatewayMiddleware) extractSubdomain(host string) string {

@@ -23,6 +23,7 @@ type Repository struct {
 }
 
 func NewRepository(db *gorm.DB, logger logrus.FieldLogger, cache *cache.Cache) *Repository {
+	db = db.Debug()
 	return &Repository{
 		db:     db,
 		logger: logger,
