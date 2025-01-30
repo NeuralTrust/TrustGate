@@ -34,6 +34,7 @@ func (m *AuthMiddleware) ValidateAPIKey() gin.HandlerFunc {
 		}
 
 		// Extract API key from X-Api-Key header first, then fallback to Authorization header
+		m.logger.WithField("headers", c.Request.Header).Debug("Extracting API key from headers")
 		apiKey := c.GetHeader("X-Api-Key")
 		if apiKey == "" {
 			authHeader := c.GetHeader("Authorization")
