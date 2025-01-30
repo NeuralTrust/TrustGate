@@ -49,9 +49,7 @@ docker compose -f docker-compose.prod.yaml up -d
 ### Using Kubernetes
 
 ```bash
-# Apply configurations
-kubectl apply -f k8s/storage.yaml
-kubectl apply -f k8s/deployment.yaml
+Coming soon
 ```
 
 ### Local Development

@@ -200,7 +200,9 @@ func (s *ProxyServer) Run() error {
 			return
 		}
 
+		// Handle auth check - skipAuthCheck now means "using EE auth"
 		if !s.skipAuthCheck {
+			// CE auth handling
 			isPublic := isPublicRoute(c, s.cache)
 			if !isPublic {
 				authHandler := authMiddleware.ValidateAPIKey()
@@ -210,6 +212,8 @@ func (s *ProxyServer) Run() error {
 				}
 			}
 		}
+		// Note: When skipAuthCheck is true, we don't do CE auth,
+		// allowing EE to handle auth in its middleware chain
 
 		// Only proceed with HandleForward if not aborted
 		if !c.IsAborted() {
@@ -339,7 +343,7 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 	}
 
 	// Get gateway data with plugins
-	gatewayData, err := s.getGatewayData(ctx, gatewayID)
+	gatewayData, err := s.GetGatewayData(ctx, gatewayID)
 	reqCtx.Metadata["gateway_data"] = gatewayData
 
 	if err != nil {
@@ -407,7 +411,7 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 	}
 
 	// Configure plugins for this request
-	if err := s.configurePlugins(gatewayData.Gateway, matchingRule); err != nil {
+	if err := s.ConfigurePlugins(gatewayData.Gateway, matchingRule); err != nil {
 		s.logger.WithError(err).Error("Failed to configure plugins")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to configure plugins"})
 		return
@@ -433,7 +437,7 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 	}
 	// Forward the request
 	startTime := time.Now()
-	response, err := s.forwardRequest(reqCtx, matchingRule)
+	response, err := s.ForwardRequest(reqCtx, matchingRule)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to forward request")
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to forward request"})
@@ -573,7 +577,7 @@ func isPublicRoute(c *gin.Context, cache *cache.Cache) bool {
 	return false
 }
 
-func (s *ProxyServer) configurePlugins(gateway *types.Gateway, rule *types.ForwardingRule) error {
+func (s *ProxyServer) ConfigurePlugins(gateway *types.Gateway, rule *types.ForwardingRule) error {
 	// Configure gateway-level plugins
 	gatewayChains := s.convertGatewayPlugins(gateway)
 	s.logger.WithFields(logrus.Fields{
@@ -598,7 +602,7 @@ func (s *ProxyServer) configurePlugins(gateway *types.Gateway, rule *types.Forwa
 	return nil
 }
 
-func (s *ProxyServer) getGatewayData(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
+func (s *ProxyServer) GetGatewayData(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
 	logger, err := getContextValue[*logrus.Logger](ctx, common.LoggerKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get logger: %w", err)
@@ -807,7 +811,7 @@ func convertModelToTypesRules(rules []models.ForwardingRule) []types.ForwardingR
 	return result
 }
 
-func (s *ProxyServer) forwardRequest(req *types.RequestContext, rule *types.ForwardingRule) (*types.ResponseContext, error) {
+func (s *ProxyServer) ForwardRequest(req *types.RequestContext, rule *types.ForwardingRule) (*types.ResponseContext, error) {
 	service, err := s.repo.GetService(req.Context, rule.ServiceID)
 	if err != nil {
 		return nil, fmt.Errorf("service not found: %w", err)
@@ -1443,4 +1447,13 @@ func (s *ProxyServer) applyAuthentication(req *fasthttp.Request, creds *types.Cr
 			req.SetBody(newBody)
 		}
 	}
+}
+
+// Add these methods to expose middleware
+func (s *ProxyServer) GetGatewayMiddleware() gin.HandlerFunc {
+	return s.gatewayMiddleware.IdentifyGateway()
+}
+
+func (s *ProxyServer) GetMetricsMiddleware() gin.HandlerFunc {
+	return s.metricsMiddleware.MetricsMiddleware()
 }
