@@ -187,3 +187,7 @@ func (u *Upstream) Validate() error {
 
 	return nil
 }
+
+func (u *Upstream) TableName() string {
+	return "public.upstreams"
+}

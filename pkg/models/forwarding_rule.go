@@ -95,3 +95,7 @@ func (r *ForwardingRule) BeforeUpdate(tx *gorm.DB) error {
 	// Validate the rule
 	return r.Validate()
 }
+
+func (r *ForwardingRule) TableName() string {
+	return "public.forwarding_rules"
+}

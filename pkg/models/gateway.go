@@ -77,7 +77,7 @@ func (g *Gateway) Validate() error {
 }
 
 func (g *Gateway) TableName() string {
-	return "gateways"
+	return "public.gateways"
 }
 
 // Include all Gateway-related methods
