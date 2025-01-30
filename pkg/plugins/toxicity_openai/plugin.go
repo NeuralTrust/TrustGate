@@ -1,4 +1,4 @@
-package toxicity_detection
+package toxicity_openai
 
 import (
 	"bytes"
@@ -16,11 +16,11 @@ import (
 )
 
 const (
-	PluginName          = "toxicity_detection"
+	PluginName          = "toxicity_openai"
 	OpenAIModerationURL = "https://api.openai.com/v1/moderations"
 )
 
-type ToxicityDetectionPlugin struct {
+type ToxicityOpenAIPlugin struct {
 	logger *logrus.Logger
 	config Config
 }
@@ -37,47 +37,64 @@ type Config struct {
 
 type RequestBody struct {
 	Messages []struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		Role    string        `json:"role"`
+		Content []ContentItem `json:"content"`
 	} `json:"messages"`
 }
 
+type ContentItem struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+type ImageURL struct {
+	URL string `json:"url"`
+}
+
 type OpenAIModerationRequest struct {
-	Input string `json:"input"`
-	Model string `json:"model,omitempty"` // Optional: can be "text-moderation-latest" or "text-moderation-stable"
+	Input []ModerationInput `json:"input"`
+	Model string            `json:"model,omitempty"`
+}
+
+type ModerationInput struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
 }
 
 type OpenAIModerationResponse struct {
 	ID      string `json:"id"`
 	Model   string `json:"model"`
 	Results []struct {
-		Flagged        bool               `json:"flagged"`
-		Categories     map[string]bool    `json:"categories"`
-		CategoryScores map[string]float64 `json:"category_scores"`
+		Flagged                   bool                `json:"flagged"`
+		Categories                map[string]bool     `json:"categories"`
+		CategoryScores            map[string]float64  `json:"category_scores"`
+		CategoryAppliedInputTypes map[string][]string `json:"category_applied_input_types"`
 	} `json:"results"`
 }
 
-func NewToxicityDetectionPlugin(logger *logrus.Logger) pluginiface.Plugin {
-	plugin := &ToxicityDetectionPlugin{
+func NewToxicityOpenAIPlugin(logger *logrus.Logger) pluginiface.Plugin {
+	plugin := &ToxicityOpenAIPlugin{
 		logger: logger,
 	}
 	return plugin
 }
 
-func (p *ToxicityDetectionPlugin) Name() string {
+func (p *ToxicityOpenAIPlugin) Name() string {
 	return PluginName
 }
 
-func (p *ToxicityDetectionPlugin) Stages() []types.Stage {
+func (p *ToxicityOpenAIPlugin) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-func (p *ToxicityDetectionPlugin) AllowedStages() []types.Stage {
+func (p *ToxicityOpenAIPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
 // ValidateConfig implements the PluginValidator interface
-func (p *ToxicityDetectionPlugin) ValidateConfig(config types.PluginConfig) error {
+func (p *ToxicityOpenAIPlugin) ValidateConfig(config types.PluginConfig) error {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
 		return fmt.Errorf("failed to decode config: %v", err)
@@ -94,7 +111,7 @@ func (p *ToxicityDetectionPlugin) ValidateConfig(config types.PluginConfig) erro
 	return nil
 }
 
-func (p *ToxicityDetectionPlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
+func (p *ToxicityOpenAIPlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
 		p.logger.WithError(err).Error("Failed to decode config")
@@ -112,18 +129,34 @@ func (p *ToxicityDetectionPlugin) Execute(ctx context.Context, cfg types.PluginC
 		return nil, fmt.Errorf("failed to parse request body: %v", err)
 	}
 
-	// Extract all message contents
-	var allContent string
+	// Create moderation inputs array
+	var moderationInputs []ModerationInput
+
+	// Process all messages and their content
 	for _, msg := range requestBody.Messages {
-		if msg.Content != "" {
-			if allContent != "" {
-				allContent += "\n"
+		for _, content := range msg.Content {
+			switch content.Type {
+			case "text":
+				if content.Text != "" {
+					moderationInputs = append(moderationInputs, ModerationInput{
+						Type: "text",
+						Text: content.Text,
+					})
+				}
+			case "image_url":
+				if content.ImageURL != nil && content.ImageURL.URL != "" {
+					moderationInputs = append(moderationInputs, ModerationInput{
+						Type: "image_url",
+						ImageURL: &ImageURL{
+							URL: content.ImageURL.URL,
+						},
+					})
+				}
 			}
-			allContent += msg.Content
 		}
 	}
 
-	if allContent == "" {
+	if len(moderationInputs) == 0 {
 		p.logger.Info("No content to moderate")
 		return &types.PluginResponse{
 			StatusCode: 200,
@@ -131,12 +164,12 @@ func (p *ToxicityDetectionPlugin) Execute(ctx context.Context, cfg types.PluginC
 		}, nil
 	}
 
-	p.logger.WithField("content", allContent).Debug("Content to moderate")
+	p.logger.WithField("inputs", moderationInputs).Debug("Content to moderate")
 
 	// Create moderation request
 	moderationReq := OpenAIModerationRequest{
-		Input: allContent,
-		Model: "omni-moderation-latest", // Using the latest model
+		Input: moderationInputs,
+		Model: "omni-moderation-latest",
 	}
 
 	jsonData, err := json.Marshal(moderationReq)
@@ -194,31 +227,33 @@ func (p *ToxicityDetectionPlugin) Execute(ctx context.Context, cfg types.PluginC
 	}
 
 	result := moderationResp.Results[0]
-	if result.Flagged {
-		// Get categories that exceed their thresholds
-		var flaggedCategories []string
-		for category, score := range result.CategoryScores {
-			// Check if this category has a threshold defined
-			if threshold, exists := config.Thresholds[category]; exists {
-				if score >= threshold {
-					flaggedCategories = append(flaggedCategories, fmt.Sprintf("%s (%.2f)", category, score))
-				}
-			} else if result.Categories[category] {
-				// If no threshold is defined, fall back to the binary flagged status
-				flaggedCategories = append(flaggedCategories, category)
-			}
-		}
 
-		if len(flaggedCategories) > 0 {
-			p.logger.WithFields(logrus.Fields{
-				"categories": flaggedCategories,
-				"scores":     result.CategoryScores,
-			}).Info("Content flagged for toxicity")
-			return nil, &types.PluginError{
-				StatusCode: 403,
-				Message:    fmt.Sprintf(config.Actions.Message+" Flagged categories: %v", flaggedCategories),
-				Err:        fmt.Errorf("content flagged for categories: %v", flaggedCategories),
+	// Get categories that exceed their thresholds
+	var flaggedCategories []string
+	for category, score := range result.CategoryScores {
+		// Check if this category has a threshold defined and if it was applied to any input
+		if threshold, exists := config.Thresholds[category]; exists {
+			if score >= threshold && len(result.CategoryAppliedInputTypes[category]) > 0 {
+				inputTypes := result.CategoryAppliedInputTypes[category]
+				flaggedCategories = append(flaggedCategories, fmt.Sprintf("%s (%.2f, types: %v)", category, score, inputTypes))
 			}
+		} else if result.Categories[category] && len(result.CategoryAppliedInputTypes[category]) > 0 {
+			// If no threshold is defined, fall back to the binary flagged status
+			inputTypes := result.CategoryAppliedInputTypes[category]
+			flaggedCategories = append(flaggedCategories, fmt.Sprintf("%s (types: %v)", category, inputTypes))
+		}
+	}
+
+	if len(flaggedCategories) > 0 {
+		p.logger.WithFields(logrus.Fields{
+			"categories":    flaggedCategories,
+			"scores":        result.CategoryScores,
+			"applied_types": result.CategoryAppliedInputTypes,
+		}).Info("Content flagged for toxicity")
+		return nil, &types.PluginError{
+			StatusCode: 403,
+			Message:    fmt.Sprintf(config.Actions.Message+" Flagged categories: %v", flaggedCategories),
+			Err:        fmt.Errorf("content flagged for categories: %v", flaggedCategories),
 		}
 	}
 
