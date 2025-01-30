@@ -85,3 +85,7 @@ func (s *Service) Validate() error {
 
 	return nil
 }
+
+func (s *Service) TableName() string {
+	return "public.services"
+}

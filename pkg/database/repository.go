@@ -98,7 +98,7 @@ func (r *Repository) GetGateway(ctx context.Context, id string) (*models.Gateway
 
 func (r *Repository) GetGatewayBySubdomain(ctx context.Context, subdomain string) (*models.Gateway, error) {
 	var gateway models.Gateway
-	err := r.db.Model("public.gateways").Where("subdomain = ?", subdomain).Take(&gateway).Error
+	err := r.db.Model(&models.Gateway{}).Where("subdomain = ?", subdomain).Take(&gateway).Error
 	if err != nil {
 		return nil, err
 	}
