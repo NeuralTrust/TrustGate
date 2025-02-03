@@ -31,11 +31,11 @@ type LimitConfig struct {
 }
 
 type Config struct {
-	Limits  map[string]LimitConfig `mapstructure:"limits"`
+	Limits  map[string]LimitConfig `json:"limits"`
 	Actions struct {
-		Type       string `mapstructure:"type"`
-		RetryAfter string `mapstructure:"retry_after"`
-	} `mapstructure:"actions"`
+		Type       string `json:"type"`
+		RetryAfter string `json:"retry_after"`
+	} `json:"actions"`
 }
 
 func NewRateLimiterPlugin(redisClient *redis.Client) pluginiface.Plugin {
@@ -133,7 +133,9 @@ func (r *RateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 
 	var finalStatus limitStatus
 	logrus.WithFields(logrus.Fields{
-		"config": config,
+		"config":  config,
+		"limits":  config.Limits,
+		"actions": config.Actions,
 	}).Info("Rate limiter config")
 	// Check limits in specific order: per_ip -> per_user -> global
 	limitOrder := []string{"per_ip", "per_user", "global"}

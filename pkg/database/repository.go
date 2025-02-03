@@ -368,10 +368,6 @@ func (r *Repository) IsSubdomainAvailable(subdomain string) (bool, error) {
 
 func (r *Repository) ValidateAPIKey(ctx context.Context, gatewayID string, apiKey string) (bool, error) {
 	var exists int64
-	r.logger.WithFields(logrus.Fields{
-		"gatewayID": gatewayID,
-		"apiKey":    apiKey,
-	}).Debug("Validating API key")
 	err := r.db.Model(&models.APIKey{}).
 		Where("gateway_id = ? AND key = ? AND (expires_at IS NULL OR expires_at > ?)",
 			gatewayID, apiKey, time.Now()).
