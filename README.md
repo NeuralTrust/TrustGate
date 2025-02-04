@@ -122,12 +122,20 @@ type Plugin interface {
 ```
 
 ### Current Plugins:
+**Rate limiting**
 - Rate Limiter
 - Token Rate Limiter
-- External API Call
+
+**Prompt moderation**
 - Data Masking (Pre-defined entities, custom keywords, regex)
 - Prompt Moderation (keywords, regex)
-- Toxicity Detection (Open AI Moderation API)
+
+**Toxicity Detection**
+- Open AI Moderation API
+- Azure Content Safety API
+
+**Others**
+- External API Call
 
 ### 🔜 Work in progress (Coming Soon)
 
@@ -136,9 +144,6 @@ type Plugin interface {
   - Azure Prompt Guard
   - AWS Prompt Guard
   - GCP Prompt Guard
-
-- **Toxicity Detection**
-  - Azure Content Safety API
 
 - **Prompt Moderation**
   - Topic detection (accepted/denied)
