@@ -10,8 +10,18 @@ ADMIN_URL=${ADMIN_URL:-"http://localhost:8080/api/v1"}
 PROXY_URL=${PROXY_URL:-"http://localhost:8081"}
 BASE_DOMAIN=${BASE_DOMAIN:-"example.com"}
 SUBDOMAIN="bedrock-$(date +%s)"
-GUARDRAIL_ID=${GUARDRAIL_ID:-"qc6jjf96aah2"}
-GUARDRAIL_VERSION=${GUARDRAIL_VERSION:-"1"}
+
+# Check if GUARDRAIL_ID is set
+if [ -z "${GUARDRAIL_ID}" ]; then
+    echo -e "${RED}Error: You didn't export the GUARDRAIL_ID environment variable${NC}"
+    exit 1
+fi
+
+# Check if GUARDRAIL_VERSION is set
+if [ -z "${GUARDRAIL_VERSION}" ]; then
+    echo -e "${RED}Error: You didn't export the GUARDRAIL_VERSION environment variable${NC}"
+    exit 1
+fi
 
 echo -e "${GREEN}Testing Bedrock Guardrail Plugin${NC}\n"
 echo -e "${GREEN}Guardrail ID: $GUARDRAIL_ID${NC}"
