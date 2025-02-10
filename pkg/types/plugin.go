@@ -67,6 +67,7 @@ type RequestContext struct {
 	Context     context.Context
 	FasthttpCtx *fasthttp.RequestCtx
 	GatewayID   string
+	RuleID      string
 	Headers     map[string][]string
 	Method      string
 	Path        string
@@ -78,13 +79,14 @@ type RequestContext struct {
 
 // ResponseContext represents the context for a response
 type ResponseContext struct {
-	Context    context.Context
-	GatewayID  string
-	Headers    map[string][]string
-	Body       []byte
-	StatusCode int
-	Metadata   map[string]interface{}
-	Streaming  bool
+	Context        context.Context
+	GatewayID      string
+	Headers        map[string][]string
+	Body           []byte
+	StatusCode     int
+	Metadata       map[string]interface{}
+	Streaming      bool
+	StopProcessing bool
 }
 
 // RateLimiterConfig represents the configuration for rate limiting

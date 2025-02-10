@@ -397,6 +397,8 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 			// Store rule and service info in context for metrics
 			c.Set(middleware.RouteIDKey, rule.ID)
 			c.Set(middleware.ServiceIDKey, rule.ServiceID)
+
+			reqCtx.RuleID = rule.ID
 			break
 		}
 	}
@@ -430,6 +432,18 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
+			return
+		}
+		if respCtx.StopProcessing {
+			s.logger.Debug("Stopping request processing due to plugin response (e.g., cache hit)")
+			// Copy headers from the plugin response
+			for k, values := range respCtx.Headers {
+				for _, v := range values {
+					c.Header(k, v)
+				}
+			}
+			// Return the response from the plugin
+			c.Data(respCtx.StatusCode, "application/json", respCtx.Body)
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Plugin execution failed"})
@@ -920,7 +934,6 @@ func (s *ProxyServer) doForwardRequest(req *types.RequestContext, rule *types.Fo
 		if !ok {
 			return nil, fmt.Errorf("unsupported provider: %s", target.Provider)
 		}
-		s.logger.WithField("providerConfig", providerConfig).Debug("Provider config")
 
 		endpointConfig, ok := providerConfig.Endpoints[target.Path]
 		if !ok {

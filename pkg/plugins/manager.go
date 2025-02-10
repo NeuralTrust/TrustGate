@@ -11,7 +11,6 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/bedrock_guardrail"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/data_masking"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/external_api"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/prompt_moderation"
@@ -83,10 +82,6 @@ func InitializePlugins(cache *cache.Cache, logger *logrus.Logger) {
 	if err := manager.RegisterPlugin(toxicity_azure.NewToxicityAzurePlugin(logger)); err != nil {
 		logger.WithError(err).Error("Failed to register toxicity azure plugin")
 	}
-
-	if err := manager.RegisterPlugin(bedrock_guardrail.NewBedrockGuardrailPlugin(logger)); err != nil {
-		logger.WithError(err).Error("Failed to register bedrock guardrail plugin")
-	}
 }
 
 // ValidatePlugin validates a plugin configuration
@@ -125,7 +120,6 @@ func (m *Manager) RegisterPlugin(plugin pluginiface.Plugin) error {
 	}
 
 	m.plugins[name] = plugin
-	m.logger.Infof("Successfully registered plugin: %s", name)
 	return nil
 }
 
