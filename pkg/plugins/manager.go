@@ -120,7 +120,6 @@ func (m *Manager) RegisterPlugin(plugin pluginiface.Plugin) error {
 	}
 
 	m.plugins[name] = plugin
-	m.logger.Infof("Successfully registered plugin: %s", name)
 	return nil
 }
 
