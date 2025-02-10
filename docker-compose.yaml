@@ -2,10 +2,12 @@ version: '3'
 
 services:
   redis:
-    image: redis:7-alpine
+    image: redis/redis-stack:latest
     restart: always
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
   redis-insight:
     image: redis/redisinsight:latest
     restart: always
