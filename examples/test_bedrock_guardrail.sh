@@ -34,6 +34,12 @@ if [ -z "${AWS_SECRET_KEY}" ]; then
     exit 1
 fi
 
+# Check if AWS region is set
+if [ -z "${AWS_REGION}" ]; then
+    echo -e "${RED}Error: You didn't export the AWS_REGION environment variable${NC}"
+    exit 1
+fi
+
 echo -e "${GREEN}Testing Bedrock Guardrail Plugin${NC}\n"
 
 
@@ -55,7 +61,8 @@ GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
                 "version": "'$GUARDRAIL_VERSION'",
                 "credentials": {
                     "aws_access_key": "'$AWS_ACCESS_KEY'",
-                    "aws_secret_key": "'$AWS_SECRET_KEY'"
+                    "aws_secret_key": "'$AWS_SECRET_KEY'",
+                    "aws_region": "'$AWS_REGION'"
                 },
                 "actions": {
                     "message": "%s"

@@ -27,6 +27,7 @@ type Config struct {
 	Credentials struct {
 		AWSAccessKey string `mapstructure:"aws_access_key"`
 		AWSSecretKey string `mapstructure:"aws_secret_key"`
+		AWSRegion    string `mapstructure:"aws_region"`
 	} `mapstructure:"credentials"`
 }
 
@@ -93,6 +94,7 @@ func (p *BedrockGuardrailPlugin) Execute(ctx context.Context, cfg plugintypes.Pl
 						}, nil
 					},
 				)),
+				awsconfig.WithRegion(config.Credentials.AWSRegion),
 			)
 		} else {
 			// Fall back to default credentials
