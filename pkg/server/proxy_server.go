@@ -457,7 +457,6 @@ func (s *ProxyServer) HandleForward(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to forward request"})
 		return
 	}
-
 	// Record upstream latency if available
 	if metrics.Config.EnableUpstreamLatency {
 		upstreamLatency := float64(time.Since(startTime).Milliseconds())
@@ -865,6 +864,9 @@ func (s *ProxyServer) ForwardRequest(req *types.RequestContext, rule *types.Forw
 			}).Debug("Attempting request")
 
 			response, err := s.doForwardRequest(req, rule, target, service.Type, lb)
+			s.logger.WithFields(logrus.Fields{
+				"response": response,
+			}).Debug("Forwarded request")
 			if err == nil {
 				lb.ReportSuccess(target)
 				return response, nil
@@ -995,6 +997,9 @@ func (s *ProxyServer) doForwardRequest(req *types.RequestContext, rule *types.Fo
 	}
 
 	// Set provider in response header
+	s.logger.WithFields(logrus.Fields{
+		"provider": target.Provider,
+	}).Debug("Selected provider")
 	httpResp.Header.Set("X-Selected-Provider", target.Provider)
 
 	// Handle response status
@@ -1097,7 +1102,7 @@ func (s *ProxyServer) handleStreamingResponse(req *types.RequestContext, target 
 				}
 			}
 		}
-
+		w.Header().Add("X-Selected-Provider", target.Provider)
 		w.WriteHeader(resp.StatusCode)
 
 		reader := bufio.NewReader(resp.Body)
@@ -1163,7 +1168,7 @@ func (s *ProxyServer) handleStreamingResponse(req *types.RequestContext, target 
 
 	return &types.ResponseContext{
 		StatusCode: resp.StatusCode,
-		Headers:    make(map[string][]string),
+		Headers:    resp.Header,
 		Streaming:  true,
 		Metadata:   req.Metadata, // Include the metadata with token usage
 	}, nil
