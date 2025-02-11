@@ -24,6 +24,10 @@ type Config struct {
 	Actions     struct {
 		Message string `mapstructure:"message"`
 	} `mapstructure:"actions"`
+	Credentials struct {
+		AWSAccessKey string `mapstructure:"aws_access_key"`
+		AWSSecretKey string `mapstructure:"aws_secret_key"`
+	} `mapstructure:"credentials"`
 }
 
 // Plugin implementation
@@ -73,7 +77,29 @@ func (p *BedrockGuardrailPlugin) Execute(ctx context.Context, cfg plugintypes.Pl
 	// Initialize AWS SDK client if not already initialized
 	if p.bedrockClient == nil {
 		p.logger.Debug("Initializing AWS client")
-		awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
+
+		var awsCfg aws.Config
+		var err error
+
+		if config.Credentials.AWSAccessKey != "" && config.Credentials.AWSSecretKey != "" {
+			// Use provided credentials
+			p.logger.Debug("Using provided AWS credentials")
+			awsCfg, err = awsconfig.LoadDefaultConfig(ctx,
+				awsconfig.WithCredentialsProvider(aws.CredentialsProviderFunc(
+					func(ctx context.Context) (aws.Credentials, error) {
+						return aws.Credentials{
+							AccessKeyID:     config.Credentials.AWSAccessKey,
+							SecretAccessKey: config.Credentials.AWSSecretKey,
+						}, nil
+					},
+				)),
+			)
+		} else {
+			// Fall back to default credentials
+			p.logger.Debug("Using default AWS credentials")
+			awsCfg, err = awsconfig.LoadDefaultConfig(ctx)
+		}
+
 		if err != nil {
 			p.logger.WithError(err).Error("Failed to load AWS config")
 			return nil, fmt.Errorf("failed to load AWS config: %v", err)

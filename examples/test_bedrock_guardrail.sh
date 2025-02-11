@@ -23,6 +23,17 @@ if [ -z "${GUARDRAIL_VERSION}" ]; then
     exit 1
 fi
 
+# Check if AWS credentials are set
+if [ -z "${AWS_ACCESS_KEY}" ]; then
+    echo -e "${RED}Error: You didn't export the AWS_ACCESS_KEY environment variable${NC}"
+    exit 1
+fi
+
+if [ -z "${AWS_SECRET_KEY}" ]; then
+    echo -e "${RED}Error: You didn't export the AWS_SECRET_KEY environment variable${NC}"
+    exit 1
+fi
+
 echo -e "${GREEN}Testing Bedrock Guardrail Plugin${NC}\n"
 
 
@@ -42,6 +53,10 @@ GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
             "settings": {
                 "guardrail_id": "'$GUARDRAIL_ID'",
                 "version": "'$GUARDRAIL_VERSION'",
+                "credentials": {
+                    "aws_access_key": "'$AWS_ACCESS_KEY'",
+                    "aws_secret_key": "'$AWS_SECRET_KEY'"
+                },
                 "actions": {
                     "message": "%s"
                 }
