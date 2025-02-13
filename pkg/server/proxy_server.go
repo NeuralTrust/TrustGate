@@ -864,9 +864,7 @@ func (s *ProxyServer) ForwardRequest(req *types.RequestContext, rule *types.Forw
 			}).Debug("Attempting request")
 
 			response, err := s.doForwardRequest(req, rule, target, service.Type, lb)
-			s.logger.WithFields(logrus.Fields{
-				"response": response,
-			}).Debug("Forwarded request")
+
 			if err == nil {
 				lb.ReportSuccess(target)
 				return response, nil

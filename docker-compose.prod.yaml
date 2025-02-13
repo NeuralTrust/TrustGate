@@ -5,9 +5,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    command: ["admin"]
     environment:
-      - SERVER_TYPE=admin
       - GIN_MODE=release
+      - LOG_LEVEL=debug
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=ai_gateway
+      - POSTGRES_SSL_MODE=disable
     ports:
       - "8080:8080"
     depends_on:
@@ -23,9 +32,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    command: ["proxy"]
     environment:
-      - SERVER_TYPE=proxy
       - GIN_MODE=release
+      - LOG_LEVEL=debug
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=ai_gateway
+      - POSTGRES_SSL_MODE=disable
     ports:
       - "8081:8081"
     depends_on:
@@ -38,12 +56,15 @@ services:
       - ai-gateway
 
   redis:
-    image: redis:7-alpine
-    command: redis-server --appendonly yes
+    image: redis/redis-stack:latest
+    command: redis-stack-server --appendonly yes
     ports:
       - "6379:6379"
+      - "8001:8001"
     volumes:
       - redis_data:/data
+    environment:
+      - REDISEARCH_ARGS=MAXSEARCHRESULTS 10000
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
