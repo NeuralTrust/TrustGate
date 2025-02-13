@@ -40,15 +40,6 @@ if [ "$VERSION" = "ce" ]; then
     echo -e "${GREEN}Starting CE Proxy server...${NC}"
     LOG_LEVEL=debug go run cmd/gateway/main.go proxy 2>&1 &
     PROXY_PID=$!
-elif [ "$VERSION" = "ee" ]; then
-    # Start EE servers
-    echo -e "${GREEN}Starting EE Admin server...${NC}"
-    LOG_LEVEL=debug ../ai-gateway-ee/bin/ai-gateway-ee --type admin --config config.yaml > logs/admin.log 2>&1 &
-    ADMIN_PID=$!
-
-    echo -e "${GREEN}Starting EE Proxy server...${NC}"
-    LOG_LEVEL=debug ../ai-gateway-ee/bin/ai-gateway-ee --type proxy --config config.yaml > logs/proxy.log 2>&1 &
-    PROXY_PID=$!
 else
     echo -e "${RED}Unknown version: $VERSION${NC}"
     exit 1
