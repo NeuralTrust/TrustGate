@@ -6,11 +6,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mitchellh/mapstructure"
-	"github.com/sirupsen/logrus"
-
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/mitchellh/mapstructure"
 )
 
 const (
@@ -20,7 +18,6 @@ const (
 )
 
 type PromptModerationPlugin struct {
-	logger     *logrus.Logger
 	keywords   []string
 	regexRules []*regexp.Regexp
 }
@@ -118,9 +115,8 @@ func (p *PromptModerationPlugin) findSimilarKeyword(text string, threshold float
 	return "", "", false
 }
 
-func NewPromptModerationPlugin(logger *logrus.Logger) pluginiface.Plugin {
+func NewPromptModerationPlugin() pluginiface.Plugin {
 	return &PromptModerationPlugin{
-		logger:     logger,
 		keywords:   make([]string, 0),
 		regexRules: make([]*regexp.Regexp, 0),
 	}

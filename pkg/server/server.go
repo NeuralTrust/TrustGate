@@ -3,13 +3,13 @@ package server
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -25,7 +25,6 @@ type BaseServer struct {
 	config         *config.Config
 	cache          *cache.Cache
 	repo           *database.Repository
-	logger         *logrus.Logger
 	router         *gin.Engine
 	metricsStarted bool
 }
@@ -37,7 +36,7 @@ func init() {
 	gin.DefaultWriter = io.Discard
 }
 
-func NewBaseServer(config *config.Config, cache *cache.Cache, repo *database.Repository, logger *logrus.Logger) *BaseServer {
+func NewBaseServer(config *config.Config, cache *cache.Cache, repo *database.Repository) *BaseServer {
 	// Create a new Gin router with default middleware
 	router := gin.New()
 
@@ -48,7 +47,6 @@ func NewBaseServer(config *config.Config, cache *cache.Cache, repo *database.Rep
 		config: config,
 		cache:  cache,
 		repo:   repo,
-		logger: logger,
 		router: router,
 	}
 }
@@ -95,7 +93,9 @@ func (s *BaseServer) setupMetricsEndpoint() {
 	go func() {
 		if err := metricsRouter.Run(fmt.Sprintf(":%d", s.config.Server.MetricsPort)); err != nil {
 			if !strings.Contains(err.Error(), "address already in use") {
-				s.logger.WithError(err).Error("Failed to start metrics server")
+				slog.Error("Failed to start metrics server",
+					slog.String("error", err.Error()),
+				)
 			}
 		}
 	}()

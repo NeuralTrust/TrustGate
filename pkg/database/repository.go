@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -11,22 +12,19 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 
-	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
 
 // Repository handles all database operations
 type Repository struct {
-	db     *gorm.DB
-	logger logrus.FieldLogger
-	cache  *cache.Cache
+	db    *gorm.DB
+	cache *cache.Cache
 }
 
-func NewRepository(db *gorm.DB, logger logrus.FieldLogger, cache *cache.Cache) *Repository {
+func NewRepository(db *gorm.DB, cache *cache.Cache) *Repository {
 	return &Repository{
-		db:     db,
-		logger: logger,
-		cache:  cache,
+		db:    db,
+		cache: cache,
 	}
 }
 
@@ -41,7 +39,7 @@ func (r *Repository) IsValidAPIKey(gatewayID, apiKey string) bool {
 		Count(&count)
 
 	if result.Error != nil {
-		r.logger.Error(context.Background(), "Failed to check API key validity", "error", result.Error)
+		slog.Error("Failed to check API key validity", slog.String("error", result.Error.Error()))
 		return false
 	}
 
@@ -50,10 +48,11 @@ func (r *Repository) IsValidAPIKey(gatewayID, apiKey string) bool {
 		cacheKey := fmt.Sprintf("apikey:%s:%s", gatewayID, apiKey)
 		value, err := json.Marshal(true)
 		if err != nil {
-			r.logger.Warn(context.Background(), "Failed to marshal cache value", "error", err)
+			slog.Warn("Failed to marshal cache value", slog.String("error", err.Error()))
 		} else {
 			if err := r.cache.Set(context.Background(), cacheKey, string(value), 5*time.Minute); err != nil {
-				r.logger.Warn(context.Background(), "Failed to cache valid API key", "error", err)
+				slog.Warn("Failed to cache valid API key", slog.String("error", err.Error()))
+
 			}
 		}
 	}
@@ -189,7 +188,7 @@ func (r *Repository) CreateRule(ctx context.Context, rule *models.ForwardingRule
 
 	// Update the rules cache after successful commit
 	if err := r.UpdateRulesCache(ctx, rule.GatewayID, rules); err != nil {
-		r.logger.WithError(err).Error("Failed to update rules cache after creation")
+		slog.Error("Failed to update rules cache after creation", slog.String("error", err.Error()))
 		// Don't return error here as the rule was created successfully
 	}
 
@@ -220,12 +219,12 @@ func (r *Repository) ListRules(ctx context.Context, gatewayID string) ([]models.
 					GatewayID:     apiRule.GatewayID,
 					Path:          apiRule.Path,
 					ServiceID:     apiRule.ServiceID,
-					Methods:       models.MethodsJSON(apiRule.Methods),
-					Headers:       models.HeadersJSON(apiRule.Headers),
+					Methods:       apiRule.Methods,
+					Headers:       apiRule.Headers,
 					StripPath:     apiRule.StripPath,
 					PreserveHost:  apiRule.PreserveHost,
 					RetryAttempts: apiRule.RetryAttempts,
-					PluginChain:   models.PluginChainJSON(apiRule.PluginChain),
+					PluginChain:   apiRule.PluginChain,
 					Active:        apiRule.Active,
 					Public:        apiRule.Public,
 				}
@@ -251,7 +250,7 @@ func (r *Repository) ListRules(ctx context.Context, gatewayID string) ([]models.
 
 	// Update cache with fresh data
 	if err := r.UpdateRulesCache(ctx, gatewayID, rules); err != nil {
-		r.logger.WithError(err).Error("Failed to update rules cache")
+		slog.Error("Failed to update rules cache", slog.String("error", err.Error()))
 		// Continue anyway as we have the data
 	}
 
@@ -427,10 +426,10 @@ func (r *Repository) UpdateRulesCache(ctx context.Context, gatewayID string, rul
 		return fmt.Errorf("failed to marshal rules: %w", err)
 	}
 
-	r.logger.WithFields(logrus.Fields{
-		"gatewayID": gatewayID,
-		"rules":     string(rulesJSON),
-	}).Debug("Caching rules")
+	slog.Debug("Caching rules",
+		slog.String("gatewayID", gatewayID),
+		slog.String("rules", string(rulesJSON)),
+	)
 
 	// Store in cache
 	rulesKey := fmt.Sprintf("rules:%s", gatewayID)

@@ -84,6 +84,7 @@ UPSTREAM_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/upstreams" 
     "algorithm": "round-robin",
     "targets": [{
         "host": "localhost",
+        "path": "/__/ping",
         "port": 8081,
         "protocol": "http",
         "weight": 100,

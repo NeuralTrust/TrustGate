@@ -87,7 +87,7 @@ const (
 	PingPath        = "/__/ping"
 )
 
-func NewProxyServer(config *config.Config, cache *cache.Cache, repo *database.Repository, logger *logrus.Logger, skipAuthCheck bool, extraPlugins ...pluginiface.Plugin) *ProxyServer {
+func NewProxyServer(config *config.Config, cache *cache.Cache, repo *database.Repository, skipAuthCheck bool, extraPlugins ...pluginiface.Plugin) *ProxyServer {
 	// Initialize metrics with config from yaml
 	metricsConfig := metrics.MetricsConfig{
 		EnableLatency:         config.Metrics.EnableLatency,
@@ -98,7 +98,7 @@ func NewProxyServer(config *config.Config, cache *cache.Cache, repo *database.Re
 	metrics.Initialize(metricsConfig)
 
 	// Initialize plugins
-	plugins.InitializePlugins(cache, logger)
+	plugins.InitializePlugins(cache)
 	manager := plugins.GetManager()
 
 	// Create TTL maps

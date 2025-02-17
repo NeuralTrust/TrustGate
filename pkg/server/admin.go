@@ -6,15 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/lib/pq"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
@@ -24,25 +20,30 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 type AdminServer struct {
 	*BaseServer
 }
 
-func NewAdminServer(config *config.Config, cache *cache.Cache, repo *database.Repository, logger *logrus.Logger, eePlugins ...pluginiface.Plugin) *AdminServer {
+func NewAdminServer(config *config.Config, cache *cache.Cache, repo *database.Repository, eePlugins ...pluginiface.Plugin) *AdminServer {
 	// Initialize plugins
-	plugins.InitializePlugins(cache, logger)
+	plugins.InitializePlugins(cache)
 
 	// Register extra plugins
 	for _, plugin := range eePlugins {
 		if err := plugins.GetManager().RegisterPlugin(plugin); err != nil {
-			logger.WithError(err).Error("Failed to register plugin")
+			slog.Error("Failed to register plugin",
+				slog.String("error", err.Error()),
+			)
 		}
 	}
 
 	return &AdminServer{
-		BaseServer: NewBaseServer(config, cache, repo, logger),
+		BaseServer: NewBaseServer(config, cache, repo),
 	}
 }
 
@@ -118,7 +119,9 @@ func (s *AdminServer) Run() error {
 
 	// Start the server
 	addr := fmt.Sprintf(":%d", s.config.Server.AdminPort)
-	defer s.logger.WithField("addr", addr).Info("Starting admin server")
+	slog.Info("Starting admin server",
+		slog.String("addr", addr),
+	)
 	return s.runServer(addr)
 }
 
@@ -126,7 +129,9 @@ func (s *AdminServer) Run() error {
 func (s *AdminServer) CreateGateway(c *gin.Context) {
 	var gateway models.Gateway
 	if err := c.ShouldBindJSON(&gateway); err != nil {
-		s.logger.WithError(err).Error("Failed to bind request")
+		slog.Error("Failed to bind request",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -138,12 +143,16 @@ func (s *AdminServer) CreateGateway(c *gin.Context) {
 
 	// Create gateway
 	if err := s.repo.CreateGateway(c.Request.Context(), &gateway); err != nil {
-		s.logger.WithError(err).Error("Failed to create gateway")
+		slog.Error("Failed to create gateway",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if err := s.updateGatewayCache(c.Request.Context(), &gateway); err != nil {
-		s.logger.WithError(err).Error("Failed to update gateway cache")
+		slog.Error("Failed to update gateway cache",
+			slog.String("error", err.Error()),
+		)
 	}
 
 	c.JSON(http.StatusCreated, gateway)
@@ -175,7 +184,7 @@ func (s *AdminServer) listGateways(c *gin.Context) {
 
 	dbGateways, err := s.repo.ListGateways(c, offset, limit)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to list gateways")
+		slog.Error("Failed to list gateways", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list gateways"})
 		return
 	}
@@ -184,7 +193,7 @@ func (s *AdminServer) listGateways(c *gin.Context) {
 	for _, dbGateway := range dbGateways {
 		gateway, err := s.convertDBGatewayToAPI(&dbGateway)
 		if err != nil {
-			s.logger.WithError(err).Error("Failed to convert gateway")
+			slog.Error("Failed to convert gateway", slog.String("error", err.Error()))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process gateway configuration"})
 			return
 		}
@@ -194,7 +203,7 @@ func (s *AdminServer) listGateways(c *gin.Context) {
 		go func(g models.Gateway) {
 			ctx := context.Background()
 			if err := s.updateGatewayCache(ctx, &g); err != nil {
-				s.logger.WithError(err).Error("Failed to update gateway cache")
+				slog.Error("Failed to update gateway cache", slog.String("error", err.Error()))
 			}
 		}(dbGateway)
 	}
@@ -211,42 +220,44 @@ func (s *AdminServer) getGatewayHandler(c *gin.Context) {
 	gatewayID := c.Param("gateway_id")
 
 	// Add request details logging
-	s.logger.WithFields(logrus.Fields{
-		"gateway_id": gatewayID,
-		"method":     c.Request.Method,
-		"path":       c.Request.URL.Path,
-		"user_agent": c.Request.UserAgent(),
-		"referer":    c.Request.Referer(),
-	}).Info("Gateway retrieval request received")
+	slog.Info("Gateway retrieval request received",
+		slog.String("gateway_id", gatewayID),
+		slog.String("method", c.Request.Method),
+		slog.String("path", c.Request.URL.Path),
+		slog.String("user_agent", c.Request.UserAgent()),
+		slog.String("referer", c.Request.Referer()),
+	)
 
 	// Add validation for gateway ID
 	if gatewayID == "" || gatewayID == "null" {
-		s.logger.WithFields(logrus.Fields{
-			"gateway_id": gatewayID,
-			"method":     c.Request.Method,
-			"path":       c.Request.URL.Path,
-			"user_agent": c.Request.UserAgent(),
-			"referer":    c.Request.Referer(),
-		}).Error("Invalid gateway ID")
+		slog.Error("Invalid gateway ID",
+			slog.String("gateway_id", gatewayID),
+			slog.String("method", c.Request.Method),
+			slog.String("path", c.Request.URL.Path),
+			slog.String("user_agent", c.Request.UserAgent()),
+			slog.String("referer", c.Request.Referer()),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Get gateway handler: Invalid gateway ID"})
 		return
 	}
 
 	// Validate UUID format
 	if _, err := uuid.Parse(gatewayID); err != nil {
-		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Invalid UUID format")
+		slog.Error("Invalid UUID format",
+			slog.String("error", err.Error()),
+			slog.String("gateway_id", gatewayID),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Get gateway handler: Invalid gateway ID format"})
 		return
 	}
 
-	s.logger.WithField("gateway_id", gatewayID).Info("Getting gateway")
-	// Try to get from cache first
+	slog.Info("Getting gateway", slog.String("gateway_id", gatewayID))
 	gateway, err := s.getGatewayFromCache(c, gatewayID)
 	if err != nil {
 		// If not in cache, get from database
 		dbGateway, err := s.repo.GetGateway(c, gatewayID)
 		if err != nil {
-			s.logger.WithError(err).Error("Failed to get gateway")
+			slog.Error("Failed to get gateway", slog.String("error", err.Error()))
 			c.JSON(http.StatusNotFound, gin.H{"error": "Gateway not found"})
 			return
 		}
@@ -254,14 +265,14 @@ func (s *AdminServer) getGatewayHandler(c *gin.Context) {
 		// Convert to API type
 		gateway, err = s.convertDBGatewayToAPI(dbGateway)
 		if err != nil {
-			s.logger.WithError(err).Error("Failed to convert gateway")
+			slog.Error("Failed to convert gateway", slog.String("error", err.Error()))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process gateway configuration"})
 			return
 		}
 
 		// Store in cache
 		if err := s.updateGatewayCache(c.Request.Context(), dbGateway); err != nil {
-			s.logger.WithError(err).Error("Failed to cache gateway")
+			slog.Error("Failed to cache gateway", slog.String("error", err.Error()))
 		}
 	}
 
@@ -291,21 +302,28 @@ func (s *AdminServer) updateGateway(c *gin.Context) {
 	gatewayID := c.Param("gateway_id")
 
 	if err := validateGatewayID(gatewayID); err != nil {
-		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Invalid gateway ID")
+		slog.Error("Invalid gateway ID",
+			slog.String("gateway_id", gatewayID),
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	dbGateway, err := s.repo.GetGateway(c, gatewayID)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to get gateway")
+		slog.Error("Failed to get gateway",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Gateway not found"})
 		return
 	}
 
 	var req types.UpdateGatewayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		s.logger.WithError(err).Error("Failed to bind request")
+		slog.Error("Failed to bind request",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -325,9 +343,12 @@ func (s *AdminServer) updateGateway(c *gin.Context) {
 
 		// Convert and validate plugins
 		manager := plugins.GetManager()
-		for _, config := range req.RequiredPlugins {
-			if err := manager.ValidatePlugin(config.Name, config); err != nil {
-				s.logger.WithError(err).WithField("plugin", config.Name).Error("Invalid plugin configuration")
+		for _, cgf := range req.RequiredPlugins {
+			if err := manager.ValidatePlugin(cgf.Name, cgf); err != nil {
+				slog.Error("Invalid plugin configuration",
+					slog.String("plugin", cgf.Name),
+					slog.String("error", err.Error()),
+				)
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid plugin configuration: %v", err)})
 				return
 			}
@@ -337,7 +358,9 @@ func (s *AdminServer) updateGateway(c *gin.Context) {
 	dbGateway.UpdatedAt = time.Now()
 
 	if err := s.repo.UpdateGateway(c, dbGateway); err != nil {
-		s.logger.WithError(err).Error("Failed to update gateway")
+		slog.Error("Failed to update gateway",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update gateway"})
 		return
 	}
@@ -345,7 +368,9 @@ func (s *AdminServer) updateGateway(c *gin.Context) {
 	// Convert to response type
 	apiGateway, err := s.convertDBGatewayToAPI(dbGateway)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to convert gateway")
+		slog.Error("Failed to convert gateway",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process gateway"})
 		return
 	}
@@ -361,12 +386,16 @@ func (s *AdminServer) updateGateway(c *gin.Context) {
 	}
 
 	if err := s.updateGatewayCache(c.Request.Context(), dbGateway); err != nil {
-		s.logger.WithError(err).Error("Failed to update gateway cache")
+		slog.Error("Failed to update gateway cache",
+			slog.String("error", err.Error()),
+		)
 	}
 
 	// Invalidate caches
 	if err := s.invalidateCaches(c.Request.Context(), dbGateway.ID); err != nil {
-		s.logger.WithError(err).Error("Failed to invalidate caches")
+		slog.Error("Failed to invalidate caches",
+			slog.String("error", err.Error()),
+		)
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -380,7 +409,9 @@ func (s *AdminServer) handleDeleteGateway(c *gin.Context) {
 	}
 
 	if err := s.repo.DeleteGateway(id); err != nil {
-		s.logger.WithError(err).Error("Failed to delete gateway")
+		slog.Error("Failed to delete gateway",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -393,7 +424,10 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 	gatewayID := c.Param("gateway_id")
 	var req types.CreateAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		s.logger.WithError(err).Error("Failed to bind request")
+		slog.Error("Failed to bind request",
+			slog.String("error", err.Error()),
+		)
+
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -411,14 +445,18 @@ func (s *AdminServer) createAPIKey(c *gin.Context) {
 	}
 
 	if err := s.repo.CreateAPIKey(c, apiKey); err != nil {
-		s.logger.WithError(err).Error("Failed to create API key")
+		slog.Error("Failed to create API key",
+			slog.String("error", err.Error()),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create API key"})
 		return
 	}
 
 	// Save to cache
 	if err := s.cache.SaveAPIKey(c, apiKey); err != nil {
-		s.logger.WithError(err).Error("Failed to cache API key")
+		slog.Error("Failed to cache API key",
+			slog.String("error", err.Error()),
+		)
 		// Continue anyway as key is in DB
 	}
 
@@ -430,7 +468,7 @@ func (s *AdminServer) listAPIKeys(c *gin.Context) {
 
 	// Verify gateway exists
 	if _, err := s.repo.GetGateway(c, gatewayID); err != nil {
-		s.logger.WithError(err).Error("Failed to get gateway")
+		slog.Error("Failed to get gateway", slog.String("error", err.Error()))
 		c.JSON(http.StatusNotFound, gin.H{"error": "Gateway not found"})
 		return
 	}
@@ -438,7 +476,7 @@ func (s *AdminServer) listAPIKeys(c *gin.Context) {
 	// Get API keys from database
 	apiKeys, err := s.repo.ListAPIKeys(c, gatewayID)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to list API keys")
+		slog.Error("Failed to list API keys", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list API keys"})
 		return
 	}
@@ -460,14 +498,14 @@ func (s *AdminServer) getAPIKeyHandler(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
 			return
 		}
-		s.logger.WithError(err).Error("Failed to get API key")
+		slog.Error("Failed to get API key", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API key"})
 		return
 	}
 
 	var apiKey models.APIKey
 	if err := json.Unmarshal([]byte(apiKeyJSON), &apiKey); err != nil {
-		s.logger.WithError(err).Error("Failed to unmarshal API key")
+		slog.Error("Failed to unmarshal API key", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API key"})
 		return
 	}
@@ -577,14 +615,14 @@ func (s *AdminServer) createRule(c *gin.Context) {
 
 	var req types.CreateRuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		s.logger.WithError(err).Error("Failed to bind request")
+		slog.Error("Failed to bind request", slog.String("error", err.Error()))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Validate the rule request
 	if err := s.validateRule(&req); err != nil {
-		s.logger.WithError(err).Error("Failed to validate rule")
+		slog.Error("Failed to validate rule", slog.String("error", err.Error()))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -631,7 +669,7 @@ func (s *AdminServer) createRule(c *gin.Context) {
 
 	// Store in database
 	if err := s.repo.CreateRule(c, dbRule); err != nil {
-		s.logger.WithError(err).Error("Failed to create rule")
+		slog.Error("Failed to create rule", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create rule"})
 		return
 	}
@@ -639,7 +677,7 @@ func (s *AdminServer) createRule(c *gin.Context) {
 	// Use existing helper to convert to API response
 	response, err := s.getRuleResponse(dbRule)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to get rule response")
+		slog.Error("Failed to get rule response", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process rule"})
 		return
 	}
@@ -653,7 +691,7 @@ func (s *AdminServer) listRules(c *gin.Context) {
 	// Get rules from database
 	dbRules, err := s.repo.ListRules(c, gatewayID)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to get rules from database")
+		slog.Error("Failed to get rules from database", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list rules"})
 		return
 	}
@@ -684,7 +722,7 @@ func (s *AdminServer) listRules(c *gin.Context) {
 	if err == nil {
 		rulesKey := fmt.Sprintf("rules:%s", gatewayID)
 		if err := s.cache.Set(c, rulesKey, string(rulesJSON), 0); err != nil {
-			s.logger.WithError(err).Warn("Failed to cache rules")
+			slog.Warn("Failed to cache rules", slog.String("error", err.Error()))
 		}
 	}
 
@@ -697,7 +735,7 @@ func (s *AdminServer) updateRule(c *gin.Context) {
 
 	var req types.UpdateRuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		s.logger.WithError(err).Error("Failed to bind request")
+		slog.Error("Failed to bind request", slog.String("error", err.Error()))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -716,7 +754,7 @@ func (s *AdminServer) updateRule(c *gin.Context) {
 
 	// Validate the rule request
 	if err := s.validateRule(&validateReq); err != nil {
-		s.logger.WithError(err).Error("Rule validation failed")
+		slog.Error("Rule validation failed", slog.String("error", err.Error()))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -725,14 +763,14 @@ func (s *AdminServer) updateRule(c *gin.Context) {
 	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
 	rulesJSON, err := s.cache.Get(c, rulesKey)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to get rules")
+		slog.Error("Failed to get rules", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update rule"})
 		return
 	}
 
 	var rules []types.ForwardingRule
 	if err := json.Unmarshal([]byte(rulesJSON), &rules); err != nil {
-		s.logger.WithError(err).Error("Failed to unmarshal rules")
+		slog.Error("Failed to unmarshal rules", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update rule"})
 		return
 	}
@@ -765,25 +803,25 @@ func (s *AdminServer) updateRule(c *gin.Context) {
 			if req.PluginChain != nil {
 				chainJSON, err := json.Marshal(req.PluginChain)
 				if err != nil {
-					s.logger.WithError(err).Error("Failed to marshal plugin chain")
+					slog.Error("Failed to marshal plugin chain", slog.String("error", err.Error()))
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process plugin chain"})
 					return
 				}
 				var pluginChain []types.PluginConfig
 				if err := json.Unmarshal(chainJSON, &pluginChain); err != nil {
-					s.logger.WithError(err).Error("Failed to unmarshal plugin chain")
+					slog.Error("Failed to unmarshal plugin chain", slog.String("error", err.Error()))
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process plugin chain"})
 					return
 				}
 				pluginChainMap, err := json.Marshal(pluginChain)
 				if err != nil {
-					s.logger.WithError(err).Error("Failed to marshal plugin chain")
+					slog.Error("Failed to marshal plugin chain", slog.String("error", err.Error()))
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process plugin chain"})
 					return
 				}
 				var jsonMap map[string]interface{}
 				if err := json.Unmarshal(pluginChainMap, &jsonMap); err != nil {
-					s.logger.WithError(err).Error("Failed to unmarshal plugin chain")
+					slog.Error("Failed to unmarshal plugin chain", slog.String("error", err.Error()))
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process plugin chain"})
 					return
 				}
@@ -802,20 +840,20 @@ func (s *AdminServer) updateRule(c *gin.Context) {
 	// Save updated rules
 	updatedJSON, err := json.Marshal(rules)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to marshal rules")
+		slog.Error("Failed to marshal rules", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update rule"})
 		return
 	}
 
 	if err := s.cache.Set(c, rulesKey, string(updatedJSON), 0); err != nil {
-		s.logger.WithError(err).Error("Failed to save rules")
+		slog.Error("Failed to save rules", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update rule"})
 		return
 	}
 
 	// After successfully updating the rule
 	if err := s.publishCacheInvalidation(c.Request.Context(), gatewayID); err != nil {
-		s.logger.WithError(err).Error("Failed to publish cache invalidation")
+		slog.Error("Failed to publish cache invalidation", slog.String("error", err.Error()))
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Rule updated successfully"})
@@ -829,14 +867,14 @@ func (s *AdminServer) deleteRule(c *gin.Context) {
 	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
 	rulesJSON, err := s.cache.Get(c, rulesKey)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to get rules")
+		slog.Error("Failed to get rules", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete rule"})
 		return
 	}
 
 	var rules []types.ForwardingRule
 	if err := json.Unmarshal([]byte(rulesJSON), &rules); err != nil {
-		s.logger.WithError(err).Error("Failed to unmarshal rules")
+		slog.Error("Failed to unmarshal rules", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete rule"})
 		return
 	}
@@ -860,20 +898,20 @@ func (s *AdminServer) deleteRule(c *gin.Context) {
 	// Save updated rules
 	updatedJSON, err := json.Marshal(updatedRules)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to marshal rules")
+		slog.Error("Failed to marshal rules", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete rule"})
 		return
 	}
 
 	if err := s.cache.Set(c, rulesKey, string(updatedJSON), 0); err != nil {
-		s.logger.WithError(err).Error("Failed to save rules")
+		slog.Error("Failed to save rules", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete rule"})
 		return
 	}
 
 	// After successfully deleting the rule
 	if err := s.publishCacheInvalidation(c.Request.Context(), gatewayID); err != nil {
-		s.logger.WithError(err).Error("Failed to publish cache invalidation")
+		slog.Error("Failed to publish cache invalidation", slog.String("error", err.Error()))
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Rule deleted successfully"})
@@ -887,7 +925,7 @@ func (s *AdminServer) deleteAPIKey(c *gin.Context) {
 	// Delete API key from cache
 	key := fmt.Sprintf("apikey:%s:%s", gatewayID, keyID)
 	if err := s.cache.Delete(c, key); err != nil {
-		s.logger.WithError(err).Error("Failed to delete API key")
+		slog.Error("Failed to delete API key", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete API key"})
 		return
 	}
@@ -1038,14 +1076,14 @@ func (s *AdminServer) createUpstream(c *gin.Context) {
 	upstream.GatewayID = gatewayID
 
 	if err := s.repo.CreateUpstream(c.Request.Context(), &upstream); err != nil {
-		s.logger.WithError(err).Error("Failed to create upstream")
+		slog.Error("Failed to create upstream", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Cache the upstream
 	if err := s.cache.SaveUpstream(c.Request.Context(), gatewayID, &upstream); err != nil {
-		s.logger.WithError(err).Error("Failed to cache upstream")
+		slog.Error("Failed to cache upstream", slog.String("error", err.Error()))
 	}
 
 	c.JSON(http.StatusCreated, upstream)
@@ -1080,7 +1118,7 @@ func (s *AdminServer) listUpstreams(c *gin.Context) {
 	// If not in cache, get from database
 	upstreams, err := s.repo.ListUpstreams(c.Request.Context(), gatewayID, offset, limit)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to list upstreams")
+		slog.Error("Failed to list upstreams", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1088,7 +1126,7 @@ func (s *AdminServer) listUpstreams(c *gin.Context) {
 	// Cache the results
 	if upstreamsJSON, err := json.Marshal(upstreams); err == nil {
 		if err := s.cache.Set(c.Request.Context(), upstreamsKey, string(upstreamsJSON), 0); err != nil {
-			s.logger.WithError(err).Error("Failed to cache upstreams list")
+			slog.Error("Failed to cache upstreams list", slog.String("error", err.Error()))
 		}
 	}
 
@@ -1118,7 +1156,7 @@ func (s *AdminServer) getUpstream(c *gin.Context) {
 
 	// Cache the upstream
 	if err := s.cache.SaveUpstream(c.Request.Context(), gatewayID, upstream); err != nil {
-		s.logger.WithError(err).Error("Failed to cache upstream")
+		slog.Error("Failed to cache upstream", slog.String("error", err.Error()))
 	}
 
 	c.JSON(http.StatusOK, upstream)
@@ -1139,14 +1177,14 @@ func (s *AdminServer) updateUpstream(c *gin.Context) {
 	upstream.GatewayID = gatewayID
 
 	if err := s.repo.UpdateUpstream(c.Request.Context(), &upstream); err != nil {
-		s.logger.WithError(err).Error("Failed to update upstream")
+		slog.Error("Failed to update upstream", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Cache the updated upstream
 	if err := s.cache.SaveUpstream(c.Request.Context(), gatewayID, &upstream); err != nil {
-		s.logger.WithError(err).Error("Failed to cache upstream")
+		slog.Error("Failed to cache upstream", slog.String("error", err.Error()))
 	}
 
 	c.JSON(http.StatusOK, upstream)
@@ -1161,7 +1199,7 @@ func (s *AdminServer) deleteUpstream(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		s.logger.WithError(err).Error("Failed to delete upstream")
+		slog.Error("Failed to delete upstream", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1170,10 +1208,12 @@ func (s *AdminServer) deleteUpstream(c *gin.Context) {
 	upstreamKey := fmt.Sprintf(cache.UpstreamKeyPattern, gatewayID, upstreamID)
 	upstreamsKey := fmt.Sprintf(cache.UpstreamsKeyPattern, gatewayID)
 	if err := s.cache.Delete(c.Request.Context(), upstreamKey); err != nil {
-		s.logger.WithError(err).Error("Failed to invalidate upstream cache")
+		slog.Error("Failed to invalidate upstream cache",
+			slog.String("error", err.Error()),
+		)
 	}
 	if err := s.cache.Delete(c.Request.Context(), upstreamsKey); err != nil {
-		s.logger.WithError(err).Error("Failed to invalidate upstreams list cache")
+		slog.Error("Failed to invalidate upstreams list cache", slog.String("error", err.Error()))
 	}
 
 	c.Status(http.StatusNoContent)
@@ -1192,14 +1232,14 @@ func (s *AdminServer) createService(c *gin.Context) {
 	service.GatewayID = gatewayID
 
 	if err := s.repo.CreateService(c.Request.Context(), &service); err != nil {
-		s.logger.WithError(err).Error("Failed to create service")
+		slog.Error("Failed to create service", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Cache the service
 	if err := s.cache.SaveService(c.Request.Context(), gatewayID, &service); err != nil {
-		s.logger.WithError(err).Error("Failed to cache service")
+		slog.Error("Failed to cache service", slog.String("error", err.Error()))
 	}
 
 	c.JSON(http.StatusCreated, service)
@@ -1223,7 +1263,7 @@ func (s *AdminServer) listServices(c *gin.Context) {
 
 	services, err := s.repo.ListServices(c.Request.Context(), gatewayID, offset, limit)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to list services")
+		slog.Error("Failed to list services", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1254,7 +1294,7 @@ func (s *AdminServer) getService(c *gin.Context) {
 
 	// Cache the service
 	if err := s.cache.SaveService(c.Request.Context(), gatewayID, service); err != nil {
-		s.logger.WithError(err).Error("Failed to cache service")
+		slog.Error("Failed to cache service", slog.String("error", err.Error()))
 	}
 
 	c.JSON(http.StatusOK, service)
@@ -1275,14 +1315,14 @@ func (s *AdminServer) updateService(c *gin.Context) {
 	service.GatewayID = gatewayID
 
 	if err := s.repo.UpdateService(c.Request.Context(), &service); err != nil {
-		s.logger.WithError(err).Error("Failed to update service")
+		slog.Error("Failed to update service", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Cache the updated service
 	if err := s.cache.SaveService(c.Request.Context(), gatewayID, &service); err != nil {
-		s.logger.WithError(err).Error("Failed to cache service")
+		slog.Error("Failed to cache service", slog.String("error", err.Error()))
 	}
 
 	c.JSON(http.StatusOK, service)
@@ -1297,7 +1337,7 @@ func (s *AdminServer) deleteService(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		s.logger.WithError(err).Error("Failed to delete service")
+		slog.Error("Failed to delete service", slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1306,10 +1346,10 @@ func (s *AdminServer) deleteService(c *gin.Context) {
 	serviceKey := fmt.Sprintf(cache.ServiceKeyPattern, gatewayID, serviceID)
 	servicesKey := fmt.Sprintf(cache.ServicesKeyPattern, gatewayID)
 	if err := s.cache.Delete(c.Request.Context(), serviceKey); err != nil {
-		s.logger.WithError(err).Error("Failed to invalidate service cache")
+		slog.Error("Failed to invalidate service cache", slog.String("error", err.Error()))
 	}
 	if err := s.cache.Delete(c.Request.Context(), servicesKey); err != nil {
-		s.logger.WithError(err).Error("Failed to invalidate services list cache")
+		slog.Error("Failed to invalidate services list cache", slog.String("error", err.Error()))
 	}
 
 	c.Status(http.StatusNoContent)

@@ -3,11 +3,10 @@ package plugins
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/sirupsen/logrus"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
@@ -30,7 +29,6 @@ var (
 type Manager struct {
 	mu             sync.RWMutex
 	cache          *cache.Cache
-	logger         *logrus.Logger
 	plugins        map[string]pluginiface.Plugin
 	configurations map[types.Level]map[string][]types.PluginConfig
 }
@@ -45,48 +43,48 @@ func GetManager() *Manager {
 	return instance
 }
 
-func InitManager(cache *cache.Cache, logger *logrus.Logger) {
+func InitManager(cache *cache.Cache) {
 	manager := GetManager()
 	manager.cache = cache
-	manager.logger = logger
 }
 
-func InitializePlugins(cache *cache.Cache, logger *logrus.Logger) {
-	InitManager(cache, logger)
+func InitializePlugins(cache *cache.Cache) {
+	InitManager(cache)
 	manager := GetManager()
 
 	// Register built-in plugins with error handling
 	if err := manager.RegisterPlugin(rate_limiter.NewRateLimiterPlugin(cache.Client())); err != nil {
-		logger.WithError(err).Error("Failed to register rate limiter plugin")
+		slog.Error("Failed to register rate limiter plugin", slog.String("error", err.Error()))
 	}
 
 	if err := manager.RegisterPlugin(external_api.NewExternalApiPlugin()); err != nil {
-		logger.WithError(err).Error("Failed to register external API plugin")
+		slog.Error("Failed to register external API plugin", slog.String("error", err.Error()))
 	}
 
-	if err := manager.RegisterPlugin(token_rate_limiter.NewTokenRateLimiterPlugin(logger, cache.Client())); err != nil {
-		logger.WithError(err).Error("Failed to register token rate limiter plugin")
+	if err := manager.RegisterPlugin(token_rate_limiter.NewTokenRateLimiterPlugin(cache.Client())); err != nil {
+		slog.Error("Failed to register token rate limiter plugin", slog.String("error", err.Error()))
 	}
 
-	if err := manager.RegisterPlugin(prompt_moderation.NewPromptModerationPlugin(logger)); err != nil {
-		logger.WithError(err).Error("Failed to register prompt moderation plugin")
+	if err := manager.RegisterPlugin(prompt_moderation.NewPromptModerationPlugin()); err != nil {
+		slog.Error("Failed to register prompt moderation plugin", slog.String("error", err.Error()))
 	}
 
-	if err := manager.RegisterPlugin(data_masking.NewDataMaskingPlugin(logger)); err != nil {
-		logger.WithError(err).Error("Failed to register data masking plugin")
+	if err := manager.RegisterPlugin(data_masking.NewDataMaskingPlugin()); err != nil {
+		slog.Error("Failed to register data masking plugin", slog.String("error", err.Error()))
 	}
 
-	if err := manager.RegisterPlugin(toxicity_openai.NewToxicityOpenAIPlugin(logger)); err != nil {
-		logger.WithError(err).Error("Failed to register toxicity openai plugin")
+	if err := manager.RegisterPlugin(toxicity_openai.NewToxicityOpenAIPlugin()); err != nil {
+		slog.Error("Failed to register toxicity OpenAI plugin", slog.String("error", err.Error()))
 	}
 
-	if err := manager.RegisterPlugin(toxicity_azure.NewToxicityAzurePlugin(logger)); err != nil {
-		logger.WithError(err).Error("Failed to register toxicity azure plugin")
+	if err := manager.RegisterPlugin(toxicity_azure.NewToxicityAzurePlugin()); err != nil {
+		slog.Error("Failed to register toxicity Azure plugin", slog.String("error", err.Error()))
 	}
 
-	if err := manager.RegisterPlugin(bedrock_guardrail.NewBedrockGuardrailPlugin(logger)); err != nil {
-		logger.WithError(err).Error("Failed to register bedrock guardrail plugin")
+	if err := manager.RegisterPlugin(bedrock_guardrail.NewBedrockGuardrailPlugin()); err != nil {
+		slog.Error("Failed to register bedrock guardrail plugin", slog.String("error", err.Error()))
 	}
+
 }
 
 // ValidatePlugin validates a plugin configuration
@@ -98,12 +96,15 @@ func (m *Manager) ValidatePlugin(name string, config types.PluginConfig) error {
 
 	validator, ok := plugin.(pluginiface.PluginValidator)
 	if !ok {
-		m.logger.Warnf("Plugin %s does not implement PluginValidator interface", name)
+		slog.Warn("Plugin does not implement PluginValidator interface", slog.String("plugin", name))
 		return nil
 	}
 
 	if err := validator.ValidateConfig(config); err != nil {
-		m.logger.WithError(err).Errorf("Plugin %s validation failed", name)
+		slog.Error("Plugin validation failed",
+			slog.String("plugin", name),
+			slog.String("error", err.Error()),
+		)
 		return err
 	}
 
@@ -121,7 +122,9 @@ func (m *Manager) RegisterPlugin(plugin pluginiface.Plugin) error {
 
 	// Ensure the plugin implements the validator interface if it needs validation
 	if _, ok := plugin.(pluginiface.PluginValidator); !ok {
-		m.logger.Warnf("Plugin %s does not implement PluginValidator interface", name)
+		slog.Warn("Plugin does not implement PluginValidator interface",
+			slog.String("plugin", name),
+		)
 	}
 
 	m.plugins[name] = plugin

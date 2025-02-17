@@ -6,13 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
-
-	"github.com/mitchellh/mapstructure"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/mitchellh/mapstructure"
 )
 
 const (
@@ -21,7 +20,6 @@ const (
 )
 
 type ToxicityOpenAIPlugin struct {
-	logger *logrus.Logger
 	config Config
 }
 
@@ -74,10 +72,8 @@ type OpenAIModerationResponse struct {
 	} `json:"results"`
 }
 
-func NewToxicityOpenAIPlugin(logger *logrus.Logger) pluginiface.Plugin {
-	plugin := &ToxicityOpenAIPlugin{
-		logger: logger,
-	}
+func NewToxicityOpenAIPlugin() pluginiface.Plugin {
+	plugin := &ToxicityOpenAIPlugin{}
 	return plugin
 }
 
@@ -114,18 +110,24 @@ func (p *ToxicityOpenAIPlugin) ValidateConfig(config types.PluginConfig) error {
 func (p *ToxicityOpenAIPlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
-		p.logger.WithError(err).Error("Failed to decode config")
+		slog.Error("Failed to decode config",
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
 
 	p.config = config
-	p.logger.Info("Received request for toxicity detection")
-	p.logger.WithField("body", string(req.Body)).Debug("Request body")
+	slog.Info("Received request for toxicity detection")
+	slog.Debug("Request body",
+		slog.String("body", string(req.Body)),
+	)
 
 	// Parse request body to extract message content
 	var requestBody RequestBody
 	if err := json.Unmarshal(req.Body, &requestBody); err != nil {
-		p.logger.WithError(err).Error("Failed to parse request body")
+		slog.Error("Failed to parse request body",
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("failed to parse request body: %v", err)
 	}
 
@@ -157,14 +159,16 @@ func (p *ToxicityOpenAIPlugin) Execute(ctx context.Context, cfg types.PluginConf
 	}
 
 	if len(moderationInputs) == 0 {
-		p.logger.Info("No content to moderate")
+		slog.Info("No content to moderate")
 		return &types.PluginResponse{
 			StatusCode: 200,
 			Message:    "No content to moderate",
 		}, nil
 	}
 
-	p.logger.WithField("inputs", moderationInputs).Debug("Content to moderate")
+	slog.Debug("Content to moderate",
+		slog.Any("inputs", moderationInputs),
+	)
 
 	// Create moderation request
 	moderationReq := OpenAIModerationRequest{
@@ -174,14 +178,18 @@ func (p *ToxicityOpenAIPlugin) Execute(ctx context.Context, cfg types.PluginConf
 
 	jsonData, err := json.Marshal(moderationReq)
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to marshal moderation request")
+		slog.Error("Failed to marshal moderation request",
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("failed to marshal moderation request: %v", err)
 	}
 
 	// Create HTTP request to OpenAI
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", OpenAIModerationURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to create HTTP request")
+		slog.Error("Failed to create HTTP request",
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("failed to create HTTP request: %v", err)
 	}
 
@@ -190,39 +198,47 @@ func (p *ToxicityOpenAIPlugin) Execute(ctx context.Context, cfg types.PluginConf
 
 	// Send request
 	client := &http.Client{}
-	p.logger.Debug("Sending request to OpenAI moderation endpoint")
+	slog.Debug("Sending request to OpenAI moderation endpoint")
 	httpResp, err := client.Do(httpReq)
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to send moderation request")
+		slog.Error("Failed to send moderation request",
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("failed to send moderation request: %v", err)
 	}
 	defer httpResp.Body.Close()
 
 	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to read response body")
+		slog.Error("Failed to read response body",
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("failed to read response body: %v", err)
 	}
 
-	p.logger.WithField("response", string(body)).Debug("OpenAI API response")
+	slog.Debug("OpenAI API response",
+		slog.String("response", string(body)),
+	)
 
 	if httpResp.StatusCode != http.StatusOK {
-		p.logger.WithFields(logrus.Fields{
-			"status_code": httpResp.StatusCode,
-			"response":    string(body),
-		}).Error("OpenAI API returned error")
+		slog.Error("OpenAI API returned error",
+			slog.Int("status_code", httpResp.StatusCode),
+			slog.String("response", string(body)),
+		)
 		return nil, fmt.Errorf("OpenAI API returned error: %s", string(body))
 	}
 
 	// Parse response
 	var moderationResp OpenAIModerationResponse
 	if err := json.Unmarshal(body, &moderationResp); err != nil {
-		p.logger.WithError(err).Error("Failed to unmarshal moderation response")
+		slog.Error("Failed to unmarshal moderation response",
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("failed to unmarshal moderation response: %v", err)
 	}
 
 	if len(moderationResp.Results) == 0 {
-		p.logger.Error("No moderation results returned")
+		slog.Error("No moderation results returned")
 		return nil, fmt.Errorf("no moderation results returned")
 	}
 
@@ -245,11 +261,11 @@ func (p *ToxicityOpenAIPlugin) Execute(ctx context.Context, cfg types.PluginConf
 	}
 
 	if len(flaggedCategories) > 0 {
-		p.logger.WithFields(logrus.Fields{
-			"categories":    flaggedCategories,
-			"scores":        result.CategoryScores,
-			"applied_types": result.CategoryAppliedInputTypes,
-		}).Info("Content flagged for toxicity")
+		slog.Info("Content flagged for toxicity",
+			slog.Any("categories", flaggedCategories),
+			slog.Any("scores", result.CategoryScores),
+			slog.Any("applied_types", result.CategoryAppliedInputTypes),
+		)
 		return nil, &types.PluginError{
 			StatusCode: 403,
 			Message:    fmt.Sprintf(config.Actions.Message+" Flagged categories: %v", flaggedCategories),
@@ -257,7 +273,7 @@ func (p *ToxicityOpenAIPlugin) Execute(ctx context.Context, cfg types.PluginConf
 		}
 	}
 
-	p.logger.Info("Content is safe")
+	slog.Info("Content is safe")
 	return &types.PluginResponse{
 		StatusCode: 200,
 		Message:    "Content is safe",

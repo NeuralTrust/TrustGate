@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
@@ -37,16 +37,14 @@ type ResponseTokens struct {
 
 // TokenRateLimiterPlugin implements the token bucket rate limiting algorithm
 type TokenRateLimiterPlugin struct {
-	logger *logrus.Logger
-	redis  *redis.Client
-	mu     sync.Mutex
+	redis *redis.Client
+	mu    sync.Mutex
 }
 
 // NewTokenRateLimiterPlugin creates a new instance of the token rate limiter plugin
-func NewTokenRateLimiterPlugin(logger *logrus.Logger, redisClient *redis.Client) pluginiface.Plugin {
+func NewTokenRateLimiterPlugin(redisClient *redis.Client) pluginiface.Plugin {
 	return &TokenRateLimiterPlugin{
-		logger: logger,
-		redis:  redisClient,
+		redis: redisClient,
 	}
 }
 
@@ -96,12 +94,16 @@ func (p *TokenRateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginCo
 	var config Config
 	configBytes, err := json.Marshal(cfg.Settings)
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to marshal plugin settings")
+		slog.Error("Failed to marshal plugin settings",
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("failed to marshal plugin settings: %w", err)
 	}
 
 	if err := json.Unmarshal(configBytes, &config); err != nil {
-		p.logger.WithError(err).Error("Failed to parse token rate limiter config")
+		slog.Error("Failed to parse token rate limiter config",
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("failed to parse token rate limiter config: %w", err)
 	}
 
@@ -117,7 +119,9 @@ func (p *TokenRateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginCo
 	// Get current bucket state
 	bucket, err := p.getBucketState(ctx, bucketKey, config)
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to get bucket state")
+		slog.Error("Failed to get bucket state",
+			slog.String("error", err.Error()),
+		)
 		return nil, err
 	}
 
@@ -138,10 +142,10 @@ func (p *TokenRateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginCo
 
 		// Check both tokens and requests limits
 		if bucket.Tokens < tokensToReserve {
-			p.logger.WithFields(logrus.Fields{
-				"required_tokens":  tokensToReserve,
-				"available_tokens": bucket.Tokens,
-			}).Warn("Rate limit exceeded - not enough tokens")
+			slog.Warn("Rate limit exceeded - not enough tokens",
+				slog.Int("required_tokens", tokensToReserve),
+				slog.Int("available_tokens", bucket.Tokens),
+			)
 
 			// Calculate time until next refill
 			timeUntilRefill := time.Until(bucket.LastRefill.Add(time.Minute))
@@ -194,7 +198,9 @@ func (p *TokenRateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginCo
 			bucket.RequestsRemaining--
 
 			if err := p.saveBucketState(ctx, bucketKey, bucket); err != nil {
-				p.logger.WithError(err).Error("Failed to save bucket state for streaming request")
+				slog.Error("Failed to save bucket state for streaming request",
+					slog.String("error", err.Error()),
+				)
 				return nil, err
 			}
 		}
@@ -252,7 +258,9 @@ func (p *TokenRateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginCo
 
 				// Save updated bucket state
 				if err := p.saveBucketState(ctx, bucketKey, bucket); err != nil {
-					p.logger.WithError(err).Error("Failed to save bucket state after streaming")
+					slog.Error("Failed to save bucket state after streaming",
+						slog.String("error", err.Error()),
+					)
 					return nil, err
 				}
 
@@ -261,12 +269,12 @@ func (p *TokenRateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginCo
 					timeUntilRefill = 0
 				}
 
-				p.logger.WithFields(logrus.Fields{
-					"streaming":          true,
-					"tokens_consumed":    tokensToConsume,
-					"tokens_remaining":   bucket.Tokens,
-					"requests_remaining": bucket.RequestsRemaining,
-				}).Debug("Token rate limiter post-response update for streaming")
+				slog.Debug("Token rate limiter post-response update for streaming",
+					slog.Bool("streaming", true),
+					slog.Int("tokens_consumed", tokensToConsume),
+					slog.Int("tokens_remaining", bucket.Tokens),
+					slog.Int("requests_remaining", bucket.RequestsRemaining),
+				)
 
 				return &types.PluginResponse{
 					Headers: map[string][]string{
@@ -304,7 +312,7 @@ func (p *TokenRateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginCo
 
 		// Save updated bucket state with stage information
 		if err := p.saveBucketState(ctx, bucketKey, bucket); err != nil {
-			p.logger.WithError(err).Error("Failed to save bucket state")
+			slog.Error("Failed to save bucket state", slog.String("error", err.Error()))
 			return nil, err
 		}
 
@@ -314,12 +322,12 @@ func (p *TokenRateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginCo
 			timeUntilRefill = 0
 		}
 
-		p.logger.WithFields(logrus.Fields{
-			"bucket_key":         bucketKey,
-			"tokens":             bucket.Tokens,
-			"requests_remaining": bucket.RequestsRemaining,
-			"last_refill":        bucket.LastRefill,
-		}).Debug("Updated bucket state")
+		slog.Debug("Updated bucket state",
+			slog.String("bucket_key", bucketKey),
+			slog.Int("tokens_remaining", bucket.Tokens),
+			slog.Int("requests_remaining", bucket.RequestsRemaining),
+			slog.Time("last_refill", bucket.LastRefill),
+		)
 
 		return &types.PluginResponse{
 			StatusCode: resp.StatusCode,
@@ -352,14 +360,14 @@ func (p *TokenRateLimiterPlugin) getBucketState(ctx context.Context, key string,
 	// Try to get existing bucket
 	result, err := p.redis.Get(ctx, key).Result()
 	if err != nil && err != redis.Nil {
-		p.logger.WithError(err).Error("Failed to get bucket from cache")
+		slog.Error("Failed to get bucket from cache", slog.String("error", err.Error()))
 		return nil, fmt.Errorf("failed to get bucket from cache: %w", err)
 	}
 
 	// If bucket exists, unmarshal it
 	if err != redis.Nil {
 		if err := json.Unmarshal([]byte(result), &bucket); err != nil {
-			p.logger.WithError(err).Error("Failed to unmarshal existing bucket")
+			slog.Error("Failed to unmarshal existing bucket", slog.String("error", err.Error()))
 			return nil, fmt.Errorf("failed to unmarshal bucket: %w", err)
 		}
 	} else {
@@ -396,13 +404,13 @@ func (p *TokenRateLimiterPlugin) saveBucketState(ctx context.Context, key string
 	// Marshal bucket state
 	data, err := json.Marshal(bucket)
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to marshal bucket")
+		slog.Error("Failed to marshal bucket", slog.String("error", err.Error()))
 		return fmt.Errorf("failed to marshal bucket: %w", err)
 	}
 
 	// Save to Redis with 24-hour TTL
 	if err := p.redis.Set(ctx, key, string(data), 24*time.Hour).Err(); err != nil {
-		p.logger.WithError(err).Error("Failed to save bucket to cache")
+		slog.Error("Failed to save bucket to cache", slog.String("error", err.Error()))
 		return fmt.Errorf("failed to save bucket to cache: %w", err)
 	}
 

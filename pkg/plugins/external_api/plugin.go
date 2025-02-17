@@ -5,16 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
-
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -85,14 +83,11 @@ func (v *ExternalApiValidator) ValidateConfig(config types.PluginConfig) error {
 }
 
 func (v *ExternalApiPlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
-	logger, err := getContextValue[*logrus.Logger](ctx, common.LoggerKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get logger: %w", err)
-	}
-
 	settings := cfg.Settings
 	if settings == nil {
-		logger.WithError(fmt.Errorf("settings are required")).Error("External validator settings missing")
+		slog.Error("External validator settings missing",
+			slog.String("error", fmt.Errorf("settings are required").Error()),
+		)
 		return nil, fmt.Errorf("settings are required")
 	}
 	// Get endpoint
@@ -236,9 +231,9 @@ func (v *ExternalApiPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 	if err := json.NewDecoder(httpResp.Body).Decode(&validationResp); err != nil {
 		return nil, fmt.Errorf("failed to parse validation response: %w", err)
 	}
-	logger.WithFields(logrus.Fields{
-		"validationResp": validationResp,
-	}).Debug("Validation response")
+	slog.Debug("Validation response",
+		slog.Any("validationResp", validationResp),
+	)
 	// Check conditions
 	for _, condition := range conditions {
 		value := getNestedValue(validationResp, strings.Split(condition.Field, "."))
@@ -299,21 +294,6 @@ func evaluateCondition(actual interface{}, operator string, expected interface{}
 	default:
 		return false
 	}
-}
-
-// Add helper function for safe type assertions
-func getContextValue[T any](ctx context.Context, key interface{}) (T, error) {
-	value := ctx.Value(key)
-	if value == nil {
-		var zero T
-		return zero, fmt.Errorf("value not found in context for key: %v", key)
-	}
-	result, ok := value.(T)
-	if !ok {
-		var zero T
-		return zero, fmt.Errorf("invalid type assertion for key: %v", key)
-	}
-	return result, nil
 }
 
 // For map assertions

@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
-	"github.com/mitchellh/mapstructure"
-	"github.com/sirupsen/logrus"
-
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/mitchellh/mapstructure"
 )
 
 const (
@@ -21,7 +20,6 @@ const (
 )
 
 type ToxicityAzurePlugin struct {
-	logger *logrus.Logger
 	config Config
 }
 
@@ -84,10 +82,8 @@ type AzureImageResponse struct {
 	} `json:"categoriesAnalysis"`
 }
 
-func NewToxicityAzurePlugin(logger *logrus.Logger) pluginiface.Plugin {
-	plugin := &ToxicityAzurePlugin{
-		logger: logger,
-	}
+func NewToxicityAzurePlugin() pluginiface.Plugin {
+	plugin := &ToxicityAzurePlugin{}
 	return plugin
 }
 
@@ -169,7 +165,9 @@ func (p *ToxicityAzurePlugin) extractText(rawBody []byte) (string, error) {
 	// Try to parse as JSON first
 	var data interface{}
 	if err := json.Unmarshal(rawBody, &data); err != nil {
-		p.logger.WithError(err).Debug("Request body is not JSON, using raw body")
+		slog.Debug("Request body is not JSON, using raw body",
+			slog.String("error", err.Error()),
+		)
 		return string(rawBody), nil
 	}
 
@@ -216,7 +214,9 @@ func (p *ToxicityAzurePlugin) extractImage(rawBody []byte) (string, error) {
 	for _, ct := range p.config.ContentTypes {
 		if ct.Type == "image" {
 			imagePath = ct.Path
-			p.logger.WithField("image_path", imagePath).Info("Found image path in config")
+			slog.Info("Found image path in config",
+				slog.String("image_path", imagePath),
+			)
 			break
 		}
 	}
@@ -229,21 +229,23 @@ func (p *ToxicityAzurePlugin) extractImage(rawBody []byte) (string, error) {
 	// Try to parse as JSON
 	var data interface{}
 	if err := json.Unmarshal(rawBody, &data); err != nil {
-		p.logger.WithError(err).Error("Request body is not valid JSON")
+		slog.Error("Request body is not valid JSON",
+			slog.String("error", err.Error()),
+		)
 		return "", fmt.Errorf("request body is not valid JSON: %v", err)
 	}
 
-	p.logger.WithField("raw_body", string(rawBody)).Debug("Raw request body")
+	slog.Debug("Raw request body", slog.String("raw_body", string(rawBody)))
 
 	// Handle different image path formats
 	paths := strings.Split(imagePath, ".")
 	current := data
 
 	for _, path := range paths {
-		p.logger.WithFields(logrus.Fields{
-			"current_path": path,
-			"data":         fmt.Sprintf("%+v", current),
-		}).Debug("Processing path segment")
+		slog.Debug("Processing path segment",
+			slog.String("current_path", path),
+			slog.String("data", fmt.Sprintf("%+v", current)),
+		)
 
 		if obj, ok := current.(map[string]interface{}); ok {
 			current = obj[path]
@@ -254,7 +256,7 @@ func (p *ToxicityAzurePlugin) extractImage(rawBody []byte) (string, error) {
 
 	// Convert final value to string (base64)
 	if str, ok := current.(string); ok {
-		p.logger.WithField("image_data_length", len(str)).Info("Successfully extracted image data")
+		slog.Info("Successfully extracted image data", slog.Int("image_data_length", len(str)))
 		return str, nil
 	}
 
@@ -272,7 +274,9 @@ func (p *ToxicityAzurePlugin) getSeverityLevel(category string) int {
 func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
-		p.logger.WithError(err).Error("Failed to decode config")
+		slog.Error("Failed to decode config",
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
 
@@ -293,7 +297,7 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 				isImageContent = true
 				endpoint = config.Endpoints.Image
 				extractedImageData = imageData
-				p.logger.WithField("endpoint", endpoint).Info("Using image endpoint")
+				slog.Info("Using image endpoint", slog.String("endpoint", endpoint))
 				break
 			}
 		} else if ct.Type == "text" {
@@ -302,14 +306,14 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 				isTextContent = true
 				endpoint = config.Endpoints.Text
 				extractedText = text
-				p.logger.WithField("endpoint", endpoint).Info("Using text endpoint")
+				slog.Info("Using text endpoint", slog.String("endpoint", endpoint))
 				break
 			}
 		}
 	}
 
 	if !isImageContent && !isTextContent {
-		p.logger.Error("No valid content type (text or image) found or could not extract content")
+		slog.Error("No valid content type (text or image) found or could not extract content")
 		return &types.PluginResponse{
 			StatusCode: 400,
 			Message:    "No valid content type (text or image) found or could not extract content",
@@ -317,17 +321,17 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 	}
 
 	// Log configuration
-	p.logger.WithFields(logrus.Fields{
-		"text_endpoint":     config.Endpoints.Text,
-		"image_endpoint":    config.Endpoints.Image,
-		"categories":        config.Categories,
-		"output_type":       config.OutputType,
-		"category_severity": config.CategorySeverity,
-		"content_types":     config.ContentTypes,
-		"is_image":          isImageContent,
-		"is_text":           isTextContent,
-		"endpoint":          endpoint,
-	}).Info("Starting plugin execution")
+	slog.Info("Starting plugin execution",
+		slog.String("text_endpoint", config.Endpoints.Text),
+		slog.String("image_endpoint", config.Endpoints.Image),
+		slog.Any("categories", config.Categories),
+		slog.String("output_type", config.OutputType),
+		slog.Any("category_severity", config.CategorySeverity),
+		slog.Any("content_types", config.ContentTypes),
+		slog.Bool("is_image", isImageContent),
+		slog.Bool("is_text", isTextContent),
+		slog.String("endpoint", endpoint),
+	)
 
 	var jsonData []byte
 	var err error
@@ -343,7 +347,9 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 
 		jsonData, err = json.Marshal(azureReq)
 		if err != nil {
-			p.logger.WithError(err).Error("Failed to marshal Azure image request")
+			slog.Error("Failed to marshal Azure image request",
+				slog.String("error", err.Error()),
+			)
 			return &types.PluginResponse{
 				StatusCode: 500,
 				Message:    fmt.Sprintf("Failed to marshal Azure image request: %v", err),
@@ -365,7 +371,7 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 
 		jsonData, err = json.Marshal(azureReq)
 		if err != nil {
-			p.logger.WithError(err).Error("Failed to marshal Azure text request")
+			slog.Error("Failed to marshal Azure text request", slog.String("error", err.Error()))
 			return &types.PluginResponse{
 				StatusCode: 500,
 				Message:    fmt.Sprintf("Failed to marshal Azure text request: %v", err),
@@ -374,23 +380,27 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 	}
 
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to marshal Azure request")
+		slog.Error("Failed to marshal Azure request",
+			slog.String("error", err.Error()),
+		)
 		return &types.PluginResponse{
 			StatusCode: 500,
 			Message:    fmt.Sprintf("Failed to marshal Azure request: %v", err),
 		}, nil
 	}
 
-	p.logger.WithFields(logrus.Fields{
-		"endpoint":    endpoint,
-		"request":     string(jsonData),
-		"categories":  config.Categories,
-		"output_type": config.OutputType,
-	}).Debug("Sending request to Azure")
+	slog.Debug("Sending request to Azure",
+		slog.String("endpoint", endpoint),
+		slog.String("request", string(jsonData)),
+		slog.Any("categories", config.Categories),
+		slog.String("output_type", config.OutputType),
+	)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to create HTTP request")
+		slog.Error("Failed to create HTTP request",
+			slog.String("error", err.Error()),
+		)
 		return &types.PluginResponse{
 			StatusCode: 500,
 			Message:    fmt.Sprintf("Failed to create HTTP request: %v", err),
@@ -404,7 +414,9 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 	client := &http.Client{}
 	httpResp, err := client.Do(httpReq)
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to send request to Azure")
+		slog.Error("Failed to send request to Azure",
+			slog.String("error", err.Error()),
+		)
 		return &types.PluginResponse{
 			StatusCode: 500,
 			Message:    fmt.Sprintf("Failed to send request to Azure: %v", err),
@@ -414,21 +426,23 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 
 	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to read response body")
+		slog.Error("Failed to read response body",
+			slog.String("error", err.Error()),
+		)
 		return &types.PluginResponse{
 			StatusCode: 500,
 			Message:    fmt.Sprintf("Failed to read response body: %v", err),
 		}, nil
 	}
 
-	p.logger.WithFields(logrus.Fields{
-		"status_code": httpResp.StatusCode,
-		"response":    string(body),
-	}).Debug("Received response from Azure")
+	slog.Debug("Received response from Azure",
+		slog.Int("status_code", httpResp.StatusCode),
+		slog.String("response", string(body)),
+	)
 
 	if httpResp.StatusCode != http.StatusOK {
 		errMsg := fmt.Sprintf("Azure API returned error (status: %d): %s", httpResp.StatusCode, string(body))
-		p.logger.Error(errMsg)
+		slog.Error(errMsg)
 		return &types.PluginResponse{
 			StatusCode: httpResp.StatusCode,
 			Message:    errMsg,
@@ -439,10 +453,10 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 	if isImageContent {
 		var azureResp AzureImageResponse
 		if err := json.Unmarshal(body, &azureResp); err != nil {
-			p.logger.WithFields(logrus.Fields{
-				"error":    err.Error(),
-				"response": string(body),
-			}).Error("Failed to unmarshal Azure image response")
+			slog.Error("Failed to unmarshal Azure image response",
+				slog.String("error", err.Error()),
+				slog.String("response", string(body)),
+			)
 			return &types.PluginResponse{
 				StatusCode: 500,
 				Message:    fmt.Sprintf("Failed to unmarshal Azure image response: %v, body: %s", err, string(body)),
@@ -456,11 +470,11 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 		for _, analysis := range azureResp.CategoriesAnalysis {
 			severityLevel := p.getSeverityLevel(analysis.Category)
 
-			p.logger.WithFields(logrus.Fields{
-				"category":      analysis.Category,
-				"severity":      analysis.Severity,
-				"severityLevel": severityLevel,
-			}).Info("Category analysis")
+			slog.Info("Category analysis",
+				slog.String("category", analysis.Category),
+				slog.Int("severity", analysis.Severity),
+				slog.Int("severityLevel", severityLevel),
+			)
 
 			// Add result to analysis results
 			analysisResults = append(analysisResults, map[string]interface{}{
@@ -481,19 +495,19 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 			"blocked_categories": blockedCategories,
 		}
 
-		p.logger.WithFields(logrus.Fields{
-			"blocked_categories": blockedCategories,
-			"is_blocked":         len(blockedCategories) > 0,
-			"analysis_results":   analysisResults,
-		}).Info("Analysis results")
+		slog.Info("Analysis results",
+			slog.Any("blocked_categories", blockedCategories),
+			slog.Bool("is_blocked", len(blockedCategories) > 0),
+			slog.Any("analysis_results", analysisResults),
+		)
 
 		// Block request if any category exceeds severity level
 		if len(blockedCategories) > 0 {
 			message := fmt.Sprintf("Blocked Image Content - Violations found in categories: %s", strings.Join(blockedCategories, ", "))
-			p.logger.WithFields(logrus.Fields{
-				"blocked_categories": blockedCategories,
-				"message":            message,
-			}).Info("Image content blocked")
+			slog.Info("Image content blocked",
+				slog.Any("blocked_categories", blockedCategories),
+				slog.String("message", message),
+			)
 
 			return nil, &types.PluginError{
 				StatusCode: 400,
@@ -505,7 +519,9 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 		// Marshal the response payload for successful case
 		responseBody, err := json.Marshal(responsePayload)
 		if err != nil {
-			p.logger.WithError(err).Error("Failed to marshal response payload")
+			slog.Error("Failed to marshal response payload",
+				slog.String("error", err.Error()),
+			)
 			return &types.PluginResponse{
 				StatusCode: 500,
 				Message:    "Failed to marshal response payload",
@@ -525,10 +541,10 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 	// Parse response for text content
 	var azureResp AzureResponse
 	if err := json.Unmarshal(body, &azureResp); err != nil {
-		p.logger.WithFields(logrus.Fields{
-			"error":    err.Error(),
-			"response": string(body),
-		}).Error("Failed to unmarshal Azure response")
+		slog.Error("Failed to unmarshal Azure response",
+			slog.String("error", err.Error()),
+			slog.String("response", string(body)),
+		)
 		return &types.PluginResponse{
 			StatusCode: 500,
 			Message:    fmt.Sprintf("Failed to unmarshal Azure response: %v, body: %s", err, string(body)),
@@ -536,7 +552,9 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 	}
 
 	if len(azureResp.CategoriesAnalysis) == 0 {
-		p.logger.WithField("response", string(body)).Error("No categories analysis returned")
+		slog.Error("No categories analysis returned",
+			slog.String("response", string(body)),
+		)
 		return &types.PluginResponse{
 			StatusCode: 500,
 			Message:    fmt.Sprintf("No categories analysis returned in response: %s", string(body)),
@@ -550,11 +568,11 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 	for _, analysis := range azureResp.CategoriesAnalysis {
 		severityLevel := p.getSeverityLevel(analysis.Category)
 
-		p.logger.WithFields(logrus.Fields{
-			"category":      analysis.Category,
-			"severity":      analysis.Severity,
-			"severityLevel": severityLevel,
-		}).Debug("Category analysis")
+		slog.Debug("Category analysis",
+			slog.String("category", analysis.Category),
+			slog.Int("severity", analysis.Severity),
+			slog.Int("severityLevel", severityLevel),
+		)
 
 		// Add result to analysis results
 		analysisResults = append(analysisResults, map[string]interface{}{
@@ -575,19 +593,19 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 		"blocked_categories": blockedCategories,
 	}
 
-	p.logger.WithFields(logrus.Fields{
-		"blocked_categories": blockedCategories,
-		"is_blocked":         len(blockedCategories) > 0,
-		"analysis_results":   analysisResults,
-	}).Info("Analysis results")
+	slog.Info("Analysis results",
+		slog.Any("blocked_categories", blockedCategories),
+		slog.Bool("is_blocked", len(blockedCategories) > 0),
+		slog.Any("analysis_results", analysisResults),
+	)
 
 	// Block request if any category exceeds severity level
 	if len(blockedCategories) > 0 {
 		message := fmt.Sprintf("Blocked Text Content - Violations found in categories: %s", strings.Join(blockedCategories, ", "))
-		p.logger.WithFields(logrus.Fields{
-			"blocked_categories": blockedCategories,
-			"message":            message,
-		}).Info("Text content blocked")
+		slog.Info("Text content blocked",
+			slog.Any("blocked_categories", blockedCategories),
+			slog.String("message", message),
+		)
 
 		return nil, &types.PluginError{
 			StatusCode: 400,
@@ -599,7 +617,9 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 	// Marshal the response payload
 	responseBody, err := json.Marshal(responsePayload)
 	if err != nil {
-		p.logger.WithError(err).Error("Failed to marshal response payload")
+		slog.Error("Failed to marshal response payload",
+			slog.String("error", err.Error()),
+		)
 		return &types.PluginResponse{
 			StatusCode: 500,
 			Message:    "Failed to marshal response payload",

@@ -21,11 +21,12 @@ type MetricsConfig struct {
 
 // Config represents the main configuration structure
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	Metrics   MetricsConfig   `yaml:"metrics"`
-	Database  DatabaseConfig  `yaml:"database"`
-	Redis     RedisConfig     `yaml:"redis"`
-	Providers ProvidersConfig `yaml:"providers"`
+	Server       ServerConfig    `yaml:"server"`
+	Metrics      MetricsConfig   `yaml:"metrics"`
+	Database     DatabaseConfig  `yaml:"database"`
+	Redis        RedisConfig     `yaml:"redis"`
+	Providers    ProvidersConfig `yaml:"providers"`
+	LoggerConfig LoggerConfig    `yaml:"logger"`
 }
 
 // ServerConfig holds server configuration
@@ -54,6 +55,10 @@ type RedisConfig struct {
 	Port     int    `yaml:"port"`
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
+}
+
+type LoggerConfig struct {
+	Level string `yaml:"level"`
 }
 
 var (
@@ -155,10 +160,13 @@ func loadEnvOverrides() {
 	if host := os.Getenv("BASE_DOMAIN"); host != "" {
 		globalConfig.Server.BaseDomain = host
 	}
+
+	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {
+		globalConfig.LoggerConfig.Level = logLevel
+	}
 }
 
-// GetConfig returns the global configuration
-func GetConfig() *Config {
+func NewConfig() *Config {
 	return &globalConfig
 }
 
