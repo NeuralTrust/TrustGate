@@ -96,13 +96,7 @@ func (m *Manager) ValidatePlugin(name string, config types.PluginConfig) error {
 		return fmt.Errorf("unknown plugin: %s", name)
 	}
 
-	validator, ok := plugin.(pluginiface.PluginValidator)
-	if !ok {
-		m.logger.Warnf("Plugin %s does not implement PluginValidator interface", name)
-		return nil
-	}
-
-	if err := validator.ValidateConfig(config); err != nil {
+	if err := plugin.ValidateConfig(config); err != nil {
 		m.logger.WithError(err).Errorf("Plugin %s validation failed", name)
 		return err
 	}
@@ -113,17 +107,10 @@ func (m *Manager) ValidatePlugin(name string, config types.PluginConfig) error {
 func (m *Manager) RegisterPlugin(plugin pluginiface.Plugin) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	name := plugin.Name()
 	if _, exists := m.plugins[name]; exists {
 		return fmt.Errorf("plugin %s already registered", name)
 	}
-
-	// Ensure the plugin implements the validator interface if it needs validation
-	if _, ok := plugin.(pluginiface.PluginValidator); !ok {
-		m.logger.Warnf("Plugin %s does not implement PluginValidator interface", name)
-	}
-
 	m.plugins[name] = plugin
 	return nil
 }

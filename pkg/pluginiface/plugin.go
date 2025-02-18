@@ -15,8 +15,5 @@ type Plugin interface {
 	// This is used for validation to ensure the plugin is not configured to run on unsupported stages.
 	AllowedStages() []types.Stage
 	Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error)
-}
-
-type PluginValidator interface {
 	ValidateConfig(config types.PluginConfig) error
 }

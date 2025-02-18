@@ -44,6 +44,10 @@ func NewBedrockGuardrailPlugin(logger *logrus.Logger) pluginiface.Plugin {
 	}
 }
 
+func (v *BedrockGuardrailPlugin) ValidateConfig(config plugintypes.PluginConfig) error {
+	return fmt.Errorf("not implemented")
+}
+
 func (p *BedrockGuardrailPlugin) Name() string {
 	return PluginName
 }

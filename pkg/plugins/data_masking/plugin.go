@@ -205,9 +205,7 @@ func (p *DataMaskingPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest, types.PreResponse}
 }
 
-type DataMaskingValidator struct{}
-
-func (v *DataMaskingValidator) ValidateConfig(config types.PluginConfig) error {
+func (p *DataMaskingPlugin) ValidateConfig(config types.PluginConfig) error {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
 		return fmt.Errorf("failed to decode config: %v", err)
