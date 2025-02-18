@@ -116,6 +116,19 @@ func (c *Cache) SaveUpstream(ctx context.Context, gatewayID string, upstream *mo
 	return c.Delete(ctx, upstreamsKey)
 }
 
+func (c *Cache) GetUpstream(ctx context.Context, gatewayID string, upstreamID string) (*models.Upstream, error) {
+	var upstream *models.Upstream
+	upstreamKey := fmt.Sprintf(UpstreamKeyPattern, gatewayID, upstreamID)
+	res, err := c.Get(ctx, upstreamKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(res), &upstream); err != nil {
+		return nil, err
+	}
+	return upstream, nil
+}
+
 func (c *Cache) SaveService(ctx context.Context, gatewayID string, service *models.Service) error {
 	// Cache individual service
 	serviceKey := fmt.Sprintf(ServiceKeyPattern, gatewayID, service.ID)

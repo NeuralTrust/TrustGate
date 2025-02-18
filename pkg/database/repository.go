@@ -446,14 +446,6 @@ func (r *Repository) CreateUpstream(ctx context.Context, upstream *models.Upstre
 	return r.db.WithContext(ctx).Create(upstream).Error
 }
 
-func (r *Repository) GetUpstream(ctx context.Context, id string) (*models.Upstream, error) {
-	var upstream models.Upstream
-	if err := r.db.WithContext(ctx).First(&upstream, "id = ?", id).Error; err != nil {
-		return nil, err
-	}
-	return &upstream, nil
-}
-
 func (r *Repository) ListUpstreams(ctx context.Context, gatewayID string, offset, limit int) ([]models.Upstream, error) {
 	var upstreams []models.Upstream
 	query := r.db.WithContext(ctx).Where("gateway_id = ?", gatewayID)

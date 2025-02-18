@@ -6,16 +6,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
+	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
+	"github.com/valyala/fasthttp"
 	"io"
 	"net/http"
+	_ "net/http/pprof"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
-	"github.com/valyala/fasthttp"
 
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -33,21 +34,33 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-type ProxyServer struct {
-	*BaseServer
-	repo              *database.Repository
-	pluginManager     *plugins.Manager
-	gatewayCache      *common.TTLMap
-	rulesCache        *common.TTLMap
-	pluginCache       *common.TTLMap
-	skipAuthCheck     bool
-	httpClient        *http.Client
-	loadBalancers     sync.Map // map[string]*loadbalancer.LoadBalancer
-	providers         map[string]config.ProviderConfig
-	lbFactory         loadbalancer.Factory
-	gatewayMiddleware *middleware.GatewayMiddleware
-	metricsMiddleware *middleware.MetricsMiddleware
-}
+type (
+	ProxyServerDI struct {
+		Config         *config.Config
+		Cache          *cache.Cache
+		Repo           *database.Repository
+		Logger         *logrus.Logger
+		SkipAuthCheck  bool
+		ExtraPlugins   []pluginiface.Plugin
+		UpstreamFinder upstream.Finder
+	}
+	ProxyServer struct {
+		*BaseServer
+		repo              *database.Repository
+		pluginManager     *plugins.Manager
+		gatewayCache      *common.TTLMap
+		rulesCache        *common.TTLMap
+		pluginCache       *common.TTLMap
+		skipAuthCheck     bool
+		httpClient        *http.Client
+		loadBalancers     sync.Map // map[string]*loadbalancer.LoadBalancer
+		providers         map[string]config.ProviderConfig
+		lbFactory         loadbalancer.Factory
+		gatewayMiddleware *middleware.GatewayMiddleware
+		metricsMiddleware *middleware.MetricsMiddleware
+		upstreamFinder    upstream.Finder
+	}
+)
 
 // Cache TTLs
 const (
@@ -87,48 +100,49 @@ const (
 	PingPath        = "/__/ping"
 )
 
-func NewProxyServer(config *config.Config, cache *cache.Cache, repo *database.Repository, logger *logrus.Logger, skipAuthCheck bool, extraPlugins ...pluginiface.Plugin) *ProxyServer {
+func NewProxyServer(di ProxyServerDI) *ProxyServer {
 	// Initialize metrics with config from yaml
 	metricsConfig := metrics.MetricsConfig{
-		EnableLatency:         config.Metrics.EnableLatency,
-		EnableUpstreamLatency: config.Metrics.EnableUpstream,
-		EnableConnections:     config.Metrics.EnableConnections,
-		EnablePerRoute:        config.Metrics.EnablePerRoute,
+		EnableLatency:         di.Config.Metrics.EnableLatency,
+		EnableUpstreamLatency: di.Config.Metrics.EnableUpstream,
+		EnableConnections:     di.Config.Metrics.EnableConnections,
+		EnablePerRoute:        di.Config.Metrics.EnablePerRoute,
 	}
 	metrics.Initialize(metricsConfig)
 
 	// Initialize plugins
-	plugins.InitializePlugins(cache, logger)
+	plugins.InitializePlugins(di.Cache, di.Logger)
 	manager := plugins.GetManager()
 
 	// Create TTL maps
-	gatewayCache := cache.CreateTTLMap("gateway", GatewayCacheTTL)
-	rulesCache := cache.CreateTTLMap("rules", RulesCacheTTL)
-	pluginCache := cache.CreateTTLMap("plugin", PluginCacheTTL)
+	gatewayCache := di.Cache.CreateTTLMap("gateway", GatewayCacheTTL)
+	rulesCache := di.Cache.CreateTTLMap("rules", RulesCacheTTL)
+	pluginCache := di.Cache.CreateTTLMap("plugin", PluginCacheTTL)
 
 	// Create middleware instance
-	gatewayMiddleware := middleware.NewGatewayMiddleware(logger, cache, repo, config.Server.BaseDomain)
-	metricsMiddleware := middleware.NewMetricsMiddleware(logger)
+	gatewayMiddleware := middleware.NewGatewayMiddleware(di.Logger, di.Cache, di.Repo, di.Config.Server.BaseDomain)
+	metricsMiddleware := middleware.NewMetricsMiddleware(di.Logger)
 
 	s := &ProxyServer{
-		BaseServer:        NewBaseServer(config, cache, repo, logger),
-		repo:              repo,
+		BaseServer:        NewBaseServer(di.Config, di.Cache, di.Repo, di.Logger),
+		repo:              di.Repo,
 		pluginManager:     manager,
 		gatewayCache:      gatewayCache,
 		rulesCache:        rulesCache,
 		pluginCache:       pluginCache,
-		skipAuthCheck:     skipAuthCheck,
+		skipAuthCheck:     di.SkipAuthCheck,
 		httpClient:        &http.Client{},
-		providers:         config.Providers.Providers,
+		providers:         di.Config.Providers.Providers,
 		lbFactory:         loadbalancer.NewBaseFactory(),
 		gatewayMiddleware: gatewayMiddleware,
 		metricsMiddleware: metricsMiddleware,
+		upstreamFinder:    di.UpstreamFinder,
 	}
 
 	// Register extra plugins with error handling
-	for _, plugin := range extraPlugins {
+	for _, plugin := range di.ExtraPlugins {
 		if err := manager.RegisterPlugin(plugin); err != nil {
-			logger.WithFields(logrus.Fields{
+			di.Logger.WithFields(logrus.Fields{
 				"plugin": plugin.Name(),
 				"error":  err,
 			}).Error("Failed to register plugin")
@@ -241,6 +255,7 @@ func (s *ProxyServer) Run() error {
 			"message": "pong",
 		})
 	})
+	router.GET("/debug/pprof/*any", gin.WrapH(http.DefaultServeMux))
 
 	// Register the main handler for all non-system routes
 	router.NoRoute(mainHandler)
@@ -832,7 +847,7 @@ func (s *ProxyServer) ForwardRequest(req *types.RequestContext, rule *types.Forw
 
 	switch service.Type {
 	case models.ServiceTypeUpstream:
-		upstreamModel, err := s.repo.GetUpstream(req.Context, service.UpstreamID)
+		upstreamModel, err := s.upstreamFinder.Find(req.Context, service.GatewayID, service.UpstreamID)
 		if err != nil {
 			return nil, fmt.Errorf("upstream not found: %w", err)
 		}
