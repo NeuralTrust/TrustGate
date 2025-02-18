@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 
 	"github.com/sirupsen/logrus"
@@ -38,6 +38,10 @@ type Condition struct {
 	Message        string      `mapstructure:"message"`
 }
 
+func NewExternalApiPlugin() pluginiface.Plugin {
+	return &ExternalApiPlugin{client: &http.Client{}}
+}
+
 func (v *ExternalApiPlugin) Name() string {
 	return PluginName
 }
@@ -50,13 +54,7 @@ func (v *ExternalApiPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest, types.PostResponse}
 }
 
-func NewExternalApiPlugin() pluginiface.Plugin {
-	return &ExternalApiPlugin{client: &http.Client{}}
-}
-
-type ExternalApiValidator struct{}
-
-func (v *ExternalApiValidator) ValidateConfig(config types.PluginConfig) error {
+func (v *ExternalApiPlugin) ValidateConfig(config types.PluginConfig) error {
 	if config.Stage != types.PreRequest {
 		return fmt.Errorf("external validator must be in pre_request stage")
 	}

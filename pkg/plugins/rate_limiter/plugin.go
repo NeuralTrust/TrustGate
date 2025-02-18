@@ -57,9 +57,7 @@ func (r *RateLimiterPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-type RateLimiterValidator struct{}
-
-func (v *RateLimiterValidator) ValidateConfig(config types.PluginConfig) error {
+func (v *RateLimiterPlugin) ValidateConfig(config types.PluginConfig) error {
 	if config.Stage != types.PreRequest {
 		return fmt.Errorf("rate limiter plugin must be in pre_request stage")
 	}

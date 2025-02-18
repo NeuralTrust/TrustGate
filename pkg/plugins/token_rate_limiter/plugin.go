@@ -55,6 +55,10 @@ func (p *TokenRateLimiterPlugin) Name() string {
 	return PluginName
 }
 
+func (p *TokenRateLimiterPlugin) ValidateConfig(config types.PluginConfig) error {
+	return fmt.Errorf("method not implemented")
+}
+
 // Stages returns the fixed stages where this plugin must run
 func (p *TokenRateLimiterPlugin) Stages() []types.Stage {
 	return []types.Stage{

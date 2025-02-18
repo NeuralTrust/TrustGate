@@ -138,9 +138,7 @@ func (p *PromptModerationPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-type PromptModerationValidator struct{}
-
-func (v *PromptModerationValidator) ValidateConfig(config types.PluginConfig) error {
+func (p *PromptModerationPlugin) ValidateConfig(config types.PluginConfig) error {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
 		return fmt.Errorf("failed to decode config: %v", err)

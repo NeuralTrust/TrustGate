@@ -24,7 +24,7 @@ fi
 ADMIN_URL=${ADMIN_URL:-"http://localhost:8080/api/v1"}
 PROXY_URL=${PROXY_URL:-"http://localhost:8081"}
 BASE_DOMAIN=${BASE_DOMAIN:-"example.com"}
-SUBDOMAIN="benchmark"
+SUBDOMAIN="benchmark-'$(date +%s)'"
 CONCURRENT_USERS=50
 DURATION="30s"
 
@@ -45,7 +45,7 @@ GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Benchmark Gateway",
-    "subdomain": "benchmark"
+    "subdomain": "'$SUBDOMAIN'"
   }')
 
 GATEWAY_ID=$(echo $GATEWAY_RESPONSE | jq -r '.id')
@@ -87,7 +87,8 @@ UPSTREAM_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/upstreams" 
         "port": 8081,
         "protocol": "http",
         "weight": 100,
-        "priority": 1
+        "priority": 1,
+        "path": "/__/ping"
     }],
     "health_checks": {
         "passive": true,
@@ -148,6 +149,6 @@ hey -z ${DURATION} \
     -disable-keepalive \
     -cpus 2 \
     -H "X-API-Key: ${API_KEY}" \
-    -H "Host: benchmark.example.com" \
-    -host "benchmark.example.com" \
+    -H "Host: ${SUBDOMAIN}.example.com" \
+    -host "${SUBDOMAIN}.example.com" \
     "${PROXY_URL}/test"
