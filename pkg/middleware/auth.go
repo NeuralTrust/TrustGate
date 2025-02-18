@@ -3,13 +3,12 @@ package middleware
 import (
 	"context"
 	"fmt"
-	"net/http"
+	"github.com/gofiber/fiber/v2"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 
-	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
 
@@ -25,19 +24,18 @@ func NewAuthMiddleware(logger *logrus.Logger, repo *database.Repository) *AuthMi
 	}
 }
 
-func (m *AuthMiddleware) ValidateAPIKey() gin.HandlerFunc {
-	return func(c *gin.Context) {
+func (m *AuthMiddleware) ValidateAPIKey() fiber.Handler {
+	return func(ctx *fiber.Ctx) error {
 		// Skip validation for system endpoints
-		if strings.HasPrefix(c.Request.URL.Path, "/__/") {
-			c.Next()
-			return
+		if strings.HasPrefix(ctx.Path(), "/__/") {
+			return ctx.Next()
 		}
 
 		// Extract API key from X-Api-Key header first, then fallback to Authorization header
-		m.logger.WithField("headers", c.Request.Header).Debug("Extracting API key from headers")
-		apiKey := c.GetHeader("X-Api-Key")
+		m.logger.WithField("headers", ctx.GetReqHeaders()).Debug("Extracting API key from headers")
+		apiKey := ctx.Get("X-Api-Key")
 		if apiKey == "" {
-			authHeader := c.GetHeader("Authorization")
+			authHeader := ctx.Get("Authorization")
 			if strings.HasPrefix(authHeader, "Bearer ") {
 				apiKey = strings.TrimPrefix(authHeader, "Bearer ")
 			}
@@ -45,29 +43,25 @@ func (m *AuthMiddleware) ValidateAPIKey() gin.HandlerFunc {
 
 		if apiKey == "" {
 			m.logger.Debug("No API key provided")
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "API key required"})
-			return
+			return ctx.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "API key required"})
 		}
 
 		// Get gateway ID from context
-		gatewayID, err := getContextValue[string](c.Request.Context(), common.GatewayContextKey)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid gateway ID"})
-			return
+		gatewayID := ctx.Locals(common.GatewayContextKey).(string)
+		if gatewayID == "" {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
 		}
 
 		// Validate API key
-		valid, err := m.db.ValidateAPIKey(c.Request.Context(), gatewayID, apiKey)
+		valid, err := m.db.ValidateAPIKey(context.Background(), gatewayID, apiKey)
 		if err != nil {
 			m.logger.WithError(err).Error("Database error during API key validation")
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-			return
+			return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
 		}
 
 		if !valid {
 			m.logger.Debug("Invalid API key")
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
-			return
+			return ctx.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid API key"})
 		}
 
 		// Initialize metadata map
@@ -77,14 +71,10 @@ func (m *AuthMiddleware) ValidateAPIKey() gin.HandlerFunc {
 		}
 
 		// Store in context
-		c.Set("api_key", apiKey)
-		c.Set("metadata", metadata)
+		ctx.Locals("api_key", apiKey)
+		ctx.Locals("metadata", metadata)
 
-		// Set in request context for plugins
-		ctx := context.WithValue(c.Request.Context(), common.MetadataKey, metadata)
-		c.Request = c.Request.WithContext(ctx)
-
-		c.Next()
+		return ctx.Next()
 	}
 }
 

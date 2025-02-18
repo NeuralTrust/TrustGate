@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"github.com/gofiber/fiber/v2"
 	"strings"
 	"time"
 
@@ -30,8 +31,8 @@ func NewGatewayMiddleware(logger *logrus.Logger, cache *cache.Cache, repo *datab
 	}
 }
 
-func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
-	return func(c *gin.Context) {
+func (m *GatewayMiddleware) IdentifyGateway() fiber.Handler {
+	return func(c *fiber.Ctx) error {
 		// Try to get host from different sources
 		host := c.GetHeader("Host")
 		if host == "" {
