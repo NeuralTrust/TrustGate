@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	"log"
 	"os"
 	"path/filepath"
@@ -72,14 +74,17 @@ func getServerType() string {
 	return "proxy" // default to proxy server
 }
 
-func initializeServer(cfg *config.Config, cache *cache.Cache, repo *database.Repository, logger *logrus.Logger) server.Server {
+func initializeServer(
+	proxyServerDi server.ProxyServerDI,
+	adminServerDi server.AdminServerDI,
+) server.Server {
 	serverType := getServerType()
 
 	switch serverType {
 	case "admin":
-		return server.NewAdminServer(cfg, cache, repo, logger)
+		return server.NewAdminServer(adminServerDi)
 	default:
-		return server.NewProxyServer(cfg, cache, repo, logger, false)
+		return server.NewProxyServer(proxyServerDi)
 	}
 }
 
@@ -180,9 +185,30 @@ func main() {
 
 	// Initialize repository
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
+	upstreamRepository := repository.NewUpstreamRepository(db.DB)
+
+	// service
+	upstreamFinder := upstream.NewFinder(upstreamRepository, cacheInstance)
 
 	// Create and initialize the server
-	srv := initializeServer(cfg, cacheInstance, repo, logger)
+	adminServerDI := server.AdminServerDI{
+		Config:         cfg,
+		Logger:         logger,
+		Cache:          cacheInstance,
+		Repo:           repo,
+		UpstreamFinder: upstreamFinder,
+	}
+
+	proxyServerDI := server.ProxyServerDI{
+		Config:         cfg,
+		Logger:         logger,
+		Cache:          cacheInstance,
+		Repo:           repo,
+		UpstreamFinder: upstreamFinder,
+		SkipAuthCheck:  false,
+	}
+
+	srv := initializeServer(proxyServerDI, adminServerDI)
 
 	if err := srv.Run(); err != nil {
 		logger.Fatalf("Server failed: %v", err)

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,23 +27,35 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
-type AdminServer struct {
-	*BaseServer
-}
+type (
+	AdminServerDI struct {
+		Config         *config.Config
+		Cache          *cache.Cache
+		Repo           *database.Repository
+		Logger         *logrus.Logger
+		ExtraPlugins   []pluginiface.Plugin
+		UpstreamFinder upstream.Finder
+	}
+	AdminServer struct {
+		*BaseServer
+		upstreamFinder upstream.Finder
+	}
+)
 
-func NewAdminServer(config *config.Config, cache *cache.Cache, repo *database.Repository, logger *logrus.Logger, eePlugins ...pluginiface.Plugin) *AdminServer {
+func NewAdminServer(di AdminServerDI) *AdminServer {
 	// Initialize plugins
-	plugins.InitializePlugins(cache, logger)
+	plugins.InitializePlugins(di.Cache, di.Logger)
 
 	// Register extra plugins
-	for _, plugin := range eePlugins {
+	for _, plugin := range di.ExtraPlugins {
 		if err := plugins.GetManager().RegisterPlugin(plugin); err != nil {
-			logger.WithError(err).Error("Failed to register plugin")
+			di.Logger.WithError(err).Error("Failed to register plugin")
 		}
 	}
 
 	return &AdminServer{
-		BaseServer: NewBaseServer(config, cache, repo, logger),
+		BaseServer:     NewBaseServer(di.Config, di.Cache, di.Repo, di.Logger),
+		upstreamFinder: di.UpstreamFinder,
 	}
 }
 
@@ -325,9 +338,9 @@ func (s *AdminServer) updateGateway(c *gin.Context) {
 
 		// Convert and validate plugins
 		manager := plugins.GetManager()
-		for _, config := range req.RequiredPlugins {
-			if err := manager.ValidatePlugin(config.Name, config); err != nil {
-				s.logger.WithError(err).WithField("plugin", config.Name).Error("Invalid plugin configuration")
+		for _, cfg := range req.RequiredPlugins {
+			if err := manager.ValidatePlugin(cfg.Name, cfg); err != nil {
+				s.logger.WithError(err).WithField("plugin", cfg.Name).Error("Invalid plugin configuration")
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid plugin configuration: %v", err)})
 				return
 			}
@@ -1029,26 +1042,26 @@ func (s *AdminServer) validatePlugin(plugin types.PluginConfig) error {
 func (s *AdminServer) createUpstream(c *gin.Context) {
 	gatewayID := c.Param("gateway_id")
 
-	var upstream models.Upstream
-	if err := c.ShouldBindJSON(&upstream); err != nil {
+	var entity models.Upstream
+	if err := c.ShouldBindJSON(&entity); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	upstream.GatewayID = gatewayID
+	entity.GatewayID = gatewayID
 
-	if err := s.repo.CreateUpstream(c.Request.Context(), &upstream); err != nil {
+	if err := s.repo.CreateUpstream(c.Request.Context(), &entity); err != nil {
 		s.logger.WithError(err).Error("Failed to create upstream")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Cache the upstream
-	if err := s.cache.SaveUpstream(c.Request.Context(), gatewayID, &upstream); err != nil {
+	if err := s.cache.SaveUpstream(c.Request.Context(), gatewayID, &entity); err != nil {
 		s.logger.WithError(err).Error("Failed to cache upstream")
 	}
 
-	c.JSON(http.StatusCreated, upstream)
+	c.JSON(http.StatusCreated, entity)
 }
 
 func (s *AdminServer) listUpstreams(c *gin.Context) {
@@ -1102,54 +1115,54 @@ func (s *AdminServer) getUpstream(c *gin.Context) {
 	// Try to get from cache first
 	upstreamKey := fmt.Sprintf(cache.UpstreamKeyPattern, gatewayID, upstreamID)
 	if upstreamJSON, err := s.cache.Get(c.Request.Context(), upstreamKey); err == nil {
-		var upstream models.Upstream
-		if err := json.Unmarshal([]byte(upstreamJSON), &upstream); err == nil {
-			c.JSON(http.StatusOK, upstream)
+		var entity models.Upstream
+		if err := json.Unmarshal([]byte(upstreamJSON), &entity); err == nil {
+			c.JSON(http.StatusOK, entity)
 			return
 		}
 	}
 
 	// If not in cache, get from database
-	upstream, err := s.repo.GetUpstream(c.Request.Context(), upstreamID)
+	entity, err := s.upstreamFinder.Find(c.Request.Context(), gatewayID, upstreamID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Upstream not found"})
 		return
 	}
 
 	// Cache the upstream
-	if err := s.cache.SaveUpstream(c.Request.Context(), gatewayID, upstream); err != nil {
+	if err := s.cache.SaveUpstream(c.Request.Context(), gatewayID, entity); err != nil {
 		s.logger.WithError(err).Error("Failed to cache upstream")
 	}
 
-	c.JSON(http.StatusOK, upstream)
+	c.JSON(http.StatusOK, entity)
 }
 
 func (s *AdminServer) updateUpstream(c *gin.Context) {
 	gatewayID := c.Param("gateway_id")
 	upstreamID := c.Param("upstream_id")
 
-	var upstream models.Upstream
-	if err := c.ShouldBindJSON(&upstream); err != nil {
+	var entity models.Upstream
+	if err := c.ShouldBindJSON(&entity); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Ensure IDs match
-	upstream.ID = upstreamID
-	upstream.GatewayID = gatewayID
+	entity.ID = upstreamID
+	entity.GatewayID = gatewayID
 
-	if err := s.repo.UpdateUpstream(c.Request.Context(), &upstream); err != nil {
+	if err := s.repo.UpdateUpstream(c.Request.Context(), &entity); err != nil {
 		s.logger.WithError(err).Error("Failed to update upstream")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Cache the updated upstream
-	if err := s.cache.SaveUpstream(c.Request.Context(), gatewayID, &upstream); err != nil {
+	if err := s.cache.SaveUpstream(c.Request.Context(), gatewayID, &entity); err != nil {
 		s.logger.WithError(err).Error("Failed to cache upstream")
 	}
 
-	c.JSON(http.StatusOK, upstream)
+	c.JSON(http.StatusOK, entity)
 }
 
 func (s *AdminServer) deleteUpstream(c *gin.Context) {
