@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"log"
 	"os"
 	"path/filepath"
@@ -183,6 +184,9 @@ func main() {
 		logger.Fatalf("Failed to initialize cache: %v", err)
 	}
 
+	plugins.InitializePlugins(cacheInstance, logger)
+	manager := plugins.GetManager()
+
 	// Initialize repository
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
 	upstreamRepository := repository.NewUpstreamRepository(db.DB)
@@ -196,6 +200,7 @@ func main() {
 		Logger:         logger,
 		Cache:          cacheInstance,
 		Repo:           repo,
+		Manager:        manager,
 		UpstreamFinder: upstreamFinder,
 	}
 
@@ -204,6 +209,7 @@ func main() {
 		Logger:         logger,
 		Cache:          cacheInstance,
 		Repo:           repo,
+		Manager:        manager,
 		UpstreamFinder: upstreamFinder,
 		SkipAuthCheck:  false,
 	}

@@ -2,10 +2,10 @@ package middleware
 
 import (
 	"fmt"
-	"github.com/NeuralTrust/TrustGate/pkg/metrics"
-	"github.com/gofiber/fiber/v2"
 	"strconv"
 
+	"github.com/NeuralTrust/TrustGate/pkg/metrics"
+	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
 

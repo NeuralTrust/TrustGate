@@ -2,18 +2,17 @@ package server
 
 import (
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	"time"
-
-	"github.com/gin-gonic/gin"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/sirupsen/logrus"
-
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/sirupsen/logrus"
+	"github.com/valyala/fasthttp"
+	"github.com/valyala/fasthttp/fasthttpadaptor"
+	"strings"
+	"time"
 )
 
 // Server interface defines the common behavior for all servers
@@ -26,41 +25,37 @@ type BaseServer struct {
 	cache          *cache.Cache
 	repo           *database.Repository
 	logger         *logrus.Logger
-	router         *gin.Engine
+	router         *fiber.App
 	metricsStarted bool
 }
 
-func init() {
-	// Set Gin mode to release by default
-	gin.SetMode(gin.ReleaseMode)
-	// Disable Gin's default logging globally
-	gin.DefaultWriter = io.Discard
-}
-
 func NewBaseServer(config *config.Config, cache *cache.Cache, repo *database.Repository, logger *logrus.Logger) *BaseServer {
-	// Create a new Gin router with default middleware
-	router := gin.New()
-
-	// Disable all Gin logging middleware
-	router.Use(gin.Recovery())
-
+	r := fiber.New(fiber.Config{
+		Prefork:               true,
+		DisableStartupMessage: true,
+	})
 	return &BaseServer{
 		config: config,
 		cache:  cache,
 		repo:   repo,
 		logger: logger,
-		router: router,
+		router: r,
 	}
+}
+
+func healthHandler(ctx *fasthttp.RequestCtx) {
+
 }
 
 // setupHealthCheck adds a health check endpoint to the server
 func (s *BaseServer) setupHealthCheck() {
-	s.router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
+	s.router.Get("/health", func(ctx *fiber.Ctx) error {
+		return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
 			"status": "healthy",
 			"time":   time.Now().Format(time.RFC3339),
 		})
 	})
+
 }
 
 // isProxyServer returns true if this is a proxy server instance
@@ -74,39 +69,36 @@ func (s *BaseServer) runServer(addr string) error {
 	if !s.isProxyServer() {
 		s.setupHealthCheck()
 	}
-	return s.router.Run(addr)
+	return s.router.Listen(addr)
 }
 
 func (s *BaseServer) setupMetricsEndpoint() {
-	// Only start metrics server once
+	// Ensure metrics server starts only once
 	if s.metricsStarted {
 		return
 	}
 	s.metricsStarted = true
 
-	// Create a new router for metrics
-	metricsRouter := gin.New()
-	metricsRouter.Use(gin.Recovery())
+	metricsApp := fiber.New()
 
-	// Add prometheus metrics endpoint
-	metricsRouter.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	metricsApp.Use(recover.New())
+
+	metricsApp.Get("/metrics", func(c *fiber.Ctx) error {
+		handler := fasthttpadaptor.NewFastHTTPHandler(promhttp.Handler())
+		handler(c.Context())
+		return nil
+	})
 
 	// Start metrics server on a different port
 	go func() {
-		if err := metricsRouter.Run(fmt.Sprintf(":%d", s.config.Server.MetricsPort)); err != nil {
+		port := s.config.Server.MetricsPort
+		addr := fmt.Sprintf(":%d", port)
+		if err := metricsApp.Listen(addr); err != nil {
 			if !strings.Contains(err.Error(), "address already in use") {
 				s.logger.WithError(err).Error("Failed to start metrics server")
 			}
 		}
 	}()
-}
-
-// InitializeMetrics sets up the metrics endpoint if needed
-func (s *BaseServer) InitializeMetrics() {
-	// Only initialize metrics if this is not a proxy server
-	if !s.isProxyServer() {
-		s.setupMetricsEndpoint()
-	}
 }
 
 // Run implements the Server interface

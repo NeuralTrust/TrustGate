@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
+	"github.com/gofiber/fiber/v2"
 	"net/http"
 	"strconv"
 	"strings"
@@ -33,22 +34,21 @@ type (
 		Cache          *cache.Cache
 		Repo           *database.Repository
 		Logger         *logrus.Logger
+		Manager        *plugins.Manager
 		ExtraPlugins   []pluginiface.Plugin
 		UpstreamFinder upstream.Finder
 	}
 	AdminServer struct {
 		*BaseServer
 		upstreamFinder upstream.Finder
+		manager        *plugins.Manager
 	}
 )
 
 func NewAdminServer(di AdminServerDI) *AdminServer {
-	// Initialize plugins
-	plugins.InitializePlugins(di.Cache, di.Logger)
-
 	// Register extra plugins
 	for _, plugin := range di.ExtraPlugins {
-		if err := plugins.GetManager().RegisterPlugin(plugin); err != nil {
+		if err := di.Manager.RegisterPlugin(plugin); err != nil {
 			di.Logger.WithError(err).Error("Failed to register plugin")
 		}
 	}
@@ -56,10 +56,11 @@ func NewAdminServer(di AdminServerDI) *AdminServer {
 	return &AdminServer{
 		BaseServer:     NewBaseServer(di.Config, di.Cache, di.Repo, di.Logger),
 		upstreamFinder: di.UpstreamFinder,
+		manager:        di.Manager,
 	}
 }
 
-func (s *AdminServer) AddRoutes(router *gin.RouterGroup) {
+func (s *AdminServer) AddRoutes(router fiber.Router) {
 	// Base routes that are common to both CE and EE editions
 	s.addBaseRoutes(router)
 
@@ -67,7 +68,7 @@ func (s *AdminServer) AddRoutes(router *gin.RouterGroup) {
 }
 
 // addBaseRoutes adds the core/common routes used in both CE and EE editions
-func (s *AdminServer) addBaseRoutes(router *gin.RouterGroup) {
+func (s *AdminServer) addBaseRoutes(router fiber.Router) {
 	v1 := router.Group("/api/v1")
 	{
 		gateways := v1.Group("/gateways")
