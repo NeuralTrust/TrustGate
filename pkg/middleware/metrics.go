@@ -2,31 +2,31 @@ package middleware
 
 import (
 	"fmt"
+	"strconv"
+
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/gofiber/fiber/v2"
-	"strconv"
 
 	"github.com/sirupsen/logrus"
 )
 
-// Define constant keys for context values
 const (
 	GatewayIDKey = "gateway_id"
 	ServiceIDKey = "service_id"
 	RouteIDKey   = "route_id"
 )
 
-type MetricsMiddleware struct {
+type metricsMiddleware struct {
 	logger *logrus.Logger
 }
 
-func NewMetricsMiddleware(logger *logrus.Logger) *MetricsMiddleware {
-	return &MetricsMiddleware{
+func NewMetricsMiddleware(logger *logrus.Logger) Middleware {
+	return &metricsMiddleware{
 		logger: logger,
 	}
 }
 
-func (m *MetricsMiddleware) MetricsMiddleware() fiber.Handler {
+func (m *metricsMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// Get gateway ID from Fiber context
 		gatewayID, ok := c.Locals(GatewayIDKey).(string)
@@ -44,7 +44,7 @@ func (m *MetricsMiddleware) MetricsMiddleware() fiber.Handler {
 		err := c.Next()
 
 		// Always record request total
-		status := GetStatusClass(strconv.Itoa(c.Response().StatusCode()))
+		status := m.getStatusClass(strconv.Itoa(c.Response().StatusCode()))
 		metrics.GatewayRequestTotal.WithLabelValues(
 			gatewayID,
 			c.Method(),
@@ -61,7 +61,7 @@ func (m *MetricsMiddleware) MetricsMiddleware() fiber.Handler {
 }
 
 // GetStatusClass returns either the specific status code or its class (e.g., "2xx")
-func GetStatusClass(status string) string {
+func (m *metricsMiddleware) getStatusClass(status string) string {
 	code, err := strconv.Atoi(status)
 	if err != nil {
 		return "5xx" // Return server error class if status code is invalid

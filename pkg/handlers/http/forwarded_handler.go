@@ -1,42 +1,49 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/models"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
-	"github.com/gin-gonic/gin"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
-	"github.com/valyala/fasthttp"
-	"io"
-	"net/http"
-	"strings"
-	"time"
 )
 
 const (
 	GatewayCacheTTL = 1 * time.Hour
-	RulesCacheTTL   = 5 * time.Minute
-	PluginCacheTTL  = 30 * time.Minute
 )
 
-type ForwardedHandler struct {
+type forwardedHandler struct {
 	logger         *logrus.Logger
 	repo           *database.Repository
 	cache          *cache.Cache
 	gatewayCache   *common.TTLMap
 	upstreamFinder upstream.Finder
-	skipAuthCheck  bool
+	providers      map[string]config.ProviderConfig
+	pluginManager  *plugins.Manager
+	loadBalancers  sync.Map
 }
 
 func NewForwardedHandler(
@@ -44,90 +51,62 @@ func NewForwardedHandler(
 	repo *database.Repository,
 	cache *cache.Cache,
 	upstreamFinder upstream.Finder,
-	skipAuthCheck bool,
-) *ForwardedHandler {
-
+	providers map[string]config.ProviderConfig,
+	pluginManager *plugins.Manager,
+) Handler {
 	gatewayCache := cache.CreateTTLMap("gateway", GatewayCacheTTL)
-
-	return &ForwardedHandler{
+	return &forwardedHandler{
 		logger:         logger,
 		repo:           repo,
 		cache:          cache,
 		gatewayCache:   gatewayCache,
-		skipAuthCheck:  skipAuthCheck,
 		upstreamFinder: upstreamFinder,
+		providers:      providers,
+		pluginManager:  pluginManager,
 	}
 }
 
-func (h *ForwardedHandler) Handle(ctx *fiber.Ctx) error {
-
-	// headers := ctx.GetRespHeaders()
-	// reqHost := ctx.Hostname()
-	// reqMethod := ctx.Method()
-	// requestUri := ctx.OriginalURL()
-
-	// Handle auth check - skipAuthCheck now means "using EE auth"
-	if !h.skipAuthCheck {
-		// CE auth handling
-		isPublic := h.isPublicRoute(ctx)
-		if !isPublic {
-			authHandler := authMiddleware.ValidateAPIKey()
-			authHandler(c)
-			if c.IsAborted() {
-				return
-			}
-		}
-	}
-	// Note: When skipAuthCheck is true, we don't do CE auth,
-	// allowing EE to handle auth in its middleware chain
-
-	// Only proceed with HandleForward if not aborted
-	if !c.IsAborted() {
-		s.HandleForward(c)
-	}
-
-	return nil
-
+type RequestData struct {
+	Headers map[string][]string
+	Body    []byte
+	Uri     string
+	Host    string
+	Method  string
 }
 
-func (h *ForwardedHandler) HandleForward(c *gin.Context) {
-	// Check if request was already aborted
-	if c.IsAborted() {
-		h.logger.Debug("Skipping HandleForward for aborted request")
-		return
-	}
+func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
-	// Skip handling for system routes
-	path := c.Request.URL.Path
-	if path == AdminHealthPath || path == HealthPath || path == PingPath {
-		c.Next()
-		return
+	headers := make(map[string][]string)
+	c.Request().Header.VisitAll(func(key, value []byte) {
+		headers[string(key)] = append(headers[string(key)], string(value))
+	})
+
+	reqData := RequestData{
+		Headers: headers,
+		Body:    c.Body(),
+		Uri:     c.OriginalURL(),
+		Host:    c.Hostname(),
+		Method:  c.Method(),
 	}
 
 	start := time.Now()
 
-	// Add logger to context
-	ctx := context.WithValue(c.Request.Context(), common.LoggerKey, s.logger)
+	gatewayIDAny := c.Locals(common.GatewayContextKey)
 
-	method := c.Request.Method
-
-	// Get gateway ID from context
-	gatewayIDAny, exists := c.Get(middleware.GatewayContextKey)
-	if !exists {
-		h.logger.Error("Gateway ID not found in gin context")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-		return
+	if gatewayIDAny == "" {
+		h.logger.Error("gateway ID not found in Fiber context")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal server error"})
 	}
+
 	gatewayID, ok := gatewayIDAny.(string)
 	if !ok {
-		h.logger.Error("Gateway ID not found in gin context")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-		return
+		h.logger.Error("gateway ID not found in Fiber context")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
 	}
 
 	// Get metadata from gin context
 	var metadata map[string]interface{}
-	if md, exists := c.Get("metadata"); exists {
+	if md := c.Locals(common.MetadataKey); md != nil {
 		if m, ok := md.(map[string]interface{}); ok {
 			metadata = m
 		}
@@ -135,64 +114,46 @@ func (h *ForwardedHandler) HandleForward(c *gin.Context) {
 
 	if metadata == nil {
 		metadata = make(map[string]interface{})
-		if apiKey, exists := c.Get("api_key"); exists && apiKey != nil {
-			metadata["api_key"] = apiKey
+		apiKey := c.Locals(common.ApiKeyContextKey)
+		if apiKey != "" {
+			metadata[string(common.ApiKeyContextKey)] = apiKey
 		}
 	}
 
-	fastCtx, err := getContextValue[*fasthttp.RequestCtx](c.Request.Context(), common.FastHTTPKey)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to get FastHTTP context")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-		return
-	}
 	// Create the RequestContext
 	reqCtx := &types.RequestContext{
-		Context:     ctx,
-		FasthttpCtx: fastCtx,
-		GatewayID:   gatewayID,
-		Headers:     make(map[string][]string),
-		Method:      method,
-		Path:        path,
-		Query:       c.Request.URL.Query(),
-		Metadata:    metadata,
+		Context:   c.Context(),
+		GatewayID: gatewayID,
+		Headers:   make(map[string][]string),
+		Method:    reqData.Method,
+		Path:      c.Path(),
+		Query:     h.getQueryParams(c),
+		Metadata:  metadata,
+		Body:      c.Body(),
 	}
-	// Read the request body
-	bodyData, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to read request body")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read request body"})
-		return
-	}
-
-	// Set the body in the request context
-	reqCtx.Body = bodyData
-
-	// Restore the request body for later use
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyData))
 
 	// Copy request headers
-	for key, values := range c.Request.Header {
+	for key, values := range c.GetReqHeaders() {
 		reqCtx.Headers[key] = values
 	}
 
 	// Create the ResponseContext
 	respCtx := &types.ResponseContext{
-		Context:   ctx,
+		Context:   c.Context(),
 		GatewayID: gatewayID,
 		Headers:   make(map[string][]string),
 		Metadata:  make(map[string]interface{}),
 	}
 
 	// Get gateway data with plugins
-	gatewayData, err := h.getGatewayData(ctx, gatewayID)
-	reqCtx.Metadata["gateway_data"] = gatewayData
+	gatewayData, err := h.getGatewayData(c.Context(), gatewayID)
+	reqCtx.Metadata[string(common.GatewayDataContextKey)] = gatewayData
 
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to get gateway data")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
 	}
+
 	// Find matching rule
 	var matchingRule *types.ForwardingRule
 	for _, rule := range gatewayData.Rules {
@@ -206,7 +167,7 @@ func (h *ForwardedHandler) HandleForward(c *gin.Context) {
 		// Check if method is allowed
 		methodAllowed := false
 		for _, m := range rule.Methods {
-			if m == method {
+			if m == reqData.Method {
 				methodAllowed = true
 				break
 			}
@@ -217,7 +178,7 @@ func (h *ForwardedHandler) HandleForward(c *gin.Context) {
 		}
 
 		// Check if path matches
-		if strings.HasPrefix(path, rule.Path) {
+		if strings.HasPrefix(c.Path(), rule.Path) {
 			// Convert the rule to models.ForwardingRule
 			modelRule := types.ForwardingRule{
 				ID:            rule.ID,
@@ -247,58 +208,63 @@ func (h *ForwardedHandler) HandleForward(c *gin.Context) {
 
 	if matchingRule == nil {
 		h.logger.WithFields(logrus.Fields{
-			"path":   path,
-			"method": method,
+			"path":   c.Path(),
+			"method": reqData.Method,
 		}).Debug("No matching rule found")
-		c.JSON(http.StatusNotFound, gin.H{"error": "No matching rule found"})
-		return
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "No matching rule found"})
 	}
 
 	// Configure plugins for this request
-	if err := h.ConfigurePlugins(gatewayData.Gateway, matchingRule); err != nil {
+	if err := h.configurePlugins(gatewayData.Gateway, matchingRule); err != nil {
 		h.logger.WithError(err).Error("Failed to configure plugins")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to configure plugins"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to configure plugins"})
 	}
 
-	// Execute pre-request plugins
-	if _, err := h.pluginManager.ExecuteStage(ctx, types.PreRequest, gatewayID, matchingRule.ID, reqCtx, respCtx); err != nil {
-		if pluginErr, ok := err.(*types.PluginError); ok {
+	if _, err := h.pluginManager.ExecuteStage(
+		c.Context(),
+		types.PreRequest,
+		gatewayID,
+		matchingRule.ID,
+		reqCtx,
+		respCtx,
+	); err != nil {
+		var pluginErr *types.PluginError
+		if errors.As(err, &pluginErr) {
 			// Copy headers from response context
 			for k, values := range respCtx.Headers {
 				for _, v := range values {
-					c.Header(k, v)
+					c.Set(k, v)
 				}
 			}
-			c.JSON(pluginErr.StatusCode, gin.H{
+			return c.Status(pluginErr.StatusCode).JSON(fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
-			return
 		}
+
 		if respCtx.StopProcessing {
 			h.logger.Debug("Stopping request processing due to plugin response (e.g., cache hit)")
 			// Copy headers from the plugin response
 			for k, values := range respCtx.Headers {
 				for _, v := range values {
-					c.Header(k, v)
+					c.Set(k, v)
 				}
 			}
 			// Return the response from the plugin
-			c.Data(respCtx.StatusCode, "application/json", respCtx.Body)
-			return
+			return c.Status(respCtx.StatusCode).Send(respCtx.Body) // `Send()` en lugar de `c.Data()`
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Plugin execution failed"})
-		return
+
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
 	}
+
 	// Forward the request
 	startTime := time.Now()
 	response, err := h.ForwardRequest(reqCtx, matchingRule)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to forward request")
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to forward request"})
-		return
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Failed to forward request"})
 	}
+
 	// Record upstream latency if available
 	if metrics.Config.EnableUpstreamLatency {
 		upstreamLatency := float64(time.Since(startTime).Milliseconds())
@@ -316,50 +282,55 @@ func (h *ForwardedHandler) HandleForward(c *gin.Context) {
 		respCtx.Headers[k] = v
 	}
 
-	// If it's an error response (4xx or 5xx), return the original error response
-	if response.StatusCode >= 400 {
+	if response.StatusCode >= http.StatusBadRequest {
 		// Parse the error response
 		var errorResponse map[string]interface{}
 		if err := json.Unmarshal(response.Body, &errorResponse); err != nil {
 			// If we can't parse the error, return a generic error
-			c.JSON(response.StatusCode, gin.H{"error": "Upstream service error"})
-			return
+			return c.Status(response.StatusCode).JSON(fiber.Map{"error": "Upstream service error"})
 		}
 
 		// Copy all headers from response context to client response
 		for k, values := range respCtx.Headers {
 			for _, v := range values {
-				c.Header(k, v)
+				c.Set(k, v)
 			}
 		}
 
 		// Return the original error response
-		c.JSON(response.StatusCode, errorResponse)
-		return
+		return c.Status(response.StatusCode).JSON(errorResponse)
 	}
 
 	// Execute pre-response plugins
-	if _, err := s.pluginManager.ExecuteStage(ctx, types.PreResponse, gatewayID, matchingRule.ID, reqCtx, respCtx); err != nil {
-		if pluginErr, ok := err.(*types.PluginError); ok {
+	if _, err := h.pluginManager.ExecuteStage(c.Context(), types.PreResponse, gatewayID, matchingRule.ID, reqCtx, respCtx); err != nil {
+		var pluginErr *types.PluginError
+		if errors.As(err, &pluginErr) {
 			// Copy headers from response context
 			for k, values := range respCtx.Headers {
 				for _, v := range values {
-					c.Header(k, v)
+					c.Set(k, v)
 				}
 			}
-			c.JSON(pluginErr.StatusCode, gin.H{
+			return c.Status(pluginErr.StatusCode).JSON(fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
-			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Plugin execution failed"})
-		return
+
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
 	}
 
 	// Execute post-response plugins
-	if _, err := h.pluginManager.ExecuteStage(ctx, types.PostResponse, gatewayID, matchingRule.ID, reqCtx, respCtx); err != nil {
-		if pluginErr, ok := err.(*types.PluginError); ok {
+	if _, err := h.pluginManager.ExecuteStage(
+		c.Context(),
+		types.PostResponse,
+		gatewayID,
+		matchingRule.ID,
+		reqCtx,
+		respCtx,
+	); err != nil {
+		var pluginErr *types.PluginError
+		if errors.As(err, &pluginErr) {
 			// Copy headers from response context
 			h.logger.WithFields(logrus.Fields{
 				"headers": respCtx.Headers,
@@ -367,31 +338,32 @@ func (h *ForwardedHandler) HandleForward(c *gin.Context) {
 
 			for k, values := range respCtx.Headers {
 				for _, v := range values {
-					c.Header(k, v)
+					c.Set(k, v)
 				}
 			}
-			c.JSON(pluginErr.StatusCode, gin.H{
+
+			return c.Status(pluginErr.StatusCode).JSON(fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
-			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Plugin execution failed"})
-		return
+
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
 	}
 
 	// Copy all headers from response context to client response
 	for k, values := range respCtx.Headers {
 		for _, v := range values {
-			c.Header(k, v)
+			c.Set(k, v)
 		}
 	}
+
 	duration := time.Since(start).Milliseconds()
 
 	if metrics.Config.EnableLatency {
 		metrics.GatewayRequestLatency.WithLabelValues(
 			gatewayID,
-			c.Request.URL.Path,
+			c.Path(),
 		).Observe(float64(duration))
 	}
 
@@ -404,14 +376,23 @@ func (h *ForwardedHandler) HandleForward(c *gin.Context) {
 	}
 
 	// Write the response body
-	c.Data(respCtx.StatusCode, "application/json", respCtx.Body)
+	return c.Status(respCtx.StatusCode).Send(respCtx.Body)
+
 }
 
-func (h *ForwardedHandler) getGatewayData(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
+func (h *forwardedHandler) getGatewayDataFromCache(value interface{}) (*types.GatewayData, error) {
+	data, ok := value.(*types.GatewayData)
+	if !ok {
+		return nil, fmt.Errorf("invalid type assertion for gateway data")
+	}
+	return data, nil
+}
+
+func (h *forwardedHandler) getGatewayData(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
 	// Try memory cache first
 	if cached, ok := h.gatewayCache.Get(gatewayID); ok {
 		h.logger.WithField("fromCache", "memory").Debug("Gateway data found in memory cache")
-		data, err := getGatewayDataFromCache(cached)
+		data, err := h.getGatewayDataFromCache(cached)
 		if err != nil {
 			h.logger.WithError(err).Error("Failed to get gateway data from cache")
 		} else {
@@ -438,7 +419,7 @@ func (h *ForwardedHandler) getGatewayData(ctx context.Context, gatewayID string)
 }
 
 // Helper function to check if a route is public
-func (h *ForwardedHandler) isPublicRoute(ctx *fiber.Ctx) bool {
+func (h *forwardedHandler) isPublicRoute(ctx *fiber.Ctx) bool {
 	path := ctx.Path()
 	if strings.HasPrefix(path, "/__/") || path == "/health" {
 		return true
@@ -463,9 +444,9 @@ func (h *ForwardedHandler) isPublicRoute(ctx *fiber.Ctx) bool {
 	return false
 }
 
-func (h *ForwardedHandler) configurePlugins(gateway *types.Gateway, rule *types.ForwardingRule) error {
+func (h *forwardedHandler) configurePlugins(gateway *types.Gateway, rule *types.ForwardingRule) error {
 	// Configure gateway-level plugins
-	gatewayChains := s.convertGatewayPlugins(gateway)
+	gatewayChains := h.convertGatewayPlugins(gateway)
 	h.logger.WithFields(logrus.Fields{
 		"gatewayChains": gatewayChains,
 	}).Debug("Gateway chains")
@@ -480,7 +461,7 @@ func (h *ForwardedHandler) configurePlugins(gateway *types.Gateway, rule *types.
 			"plugins": rule.PluginChain,
 		}).Debug("Rule plugins")
 
-		if err := s.pluginManager.SetPluginChain(types.RuleLevel, rule.ID, rule.PluginChain); err != nil {
+		if err := h.pluginManager.SetPluginChain(types.RuleLevel, rule.ID, rule.PluginChain); err != nil {
 			return fmt.Errorf("failed to configure rule plugins: %w", err)
 		}
 	}
@@ -488,7 +469,7 @@ func (h *ForwardedHandler) configurePlugins(gateway *types.Gateway, rule *types.
 	return nil
 }
 
-func (h *ForwardedHandler) ForwardRequest(req *types.RequestContext, rule *types.ForwardingRule) (*types.ResponseContext, error) {
+func (h *forwardedHandler) ForwardRequest(req *types.RequestContext, rule *types.ForwardingRule) (*types.ResponseContext, error) {
 	service, err := h.repo.GetService(req.Context, rule.ServiceID)
 	if err != nil {
 		return nil, fmt.Errorf("service not found: %w", err)
@@ -564,7 +545,7 @@ func (h *ForwardedHandler) ForwardRequest(req *types.RequestContext, rule *types
 }
 
 // Add helper method to create or get load balancer
-func (h *ForwardedHandler) getOrCreateLoadBalancer(upstream *models.Upstream) (*loadbalancer.LoadBalancer, error) {
+func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *models.Upstream) (*loadbalancer.LoadBalancer, error) {
 	if lb, ok := h.loadBalancers.Load(upstream.ID); ok {
 		if lb, ok := lb.(*loadbalancer.LoadBalancer); ok {
 			return lb, nil
@@ -580,7 +561,7 @@ func (h *ForwardedHandler) getOrCreateLoadBalancer(upstream *models.Upstream) (*
 	return lb, nil
 }
 
-func (h *ForwardedHandler) getGatewayDataFromRedis(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
+func (h *forwardedHandler) getGatewayDataFromRedis(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
 	// Get gateway from Redis
 	gatewayKey := fmt.Sprintf("gateway:%s", gatewayID)
 	gatewayJSON, err := h.cache.Get(ctx, gatewayKey)
@@ -612,7 +593,7 @@ func (h *ForwardedHandler) getGatewayDataFromRedis(ctx context.Context, gatewayI
 }
 
 // Helper functions to convert between models and types
-func (h *ForwardedHandler) convertModelToTypesGateway(g *models.Gateway) *types.Gateway {
+func (h *forwardedHandler) convertModelToTypesGateway(g *models.Gateway) *types.Gateway {
 	var requiredPlugins []types.PluginConfig
 	for _, pluginConfig := range g.RequiredPlugins {
 		requiredPlugins = append(requiredPlugins, pluginConfig)
@@ -626,7 +607,7 @@ func (h *ForwardedHandler) convertModelToTypesGateway(g *models.Gateway) *types.
 	}
 }
 
-func (h *ForwardedHandler) getGatewayDataFromDB(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
+func (h *forwardedHandler) getGatewayDataFromDB(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
 	// Get gateway from database
 	gateway, err := h.repo.GetGateway(ctx, gatewayID)
 	if err != nil {
@@ -660,7 +641,7 @@ func (h *ForwardedHandler) getGatewayDataFromDB(ctx context.Context, gatewayID s
 	return gatewayData, nil
 }
 
-func (h *ForwardedHandler) cacheGatewayData(
+func (h *forwardedHandler) cacheGatewayData(
 	ctx context.Context,
 	gatewayID string,
 	gateway *models.Gateway,
@@ -698,7 +679,7 @@ func (h *ForwardedHandler) cacheGatewayData(
 	return nil
 }
 
-func (h *ForwardedHandler) convertModelToTypesRules(rules []models.ForwardingRule) []types.ForwardingRule {
+func (h *forwardedHandler) convertModelToTypesRules(rules []models.ForwardingRule) []types.ForwardingRule {
 	var result []types.ForwardingRule
 	for _, r := range rules {
 		var pluginChain []types.PluginConfig
@@ -732,7 +713,7 @@ func (h *ForwardedHandler) convertModelToTypesRules(rules []models.ForwardingRul
 	return result
 }
 
-func (h *ForwardedHandler) getJSONBytes(value interface{}) ([]byte, error) {
+func (h *forwardedHandler) getJSONBytes(value interface{}) ([]byte, error) {
 	switch v := value.(type) {
 	case []byte:
 		return v, nil
@@ -750,29 +731,19 @@ func (h *ForwardedHandler) getJSONBytes(value interface{}) ([]byte, error) {
 	}
 }
 
-func (h *ForwardedHandler) doForwardRequest(
+func (h *forwardedHandler) doForwardRequest(
 	req *types.RequestContext,
 	rule *types.ForwardingRule,
 	target *types.UpstreamTarget,
 ) (*types.ResponseContext, error) {
-	client := &fasthttp.Client{
-		ReadTimeout:  time.Second * 30,
-		WriteTimeout: time.Second * 30,
-	}
 
-	httpReq := fasthttp.AcquireRequest()
-	httpResp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseRequest(httpReq)
-	defer fasthttp.ReleaseResponse(httpResp)
-
-	// Build target URL based on target type
+	// Build target URL
 	var targetURL string
 	if target.Provider != "" {
 		providerConfig, ok := h.providers[target.Provider]
 		if !ok {
 			return nil, fmt.Errorf("unsupported provider: %s", target.Provider)
 		}
-
 		endpointConfig, ok := providerConfig.Endpoints[target.Path]
 		if !ok {
 			return nil, fmt.Errorf("unsupported endpoint path: %s", target.Path)
@@ -790,31 +761,37 @@ func (h *ForwardedHandler) doForwardRequest(
 	if rule.StripPath {
 		targetURL = strings.TrimSuffix(targetURL, "/") + strings.TrimPrefix(req.Path, rule.Path)
 	}
-	httpReq.SetRequestURI(targetURL)
-	httpReq.Header.SetMethod(req.Method)
 
-	// Handle request body and check for streaming
+	// Prepare request body
+	var requestBody io.Reader
 	if len(req.Body) > 0 {
 		var requestData map[string]interface{}
 		if err := json.Unmarshal(req.Body, &requestData); err == nil {
 			if stream, ok := requestData["stream"].(bool); ok && stream {
-				return h.handleStreamingRequest(req, target, requestData)
+				return h.handleStreamingRequest(req, target)
 			}
 		}
-
-		// Non-streaming request - transform body if needed
+		// Transform body if needed
 		if target.Provider != "" {
 			transformedBody, err := h.transformRequestBody(req.Body, target)
 			if err != nil {
 				return nil, fmt.Errorf("failed to transform request body: %w", err)
 			}
-			httpReq.SetBody(transformedBody)
+			requestBody = bytes.NewBuffer(transformedBody)
 		} else {
-			httpReq.SetBody(req.Body)
+			requestBody = bytes.NewBuffer(req.Body)
 		}
+	} else {
+		requestBody = nil
 	}
 
-	// Copy headers and apply authentication
+	// Create HTTP request
+	httpReq, err := http.NewRequest(req.Method, targetURL, requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Copy headers
 	for k, v := range req.Headers {
 		for _, val := range v {
 			httpReq.Header.Add(k, val)
@@ -827,26 +804,444 @@ func (h *ForwardedHandler) doForwardRequest(
 	}
 	h.applyAuthentication(httpReq, &target.Credentials, req.Body)
 
+	// Create HTTP client
+	client := &http.Client{
+		Timeout: time.Second * 30,
+	}
+
 	// Make the request
-	if err := client.Do(httpReq, httpResp); err != nil {
+	httpResp, err := client.Do(httpReq)
+	if err != nil {
 		return nil, fmt.Errorf("failed to forward request: %w", err)
+	}
+	defer httpResp.Body.Close()
+
+	// Read response body
+	respBody, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Validate response status
+	statusCode := httpResp.StatusCode
+	if statusCode <= 0 || statusCode >= 600 {
+		return nil, fmt.Errorf("invalid status code received: %d", statusCode)
+	}
+	if statusCode < 200 || statusCode >= 300 {
+		return nil, fmt.Errorf("upstream returned status code %d: %s", statusCode, string(respBody))
 	}
 
 	// Set provider in response header
 	h.logger.WithFields(logrus.Fields{
 		"provider": target.Provider,
 	}).Debug("Selected provider")
-	httpResp.Header.Set("X-Selected-Provider", target.Provider)
 
-	// Handle response status
-	statusCode := httpResp.StatusCode()
-	if statusCode <= 0 || statusCode >= 600 {
-		return nil, fmt.Errorf("invalid status code received: %d", statusCode)
-	}
-	if statusCode < 200 || statusCode >= 300 {
-		respBody := httpResp.Body()
-		return nil, fmt.Errorf("upstream returned status code %d: %s", statusCode, string(respBody))
+	return h.createResponse(httpResp, respBody), nil
+}
+
+func (h *forwardedHandler) handleStreamingRequest(req *types.RequestContext, target *types.UpstreamTarget) (*types.ResponseContext, error) {
+	// Transform request body if needed
+	transformedBody, err := h.transformRequestBody(req.Body, target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to transform streaming request: %w", err)
 	}
 
-	return h.createResponse(httpResp), nil
+	// Update the request body with transformed data
+	req.Body = transformedBody
+
+	// Handle the streaming based on the provider
+	return h.handleStreamingResponse(req, target)
+}
+
+func (h *forwardedHandler) handleStreamingResponse(req *types.RequestContext, target *types.UpstreamTarget) (*types.ResponseContext, error) {
+	providerConfig, ok := h.providers[target.Provider]
+	if !ok {
+		return nil, fmt.Errorf("unsupported provider: %s", target.Provider)
+	}
+
+	endpointConfig, ok := providerConfig.Endpoints[target.Path]
+	if !ok {
+		return nil, fmt.Errorf("unsupported endpoint path: %s", target.Path)
+	}
+
+	upstreamURL := fmt.Sprintf("%s%s", providerConfig.BaseURL, endpointConfig.Path)
+
+	httpReq, err := http.NewRequestWithContext(req.Context, req.Method, upstreamURL, bytes.NewReader(req.Body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Copy headers
+	for k, v := range req.Headers {
+		if k != "Host" {
+			for _, val := range v {
+				httpReq.Header.Add(k, val)
+			}
+		}
+	}
+
+	// Set required headers for streaming
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("Cache-Control", "no-cache")
+	httpReq.Header.Set("Connection", "keep-alive")
+
+	// Apply authentication and target headers
+	if target.Credentials.HeaderValue != "" {
+		httpReq.Header.Set(target.Credentials.HeaderName, target.Credentials.HeaderValue)
+	}
+	for k, v := range target.Headers {
+		httpReq.Header.Set(k, v)
+	}
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make streaming request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return &types.ResponseContext{
+			StatusCode: resp.StatusCode,
+			Headers:    make(map[string][]string),
+			Body:       body,
+		}, nil
+	}
+
+	if w, ok := req.Context.Value(common.ResponseWriterKey).(http.ResponseWriter); ok {
+		// Copy response headers
+		for k, v := range resp.Header {
+			for _, val := range v {
+				w.Header().Add(k, val)
+			}
+		}
+
+		// Add rate limit headers if they exist in metadata
+		if rateLimitHeaders, ok := req.Metadata["rate_limit_headers"].(map[string][]string); ok {
+			for k, v := range rateLimitHeaders {
+				for _, val := range v {
+					w.Header().Set(k, val)
+				}
+			}
+		}
+		w.Header().Add("X-Selected-Provider", target.Provider)
+		w.WriteHeader(resp.StatusCode)
+
+		reader := bufio.NewReader(resp.Body)
+		var lastUsage map[string]interface{}
+
+		for {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				h.logger.WithError(err).Error("Error reading streaming response")
+				break
+			}
+
+			// Check if this is a data line
+			if bytes.HasPrefix(line, []byte("data: ")) {
+				// Check if this is the [DONE] message
+				if bytes.Equal(line, []byte("data: [DONE]\n")) {
+					// If we have usage from the last chunk, store it
+					if lastUsage != nil {
+						req.Metadata["token_usage"] = lastUsage
+						h.logger.WithFields(logrus.Fields{
+							"token_usage": lastUsage,
+						}).Debug("Stored token usage from streaming response")
+					}
+					// Write the [DONE] message
+					if _, err := w.Write(line); err != nil {
+						h.logger.WithError(err).Error("Failed to write [DONE] message")
+						break
+					}
+					continue
+				}
+
+				// For non-[DONE] messages, try to extract usage info
+				jsonData := line[6:] // Skip "data: " prefix
+				var response map[string]interface{}
+				if err := json.Unmarshal(jsonData, &response); err == nil {
+					if usage, ok := response["usage"].(map[string]interface{}); ok {
+						lastUsage = usage
+					}
+				}
+			}
+
+			// Write the line to the client
+			if _, err := w.Write(line); err != nil {
+				h.logger.WithError(err).Error("Failed to write SSE message")
+				break
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+
+		// If we have usage info but didn't get a [DONE] message, store it anyway
+		if lastUsage != nil && req.Metadata["token_usage"] == nil {
+			req.Metadata["token_usage"] = lastUsage
+			h.logger.WithFields(logrus.Fields{
+				"token_usage": lastUsage,
+			}).Debug("Stored token usage from last chunk")
+		}
+	}
+
+	return &types.ResponseContext{
+		StatusCode: resp.StatusCode,
+		Headers:    resp.Header,
+		Streaming:  true,
+		Metadata:   req.Metadata, // Include the metadata with token usage
+	}, nil
+}
+
+func (h *forwardedHandler) getQueryParams(c *fiber.Ctx) url.Values {
+	queryParams := url.Values{}
+	for key, value := range c.Queries() {
+		queryParams.Set(key, value)
+	}
+	return queryParams
+}
+
+func (h *forwardedHandler) convertGatewayPlugins(gateway *types.Gateway) []types.PluginConfig {
+	var chains []types.PluginConfig
+	for _, cfg := range gateway.RequiredPlugins {
+		if cfg.Enabled {
+			// Get the plugin to check its stages
+			plugin := h.pluginManager.GetPlugin(cfg.Name)
+			if plugin == nil {
+				h.logger.WithField("plugin", cfg.Name).Error("Plugin not found")
+				continue
+			}
+
+			// Check if this is a fixed-stage plugin
+			supportedStages := plugin.Stages()
+			if len(supportedStages) > 0 {
+				// For fixed-stage plugins, just add the config without a stage
+				// The stage will be set when executing based on the plugin's supported stages
+				pluginConfig := cfg
+				pluginConfig.Level = types.GatewayLevel
+				chains = append(chains, pluginConfig)
+			} else {
+				// For user-configured plugins, the stage must be set in the config
+				if cfg.Stage == "" {
+					h.logger.WithField("plugin", cfg.Name).Error("Stage not configured for plugin")
+					continue
+				}
+				pluginConfig := cfg
+				pluginConfig.Level = types.GatewayLevel
+				chains = append(chains, pluginConfig)
+			}
+		}
+	}
+	return chains
+}
+
+func (h *forwardedHandler) transformRequestBody(body []byte, target *types.UpstreamTarget) ([]byte, error) {
+	// Handle empty body case
+	if len(body) == 0 {
+		return body, nil
+	}
+
+	// Parse original request
+	var requestData map[string]interface{}
+	if err := json.Unmarshal(body, &requestData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal request body: %w", err)
+	}
+
+	targetEndpointConfig, ok := h.providers[target.Provider].Endpoints[target.Path]
+	if !ok || targetEndpointConfig.Schema == nil {
+		return nil, fmt.Errorf("missing schema for target provider %s endpoint %s", target.Provider, target.Path)
+	}
+
+	// Handle model validation and streaming
+	if modelName, ok := requestData["model"].(string); ok {
+		if !slices.Contains(target.Models, modelName) {
+			requestData["model"] = target.DefaultModel
+		}
+	} else {
+		requestData["model"] = target.DefaultModel
+	}
+
+	// Transform data to target format
+	transformed, err := h.mapBetweenSchemas(requestData, targetEndpointConfig.Schema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to transform request for provider %s endpoint %s: %w",
+			target.Provider, target.Path, err)
+	}
+
+	// Preserve streaming parameter if present in original request
+	if stream, ok := requestData["stream"].(bool); ok {
+		transformed["stream"] = stream
+	}
+	return json.Marshal(transformed)
+}
+
+func (h *forwardedHandler) mapBetweenSchemas(data map[string]interface{}, targetSchema *config.ProviderSchema) (map[string]interface{}, error) {
+	// When no source schema is provided, we just validate against target schema
+	if targetSchema == nil {
+		return nil, fmt.Errorf("missing target schema configuration")
+	}
+
+	result := make(map[string]interface{})
+
+	for targetKey, targetField := range targetSchema.RequestFormat {
+		value, err := h.extractValueByPath(data, targetField.Path)
+		if err != nil {
+			if targetField.Default != nil {
+				result[targetKey] = targetField.Default
+				continue
+			}
+			if targetField.Required {
+				return nil, fmt.Errorf("missing required field %s: %w", targetKey, err)
+			}
+			continue
+		}
+		result[targetKey] = value
+	}
+
+	return result, nil
+}
+
+func (h *forwardedHandler) extractValueByPath(data map[string]interface{}, path string) (interface{}, error) {
+	if path == "" {
+		return nil, fmt.Errorf("empty path")
+	}
+
+	// Direct field access for simple paths
+	if !strings.Contains(path, ".") && !strings.Contains(path, "[") {
+		if val, exists := data[path]; exists {
+			return val, nil
+		}
+		return nil, fmt.Errorf("key not found: %s", path)
+	}
+
+	// Split path into segments (e.g., "messages[0].content" -> ["messages", "[0]", "content"])
+	segments := strings.FieldsFunc(path, func(r rune) bool {
+		return r == '.' || r == '[' || r == ']'
+	})
+
+	var current interface{} = data
+	for i, segment := range segments {
+		if idx, err := strconv.Atoi(segment); err == nil {
+			if arr, ok := current.([]interface{}); ok {
+				if idx < 0 || idx >= len(arr) {
+					return nil, fmt.Errorf("array index out of bounds: %d", idx)
+				}
+				if i == len(segments)-1 {
+					return arr[idx], nil
+				}
+				// If not last segment, next value must be a map
+				if nextMap, ok := arr[idx].(map[string]interface{}); ok {
+					current = nextMap
+					continue
+				}
+				return nil, fmt.Errorf("expected object at index %d", idx)
+			}
+			return nil, fmt.Errorf("expected array for index access")
+		}
+
+		// Handle special paths
+		switch segment {
+		case "last":
+			if arr, ok := current.([]interface{}); ok {
+				if len(arr) == 0 {
+					return nil, fmt.Errorf("array is empty")
+				}
+				if i == len(segments)-1 {
+					return arr[len(arr)-1], nil
+				}
+				// If not last segment, next value must be a map
+				if nextMap, ok := arr[len(arr)-1].(map[string]interface{}); ok {
+					current = nextMap
+					continue
+				}
+				return nil, fmt.Errorf("expected object at last index")
+			}
+			return nil, fmt.Errorf("expected array for 'last' access")
+
+		default:
+			// Regular object property access
+			if currentMap, ok := current.(map[string]interface{}); ok {
+				if val, exists := currentMap[segment]; exists {
+					if i == len(segments)-1 {
+						return val, nil
+					}
+					current = val // Set current to the value for next iteration
+					continue
+				}
+				return nil, fmt.Errorf("key not found: %s", segment)
+			}
+			return nil, fmt.Errorf("expected object at path %s", segment)
+		}
+	}
+
+	return nil, fmt.Errorf("invalid path")
+}
+
+func (h *forwardedHandler) createResponse(resp *http.Response, body []byte) *types.ResponseContext {
+	response := &types.ResponseContext{
+		StatusCode: resp.StatusCode,
+		Headers:    make(map[string][]string),
+		Body:       body,
+	}
+
+	for key, values := range resp.Header {
+		response.Headers[key] = values
+	}
+
+	return response
+}
+
+func (h *forwardedHandler) applyAuthentication(req *http.Request, creds *types.Credentials, body []byte) {
+	if creds == nil {
+		h.logger.Debug("No credentials found")
+		return
+	}
+	h.logger.WithFields(logrus.Fields{
+		"creds": creds,
+	}).Debug("Applying authentication")
+
+	// Header-based authentication
+	if creds.HeaderName != "" && creds.HeaderValue != "" {
+		h.logger.WithFields(logrus.Fields{
+			"header_name": creds.HeaderName,
+			"has_value":   creds.HeaderValue != "",
+		}).Debug("Setting auth header")
+
+		req.Header.Set(creds.HeaderName, creds.HeaderValue)
+	}
+
+	// Parameter-based authentication
+	if creds.ParamName != "" && creds.ParamValue != "" {
+		if creds.ParamLocation == "query" {
+			// Modify the query parameters
+			q := req.URL.Query()
+			q.Set(creds.ParamName, creds.ParamValue)
+			req.URL.RawQuery = q.Encode()
+		} else if creds.ParamLocation == "body" && len(body) > 0 {
+			// Parse JSON body
+			var jsonBody map[string]interface{}
+			if err := json.Unmarshal(body, &jsonBody); err != nil {
+				h.logger.WithError(err).Error("Failed to parse request body")
+				return
+			}
+
+			// Add auth parameter
+			jsonBody[creds.ParamName] = creds.ParamValue
+
+			// Rewrite body
+			newBody, err := json.Marshal(jsonBody)
+			if err != nil {
+				h.logger.WithError(err).Error("Failed to marshal request body")
+				return
+			}
+
+			// Replace request body
+			req.Body = io.NopCloser(bytes.NewReader(newBody))
+			req.ContentLength = int64(len(newBody))
+		}
+	}
 }

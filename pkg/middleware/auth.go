@@ -2,9 +2,10 @@ package middleware
 
 import (
 	"context"
-	"fmt"
-	"github.com/gofiber/fiber/v2"
 	"strings"
+
+	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/gofiber/fiber/v2"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
@@ -12,20 +13,28 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type AuthMiddleware struct {
-	logger *logrus.Logger
-	db     *database.Repository
+type authMiddleware struct {
+	skipAuthCheck bool
+	logger        *logrus.Logger
+	db            *database.Repository
 }
 
-func NewAuthMiddleware(logger *logrus.Logger, repo *database.Repository) *AuthMiddleware {
-	return &AuthMiddleware{
-		logger: logger,
-		db:     repo,
+func NewAuthMiddleware(logger *logrus.Logger, repo *database.Repository, skipAuthCheck bool) Middleware {
+	return &authMiddleware{
+		skipAuthCheck: skipAuthCheck,
+		logger:        logger,
+		db:            repo,
 	}
 }
 
-func (m *AuthMiddleware) ValidateAPIKey() fiber.Handler {
+func (m *authMiddleware) Middleware() fiber.Handler {
 	return func(ctx *fiber.Ctx) error {
+		if !m.skipAuthCheck {
+			isPublic := m.isPublicRoute(ctx)
+			if isPublic {
+				return ctx.Next()
+			}
+		}
 		// Skip validation for system endpoints
 		if strings.HasPrefix(ctx.Path(), "/__/") {
 			return ctx.Next()
@@ -47,7 +56,11 @@ func (m *AuthMiddleware) ValidateAPIKey() fiber.Handler {
 		}
 
 		// Get gateway ID from context
-		gatewayID := ctx.Locals(common.GatewayContextKey).(string)
+		gatewayID, ok := ctx.Locals(common.GatewayContextKey).(string)
+		if !ok || gatewayID == "" {
+			m.logger.Error("missing or invalid gateway in context ID")
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid or missing gateway ID"})
+		}
 		if gatewayID == "" {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
 		}
@@ -66,29 +79,35 @@ func (m *AuthMiddleware) ValidateAPIKey() fiber.Handler {
 
 		// Initialize metadata map
 		metadata := map[string]interface{}{
-			"api_key":    apiKey,
-			"gateway_id": gatewayID,
+			string(common.ApiKeyContextKey):  apiKey,
+			string(common.GatewayContextKey): gatewayID,
 		}
 
 		// Store in context
-		ctx.Locals("api_key", apiKey)
-		ctx.Locals("metadata", metadata)
+		ctx.Locals(common.ApiKeyContextKey, apiKey)
+		ctx.Locals(common.MetadataKey, metadata)
 
 		return ctx.Next()
 	}
 }
 
-// Add helper function for safe type assertions
-func getContextValue[T any](ctx context.Context, key interface{}) (T, error) {
-	value := ctx.Value(key)
-	if value == nil {
-		var zero T
-		return zero, fmt.Errorf("value not found in context for key: %v", key)
+func (m *authMiddleware) isPublicRoute(ctx *fiber.Ctx) bool {
+	path := ctx.Path()
+	if strings.HasPrefix(path, "/__/") || path == "/health" {
+		return true
 	}
-	result, ok := value.(T)
-	if !ok {
-		var zero T
-		return zero, fmt.Errorf("invalid type assertion for key: %v", key)
+	// Get gateway data from context
+	gatewayData := ctx.Locals(common.GatewayDataContextKey)
+	if gatewayData == "" {
+		return false
 	}
-	return result, nil
+	// Check if the route is marked as public in the gateway rules
+	if data, ok := gatewayData.(*types.GatewayData); ok {
+		for _, rule := range data.Rules {
+			if rule.Path == path && rule.Public {
+				return true
+			}
+		}
+	}
+	return false
 }
