@@ -3,22 +3,30 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
+	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
+	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
+	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
+	"github.com/NeuralTrust/TrustGate/pkg/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/sirupsen/logrus"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 )
 
@@ -185,7 +193,7 @@ func main() {
 	}
 
 	plugins.InitializePlugins(cacheInstance, logger)
-	manager := plugins.GetManager()
+	pluginManager := plugins.GetManager()
 
 	// Initialize repository
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
@@ -193,30 +201,131 @@ func main() {
 
 	// service
 	upstreamFinder := upstream.NewFinder(upstreamRepository, cacheInstance)
+	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
+	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
+	invalidateCachePublisher := infraCache.NewInvalidationPublisher(cacheInstance)
+	invalidateGatewayCache := gateway.NewInvalidateGatewayCache(cacheInstance, invalidateCachePublisher)
+	validatePlugin := plugin.NewValidatePlugin()
+	validateRule := rule.NewValidateRule(validatePlugin)
+
+	//middleware
+	middlewareTransport := middleware.Transport{
+		AuthMiddleware:    middleware.NewAuthMiddleware(logger, repo, false),
+		GatewayMiddleware: middleware.NewGatewayMiddleware(logger, cacheInstance, repo, cfg.Server.BaseDomain),
+		MetricsMiddleware: middleware.NewMetricsMiddleware(logger),
+	}
+
+	//handler
+	forwardedHandler := handlers.NewForwardedHandler(
+		logger,
+		repo,
+		cacheInstance,
+		upstreamFinder,
+		cfg.Providers.Providers,
+		pluginManager,
+	)
+
+	createGatewayHandler := handlers.NewCreateGatewayHandler(logger, repo, updateGatewayCache)
+	listGatewayHandler := handlers.NewListGatewayHandler(logger, repo, updateGatewayCache)
+	getGatewayHandler := handlers.NewGetGatewayHandler(logger, repo, getGatewayCache, updateGatewayCache)
+	updateGatewayHandler := handlers.NewUpdateGatewayHandler(
+		logger,
+		repo,
+		updateGatewayCache,
+		invalidateGatewayCache,
+		pluginManager,
+	)
+	deleteGatewayHandler := handlers.NewDeleteGatewayHandler(logger, repo)
+
+	createUpstreamHandler := handlers.NewCreateUpstreamHandler(logger, repo, cacheInstance)
+	listUpstreamHandler := handlers.NewListUpstreamHandler(logger, repo, cacheInstance)
+	getUpstreamHandler := handlers.NewGetUpstreamHandler(logger, repo, cacheInstance, upstreamFinder)
+	updateUpstreamHandler := handlers.NewUpdateUpstreamHandler(logger, repo, cacheInstance)
+	deleteUpstreamHandler := handlers.NewDeleteUpstreamHandler(logger, repo, cacheInstance)
+
+	createServiceHandler := handlers.NewCreateServiceHandler(logger, repo, cacheInstance)
+	listServicesHandler := handlers.NewListServicesHandler(logger, repo)
+	getServiceHandler := handlers.NewGetServiceHandler(logger, repo, cacheInstance)
+	updateServiceHandler := handlers.NewUpdateServiceHandler(logger, repo, cacheInstance)
+	deleteServiceHandler := handlers.NewDeleteServiceHandler(logger, repo, cacheInstance)
+
+	createRuleHandler := handlers.NewCreateRuleHandler(logger, repo, validateRule)
+	listRulesHandler := handlers.NewListRulesHandler(logger, repo, cacheInstance)
+	updateRuleHandler := handlers.NewUpdateRuleHandler(logger, repo, cacheInstance, validateRule, invalidateCachePublisher)
+	deleteRuleHandler := handlers.NewDeleteRuleHandler(logger, repo, cacheInstance, invalidateCachePublisher)
+
+	createApiKeyHandler := handlers.NewCreateAPIKeyHandler(logger, repo, cacheInstance)
+	listApiKeysHandler := handlers.NewListAPIKeysHandler(logger, repo)
+	getApiKeyHandler := handlers.NewGetAPIKeyHandler(logger, cacheInstance)
+	deleteApiKeyHandler := handlers.NewDeleteAPIKeyHandler(logger, cacheInstance)
+
+	// Handler Transport
+	handlerTransport := handlers.HandlerTransport{
+		// Proxy
+		ForwardedHandler: forwardedHandler,
+		// Gateway
+		CreateGatewayHandler: createGatewayHandler,
+		ListGatewayHandler:   listGatewayHandler,
+		GetGatewayHandler:    getGatewayHandler,
+		UpdateGatewayHandler: updateGatewayHandler,
+		DeleteGatewayHandler: deleteGatewayHandler,
+		// Upstream
+		CreateUpstreamHandler: createUpstreamHandler,
+		ListUpstreamHandler:   listUpstreamHandler,
+		GetUpstreamHandler:    getUpstreamHandler,
+		UpdateUpstreamHandler: updateUpstreamHandler,
+		DeleteUpstreamHandler: deleteUpstreamHandler,
+		// Service
+		CreateServiceHandler: createServiceHandler,
+		ListServicesHandler:  listServicesHandler,
+		GetServiceHandler:    getServiceHandler,
+		UpdateServiceHandler: updateServiceHandler,
+		DeleteServiceHandler: deleteServiceHandler,
+		// Rule
+		CreateRuleHandler: createRuleHandler,
+		ListRulesHandler:  listRulesHandler,
+		UpdateRuleHandler: updateRuleHandler,
+		DeleteRuleHandler: deleteRuleHandler,
+		// APIKey
+		CreateAPIKeyHandler: createApiKeyHandler,
+		ListAPIKeysHandler:  listApiKeysHandler,
+		GetAPIKeyHandler:    getApiKeyHandler,
+		DeleteAPIKeyHandler: deleteApiKeyHandler,
+	}
 
 	// Create and initialize the server
 	adminServerDI := server.AdminServerDI{
-		Config:         cfg,
-		Logger:         logger,
-		Cache:          cacheInstance,
-		Repo:           repo,
-		Manager:        manager,
-		UpstreamFinder: upstreamFinder,
+		MiddlewareTransport: middlewareTransport,
+		HandlerTransport:    handlerTransport,
+		Config:              cfg,
+		Logger:              logger,
+		Cache:               cacheInstance,
 	}
 
 	proxyServerDI := server.ProxyServerDI{
-		Config:         cfg,
-		Logger:         logger,
-		Cache:          cacheInstance,
-		Repo:           repo,
-		Manager:        manager,
-		UpstreamFinder: upstreamFinder,
-		SkipAuthCheck:  false,
+		MiddlewareTransport: middlewareTransport,
+		HandlerTransport:    handlerTransport,
+		Config:              cfg,
+		Logger:              logger,
+		Cache:               cacheInstance,
 	}
 
 	srv := initializeServer(proxyServerDI, adminServerDI)
 
-	if err := srv.Run(); err != nil {
-		logger.Fatalf("Server failed: %v", err)
+	go func() {
+		if err := srv.Run(); err != nil {
+			logger.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+
+	<-quit
+	fmt.Println("shutting down server...")
+	if err := srv.Shutdown(); err != nil {
+		fmt.Println("error shutting down server:", err)
+		os.Exit(1)
 	}
+	fmt.Println("server gracefully stopped")
 }
