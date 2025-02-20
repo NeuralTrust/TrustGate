@@ -45,9 +45,8 @@ const (
 )
 
 const (
-	HealthPath      = "/health"
-	AdminHealthPath = "/__/health"
-	PingPath        = "/__/ping"
+	HealthPath = "/health"
+	PingPath   = "/__/ping"
 )
 
 func NewProxyServer(di ProxyServerDI) *ProxyServer {
@@ -81,12 +80,6 @@ func NewProxyServer(di ProxyServerDI) *ProxyServer {
 }
 
 func (s *ProxyServer) Run() error {
-	s.router.Get(AdminHealthPath, func(ctx *fiber.Ctx) error {
-		return ctx.Status(http.StatusOK).JSON(fiber.Map{
-			"status": "ok",
-			"time":   time.Now().Format(time.RFC3339),
-		})
-	})
 
 	s.router.Get(HealthPath, func(ctx *fiber.Ctx) error {
 		return ctx.Status(http.StatusOK).JSON(fiber.Map{
@@ -110,8 +103,8 @@ func (s *ProxyServer) Run() error {
 	// Register the main handler for all non-system routes
 	s.router.Use(
 		s.middlewareTransport.GatewayMiddleware.Middleware(),
-		s.middlewareTransport.AuthMiddleware.Middleware(),
-		s.middlewareTransport.MetricsMiddleware.Middleware(),
+		//s.middlewareTransport.AuthMiddleware.Middleware(),
+		//s.middlewareTransport.MetricsMiddleware.Middleware(),
 		s.handlerTransport.ForwardedHandler.Handle,
 	)
 

@@ -129,6 +129,19 @@ func (c *Cache) GetUpstream(ctx context.Context, gatewayID string, upstreamID st
 	return upstream, nil
 }
 
+func (c *Cache) GetService(ctx context.Context, gatewayID string, serviceID string) (*models.Service, error) {
+	var service *models.Service
+	key := fmt.Sprintf(ServiceKeyPattern, gatewayID, serviceID)
+	res, err := c.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(res), &service); err != nil {
+		return nil, err
+	}
+	return service, nil
+}
+
 func (c *Cache) SaveService(ctx context.Context, gatewayID string, service *models.Service) error {
 	// Cache individual service
 	serviceKey := fmt.Sprintf(ServiceKeyPattern, gatewayID, service.ID)

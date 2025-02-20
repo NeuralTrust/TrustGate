@@ -14,6 +14,8 @@ import (
 	"github.com/valyala/fasthttp/fasthttpadaptor"
 )
 
+const AdminHealthPath = "/__/health"
+
 // Server interface defines the common behavior for all servers
 type Server interface {
 	Run() error
@@ -45,6 +47,12 @@ func (s *BaseServer) setupHealthCheck() {
 	s.router.Get("/health", func(ctx *fiber.Ctx) error {
 		return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
 			"status": "healthy",
+			"time":   time.Now().Format(time.RFC3339),
+		})
+	})
+	s.router.Get(AdminHealthPath, func(ctx *fiber.Ctx) error {
+		return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
+			"status": "ok",
 			"time":   time.Now().Format(time.RFC3339),
 		})
 	})

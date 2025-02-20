@@ -1,22 +1,22 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
+	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
+	infraLogger "github.com/NeuralTrust/TrustGate/pkg/infra/logger"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
@@ -30,74 +30,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 )
 
-// syncWriter wraps a buffered writer and ensures each write is flushed
-type syncWriter struct {
-	writer *bufio.Writer
-	file   *os.File
-	mu     sync.Mutex
-}
-
-// Write implements io.Writer
-func (w *syncWriter) Write(p []byte) (n int, err error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	// Write the data
-	n, err = w.writer.Write(p)
-	if err != nil {
-		return n, err
-	}
-
-	// Ensure the write is flushed to disk
-	if err = w.writer.Flush(); err != nil {
-		return n, err
-	}
-
-	// Sync to disk to ensure durability
-	return n, w.file.Sync()
-}
-
-// ConsoleHook is a logrus hook that writes to stdout
-type ConsoleHook struct{}
-
-// Fire implements logrus.Hook
-func (h *ConsoleHook) Fire(entry *logrus.Entry) error {
-	line, err := entry.String()
-	if err != nil {
-		return err
-	}
-	fmt.Print(line)
-	return nil
-}
-
-// Levels implements logrus.Hook
-func (h *ConsoleHook) Levels() []logrus.Level {
-	return logrus.AllLevels
-}
-
-// Get server type safely
-func getServerType() string {
-	if len(os.Args) > 1 {
-		return os.Args[1]
-	}
-	return "proxy" // default to proxy server
-}
-
-func initializeServer(
-	proxyServerDi server.ProxyServerDI,
-	adminServerDi server.AdminServerDI,
-) server.Server {
-	serverType := getServerType()
-
-	switch serverType {
-	case "admin":
-		return server.NewAdminServer(adminServerDi)
-	default:
-		return server.NewProxyServer(proxyServerDi)
-	}
-}
-
 func main() {
+
 	// Initialize logger
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{
@@ -113,6 +47,10 @@ func main() {
 		logger.SetLevel(logrus.DebugLevel)
 	}
 
+	//textHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	//asyncHandler := infraLogger.NewAsyncHandler(textHandler, 100)
+	//slogger := slog.New(asyncHandler)
+	//slog.SetDefault(slogger)
 	// Get server type once at the start
 	serverType := getServerType()
 
@@ -142,22 +80,21 @@ func main() {
 	}
 	defer file.Close()
 
-	// Create a buffered writer with a larger buffer size
-	writer := bufio.NewWriterSize(file, 32*1024) // 32KB buffer
-	defer writer.Flush()
-
-	// Create a synchronized writer that ensures atomic writes
-	syncedWriter := &syncWriter{
-		writer: writer,
-		file:   file,
+	asyncWriter, err := infraLogger.NewAsyncFileWriter(logFile, 32*1024)
+	if err != nil {
+		log.Fatalf("Failed to initialize async log writer: %v", err)
 	}
+	defer asyncWriter.Close()
 
 	// Set the logger output to the file
-	logger.SetOutput(syncedWriter)
+	logger.SetOutput(asyncWriter)
+
+	asyncConsoleHook := infraLogger.NewAsyncConsoleHook(500)
+	defer asyncConsoleHook.Close()
 
 	// In debug mode, add a hook for stdout
 	if os.Getenv("LOG_LEVEL") == "debug" {
-		logger.AddHook(&ConsoleHook{})
+		logger.AddHook(asyncConsoleHook)
 	}
 
 	// Load configuration
@@ -198,9 +135,11 @@ func main() {
 	// Initialize repository
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
 	upstreamRepository := repository.NewUpstreamRepository(db.DB)
+	serviceRepository := repository.NewServiceRepository(db.DB)
 
 	// service
-	upstreamFinder := upstream.NewFinder(upstreamRepository, cacheInstance)
+	upstreamFinder := upstream.NewFinder(upstreamRepository, cacheInstance, logger)
+	serviceFinder := service.NewFinder(serviceRepository, cacheInstance, logger)
 	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
 	invalidateCachePublisher := infraCache.NewInvalidationPublisher(cacheInstance)
@@ -221,6 +160,7 @@ func main() {
 		repo,
 		cacheInstance,
 		upstreamFinder,
+		serviceFinder,
 		cfg.Providers.Providers,
 		pluginManager,
 	)
@@ -245,7 +185,7 @@ func main() {
 
 	createServiceHandler := handlers.NewCreateServiceHandler(logger, repo, cacheInstance)
 	listServicesHandler := handlers.NewListServicesHandler(logger, repo)
-	getServiceHandler := handlers.NewGetServiceHandler(logger, repo, cacheInstance)
+	getServiceHandler := handlers.NewGetServiceHandler(logger, serviceRepository, cacheInstance)
 	updateServiceHandler := handlers.NewUpdateServiceHandler(logger, repo, cacheInstance)
 	deleteServiceHandler := handlers.NewDeleteServiceHandler(logger, repo, cacheInstance)
 
@@ -328,4 +268,25 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("server gracefully stopped")
+}
+
+func getServerType() string {
+	if len(os.Args) > 1 {
+		return os.Args[1]
+	}
+	return "proxy"
+}
+
+func initializeServer(
+	proxyServerDi server.ProxyServerDI,
+	adminServerDi server.AdminServerDI,
+) server.Server {
+	serverType := getServerType()
+
+	switch serverType {
+	case "admin":
+		return server.NewAdminServer(adminServerDi)
+	default:
+		return server.NewProxyServer(proxyServerDi)
+	}
 }

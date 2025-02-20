@@ -1,4 +1,4 @@
-package upstream
+package service
 
 import (
 	"context"
@@ -7,5 +7,5 @@ import (
 )
 
 type Repository interface {
-	GetUpstream(ctx context.Context, id string) (*models.Upstream, error)
+	GetService(ctx context.Context, id string) (*models.Service, error)
 }
