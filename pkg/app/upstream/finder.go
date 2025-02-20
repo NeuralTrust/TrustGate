@@ -2,39 +2,72 @@ package upstream
 
 import (
 	"context"
+	"errors"
+
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/models"
+	"github.com/sirupsen/logrus"
 )
 
+var ErrInvalidCacheType = errors.New("invalid type assertion for upstream model")
+
 type Finder interface {
-	Find(ctx context.Context, gatewayID string, upstreamID string) (*models.Upstream, error)
+	Find(ctx context.Context, gatewayID, upstreamID string) (*models.Upstream, error)
 }
 
 type finder struct {
-	repo  domainUpstream.Repository
-	cache *cache.Cache
+	repo        domainUpstream.Repository
+	cache       *cache.Cache
+	memoryCache *common.TTLMap
+	logger      *logrus.Logger
 }
 
-func NewFinder(repository domainUpstream.Repository, cache *cache.Cache) Finder {
+func NewFinder(repository domainUpstream.Repository, cache *cache.Cache, logger *logrus.Logger) Finder {
 	return &finder{
-		repo:  repository,
-		cache: cache,
+		repo:        repository,
+		cache:       cache,
+		logger:      logger,
+		memoryCache: cache.CreateTTLMap("upstream", common.UpstreamCacheTTL),
 	}
 }
 
-func (f *finder) Find(ctx context.Context, gatewayID string, upstreamID string) (*models.Upstream, error) {
-	// Check cache first
-	upstreamCache, err := f.cache.GetUpstream(ctx, gatewayID, upstreamID)
+func (f *finder) Find(ctx context.Context, gatewayID, upstreamID string) (*models.Upstream, error) {
+	if upstream, err := f.getUpstreamFromMemoryCache(upstreamID); err == nil {
+		return upstream, nil
+	} else if !errors.Is(err, ErrInvalidCacheType) {
+		f.logger.WithError(err).Warn("memory cache read upstream failure")
+	}
+	if cachedUpstream, err := f.cache.GetUpstream(ctx, gatewayID, upstreamID); err == nil && cachedUpstream != nil {
+		f.saveUpstreamToMemoryCache(cachedUpstream)
+		return cachedUpstream, nil
+	} else if err != nil {
+		f.logger.WithError(err).Warn("distributed cache read upstream failure")
+	}
+	upstream, err := f.repo.GetUpstream(ctx, upstreamID)
 	if err != nil {
+		f.logger.WithError(err).Error("failed to fetch upstream from repository")
 		return nil, err
 	}
-	if upstreamCache != nil {
-		return upstreamCache, nil
+	f.saveUpstreamToMemoryCache(upstream)
+	return upstream, nil
+}
+
+func (f *finder) getUpstreamFromMemoryCache(upstreamID string) (*models.Upstream, error) {
+	cachedValue, found := f.memoryCache.Get(upstreamID)
+	if !found {
+		return nil, errors.New("upstream not found in memory cache")
 	}
-	upstreamModel, err := f.repo.GetUpstream(ctx, upstreamID)
-	if err != nil {
-		return nil, err
+
+	upstream, ok := cachedValue.(*models.Upstream)
+	if !ok {
+		return nil, ErrInvalidCacheType
 	}
-	return upstreamModel, nil
+
+	return upstream, nil
+}
+
+func (f *finder) saveUpstreamToMemoryCache(upstream *models.Upstream) {
+	f.memoryCache.Set(upstream.ID, upstream)
 }

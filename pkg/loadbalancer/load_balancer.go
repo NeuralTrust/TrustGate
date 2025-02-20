@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -102,9 +103,8 @@ func (lb *LoadBalancer) NextTarget(ctx context.Context) (*types.UpstreamTarget, 
 		return nil, fmt.Errorf("no available targets")
 	}
 
-	// Check target health
-	health, err := lb.getTargetHealth(ctx, target.ID)
-	if err == nil && health.Healthy {
+	health, err := lb.isTargetHealthy(ctx, target.ID)
+	if err == nil && health {
 		return target, nil
 	}
 
@@ -182,13 +182,22 @@ func (lb *LoadBalancer) getTargetHealth(ctx context.Context, targetID string) (*
 	if err != nil {
 		return nil, err
 	}
-
 	var health types.HealthStatus
 	if err := json.Unmarshal([]byte(val), &health); err != nil {
 		return nil, err
 	}
 
 	return &health, nil
+}
+
+func (lb *LoadBalancer) isTargetHealthy(ctx context.Context, targetID string) (bool, error) {
+	key := fmt.Sprintf("lb:health:%s:%s", lb.upstreamID, targetID)
+	val, err := lb.cache.Get(ctx, key)
+	needle := `"Healthy":true`
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(val, needle), nil
 }
 
 func (lb *LoadBalancer) fallbackTarget(ctx context.Context) (*types.UpstreamTarget, error) {

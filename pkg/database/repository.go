@@ -488,17 +488,6 @@ func (r *Repository) CreateService(ctx context.Context, service *models.Service)
 	return r.db.WithContext(ctx).Create(service).Error
 }
 
-func (r *Repository) GetService(ctx context.Context, id string) (*models.Service, error) {
-	var service models.Service
-	result := r.db.WithContext(ctx).
-		Preload("Upstream").
-		First(&service, "id = ?", id)
-	if result.Error != nil {
-		return nil, fmt.Errorf("Upstream: %w", result.Error)
-	}
-	return &service, nil
-}
-
 func (r *Repository) ListServices(ctx context.Context, gatewayID string, offset, limit int) ([]models.Service, error) {
 	var services []models.Service
 	query := r.db.WithContext(ctx).Where("gateway_id = ?", gatewayID).Preload("Upstream")

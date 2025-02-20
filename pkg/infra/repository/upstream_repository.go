@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"gorm.io/gorm"

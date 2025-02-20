@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
@@ -13,11 +13,11 @@ import (
 
 type getServiceHandler struct {
 	logger *logrus.Logger
-	repo   *database.Repository
+	repo   service.Repository
 	cache  *cache.Cache
 }
 
-func NewGetServiceHandler(logger *logrus.Logger, repo *database.Repository, cache *cache.Cache) Handler {
+func NewGetServiceHandler(logger *logrus.Logger, repo service.Repository, cache *cache.Cache) Handler {
 	return &getServiceHandler{
 		logger: logger,
 		repo:   repo,
@@ -32,22 +32,22 @@ func (s *getServiceHandler) Handle(c *fiber.Ctx) error {
 	// Try to get from cache first
 	serviceKey := fmt.Sprintf(cache.ServiceKeyPattern, gatewayID, serviceID)
 	if serviceJSON, err := s.cache.Get(c.Context(), serviceKey); err == nil {
-		var service models.Service
-		if err := json.Unmarshal([]byte(serviceJSON), &service); err == nil {
-			return c.Status(fiber.StatusOK).JSON(service)
+		var entity models.Service
+		if err := json.Unmarshal([]byte(serviceJSON), &entity); err == nil {
+			return c.Status(fiber.StatusOK).JSON(entity)
 		}
 	}
 
 	// If not in cache, get from database
-	service, err := s.repo.GetService(c.Context(), serviceID)
+	entity, err := s.repo.GetService(c.Context(), serviceID)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Service not found"})
 	}
 
 	// Cache the service
-	if err := s.cache.SaveService(c.Context(), gatewayID, service); err != nil {
+	if err := s.cache.SaveService(c.Context(), gatewayID, entity); err != nil {
 		s.logger.WithError(err).Error("Failed to cache service")
 	}
 
-	return c.Status(fiber.StatusOK).JSON(service)
+	return c.Status(fiber.StatusOK).JSON(entity)
 }
