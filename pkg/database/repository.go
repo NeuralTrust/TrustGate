@@ -368,7 +368,7 @@ func (r *Repository) IsSubdomainAvailable(subdomain string) (bool, error) {
 
 func (r *Repository) ValidateAPIKey(ctx context.Context, gatewayID string, apiKey string) (bool, error) {
 	var exists int64
-	err := r.db.Model(&models.APIKey{}).
+	err := r.db.WithContext(ctx).Model(&models.APIKey{}).
 		Where("gateway_id = ? AND key = ? AND (expires_at IS NULL OR expires_at > ?)",
 			gatewayID, apiKey, time.Now()).
 		Count(&exists).Error
@@ -376,7 +376,6 @@ func (r *Repository) ValidateAPIKey(ctx context.Context, gatewayID string, apiKe
 	if err != nil {
 		return false, err
 	}
-
 	return exists > 0, nil
 }
 

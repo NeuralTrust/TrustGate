@@ -33,13 +33,31 @@ type BaseServer struct {
 func NewBaseServer(config *config.Config, cache *cache.Cache, logger *logrus.Logger) *BaseServer {
 	r := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
+		ReduceMemoryUsage:     true,
+		Network:               fiber.NetworkTCP,
+		EnablePrintRoutes:     false,
+		DisableKeepalive:      false,
+		BodyLimit:             4 * 1024 * 1024,
+		ReadTimeout:           10 * time.Second,
+		WriteTimeout:          10 * time.Second,
+		IdleTimeout:           30 * time.Second,
+		Concurrency:           4096,
 	})
-	return &BaseServer{
+	r.Server().MaxConnsPerIP = 1024
+	r.Server().ReadBufferSize = 8192
+	r.Server().WriteBufferSize = 8192
+	r.Server().GetOnly = false
+	r.Server().NoDefaultServerHeader = true
+	r.Server().NoDefaultDate = true
+	r.Server().NoDefaultContentType = true
+
+	server := &BaseServer{
 		config: config,
 		cache:  cache,
 		logger: logger,
 		router: r,
 	}
+	return server
 }
 
 // setupHealthCheck adds a health check endpoint to the server

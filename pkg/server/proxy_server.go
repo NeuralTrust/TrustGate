@@ -103,8 +103,8 @@ func (s *ProxyServer) Run() error {
 	// Register the main handler for all non-system routes
 	s.router.Use(
 		s.middlewareTransport.GatewayMiddleware.Middleware(),
-		//s.middlewareTransport.AuthMiddleware.Middleware(),
-		//s.middlewareTransport.MetricsMiddleware.Middleware(),
+		s.middlewareTransport.AuthMiddleware.Middleware(),
+		s.middlewareTransport.MetricsMiddleware.Middleware(),
 		s.handlerTransport.ForwardedHandler.Handle,
 	)
 

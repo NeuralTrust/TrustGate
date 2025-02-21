@@ -1,29 +1,27 @@
 package middleware
 
 import (
-	"context"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
-
 	"github.com/sirupsen/logrus"
 )
 
 type authMiddleware struct {
 	skipAuthCheck bool
 	logger        *logrus.Logger
-	db            *database.Repository
+	finder        apikey.Finder
 }
 
-func NewAuthMiddleware(logger *logrus.Logger, repo *database.Repository, skipAuthCheck bool) Middleware {
+func NewAuthMiddleware(logger *logrus.Logger, finder apikey.Finder, skipAuthCheck bool) Middleware {
 	return &authMiddleware{
 		skipAuthCheck: skipAuthCheck,
 		logger:        logger,
-		db:            repo,
+		finder:        finder,
 	}
 }
 
@@ -66,13 +64,13 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 		}
 
 		// Validate API key
-		valid, err := m.db.ValidateAPIKey(context.Background(), gatewayID, apiKey)
+		key, err := m.finder.Find(ctx.Context(), gatewayID, apiKey)
 		if err != nil {
-			m.logger.WithError(err).Error("Database error during API key validation")
-			return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
+			m.logger.WithError(err).Error("error retrieving apikey")
+			return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal server error"})
 		}
 
-		if !valid {
+		if !key.IsValid() {
 			m.logger.Debug("Invalid API key")
 			return ctx.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid API key"})
 		}

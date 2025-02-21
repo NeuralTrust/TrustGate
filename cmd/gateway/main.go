@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
@@ -136,10 +137,12 @@ func main() {
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
 	upstreamRepository := repository.NewUpstreamRepository(db.DB)
 	serviceRepository := repository.NewServiceRepository(db.DB)
+	apiKeyRepository := repository.NewApiKeyRepository(db.DB)
 
 	// service
 	upstreamFinder := upstream.NewFinder(upstreamRepository, cacheInstance, logger)
 	serviceFinder := service.NewFinder(serviceRepository, cacheInstance, logger)
+	apiKeyFinder := apikey.NewFinder(apiKeyRepository, cacheInstance, logger)
 	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
 	invalidateCachePublisher := infraCache.NewInvalidationPublisher(cacheInstance)
@@ -149,7 +152,7 @@ func main() {
 
 	//middleware
 	middlewareTransport := middleware.Transport{
-		AuthMiddleware:    middleware.NewAuthMiddleware(logger, repo, false),
+		AuthMiddleware:    middleware.NewAuthMiddleware(logger, apiKeyFinder, false),
 		GatewayMiddleware: middleware.NewGatewayMiddleware(logger, cacheInstance, repo, cfg.Server.BaseDomain),
 		MetricsMiddleware: middleware.NewMetricsMiddleware(logger),
 	}
