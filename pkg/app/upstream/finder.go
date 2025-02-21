@@ -55,17 +55,13 @@ func (f *finder) Find(ctx context.Context, gatewayID, upstreamID string) (*model
 }
 
 func (f *finder) getUpstreamFromMemoryCache(upstreamID string) (*models.Upstream, error) {
-	cachedValue, found := f.memoryCache.Get(upstreamID)
-	if !found {
-		return nil, errors.New("upstream not found in memory cache")
-	}
-
-	upstream, ok := cachedValue.(*models.Upstream)
-	if !ok {
+	if cachedValue, found := f.memoryCache.Get(upstreamID); found {
+		if upstream, ok := cachedValue.(*models.Upstream); ok {
+			return upstream, nil
+		}
 		return nil, ErrInvalidCacheType
 	}
-
-	return upstream, nil
+	return nil, errors.New("upstream not found in memory cache")
 }
 
 func (f *finder) saveUpstreamToMemoryCache(upstream *models.Upstream) {

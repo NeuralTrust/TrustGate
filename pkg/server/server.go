@@ -36,13 +36,15 @@ func NewBaseServer(config *config.Config, cache *cache.Cache, logger *logrus.Log
 		ReduceMemoryUsage:     true,
 		Network:               fiber.NetworkTCP,
 		EnablePrintRoutes:     false,
-		DisableKeepalive:      false,
-		BodyLimit:             4 * 1024 * 1024,
-		ReadTimeout:           10 * time.Second,
-		WriteTimeout:          10 * time.Second,
-		IdleTimeout:           30 * time.Second,
-		Concurrency:           4096,
+		DisableKeepalive:      true,
+		BodyLimit:             8 * 1024 * 1024,
+		ReadTimeout:           3 * time.Second,
+		WriteTimeout:          3 * time.Second,
+		IdleTimeout:           120 * time.Second,
+		Concurrency:           16384,
+		// Prefork:               true,
 	})
+
 	r.Server().MaxConnsPerIP = 1024
 	r.Server().ReadBufferSize = 8192
 	r.Server().WriteBufferSize = 8192
