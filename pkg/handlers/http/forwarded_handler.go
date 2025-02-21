@@ -30,7 +30,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
+	"github.com/valyala/bytebufferpool"
 	"github.com/valyala/fasthttp"
+	"github.com/valyala/fastjson"
 )
 
 const (
@@ -48,7 +50,6 @@ type forwardedHandler struct {
 	pluginManager  *plugins.Manager
 	loadBalancers  sync.Map
 	client         *fasthttp.Client
-	clientHttp     *http.Client
 }
 
 func NewForwardedHandler(
@@ -63,10 +64,13 @@ func NewForwardedHandler(
 	gatewayCache := cache.CreateTTLMap("gateway", GatewayCacheTTL)
 
 	client := &fasthttp.Client{
-		ReadTimeout:     time.Second * 30,
-		WriteTimeout:    time.Second * 30,
-		MaxConnsPerHost: 512, // Adjust based on expected load
+		ReadTimeout:         time.Second * 10,
+		WriteTimeout:        time.Second * 10,
+		MaxConnsPerHost:     4096,
+		DialDualStack:       true,
+		MaxIdleConnDuration: 30 * time.Second,
 	}
+
 	return &forwardedHandler{
 		logger:         logger,
 		repo:           repo,
@@ -77,9 +81,6 @@ func NewForwardedHandler(
 		providers:      providers,
 		pluginManager:  pluginManager,
 		client:         client,
-		clientHttp: &http.Client{
-			Timeout: time.Second * 30,
-		},
 	}
 }
 
@@ -92,14 +93,8 @@ type RequestData struct {
 }
 
 func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
-
-	headers := make(map[string][]string)
-	c.Request().Header.VisitAll(func(key, value []byte) {
-		headers[string(key)] = append(headers[string(key)], string(value))
-	})
-
 	reqData := RequestData{
-		Headers: headers,
+		Headers: c.GetReqHeaders(),
 		Body:    c.Body(),
 		Uri:     c.OriginalURL(),
 		Host:    c.Hostname(),
@@ -290,7 +285,6 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		// Parse the error response
 		var errorResponse map[string]interface{}
 		if err := json.Unmarshal(response.Body, &errorResponse); err != nil {
-			// If we can't parse the error, return a generic error
 			return c.Status(response.StatusCode).JSON(fiber.Map{"error": "Upstream service error"})
 		}
 
@@ -448,7 +442,6 @@ func (h *forwardedHandler) isPublicRoute(ctx *fiber.Ctx) bool {
 }
 
 func (h *forwardedHandler) configurePlugins(gateway *types.Gateway, rule *types.ForwardingRule) error {
-	// Configure gateway-level plugins
 	gatewayChains := h.convertGatewayPlugins(gateway)
 	if err := h.pluginManager.SetPluginChain(types.GatewayLevel, gateway.ID, gatewayChains); err != nil {
 		return fmt.Errorf("failed to configure gateway plugins: %w", err)
@@ -469,71 +462,65 @@ func (h *forwardedHandler) forwardRequest(req *types.RequestContext, rule *types
 
 	switch serviceEntity.Type {
 	case models.ServiceTypeUpstream:
-		upstreamModel, err := h.upstreamFinder.Find(req.Context, serviceEntity.GatewayID, serviceEntity.UpstreamID)
-		if err != nil {
-			return nil, fmt.Errorf("upstream not found: %w", err)
-		}
-
-		// Create or get load balancer
-		lb, err := h.getOrCreateLoadBalancer(upstreamModel)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get load balancer: %w", err)
-		}
-
-		// Try with retries and fallback
-		maxRetries := rule.RetryAttempts
-		if maxRetries == 0 {
-			maxRetries = 2 // default retries
-		}
-
-		var lastErr error
-		for attempt := 0; attempt <= maxRetries; attempt++ {
-			target, err := lb.NextTarget(req.Context)
-			if err != nil {
-				lastErr = err
-				continue
-			}
-
-			h.logger.WithFields(logrus.Fields{
-				"attempt":   attempt + 1,
-				"provider":  target.Provider,
-				"target_id": target.ID,
-			}).Debug("Attempting request")
-
-			response, err := h.doForwardRequest(req, rule, target)
-
-			if err == nil {
-				lb.ReportSuccess(target)
-				return response, nil
-			}
-
-			lastErr = err
-			lb.ReportFailure(target, err)
-
-			if attempt == maxRetries {
-				h.logger.WithFields(logrus.Fields{
-					"total_attempts": maxRetries + 1,
-					"last_error":     lastErr.Error(),
-				}).Error("All retry attempts failed")
-				return nil, fmt.Errorf("all retry attempts failed, last error: %v", lastErr)
-			}
-		}
-		return nil, lastErr
-
+		return h.handleUpstreamRequest(req, rule, serviceEntity)
 	case models.ServiceTypeEndpoint:
-		target := &types.UpstreamTarget{
-			Host:        serviceEntity.Host,
-			Port:        serviceEntity.Port,
-			Protocol:    serviceEntity.Protocol,
-			Path:        serviceEntity.Path,
-			Headers:     serviceEntity.Headers,
-			Credentials: types.Credentials(serviceEntity.Credentials),
-		}
-		return h.doForwardRequest(req, rule, target)
-
+		return h.handleEndpointRequest(req, rule, serviceEntity)
 	default:
 		return nil, fmt.Errorf("unsupported service type: %s", serviceEntity.Type)
 	}
+}
+func (h *forwardedHandler) handleUpstreamRequest(req *types.RequestContext, rule *types.ForwardingRule, serviceEntity *models.Service) (*types.ResponseContext, error) {
+	upstreamModel, err := h.upstreamFinder.Find(req.Context, serviceEntity.GatewayID, serviceEntity.UpstreamID)
+	if err != nil {
+		return nil, fmt.Errorf("upstream not found: %w", err)
+	}
+
+	lb, err := h.getOrCreateLoadBalancer(upstreamModel)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get load balancer: %w", err)
+	}
+
+	maxRetries := rule.RetryAttempts
+	if maxRetries == 0 {
+		maxRetries = 2
+	}
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		target, err := lb.NextTarget(req.Context)
+		if err != nil {
+			if attempt == maxRetries {
+				return nil, fmt.Errorf("failed to get target after retries: %w", err)
+			}
+			continue
+		}
+
+		go h.logger.WithFields(logrus.Fields{
+			"attempt":   attempt + 1,
+			"provider":  target.Provider,
+			"target_id": target.ID,
+		}).Debug("Attempting request")
+
+		response, err := h.doForwardRequest(req, rule, target)
+		if err == nil {
+			lb.ReportSuccess(target)
+			return response, nil
+		}
+		lb.ReportFailure(target, err)
+	}
+
+	return nil, fmt.Errorf("all retry attempts failed")
+}
+
+func (h *forwardedHandler) handleEndpointRequest(req *types.RequestContext, rule *types.ForwardingRule, serviceEntity *models.Service) (*types.ResponseContext, error) {
+	target := &types.UpstreamTarget{
+		Host:        serviceEntity.Host,
+		Port:        serviceEntity.Port,
+		Protocol:    serviceEntity.Protocol,
+		Path:        serviceEntity.Path,
+		Headers:     serviceEntity.Headers,
+		Credentials: types.Credentials(serviceEntity.Credentials),
+	}
+	return h.doForwardRequest(req, rule, target)
 }
 
 // Add helper method to create or get load balancer
@@ -714,7 +701,6 @@ func (h *forwardedHandler) getJSONBytes(value interface{}) ([]byte, error) {
 	case json.RawMessage:
 		return v, nil
 	default:
-		// Try to marshal the value to JSON if it's not already in byte form
 		b, err := json.Marshal(value)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal value to JSON bytes: %w", err)
@@ -722,14 +708,20 @@ func (h *forwardedHandler) getJSONBytes(value interface{}) ([]byte, error) {
 		return b, nil
 	}
 }
+
+var responseBodyPool = sync.Pool{
+	New: func() interface{} {
+		return new([]byte)
+	},
+}
+
 func (h *forwardedHandler) doForwardRequest(
 	req *types.RequestContext,
 	rule *types.ForwardingRule,
 	target *types.UpstreamTarget,
 ) (*types.ResponseContext, error) {
 
-	// Build target URL
-	var targetURL string
+	var sb strings.Builder
 	if target.Provider != "" {
 		providerConfig, ok := h.providers[target.Provider]
 		if !ok {
@@ -739,41 +731,35 @@ func (h *forwardedHandler) doForwardRequest(
 		if !ok {
 			return nil, fmt.Errorf("unsupported endpoint path: %s", target.Path)
 		}
-		targetURL = fmt.Sprintf("%s%s", providerConfig.BaseURL, endpointConfig.Path)
+		sb.WriteString(providerConfig.BaseURL)
+		sb.WriteString(endpointConfig.Path)
 	} else {
-		targetURL = fmt.Sprintf("%s://%s:%d%s",
-			target.Protocol,
-			target.Host,
-			target.Port,
-			target.Path,
-		)
+		sb.WriteString(target.Protocol)
+		sb.WriteString("://")
+		sb.WriteString(target.Host)
+		sb.WriteString(":")
+		sb.WriteString(strconv.Itoa(target.Port))
+		sb.WriteString(target.Path)
 	}
+	targetURL := sb.String()
 
 	if rule.StripPath {
 		targetURL = strings.TrimSuffix(targetURL, "/") + strings.TrimPrefix(req.Path, rule.Path)
 	}
 
-	// Acquire request and response objects from fasthttp's pool
 	fasthttpReq := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(fasthttpReq)
 
 	fasthttpResp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(fasthttpResp)
 
-	// Set request method and URL
 	fasthttpReq.SetRequestURI(targetURL)
 	fasthttpReq.Header.SetMethod(req.Method)
 
-	// Set request body if available
 	if len(req.Body) > 0 {
-		var requestData map[string]interface{}
-		if err := json.Unmarshal(req.Body, &requestData); err == nil {
-			if stream, ok := requestData["stream"].(bool); ok && stream {
-				return h.handleStreamingRequest(req, target)
-			}
+		if bytes.Contains(req.Body, []byte(`"stream":true`)) {
+			return h.handleStreamingRequest(req, target)
 		}
-
-		// Transform body if needed
 		if target.Provider != "" {
 			transformedBody, err := h.transformRequestBody(req.Body, target)
 			if err != nil {
@@ -781,91 +767,83 @@ func (h *forwardedHandler) doForwardRequest(
 			}
 			fasthttpReq.SetBody(transformedBody)
 		} else {
-			fasthttpReq.SetBody(req.Body)
+			fasthttpReq.SetBodyRaw(req.Body)
 		}
 	}
 
-	// Copy headers
-	for k, v := range req.Headers {
-		for _, val := range v {
-			fasthttpReq.Header.Add(k, val)
+	for k, vals := range req.Headers {
+		if len(vals) == 1 {
+			fasthttpReq.Header.Set(k, vals[0])
+		} else {
+			for _, val := range vals {
+				fasthttpReq.Header.Add(k, val)
+			}
 		}
 	}
 	for k, v := range target.Headers {
 		fasthttpReq.Header.Set(k, v)
 	}
 
-	// Apply authentication
 	h.applyAuthentication(fasthttpReq, &target.Credentials, req.Body)
+
 	err := h.client.DoTimeout(fasthttpReq, fasthttpResp, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to forward request: %w", err)
 	}
 
-	// Read response body
-	respBody := fasthttpResp.Body()
+	respBodyPtr := responseBodyPool.Get().(*[]byte)
+	*respBodyPtr = fasthttpResp.Body()
 
-	// Validate response status
 	statusCode := fasthttpResp.StatusCode()
 	if statusCode <= 0 || statusCode >= 600 {
+		responseBodyPool.Put(respBodyPtr)
 		return nil, fmt.Errorf("invalid status code received: %d", statusCode)
 	}
 	if statusCode < 200 || statusCode >= 300 {
-		return nil, fmt.Errorf("upstream returned status code %d: %s", statusCode, string(respBody))
+		responseBodyPool.Put(respBodyPtr)
+		return nil, fmt.Errorf("upstream returned status code %d: %s", statusCode, string(*respBodyPtr))
 	}
 
-	// Logging
-	h.logger.WithFields(logrus.Fields{
+	go h.logger.WithFields(logrus.Fields{
 		"provider": target.Provider,
 	}).Debug("Selected provider")
 
-	return h.createResponse(fasthttpResp, respBody), nil
+	response := h.createResponse(fasthttpResp, *respBodyPtr)
+	responseBodyPool.Put(respBodyPtr)
+
+	return response, nil
 }
+
 func (h *forwardedHandler) applyAuthentication(req *fasthttp.Request, creds *types.Credentials, body []byte) {
 	if creds == nil {
-		h.logger.Debug("No credentials found")
 		return
 	}
-	h.logger.WithFields(logrus.Fields{
-		"creds": creds,
-	}).Debug("Applying authentication")
 
-	// Header-based authentication
 	if creds.HeaderName != "" && creds.HeaderValue != "" {
-		h.logger.WithFields(logrus.Fields{
-			"header_name": creds.HeaderName,
-			"has_value":   creds.HeaderValue != "",
-		}).Debug("Setting auth header")
-
 		req.Header.Set(creds.HeaderName, creds.HeaderValue)
 	}
 
-	// Parameter-based authentication
-	if creds.ParamName != "" && creds.ParamValue != "" {
-		if creds.ParamLocation == "query" {
-			// Modify the query parameters
-			req.URI().QueryArgs().Set(creds.ParamName, creds.ParamValue)
-		} else if creds.ParamLocation == "body" && len(body) > 0 {
-			// Parse JSON body
-			var jsonBody map[string]interface{}
-			if err := json.Unmarshal(body, &jsonBody); err != nil {
-				h.logger.WithError(err).Error("Failed to parse request body")
-				return
-			}
+	if creds.ParamName == "" || creds.ParamValue == "" {
+		return
+	}
 
-			// Add auth parameter
-			jsonBody[creds.ParamName] = creds.ParamValue
-
-			// Rewrite body
-			newBody, err := json.Marshal(jsonBody)
-			if err != nil {
-				h.logger.WithError(err).Error("Failed to marshal request body")
-				return
-			}
-
-			// Replace request body
-			req.SetBody(newBody)
+	switch creds.ParamLocation {
+	case "query":
+		req.URI().QueryArgs().Set(creds.ParamName, creds.ParamValue)
+	case "body":
+		if len(body) == 0 {
+			return
 		}
+
+		var p fastjson.Parser
+		parsedBody, err := p.ParseBytes(body)
+		if err != nil {
+			h.logger.WithError(err).Error("Failed to parse request body")
+			return
+		}
+
+		parsedBody.GetObject().Set(creds.ParamName, fastjson.MustParse(fmt.Sprintf(`"%s"`, creds.ParamValue)))
+		req.SetBodyRaw(parsedBody.MarshalTo(nil))
 	}
 }
 
@@ -1028,57 +1006,47 @@ func (h *forwardedHandler) handleStreamingResponse(req *types.RequestContext, ta
 }
 
 func (h *forwardedHandler) getQueryParams(c *fiber.Ctx) url.Values {
-	queryParams := url.Values{}
-	for key, value := range c.Queries() {
-		queryParams.Set(key, value)
-	}
+	queryParams := make(url.Values)
+	c.Request().URI().QueryArgs().VisitAll(func(k, v []byte) {
+		queryParams.Set(string(k), string(v))
+	})
 	return queryParams
 }
 
 func (h *forwardedHandler) convertGatewayPlugins(gateway *types.Gateway) []types.PluginConfig {
-	var chains []types.PluginConfig
+	chains := make([]types.PluginConfig, 0, len(gateway.RequiredPlugins))
 	for _, cfg := range gateway.RequiredPlugins {
-		if cfg.Enabled {
-			// Get the plugin to check its stages
-			plugin := h.pluginManager.GetPlugin(cfg.Name)
-			if plugin == nil {
-				h.logger.WithField("plugin", cfg.Name).Error("Plugin not found")
-				continue
-			}
+		if !cfg.Enabled {
+			continue
+		}
 
-			// Check if this is a fixed-stage plugin
-			supportedStages := plugin.Stages()
-			if len(supportedStages) > 0 {
-				// For fixed-stage plugins, just add the config without a stage
-				// The stage will be set when executing based on the plugin's supported stages
-				pluginConfig := cfg
-				pluginConfig.Level = types.GatewayLevel
-				chains = append(chains, pluginConfig)
-			} else {
-				// For user-configured plugins, the stage must be set in the config
-				if cfg.Stage == "" {
-					h.logger.WithField("plugin", cfg.Name).Error("Stage not configured for plugin")
-					continue
-				}
-				pluginConfig := cfg
-				pluginConfig.Level = types.GatewayLevel
-				chains = append(chains, pluginConfig)
-			}
+		plugin := h.pluginManager.GetPlugin(cfg.Name)
+		if plugin == nil {
+			h.logger.WithField("plugin", cfg.Name).Error("Plugin not found")
+			continue
+		}
+
+		pluginConfig := cfg
+		pluginConfig.Level = types.GatewayLevel
+
+		if len(plugin.Stages()) > 0 || cfg.Stage != "" {
+			chains = append(chains, pluginConfig)
+		} else {
+			h.logger.WithField("plugin", cfg.Name).Error("Stage not configured for plugin")
 		}
 	}
 	return chains
 }
 
 func (h *forwardedHandler) transformRequestBody(body []byte, target *types.UpstreamTarget) ([]byte, error) {
-	// Handle empty body case
 	if len(body) == 0 {
 		return body, nil
 	}
 
-	// Parse original request
-	var requestData map[string]interface{}
-	if err := json.Unmarshal(body, &requestData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal request body: %w", err)
+	var parser fastjson.Parser
+	parsedBody, err := parser.ParseBytes(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse request body: %w", err)
 	}
 
 	targetEndpointConfig, ok := h.providers[target.Provider].Endpoints[target.Path]
@@ -1086,52 +1054,54 @@ func (h *forwardedHandler) transformRequestBody(body []byte, target *types.Upstr
 		return nil, fmt.Errorf("missing schema for target provider %s endpoint %s", target.Provider, target.Path)
 	}
 
-	// Handle model validation and streaming
-	if modelName, ok := requestData["model"].(string); ok {
-		if !slices.Contains(target.Models, modelName) {
-			requestData["model"] = target.DefaultModel
+	obj := parsedBody.GetObject()
+	modelName := obj.Get("model")
+	if modelName != nil && modelName.Type() == fastjson.TypeString {
+		if !slices.Contains(target.Models, string(modelName.GetStringBytes())) {
+			obj.Set("model", fastjson.MustParse(fmt.Sprintf(`"%s"`, target.DefaultModel)))
 		}
 	} else {
-		requestData["model"] = target.DefaultModel
+		obj.Set("model", fastjson.MustParse(fmt.Sprintf(`"%s"`, target.DefaultModel)))
 	}
 
-	// Transform data to target format
-	transformed, err := h.mapBetweenSchemas(requestData, targetEndpointConfig.Schema)
+	var objMap map[string]interface{}
+	if err := json.Unmarshal(parsedBody.MarshalTo(nil), &objMap); err != nil {
+		return nil, fmt.Errorf("failed to convert JSON object: %w", err)
+	}
+
+	transformed, err := h.mapBetweenSchemas(objMap, targetEndpointConfig.Schema)
 	if err != nil {
-		return nil, fmt.Errorf("failed to transform request for provider %s endpoint %s: %w",
-			target.Provider, target.Path, err)
+		return nil, fmt.Errorf("failed to transform request for provider %s endpoint %s: %w", target.Provider, target.Path, err)
 	}
 
-	// Preserve streaming parameter if present in original request
-	if stream, ok := requestData["stream"].(bool); ok {
-		transformed["stream"] = stream
+	if stream := obj.Get("stream"); stream != nil && stream.Type() == fastjson.TypeTrue {
+		transformed["stream"] = true
 	}
-	return json.Marshal(transformed)
+
+	buffer := bytebufferpool.Get()
+	defer bytebufferpool.Put(buffer)
+	jsonData, err := json.Marshal(transformed)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal transformed body: %w", err)
+	}
+	buffer.B = append(buffer.B[:0], jsonData...)
+	return buffer.B, nil
 }
 
 func (h *forwardedHandler) mapBetweenSchemas(data map[string]interface{}, targetSchema *config.ProviderSchema) (map[string]interface{}, error) {
-	// When no source schema is provided, we just validate against target schema
 	if targetSchema == nil {
 		return nil, fmt.Errorf("missing target schema configuration")
 	}
-
-	result := make(map[string]interface{})
-
+	result := make(map[string]interface{}, len(targetSchema.RequestFormat))
 	for targetKey, targetField := range targetSchema.RequestFormat {
-		value, err := h.extractValueByPath(data, targetField.Path)
-		if err != nil {
-			if targetField.Default != nil {
-				result[targetKey] = targetField.Default
-				continue
-			}
-			if targetField.Required {
-				return nil, fmt.Errorf("missing required field %s: %w", targetKey, err)
-			}
-			continue
+		if value, err := h.extractValueByPath(data, targetField.Path); err == nil {
+			result[targetKey] = value
+		} else if targetField.Default != nil {
+			result[targetKey] = targetField.Default
+		} else if targetField.Required {
+			return nil, fmt.Errorf("missing required field %s: %w", targetKey, err)
 		}
-		result[targetKey] = value
 	}
-
 	return result, nil
 }
 
@@ -1140,88 +1110,51 @@ func (h *forwardedHandler) extractValueByPath(data map[string]interface{}, path 
 		return nil, fmt.Errorf("empty path")
 	}
 
-	// Direct field access for simple paths
-	if !strings.Contains(path, ".") && !strings.Contains(path, "[") {
-		if val, exists := data[path]; exists {
-			return val, nil
-		}
-		return nil, fmt.Errorf("key not found: %s", path)
-	}
-
-	// Split path into segments (e.g., "messages[0].content" -> ["messages", "[0]", "content"])
 	segments := strings.FieldsFunc(path, func(r rune) bool {
 		return r == '.' || r == '[' || r == ']'
 	})
 
 	var current interface{} = data
-	for i, segment := range segments {
+	for _, segment := range segments {
 		if idx, err := strconv.Atoi(segment); err == nil {
-			if arr, ok := current.([]interface{}); ok {
-				if idx < 0 || idx >= len(arr) {
-					return nil, fmt.Errorf("array index out of bounds: %d", idx)
-				}
-				if i == len(segments)-1 {
-					return arr[idx], nil
-				}
-				// If not last segment, next value must be a map
-				if nextMap, ok := arr[idx].(map[string]interface{}); ok {
-					current = nextMap
-					continue
-				}
-				return nil, fmt.Errorf("expected object at index %d", idx)
+			if arr, ok := current.([]interface{}); ok && idx >= 0 && idx < len(arr) {
+				current = arr[idx]
+				continue
 			}
-			return nil, fmt.Errorf("expected array for index access")
+			return nil, fmt.Errorf("array index out of bounds or not an array: %s", segment)
 		}
 
-		// Handle special paths
-		switch segment {
-		case "last":
-			if arr, ok := current.([]interface{}); ok {
-				if len(arr) == 0 {
-					return nil, fmt.Errorf("array is empty")
-				}
-				if i == len(segments)-1 {
-					return arr[len(arr)-1], nil
-				}
-				// If not last segment, next value must be a map
-				if nextMap, ok := arr[len(arr)-1].(map[string]interface{}); ok {
-					current = nextMap
-					continue
-				}
-				return nil, fmt.Errorf("expected object at last index")
+		if segment == "last" {
+			if arr, ok := current.([]interface{}); ok && len(arr) > 0 {
+				current = arr[len(arr)-1]
+				continue
 			}
 			return nil, fmt.Errorf("expected array for 'last' access")
-
-		default:
-			// Regular object property access
-			if currentMap, ok := current.(map[string]interface{}); ok {
-				if val, exists := currentMap[segment]; exists {
-					if i == len(segments)-1 {
-						return val, nil
-					}
-					current = val // Set current to the value for next iteration
-					continue
-				}
-				return nil, fmt.Errorf("key not found: %s", segment)
-			}
-			return nil, fmt.Errorf("expected object at path %s", segment)
 		}
+
+		if currentMap, ok := current.(map[string]interface{}); ok {
+			if val, exists := currentMap[segment]; exists {
+				current = val
+				continue
+			}
+			return nil, fmt.Errorf("key not found: %s", segment)
+		}
+
+		return nil, fmt.Errorf("unexpected type at segment: %s", segment)
 	}
 
-	return nil, fmt.Errorf("invalid path")
+	return current, nil
 }
 
 func (h *forwardedHandler) createResponse(resp *fasthttp.Response, body []byte) *types.ResponseContext {
 	response := &types.ResponseContext{
 		StatusCode: resp.StatusCode(),
-		Headers:    make(map[string][]string),
+		Headers:    make(map[string][]string, resp.Header.Len()),
 		Body:       body,
 	}
 	resp.Header.VisitAll(func(key, value []byte) {
 		k := string(key)
-		v := string(value)
-		response.Headers[k] = append(response.Headers[k], v)
+		response.Headers[k] = append(response.Headers[k], string(value))
 	})
-
 	return response
 }
