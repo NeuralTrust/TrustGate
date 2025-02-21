@@ -64,11 +64,15 @@ func NewForwardedHandler(
 	gatewayCache := cache.CreateTTLMap("gateway", GatewayCacheTTL)
 
 	client := &fasthttp.Client{
-		ReadTimeout:         time.Second * 10,
-		WriteTimeout:        time.Second * 10,
-		MaxConnsPerHost:     4096,
-		DialDualStack:       true,
-		MaxIdleConnDuration: 30 * time.Second,
+		ReadTimeout:                   3 * time.Second,
+		WriteTimeout:                  3 * time.Second,
+		MaxConnsPerHost:               16384,
+		MaxIdleConnDuration:           120 * time.Second,
+		ReadBufferSize:                32768,
+		WriteBufferSize:               32768,
+		NoDefaultUserAgentHeader:      true,
+		DisableHeaderNamesNormalizing: true,
+		DisablePathNormalizing:        true,
 	}
 
 	return &forwardedHandler{
@@ -263,8 +267,8 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		h.logger.WithError(err).Error("Failed to forward request")
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Failed to forward request"})
 	}
-	//
-	//// Record upstream latency if available
+
+	// Record upstream latency if available
 	if metrics.Config.EnableUpstreamLatency {
 		upstreamLatency := float64(time.Since(startTime).Milliseconds())
 		metrics.GatewayUpstreamLatency.WithLabelValues(
@@ -459,7 +463,6 @@ func (h *forwardedHandler) forwardRequest(req *types.RequestContext, rule *types
 	if err != nil {
 		return nil, fmt.Errorf("service not found: %w", err)
 	}
-
 	switch serviceEntity.Type {
 	case models.ServiceTypeUpstream:
 		return h.handleUpstreamRequest(req, rule, serviceEntity)
@@ -747,14 +750,14 @@ func (h *forwardedHandler) doForwardRequest(
 		targetURL = strings.TrimSuffix(targetURL, "/") + strings.TrimPrefix(req.Path, rule.Path)
 	}
 
-	fasthttpReq := fasthttp.AcquireRequest()
-	defer fasthttp.ReleaseRequest(fasthttpReq)
+	fastHttpReq := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(fastHttpReq)
 
-	fasthttpResp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseResponse(fasthttpResp)
+	fastHttpResp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(fastHttpResp)
 
-	fasthttpReq.SetRequestURI(targetURL)
-	fasthttpReq.Header.SetMethod(req.Method)
+	fastHttpReq.SetRequestURI(targetURL)
+	fastHttpReq.Header.SetMethod(req.Method)
 
 	if len(req.Body) > 0 {
 		if bytes.Contains(req.Body, []byte(`"stream":true`)) {
@@ -765,36 +768,36 @@ func (h *forwardedHandler) doForwardRequest(
 			if err != nil {
 				return nil, fmt.Errorf("failed to transform request body: %w", err)
 			}
-			fasthttpReq.SetBody(transformedBody)
+			fastHttpReq.SetBody(transformedBody)
 		} else {
-			fasthttpReq.SetBodyRaw(req.Body)
+			fastHttpReq.SetBodyRaw(req.Body)
 		}
 	}
 
 	for k, vals := range req.Headers {
 		if len(vals) == 1 {
-			fasthttpReq.Header.Set(k, vals[0])
+			fastHttpReq.Header.Set(k, vals[0])
 		} else {
 			for _, val := range vals {
-				fasthttpReq.Header.Add(k, val)
+				fastHttpReq.Header.Add(k, val)
 			}
 		}
 	}
 	for k, v := range target.Headers {
-		fasthttpReq.Header.Set(k, v)
+		fastHttpReq.Header.Set(k, v)
 	}
 
-	h.applyAuthentication(fasthttpReq, &target.Credentials, req.Body)
+	h.applyAuthentication(fastHttpReq, &target.Credentials, req.Body)
 
-	err := h.client.DoTimeout(fasthttpReq, fasthttpResp, 30*time.Second)
+	err := h.client.DoTimeout(fastHttpReq, fastHttpResp, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to forward request: %w", err)
 	}
 
 	respBodyPtr := responseBodyPool.Get().(*[]byte)
-	*respBodyPtr = fasthttpResp.Body()
+	*respBodyPtr = fastHttpResp.Body()
 
-	statusCode := fasthttpResp.StatusCode()
+	statusCode := fastHttpResp.StatusCode()
 	if statusCode <= 0 || statusCode >= 600 {
 		responseBodyPool.Put(respBodyPtr)
 		return nil, fmt.Errorf("invalid status code received: %d", statusCode)
@@ -808,7 +811,7 @@ func (h *forwardedHandler) doForwardRequest(
 		"provider": target.Provider,
 	}).Debug("Selected provider")
 
-	response := h.createResponse(fasthttpResp, *respBodyPtr)
+	response := h.createResponse(fastHttpResp, *respBodyPtr)
 	responseBodyPool.Put(respBodyPtr)
 
 	return response, nil

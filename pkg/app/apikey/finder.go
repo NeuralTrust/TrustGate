@@ -41,14 +41,14 @@ func (f *finder) Find(ctx context.Context, gatewayID string, key string) (*model
 	if entity, err := f.getFromMemoryCache(key); err == nil {
 		return entity, nil
 	} else if !errors.Is(err, ErrInvalidCacheType) {
-		go f.logger.WithError(err).Warn("memory cache read apikey failure")
+		f.logger.WithError(err).Warn("memory cache read apikey failure")
 	}
 
 	if cachedService, err := f.cache.GetApiKey(ctx, gatewayID, key); err == nil && cachedService != nil {
 		f.saveToMemoryCache(cachedService)
 		return cachedService, nil
 	} else if err != nil {
-		go f.logger.WithError(err).Warn("distributed cache read apikey failure")
+		f.logger.WithError(err).Warn("distributed cache read apikey failure")
 	}
 
 	entity, err := f.repo.GetByKey(ctx, gatewayID, key)
