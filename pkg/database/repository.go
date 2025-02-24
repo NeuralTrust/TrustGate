@@ -340,7 +340,7 @@ func (r *Repository) UpdateAPIKey(ctx context.Context, apiKey *models.APIKey) er
 }
 
 func (r *Repository) DeleteAPIKey(ctx context.Context, id, gatewayID string) error {
-	result := r.db.Where("id = ? AND gateway_id = ?", id, gatewayID).Delete(&models.APIKey{})
+	result := r.db.WithContext(ctx).Where("id = ? AND gateway_id = ?", id, gatewayID).Delete(&models.APIKey{})
 	if result.Error != nil {
 		return result.Error
 	}

@@ -1,27 +1,32 @@
 package http
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
 
 type deleteServiceHandler struct {
-	logger *logrus.Logger
-	repo   *database.Repository
-	cache  *cache.Cache
+	logger    *logrus.Logger
+	repo      *database.Repository
+	publisher infraCache.EventPublisher
 }
 
-func NewDeleteServiceHandler(logger *logrus.Logger, repo *database.Repository, cache *cache.Cache) Handler {
+func NewDeleteServiceHandler(
+	logger *logrus.Logger,
+	repo *database.Repository,
+	publisher infraCache.EventPublisher,
+) Handler {
 	return &deleteServiceHandler{
-		logger: logger,
-		repo:   repo,
-		cache:  cache,
+		logger:    logger,
+		repo:      repo,
+		publisher: publisher,
 	}
 }
 
@@ -37,14 +42,17 @@ func (s *deleteServiceHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Invalidate cache
-	serviceKey := fmt.Sprintf(cache.ServiceKeyPattern, gatewayID, serviceID)
-	servicesKey := fmt.Sprintf(cache.ServicesKeyPattern, gatewayID)
-	if err := s.cache.Delete(c.Context(), serviceKey); err != nil {
-		s.logger.WithError(err).Error("Failed to invalidate service cache")
-	}
-	if err := s.cache.Delete(c.Context(), servicesKey); err != nil {
-		s.logger.WithError(err).Error("Failed to invalidate services list cache")
+	err := s.publisher.Publish(
+		c.Context(),
+		channel.GatewayEventsChannel,
+		event.DeleteServiceCacheEvent{
+			GatewayID: gatewayID,
+			ServiceID: serviceID,
+		},
+	)
+
+	if err != nil {
+		s.logger.WithError(err).Error("failed to publish service cache invalidation")
 	}
 
 	return c.SendStatus(http.StatusNoContent)

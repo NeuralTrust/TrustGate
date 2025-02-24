@@ -33,6 +33,7 @@ const (
 	ApiKeyPattern       = "gateway:%s:apikey:%s"
 
 	GatewayTTLName  = "gateway"
+	ApiKeyTTLName   = "api_key"
 	RulesTTLName    = "rules"
 	PluginTTLName   = "plugin"
 	ServiceTTLName  = "service"

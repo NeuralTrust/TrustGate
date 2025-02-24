@@ -40,7 +40,7 @@ func (f *finder) Find(ctx context.Context, gatewayID, upstreamID string) (*model
 		f.logger.WithError(err).Warn("memory cache read upstream failure")
 	}
 	if cachedUpstream, err := f.cache.GetUpstream(ctx, gatewayID, upstreamID); err == nil && cachedUpstream != nil {
-		f.saveUpstreamToMemoryCache(cachedUpstream)
+		f.saveUpstreamToMemoryCache(ctx, cachedUpstream)
 		return cachedUpstream, nil
 	} else if err != nil {
 		f.logger.WithError(err).Warn("distributed cache read upstream failure")
@@ -50,7 +50,7 @@ func (f *finder) Find(ctx context.Context, gatewayID, upstreamID string) (*model
 		f.logger.WithError(err).Error("failed to fetch upstream from repository")
 		return nil, err
 	}
-	f.saveUpstreamToMemoryCache(upstream)
+	f.saveUpstreamToMemoryCache(ctx, upstream)
 	return upstream, nil
 }
 
@@ -64,6 +64,10 @@ func (f *finder) getUpstreamFromMemoryCache(upstreamID string) (*models.Upstream
 	return nil, errors.New("upstream not found in memory cache")
 }
 
-func (f *finder) saveUpstreamToMemoryCache(upstream *models.Upstream) {
+func (f *finder) saveUpstreamToMemoryCache(ctx context.Context, upstream *models.Upstream) {
 	f.memoryCache.Set(upstream.ID, upstream)
+	err := f.cache.SaveUpstream(ctx, upstream.GatewayID, upstream)
+	if err != nil {
+		f.logger.WithError(err).Warn("failed to save upstream to distributed cache")
+	}
 }

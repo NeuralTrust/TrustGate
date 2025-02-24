@@ -2,16 +2,19 @@ package models
 
 import (
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type APIKey struct {
-	ID        string    `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	Key       string    `json:"key" gorm:"index"`
-	Name      string    `json:"name"`
-	Active    bool      `json:"active"`
-	GatewayID string    `json:"gateway_id" gorm:"type:varchar(255);index"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string         `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	Key       string         `json:"key" gorm:"index"`
+	Name      string         `json:"name"`
+	Active    bool           `json:"active"`
+	GatewayID string         `json:"gateway_id" gorm:"type:varchar(255);index"`
+	ExpiresAt time.Time      `json:"expires_at"`
+	CreatedAt time.Time      `json:"created_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 }
 
 func (a APIKey) TableName() string {

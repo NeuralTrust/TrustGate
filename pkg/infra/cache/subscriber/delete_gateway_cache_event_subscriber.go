@@ -38,6 +38,5 @@ func (s DeleteGatewayCacheEventSubscriber) OnEvent(ctx context.Context, evt even
 	if err := s.cache.Delete(ctx, fmt.Sprintf(cache.GatewayKeyPattern, evt.GatewayID)); err != nil {
 		s.logger.WithError(err).Warn("failed to delete gateway from redis cache")
 	}
-
 	return nil
 }
