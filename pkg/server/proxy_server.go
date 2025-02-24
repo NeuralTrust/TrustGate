@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
@@ -29,17 +28,7 @@ type (
 		*BaseServer
 		middlewareTransport middleware.Transport
 		handlerTransport    handlers.HandlerTransport
-		gatewayCache        *common.TTLMap
-		rulesCache          *common.TTLMap
-		pluginCache         *common.TTLMap
 	}
-)
-
-// Cache TTLs
-const (
-	GatewayCacheTTL = 1 * time.Hour
-	RulesCacheTTL   = 5 * time.Minute
-	PluginCacheTTL  = 30 * time.Minute
 )
 
 const (
@@ -60,9 +49,6 @@ func NewProxyServer(di ProxyServerDI) *ProxyServer {
 		BaseServer:          NewBaseServer(di.Config, di.Cache, di.Logger),
 		middlewareTransport: di.MiddlewareTransport,
 		handlerTransport:    di.HandlerTransport,
-		gatewayCache:        di.Cache.GetTTLMap("gateway"),
-		rulesCache:          di.Cache.GetTTLMap("rules"),
-		pluginCache:         di.Cache.GetTTLMap("plugin"),
 	}
 
 	s.BaseServer.setupMetricsEndpoint()

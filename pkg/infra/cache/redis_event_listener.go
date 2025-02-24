@@ -90,7 +90,7 @@ func (r *redisEventListener) Listen(ctx context.Context, channels ...channel.Cha
 }
 
 func (r *redisEventListener) getEvent(eventType string) (reflect.Type, error) {
-	concreteType, ok := event.EventRegistry[eventType]
+	concreteType, ok := event.Registry[eventType]
 	if !ok {
 		return nil, fmt.Errorf("unknown event type: %s", eventType)
 	}

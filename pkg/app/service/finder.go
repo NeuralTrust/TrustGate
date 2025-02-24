@@ -46,7 +46,7 @@ func (f *finder) Find(ctx context.Context, gatewayID, serviceID string) (*models
 	}
 
 	if cachedService, err := f.cache.GetService(ctx, gatewayID, serviceID); err == nil && cachedService != nil {
-		f.saveServiceToMemoryCache(cachedService)
+		f.saveServiceToMemoryCache(ctx, cachedService)
 		return cachedService, nil
 	} else if err != nil {
 		f.logger.WithError(err).Warn("distributed cache read service failure")
@@ -58,7 +58,7 @@ func (f *finder) Find(ctx context.Context, gatewayID, serviceID string) (*models
 		return nil, err
 	}
 
-	f.saveServiceToMemoryCache(service)
+	f.saveServiceToMemoryCache(ctx, service)
 	return service, nil
 }
 
@@ -76,6 +76,10 @@ func (f *finder) getServiceFromMemoryCache(serviceID string) (*models.Service, e
 	return service, nil
 }
 
-func (f *finder) saveServiceToMemoryCache(service *models.Service) {
+func (f *finder) saveServiceToMemoryCache(ctx context.Context, service *models.Service) {
 	f.memoryCache.Set(service.ID, service)
+	err := f.cache.SaveService(ctx, service.GatewayID, service)
+	if err != nil {
+		f.logger.WithError(err).Error("failed to save service to distributed cache")
+	}
 }

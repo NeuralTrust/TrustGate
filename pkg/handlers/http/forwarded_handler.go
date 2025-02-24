@@ -35,10 +35,6 @@ import (
 	"github.com/valyala/fastjson"
 )
 
-const (
-	GatewayCacheTTL = 1 * time.Hour
-)
-
 type forwardedHandler struct {
 	logger         *logrus.Logger
 	repo           *database.Repository

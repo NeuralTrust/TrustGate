@@ -141,9 +141,15 @@ func main() {
 	// subscribers
 	deleteGatewaySubscriber := subscriber.NewDeleteGatewayCacheEventSubscriber(logger, cacheInstance)
 	deleteRulesSubscriber := subscriber.NewDeleteRulesEventSubscriber(logger, cacheInstance)
+	deleteServiceSubscriber := subscriber.NewDeleteServiceCacheEventSubscriber(logger, cacheInstance)
+	deleteUpstreamSubscriber := subscriber.NewDeleteUpstreamCacheEventSubscriber(logger, cacheInstance)
+	deleteApiKeySubscriber := subscriber.NewDeleteApiKeyCacheEventSubscriber(logger, cacheInstance)
 
 	infraCache.RegisterEventSubscriber[event.DeleteGatewayCacheEvent](redisListener, deleteGatewaySubscriber)
 	infraCache.RegisterEventSubscriber[event.DeleteRulesCacheEvent](redisListener, deleteRulesSubscriber)
+	infraCache.RegisterEventSubscriber[event.DeleteServiceCacheEvent](redisListener, deleteServiceSubscriber)
+	infraCache.RegisterEventSubscriber[event.DeleteUpstreamCacheEvent](redisListener, deleteUpstreamSubscriber)
+	infraCache.RegisterEventSubscriber[event.DeleteApiKeyCacheEvent](redisListener, deleteApiKeySubscriber)
 
 	// repository
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
@@ -183,13 +189,13 @@ func main() {
 		ListUpstreamHandler:   handlers.NewListUpstreamHandler(logger, repo, cacheInstance),
 		GetUpstreamHandler:    handlers.NewGetUpstreamHandler(logger, repo, cacheInstance, upstreamFinder),
 		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(logger, repo, cacheInstance),
-		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(logger, repo, cacheInstance),
+		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(logger, repo, redisPublisher),
 		// Service
 		CreateServiceHandler: handlers.NewCreateServiceHandler(logger, repo, cacheInstance),
 		ListServicesHandler:  handlers.NewListServicesHandler(logger, repo),
 		GetServiceHandler:    handlers.NewGetServiceHandler(logger, serviceRepository, cacheInstance),
 		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, repo, cacheInstance),
-		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, repo, cacheInstance),
+		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, repo, redisPublisher),
 		// Rule
 		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, repo, validateRule),
 		ListRulesHandler:  handlers.NewListRulesHandler(logger, repo, cacheInstance),
@@ -199,7 +205,7 @@ func main() {
 		CreateAPIKeyHandler: handlers.NewCreateAPIKeyHandler(logger, repo, cacheInstance),
 		ListAPIKeysHandler:  handlers.NewListAPIKeysHandler(logger, repo),
 		GetAPIKeyHandler:    handlers.NewGetAPIKeyHandler(logger, cacheInstance),
-		DeleteAPIKeyHandler: handlers.NewDeleteAPIKeyHandler(logger, cacheInstance),
+		DeleteAPIKeyHandler: handlers.NewDeleteAPIKeyHandler(logger, repo, redisPublisher),
 	}
 
 	// Create and initialize the server
@@ -248,11 +254,12 @@ func main() {
 
 func initializeMemoryCache(cacheInstance *cache.Cache) {
 	// memoryCache
-	_ = cacheInstance.CreateTTLMap(cache.GatewayTTLName, server.GatewayCacheTTL)
-	_ = cacheInstance.CreateTTLMap(cache.RulesTTLName, server.RulesCacheTTL)
-	_ = cacheInstance.CreateTTLMap(cache.PluginTTLName, server.PluginCacheTTL)
+	_ = cacheInstance.CreateTTLMap(cache.GatewayTTLName, common.GatewayCacheTTL)
+	_ = cacheInstance.CreateTTLMap(cache.RulesTTLName, common.RulesCacheTTL)
+	_ = cacheInstance.CreateTTLMap(cache.PluginTTLName, common.PluginCacheTTL)
 	_ = cacheInstance.CreateTTLMap(cache.ServiceTTLName, common.ServiceCacheTTL)
 	_ = cacheInstance.CreateTTLMap(cache.UpstreamTTLName, common.UpstreamCacheTTL)
+	_ = cacheInstance.CreateTTLMap(cache.ApiKeyTTLName, common.ApiKeyCacheTTL)
 }
 
 func getServerType() string {

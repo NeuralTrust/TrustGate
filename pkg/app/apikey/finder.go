@@ -26,14 +26,14 @@ type finder struct {
 
 func NewFinder(
 	repository domainService.Repository,
-	cache *cache.Cache,
+	c *cache.Cache,
 	logger *logrus.Logger,
 ) Finder {
 	return &finder{
 		repo:        repository,
-		cache:       cache,
+		cache:       c,
 		logger:      logger,
-		memoryCache: cache.CreateTTLMap("apikey", common.ApiKeyCacheTTL),
+		memoryCache: c.GetTTLMap(cache.ApiKeyTTLName),
 	}
 }
 
@@ -45,7 +45,7 @@ func (f *finder) Find(ctx context.Context, gatewayID string, key string) (*model
 	}
 
 	if cachedService, err := f.cache.GetApiKey(ctx, gatewayID, key); err == nil && cachedService != nil {
-		f.saveToMemoryCache(cachedService)
+		f.saveToMemoryCache(ctx, cachedService)
 		return cachedService, nil
 	} else if err != nil {
 		f.logger.WithError(err).Warn("distributed cache read apikey failure")
@@ -57,7 +57,7 @@ func (f *finder) Find(ctx context.Context, gatewayID string, key string) (*model
 		return nil, err
 	}
 
-	f.saveToMemoryCache(entity)
+	f.saveToMemoryCache(ctx, entity)
 	return entity, nil
 }
 
@@ -75,6 +75,10 @@ func (f *finder) getFromMemoryCache(key string) (*models.APIKey, error) {
 	return entity, nil
 }
 
-func (f *finder) saveToMemoryCache(entity *models.APIKey) {
+func (f *finder) saveToMemoryCache(ctx context.Context, entity *models.APIKey) {
 	f.memoryCache.Set(entity.Key, entity)
+	err := f.cache.SaveAPIKey(ctx, entity)
+	if err != nil {
+		f.logger.WithError(err).Error("failed to save apikey to distributed cache")
+	}
 }
