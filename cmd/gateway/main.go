@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -17,6 +18,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
+	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	infraLogger "github.com/NeuralTrust/TrustGate/pkg/infra/logger"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
@@ -27,12 +32,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 )
 
 func main() {
-
+	ctx := context.Background()
 	// Initialize logger
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{
@@ -48,11 +52,6 @@ func main() {
 		logger.SetLevel(logrus.DebugLevel)
 	}
 
-	//textHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
-	//asyncHandler := infraLogger.NewAsyncHandler(textHandler, 100)
-	//slogger := slog.New(asyncHandler)
-	//slog.SetDefault(slogger)
-	// Get server type once at the start
 	serverType := getServerType()
 
 	// Set up logging to file
@@ -133,7 +132,20 @@ func main() {
 	plugins.InitializePlugins(cacheInstance, logger)
 	pluginManager := plugins.GetManager()
 
-	// Initialize repository
+	initializeMemoryCache(cacheInstance)
+
+	// redis publisher
+	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
+	redisListener := infraCache.NewRedisEventListener(logger, cacheInstance)
+
+	// subscribers
+	deleteGatewaySubscriber := subscriber.NewDeleteGatewayCacheEventSubscriber(logger, cacheInstance)
+	deleteRulesSubscriber := subscriber.NewDeleteRulesEventSubscriber(logger, cacheInstance)
+
+	infraCache.RegisterEventSubscriber[event.DeleteGatewayCacheEvent](redisListener, deleteGatewaySubscriber)
+	infraCache.RegisterEventSubscriber[event.DeleteRulesCacheEvent](redisListener, deleteRulesSubscriber)
+
+	// repository
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
 	upstreamRepository := repository.NewUpstreamRepository(db.DB)
 	serviceRepository := repository.NewServiceRepository(db.DB)
@@ -145,8 +157,7 @@ func main() {
 	apiKeyFinder := apikey.NewFinder(apiKeyRepository, cacheInstance, logger)
 	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
-	invalidateCachePublisher := infraCache.NewInvalidationPublisher(cacheInstance)
-	invalidateGatewayCache := gateway.NewInvalidateGatewayCache(cacheInstance, invalidateCachePublisher)
+	invalidateGatewayCache := gateway.NewInvalidateGatewayCache(cacheInstance, redisPublisher)
 	validatePlugin := plugin.NewValidatePlugin()
 	validateRule := rule.NewValidateRule(validatePlugin)
 
@@ -157,83 +168,38 @@ func main() {
 		MetricsMiddleware: middleware.NewMetricsMiddleware(logger),
 	}
 
-	//handler
-	forwardedHandler := handlers.NewForwardedHandler(
-		logger,
-		repo,
-		cacheInstance,
-		upstreamFinder,
-		serviceFinder,
-		cfg.Providers.Providers,
-		pluginManager,
-	)
-
-	createGatewayHandler := handlers.NewCreateGatewayHandler(logger, repo, updateGatewayCache)
-	listGatewayHandler := handlers.NewListGatewayHandler(logger, repo, updateGatewayCache)
-	getGatewayHandler := handlers.NewGetGatewayHandler(logger, repo, getGatewayCache, updateGatewayCache)
-	updateGatewayHandler := handlers.NewUpdateGatewayHandler(
-		logger,
-		repo,
-		updateGatewayCache,
-		invalidateGatewayCache,
-		pluginManager,
-	)
-	deleteGatewayHandler := handlers.NewDeleteGatewayHandler(logger, repo)
-
-	createUpstreamHandler := handlers.NewCreateUpstreamHandler(logger, repo, cacheInstance)
-	listUpstreamHandler := handlers.NewListUpstreamHandler(logger, repo, cacheInstance)
-	getUpstreamHandler := handlers.NewGetUpstreamHandler(logger, repo, cacheInstance, upstreamFinder)
-	updateUpstreamHandler := handlers.NewUpdateUpstreamHandler(logger, repo, cacheInstance)
-	deleteUpstreamHandler := handlers.NewDeleteUpstreamHandler(logger, repo, cacheInstance)
-
-	createServiceHandler := handlers.NewCreateServiceHandler(logger, repo, cacheInstance)
-	listServicesHandler := handlers.NewListServicesHandler(logger, repo)
-	getServiceHandler := handlers.NewGetServiceHandler(logger, serviceRepository, cacheInstance)
-	updateServiceHandler := handlers.NewUpdateServiceHandler(logger, repo, cacheInstance)
-	deleteServiceHandler := handlers.NewDeleteServiceHandler(logger, repo, cacheInstance)
-
-	createRuleHandler := handlers.NewCreateRuleHandler(logger, repo, validateRule)
-	listRulesHandler := handlers.NewListRulesHandler(logger, repo, cacheInstance)
-	updateRuleHandler := handlers.NewUpdateRuleHandler(logger, repo, cacheInstance, validateRule, invalidateCachePublisher)
-	deleteRuleHandler := handlers.NewDeleteRuleHandler(logger, repo, cacheInstance, invalidateCachePublisher)
-
-	createApiKeyHandler := handlers.NewCreateAPIKeyHandler(logger, repo, cacheInstance)
-	listApiKeysHandler := handlers.NewListAPIKeysHandler(logger, repo)
-	getApiKeyHandler := handlers.NewGetAPIKeyHandler(logger, cacheInstance)
-	deleteApiKeyHandler := handlers.NewDeleteAPIKeyHandler(logger, cacheInstance)
-
 	// Handler Transport
 	handlerTransport := handlers.HandlerTransport{
 		// Proxy
-		ForwardedHandler: forwardedHandler,
+		ForwardedHandler: handlers.NewForwardedHandler(logger, repo, cacheInstance, upstreamFinder, serviceFinder, cfg.Providers.Providers, pluginManager),
 		// Gateway
-		CreateGatewayHandler: createGatewayHandler,
-		ListGatewayHandler:   listGatewayHandler,
-		GetGatewayHandler:    getGatewayHandler,
-		UpdateGatewayHandler: updateGatewayHandler,
-		DeleteGatewayHandler: deleteGatewayHandler,
+		CreateGatewayHandler: handlers.NewCreateGatewayHandler(logger, repo, updateGatewayCache),
+		ListGatewayHandler:   handlers.NewListGatewayHandler(logger, repo, updateGatewayCache),
+		GetGatewayHandler:    handlers.NewGetGatewayHandler(logger, repo, getGatewayCache, updateGatewayCache),
+		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, repo, updateGatewayCache, invalidateGatewayCache, pluginManager),
+		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(logger, repo, redisPublisher),
 		// Upstream
-		CreateUpstreamHandler: createUpstreamHandler,
-		ListUpstreamHandler:   listUpstreamHandler,
-		GetUpstreamHandler:    getUpstreamHandler,
-		UpdateUpstreamHandler: updateUpstreamHandler,
-		DeleteUpstreamHandler: deleteUpstreamHandler,
+		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, repo, cacheInstance),
+		ListUpstreamHandler:   handlers.NewListUpstreamHandler(logger, repo, cacheInstance),
+		GetUpstreamHandler:    handlers.NewGetUpstreamHandler(logger, repo, cacheInstance, upstreamFinder),
+		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(logger, repo, cacheInstance),
+		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(logger, repo, cacheInstance),
 		// Service
-		CreateServiceHandler: createServiceHandler,
-		ListServicesHandler:  listServicesHandler,
-		GetServiceHandler:    getServiceHandler,
-		UpdateServiceHandler: updateServiceHandler,
-		DeleteServiceHandler: deleteServiceHandler,
+		CreateServiceHandler: handlers.NewCreateServiceHandler(logger, repo, cacheInstance),
+		ListServicesHandler:  handlers.NewListServicesHandler(logger, repo),
+		GetServiceHandler:    handlers.NewGetServiceHandler(logger, serviceRepository, cacheInstance),
+		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, repo, cacheInstance),
+		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, repo, cacheInstance),
 		// Rule
-		CreateRuleHandler: createRuleHandler,
-		ListRulesHandler:  listRulesHandler,
-		UpdateRuleHandler: updateRuleHandler,
-		DeleteRuleHandler: deleteRuleHandler,
+		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, repo, validateRule),
+		ListRulesHandler:  handlers.NewListRulesHandler(logger, repo, cacheInstance),
+		UpdateRuleHandler: handlers.NewUpdateRuleHandler(logger, repo, cacheInstance, validateRule, redisPublisher),
+		DeleteRuleHandler: handlers.NewDeleteRuleHandler(logger, repo, cacheInstance, redisPublisher),
 		// APIKey
-		CreateAPIKeyHandler: createApiKeyHandler,
-		ListAPIKeysHandler:  listApiKeysHandler,
-		GetAPIKeyHandler:    getApiKeyHandler,
-		DeleteAPIKeyHandler: deleteApiKeyHandler,
+		CreateAPIKeyHandler: handlers.NewCreateAPIKeyHandler(logger, repo, cacheInstance),
+		ListAPIKeysHandler:  handlers.NewListAPIKeysHandler(logger, repo),
+		GetAPIKeyHandler:    handlers.NewGetAPIKeyHandler(logger, cacheInstance),
+		DeleteAPIKeyHandler: handlers.NewDeleteAPIKeyHandler(logger, cacheInstance),
 	}
 
 	// Create and initialize the server
@@ -251,6 +217,13 @@ func main() {
 		Config:              cfg,
 		Logger:              logger,
 		Cache:               cacheInstance,
+	}
+
+	if getServerType() == "proxy" {
+		go func() {
+			fmt.Println("starting listening redis events...")
+			redisListener.Listen(ctx, channel.GatewayEventsChannel)
+		}()
 	}
 
 	srv := initializeServer(proxyServerDI, adminServerDI)
@@ -271,6 +244,15 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("server gracefully stopped")
+}
+
+func initializeMemoryCache(cacheInstance *cache.Cache) {
+	// memoryCache
+	_ = cacheInstance.CreateTTLMap(cache.GatewayTTLName, server.GatewayCacheTTL)
+	_ = cacheInstance.CreateTTLMap(cache.RulesTTLName, server.RulesCacheTTL)
+	_ = cacheInstance.CreateTTLMap(cache.PluginTTLName, server.PluginCacheTTL)
+	_ = cacheInstance.CreateTTLMap(cache.ServiceTTLName, common.ServiceCacheTTL)
+	_ = cacheInstance.CreateTTLMap(cache.UpstreamTTLName, common.UpstreamCacheTTL)
 }
 
 func getServerType() string {

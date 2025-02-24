@@ -31,6 +31,12 @@ const (
 	ServicesKeyPattern  = "gateway:%s:services"
 	ServiceKeyPattern   = "gateway:%s:service:%s"
 	ApiKeyPattern       = "gateway:%s:apikey:%s"
+
+	GatewayTTLName  = "gateway"
+	RulesTTLName    = "rules"
+	PluginTTLName   = "plugin"
+	ServiceTTLName  = "service"
+	UpstreamTTLName = "upstream"
 )
 
 func NewCache(config common.CacheConfig, db *gorm.DB) (*Cache, error) {

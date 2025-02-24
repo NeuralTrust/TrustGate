@@ -55,13 +55,12 @@ type forwardedHandler struct {
 func NewForwardedHandler(
 	logger *logrus.Logger,
 	repo *database.Repository,
-	cache *cache.Cache,
+	c *cache.Cache,
 	upstreamFinder upstream.Finder,
 	serviceFinder service.Finder,
 	providers map[string]config.ProviderConfig,
 	pluginManager *plugins.Manager,
 ) Handler {
-	gatewayCache := cache.CreateTTLMap("gateway", GatewayCacheTTL)
 
 	client := &fasthttp.Client{
 		ReadTimeout:                   3 * time.Second,
@@ -78,8 +77,8 @@ func NewForwardedHandler(
 	return &forwardedHandler{
 		logger:         logger,
 		repo:           repo,
-		cache:          cache,
-		gatewayCache:   gatewayCache,
+		cache:          c,
+		gatewayCache:   c.GetTTLMap(cache.GatewayTTLName),
 		upstreamFinder: upstreamFinder,
 		serviceFinder:  serviceFinder,
 		providers:      providers,

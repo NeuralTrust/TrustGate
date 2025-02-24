@@ -8,6 +8,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
@@ -18,7 +20,7 @@ type updateRuleHandler struct {
 	repo                  *database.Repository
 	cache                 *cache.Cache
 	validateRule          *rule.ValidateRule
-	invalidationPublisher infraCache.InvalidationPublisher
+	invalidationPublisher infraCache.EventPublisher
 }
 
 func NewUpdateRuleHandler(
@@ -26,7 +28,7 @@ func NewUpdateRuleHandler(
 	repo *database.Repository,
 	cache *cache.Cache,
 	validateRule *rule.ValidateRule,
-	invalidationPublisher infraCache.InvalidationPublisher,
+	invalidationPublisher infraCache.EventPublisher,
 ) Handler {
 	return &updateRuleHandler{
 		logger:                logger,
@@ -139,7 +141,13 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Invalidate cache after updating the rule
-	if err := s.invalidationPublisher.Publish(c.Context(), gatewayID); err != nil {
+	if err := s.invalidationPublisher.Publish(
+		c.Context(),
+		channel.GatewayEventsChannel,
+		event.DeleteGatewayCacheEvent{
+			GatewayID: gatewayID,
+		},
+	); err != nil {
 		s.logger.WithError(err).Error("Failed to publish cache invalidation")
 	}
 

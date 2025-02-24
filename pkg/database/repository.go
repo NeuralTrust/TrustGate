@@ -15,6 +15,10 @@ import (
 	"gorm.io/gorm"
 )
 
+var (
+	ErrRuleNotFound = fmt.Errorf("rule not found")
+)
+
 // Repository handles all database operations
 type Repository struct {
 	db     *gorm.DB
@@ -270,12 +274,12 @@ func (r *Repository) UpdateRule(ctx context.Context, rule *models.ForwardingRule
 }
 
 func (r *Repository) DeleteRule(ctx context.Context, id, gatewayID string) error {
-	result := r.db.Where("id = ? AND gateway_id = ?", id, gatewayID).Delete(&models.ForwardingRule{})
+	result := r.db.WithContext(ctx).Unscoped().Where("id = ? AND gateway_id = ?", id, gatewayID).Delete(&models.ForwardingRule{})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("rule not found")
+		return ErrRuleNotFound
 	}
 	return nil
 }
