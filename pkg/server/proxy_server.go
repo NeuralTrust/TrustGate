@@ -1,8 +1,6 @@
 package server
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
@@ -58,24 +56,16 @@ func NewProxyServer(di ProxyServerDI) *ProxyServer {
 	}
 	metrics.Initialize(metricsConfig)
 
-	gatewayCache := di.Cache.CreateTTLMap("gateway", GatewayCacheTTL)
-	rulesCache := di.Cache.CreateTTLMap("rules", RulesCacheTTL)
-	pluginCache := di.Cache.CreateTTLMap("plugin", PluginCacheTTL)
-
 	s := &ProxyServer{
 		BaseServer:          NewBaseServer(di.Config, di.Cache, di.Logger),
 		middlewareTransport: di.MiddlewareTransport,
 		handlerTransport:    di.HandlerTransport,
-		gatewayCache:        gatewayCache,
-		rulesCache:          rulesCache,
-		pluginCache:         pluginCache,
+		gatewayCache:        di.Cache.GetTTLMap("gateway"),
+		rulesCache:          di.Cache.GetTTLMap("rules"),
+		pluginCache:         di.Cache.GetTTLMap("plugin"),
 	}
 
 	s.BaseServer.setupMetricsEndpoint()
-
-	// Subscribe to gateway events
-	go s.subscribeToEvents()
-
 	return s
 }
 
@@ -110,45 +100,6 @@ func (s *ProxyServer) Run() error {
 
 	s.logger.WithField("addr", s.config.Server.ProxyPort).Info("Starting proxy server")
 	return s.router.Listen(fmt.Sprintf(":%d", s.config.Server.ProxyPort))
-}
-
-func (s *ProxyServer) subscribeToEvents() {
-	rdb := s.cache.Client()
-	pubsub := rdb.Subscribe(context.Background(), "gateway_events")
-	defer pubsub.Close()
-
-	// Listen for messages
-	ch := pubsub.Channel()
-	for msg := range ch {
-		var event map[string]string
-		if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
-			s.logger.WithError(err).Error("Failed to unmarshal event")
-			continue
-		}
-		if event["type"] == "cache_invalidation" {
-			gatewayID := event["gatewayID"]
-			if err := s.invalidateGatewayCache(context.Background(), gatewayID); err != nil {
-				s.logger.WithError(err).Error("Failed to invalidate gateway cache")
-			}
-		}
-	}
-}
-
-// InvalidateGatewayCache removes the gateway data from both memory and Redis cache
-func (s *ProxyServer) invalidateGatewayCache(ctx context.Context, gatewayID string) error {
-	s.logger.WithFields(logrus.Fields{
-		"gatewayID": gatewayID,
-	}).Debug("invalidating gateway cache")
-
-	// Remove from memory cache
-	s.gatewayCache.Delete(gatewayID)
-
-	// Remove from Redis cache
-	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
-	if err := s.cache.Delete(ctx, rulesKey); err != nil {
-		s.logger.WithError(err).Warn("Failed to delete rules from Redis cache")
-	}
-	return nil
 }
 
 func (s *ProxyServer) Shutdown() error {
