@@ -6,6 +6,9 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
@@ -14,28 +17,25 @@ import (
 )
 
 type updateGatewayHandler struct {
-	logger             *logrus.Logger
-	repo               *database.Repository
-	transformer        *gateway.OutputTransformer
-	updateGatewayCache gateway.UpdateGatewayCache
-	invalidateCache    gateway.InvalidateGatewayCache
-	pluginManager      *plugins.Manager
+	logger        *logrus.Logger
+	repo          *database.Repository
+	transformer   *gateway.OutputTransformer
+	pluginManager *plugins.Manager
+	publisher     infraCache.EventPublisher
 }
 
 func NewUpdateGatewayHandler(
 	logger *logrus.Logger,
 	repo *database.Repository,
-	updateGatewayCache gateway.UpdateGatewayCache,
-	invalidateCache gateway.InvalidateGatewayCache,
 	pluginManager *plugins.Manager,
+	publisher infraCache.EventPublisher,
 ) Handler {
 	return &updateGatewayHandler{
-		logger:             logger,
-		repo:               repo,
-		transformer:        gateway.NewOutputTransformer(),
-		updateGatewayCache: updateGatewayCache,
-		invalidateCache:    invalidateCache,
-		pluginManager:      pluginManager,
+		logger:        logger,
+		repo:          repo,
+		transformer:   gateway.NewOutputTransformer(),
+		pluginManager: pluginManager,
+		publisher:     publisher,
 	}
 }
 
@@ -105,13 +105,11 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		RequiredPlugins: apiGateway.RequiredPlugins,
 	}
 
-	if err := h.updateGatewayCache.Update(c.Context(), dbGateway); err != nil {
-		h.logger.WithError(err).Error("Failed to update gateway cache")
-	}
-
-	// Invalidate caches
-	if err := h.invalidateCache.Invalidate(c.Context(), dbGateway.ID); err != nil {
-		h.logger.WithError(err).Error("Failed to invalidate caches")
+	err = h.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateGatewayCacheEvent{
+		GatewayID: dbGateway.ID,
+	})
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to publish update gateway cache event")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(response)

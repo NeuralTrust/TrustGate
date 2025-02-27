@@ -103,7 +103,6 @@ func (c *Cache) GetTTLMap(name string) *common.TTLMap {
 	return nil
 }
 
-// Add new cache methods
 func (c *Cache) SaveUpstream(ctx context.Context, gatewayID string, upstream *models.Upstream) error {
 	// Cache individual upstream
 	upstreamKey := fmt.Sprintf(UpstreamKeyPattern, gatewayID, upstream.ID)
@@ -114,7 +113,6 @@ func (c *Cache) SaveUpstream(ctx context.Context, gatewayID string, upstream *mo
 	if err := c.Set(ctx, upstreamKey, string(upstreamJSON), 0); err != nil {
 		return err
 	}
-
 	// Invalidate upstreams list cache
 	upstreamsKey := fmt.Sprintf(UpstreamsKeyPattern, gatewayID)
 	return c.Delete(ctx, upstreamsKey)

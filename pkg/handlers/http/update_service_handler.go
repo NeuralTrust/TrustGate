@@ -1,24 +1,26 @@
 package http
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
 
 type updateServiceHandler struct {
-	logger *logrus.Logger
-	repo   *database.Repository
-	cache  *cache.Cache
+	logger    *logrus.Logger
+	repo      *database.Repository
+	publisher infraCache.EventPublisher
 }
 
-func NewUpdateServiceHandler(logger *logrus.Logger, repo *database.Repository, cache *cache.Cache) Handler {
+func NewUpdateServiceHandler(logger *logrus.Logger, repo *database.Repository, publisher infraCache.EventPublisher) Handler {
 	return &updateServiceHandler{
-		logger: logger,
-		repo:   repo,
-		cache:  cache,
+		logger:    logger,
+		repo:      repo,
+		publisher: publisher,
 	}
 }
 
@@ -41,8 +43,12 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Cache the updated service
-	if err := s.cache.SaveService(c.Context(), gatewayID, &service); err != nil {
-		s.logger.WithError(err).Error("Failed to cache service")
+	err := s.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateServiceCacheEvent{
+		ServiceID: service.ID,
+		GatewayID: service.GatewayID,
+	})
+	if err != nil {
+		s.logger.WithError(err).Error("failed to publish update service cache event")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(service)

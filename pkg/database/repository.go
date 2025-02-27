@@ -141,18 +141,34 @@ func (r *Repository) UpdateGateway(ctx context.Context, gateway *models.Gateway)
 func (r *Repository) DeleteGateway(id string) error {
 	// Start a transaction
 	tx := r.db.Begin()
+	tx = tx.Debug()
 	if tx.Error != nil {
 		return tx.Error
 	}
 
 	// Delete associated forwarding rules first
-	if err := tx.Where("gateway_id = ?", id).Delete(&models.ForwardingRule{}).Error; err != nil {
+	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&models.ForwardingRule{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&models.Upstream{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&models.Service{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&models.APIKey{}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
 
 	// Then delete the gateway
-	if err := tx.Delete(&models.Gateway{ID: id}).Error; err != nil {
+	if err := tx.Unscoped().Delete(&models.Gateway{ID: id}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}

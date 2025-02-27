@@ -134,23 +134,6 @@ func main() {
 
 	initializeMemoryCache(cacheInstance)
 
-	// redis publisher
-	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
-	redisListener := infraCache.NewRedisEventListener(logger, cacheInstance)
-
-	// subscribers
-	deleteGatewaySubscriber := subscriber.NewDeleteGatewayCacheEventSubscriber(logger, cacheInstance)
-	deleteRulesSubscriber := subscriber.NewDeleteRulesEventSubscriber(logger, cacheInstance)
-	deleteServiceSubscriber := subscriber.NewDeleteServiceCacheEventSubscriber(logger, cacheInstance)
-	deleteUpstreamSubscriber := subscriber.NewDeleteUpstreamCacheEventSubscriber(logger, cacheInstance)
-	deleteApiKeySubscriber := subscriber.NewDeleteApiKeyCacheEventSubscriber(logger, cacheInstance)
-
-	infraCache.RegisterEventSubscriber[event.DeleteGatewayCacheEvent](redisListener, deleteGatewaySubscriber)
-	infraCache.RegisterEventSubscriber[event.DeleteRulesCacheEvent](redisListener, deleteRulesSubscriber)
-	infraCache.RegisterEventSubscriber[event.DeleteServiceCacheEvent](redisListener, deleteServiceSubscriber)
-	infraCache.RegisterEventSubscriber[event.DeleteUpstreamCacheEvent](redisListener, deleteUpstreamSubscriber)
-	infraCache.RegisterEventSubscriber[event.DeleteApiKeyCacheEvent](redisListener, deleteApiKeySubscriber)
-
 	// repository
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
 	upstreamRepository := repository.NewUpstreamRepository(db.DB)
@@ -163,9 +146,31 @@ func main() {
 	apiKeyFinder := apikey.NewFinder(apiKeyRepository, cacheInstance, logger)
 	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
-	invalidateGatewayCache := gateway.NewInvalidateGatewayCache(cacheInstance, redisPublisher)
 	validatePlugin := plugin.NewValidatePlugin()
 	validateRule := rule.NewValidateRule(validatePlugin)
+
+	// redis publisher
+	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
+	redisListener := infraCache.NewRedisEventListener(logger, cacheInstance)
+
+	// subscribers
+	deleteGatewaySubscriber := subscriber.NewDeleteGatewayCacheEventSubscriber(logger, cacheInstance)
+	deleteRulesSubscriber := subscriber.NewDeleteRulesEventSubscriber(logger, cacheInstance)
+	deleteServiceSubscriber := subscriber.NewDeleteServiceCacheEventSubscriber(logger, cacheInstance)
+	deleteUpstreamSubscriber := subscriber.NewDeleteUpstreamCacheEventSubscriber(logger, cacheInstance)
+	deleteApiKeySubscriber := subscriber.NewDeleteApiKeyCacheEventSubscriber(logger, cacheInstance)
+	updateGatewaySubscriber := subscriber.NewUpdateGatewayCacheEventSubscriber(logger, updateGatewayCache, cacheInstance)
+	updateUpstreamSubscriber := subscriber.NewUpdateUpstreamCacheEventSubscriber(logger, cacheInstance, upstreamRepository)
+	updateServiceSubscriber := subscriber.NewUpdateServiceCacheEventSubscriber(logger, cacheInstance, serviceRepository)
+
+	infraCache.RegisterEventSubscriber[event.DeleteGatewayCacheEvent](redisListener, deleteGatewaySubscriber)
+	infraCache.RegisterEventSubscriber[event.DeleteRulesCacheEvent](redisListener, deleteRulesSubscriber)
+	infraCache.RegisterEventSubscriber[event.DeleteServiceCacheEvent](redisListener, deleteServiceSubscriber)
+	infraCache.RegisterEventSubscriber[event.DeleteUpstreamCacheEvent](redisListener, deleteUpstreamSubscriber)
+	infraCache.RegisterEventSubscriber[event.DeleteApiKeyCacheEvent](redisListener, deleteApiKeySubscriber)
+	infraCache.RegisterEventSubscriber[event.UpdateGatewayCacheEvent](redisListener, updateGatewaySubscriber)
+	infraCache.RegisterEventSubscriber[event.UpdateUpstreamCacheEvent](redisListener, updateUpstreamSubscriber)
+	infraCache.RegisterEventSubscriber[event.UpdateServiceCacheEvent](redisListener, updateServiceSubscriber)
 
 	//middleware
 	middlewareTransport := middleware.Transport{
@@ -182,19 +187,19 @@ func main() {
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(logger, repo, updateGatewayCache),
 		ListGatewayHandler:   handlers.NewListGatewayHandler(logger, repo, updateGatewayCache),
 		GetGatewayHandler:    handlers.NewGetGatewayHandler(logger, repo, getGatewayCache, updateGatewayCache),
-		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, repo, updateGatewayCache, invalidateGatewayCache, pluginManager),
+		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, repo, pluginManager, redisPublisher),
 		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(logger, repo, redisPublisher),
 		// Upstream
 		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, repo, cacheInstance),
 		ListUpstreamHandler:   handlers.NewListUpstreamHandler(logger, repo, cacheInstance),
 		GetUpstreamHandler:    handlers.NewGetUpstreamHandler(logger, repo, cacheInstance, upstreamFinder),
-		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(logger, repo, cacheInstance),
+		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(logger, repo, redisPublisher),
 		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(logger, repo, redisPublisher),
 		// Service
 		CreateServiceHandler: handlers.NewCreateServiceHandler(logger, repo, cacheInstance),
 		ListServicesHandler:  handlers.NewListServicesHandler(logger, repo),
 		GetServiceHandler:    handlers.NewGetServiceHandler(logger, serviceRepository, cacheInstance),
-		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, repo, cacheInstance),
+		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, repo, redisPublisher),
 		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, repo, redisPublisher),
 		// Rule
 		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, repo, validateRule),
