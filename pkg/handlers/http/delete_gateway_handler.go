@@ -30,7 +30,7 @@ func NewDeleteGatewayHandler(
 }
 
 func (s *deleteGatewayHandler) Handle(c *fiber.Ctx) error {
-	id := c.Params("id")
+	id := c.Params("gateway_id")
 	if id == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "id is required"})
 	}

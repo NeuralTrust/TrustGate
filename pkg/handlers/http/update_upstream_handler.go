@@ -1,24 +1,30 @@
 package http
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
 
 type updateUpstreamHandler struct {
-	logger *logrus.Logger
-	repo   *database.Repository
-	cache  *cache.Cache
+	logger    *logrus.Logger
+	repo      *database.Repository
+	publisher infraCache.EventPublisher
 }
 
-func NewUpdateUpstreamHandler(logger *logrus.Logger, repo *database.Repository, cache *cache.Cache) Handler {
+func NewUpdateUpstreamHandler(
+	logger *logrus.Logger,
+	repo *database.Repository,
+	publisher infraCache.EventPublisher,
+) Handler {
 	return &updateUpstreamHandler{
-		logger: logger,
-		repo:   repo,
-		cache:  cache,
+		logger:    logger,
+		repo:      repo,
+		publisher: publisher,
 	}
 }
 
@@ -39,8 +45,12 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	if err := s.cache.SaveUpstream(c.Context(), gatewayID, &entity); err != nil {
-		s.logger.WithError(err).Error("Failed to cache upstream")
+	err := s.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateUpstreamCacheEvent{
+		UpstreamID: upstreamID,
+		GatewayID:  gatewayID,
+	})
+	if err != nil {
+		s.logger.WithError(err).Error("failed to publish update upstream event")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(entity)
