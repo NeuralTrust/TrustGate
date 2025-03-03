@@ -35,8 +35,12 @@ import (
 func main() {
 	ctx := context.Background()
 	serverType := getServerType()
+	envFile := os.Getenv("ENV_FILE")
 
-	err := godotenv.Load()
+	if envFile == "" {
+		envFile = ".env"
+	}
+	err := godotenv.Load(envFile)
 	if err != nil {
 		log.Println("no .env file found, using system environment variables")
 	}
@@ -44,7 +48,7 @@ func main() {
 	logger := infraLogger.NewLogger(serverType)
 
 	// Load configuration
-	if err := config.Load(); err != nil {
+	if err := config.Load("../../config/"); err != nil {
 		logger.Fatalf("Failed to load config: %v", err)
 	}
 	cfg := config.GetConfig()

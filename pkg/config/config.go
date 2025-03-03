@@ -72,10 +72,10 @@ type OpenAiConfig struct {
 var globalConfig Config
 
 // Load reads configuration from file and environment variables
-func Load() error {
+func Load(configPath string) error {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
-	viper.AddConfigPath("./config")
+	viper.AddConfigPath(configPath)
 	viper.AddConfigPath(".")
 
 	// Support environment variables
