@@ -1,8 +1,8 @@
 server:
-  admin_port: 8080
-  metrics_port: 9090
-  proxy_port: 8081
-  base_domain: example.com
+  admin_port: ${SERVER_ADMIN_PORT}
+  metrics_port: ${SERVER_METRICS_PORT}
+  proxy_port: ${SERVER_PROXY_PORT}
+  base_domain: ${BASE_DOMAIN}
 
 metrics:
   enabled: true
@@ -13,15 +13,26 @@ metrics:
   enable_detailed_status: true # Detailed status codes
 
 database:
-  host: localhost
-  port: 5432
-  user: postgres
-  password: postgres
-  dbname: ai_gateway
-  ssl_mode: disable 
+  host: ${DATABASE_HOST}
+  port: ${DATABASE_PORT}
+  user: ${DATABASE_USER}
+  password: ${DATABASE_PASSWORD}
+  name: ${DATABASE_NAME}
+  ssl_mode: ${DATABASE_SSL_MODE}
 
 redis:
-  host: localhost
-  port: 6379
+  host: ${REDIS_HOST}
+  port: ${REDIS_PORT}
   password: ""
-  db: 0
+  db: ${REDIS_DB}
+
+aws:
+  region: ${AWS_REGION}
+  access_key: ${AWS_ACCESS_KEY}
+  secret_key: ${AWS_SECRET_KEY}
+
+azure:
+  api_key: ${AZURE_API_KEY}
+
+openai:
+  api_key: ${OPENAI_API_KEY}

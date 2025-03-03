@@ -8,10 +8,13 @@ import (
 )
 
 type ValidatePlugin struct {
+	manager *plugins.Manager
 }
 
-func NewValidatePlugin() *ValidatePlugin {
-	return &ValidatePlugin{}
+func NewValidatePlugin(manager *plugins.Manager) *ValidatePlugin {
+	return &ValidatePlugin{
+		manager: manager,
+	}
 }
 
 func (s *ValidatePlugin) Validate(plugin types.PluginConfig) error {
@@ -45,10 +48,8 @@ func (s *ValidatePlugin) Validate(plugin types.PluginConfig) error {
 		return fmt.Errorf("plugin priority must be between 0 and 999")
 	}
 
-	// Get plugin validator
-	manager := plugins.GetManager()
-	if err := manager.ValidatePlugin(plugin.Name, plugin); err != nil {
-		return fmt.Errorf("unknown plugin: %s", plugin.Name)
+	if err := s.manager.ValidatePlugin(plugin.Name, plugin); err != nil {
+		return err
 	}
 	return nil
 }

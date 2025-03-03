@@ -42,20 +42,37 @@ const (
 
 // predefinedEntityPatterns maps entity types to their regex patterns
 var predefinedEntityPatterns = map[PredefinedEntity]string{
-	CreditCard:    `\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b`,
+	CreditCard:    `\b(?:\d[ -]*?){13,19}\b`,
 	Email:         `\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`,
-	PhoneNumber:   `\b\+?[\d\s-]{10,}\b`,
+	PhoneNumber:   `\+?(\d{1,4}[-\s]?)?(\d{3}[-\s]?\d{3}[-\s]?\d{4})`,
 	SSN:           `\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b`,
-	IPAddress:     `\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`,
-	BankAccount:   `\b\d{8,17}\b`,
+	IPAddress:     `\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`,
+	BankAccount:   `\b\d{8,20}\b`,
 	Password:      `(?i)password[\s]*[=:]\s*\S+`,
 	APIKey:        `(?i)(api[_-]?key|access[_-]?key)[\s]*[=:]\s*\S+`,
 	AccessToken:   `(?i)(access[_-]?token|bearer)[\s]*[=:]\s*\S+`,
-	IBAN:          `\b[A-Z]{2}\d{2}[A-Z0-9]{4,34}\b`,
+	IBAN:          `\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b`,
 	SwiftBIC:      `\b[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?\b`,
 	CryptoWallet:  `\b(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b`,
 	TaxID:         `\b\d{2}[-\s]?\d{7}\b`,
 	RoutingNumber: `\b\d{9}\b`,
+}
+
+var predefinedEntityOrder = []PredefinedEntity{
+	CreditCard,
+	Email,
+	IBAN,
+	PhoneNumber,
+	SSN,
+	IPAddress,
+	BankAccount,
+	Password,
+	APIKey,
+	AccessToken,
+	SwiftBIC,
+	CryptoWallet,
+	TaxID,
+	RoutingNumber,
 }
 
 // defaultEntityMasks defines default masking for pre-defined entities
@@ -171,7 +188,6 @@ func max(a, b int) int {
 	return b
 }
 
-// findSimilarKeyword checks if any word in the text is similar to the keywords
 func (p *DataMaskingPlugin) findSimilarKeyword(text string, threshold float64) (string, string, string, bool) {
 	words := strings.Fields(text)
 	for _, word := range words {
@@ -244,13 +260,20 @@ func (p *DataMaskingPlugin) ValidateConfig(config types.PluginConfig) error {
 
 func (p *DataMaskingPlugin) maskContent(content string, pattern string, maskWith string, preserveLen bool) string {
 	if preserveLen {
-		mask := strings.Repeat(maskWith[0:1], len(content))
-		return mask
+		if len(maskWith) > 1 {
+			return strings.Repeat(maskWith, 1)
+		}
+		return strings.Repeat("*", len(content))
 	}
 	return maskWith
 }
 
-func (p *DataMaskingPlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
+func (p *DataMaskingPlugin) Execute(
+	ctx context.Context,
+	cfg types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
 		return nil, fmt.Errorf("failed to decode config: %v", err)
@@ -328,11 +351,9 @@ func (p *DataMaskingPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 		}
 	}
 
-	// Process response body if in PreResponse stage
 	if resp != nil && len(resp.Body) > 0 {
 		var jsonData interface{}
 		if err := json.Unmarshal(resp.Body, &jsonData); err == nil {
-			// If it's valid JSON, process it as JSON
 			maskedData := p.maskJSONData(jsonData, threshold)
 			maskedJSON, err := json.Marshal(maskedData)
 			if err != nil {
@@ -340,7 +361,6 @@ func (p *DataMaskingPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 			}
 			resp.Body = maskedJSON
 		} else {
-			// If it's not JSON, process it as plain text
 			content := string(resp.Body)
 			maskedContent := p.maskPlainText(content, threshold)
 			resp.Body = []byte(maskedContent)
@@ -357,27 +377,30 @@ func (p *DataMaskingPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64) string {
 	maskedContent := content
 
-	// Apply regex masking first
-	for pattern, regex := range p.regexRules {
+	// Apply regex masking using the ordered entity list
+	for _, entityType := range predefinedEntityOrder {
+		_, exists := predefinedEntityPatterns[entityType]
+		if !exists {
+			continue
+		}
+		regex := p.regexRules[string(entityType)]
+		if regex == nil {
+			continue
+		}
+
 		matches := regex.FindAllString(maskedContent, -1)
-		for _, match := range matches {
-			// Try to identify the entity type from the pattern
-			for entityType, entityPattern := range predefinedEntityPatterns {
-				if pattern == entityPattern {
-					maskedContent = strings.ReplaceAll(maskedContent, match, defaultEntityMasks[entityType])
-					break
-				}
+		if len(matches) > 0 {
+			for _, match := range matches {
+				maskedContent = strings.ReplaceAll(maskedContent, match, defaultEntityMasks[entityType])
 			}
+			return maskedContent // Return immediately after first match is masked
 		}
 	}
 
-	// Split content into words to handle fuzzy matching
 	words := strings.Fields(maskedContent)
 	modified := false
 	for i, word := range words {
-		// Check for fuzzy matches using findSimilarKeyword
 		if origWord, keyword, maskWith, found := p.findSimilarKeyword(word, threshold); found {
-			// Use maskContent to apply the masking
 			words[i] = p.maskContent(origWord, keyword, maskWith, true)
 			modified = true
 		}

@@ -7,13 +7,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
+	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/mitchellh/mapstructure"
-	"github.com/sirupsen/logrus"
-
-	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
-	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
 const (
@@ -21,8 +19,15 @@ const (
 )
 
 type RateLimiterPlugin struct {
-	redis  *redis.Client
-	limits map[string]LimitConfig
+	redis        *redis.Client
+	limits       map[string]LimitConfig
+	timeProvider func() time.Time
+	uuidProvider func() uuid.UUID
+}
+
+type RateLimiterOpts struct {
+	TimeProvider func() time.Time
+	UuidProvider func() uuid.UUID
 }
 
 type LimitConfig struct {
@@ -38,10 +43,25 @@ type Config struct {
 	} `json:"actions"`
 }
 
-func NewRateLimiterPlugin(redisClient *redis.Client) pluginiface.Plugin {
+func NewRateLimiterPlugin(redisClient *redis.Client, opts *RateLimiterOpts) pluginiface.Plugin {
+	var timeProvider func() time.Time
+	var uuidProvider func() uuid.UUID
+	if opts != nil && opts.TimeProvider != nil {
+		timeProvider = opts.TimeProvider
+	} else {
+		timeProvider = time.Now
+	}
+	if opts != nil && opts.UuidProvider != nil {
+		uuidProvider = opts.UuidProvider
+	} else {
+		uuidProvider = uuid.New
+	}
+
 	return &RateLimiterPlugin{
-		redis:  redisClient,
-		limits: make(map[string]LimitConfig),
+		redis:        redisClient,
+		limits:       make(map[string]LimitConfig),
+		timeProvider: timeProvider,
+		uuidProvider: uuidProvider,
 	}
 }
 
@@ -57,7 +77,7 @@ func (r *RateLimiterPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-func (v *RateLimiterPlugin) ValidateConfig(config types.PluginConfig) error {
+func (r *RateLimiterPlugin) ValidateConfig(config types.PluginConfig) error {
 	if config.Stage != types.PreRequest {
 		return fmt.Errorf("rate limiter plugin must be in pre_request stage")
 	}
@@ -111,7 +131,12 @@ func (v *RateLimiterPlugin) ValidateConfig(config types.PluginConfig) error {
 	return nil
 }
 
-func (r *RateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
+func (r *RateLimiterPlugin) Execute(
+	ctx context.Context,
+	cfg types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
 		return nil, fmt.Errorf("invalid rate limiter config: %w", err)
@@ -130,11 +155,7 @@ func (r *RateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 	}
 
 	var finalStatus limitStatus
-	logrus.WithFields(logrus.Fields{
-		"config":  config,
-		"limits":  config.Limits,
-		"actions": config.Actions,
-	}).Info("Rate limiter config")
+
 	// Check limits in specific order: per_ip -> per_user -> global
 	limitOrder := []string{"per_ip", "per_user", "global"}
 
@@ -160,7 +181,7 @@ func (r *RateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 				r.extractKey(req, limitType),
 			)
 
-			now := time.Now()
+			now := r.timeProvider()
 			windowStart := now.Add(-window).Unix()
 
 			// Check current count
@@ -189,9 +210,10 @@ func (r *RateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 				break
 			}
 
+			uid := r.uuidProvider()
 			// Only increment counter if not exceeded
-			requestID := fmt.Sprintf("%d:%s", now.Unix(), uuid.New().String())
-			pipe := r.redis.Pipeline()
+			requestID := fmt.Sprintf("%d:%s", now.Unix(), uid.String())
+			pipe := r.redis.TxPipeline()
 
 			pipe.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(windowStart, 10))
 			pipe.ZAdd(ctx, key, &redis.Z{

@@ -3,10 +3,13 @@ package plugins
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/sirupsen/logrus"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -29,63 +32,74 @@ var (
 
 type Manager struct {
 	mu             sync.RWMutex
+	config         *config.Config
 	cache          *cache.Cache
 	logger         *logrus.Logger
+	bedrockClient  bedrock.Client
 	plugins        map[string]pluginiface.Plugin
 	configurations map[types.Level]map[string][]types.PluginConfig
 }
 
-func GetManager() *Manager {
+func NewManager(
+	config *config.Config,
+	cache *cache.Cache,
+	logger *logrus.Logger,
+	bedrockClient bedrock.Client,
+) *Manager {
 	once.Do(func() {
 		instance = &Manager{
 			plugins:        make(map[string]pluginiface.Plugin),
 			configurations: make(map[types.Level]map[string][]types.PluginConfig),
+			bedrockClient:  bedrockClient,
+			cache:          cache,
+			logger:         logger,
+			config:         config,
 		}
 	})
+	instance.initializePlugins()
 	return instance
 }
 
-func InitManager(cache *cache.Cache, logger *logrus.Logger) {
-	manager := GetManager()
-	manager.cache = cache
-	manager.logger = logger
-}
+func (m *Manager) initializePlugins() {
 
-func InitializePlugins(cache *cache.Cache, logger *logrus.Logger) {
-	InitManager(cache, logger)
-	manager := GetManager()
-
-	// Register built-in plugins with error handling
-	if err := manager.RegisterPlugin(rate_limiter.NewRateLimiterPlugin(cache.Client())); err != nil {
-		logger.WithError(err).Error("Failed to register rate limiter plugin")
+	if err := m.RegisterPlugin(rate_limiter.NewRateLimiterPlugin(m.cache.Client(), nil)); err != nil {
+		m.logger.WithError(err).Error("Failed to register rate limiter plugin")
 	}
 
-	if err := manager.RegisterPlugin(external_api.NewExternalApiPlugin()); err != nil {
-		logger.WithError(err).Error("Failed to register external API plugin")
+	if err := m.RegisterPlugin(external_api.NewExternalApiPlugin(&http.Client{})); err != nil {
+		m.logger.WithError(err).Error("Failed to register external API plugin")
 	}
 
-	if err := manager.RegisterPlugin(token_rate_limiter.NewTokenRateLimiterPlugin(logger, cache.Client())); err != nil {
-		logger.WithError(err).Error("Failed to register token rate limiter plugin")
+	if err := m.RegisterPlugin(token_rate_limiter.NewTokenRateLimiterPlugin(m.logger, m.cache.Client())); err != nil {
+		m.logger.WithError(err).Error("Failed to register token rate limiter plugin")
 	}
 
-	if err := manager.RegisterPlugin(prompt_moderation.NewPromptModerationPlugin(logger)); err != nil {
-		logger.WithError(err).Error("Failed to register prompt moderation plugin")
+	if err := m.RegisterPlugin(prompt_moderation.NewPromptModerationPlugin(m.logger)); err != nil {
+		m.logger.WithError(err).Error("Failed to register prompt moderation plugin")
 	}
 
-	if err := manager.RegisterPlugin(data_masking.NewDataMaskingPlugin(logger)); err != nil {
-		logger.WithError(err).Error("Failed to register data masking plugin")
+	if err := m.RegisterPlugin(data_masking.NewDataMaskingPlugin(m.logger)); err != nil {
+		m.logger.WithError(err).Error("Failed to register data masking plugin")
 	}
 
-	if err := manager.RegisterPlugin(toxicity_openai.NewToxicityOpenAIPlugin(logger)); err != nil {
-		logger.WithError(err).Error("Failed to register toxicity openai plugin")
+	if err := m.RegisterPlugin(toxicity_openai.NewToxicityOpenAIPlugin(
+		m.logger,
+		&http.Client{},
+		m.config.OpenAi,
+	)); err != nil {
+		m.logger.WithError(err).Error("Failed to register toxicity openai plugin")
 	}
 
-	if err := manager.RegisterPlugin(toxicity_azure.NewToxicityAzurePlugin(logger)); err != nil {
-		logger.WithError(err).Error("Failed to register toxicity azure plugin")
+	if err := m.RegisterPlugin(toxicity_azure.NewToxicityAzurePlugin(
+		m.logger,
+		&http.Client{},
+		m.config.Azure,
+	)); err != nil {
+		m.logger.WithError(err).Error("Failed to register toxicity azure plugin")
 	}
 
-	if err := manager.RegisterPlugin(bedrock_guardrail.NewBedrockGuardrailPlugin(logger)); err != nil {
-		logger.WithError(err).Error("Failed to register bedrock guardrail plugin")
+	if err := m.RegisterPlugin(bedrock_guardrail.NewBedrockGuardrailPlugin(m.logger, m.bedrockClient, m.config.AWS)); err != nil {
+		m.logger.WithError(err).Error("Failed to register bedrock guardrail plugin")
 	}
 }
 
@@ -165,7 +179,14 @@ func (m *Manager) ExecuteStage(ctx context.Context, stage types.Stage, gatewayID
 	return resp, nil
 }
 
-func (m *Manager) executeChains(ctx context.Context, plugins map[string]pluginiface.Plugin, chains []types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext, executedPlugins map[string]bool) error {
+func (m *Manager) executeChains(
+	ctx context.Context,
+	plugins map[string]pluginiface.Plugin,
+	chains []types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	executedPlugins map[string]bool,
+) error {
 	// Group parallel and sequential chains
 	var parallelChains, sequentialChains []types.PluginConfig
 	for _, chain := range chains {

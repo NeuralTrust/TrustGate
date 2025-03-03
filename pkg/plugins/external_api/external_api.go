@@ -5,16 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 
-	"github.com/sirupsen/logrus"
+	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
 const (
@@ -38,8 +36,8 @@ type Condition struct {
 	Message        string      `mapstructure:"message"`
 }
 
-func NewExternalApiPlugin() pluginiface.Plugin {
-	return &ExternalApiPlugin{client: &http.Client{}}
+func NewExternalApiPlugin(client *http.Client) pluginiface.Plugin {
+	return &ExternalApiPlugin{client: client}
 }
 
 func (v *ExternalApiPlugin) Name() string {
@@ -82,15 +80,15 @@ func (v *ExternalApiPlugin) ValidateConfig(config types.PluginConfig) error {
 	return nil
 }
 
-func (v *ExternalApiPlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
-	logger, err := getContextValue[*logrus.Logger](ctx, common.LoggerKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get logger: %w", err)
-	}
+func (v *ExternalApiPlugin) Execute(
+	ctx context.Context,
+	cfg types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+) (*types.PluginResponse, error) {
 
 	settings := cfg.Settings
 	if settings == nil {
-		logger.WithError(fmt.Errorf("settings are required")).Error("External validator settings missing")
 		return nil, fmt.Errorf("settings are required")
 	}
 	// Get endpoint
@@ -173,6 +171,9 @@ func (v *ExternalApiPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 				if msg, ok := condMap["message"].(string); ok {
 					condition.Message = msg
 				}
+				if value, ok := condMap["value"].(interface{}); ok {
+					condition.Value = value
+				}
 				conditions = append(conditions, condition)
 			}
 		}
@@ -234,9 +235,7 @@ func (v *ExternalApiPlugin) Execute(ctx context.Context, cfg types.PluginConfig,
 	if err := json.NewDecoder(httpResp.Body).Decode(&validationResp); err != nil {
 		return nil, fmt.Errorf("failed to parse validation response: %w", err)
 	}
-	logger.WithFields(logrus.Fields{
-		"validationResp": validationResp,
-	}).Debug("Validation response")
+
 	// Check conditions
 	for _, condition := range conditions {
 		value := getNestedValue(validationResp, strings.Split(condition.Field, "."))

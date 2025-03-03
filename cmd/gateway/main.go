@@ -6,10 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -17,7 +14,12 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
+	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/common"
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/database"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -26,76 +28,20 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
-	"github.com/sirupsen/logrus"
-
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
+	"github.com/joho/godotenv"
 )
 
 func main() {
 	ctx := context.Background()
-	// Initialize logger
-	logger := logrus.New()
-	logger.SetFormatter(&logrus.JSONFormatter{
-		TimestampFormat: time.RFC3339,
-		FieldMap: logrus.FieldMap{
-			logrus.FieldKeyTime: "time",
-			logrus.FieldKeyMsg:  "msg",
-		},
-	})
-
-	// Set log level
-	if os.Getenv("LOG_LEVEL") == "debug" {
-		logger.SetLevel(logrus.DebugLevel)
-	}
-
 	serverType := getServerType()
 
-	// Set up logging to file
-	var logFile string
-	if serverType == "admin" {
-		logFile = "logs/admin.log"
-	} else {
-		logFile = "logs/proxy.log"
-	}
-
-	// Validate and sanitize log file path
-	logFile = filepath.Clean(logFile)
-	if !strings.HasPrefix(logFile, "logs/") {
-		log.Fatalf("Invalid log file path: must be in logs directory")
-	}
-
-	// Create logs directory with more restrictive permissions
-	if err := os.MkdirAll("logs", 0750); err != nil {
-		log.Fatalf("Failed to create logs directory: %v", err)
-	}
-
-	// Open log file with more restrictive permissions
-	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	err := godotenv.Load()
 	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
+		log.Println("no .env file found, using system environment variables")
 	}
-	defer file.Close()
 
-	asyncWriter, err := infraLogger.NewAsyncFileWriter(logFile, 32*1024)
-	if err != nil {
-		log.Fatalf("Failed to initialize async log writer: %v", err)
-	}
-	defer asyncWriter.Close()
-
-	// Set the logger output to the file
-	logger.SetOutput(asyncWriter)
-
-	asyncConsoleHook := infraLogger.NewAsyncConsoleHook(500)
-	defer asyncConsoleHook.Close()
-
-	// In debug mode, add a hook for stdout
-	if os.Getenv("LOG_LEVEL") == "debug" {
-		logger.AddHook(asyncConsoleHook)
-	}
+	logger := infraLogger.NewLogger(serverType)
 
 	// Load configuration
 	if err := config.Load(); err != nil {
@@ -129,8 +75,12 @@ func main() {
 		logger.Fatalf("Failed to initialize cache: %v", err)
 	}
 
-	plugins.InitializePlugins(cacheInstance, logger)
-	pluginManager := plugins.GetManager()
+	bedrockClient, err := bedrock.NewClient(cfg.AWS, logger)
+	if err != nil {
+		logger.Fatalf("failed to initialize bedrock client: %v", err)
+	}
+
+	pluginManager := plugins.NewManager(cfg, cacheInstance, logger, bedrockClient)
 
 	initializeMemoryCache(cacheInstance)
 
@@ -146,7 +96,7 @@ func main() {
 	apiKeyFinder := apikey.NewFinder(apiKeyRepository, cacheInstance, logger)
 	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
-	validatePlugin := plugin.NewValidatePlugin()
+	validatePlugin := plugin.NewValidatePlugin(pluginManager)
 	validateRule := rule.NewValidateRule(validatePlugin)
 
 	// redis publisher

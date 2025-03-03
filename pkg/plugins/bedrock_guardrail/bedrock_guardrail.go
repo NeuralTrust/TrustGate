@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/mitchellh/mapstructure"
@@ -17,35 +18,54 @@ import (
 
 const PluginName = "bedrock_guardrail"
 
-// Plugin configuration
 type Config struct {
-	GuardrailID string `mapstructure:"guardrail_id"`
-	Version     string `mapstructure:"version"`
-	Actions     struct {
-		Message string `mapstructure:"message"`
-	} `mapstructure:"actions"`
-	Credentials struct {
-		AWSAccessKey string `mapstructure:"aws_access_key"`
-		AWSSecretKey string `mapstructure:"aws_secret_key"`
-		AWSRegion    string `mapstructure:"aws_region"`
-	} `mapstructure:"credentials"`
+	GuardrailID string  `mapstructure:"guardrail_id"`
+	Version     string  `mapstructure:"version"`
+	Actions     Actions `mapstructure:"actions"`
 }
 
-// Plugin implementation
+type Actions struct {
+	Message string `mapstructure:"message"`
+}
+
 type BedrockGuardrailPlugin struct {
 	logger        *logrus.Logger
-	bedrockClient *bedrockruntime.Client
+	globalConfig  config.AWSConfig
+	bedrockClient bedrock.Client
 }
 
-// Create new plugin instance
-func NewBedrockGuardrailPlugin(logger *logrus.Logger) pluginiface.Plugin {
+func NewBedrockGuardrailPlugin(
+	logger *logrus.Logger,
+	bedrockClient bedrock.Client,
+	globalConfig config.AWSConfig,
+) pluginiface.Plugin {
 	return &BedrockGuardrailPlugin{
-		logger: logger,
+		logger:        logger,
+		bedrockClient: bedrockClient,
+		globalConfig:  globalConfig,
 	}
 }
 
-func (v *BedrockGuardrailPlugin) ValidateConfig(config plugintypes.PluginConfig) error {
-	return fmt.Errorf("not implemented")
+func (p *BedrockGuardrailPlugin) ValidateConfig(config plugintypes.PluginConfig) error {
+	if p.globalConfig.AccessKey == "" {
+		return fmt.Errorf("aws Access key must be specified")
+	}
+	if p.globalConfig.SecretKey == "" {
+		return fmt.Errorf("aws Secret key must be specified")
+	}
+	if p.globalConfig.Region == "" {
+		return fmt.Errorf("aws Region must be specified")
+	}
+	var conf Config
+	if err := mapstructure.Decode(config.Settings, &conf); err != nil {
+		p.logger.WithError(err).Error("Failed to decode config")
+		return fmt.Errorf("failed to decode config: %v", err)
+	}
+	if conf.GuardrailID == "" {
+		return fmt.Errorf("aws GuardrailID must be specified")
+	}
+
+	return nil
 }
 
 func (p *BedrockGuardrailPlugin) Name() string {
@@ -60,57 +80,27 @@ func (p *BedrockGuardrailPlugin) AllowedStages() []plugintypes.Stage {
 	return []plugintypes.Stage{plugintypes.PreRequest}
 }
 
-// Execute implements the plugin logic
-func (p *BedrockGuardrailPlugin) Execute(ctx context.Context, cfg plugintypes.PluginConfig, req *plugintypes.RequestContext, resp *plugintypes.ResponseContext) (*plugintypes.PluginResponse, error) {
+func (p *BedrockGuardrailPlugin) Execute(
+	ctx context.Context,
+	cfg plugintypes.PluginConfig,
+	req *plugintypes.RequestContext,
+	resp *plugintypes.ResponseContext,
+) (*plugintypes.PluginResponse, error) {
 	// Parse config
-	var config Config
-	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
+	var conf Config
+	if err := mapstructure.Decode(cfg.Settings, &conf); err != nil {
 		p.logger.WithError(err).Error("Failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
 
 	// Validate config
-	if config.GuardrailID == "" {
+	if conf.GuardrailID == "" {
 		p.logger.Error("GuardrailID is required")
 		return nil, fmt.Errorf("guardrail_id is required")
 	}
 	// If version is not specified, use default version
-	if config.Version == "" {
-		config.Version = "1" // Default version if not specified
-	}
-
-	// Initialize AWS SDK client if not already initialized
-	if p.bedrockClient == nil {
-		p.logger.Debug("Initializing AWS client")
-
-		var awsCfg aws.Config
-		var err error
-
-		if config.Credentials.AWSAccessKey != "" && config.Credentials.AWSSecretKey != "" {
-			// Use provided credentials
-			p.logger.Debug("Using provided AWS credentials")
-			awsCfg, err = awsconfig.LoadDefaultConfig(ctx,
-				awsconfig.WithCredentialsProvider(aws.CredentialsProviderFunc(
-					func(ctx context.Context) (aws.Credentials, error) {
-						return aws.Credentials{
-							AccessKeyID:     config.Credentials.AWSAccessKey,
-							SecretAccessKey: config.Credentials.AWSSecretKey,
-						}, nil
-					},
-				)),
-				awsconfig.WithRegion(config.Credentials.AWSRegion),
-			)
-		} else {
-			// Fall back to default credentials
-			p.logger.Debug("Using default AWS credentials")
-			awsCfg, err = awsconfig.LoadDefaultConfig(ctx)
-		}
-
-		if err != nil {
-			p.logger.WithError(err).Error("Failed to load AWS config")
-			return nil, fmt.Errorf("failed to load AWS config: %v", err)
-		}
-		p.bedrockClient = bedrockruntime.NewFromConfig(awsCfg)
+	if conf.Version == "" {
+		conf.Version = "1" // Default version if not specified
 	}
 
 	// Get content to check
@@ -124,8 +114,8 @@ func (p *BedrockGuardrailPlugin) Execute(ctx context.Context, cfg plugintypes.Pl
 	p.logger.WithFields(logrus.Fields{
 		"content":        content,
 		"content_length": len(content),
-		"guardrail_id":   config.GuardrailID,
-		"version":        config.Version,
+		"guardrail_id":   conf.GuardrailID,
+		"version":        conf.Version,
 	}).Info("Content being sent to Bedrock API")
 
 	// Prepare request for ApplyGuardrail
@@ -137,14 +127,14 @@ func (p *BedrockGuardrailPlugin) Execute(ctx context.Context, cfg plugintypes.Pl
 
 	input := &bedrockruntime.ApplyGuardrailInput{
 		Content:             []types.GuardrailContentBlock{&contentBlock},
-		GuardrailIdentifier: aws.String(config.GuardrailID),
-		GuardrailVersion:    aws.String(config.Version),
+		GuardrailIdentifier: aws.String(conf.GuardrailID),
+		GuardrailVersion:    aws.String(conf.Version),
 		Source:              types.GuardrailContentSourceInput,
 	}
 
 	p.logger.WithFields(logrus.Fields{
-		"guardrail_id":   config.GuardrailID,
-		"version":        config.Version,
+		"guardrail_id":   conf.GuardrailID,
+		"version":        conf.Version,
 		"content_length": len(content),
 	}).Debug("Calling Bedrock Guardrail API")
 
@@ -160,7 +150,6 @@ func (p *BedrockGuardrailPlugin) Execute(ctx context.Context, cfg plugintypes.Pl
 
 	// Check if content is flagged by examining the assessments
 	for _, assessment := range output.Assessments {
-		// Check topic policy violations
 		if assessment.TopicPolicy != nil && len(assessment.TopicPolicy.Topics) > 0 {
 			for _, topic := range assessment.TopicPolicy.Topics {
 				if topic.Action == "BLOCKED" && topic.Type == "DENY" {
@@ -172,7 +161,7 @@ func (p *BedrockGuardrailPlugin) Execute(ctx context.Context, cfg plugintypes.Pl
 					}).Info("Content blocked due to topic policy violation")
 					return nil, &plugintypes.PluginError{
 						StatusCode: 403,
-						Message:    fmt.Sprintf(config.Actions.Message, message),
+						Message:    fmt.Sprintf(conf.Actions.Message, message),
 						Err:        fmt.Errorf("content blocked by guardrail: topic policy violation"),
 					}
 				}
@@ -193,7 +182,7 @@ func (p *BedrockGuardrailPlugin) Execute(ctx context.Context, cfg plugintypes.Pl
 					}).Info("Content blocked due to content policy violation")
 					return nil, &plugintypes.PluginError{
 						StatusCode: 403,
-						Message:    fmt.Sprintf(config.Actions.Message, message),
+						Message:    fmt.Sprintf(conf.Actions.Message, message),
 						Err:        fmt.Errorf("content blocked by guardrail"),
 					}
 				}
@@ -212,7 +201,7 @@ func (p *BedrockGuardrailPlugin) Execute(ctx context.Context, cfg plugintypes.Pl
 						}).Info("Content blocked due to sensitive information violation")
 						return nil, &plugintypes.PluginError{
 							StatusCode: 403,
-							Message:    fmt.Sprintf(config.Actions.Message, message),
+							Message:    fmt.Sprintf(conf.Actions.Message, message),
 							Err:        fmt.Errorf("content blocked by guardrail: sensitive information"),
 						}
 					}

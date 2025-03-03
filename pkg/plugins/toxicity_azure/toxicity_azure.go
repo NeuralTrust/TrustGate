@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -21,12 +23,13 @@ const (
 )
 
 type ToxicityAzurePlugin struct {
-	logger *logrus.Logger
-	config Config
+	client       httpx.Client
+	logger       *logrus.Logger
+	config       Config
+	globalConfig config.AzureConfig
 }
 
 type Config struct {
-	APIKey    string `mapstructure:"api_key"`
 	Endpoints struct {
 		Text  string `mapstructure:"text"`  // Endpoint for text content
 		Image string `mapstructure:"image"` // Endpoint for image content
@@ -37,11 +40,13 @@ type Config struct {
 		Type    string `mapstructure:"type"`
 		Message string `mapstructure:"message"`
 	} `mapstructure:"actions"`
-	ContentTypes []struct {
-		Type string `mapstructure:"type"`
-		Path string `mapstructure:"path"`
-	} `mapstructure:"content_types"`
-	Categories []string `mapstructure:"categories"` // Categories to check for (e.g., "Hate", "Violence", etc.)
+	ContentTypes []ContentType `mapstructure:"content_types"`
+	Categories   []string      `mapstructure:"categories"` // Categories to check for (e.g., "Hate", "Violence", etc.)
+}
+
+type ContentType struct {
+	Type string `mapstructure:"type"`
+	Path string `mapstructure:"path"`
 }
 
 type RequestBody struct {
@@ -84,9 +89,11 @@ type AzureImageResponse struct {
 	} `json:"categoriesAnalysis"`
 }
 
-func NewToxicityAzurePlugin(logger *logrus.Logger) pluginiface.Plugin {
+func NewToxicityAzurePlugin(logger *logrus.Logger, client httpx.Client, globalConfig config.AzureConfig) pluginiface.Plugin {
 	plugin := &ToxicityAzurePlugin{
-		logger: logger,
+		logger:       logger,
+		client:       client,
+		globalConfig: globalConfig,
 	}
 	return plugin
 }
@@ -110,8 +117,12 @@ func (p *ToxicityAzurePlugin) ValidateConfig(config types.PluginConfig) error {
 		return fmt.Errorf("failed to decode config: %v", err)
 	}
 
-	if cfg.APIKey == "" {
-		return fmt.Errorf("Azure API key must be specified")
+	if p.globalConfig.ApiKey == "" {
+		return fmt.Errorf("azure API key must be specified")
+	}
+
+	if len(cfg.ContentTypes) == 0 {
+		cfg.ContentTypes = append(cfg.ContentTypes, ContentType{Type: "text", Path: "text"})
 	}
 
 	if cfg.Actions.Type == "" {
@@ -269,14 +280,18 @@ func (p *ToxicityAzurePlugin) getSeverityLevel(category string) int {
 	return 2 // Default severity level if category not configured
 }
 
-func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
-	var config Config
-	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
+func (p *ToxicityAzurePlugin) Execute(
+	ctx context.Context,
+	cfg types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+) (*types.PluginResponse, error) {
+	var conf Config
+	if err := mapstructure.Decode(cfg.Settings, &conf); err != nil {
 		p.logger.WithError(err).Error("Failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
-
-	p.config = config
+	p.config = conf
 
 	var endpoint string
 	var extractedImageData string
@@ -285,13 +300,13 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 	// Find the content type we're processing
 	var isImageContent bool
 	var isTextContent bool
-	for _, ct := range config.ContentTypes {
+	for _, ct := range conf.ContentTypes {
 		// Try to extract image data first
 		if ct.Type == "image" {
 			imageData, err := p.extractImage(req.Body)
 			if err == nil {
 				isImageContent = true
-				endpoint = config.Endpoints.Image
+				endpoint = conf.Endpoints.Image
 				extractedImageData = imageData
 				p.logger.WithField("endpoint", endpoint).Info("Using image endpoint")
 				break
@@ -300,7 +315,7 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 			text, err := p.extractText(req.Body)
 			if err == nil {
 				isTextContent = true
-				endpoint = config.Endpoints.Text
+				endpoint = conf.Endpoints.Text
 				extractedText = text
 				p.logger.WithField("endpoint", endpoint).Info("Using text endpoint")
 				break
@@ -318,12 +333,12 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 
 	// Log configuration
 	p.logger.WithFields(logrus.Fields{
-		"text_endpoint":     config.Endpoints.Text,
-		"image_endpoint":    config.Endpoints.Image,
-		"categories":        config.Categories,
-		"output_type":       config.OutputType,
-		"category_severity": config.CategorySeverity,
-		"content_types":     config.ContentTypes,
+		"text_endpoint":     conf.Endpoints.Text,
+		"image_endpoint":    conf.Endpoints.Image,
+		"categories":        conf.Categories,
+		"output_type":       conf.OutputType,
+		"category_severity": conf.CategorySeverity,
+		"content_types":     conf.ContentTypes,
 		"is_image":          isImageContent,
 		"is_text":           isTextContent,
 		"endpoint":          endpoint,
@@ -332,12 +347,10 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 	var jsonData []byte
 	var err error
 
-	// Handle different content types
 	if isImageContent {
-		// Create Azure image content safety request
 		azureReq := AzureImageRequest{
-			Categories: config.Categories,
-			OutputType: config.OutputType,
+			Categories: conf.Categories,
+			OutputType: conf.OutputType,
 		}
 		azureReq.Image.Content = extractedImageData
 
@@ -349,18 +362,16 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 				Message:    fmt.Sprintf("Failed to marshal Azure image request: %v", err),
 			}, nil
 		}
-	} else if isTextContent {
-		// Use configured categories or default ones
-		categories := config.Categories
+	} else {
+		categories := conf.Categories
 		if len(categories) == 0 {
 			categories = []string{"Hate", "Violence", "SelfHarm", "Sexual"}
 		}
 
-		// Create Azure text content safety request
 		azureReq := AzureRequest{
 			Text:       extractedText,
 			Categories: categories,
-			OutputType: config.OutputType,
+			OutputType: conf.OutputType,
 		}
 
 		jsonData, err = json.Marshal(azureReq)
@@ -373,21 +384,6 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 		}
 	}
 
-	if err != nil {
-		p.logger.WithError(err).Error("Failed to marshal Azure request")
-		return &types.PluginResponse{
-			StatusCode: 500,
-			Message:    fmt.Sprintf("Failed to marshal Azure request: %v", err),
-		}, nil
-	}
-
-	p.logger.WithFields(logrus.Fields{
-		"endpoint":    endpoint,
-		"request":     string(jsonData),
-		"categories":  config.Categories,
-		"output_type": config.OutputType,
-	}).Debug("Sending request to Azure")
-
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		p.logger.WithError(err).Error("Failed to create HTTP request")
@@ -398,11 +394,10 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Ocp-Apim-Subscription-Key", config.APIKey)
+	httpReq.Header.Set("Ocp-Apim-Subscription-Key", p.globalConfig.ApiKey)
 
 	// Send request
-	client := &http.Client{}
-	httpResp, err := client.Do(httpReq)
+	httpResp, err := p.client.Do(httpReq)
 	if err != nil {
 		p.logger.WithError(err).Error("Failed to send request to Azure")
 		return &types.PluginResponse{
@@ -420,11 +415,6 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 			Message:    fmt.Sprintf("Failed to read response body: %v", err),
 		}, nil
 	}
-
-	p.logger.WithFields(logrus.Fields{
-		"status_code": httpResp.StatusCode,
-		"response":    string(body),
-	}).Debug("Received response from Azure")
 
 	if httpResp.StatusCode != http.StatusOK {
 		errMsg := fmt.Sprintf("Azure API returned error (status: %d): %s", httpResp.StatusCode, string(body))
@@ -462,7 +452,6 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 				"severityLevel": severityLevel,
 			}).Info("Category analysis")
 
-			// Add result to analysis results
 			analysisResults = append(analysisResults, map[string]interface{}{
 				"category":      analysis.Category,
 				"severity":      analysis.Severity,
@@ -497,7 +486,7 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 
 			return nil, &types.PluginError{
 				StatusCode: 400,
-				Message:    fmt.Sprintf(config.Actions.Message+" Flagged categories: %v", blockedCategories),
+				Message:    fmt.Sprintf(conf.Actions.Message+" Flagged categories: %v", blockedCategories),
 				Err:        fmt.Errorf("content flagged for categories: %v", blockedCategories),
 			}
 		}
@@ -591,7 +580,7 @@ func (p *ToxicityAzurePlugin) Execute(ctx context.Context, cfg types.PluginConfi
 
 		return nil, &types.PluginError{
 			StatusCode: 400,
-			Message:    fmt.Sprintf(config.Actions.Message+" Flagged categories: %v", blockedCategories),
+			Message:    fmt.Sprintf(conf.Actions.Message+" Flagged categories: %v", blockedCategories),
 			Err:        fmt.Errorf("content flagged for categories: %v", blockedCategories),
 		}
 	}
