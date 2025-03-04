@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
@@ -23,13 +22,13 @@ const (
 )
 
 type ToxicityOpenAIPlugin struct {
-	client       httpx.Client
-	logger       *logrus.Logger
-	config       Config
-	globalConfig config.OpenAiConfig
+	client httpx.Client
+	logger *logrus.Logger
+	config Config
 }
 
 type Config struct {
+	OpenAIKey  string             `mapstructure:"openai_key"`
 	Actions    ActionConfig       `mapstructure:"actions"`
 	Categories []string           `mapstructure:"categories"`
 	Thresholds map[string]float64 `mapstructure:"thresholds"`
@@ -86,15 +85,13 @@ type ModerationResult struct {
 func NewToxicityOpenAIPlugin(
 	logger *logrus.Logger,
 	client httpx.Client,
-	globalConfig config.OpenAiConfig,
 ) pluginiface.Plugin {
 	if client == nil {
 		client = &http.Client{}
 	}
 	return &ToxicityOpenAIPlugin{
-		client:       client,
-		logger:       logger,
-		globalConfig: globalConfig,
+		client: client,
+		logger: logger,
 	}
 }
 
@@ -118,7 +115,7 @@ func (p *ToxicityOpenAIPlugin) ValidateConfig(config types.PluginConfig) error {
 	if cfg.Actions.Type == "" {
 		return fmt.Errorf("action type must be specified")
 	}
-	if p.globalConfig.ApiKey == "" {
+	if cfg.OpenAIKey == "" {
 		return fmt.Errorf("OpenAI API key must be specified")
 	}
 	return nil
@@ -153,7 +150,7 @@ func (p *ToxicityOpenAIPlugin) Execute(
 		return nil, fmt.Errorf("failed to marshal moderation request: %w", err)
 	}
 
-	httpResp, err := p.sendModerationRequest(ctx, p.globalConfig.ApiKey, jsonData)
+	httpResp, err := p.sendModerationRequest(ctx, conf.OpenAIKey, jsonData)
 	if err != nil {
 		return nil, err
 	}

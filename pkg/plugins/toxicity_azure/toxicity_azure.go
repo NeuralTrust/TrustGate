@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
@@ -23,13 +22,13 @@ const (
 )
 
 type ToxicityAzurePlugin struct {
-	client       httpx.Client
-	logger       *logrus.Logger
-	config       Config
-	globalConfig config.AzureConfig
+	client httpx.Client
+	logger *logrus.Logger
+	config Config
 }
 
 type Config struct {
+	APIKey    string `mapstructure:"api_key"`
 	Endpoints struct {
 		Text  string `mapstructure:"text"`  // Endpoint for text content
 		Image string `mapstructure:"image"` // Endpoint for image content
@@ -89,11 +88,10 @@ type AzureImageResponse struct {
 	} `json:"categoriesAnalysis"`
 }
 
-func NewToxicityAzurePlugin(logger *logrus.Logger, client httpx.Client, globalConfig config.AzureConfig) pluginiface.Plugin {
+func NewToxicityAzurePlugin(logger *logrus.Logger, client httpx.Client) pluginiface.Plugin {
 	plugin := &ToxicityAzurePlugin{
-		logger:       logger,
-		client:       client,
-		globalConfig: globalConfig,
+		logger: logger,
+		client: client,
 	}
 	return plugin
 }
@@ -117,7 +115,7 @@ func (p *ToxicityAzurePlugin) ValidateConfig(config types.PluginConfig) error {
 		return fmt.Errorf("failed to decode config: %v", err)
 	}
 
-	if p.globalConfig.ApiKey == "" {
+	if cfg.APIKey == "" {
 		return fmt.Errorf("azure API key must be specified")
 	}
 
@@ -394,7 +392,7 @@ func (p *ToxicityAzurePlugin) Execute(
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Ocp-Apim-Subscription-Key", p.globalConfig.ApiKey)
+	httpReq.Header.Set("Ocp-Apim-Subscription-Key", conf.APIKey)
 
 	// Send request
 	httpResp, err := p.client.Do(httpReq)

@@ -79,7 +79,7 @@ func main() {
 		logger.Fatalf("Failed to initialize cache: %v", err)
 	}
 
-	bedrockClient, err := bedrock.NewClient(cfg.AWS, logger)
+	bedrockClient, err := bedrock.NewClient(logger)
 	if err != nil {
 		logger.Fatalf("failed to initialize bedrock client: %v", err)
 	}
@@ -93,6 +93,7 @@ func main() {
 	upstreamRepository := repository.NewUpstreamRepository(db.DB)
 	serviceRepository := repository.NewServiceRepository(db.DB)
 	apiKeyRepository := repository.NewApiKeyRepository(db.DB)
+	gatewayRepository := repository.NewGatewayRepository(db.DB)
 
 	// service
 	upstreamFinder := upstream.NewFinder(upstreamRepository, cacheInstance, logger)
@@ -140,7 +141,7 @@ func main() {
 			logger, repo, cacheInstance, upstreamFinder, serviceFinder, cfg.Providers.Providers, pluginManager,
 		),
 		// Gateway
-		CreateGatewayHandler: handlers.NewCreateGatewayHandler(logger, repo, updateGatewayCache),
+		CreateGatewayHandler: handlers.NewCreateGatewayHandler(logger, gatewayRepository, updateGatewayCache),
 		ListGatewayHandler:   handlers.NewListGatewayHandler(logger, repo, updateGatewayCache),
 		GetGatewayHandler:    handlers.NewGetGatewayHandler(logger, repo, getGatewayCache, updateGatewayCache),
 		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, repo, pluginManager, redisPublisher),

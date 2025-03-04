@@ -10,9 +10,10 @@ import (
 )
 
 func TestRateLimit(t *testing.T) {
+	subdomain := fmt.Sprintf("gateway-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Multi Rate Limited Gateway",
-		"subdomain": Subdomain,
+		"subdomain": subdomain,
 		"required_plugins": []map[string]interface{}{
 			{
 				"name":     "rate_limiter",
@@ -81,8 +82,8 @@ func TestRateLimit(t *testing.T) {
 		startTime := time.Now()
 
 		req, _ := http.NewRequest(http.MethodGet, ProxyUrl+"/path1", nil)
-		req.Host = fmt.Sprintf("%s.%s", Subdomain, BaseDomain)
-		req.Header.Set("Host", fmt.Sprintf("%s.%s", Subdomain, BaseDomain))
+		req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
+		req.Header.Set("Host", fmt.Sprintf("%s.%s", subdomain, BaseDomain))
 		req.Header.Set("X-API-Key", apiKey)
 
 		client := &http.Client{}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -19,43 +18,38 @@ import (
 const PluginName = "bedrock_guardrail"
 
 type Config struct {
-	GuardrailID string  `mapstructure:"guardrail_id"`
-	Version     string  `mapstructure:"version"`
-	Actions     Actions `mapstructure:"actions"`
+	GuardrailID string      `mapstructure:"guardrail_id"`
+	Version     string      `mapstructure:"version"`
+	Actions     Actions     `mapstructure:"actions"`
+	Credentials Credentials `mapstructure:"credentials"`
 }
 
+type Credentials struct {
+	AWSAccessKey string `mapstructure:"aws_access_key"`
+	AWSSecretKey string `mapstructure:"aws_secret_key"`
+	AWSRegion    string `mapstructure:"aws_region"`
+}
 type Actions struct {
 	Message string `mapstructure:"message"`
 }
 
 type BedrockGuardrailPlugin struct {
-	logger        *logrus.Logger
-	globalConfig  config.AWSConfig
-	bedrockClient bedrock.Client
+	logger *logrus.Logger
+	client bedrock.Client
 }
 
 func NewBedrockGuardrailPlugin(
 	logger *logrus.Logger,
-	bedrockClient bedrock.Client,
-	globalConfig config.AWSConfig,
+	client bedrock.Client,
 ) pluginiface.Plugin {
 	return &BedrockGuardrailPlugin{
-		logger:        logger,
-		bedrockClient: bedrockClient,
-		globalConfig:  globalConfig,
+		logger: logger,
+		client: client,
 	}
 }
 
 func (p *BedrockGuardrailPlugin) ValidateConfig(config plugintypes.PluginConfig) error {
-	if p.globalConfig.AccessKey == "" {
-		return fmt.Errorf("aws Access key must be specified")
-	}
-	if p.globalConfig.SecretKey == "" {
-		return fmt.Errorf("aws Secret key must be specified")
-	}
-	if p.globalConfig.Region == "" {
-		return fmt.Errorf("aws Region must be specified")
-	}
+
 	var conf Config
 	if err := mapstructure.Decode(config.Settings, &conf); err != nil {
 		p.logger.WithError(err).Error("Failed to decode config")
@@ -63,6 +57,15 @@ func (p *BedrockGuardrailPlugin) ValidateConfig(config plugintypes.PluginConfig)
 	}
 	if conf.GuardrailID == "" {
 		return fmt.Errorf("aws GuardrailID must be specified")
+	}
+	if conf.Credentials.AWSAccessKey == "" {
+		return fmt.Errorf("aws Access key must be specified")
+	}
+	if conf.Credentials.AWSSecretKey == "" {
+		return fmt.Errorf("aws Secret key must be specified")
+	}
+	if conf.Credentials.AWSRegion == "" {
+		return fmt.Errorf("aws Region must be specified")
 	}
 
 	return nil
@@ -138,7 +141,18 @@ func (p *BedrockGuardrailPlugin) Execute(
 		"content_length": len(content),
 	}).Debug("Calling Bedrock Guardrail API")
 
-	output, err := p.bedrockClient.ApplyGuardrail(ctx, input)
+	bedrockClient, err := p.client.BuildClient(
+		ctx,
+		conf.Credentials.AWSAccessKey,
+		conf.Credentials.AWSSecretKey,
+		conf.Credentials.AWSRegion,
+	)
+	if err != nil {
+		p.logger.WithError(err).Error("Failed to create Bedrock client")
+		return nil, fmt.Errorf("failed to create Bedrock client: %v", err)
+	}
+
+	output, err := bedrockClient.ApplyGuardrail(ctx, input)
 	if err != nil {
 		p.logger.WithError(err).Error("Failed to call Bedrock API")
 		return nil, fmt.Errorf("failed to call Bedrock API: %v", err)

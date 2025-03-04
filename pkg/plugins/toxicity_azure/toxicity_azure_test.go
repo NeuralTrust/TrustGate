@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/mocks"
-	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_azure"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -36,10 +35,11 @@ func TestToxicityAzurePlugin_AllowedStages(t *testing.T) {
 func TestToxicityAzurePlugin_ValidateConfig(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	logger := logrus.New()
-	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient, config.AzureConfig{ApiKey: "1"})
+	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient)
 
 	validConfig := types.PluginConfig{
 		Settings: map[string]interface{}{
+			"api_key": "apikey",
 			"endpoints": map[string]interface{}{
 				"text": "https://test.azure.com/text",
 			},
@@ -68,10 +68,11 @@ func TestToxicityAzurePlugin_ValidateConfig(t *testing.T) {
 func TestToxicityAzurePlugin_ValidateConfig_InvalidApiKey(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	logger := logrus.New()
-	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient, config.AzureConfig{ApiKey: ""})
+	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient)
 
 	validConfig := types.PluginConfig{
 		Settings: map[string]interface{}{
+			"api_key": "",
 			"endpoints": map[string]interface{}{
 				"text": "https://test.azure.com/text",
 			},
@@ -89,7 +90,7 @@ func TestToxicityAzurePlugin_ValidateConfig_InvalidApiKey(t *testing.T) {
 func TestToxicityAzurePlugin_Execute_Success(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	logger := logrus.New()
-	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient, config.AzureConfig{ApiKey: "1"})
+	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -137,7 +138,7 @@ func TestToxicityAzurePlugin_Execute_Success(t *testing.T) {
 func TestToxicityAzurePlugin_Execute_FlaggedContent(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	logger := logrus.New()
-	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient, config.AzureConfig{ApiKey: "1"})
+	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{

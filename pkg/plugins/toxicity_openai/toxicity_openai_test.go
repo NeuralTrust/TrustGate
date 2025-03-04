@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/mocks"
-	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_openai"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -19,16 +18,17 @@ import (
 )
 
 func TestNewToxicityOpenAIPlugin(t *testing.T) {
-	plugin := toxicity_openai.NewToxicityOpenAIPlugin(logrus.New(), &http.Client{}, config.OpenAiConfig{ApiKey: "1"})
+	plugin := toxicity_openai.NewToxicityOpenAIPlugin(logrus.New(), &http.Client{})
 	assert.NotNil(t, plugin)
 	assert.Implements(t, (*pluginiface.Plugin)(nil), plugin)
 }
 
 func TestToxicityOpenAIPlugin_ValidateConfig(t *testing.T) {
-	plugin := toxicity_openai.NewToxicityOpenAIPlugin(logrus.New(), &http.Client{}, config.OpenAiConfig{ApiKey: "1"})
+	plugin := toxicity_openai.NewToxicityOpenAIPlugin(logrus.New(), &http.Client{})
 
 	validConfig := types.PluginConfig{
 		Settings: map[string]interface{}{
+			"openai_key": "apikey",
 			"actions": map[string]interface{}{
 				"type":    "reject",
 				"message": "Toxic content detected",
@@ -45,7 +45,7 @@ func TestToxicityOpenAIPlugin_ValidateConfig(t *testing.T) {
 }
 
 func TestToxicityOpenAIPlugin_ValidateConfig_InvalidKey(t *testing.T) {
-	plugin := toxicity_openai.NewToxicityOpenAIPlugin(logrus.New(), &http.Client{}, config.OpenAiConfig{ApiKey: ""})
+	plugin := toxicity_openai.NewToxicityOpenAIPlugin(logrus.New(), &http.Client{})
 
 	validConfig := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -62,7 +62,7 @@ func TestToxicityOpenAIPlugin_ValidateConfig_InvalidKey(t *testing.T) {
 func TestToxicityOpenAIPlugin_Execute_Success(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	logger := logrus.New()
-	plugin := toxicity_openai.NewToxicityOpenAIPlugin(logger, mockClient, config.OpenAiConfig{ApiKey: "1"})
+	plugin := toxicity_openai.NewToxicityOpenAIPlugin(logger, mockClient)
 
 	cf := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -106,7 +106,7 @@ func TestToxicityOpenAIPlugin_Execute_Success(t *testing.T) {
 func TestToxicityOpenAIPlugin_Execute_FlaggedContent(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	logger := logrus.New()
-	plugin := toxicity_openai.NewToxicityOpenAIPlugin(logger, mockClient, config.OpenAiConfig{ApiKey: "1"})
+	plugin := toxicity_openai.NewToxicityOpenAIPlugin(logger, mockClient)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{

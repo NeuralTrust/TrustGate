@@ -22,7 +22,6 @@ var (
 	redisDB      *redis.Client
 	proxyCmd     *exec.Cmd
 	adminCmd     *exec.Cmd
-	Subdomain    = fmt.Sprintf("gateway-%d", time.Now().Unix())
 	AdminUrl     = getEnv("ADMIN_URL", "http://localhost:8080/api/v1")
 	ProxyUrl     = getEnv("PROXY_URL", "http://localhost:8081")
 	BaseDomain   = getEnv("BASE_DOMAIN", "example.com")
@@ -84,7 +83,7 @@ func setupTestEnvironment() {
 	adminCmd.Stderr = os.Stderr
 	adminCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	fmt.Println("✨ Starting Proxy Server:", adminCmd.String())
+	fmt.Println("✨ Starting Proxy Server:", proxyCmd.String())
 	if err := proxyCmd.Start(); err != nil {
 		log.Fatalf("Failed to start proxy: %v", err)
 	}

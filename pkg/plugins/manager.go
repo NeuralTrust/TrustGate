@@ -82,23 +82,15 @@ func (m *Manager) initializePlugins() {
 		m.logger.WithError(err).Error("Failed to register data masking plugin")
 	}
 
-	if err := m.RegisterPlugin(toxicity_openai.NewToxicityOpenAIPlugin(
-		m.logger,
-		&http.Client{},
-		m.config.OpenAi,
-	)); err != nil {
+	if err := m.RegisterPlugin(toxicity_openai.NewToxicityOpenAIPlugin(m.logger, &http.Client{})); err != nil {
 		m.logger.WithError(err).Error("Failed to register toxicity openai plugin")
 	}
 
-	if err := m.RegisterPlugin(toxicity_azure.NewToxicityAzurePlugin(
-		m.logger,
-		&http.Client{},
-		m.config.Azure,
-	)); err != nil {
+	if err := m.RegisterPlugin(toxicity_azure.NewToxicityAzurePlugin(m.logger, &http.Client{})); err != nil {
 		m.logger.WithError(err).Error("Failed to register toxicity azure plugin")
 	}
 
-	if err := m.RegisterPlugin(bedrock_guardrail.NewBedrockGuardrailPlugin(m.logger, m.bedrockClient, m.config.AWS)); err != nil {
+	if err := m.RegisterPlugin(bedrock_guardrail.NewBedrockGuardrailPlugin(m.logger, m.bedrockClient)); err != nil {
 		m.logger.WithError(err).Error("Failed to register bedrock guardrail plugin")
 	}
 }

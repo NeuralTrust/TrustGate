@@ -3,9 +3,10 @@
 package mocks
 
 import (
-	context "context"
-
+	bedrock "github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	bedrockruntime "github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+
+	context "context"
 
 	mock "github.com/stretchr/testify/mock"
 )
@@ -93,6 +94,67 @@ func (_c *Client_ApplyGuardrail_Call) Return(_a0 *bedrockruntime.ApplyGuardrailO
 }
 
 func (_c *Client_ApplyGuardrail_Call) RunAndReturn(run func(context.Context, *bedrockruntime.ApplyGuardrailInput, ...func(*bedrockruntime.Options)) (*bedrockruntime.ApplyGuardrailOutput, error)) *Client_ApplyGuardrail_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// BuildClient provides a mock function with given fields: ctx, accessKey, secretKey, region
+func (_m *Client) BuildClient(ctx context.Context, accessKey string, secretKey string, region string) (bedrock.Client, error) {
+	ret := _m.Called(ctx, accessKey, secretKey, region)
+
+	if len(ret) == 0 {
+		panic("no return value specified for BuildClient")
+	}
+
+	var r0 bedrock.Client
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) (bedrock.Client, error)); ok {
+		return rf(ctx, accessKey, secretKey, region)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) bedrock.Client); ok {
+		r0 = rf(ctx, accessKey, secretKey, region)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(bedrock.Client)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, string, string) error); ok {
+		r1 = rf(ctx, accessKey, secretKey, region)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Client_BuildClient_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BuildClient'
+type Client_BuildClient_Call struct {
+	*mock.Call
+}
+
+// BuildClient is a helper method to define mock.On call
+//   - ctx context.Context
+//   - accessKey string
+//   - secretKey string
+//   - region string
+func (_e *Client_Expecter) BuildClient(ctx interface{}, accessKey interface{}, secretKey interface{}, region interface{}) *Client_BuildClient_Call {
+	return &Client_BuildClient_Call{Call: _e.mock.On("BuildClient", ctx, accessKey, secretKey, region)}
+}
+
+func (_c *Client_BuildClient_Call) Run(run func(ctx context.Context, accessKey string, secretKey string, region string)) *Client_BuildClient_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string))
+	})
+	return _c
+}
+
+func (_c *Client_BuildClient_Call) Return(_a0 bedrock.Client, _a1 error) *Client_BuildClient_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Client_BuildClient_Call) RunAndReturn(run func(context.Context, string, string, string) (bedrock.Client, error)) *Client_BuildClient_Call {
 	_c.Call.Return(run)
 	return _c
 }

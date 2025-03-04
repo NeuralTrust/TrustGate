@@ -13,9 +13,10 @@ import (
 )
 
 func TestProviderLoadBalancer(t *testing.T) {
+	subdomain := fmt.Sprintf("gateway-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      fmt.Sprintf("multi-provider-gateway-%d", time.Now().Unix()),
-		"subdomain": Subdomain,
+		"subdomain": subdomain,
 	}
 	gatewayID := CreateGateway(t, gatewayPayload)
 	apiKey := CreateApiKey(t, gatewayID)
@@ -89,8 +90,8 @@ func TestProviderLoadBalancer(t *testing.T) {
 		req, err := http.NewRequest(http.MethodPost, ProxyUrl+"/v1", bytes.NewReader(reqBody))
 		assert.NoError(t, err, "Failed to create request")
 
-		req.Host = fmt.Sprintf("%s.%s", Subdomain, BaseDomain)
-		req.Header.Set("Host", fmt.Sprintf("%s.%s", Subdomain, BaseDomain))
+		req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
+		req.Header.Set("Host", fmt.Sprintf("%s.%s", subdomain, BaseDomain))
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("Content-Type", "application/json")
 

@@ -25,14 +25,3 @@ redis:
   port: ${REDIS_PORT}
   password: ""
   db: ${REDIS_DB}
-
-aws:
-  region: ${AWS_REGION}
-  access_key: ${AWS_ACCESS_KEY}
-  secret_key: ${AWS_SECRET_KEY}
-
-azure:
-  api_key: ${AZURE_API_KEY}
-
-openai:
-  api_key: ${OPENAI_API_KEY}

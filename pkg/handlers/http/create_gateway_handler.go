@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
@@ -12,13 +12,13 @@ import (
 
 type createGatewayHandler struct {
 	logger             *logrus.Logger
-	repo               *database.Repository
+	repo               domain.Repository
 	updateGatewayCache gateway.UpdateGatewayCache
 }
 
 func NewCreateGatewayHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo domain.Repository,
 	updateGatewayCache gateway.UpdateGatewayCache,
 ) Handler {
 	return &createGatewayHandler{
@@ -40,7 +40,7 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 	entity.CreatedAt = now
 	entity.UpdatedAt = now
 
-	if err := h.repo.CreateGateway(c.Context(), &entity); err != nil {
+	if err := h.repo.Save(c.Context(), &entity); err != nil {
 		h.logger.WithError(err).Error("Failed to create gateway")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

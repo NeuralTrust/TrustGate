@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/mocks"
-	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/bedrock_guardrail"
 	plugintypes "github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -23,15 +22,15 @@ func TestValidateConfig(t *testing.T) {
 	plugin := bedrock_guardrail.NewBedrockGuardrailPlugin(
 		logger,
 		client,
-		config.AWSConfig{
-			AccessKey: "test-access-key",
-			SecretKey: "test-secret-key",
-			Region:    "us-west-2",
-		},
 	)
 
 	cf := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
+			"credentials": map[string]interface{}{
+				"aws_access_key": "$AWS_ACCESS_KEY",
+				"aws_secret_key": "$AWS_SECRET_KEY",
+				"aws_region":     "$AWS_REGION",
+			},
 			"guardrail_id": "test-guardrail",
 			"version":      "1",
 			"actions":      map[string]interface{}{"message": "Blocked: %s"},
@@ -45,12 +44,8 @@ func TestValidateConfig(t *testing.T) {
 func TestExecute_ContentBlockedByPolicy(t *testing.T) {
 	logger := logrus.New()
 	client := new(mocks.Client)
-	plugin := bedrock_guardrail.NewBedrockGuardrailPlugin(logger, client, config.AWSConfig{
-		AccessKey: "test-access-key",
-		SecretKey: "test-secret-key",
-		Region:    "us-west-2",
-	})
-
+	plugin := bedrock_guardrail.NewBedrockGuardrailPlugin(logger, client)
+	client.On("BuildClient", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(client, nil)
 	client.On("ApplyGuardrail", mock.Anything, mock.Anything).Return(&bedrockruntime.ApplyGuardrailOutput{
 		Assessments: []types.GuardrailAssessment{
 			{
@@ -65,6 +60,11 @@ func TestExecute_ContentBlockedByPolicy(t *testing.T) {
 
 	conf := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
+			"credentials": map[string]interface{}{
+				"aws_access_key": "$AWS_ACCESS_KEY",
+				"aws_secret_key": "$AWS_SECRET_KEY",
+				"aws_region":     "$AWS_REGION",
+			},
 			"guardrail_id": "test-guardrail",
 			"version":      "1",
 			"actions":      map[string]interface{}{"message": "Blocked: %s"},
@@ -82,15 +82,13 @@ func TestExecute_ContentBlockedByPolicy(t *testing.T) {
 func TestExecute_ContentAllowed(t *testing.T) {
 	logger := logrus.New()
 	client := new(mocks.Client)
-	plugin := bedrock_guardrail.NewBedrockGuardrailPlugin(logger, client, config.AWSConfig{
-		AccessKey: "test-access-key",
-		SecretKey: "test-secret-key",
-		Region:    "us-west-2",
-	})
+	plugin := bedrock_guardrail.NewBedrockGuardrailPlugin(logger, client)
 
 	client.On("ApplyGuardrail", mock.Anything, mock.Anything).Return(&bedrockruntime.ApplyGuardrailOutput{
 		Assessments: []types.GuardrailAssessment{},
 	}, nil)
+
+	client.On("BuildClient", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(client, nil)
 
 	conf := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
@@ -112,12 +110,8 @@ func TestExecute_ContentAllowed(t *testing.T) {
 func TestExecute_BedrockAPIFailure(t *testing.T) {
 	logger := logrus.New()
 	client := new(mocks.Client)
-	plugin := bedrock_guardrail.NewBedrockGuardrailPlugin(logger, client, config.AWSConfig{
-		AccessKey: "test-access-key",
-		SecretKey: "test-secret-key",
-		Region:    "us-west-2",
-	})
-
+	plugin := bedrock_guardrail.NewBedrockGuardrailPlugin(logger, client)
+	client.On("BuildClient", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(client, nil)
 	client.On("ApplyGuardrail", mock.Anything, mock.Anything).Return(nil, errors.New("API failure"))
 
 	conf := plugintypes.PluginConfig{

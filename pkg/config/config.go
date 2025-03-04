@@ -23,9 +23,6 @@ type Config struct {
 	Database  DatabaseConfig  `mapstructure:"database"`
 	Redis     RedisConfig     `mapstructure:"redis"`
 	Providers ProvidersConfig `mapstructure:"providers"`
-	AWS       AWSConfig       `mapstructure:"aws"`
-	Azure     AzureConfig     `mapstructure:"azure"`
-	OpenAi    OpenAiConfig    `mapstructure:"openai"`
 }
 
 type ServerConfig struct {
@@ -52,20 +49,6 @@ type RedisConfig struct {
 	Port     int    `mapstructure:"port"`
 	Password string `mapstructure:"password"`
 	DB       int    `mapstructure:"db"`
-}
-
-type AWSConfig struct {
-	Region    string `mapstructure:"region"`
-	AccessKey string `mapstructure:"access_key"`
-	SecretKey string `mapstructure:"secret_key"`
-}
-
-type AzureConfig struct {
-	ApiKey string `mapstructure:"api_key"`
-}
-
-type OpenAiConfig struct {
-	ApiKey string `mapstructure:"api_key"`
 }
 
 var globalConfig Config

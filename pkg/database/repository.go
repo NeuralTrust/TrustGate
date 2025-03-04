@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 
@@ -33,62 +32,6 @@ func NewRepository(db *gorm.DB, logger logrus.FieldLogger, cache *cache.Cache) *
 		cache:  cache,
 	}
 }
-
-// IsValidAPIKey checks if the provided API key is valid for the given gateway
-func (r *Repository) IsValidAPIKey(gatewayID, apiKey string) bool {
-	var count int64
-
-	// Check in database first
-	result := r.db.Model(&models.APIKey{}).
-		Where("gateway_id = ? AND key = ? AND active = true AND (expires_at IS NULL OR expires_at > NOW())",
-			gatewayID, apiKey).
-		Count(&count)
-
-	if result.Error != nil {
-		r.logger.Error(context.Background(), "Failed to check API key validity", "error", result.Error)
-		return false
-	}
-
-	// If key is valid, cache it
-	if count > 0 {
-		cacheKey := fmt.Sprintf("apikey:%s:%s", gatewayID, apiKey)
-		value, err := json.Marshal(true)
-		if err != nil {
-			r.logger.Warn(context.Background(), "Failed to marshal cache value", "error", err)
-		} else {
-			if err := r.cache.Set(context.Background(), cacheKey, string(value), 5*time.Minute); err != nil {
-				r.logger.Warn(context.Background(), "Failed to cache valid API key", "error", err)
-			}
-		}
-	}
-
-	return count > 0
-}
-
-// IsValidAPIKeyFast checks cache first, then database
-func (r *Repository) IsValidAPIKeyFast(gatewayID, apiKey string) bool {
-	cacheKey := fmt.Sprintf("apikey:%s:%s", gatewayID, apiKey)
-
-	// Try cache first
-	value, err := r.cache.Get(context.Background(), cacheKey)
-	if err == nil {
-		var isValid bool
-		if err := json.Unmarshal([]byte(value), &isValid); err == nil && isValid {
-			return true
-		}
-	}
-
-	// If not in cache or invalid, check database
-	return r.IsValidAPIKey(gatewayID, apiKey)
-}
-
-// Gateway operations
-func (r *Repository) CreateGateway(ctx context.Context, gateway *models.Gateway) error {
-	// Add repository as cacher to context
-	ctx = context.WithValue(ctx, common.CacherKey, r)
-	return r.db.WithContext(ctx).Create(gateway).Error
-}
-
 func (r *Repository) GetGateway(ctx context.Context, id string) (*models.Gateway, error) {
 	var gateway models.Gateway
 	if err := r.db.First(&gateway, "id = ?", id).Error; err != nil {
