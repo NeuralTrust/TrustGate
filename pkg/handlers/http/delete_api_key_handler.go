@@ -38,7 +38,7 @@ func (s *deleteAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete API key"})
 	}
 
-	err = s.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.DeleteApiKeyCacheEvent{
+	err = s.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.DeleteKeyCacheEvent{
 		ApiKeyID:  keyID,
 		GatewayID: gatewayID,
 	})

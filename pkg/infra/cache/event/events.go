@@ -11,7 +11,7 @@ var (
 	DeleteGatewayCacheEventType  = "DeleteGatewayCacheEvent"
 	DeleteServiceCacheEventType  = "DeleteServiceCacheEvent"
 	DeleteUpstreamCacheEventType = "DeleteUpstreamCacheEvent"
-	DeleteApiKeyCacheEventType   = "DeleteApiKeyCacheEvent"
+	DeleteKeyCacheEventType      = "DeleteKeyCacheEvent"
 	UpdateUpstreamCacheEventType = "UpdateUpstreamCacheEvent"
 	UpdateServiceCacheEventType  = "UpdateServiceCacheEvent"
 	UpdateGatewayCacheEventType  = "UpdateGatewayCacheEvent"
@@ -22,7 +22,7 @@ var Registry = map[string]reflect.Type{
 	DeleteGatewayCacheEventType:  reflect.TypeOf(DeleteGatewayCacheEvent{}),
 	DeleteServiceCacheEventType:  reflect.TypeOf(DeleteServiceCacheEvent{}),
 	DeleteUpstreamCacheEventType: reflect.TypeOf(DeleteUpstreamCacheEvent{}),
-	DeleteApiKeyCacheEventType:   reflect.TypeOf(DeleteApiKeyCacheEvent{}),
+	DeleteKeyCacheEventType:      reflect.TypeOf(DeleteKeyCacheEvent{}),
 	UpdateUpstreamCacheEventType: reflect.TypeOf(UpdateUpstreamCacheEvent{}),
 	UpdateServiceCacheEventType:  reflect.TypeOf(UpdateServiceCacheEvent{}),
 	UpdateGatewayCacheEventType:  reflect.TypeOf(UpdateGatewayCacheEvent{}),

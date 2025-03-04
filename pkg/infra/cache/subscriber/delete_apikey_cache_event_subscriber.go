@@ -20,7 +20,7 @@ type DeleteApiKeyCacheEventSubscriber struct {
 func NewDeleteApiKeyCacheEventSubscriber(
 	logger *logrus.Logger,
 	c *cache.Cache,
-) infraCache.EventSubscriber[event.DeleteApiKeyCacheEvent] {
+) infraCache.EventSubscriber[event.DeleteKeyCacheEvent] {
 	return &DeleteApiKeyCacheEventSubscriber{
 		logger:      logger,
 		cache:       c,
@@ -28,7 +28,7 @@ func NewDeleteApiKeyCacheEventSubscriber(
 	}
 }
 
-func (s DeleteApiKeyCacheEventSubscriber) OnEvent(ctx context.Context, evt event.DeleteApiKeyCacheEvent) error {
+func (s DeleteApiKeyCacheEventSubscriber) OnEvent(ctx context.Context, evt event.DeleteKeyCacheEvent) error {
 	s.logger.WithFields(logrus.Fields{
 		"apiKeyID": evt.ApiKeyID,
 	}).Debug("invalidating apikey cache")
