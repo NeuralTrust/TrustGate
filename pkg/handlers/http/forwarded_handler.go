@@ -755,8 +755,13 @@ func (h *forwardedHandler) doForwardRequest(
 	fastHttpReq.Header.SetMethod(req.Method)
 
 	if len(req.Body) > 0 {
-		if bytes.Contains(req.Body, []byte(`"stream":true`)) {
-			return h.handleStreamingRequest(req, target)
+		var requestBody map[string]interface{}
+		if err := json.Unmarshal(req.Body, &requestBody); err == nil {
+			if streamValue, exists := requestBody["stream"]; exists {
+				if isStream, ok := streamValue.(bool); ok && isStream {
+					return h.handleStreamingRequest(req, target)
+				}
+			}
 		}
 		if target.Provider != "" {
 			transformedBody, err := h.transformRequestBody(req.Body, target)
@@ -845,21 +850,25 @@ func (h *forwardedHandler) applyAuthentication(req *fasthttp.Request, creds *typ
 	}
 }
 
-func (h *forwardedHandler) handleStreamingRequest(req *types.RequestContext, target *types.UpstreamTarget) (*types.ResponseContext, error) {
+func (h *forwardedHandler) handleStreamingRequest(
+	req *types.RequestContext,
+	target *types.UpstreamTarget,
+) (*types.ResponseContext, error) {
 	// Transform request body if needed
 	transformedBody, err := h.transformRequestBody(req.Body, target)
 	if err != nil {
 		return nil, fmt.Errorf("failed to transform streaming request: %w", err)
 	}
 
-	// Update the request body with transformed data
 	req.Body = transformedBody
 
-	// Handle the streaming based on the provider
 	return h.handleStreamingResponse(req, target)
 }
 
-func (h *forwardedHandler) handleStreamingResponse(req *types.RequestContext, target *types.UpstreamTarget) (*types.ResponseContext, error) {
+func (h *forwardedHandler) handleStreamingResponse(
+	req *types.RequestContext,
+	target *types.UpstreamTarget,
+) (*types.ResponseContext, error) {
 	providerConfig, ok := h.providers[target.Provider]
 	if !ok {
 		return nil, fmt.Errorf("unsupported provider: %s", target.Provider)
@@ -906,100 +915,68 @@ func (h *forwardedHandler) handleStreamingResponse(req *types.RequestContext, ta
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return &types.ResponseContext{
-			StatusCode: resp.StatusCode,
-			Headers:    make(map[string][]string),
-			Body:       body,
-		}, nil
+	responseHeaders := make(map[string][]string)
+	for k, v := range resp.Header {
+		responseHeaders[k] = v
+	}
+	responseHeaders["X-Selected-Provider"] = []string{target.Provider}
+
+	if rateLimitHeaders, ok := req.Metadata["rate_limit_headers"].(map[string][]string); ok {
+		for k, v := range rateLimitHeaders {
+			responseHeaders[k] = v
+		}
 	}
 
-	if w, ok := req.Context.Value(common.ResponseWriterKey).(http.ResponseWriter); ok {
-		// Copy response headers
-		for k, v := range resp.Header {
-			for _, val := range v {
-				w.Header().Add(k, val)
-			}
-		}
+	reader := bufio.NewReader(resp.Body)
+	var lastUsage map[string]interface{}
+	var responseBody []byte
 
-		// Add rate limit headers if they exist in metadata
-		if rateLimitHeaders, ok := req.Metadata["rate_limit_headers"].(map[string][]string); ok {
-			for k, v := range rateLimitHeaders {
-				for _, val := range v {
-					w.Header().Set(k, val)
-				}
-			}
-		}
-		w.Header().Add("X-Selected-Provider", target.Provider)
-		w.WriteHeader(resp.StatusCode)
-
-		reader := bufio.NewReader(resp.Body)
-		var lastUsage map[string]interface{}
-
-		for {
-			line, err := reader.ReadBytes('\n')
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				h.logger.WithError(err).Error("Error reading streaming response")
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
 				break
 			}
-
-			// Check if this is a data line
-			if bytes.HasPrefix(line, []byte("data: ")) {
-				// Check if this is the [DONE] message
-				if bytes.Equal(line, []byte("data: [DONE]\n")) {
-					// If we have usage from the last chunk, store it
-					if lastUsage != nil {
-						req.Metadata["token_usage"] = lastUsage
-						h.logger.WithFields(logrus.Fields{
-							"token_usage": lastUsage,
-						}).Debug("Stored token usage from streaming response")
-					}
-					// Write the [DONE] message
-					if _, err := w.Write(line); err != nil {
-						h.logger.WithError(err).Error("Failed to write [DONE] message")
-						break
-					}
-					continue
-				}
-
-				// For non-[DONE] messages, try to extract usage info
-				jsonData := line[6:] // Skip "data: " prefix
-				var response map[string]interface{}
-				if err := json.Unmarshal(jsonData, &response); err == nil {
-					if usage, ok := response["usage"].(map[string]interface{}); ok {
-						lastUsage = usage
-					}
-				}
-			}
-
-			// Write the line to the client
-			if _, err := w.Write(line); err != nil {
-				h.logger.WithError(err).Error("Failed to write SSE message")
-				break
-			}
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
+			h.logger.WithError(err).Error("Error reading streaming response")
+			break
 		}
 
-		// If we have usage info but didn't get a [DONE] message, store it anyway
-		if lastUsage != nil && req.Metadata["token_usage"] == nil {
-			req.Metadata["token_usage"] = lastUsage
-			h.logger.WithFields(logrus.Fields{
-				"token_usage": lastUsage,
-			}).Debug("Stored token usage from last chunk")
+		if bytes.HasPrefix(line, []byte("data: ")) {
+			if bytes.Equal(line, []byte("data: [DONE]\n")) {
+				if lastUsage != nil {
+					req.Metadata["token_usage"] = lastUsage
+					h.logger.WithFields(logrus.Fields{
+						"token_usage": lastUsage,
+					}).Debug("Stored token usage from streaming response")
+				}
+				responseBody = append(responseBody, line...)
+				continue
+			}
+
+			jsonData := line[6:]
+			var response map[string]interface{}
+			if err := json.Unmarshal(jsonData, &response); err == nil {
+				if usage, ok := response["usage"].(map[string]interface{}); ok {
+					lastUsage = usage
+				}
+			}
 		}
+		responseBody = append(responseBody, line...)
+	}
+
+	if lastUsage != nil && req.Metadata["token_usage"] == nil {
+		req.Metadata["token_usage"] = lastUsage
+		h.logger.WithFields(logrus.Fields{
+			"token_usage": lastUsage,
+		}).Debug("Stored token usage from last chunk")
 	}
 
 	return &types.ResponseContext{
 		StatusCode: resp.StatusCode,
-		Headers:    resp.Header,
+		Headers:    responseHeaders,
+		Body:       responseBody,
 		Streaming:  true,
-		Metadata:   req.Metadata, // Include the metadata with token usage
+		Metadata:   req.Metadata,
 	}, nil
 }
 

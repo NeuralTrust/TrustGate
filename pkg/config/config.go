@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -70,38 +69,55 @@ type OpenAiConfig struct {
 }
 
 var globalConfig Config
+var providerConfig ProvidersConfig
 
-// Load reads configuration from file and environment variables
 func Load(configPath string) error {
-	viper.SetConfigName("config")
+	if err := loadConfigFile(configPath, "config", &globalConfig); err != nil {
+		return fmt.Errorf("⚠️ Warning: Could not load main config file: %v", err)
+	}
+
+	setDefaultValues()
+
+	if err := loadConfigFile(configPath, "providers", &providerConfig); err != nil {
+		return fmt.Errorf("⚠️ Warning: Could not load providers config file: %v", err)
+	}
+
+	globalConfig.Providers = providerConfig
+
+	return nil
+}
+
+func loadConfigFile(configPath, fileName string, out interface{}) error {
+	viper.SetConfigName(fileName)
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(configPath)
+	viper.AddConfigPath("./config")
 	viper.AddConfigPath(".")
 
-	// Support environment variables
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 
-	// Load configuration file
 	if err := viper.ReadInConfig(); err != nil {
 		var configFileNotFoundError viper.ConfigFileNotFoundError
 		if errors.As(err, &configFileNotFoundError) {
-			log.Println("Warning: Config file not found, using only environment variables")
+			return fmt.Errorf("config file %s.yaml not found, using only environment variables", fileName)
 		}
+		return fmt.Errorf("error reading config file %s.yaml: %w", fileName, err)
 	}
 
-	if err := viper.Unmarshal(&globalConfig); err != nil {
-		return fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	if globalConfig.Database.SSLMode == "" {
-		globalConfig.Database.SSLMode = "disable"
+	if err := viper.Unmarshal(out); err != nil {
+		return fmt.Errorf("failed to unmarshal %s config: %w", fileName, err)
 	}
 
 	return nil
 }
 
-// GetConfig returns the global configuration
+func setDefaultValues() {
+	if globalConfig.Database.SSLMode == "" {
+		globalConfig.Database.SSLMode = "disable"
+	}
+}
+
 func GetConfig() *Config {
 	return &globalConfig
 }

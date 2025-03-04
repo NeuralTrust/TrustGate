@@ -9,16 +9,23 @@ import (
 	"os/exec"
 	"syscall"
 	"testing"
+	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/go-redis/redis/v8"
+	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
 
 var (
-	serverURL string
-	redisDB   *redis.Client
-	proxyCmd  *exec.Cmd
-	adminCmd  *exec.Cmd
+	GlobalConfig *config.Config
+	redisDB      *redis.Client
+	proxyCmd     *exec.Cmd
+	adminCmd     *exec.Cmd
+	Subdomain    = fmt.Sprintf("gateway-%d", time.Now().Unix())
+	AdminUrl     = getEnv("ADMIN_URL", "http://localhost:8080/api/v1")
+	ProxyUrl     = getEnv("PROXY_URL", "http://localhost:8081")
+	BaseDomain   = getEnv("BASE_DOMAIN", "example.com")
 )
 
 const (
@@ -39,9 +46,27 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func setupTestEnvironment() {
-	createTestDB(dbName)
+func getEnv(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return fallback
+}
 
+func setupTestEnvironment() {
+
+	err := godotenv.Load("../../.env.functional")
+	if err != nil {
+		log.Println("no .env file found, using system environment variables")
+	}
+
+	if err := config.Load("../../config/"); err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	GlobalConfig = config.GetConfig()
+
+	createTestDB(dbName)
 	redisDB = redis.NewClient(&redis.Options{
 		Addr: redisAddr,
 		DB:   9,
@@ -68,6 +93,8 @@ func setupTestEnvironment() {
 	if err := adminCmd.Start(); err != nil {
 		log.Fatalf("Failed to start admin: %v", err)
 	}
+
+	time.Sleep(5 * time.Second)
 
 	fmt.Println("🚀 Test Environment Ready")
 }

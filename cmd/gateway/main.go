@@ -48,7 +48,7 @@ func main() {
 	logger := infraLogger.NewLogger(serverType)
 
 	// Load configuration
-	if err := config.Load("../../config/"); err != nil {
+	if err := config.Load("../../config"); err != nil {
 		logger.Fatalf("Failed to load config: %v", err)
 	}
 	cfg := config.GetConfig()
@@ -136,7 +136,9 @@ func main() {
 	// Handler Transport
 	handlerTransport := handlers.HandlerTransport{
 		// Proxy
-		ForwardedHandler: handlers.NewForwardedHandler(logger, repo, cacheInstance, upstreamFinder, serviceFinder, cfg.Providers.Providers, pluginManager),
+		ForwardedHandler: handlers.NewForwardedHandler(
+			logger, repo, cacheInstance, upstreamFinder, serviceFinder, cfg.Providers.Providers, pluginManager,
+		),
 		// Gateway
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(logger, repo, updateGatewayCache),
 		ListGatewayHandler:   handlers.NewListGatewayHandler(logger, repo, updateGatewayCache),
