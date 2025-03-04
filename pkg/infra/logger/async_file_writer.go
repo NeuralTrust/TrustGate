@@ -3,6 +3,7 @@ package logger
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -16,7 +17,8 @@ type AsyncFileWriter struct {
 }
 
 func NewAsyncFileWriter(logFile string, bufferSize int) (*AsyncFileWriter, error) {
-	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	safeLogFile := filepath.Clean(logFile)
+	file, err := os.OpenFile(safeLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -50,17 +52,17 @@ func (aw *AsyncFileWriter) processLogs() {
 		select {
 		case logData := <-aw.logChan:
 			aw.mu.Lock()
-			aw.writer.Write(logData)
+			_, _ = aw.writer.Write(logData)
 			aw.mu.Unlock()
 
 		case <-ticker.C:
 			aw.mu.Lock()
-			aw.writer.Flush()
+			_ = aw.writer.Flush()
 			aw.mu.Unlock()
 
 		case <-aw.done:
 			aw.mu.Lock()
-			aw.writer.Flush()
+			_ = aw.writer.Flush()
 			aw.mu.Unlock()
 			return
 		}

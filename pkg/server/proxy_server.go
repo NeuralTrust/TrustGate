@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"net/http"
-	_ "net/http/pprof"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -13,7 +12,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
-	"github.com/valyala/fasthttp/fasthttpadaptor"
 )
 
 type (
@@ -68,12 +66,6 @@ func (s *ProxyServer) Run() error {
 		return ctx.Status(http.StatusOK).JSON(fiber.Map{
 			"message": "pong",
 		})
-	})
-
-	s.router.Get("/debug/pprof/*", func(c *fiber.Ctx) error {
-		pprofHandler := fasthttpadaptor.NewFastHTTPHandler(http.DefaultServeMux)
-		pprofHandler(c.Context())
-		return nil
 	})
 
 	// Register the main handler for all non-system routes
