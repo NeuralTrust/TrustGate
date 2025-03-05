@@ -54,7 +54,7 @@ jobs:
           only-new-issues: true  # Only report new issues
 
       - name: Copy environment file
-        run: copy .env.example .env
+        run: cp .env.example .env && cp .env.example .env.functional
 
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./pkg/...
