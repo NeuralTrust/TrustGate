@@ -42,6 +42,9 @@
 git clone https://github.com/NeuralTrust/TrustGate.git
 cd TrustGate
 
+# Clone env
+cp .env.example .env
+
 # Start the services
 docker compose -f docker-compose.prod.yaml up -d
 ```
@@ -60,6 +63,18 @@ docker compose up -d redis postgres
 
 # Run the servers
 ./scripts/run_local.sh
+```
+
+### Run Unit Tests
+
+```
+make test
+```
+
+### Run Functional Tests
+
+```
+make test-functional
 ```
 
 ## 🏗️ Architecture

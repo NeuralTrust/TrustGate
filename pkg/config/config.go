@@ -1,178 +1,106 @@
 package config
 
 import (
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
+	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/spf13/viper"
 )
 
-// MetricsConfig holds configuration for metrics collection
 type MetricsConfig struct {
-	Enabled           bool `yaml:"enabled"`
-	RetentionDays     int  `yaml:"retention_days"`
-	EnableLatency     bool `yaml:"enable_latency"`
-	EnableUpstream    bool `yaml:"enable_upstream"`
-	EnableConnections bool `yaml:"enable_connections"`
-	EnablePerRoute    bool `yaml:"enable_per_route"`
+	Enabled           bool `mapstructure:"enabled"`
+	RetentionDays     int  `mapstructure:"retention_days"`
+	EnableLatency     bool `mapstructure:"enable_latency"`
+	EnableUpstream    bool `mapstructure:"enable_upstream"`
+	EnableConnections bool `mapstructure:"enable_connections"`
+	EnablePerRoute    bool `mapstructure:"enable_per_route"`
 }
 
-// Config represents the main configuration structure
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	Metrics   MetricsConfig   `yaml:"metrics"`
-	Database  DatabaseConfig  `yaml:"database"`
-	Redis     RedisConfig     `yaml:"redis"`
-	Providers ProvidersConfig `yaml:"providers"`
+	Server    ServerConfig    `mapstructure:"server"`
+	Metrics   MetricsConfig   `mapstructure:"metrics"`
+	Database  DatabaseConfig  `mapstructure:"database"`
+	Redis     RedisConfig     `mapstructure:"redis"`
+	Providers ProvidersConfig `mapstructure:"providers"`
 }
 
-// ServerConfig holds server configuration
 type ServerConfig struct {
-	AdminPort   int    `yaml:"admin_port"`
-	ProxyPort   int    `yaml:"proxy_port"`
-	MetricsPort int    `yaml:"metrics_port"`
-	Type        string `yaml:"type"`
-	Port        int    `yaml:"port"`
-	BaseDomain  string `yaml:"base_domain"`
-	Host        string `yaml:"host"`
+	AdminPort   int    `mapstructure:"admin_port"`
+	ProxyPort   int    `mapstructure:"proxy_port"`
+	MetricsPort int    `mapstructure:"metrics_port"`
+	Type        string `mapstructure:"type"`
+	Port        int    `mapstructure:"port"`
+	BaseDomain  string `mapstructure:"base_domain"`
+	Host        string `mapstructure:"host"`
 }
 
-// DatabaseConfig holds database configuration
 type DatabaseConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	DBName   string `yaml:"dbname"`
-	SSLMode  string `yaml:"sslmode"`
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	User     string `mapstructure:"user"`
+	Password string `mapstructure:"password"`
+	DBName   string `mapstructure:"name"`
+	SSLMode  string `mapstructure:"sslmode"`
 }
 
 type RedisConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	Password string `mapstructure:"password"`
+	DB       int    `mapstructure:"db"`
 }
 
-var (
-	// Global configuration
-	globalConfig Config
-)
+var globalConfig Config
+var providerConfig ProvidersConfig
 
-// Load loads the configuration from config files
-func Load() error {
-	// Get config path from environment variable or use default
-	configPath := os.Getenv("CONFIG_PATH")
-	if configPath == "" {
-		configPath = "./config/config.yaml"
+func Load(configPath string) error {
+	if err := loadConfigFile(configPath, "config", &globalConfig); err != nil {
+		return fmt.Errorf("⚠️ Warning: Could not load main config file: %v", err)
 	}
 
-	// Clean and validate the path
-	configPath = filepath.Clean(configPath)
+	setDefaultValues()
 
-	// Read config file
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		// Try to get current working directory for debugging
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("failed to read config file and get working directory: %w", err)
-		}
-		fmt.Printf("Working directory: %s\n", cwd)
-		return fmt.Errorf("failed to read config file %s: %w", configPath, err)
+	if err := loadConfigFile(configPath, "providers", &providerConfig); err != nil {
+		return fmt.Errorf("⚠️ Warning: Could not load providers config file: %v", err)
 	}
 
-	// Unmarshal YAML directly
-	if err := yaml.Unmarshal(data, &globalConfig); err != nil {
-		return fmt.Errorf("failed to unmarshal config: %w", err)
-	}
-
-	// Load provider config
-	providerConfig, err := LoadProviderConfig()
-	if err != nil {
-		return fmt.Errorf("failed to load provider config: %w", err)
-	}
-	globalConfig.Providers = *providerConfig
-
-	// Override with environment variables if present
-	loadEnvOverrides()
+	globalConfig.Providers = providerConfig
 
 	return nil
 }
 
-// loadEnvOverrides overrides config values with environment variables if present
-func loadEnvOverrides() {
-	// Database overrides
-	if host := os.Getenv("DB_HOST"); host != "" {
-		globalConfig.Database.Host = host
-	}
-	if port := os.Getenv("DB_PORT"); port != "" {
-		if p, err := strconv.Atoi(port); err == nil {
-			globalConfig.Database.Port = p
+func loadConfigFile(configPath, fileName string, out interface{}) error {
+	viper.SetConfigName(fileName)
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(configPath)
+	viper.AddConfigPath("./config")
+	viper.AddConfigPath(".")
+
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
+
+	if err := viper.ReadInConfig(); err != nil {
+		var configFileNotFoundError viper.ConfigFileNotFoundError
+		if errors.As(err, &configFileNotFoundError) {
+			return fmt.Errorf("config file %s.yaml not found, using only environment variables", fileName)
 		}
-	}
-	if user := os.Getenv("DB_USER"); user != "" {
-		globalConfig.Database.User = user
-	}
-	if pass := os.Getenv("DB_PASSWORD"); pass != "" {
-		globalConfig.Database.Password = pass
-	}
-	if name := os.Getenv("DB_NAME"); name != "" {
-		globalConfig.Database.DBName = name
+		return fmt.Errorf("error reading config file %s.yaml: %w", fileName, err)
 	}
 
-	// Redis overrides
-	if host := os.Getenv("REDIS_HOST"); host != "" {
-		globalConfig.Redis.Host = host
-	}
-	if port := os.Getenv("REDIS_PORT"); port != "" {
-		if p, err := strconv.Atoi(port); err == nil {
-			globalConfig.Redis.Port = p
-		}
-	}
-	if pass := os.Getenv("REDIS_PASSWORD"); pass != "" {
-		globalConfig.Redis.Password = pass
+	if err := viper.Unmarshal(out); err != nil {
+		return fmt.Errorf("failed to unmarshal %s config: %w", fileName, err)
 	}
 
-	// Server overrides
-	if port := os.Getenv("ADMIN_PORT"); port != "" {
-		if p, err := strconv.Atoi(port); err == nil {
-			globalConfig.Server.AdminPort = p
-		}
-	}
-	if port := os.Getenv("PROXY_PORT"); port != "" {
-		if p, err := strconv.Atoi(port); err == nil {
-			globalConfig.Server.ProxyPort = p
-		}
-	}
-	if port := os.Getenv("METRICS_PORT"); port != "" {
-		if p, err := strconv.Atoi(port); err == nil {
-			globalConfig.Server.MetricsPort = p
-		}
-	}
-	if host := os.Getenv("BASE_DOMAIN"); host != "" {
-		globalConfig.Server.BaseDomain = host
+	return nil
+}
+
+func setDefaultValues() {
+	if globalConfig.Database.SSLMode == "" {
+		globalConfig.Database.SSLMode = "disable"
 	}
 }
 
-// GetConfig returns the global configuration
 func GetConfig() *Config {
 	return &globalConfig
-}
-
-// GetDatabaseConfig returns the database configuration
-func GetDatabaseConfig() DatabaseConfig {
-	return globalConfig.Database
-}
-
-// GetServerConfig returns the server configuration
-func GetServerConfig() ServerConfig {
-	return globalConfig.Server
-}
-
-// GetRedisConfig returns the redis configuration
-func GetRedisConfig() RedisConfig {
-	return globalConfig.Redis
 }

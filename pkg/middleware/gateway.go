@@ -6,23 +6,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
+	"github.com/gofiber/fiber/v2"
+
+	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 
-	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
 
-type GatewayMiddleware struct {
+type gatewayMiddleware struct {
 	logger     *logrus.Logger
 	cache      *cache.Cache
 	repo       *database.Repository
 	baseDomain string
 }
 
-func NewGatewayMiddleware(logger *logrus.Logger, cache *cache.Cache, repo *database.Repository, baseDomain string) *GatewayMiddleware {
-	return &GatewayMiddleware{
+func NewGatewayMiddleware(logger *logrus.Logger, cache *cache.Cache, repo *database.Repository, baseDomain string) Middleware {
+	return &gatewayMiddleware{
 		logger:     logger,
 		cache:      cache,
 		repo:       repo,
@@ -30,25 +31,22 @@ func NewGatewayMiddleware(logger *logrus.Logger, cache *cache.Cache, repo *datab
 	}
 }
 
-func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
-	return func(c *gin.Context) {
+func (m *gatewayMiddleware) Middleware() fiber.Handler {
+	return func(ctx *fiber.Ctx) error {
 		// Try to get host from different sources
-		host := c.GetHeader("Host")
+		host := ctx.Get("Host")
 		if host == "" {
-			host = c.Request.Host
+			host = string(ctx.Request().Host())
 		}
 
 		// Skip middleware for system endpoints
-		if strings.HasPrefix(c.Request.URL.Path, "/__/") {
-			c.Next()
-			return
+		if strings.HasPrefix(ctx.Path(), "/__/") {
+			return ctx.Next()
 		}
 
 		if host == "" {
 			m.logger.Error("No host header found")
-			c.JSON(400, gin.H{"error": "Host header required"})
-			c.Abort()
-			return
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Host header required"})
 		}
 
 		subdomain := m.extractSubdomain(host)
@@ -57,20 +55,18 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 				"host":       host,
 				"baseDomain": m.baseDomain,
 			}).Error("Failed to extract subdomain")
-			c.JSON(400, gin.H{"error": "Invalid gateway identifier"})
-			c.Abort()
-			return
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid gateway identifier"})
 		}
 
 		// Try to get gateway ID from cache first
 		key := fmt.Sprintf("subdomain:%s", subdomain)
-		gatewayID, err := m.cache.Get(c, key)
+		gatewayID, err := m.cache.Get(ctx.Context(), key)
 		if err != nil {
 			if err.Error() == "redis: nil" {
 				// If not in cache, try to get from database
 				m.logger.WithField("subdomain", subdomain).Debug("Cache miss, querying database")
 
-				gateway, err := m.repo.GetGatewayBySubdomain(c.Request.Context(), subdomain)
+				gateway, err := m.repo.GetGatewayBySubdomain(ctx.Context(), subdomain)
 				if err != nil {
 					m.logger.WithFields(logrus.Fields{
 						"subdomain": subdomain,
@@ -78,14 +74,12 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 						"errorType": fmt.Sprintf("%T", err),
 						"host":      host,
 					}).Error("Failed to get gateway from database")
-					c.JSON(404, gin.H{"error": "Gateway not found"})
-					c.Abort()
-					return
+					return ctx.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Gateway not found"})
 				}
 
 				gatewayID = gateway.ID
 				// Cache the gateway ID
-				if err := m.cache.Set(c.Request.Context(), key, gateway.ID, 24*time.Hour); err != nil {
+				if err := m.cache.Set(ctx.Context(), key, gateway.ID, 24*time.Hour); err != nil {
 					m.logger.WithFields(logrus.Fields{
 						"error":     err,
 						"key":       key,
@@ -97,22 +91,19 @@ func (m *GatewayMiddleware) IdentifyGateway() gin.HandlerFunc {
 					"error": err,
 					"key":   key,
 				}).Error("Failed to get gateway ID from cache")
-				c.JSON(500, gin.H{"error": "Internal server error"})
-				c.Abort()
-				return
+				return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
 			}
 		}
 
-		// Set gateway ID in both gin context and request context
-		c.Set(GatewayContextKey, gatewayID)
-		ctx := context.WithValue(c.Request.Context(), common.GatewayContextKey, gatewayID)
-		c.Request = c.Request.WithContext(ctx)
+		ctx.Locals(common.GatewayContextKey, gatewayID)
+		c := context.WithValue(ctx.Context(), common.GatewayContextKey, gatewayID)
+		ctx.SetUserContext(c)
 
-		c.Next()
+		return ctx.Next()
 	}
 }
 
-func (m *GatewayMiddleware) extractSubdomain(host string) string {
+func (m *gatewayMiddleware) extractSubdomain(host string) string {
 	m.logger.WithFields(logrus.Fields{
 		"host":       host,
 		"baseDomain": m.baseDomain,

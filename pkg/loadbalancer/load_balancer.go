@@ -4,25 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
-
+	"github.com/go-redis/redis/v8"
 	"github.com/sirupsen/logrus"
 )
 
 type LoadBalancer struct {
-	mu           sync.RWMutex
 	strategy     Strategy
 	logger       *logrus.Logger
 	cache        *cache.Cache
 	upstreamID   string
 	upstream     *models.Upstream
 	targetStatus map[string]*TargetStatus
+	successCh    chan *types.UpstreamTarget
 }
 
 type TargetStatus struct {
@@ -33,30 +32,25 @@ type TargetStatus struct {
 }
 
 func NewLoadBalancer(upstream *models.Upstream, logger *logrus.Logger, cache *cache.Cache) (*LoadBalancer, error) {
-	// Convert upstream targets to UpstreamTarget type
 	targets := make([]types.UpstreamTarget, len(upstream.Targets))
-	for i, t := range upstream.Targets {
-		var creds types.Credentials
-		if credBytes, err := json.Marshal(t.Credentials); err == nil {
-			if err := json.Unmarshal(credBytes, &creds); err != nil {
-				log.Printf("Failed to unmarshal credentials: %v", err)
-			}
-		}
+	ctx := context.Background()
+	cacheTTL := time.Hour
+	now := time.Now()
 
-		// Initialize health status
+	for i, t := range upstream.Targets {
+		credentials := types.Credentials(t.Credentials)
+
 		healthStatus := &types.HealthStatus{
 			Healthy:   true,
-			LastCheck: time.Now(),
+			LastCheck: now,
 		}
 
-		// Store initial health status in cache
 		key := fmt.Sprintf("lb:health:%s:%s", upstream.ID, t.ID)
 		if statusJSON, err := json.Marshal(healthStatus); err == nil {
-			if err := cache.Set(context.Background(), key, string(statusJSON), time.Hour); err != nil {
-				return nil, fmt.Errorf("failed to set cache: %w", err)
-			}
+			_ = cache.Set(ctx, key, string(statusJSON), cacheTTL)
+		} else {
+			logger.WithError(err).Warn("Failed to marshal health status for cache")
 		}
-
 		targets[i] = types.UpstreamTarget{
 			ID:           t.ID,
 			Weight:       t.Weight,
@@ -67,131 +61,79 @@ func NewLoadBalancer(upstream *models.Upstream, logger *logrus.Logger, cache *ca
 			Provider:     t.Provider,
 			Models:       t.Models,
 			DefaultModel: t.DefaultModel,
-			Credentials:  creds,
+			Credentials:  credentials,
 			Headers:      t.Headers,
 			Path:         t.Path,
 			Health:       healthStatus,
 		}
 	}
 
-	// Create the base factory
-	factory := NewBaseFactory()
-
-	// Create strategy based on algorithm
-	strategy, err := factory.CreateStrategy(upstream.Algorithm, targets)
+	strategy, err := NewBaseFactory().CreateStrategy(upstream.Algorithm, targets)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create load balancing strategy: %w", err)
 	}
 
-	return &LoadBalancer{
+	lb := &LoadBalancer{
 		strategy:     strategy,
 		logger:       logger,
 		cache:        cache,
 		upstreamID:   upstream.ID,
 		upstream:     upstream,
 		targetStatus: make(map[string]*TargetStatus),
-	}, nil
+		successCh:    make(chan *types.UpstreamTarget, 1000),
+	}
+
+	go lb.processSuccessReports()
+
+	return lb, nil
 }
 
-func (lb *LoadBalancer) NextTarget(ctx context.Context) (*types.UpstreamTarget, error) {
-	lb.mu.RLock()
-	defer lb.mu.RUnlock()
-
-	target := lb.strategy.Next()
-	if target == nil {
-		return nil, fmt.Errorf("no available targets")
-	}
-
-	// Check target health
-	health, err := lb.getTargetHealth(ctx, target.ID)
-	if err == nil && health.Healthy {
-		return target, nil
-	}
-
-	// If target is unhealthy, try to get another one
-	return lb.fallbackTarget(ctx)
-}
-
-// UpdateTargetHealth updates the target's health status
-func (lb *LoadBalancer) UpdateTargetHealth(target *types.UpstreamTarget, healthy bool, err error) {
-	if lb.upstream.HealthChecks == nil || !lb.upstream.HealthChecks.Passive {
-		return
-	}
-
-	key := fmt.Sprintf("lb:health:%s:%s", lb.upstreamID, target.ID)
-	failuresKey := fmt.Sprintf("lb:health:%s:%s:failures", lb.upstreamID, target.ID)
-
-	if !healthy {
-		failures, _ := lb.cache.Client().Incr(context.Background(), failuresKey).Result()
-
-		if lb.upstream.HealthChecks.Interval > 0 {
-			lb.cache.Client().Expire(context.Background(), failuresKey,
-				time.Duration(lb.upstream.HealthChecks.Interval)*time.Second)
-		}
-
-		if failures >= int64(lb.upstream.HealthChecks.Threshold) {
-			status := &types.HealthStatus{
-				Healthy:   false,
-				LastCheck: time.Now(),
-				LastError: err,
-				Failures:  int(failures),
-			}
-			statusJSON, err := json.Marshal(status)
-			if err != nil {
-				lb.logger.WithError(err).Error("Failed to marshal health status")
-				return
-			}
-			if err := lb.cache.Set(context.Background(), key, string(statusJSON), time.Hour); err != nil {
-				lb.logger.WithError(err).Error("Failed to cache health status")
-			}
-		}
-	} else {
-		if err := lb.cache.Delete(context.Background(), failuresKey); err != nil {
-			lb.logger.WithError(err).Error("Failed to delete failures key")
-		}
-
-		status := &types.HealthStatus{
-			Healthy:   true,
-			LastCheck: time.Now(),
-			LastError: nil,
-			Failures:  0,
-		}
-		statusJSON, err := json.Marshal(status)
-		if err != nil {
-			lb.logger.WithError(err).Error("Failed to marshal health status")
-			return
-		}
-		if err := lb.cache.Set(context.Background(), key, string(statusJSON), time.Hour); err != nil {
-			lb.logger.WithError(err).Error("Failed to cache health status")
-		}
+func (lb *LoadBalancer) processSuccessReports() {
+	for target := range lb.successCh {
+		lb.performSuccessUpdate(target)
 	}
 }
 
 func (lb *LoadBalancer) ReportSuccess(target *types.UpstreamTarget) {
-	lb.UpdateTargetHealth(target, true, nil)
+	select {
+	case lb.successCh <- target:
+	default:
+	}
 }
 
-func (lb *LoadBalancer) ReportFailure(target *types.UpstreamTarget, err error) {
-	lb.UpdateTargetHealth(target, false, err)
-}
+func (lb *LoadBalancer) performSuccessUpdate(target *types.UpstreamTarget) {
+	ctx := context.Background()
+	key := fmt.Sprintf("lb:health:%s:%s", lb.upstreamID, target.ID)
+	redisClient := lb.cache.Client()
 
-// Add the helper methods for health checks
-func (lb *LoadBalancer) getTargetHealth(ctx context.Context, targetID string) (*types.HealthStatus, error) {
-	key := fmt.Sprintf("lb:health:%s:%s", lb.upstreamID, targetID)
-	val, err := lb.cache.Get(ctx, key)
-	if err != nil {
-		return nil, err
+	pipe := redisClient.Pipeline()
+
+	status := types.HealthStatus{
+		Healthy:   true,
+		LastCheck: time.Now(),
+		LastError: nil,
+		Failures:  0,
 	}
 
-	var health types.HealthStatus
-	if err := json.Unmarshal([]byte(val), &health); err != nil {
-		return nil, err
-	}
+	statusJSON, _ := json.Marshal(status)
+	pipe.Set(ctx, key, statusJSON, time.Hour)
 
-	return &health, nil
+	_, _ = pipe.Exec(ctx)
 }
 
-func (lb *LoadBalancer) fallbackTarget(ctx context.Context) (*types.UpstreamTarget, error) {
+func (lb *LoadBalancer) NextTarget(ctx context.Context) (*types.UpstreamTarget, error) {
+	target := lb.strategy.Next()
+	if target == nil {
+		return nil, fmt.Errorf("no available targets")
+	}
+	health, err := lb.isTargetHealthy(ctx, target.ID)
+	if err == nil && health {
+		return target, nil
+	}
+	return lb.fallbackTarget()
+}
+
+func (lb *LoadBalancer) fallbackTarget() (*types.UpstreamTarget, error) {
 	target := lb.strategy.Next()
 	if target != nil {
 		lb.logger.WithFields(logrus.Fields{
@@ -201,4 +143,69 @@ func (lb *LoadBalancer) fallbackTarget(ctx context.Context) (*types.UpstreamTarg
 		return target, nil
 	}
 	return nil, fmt.Errorf("no targets available for fallback")
+}
+
+func (lb *LoadBalancer) isTargetHealthy(ctx context.Context, targetID string) (bool, error) {
+	key := fmt.Sprintf("lb:health:%s:%s", lb.upstreamID, targetID)
+	val, err := lb.cache.Get(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(val, `"Healthy":true`), nil
+}
+
+func (lb *LoadBalancer) ReportFailure(target *types.UpstreamTarget, err error) {
+	lb.UpdateTargetHealth(target, false, err)
+}
+
+func (lb *LoadBalancer) UpdateTargetHealth(target *types.UpstreamTarget, healthy bool, err error) {
+	if lb.upstream.HealthChecks == nil || !lb.upstream.HealthChecks.Passive {
+		return
+	}
+
+	ctx := context.Background()
+	key := fmt.Sprintf("lb:health:%s:%s", lb.upstreamID, target.ID)
+	failuresKey := fmt.Sprintf("lb:health:%s:%s:failures", lb.upstreamID, target.ID)
+	redisClient := lb.cache.Client()
+
+	if !healthy {
+		failures, _ := redisClient.Incr(ctx, failuresKey).Result()
+		if lb.upstream.HealthChecks.Interval > 0 {
+			redisClient.Expire(ctx, failuresKey, time.Duration(lb.upstream.HealthChecks.Interval)*time.Second)
+		}
+
+		if failures >= int64(lb.upstream.HealthChecks.Threshold) {
+			status := types.HealthStatus{
+				Healthy:   false,
+				LastCheck: time.Now(),
+				LastError: err,
+				Failures:  int(failures),
+			}
+
+			if err := cacheHealthStatus(ctx, redisClient, key, &status); err != nil {
+				lb.logger.WithError(err).Error("Failed to cache health status")
+			}
+		}
+	} else {
+		redisClient.Del(ctx, failuresKey)
+
+		status := types.HealthStatus{
+			Healthy:   true,
+			LastCheck: time.Now(),
+			LastError: nil,
+			Failures:  0,
+		}
+
+		if err := cacheHealthStatus(ctx, redisClient, key, &status); err != nil {
+			lb.logger.WithError(err).Error("Failed to cache health status")
+		}
+	}
+}
+
+func cacheHealthStatus(ctx context.Context, redisClient *redis.Client, key string, status *types.HealthStatus) error {
+	statusJSON, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("failed to marshal health status: %w", err)
+	}
+	return redisClient.Set(ctx, key, statusJSON, time.Hour).Err()
 }

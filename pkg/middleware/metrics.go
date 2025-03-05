@@ -5,36 +5,34 @@ import (
 	"strconv"
 
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
-	"github.com/sirupsen/logrus"
+	"github.com/gofiber/fiber/v2"
 
-	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 )
 
-// Define constant keys for context values
 const (
 	GatewayIDKey = "gateway_id"
 	ServiceIDKey = "service_id"
 	RouteIDKey   = "route_id"
 )
 
-type MetricsMiddleware struct {
+type metricsMiddleware struct {
 	logger *logrus.Logger
 }
 
-func NewMetricsMiddleware(logger *logrus.Logger) *MetricsMiddleware {
-	return &MetricsMiddleware{
+func NewMetricsMiddleware(logger *logrus.Logger) Middleware {
+	return &metricsMiddleware{
 		logger: logger,
 	}
 }
 
-func (m *MetricsMiddleware) MetricsMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Get gateway ID using GetString to avoid type assertions
-		gatewayID := c.GetString(GatewayIDKey)
-		if gatewayID == "" {
+func (m *metricsMiddleware) Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Get gateway ID from Fiber context
+		gatewayID, ok := c.Locals(GatewayIDKey).(string)
+		if !ok || gatewayID == "" {
 			m.logger.Error("Gateway ID not found in context")
-			c.Next()
-			return
+			return c.Next()
 		}
 
 		// Record connections if enabled
@@ -43,13 +41,13 @@ func (m *MetricsMiddleware) MetricsMiddleware() gin.HandlerFunc {
 		}
 
 		// Process request
-		c.Next()
+		err := c.Next()
 
 		// Always record request total
-		status := GetStatusClass(fmt.Sprint(c.Writer.Status()))
+		status := m.getStatusClass(strconv.Itoa(c.Response().StatusCode()))
 		metrics.GatewayRequestTotal.WithLabelValues(
 			gatewayID,
-			c.Request.Method,
+			c.Method(),
 			status,
 		).Inc()
 
@@ -57,11 +55,13 @@ func (m *MetricsMiddleware) MetricsMiddleware() gin.HandlerFunc {
 		if metrics.Config.EnableConnections {
 			metrics.GatewayConnections.WithLabelValues(gatewayID, "active").Dec()
 		}
+
+		return err
 	}
 }
 
 // GetStatusClass returns either the specific status code or its class (e.g., "2xx")
-func GetStatusClass(status string) string {
+func (m *metricsMiddleware) getStatusClass(status string) string {
 	code, err := strconv.Atoi(status)
 	if err != nil {
 		return "5xx" // Return server error class if status code is invalid

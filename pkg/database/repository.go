@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
+)
+
+var (
+	ErrRuleNotFound = fmt.Errorf("rule not found")
 )
 
 // Repository handles all database operations
@@ -29,62 +32,6 @@ func NewRepository(db *gorm.DB, logger logrus.FieldLogger, cache *cache.Cache) *
 		cache:  cache,
 	}
 }
-
-// IsValidAPIKey checks if the provided API key is valid for the given gateway
-func (r *Repository) IsValidAPIKey(gatewayID, apiKey string) bool {
-	var count int64
-
-	// Check in database first
-	result := r.db.Model(&models.APIKey{}).
-		Where("gateway_id = ? AND key = ? AND active = true AND (expires_at IS NULL OR expires_at > NOW())",
-			gatewayID, apiKey).
-		Count(&count)
-
-	if result.Error != nil {
-		r.logger.Error(context.Background(), "Failed to check API key validity", "error", result.Error)
-		return false
-	}
-
-	// If key is valid, cache it
-	if count > 0 {
-		cacheKey := fmt.Sprintf("apikey:%s:%s", gatewayID, apiKey)
-		value, err := json.Marshal(true)
-		if err != nil {
-			r.logger.Warn(context.Background(), "Failed to marshal cache value", "error", err)
-		} else {
-			if err := r.cache.Set(context.Background(), cacheKey, string(value), 5*time.Minute); err != nil {
-				r.logger.Warn(context.Background(), "Failed to cache valid API key", "error", err)
-			}
-		}
-	}
-
-	return count > 0
-}
-
-// IsValidAPIKeyFast checks cache first, then database
-func (r *Repository) IsValidAPIKeyFast(gatewayID, apiKey string) bool {
-	cacheKey := fmt.Sprintf("apikey:%s:%s", gatewayID, apiKey)
-
-	// Try cache first
-	value, err := r.cache.Get(context.Background(), cacheKey)
-	if err == nil {
-		var isValid bool
-		if err := json.Unmarshal([]byte(value), &isValid); err == nil && isValid {
-			return true
-		}
-	}
-
-	// If not in cache or invalid, check database
-	return r.IsValidAPIKey(gatewayID, apiKey)
-}
-
-// Gateway operations
-func (r *Repository) CreateGateway(ctx context.Context, gateway *models.Gateway) error {
-	// Add repository as cacher to context
-	ctx = context.WithValue(ctx, common.CacherKey, r)
-	return r.db.WithContext(ctx).Create(gateway).Error
-}
-
 func (r *Repository) GetGateway(ctx context.Context, id string) (*models.Gateway, error) {
 	var gateway models.Gateway
 	if err := r.db.First(&gateway, "id = ?", id).Error; err != nil {
@@ -137,18 +84,34 @@ func (r *Repository) UpdateGateway(ctx context.Context, gateway *models.Gateway)
 func (r *Repository) DeleteGateway(id string) error {
 	// Start a transaction
 	tx := r.db.Begin()
+	tx = tx.Debug()
 	if tx.Error != nil {
 		return tx.Error
 	}
 
 	// Delete associated forwarding rules first
-	if err := tx.Where("gateway_id = ?", id).Delete(&models.ForwardingRule{}).Error; err != nil {
+	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&models.ForwardingRule{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&models.Upstream{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&models.Service{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&models.APIKey{}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
 
 	// Then delete the gateway
-	if err := tx.Delete(&models.Gateway{ID: id}).Error; err != nil {
+	if err := tx.Unscoped().Delete(&models.Gateway{ID: id}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -270,12 +233,12 @@ func (r *Repository) UpdateRule(ctx context.Context, rule *models.ForwardingRule
 }
 
 func (r *Repository) DeleteRule(ctx context.Context, id, gatewayID string) error {
-	result := r.db.Where("id = ? AND gateway_id = ?", id, gatewayID).Delete(&models.ForwardingRule{})
+	result := r.db.WithContext(ctx).Unscoped().Where("id = ? AND gateway_id = ?", id, gatewayID).Delete(&models.ForwardingRule{})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("rule not found")
+		return ErrRuleNotFound
 	}
 	return nil
 }
@@ -336,7 +299,7 @@ func (r *Repository) UpdateAPIKey(ctx context.Context, apiKey *models.APIKey) er
 }
 
 func (r *Repository) DeleteAPIKey(ctx context.Context, id, gatewayID string) error {
-	result := r.db.Where("id = ? AND gateway_id = ?", id, gatewayID).Delete(&models.APIKey{})
+	result := r.db.WithContext(ctx).Where("id = ? AND gateway_id = ?", id, gatewayID).Delete(&models.APIKey{})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -368,7 +331,7 @@ func (r *Repository) IsSubdomainAvailable(subdomain string) (bool, error) {
 
 func (r *Repository) ValidateAPIKey(ctx context.Context, gatewayID string, apiKey string) (bool, error) {
 	var exists int64
-	err := r.db.Model(&models.APIKey{}).
+	err := r.db.WithContext(ctx).Model(&models.APIKey{}).
 		Where("gateway_id = ? AND key = ? AND (expires_at IS NULL OR expires_at > ?)",
 			gatewayID, apiKey, time.Now()).
 		Count(&exists).Error
@@ -376,7 +339,6 @@ func (r *Repository) ValidateAPIKey(ctx context.Context, gatewayID string, apiKe
 	if err != nil {
 		return false, err
 	}
-
 	return exists > 0, nil
 }
 
@@ -446,14 +408,6 @@ func (r *Repository) CreateUpstream(ctx context.Context, upstream *models.Upstre
 	return r.db.WithContext(ctx).Create(upstream).Error
 }
 
-func (r *Repository) GetUpstream(ctx context.Context, id string) (*models.Upstream, error) {
-	var upstream models.Upstream
-	if err := r.db.WithContext(ctx).First(&upstream, "id = ?", id).Error; err != nil {
-		return nil, err
-	}
-	return &upstream, nil
-}
-
 func (r *Repository) ListUpstreams(ctx context.Context, gatewayID string, offset, limit int) ([]models.Upstream, error) {
 	var upstreams []models.Upstream
 	query := r.db.WithContext(ctx).Where("gateway_id = ?", gatewayID)
@@ -494,17 +448,6 @@ func (r *Repository) CreateService(ctx context.Context, service *models.Service)
 	}
 
 	return r.db.WithContext(ctx).Create(service).Error
-}
-
-func (r *Repository) GetService(ctx context.Context, id string) (*models.Service, error) {
-	var service models.Service
-	result := r.db.WithContext(ctx).
-		Preload("Upstream").
-		First(&service, "id = ?", id)
-	if result.Error != nil {
-		return nil, fmt.Errorf("Upstream: %w", result.Error)
-	}
-	return &service, nil
 }
 
 func (r *Repository) ListServices(ctx context.Context, gatewayID string, offset, limit int) ([]models.Service, error) {

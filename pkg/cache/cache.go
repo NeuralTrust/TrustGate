@@ -23,17 +23,21 @@ type Cache struct {
 	ttl        time.Duration
 }
 
-// Add new cache key patterns
 const (
-	// Existing patterns
-	GatewayKeyPattern = "gateway:%s"
-	RulesKeyPattern   = "rules:%s"
+	GatewayKeyPattern   = "gateway:%s"
+	RulesKeyPattern     = "rules:%s"
+	UpstreamsKeyPattern = "gateway:%s:upstreams"
+	UpstreamKeyPattern  = "gateway:%s:upstream:%s"
+	ServicesKeyPattern  = "gateway:%s:services"
+	ServiceKeyPattern   = "gateway:%s:service:%s"
+	ApiKeyPattern       = "gateway:%s:apikey:%s"
 
-	// New patterns
-	UpstreamsKeyPattern = "gateway:%s:upstreams"   // List of upstreams for a gateway
-	UpstreamKeyPattern  = "gateway:%s:upstream:%s" // Single upstream
-	ServicesKeyPattern  = "gateway:%s:services"    // List of services for a gateway
-	ServiceKeyPattern   = "gateway:%s:service:%s"  // Single service
+	GatewayTTLName  = "gateway"
+	ApiKeyTTLName   = "api_key"
+	RulesTTLName    = "rules"
+	PluginTTLName   = "plugin"
+	ServiceTTLName  = "service"
+	UpstreamTTLName = "upstream"
 )
 
 func NewCache(config common.CacheConfig, db *gorm.DB) (*Cache, error) {
@@ -99,7 +103,6 @@ func (c *Cache) GetTTLMap(name string) *common.TTLMap {
 	return nil
 }
 
-// Add new cache methods
 func (c *Cache) SaveUpstream(ctx context.Context, gatewayID string, upstream *models.Upstream) error {
 	// Cache individual upstream
 	upstreamKey := fmt.Sprintf(UpstreamKeyPattern, gatewayID, upstream.ID)
@@ -110,10 +113,48 @@ func (c *Cache) SaveUpstream(ctx context.Context, gatewayID string, upstream *mo
 	if err := c.Set(ctx, upstreamKey, string(upstreamJSON), 0); err != nil {
 		return err
 	}
-
 	// Invalidate upstreams list cache
 	upstreamsKey := fmt.Sprintf(UpstreamsKeyPattern, gatewayID)
 	return c.Delete(ctx, upstreamsKey)
+}
+
+func (c *Cache) GetUpstream(ctx context.Context, gatewayID, upstreamID string) (*models.Upstream, error) {
+	upstreamKey := fmt.Sprintf(UpstreamKeyPattern, gatewayID, upstreamID)
+	res, err := c.Get(ctx, upstreamKey)
+	if err != nil {
+		return nil, err
+	}
+	upstream := new(models.Upstream)
+	if err := json.Unmarshal([]byte(res), upstream); err != nil {
+		return nil, err
+	}
+	return upstream, nil
+}
+
+func (c *Cache) GetService(ctx context.Context, gatewayID, serviceID string) (*models.Service, error) {
+	key := fmt.Sprintf(ServiceKeyPattern, gatewayID, serviceID)
+	res, err := c.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	service := new(models.Service)
+	if err := json.Unmarshal([]byte(res), service); err != nil {
+		return nil, err
+	}
+	return service, nil
+}
+
+func (c *Cache) GetApiKey(ctx context.Context, gatewayID, key string) (*models.APIKey, error) {
+	apikeyPattern := fmt.Sprintf(ApiKeyPattern, gatewayID, key)
+	res, err := c.Get(ctx, apikeyPattern)
+	if err != nil {
+		return nil, err
+	}
+	apiKey := new(models.APIKey)
+	if err := json.Unmarshal([]byte(res), apiKey); err != nil {
+		return nil, err
+	}
+	return apiKey, nil
 }
 
 func (c *Cache) SaveService(ctx context.Context, gatewayID string, service *models.Service) error {
