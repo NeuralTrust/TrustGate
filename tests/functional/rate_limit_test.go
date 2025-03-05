@@ -81,7 +81,8 @@ func TestRateLimit(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		startTime := time.Now()
 
-		req, _ := http.NewRequest(http.MethodGet, ProxyUrl+"/path1", nil)
+		req, err := http.NewRequest(http.MethodGet, ProxyUrl+"/path1", nil)
+		assert.NoError(t, err)
 		req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
 		req.Header.Set("Host", fmt.Sprintf("%s.%s", subdomain, BaseDomain))
 		req.Header.Set("X-API-Key", apiKey)

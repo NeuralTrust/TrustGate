@@ -171,7 +171,7 @@ func (v *ExternalApiPlugin) Execute(
 				if msg, ok := condMap["message"].(string); ok {
 					condition.Message = msg
 				}
-				if value, ok := condMap["value"].(interface{}); ok {
+				if value, ok := condMap["value"]; ok {
 					condition.Value = value
 				}
 				conditions = append(conditions, condition)
@@ -296,21 +296,6 @@ func evaluateCondition(actual interface{}, operator string, expected interface{}
 	default:
 		return false
 	}
-}
-
-// Add helper function for safe type assertions
-func getContextValue[T any](ctx context.Context, key interface{}) (T, error) {
-	value := ctx.Value(key)
-	if value == nil {
-		var zero T
-		return zero, fmt.Errorf("value not found in context for key: %v", key)
-	}
-	result, ok := value.(T)
-	if !ok {
-		var zero T
-		return zero, fmt.Errorf("invalid type assertion for key: %v", key)
-	}
-	return result, nil
 }
 
 // For map assertions

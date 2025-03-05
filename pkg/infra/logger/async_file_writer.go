@@ -2,6 +2,7 @@ package logger
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -52,7 +53,10 @@ func (aw *AsyncFileWriter) processLogs() {
 		select {
 		case logData := <-aw.logChan:
 			aw.mu.Lock()
-			_, _ = aw.writer.Write(logData)
+			_, err := aw.writer.Write(logData)
+			if err != nil {
+				fmt.Println("error writing log data to file", err)
+			}
 			aw.mu.Unlock()
 
 		case <-ticker.C:

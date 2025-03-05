@@ -227,7 +227,8 @@ func TestKeywordMasking(t *testing.T) {
 
 func TestExecutePlugin(t *testing.T) {
 	logger := logrus.New()
-	plugin := NewDataMaskingPlugin(logger).(*DataMaskingPlugin)
+	plugin, ok := NewDataMaskingPlugin(logger).(*DataMaskingPlugin)
+	assert.True(t, ok)
 
 	config := types.PluginConfig{
 		Settings: map[string]interface{}{

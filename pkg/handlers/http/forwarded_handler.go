@@ -414,32 +414,6 @@ func (h *forwardedHandler) getGatewayData(ctx context.Context, gatewayID string)
 	return h.getGatewayDataFromDB(ctx, gatewayID)
 }
 
-// Helper function to check if a route is public
-func (h *forwardedHandler) isPublicRoute(ctx *fiber.Ctx) bool {
-	path := ctx.Path()
-	if strings.HasPrefix(path, "/__/") || path == "/health" {
-		return true
-	}
-
-	// Get gateway data from context
-	gatewayData := ctx.Locals("gateway_data")
-
-	if gatewayData == "" {
-		return false
-	}
-
-	// Check if the route is marked as public in the gateway rules
-	if data, ok := gatewayData.(*types.GatewayData); ok {
-		for _, rule := range data.Rules {
-			if rule.Path == path && rule.Public {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
 func (h *forwardedHandler) configurePlugins(gateway *types.Gateway, rule *types.ForwardingRule) error {
 	gatewayChains := h.convertGatewayPlugins(gateway)
 	if err := h.pluginManager.SetPluginChain(types.GatewayLevel, gateway.ID, gatewayChains); err != nil {
@@ -794,7 +768,10 @@ func (h *forwardedHandler) doForwardRequest(
 		return nil, fmt.Errorf("failed to forward request: %w", err)
 	}
 
-	respBodyPtr := responseBodyPool.Get().(*[]byte)
+	respBodyPtr, ok := responseBodyPool.Get().(*[]byte)
+	if !ok {
+		return nil, errors.New("failed to get response body from pool")
+	}
 	*respBodyPtr = fastHttpResp.Body()
 
 	statusCode := fastHttpResp.StatusCode()

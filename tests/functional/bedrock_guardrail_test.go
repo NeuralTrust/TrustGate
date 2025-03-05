@@ -90,7 +90,8 @@ func TestBedrockGuardrailPlugin(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			reqBody := []byte(tc.input)
-			req, _ := http.NewRequest(http.MethodPost, ProxyUrl+"/post", bytes.NewReader(reqBody))
+			req, err := http.NewRequest(http.MethodPost, ProxyUrl+"/post", bytes.NewReader(reqBody))
+			assert.NoError(t, err)
 			req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
 			req.Header.Set("Host", fmt.Sprintf("%s.%s", subdomain, BaseDomain))
 			req.Header.Set("Authorization", "Bearer "+apiKey)

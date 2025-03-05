@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"encoding/json"
-	"reflect"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
@@ -21,10 +20,6 @@ func NewRedisEventPublisher(cache *cache.Cache) EventPublisher {
 }
 
 func (p *redisEventPublisher) Publish(ctx context.Context, channel channel.Channel, ev event.Event) error {
-	t := reflect.TypeOf(ev)
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
 	b, err := json.Marshal(ev)
 	if err != nil {
 		return err

@@ -117,9 +117,9 @@ func TestFindSimilarKeyword(t *testing.T) {
 		keywords: []string{"forbidden", "banned"},
 	}
 
-	word, keyword, found := plugin.findSimilarKeyword("This message contains forbiden", 0.8)
+	word, keyword, found := plugin.findSimilarKeyword("This message contains forbidden", 0.8)
 	assert.True(t, found)
-	assert.Equal(t, "forbiden", word)
+	assert.Equal(t, "forbidden", word)
 	assert.Equal(t, "forbidden", keyword)
 }
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -16,7 +15,6 @@ import (
 )
 
 type LoadBalancer struct {
-	mu           sync.RWMutex
 	strategy     Strategy
 	logger       *logrus.Logger
 	cache        *cache.Cache

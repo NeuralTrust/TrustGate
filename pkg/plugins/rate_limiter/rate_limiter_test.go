@@ -2,6 +2,7 @@ package rate_limiter_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"testing"
@@ -94,7 +95,13 @@ func TestRateLimiterPlugin_Execute_LimitExceeded(t *testing.T) {
 
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)
-	assert.Equal(t, http.StatusTooManyRequests, err.(*types.PluginError).StatusCode)
+	if err != nil {
+		assert.IsType(t, &types.PluginError{}, err)
+		var pluginError *types.PluginError
+		ok := errors.As(err, &pluginError)
+		assert.True(t, ok)
+		assert.Equal(t, http.StatusTooManyRequests, pluginError.StatusCode)
+	}
 }
 
 func TestRateLimiterPlugin_Execute_NoLimitExceeded(t *testing.T) {

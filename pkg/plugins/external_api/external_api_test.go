@@ -46,7 +46,8 @@ func TestExternalApiPlugin_ValidateConfig(t *testing.T) {
 func TestExternalApiPlugin_Execute_Success(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"validation": "success"}`))
+		_, err := w.Write([]byte(`{"validation": "success"}`))
+		assert.NoError(t, err)
 	}))
 	defer ts.Close()
 
@@ -72,7 +73,8 @@ func TestExternalApiPlugin_Execute_Success(t *testing.T) {
 func TestExternalApiPlugin_Execute_ConditionMatching(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status": "success"}`))
+		_, err := w.Write([]byte(`{"status": "success"}`))
+		assert.NoError(t, err)
 	}))
 	defer ts.Close()
 
@@ -125,11 +127,13 @@ func TestExternalApiPlugin_Execute_Failure(t *testing.T) {
 func TestExternalApiPlugin_Execute_WithFieldMapping(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var requestBody map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&requestBody)
-
-		responseBody, _ := json.Marshal(map[string]interface{}{"status": "success", "mapped": requestBody})
+		err := json.NewDecoder(r.Body).Decode(&requestBody)
+		assert.NoError(t, err)
+		responseBody, err := json.Marshal(map[string]interface{}{"status": "success", "mapped": requestBody})
+		assert.NoError(t, err)
 		w.WriteHeader(http.StatusOK)
-		w.Write(responseBody)
+		_, err = w.Write(responseBody)
+		assert.NoError(t, err)
 	}))
 	defer ts.Close()
 
@@ -146,7 +150,8 @@ func TestExternalApiPlugin_Execute_WithFieldMapping(t *testing.T) {
 	}
 
 	requestBody := map[string]interface{}{"input": "test_value"}
-	bodyBytes, _ := json.Marshal(requestBody)
+	bodyBytes, err := json.Marshal(requestBody)
+	assert.NoError(t, err)
 
 	req := &types.RequestContext{Body: bodyBytes}
 	resp := &types.ResponseContext{}
@@ -159,17 +164,26 @@ func TestExternalApiPlugin_Execute_WithFieldMapping(t *testing.T) {
 	var responseBody map[string]interface{}
 	err = json.Unmarshal(pluginResponse.Body, &responseBody)
 	assert.NoError(t, err)
-	assert.Equal(t, "test_value", responseBody["mapped"].(map[string]interface{})["output"])
+	mapped, ok := responseBody["mapped"].(map[string]interface{})
+	assert.True(t, ok, "expected responseBody['mapped'] to be a map[string]interface{}")
+
+	output, ok := mapped["output"].(string)
+	assert.True(t, ok, "expected mapped['output'] to be a string")
+
+	assert.Equal(t, "test_value", output)
+
 }
 
 func TestExternalApiPlugin_Execute_WithInvalidFieldMapping(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var requestBody map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&requestBody)
-
-		responseBody, _ := json.Marshal(map[string]interface{}{"status": "success", "mapped": requestBody})
+		err := json.NewDecoder(r.Body).Decode(&requestBody)
+		assert.NoError(t, err)
+		responseBody, err := json.Marshal(map[string]interface{}{"status": "success", "mapped": requestBody})
+		assert.NoError(t, err)
 		w.WriteHeader(http.StatusOK)
-		w.Write(responseBody)
+		_, err = w.Write(responseBody)
+		assert.NoError(t, err)
 	}))
 	defer ts.Close()
 
@@ -186,12 +200,13 @@ func TestExternalApiPlugin_Execute_WithInvalidFieldMapping(t *testing.T) {
 	}
 
 	requestBody := map[string]interface{}{"input": "test_value"}
-	bodyBytes, _ := json.Marshal(requestBody)
+	bodyBytes, err := json.Marshal(requestBody)
+	assert.NoError(t, err)
 
 	req := &types.RequestContext{Body: bodyBytes}
 	resp := &types.ResponseContext{}
 
-	_, err := plugin.Execute(context.Background(), cfg, req, resp)
+	_, err = plugin.Execute(context.Background(), cfg, req, resp)
 
 	assert.Error(t, err)
 

@@ -79,7 +79,8 @@ func TestToxicityOpenAIPlugin_Execute_Success(t *testing.T) {
 			},
 		},
 	}
-	reqBytes, _ := json.Marshal(reqBody)
+	reqBytes, err := json.Marshal(reqBody)
+	assert.NoError(t, err)
 	request := &types.RequestContext{Body: reqBytes}
 	response := &types.ResponseContext{}
 
@@ -87,7 +88,8 @@ func TestToxicityOpenAIPlugin_Execute_Success(t *testing.T) {
 		Results: []toxicity_openai.ModerationResult{{CategoryScores: map[string]float64{"hate": 0.4}}},
 	}
 
-	serverResponseBytes, _ := json.Marshal(serverResponse)
+	serverResponseBytes, err := json.Marshal(serverResponse)
+	assert.NoError(t, err)
 	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
 
 	httpResponse := &http.Response{
@@ -133,7 +135,8 @@ func TestToxicityOpenAIPlugin_Execute_FlaggedContent(t *testing.T) {
 		}},
 	}
 
-	serverResponseBytes, _ := json.Marshal(serverResponse)
+	serverResponseBytes, err := json.Marshal(serverResponse)
+	assert.NoError(t, err)
 	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
 
 	httpResponse := &http.Response{

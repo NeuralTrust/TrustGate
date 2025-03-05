@@ -120,10 +120,16 @@ func createTestDB(name string) {
 
 func teardownTestEnvironment() {
 	if proxyCmd != nil && proxyCmd.Process != nil {
-		syscall.Kill(-proxyCmd.Process.Pid, syscall.SIGKILL)
+		err := syscall.Kill(-proxyCmd.Process.Pid, syscall.SIGKILL)
+		if err != nil {
+			log.Printf("error killing proxy server: %v", err)
+		}
 	}
 	if adminCmd != nil && adminCmd.Process != nil {
-		syscall.Kill(-adminCmd.Process.Pid, syscall.SIGKILL)
+		err := syscall.Kill(-adminCmd.Process.Pid, syscall.SIGKILL)
+		if err != nil {
+			log.Printf("error killing admin server: %v", err)
+		}
 	}
 	fmt.Printf("🗑 Servers Stopped\n")
 	defer redisDB.Close()

@@ -18,7 +18,8 @@ func CreateGateway(t *testing.T, gatewayPayload map[string]interface{}) string {
 		t.Fatalf("❌ Failed to create gateway. Status: %d, Response: %v", status, gatewayResp)
 	}
 
-	gatewayID, _ := gatewayResp["id"].(string)
+	gatewayID, ok := gatewayResp["id"].(string)
+	assert.True(t, ok)
 	if gatewayID == "" {
 		t.Fatalf("❌ Gateway creation response did not contain a valid ID. Response: %v", gatewayResp)
 	}
@@ -38,7 +39,8 @@ func CreateApiKey(t *testing.T, gatewayID string) string {
 		t.Fatalf("❌ Failed to create apiKey. Status: %d, Response: %v", status, apiKeyResp)
 	}
 
-	apiKey, _ := apiKeyResp["key"].(string)
+	apiKey, ok := apiKeyResp["key"].(string)
+	assert.True(t, ok)
 	assert.NotEmpty(t, apiKey)
 	t.Logf("✅ API Key created: %s\n", apiKey)
 	return apiKey
@@ -51,7 +53,8 @@ func CreateUpstream(t *testing.T, gatewayID string, upstreamPayload map[string]i
 		t.Fatalf("❌ Failed to create upstream. Status: %d, Response: %v", status, upstreamResp)
 	}
 
-	upstreamID, _ := upstreamResp["id"].(string)
+	upstreamID, ok := upstreamResp["id"].(string)
+	assert.True(t, ok)
 	if upstreamID == "" {
 		t.Fatalf("❌ Upstream creation response did not contain a valid ID. Response: %v", upstreamResp)
 	}
@@ -67,7 +70,8 @@ func CreateService(t *testing.T, gatewayID string, servicePayload map[string]int
 		t.Fatalf("❌ Failed to create service. Status: %d, Response: %v", status, serviceResp)
 	}
 
-	serviceID, _ := serviceResp["id"].(string)
+	serviceID, ok := serviceResp["id"].(string)
+	assert.True(t, ok)
 	if serviceID == "" {
 		t.Fatalf("❌ Service creation response did not contain a valid ID. Response: %v", serviceResp)
 	}
@@ -117,7 +121,8 @@ func sendRequest(t *testing.T, method, url string, body interface{}) (int, map[s
 	assert.NoError(t, err)
 
 	var respData map[string]interface{}
-	json.Unmarshal(respBytes, &respData)
+	err = json.Unmarshal(respBytes, &respData)
+	assert.NoError(t, err)
 
 	return resp.StatusCode, respData
 }

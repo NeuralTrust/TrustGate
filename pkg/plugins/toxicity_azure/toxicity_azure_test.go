@@ -117,7 +117,8 @@ func TestToxicityAzurePlugin_Execute_Success(t *testing.T) {
 		}{{Category: "Hate", Severity: 1}},
 	}
 
-	serverResponseBytes, _ := json.Marshal(serverResponse)
+	serverResponseBytes, err := json.Marshal(serverResponse)
+	assert.NoError(t, err)
 	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
 
 	httpResponse := &http.Response{
@@ -172,7 +173,8 @@ func TestToxicityAzurePlugin_Execute_FlaggedContent(t *testing.T) {
 		}{{Category: "Hate", Severity: 3}},
 	}
 
-	serverResponseBytes, _ := json.Marshal(serverResponse)
+	serverResponseBytes, err := json.Marshal(serverResponse)
+	assert.NoError(t, err)
 	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
 
 	httpResponse := &http.Response{
