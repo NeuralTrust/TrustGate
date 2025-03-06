@@ -57,7 +57,7 @@ func (c *client) ApplyGuardrail(
 	optFns ...func(*bedrockruntime.Options),
 ) (*bedrockruntime.ApplyGuardrailOutput, error) {
 	if c.client == nil {
-		return nil, fmt.Errorf("client not initialized")
+		return nil, fmt.Errorf("client not can be initialized")
 	}
 	return c.client.ApplyGuardrail(ctx, params, optFns...)
 }
