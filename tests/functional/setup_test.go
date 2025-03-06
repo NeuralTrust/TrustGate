@@ -88,6 +88,8 @@ func setupTestEnvironment() {
 		log.Fatalf("Failed to start proxy: %v", err)
 	}
 
+	time.Sleep(5 * time.Second)
+
 	fmt.Println("✨ Starting Admin Server:", adminCmd.String())
 	if err := adminCmd.Start(); err != nil {
 		log.Fatalf("Failed to start admin: %v", err)
