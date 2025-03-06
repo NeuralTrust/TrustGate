@@ -21,7 +21,7 @@ jobs:
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres
-          POSTGRES_DB: aigateway_test
+          POSTGRES_DB: ai_gateway
         ports:
           - 5432:5432
         options: >-
@@ -56,14 +56,25 @@ jobs:
       - name: Copy environment file
         run: cp .env.example .env && cp .env.example .env.functional
 
-      - name: Run tests
-        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./pkg/...
-        env:
-          REDIS_URL: redis://localhost:6379
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/aigateway_test?sslmode=disable
+      - name: Set up environment variables
+        run: |
+          echo "AWS_ACCESS_KEY=${{ secrets.AWS_ACCESS_KEY }}" >> .env.functional
+          echo "AWS_SECRET_KEY=${{ secrets.AWS_SECRET_KEY }}" >> .env.functional
+          echo "AWS_REGION=${{ secrets.AWS_REGION }}" >> .env.functional
+          echo "GUARDRAIL_ID=${{ secrets.GUARDRAIL_ID }}" >> .env.functional
+          echo "GUARDRAIL_VERSION=${{ secrets.GUARDRAIL_VERSION }}" >> .env.functional
+          echo "AZURE_API_KEY=${{ secrets.AZURE_API_KEY }}" >> .env.functional
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env.functional
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env.functional
+
+      - name: Run Unit tests
+        run: go test -v -race -coverprofile=unit-coverage.txt -covermode=atomic ./pkg/...
+
+      - name: Run Functional tests
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./tests/functional
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
-          file: ./coverage.txt
+          file: ./unit-coverage.txt
           flags: unittests 
