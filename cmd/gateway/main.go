@@ -45,12 +45,6 @@ func main() {
 		log.Println("no .env file found, using system environment variables")
 	}
 
-	fmt.Println("=== Environment Variables ===")
-	for _, env := range os.Environ() {
-		fmt.Println(env)
-	}
-	fmt.Println("============================")
-
 	logger := infraLogger.NewLogger(serverType)
 
 	// Load configuration

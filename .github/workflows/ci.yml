@@ -58,7 +58,7 @@ jobs:
 
       - name: Set up environment variables
         run: |
-          echo "" > .env.functional
+          echo "" >> .env.functional
           echo "AWS_ACCESS_KEY=${{ secrets.AWS_ACCESS_KEY }}" >> .env.functional
           echo "AWS_ACCESS_KEY=${{ secrets.AWS_ACCESS_KEY }}" >> .env.functional
           echo "AWS_SECRET_KEY=${{ secrets.AWS_SECRET_KEY }}" >> .env.functional
