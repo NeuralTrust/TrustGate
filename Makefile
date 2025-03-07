@@ -9,3 +9,7 @@ test-functional: ## Run test with check race  and coverage
 .PHONY: generate-mocks
 generate-mocks:  ; $(info $(M) Generating mocks ...)	@ ## Generate mocks
 	go generate ./...
+
+.PHONY: lint
+lint:  ; $(info $(M) Running linter ...)	@ ## Run linter
+	golangci-lint run ./...
