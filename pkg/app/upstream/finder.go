@@ -7,14 +7,13 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/sirupsen/logrus"
 )
 
 var ErrInvalidCacheType = errors.New("invalid type assertion for upstream model")
 
 type Finder interface {
-	Find(ctx context.Context, gatewayID, upstreamID string) (*models.Upstream, error)
+	Find(ctx context.Context, gatewayID, upstreamID string) (*domainUpstream.Upstream, error)
 }
 
 type finder struct {
@@ -24,16 +23,16 @@ type finder struct {
 	logger      *logrus.Logger
 }
 
-func NewFinder(repository domainUpstream.Repository, cache *cache.Cache, logger *logrus.Logger) Finder {
+func NewFinder(repository domainUpstream.Repository, c *cache.Cache, logger *logrus.Logger) Finder {
 	return &finder{
 		repo:        repository,
-		cache:       cache,
+		cache:       c,
 		logger:      logger,
-		memoryCache: cache.CreateTTLMap("upstream", common.UpstreamCacheTTL),
+		memoryCache: c.GetTTLMap(cache.UpstreamTTLName),
 	}
 }
 
-func (f *finder) Find(ctx context.Context, gatewayID, upstreamID string) (*models.Upstream, error) {
+func (f *finder) Find(ctx context.Context, gatewayID, upstreamID string) (*domainUpstream.Upstream, error) {
 	if upstream, err := f.getUpstreamFromMemoryCache(upstreamID); err == nil {
 		return upstream, nil
 	} else if !errors.Is(err, ErrInvalidCacheType) {
@@ -54,9 +53,9 @@ func (f *finder) Find(ctx context.Context, gatewayID, upstreamID string) (*model
 	return upstream, nil
 }
 
-func (f *finder) getUpstreamFromMemoryCache(upstreamID string) (*models.Upstream, error) {
+func (f *finder) getUpstreamFromMemoryCache(upstreamID string) (*domainUpstream.Upstream, error) {
 	if cachedValue, found := f.memoryCache.Get(upstreamID); found {
-		if upstream, ok := cachedValue.(*models.Upstream); ok {
+		if upstream, ok := cachedValue.(*domainUpstream.Upstream); ok {
 			return upstream, nil
 		}
 		return nil, ErrInvalidCacheType
@@ -64,7 +63,7 @@ func (f *finder) getUpstreamFromMemoryCache(upstreamID string) (*models.Upstream
 	return nil, errors.New("upstream not found in memory cache")
 }
 
-func (f *finder) saveUpstreamToMemoryCache(ctx context.Context, upstream *models.Upstream) {
+func (f *finder) saveUpstreamToMemoryCache(ctx context.Context, upstream *domainUpstream.Upstream) {
 	f.memoryCache.Set(upstream.ID, upstream)
 	err := f.cache.SaveUpstream(ctx, upstream.GatewayID, upstream)
 	if err != nil {

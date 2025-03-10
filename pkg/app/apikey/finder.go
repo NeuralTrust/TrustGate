@@ -6,26 +6,25 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
-	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	"github.com/sirupsen/logrus"
 )
 
 var ErrInvalidCacheType = errors.New("invalid type assertion for apikey model")
 
 type Finder interface {
-	Find(ctx context.Context, gatewayID string, key string) (*models.APIKey, error)
+	Find(ctx context.Context, gatewayID string, key string) (*domain.APIKey, error)
 }
 
 type finder struct {
-	repo        domainService.Repository
+	repo        domain.Repository
 	cache       *cache.Cache
 	memoryCache *common.TTLMap
 	logger      *logrus.Logger
 }
 
 func NewFinder(
-	repository domainService.Repository,
+	repository domain.Repository,
 	c *cache.Cache,
 	logger *logrus.Logger,
 ) Finder {
@@ -37,7 +36,7 @@ func NewFinder(
 	}
 }
 
-func (f *finder) Find(ctx context.Context, gatewayID string, key string) (*models.APIKey, error) {
+func (f *finder) Find(ctx context.Context, gatewayID string, key string) (*domain.APIKey, error) {
 	if entity, err := f.getFromMemoryCache(key); err == nil {
 		return entity, nil
 	} else if !errors.Is(err, ErrInvalidCacheType) {
@@ -61,13 +60,13 @@ func (f *finder) Find(ctx context.Context, gatewayID string, key string) (*model
 	return entity, nil
 }
 
-func (f *finder) getFromMemoryCache(key string) (*models.APIKey, error) {
+func (f *finder) getFromMemoryCache(key string) (*domain.APIKey, error) {
 	cachedValue, found := f.memoryCache.Get(key)
 	if !found {
 		return nil, errors.New("apiKey not found in memory cache")
 	}
 
-	entity, ok := cachedValue.(*models.APIKey)
+	entity, ok := cachedValue.(*domain.APIKey)
 	if !ok {
 		return nil, ErrInvalidCacheType
 	}
@@ -75,7 +74,7 @@ func (f *finder) getFromMemoryCache(key string) (*models.APIKey, error) {
 	return entity, nil
 }
 
-func (f *finder) saveToMemoryCache(ctx context.Context, entity *models.APIKey) {
+func (f *finder) saveToMemoryCache(ctx context.Context, entity *domain.APIKey) {
 	f.memoryCache.Set(entity.Key, entity)
 	err := f.cache.SaveAPIKey(ctx, entity)
 	if err != nil {

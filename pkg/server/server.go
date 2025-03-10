@@ -7,6 +7,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -42,7 +43,6 @@ func NewBaseServer(config *config.Config, cache *cache.Cache, logger *logrus.Log
 		WriteTimeout:          3 * time.Second,
 		IdleTimeout:           120 * time.Second,
 		Concurrency:           16384,
-		// Prefork:               true,
 	})
 
 	r.Server().MaxConnsPerIP = 1024
@@ -76,7 +76,16 @@ func (s *BaseServer) setupHealthCheck() {
 			"time":   time.Now().Format(time.RFC3339),
 		})
 	})
+}
 
+func (s *BaseServer) WithRouters(routers ...router.ServerRouter) *BaseServer {
+	for _, r := range routers {
+		err := r.BuildRoutes(s.router)
+		if err != nil {
+			s.logger.WithError(err).Error("failed to build routes")
+		}
+	}
+	return s
 }
 
 func (s *BaseServer) setupMetricsEndpoint() {

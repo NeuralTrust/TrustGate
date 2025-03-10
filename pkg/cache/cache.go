@@ -7,11 +7,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/go-redis/redis/v8"
 	"gorm.io/gorm"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
 )
 
 // Cache implements the common.Cache interface
@@ -103,7 +105,7 @@ func (c *Cache) GetTTLMap(name string) *common.TTLMap {
 	return nil
 }
 
-func (c *Cache) SaveUpstream(ctx context.Context, gatewayID string, upstream *models.Upstream) error {
+func (c *Cache) SaveUpstream(ctx context.Context, gatewayID string, upstream *upstream.Upstream) error {
 	// Cache individual upstream
 	upstreamKey := fmt.Sprintf(UpstreamKeyPattern, gatewayID, upstream.ID)
 	upstreamJSON, err := json.Marshal(upstream)
@@ -118,46 +120,46 @@ func (c *Cache) SaveUpstream(ctx context.Context, gatewayID string, upstream *mo
 	return c.Delete(ctx, upstreamsKey)
 }
 
-func (c *Cache) GetUpstream(ctx context.Context, gatewayID, upstreamID string) (*models.Upstream, error) {
+func (c *Cache) GetUpstream(ctx context.Context, gatewayID, upstreamID string) (*upstream.Upstream, error) {
 	upstreamKey := fmt.Sprintf(UpstreamKeyPattern, gatewayID, upstreamID)
 	res, err := c.Get(ctx, upstreamKey)
 	if err != nil {
 		return nil, err
 	}
-	upstream := new(models.Upstream)
+	upstream := new(upstream.Upstream)
 	if err := json.Unmarshal([]byte(res), upstream); err != nil {
 		return nil, err
 	}
 	return upstream, nil
 }
 
-func (c *Cache) GetService(ctx context.Context, gatewayID, serviceID string) (*models.Service, error) {
+func (c *Cache) GetService(ctx context.Context, gatewayID, serviceID string) (*service.Service, error) {
 	key := fmt.Sprintf(ServiceKeyPattern, gatewayID, serviceID)
 	res, err := c.Get(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	service := new(models.Service)
+	service := new(service.Service)
 	if err := json.Unmarshal([]byte(res), service); err != nil {
 		return nil, err
 	}
 	return service, nil
 }
 
-func (c *Cache) GetApiKey(ctx context.Context, gatewayID, key string) (*models.APIKey, error) {
+func (c *Cache) GetApiKey(ctx context.Context, gatewayID, key string) (*apikey.APIKey, error) {
 	apikeyPattern := fmt.Sprintf(ApiKeyPattern, gatewayID, key)
 	res, err := c.Get(ctx, apikeyPattern)
 	if err != nil {
 		return nil, err
 	}
-	apiKey := new(models.APIKey)
+	apiKey := new(apikey.APIKey)
 	if err := json.Unmarshal([]byte(res), apiKey); err != nil {
 		return nil, err
 	}
 	return apiKey, nil
 }
 
-func (c *Cache) SaveService(ctx context.Context, gatewayID string, service *models.Service) error {
+func (c *Cache) SaveService(ctx context.Context, gatewayID string, service *service.Service) error {
 	// Cache individual service
 	serviceKey := fmt.Sprintf(ServiceKeyPattern, gatewayID, service.ID)
 	serviceJSON, err := json.Marshal(service)

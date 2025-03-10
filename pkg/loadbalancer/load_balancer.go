@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/go-redis/redis/v8"
 	"github.com/sirupsen/logrus"
@@ -19,7 +19,7 @@ type LoadBalancer struct {
 	logger       *logrus.Logger
 	cache        *cache.Cache
 	upstreamID   string
-	upstream     *models.Upstream
+	upstream     *upstream.Upstream
 	targetStatus map[string]*TargetStatus
 	successCh    chan *types.UpstreamTarget
 }
@@ -31,7 +31,7 @@ type TargetStatus struct {
 	LastError  error
 }
 
-func NewLoadBalancer(upstream *models.Upstream, logger *logrus.Logger, cache *cache.Cache) (*LoadBalancer, error) {
+func NewLoadBalancer(upstream *upstream.Upstream, logger *logrus.Logger, cache *cache.Cache) (*LoadBalancer, error) {
 	targets := make([]types.UpstreamTarget, len(upstream.Targets))
 	ctx := context.Background()
 	cacheTTL := time.Hour

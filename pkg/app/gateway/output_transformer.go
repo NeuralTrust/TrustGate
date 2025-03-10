@@ -3,7 +3,7 @@ package gateway
 import (
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
@@ -14,7 +14,7 @@ func NewOutputTransformer() *OutputTransformer {
 	return &OutputTransformer{}
 }
 
-func (ot OutputTransformer) Transform(dbGateway *models.Gateway) (*types.Gateway, error) {
+func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) (*types.Gateway, error) {
 	if dbGateway.RequiredPlugins == nil {
 		dbGateway.RequiredPlugins = []types.PluginConfig{}
 	}

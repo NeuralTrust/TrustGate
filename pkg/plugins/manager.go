@@ -140,7 +140,14 @@ func (m *Manager) SetPluginChain(level types.Level, entityID string, chains []ty
 	return nil
 }
 
-func (m *Manager) ExecuteStage(ctx context.Context, stage types.Stage, gatewayID, ruleID string, req *types.RequestContext, resp *types.ResponseContext) (*types.ResponseContext, error) {
+func (m *Manager) ExecuteStage(
+	ctx context.Context,
+	stage types.Stage,
+	gatewayID,
+	ruleID string,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+) (*types.ResponseContext, error) {
 	m.mu.RLock()
 	// Get both gateway and rule level chains
 	gatewayChains := m.getChains(types.GatewayLevel, gatewayID, stage)

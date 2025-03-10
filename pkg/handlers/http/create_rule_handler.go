@@ -8,7 +8,8 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -71,13 +72,13 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Create the database model
-	dbRule := &models.ForwardingRule{
+	dbRule := &forwarding_rule.ForwardingRule{
 		ID:            uuid.NewString(),
 		GatewayID:     gatewayID,
 		Path:          req.Path,
 		ServiceID:     req.ServiceID,
 		Methods:       req.Methods,
-		Headers:       models.HeadersJSON(req.Headers),
+		Headers:       domain.HeadersJSON(req.Headers),
 		StripPath:     stripPath,
 		PreserveHost:  preserveHost,
 		RetryAttempts: retryAttempts,
@@ -104,7 +105,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(response)
 }
 
-func (s *createRuleHandler) getRuleResponse(rule *models.ForwardingRule) (types.ForwardingRule, error) {
+func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule) (types.ForwardingRule, error) {
 	var pluginChain []types.PluginConfig
 	if rule.PluginChain != nil {
 		chainJSON, err := json.Marshal(rule.PluginChain)

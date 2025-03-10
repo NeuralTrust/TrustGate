@@ -7,14 +7,13 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/sirupsen/logrus"
 )
 
 var ErrInvalidCacheType = errors.New("invalid type assertion for service model")
 
 type Finder interface {
-	Find(ctx context.Context, gatewayID string, serviceID string) (*models.Service, error)
+	Find(ctx context.Context, gatewayID string, serviceID string) (*domainService.Service, error)
 }
 
 type finder struct {
@@ -26,18 +25,18 @@ type finder struct {
 
 func NewFinder(
 	repository domainService.Repository,
-	cache *cache.Cache,
+	c *cache.Cache,
 	logger *logrus.Logger,
 ) Finder {
 	return &finder{
 		repo:        repository,
-		cache:       cache,
+		cache:       c,
 		logger:      logger,
-		memoryCache: cache.CreateTTLMap("service", common.ServiceCacheTTL),
+		memoryCache: c.GetTTLMap(cache.ServiceTTLName),
 	}
 }
 
-func (f *finder) Find(ctx context.Context, gatewayID, serviceID string) (*models.Service, error) {
+func (f *finder) Find(ctx context.Context, gatewayID, serviceID string) (*domainService.Service, error) {
 
 	if service, err := f.getServiceFromMemoryCache(serviceID); err == nil {
 		return service, nil
@@ -62,13 +61,13 @@ func (f *finder) Find(ctx context.Context, gatewayID, serviceID string) (*models
 	return service, nil
 }
 
-func (f *finder) getServiceFromMemoryCache(serviceID string) (*models.Service, error) {
+func (f *finder) getServiceFromMemoryCache(serviceID string) (*domainService.Service, error) {
 	cachedValue, found := f.memoryCache.Get(serviceID)
 	if !found {
 		return nil, errors.New("service not found in memory cache")
 	}
 
-	service, ok := cachedValue.(*models.Service)
+	service, ok := cachedValue.(*domainService.Service)
 	if !ok {
 		return nil, ErrInvalidCacheType
 	}
@@ -76,7 +75,7 @@ func (f *finder) getServiceFromMemoryCache(serviceID string) (*models.Service, e
 	return service, nil
 }
 
-func (f *finder) saveServiceToMemoryCache(ctx context.Context, service *models.Service) {
+func (f *finder) saveServiceToMemoryCache(ctx context.Context, service *domainService.Service) {
 	f.memoryCache.Set(service.ID, service)
 	err := f.cache.SaveService(ctx, service.GatewayID, service)
 	if err != nil {

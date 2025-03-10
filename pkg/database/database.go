@@ -3,11 +3,25 @@ package database
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+func GetRegisteredModels() []interface{} {
+	return []interface{}{
+		&gateway.Gateway{},
+		&forwarding_rule.ForwardingRule{},
+		&apikey.APIKey{},
+		&service.Service{},
+		&upstream.Upstream{},
+	}
+}
 
 // DB represents the database connection
 type DB struct {
@@ -25,7 +39,7 @@ type Config struct {
 }
 
 // NewDB creates a new database connection
-func NewDB(cfg *Config) (*DB, error) {
+func NewDB(cfg *Config, models []interface{}) (*DB, error) {
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode)
 
@@ -35,13 +49,7 @@ func NewDB(cfg *Config) (*DB, error) {
 	}
 
 	// Auto-migrate the schema
-	if err := gormDB.AutoMigrate(
-		&models.Gateway{},
-		&models.ForwardingRule{},
-		&models.APIKey{},
-		&models.Service{},
-		&models.Upstream{},
-	); err != nil {
+	if err := gormDB.AutoMigrate(models...); err != nil {
 		return nil, fmt.Errorf("failed to auto-migrate schema: %w", err)
 	}
 

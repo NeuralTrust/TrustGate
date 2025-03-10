@@ -1,4 +1,4 @@
-package models
+package upstream
 
 import (
 	"database/sql/driver"
@@ -7,27 +7,27 @@ import (
 	"slices"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
-type UpstreamTarget struct {
-	ID           string          `json:"id" gorm:"primaryKey"`
-	Weight       int             `json:"weight,omitempty"`
-	Priority     int             `json:"priority,omitempty"`
-	Tags         TagsJSON        `json:"tags,omitempty" gorm:"type:jsonb"`
-	Headers      HeadersJSON     `json:"headers,omitempty" gorm:"type:jsonb"`
-	Path         string          `json:"path,omitempty"`
-	Host         string          `json:"host,omitempty"`
-	Port         int             `json:"port,omitempty"`
-	Protocol     string          `json:"protocol,omitempty"`
-	Provider     string          `json:"provider,omitempty"`
-	Models       ModelsJSON      `json:"models,omitempty" gorm:"type:jsonb"`
-	DefaultModel string          `json:"default_model,omitempty"`
-	Credentials  CredentialsJSON `json:"credentials,omitempty" gorm:"type:jsonb"`
+type Target struct {
+	ID           string                 `json:"id" gorm:"primaryKey"`
+	Weight       int                    `json:"weight,omitempty"`
+	Priority     int                    `json:"priority,omitempty"`
+	Tags         domain.TagsJSON        `json:"tags,omitempty" gorm:"type:jsonb"`
+	Headers      domain.HeadersJSON     `json:"headers,omitempty" gorm:"type:jsonb"`
+	Path         string                 `json:"path,omitempty"`
+	Host         string                 `json:"host,omitempty"`
+	Port         int                    `json:"port,omitempty"`
+	Protocol     string                 `json:"protocol,omitempty"`
+	Provider     string                 `json:"provider,omitempty"`
+	Models       ModelsJSON             `json:"models,omitempty" gorm:"type:jsonb"`
+	DefaultModel string                 `json:"default_model,omitempty"`
+	Credentials  domain.CredentialsJSON `json:"credentials,omitempty" gorm:"type:jsonb"`
 }
 
-// Add this type for Models array
 type ModelsJSON []string
 
 func (m ModelsJSON) Value() (driver.Value, error) {
@@ -49,19 +49,18 @@ func (m *ModelsJSON) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, m)
 }
 
-// Add Value() method for UpstreamTargets
-type UpstreamTargets []UpstreamTarget
+type Targets []Target
 
-func (t UpstreamTargets) Value() (driver.Value, error) {
-	if len(t) == 0 {
+func (t Targets) Value() (driver.Value, error) {
+	if t != nil && len(t) == 0 {
 		return []byte("[]"), nil
 	}
 	return json.Marshal(t)
 }
 
-func (t *UpstreamTargets) Scan(value interface{}) error {
+func (t *Targets) Scan(value interface{}) error {
 	if value == nil {
-		*t = make(UpstreamTargets, 0)
+		*t = make(Targets, 0)
 		return nil
 	}
 
@@ -81,7 +80,7 @@ func (t *UpstreamTargets) Scan(value interface{}) error {
 		return json.Unmarshal(bytes, t)
 	case map[string]interface{}:
 		// If it's a single object, wrap it in an array
-		*t = make(UpstreamTargets, 1)
+		*t = make(Targets, 1)
 		return json.Unmarshal(bytes, &(*t)[0])
 	default:
 		return fmt.Errorf("unexpected JSON type: %T", v)
@@ -93,15 +92,14 @@ type Upstream struct {
 	GatewayID    string          `json:"gateway_id" gorm:"not null"`
 	Name         string          `json:"name" gorm:"uniqueIndex:idx_gateway_upstream_name"`
 	Algorithm    string          `json:"algorithm" gorm:"default:'round-robin'"`
-	Targets      UpstreamTargets `json:"targets" gorm:"type:jsonb"`
+	Targets      Targets         `json:"targets" gorm:"type:jsonb"`
 	HealthChecks *HealthCheck    `json:"health_checks,omitempty" gorm:"type:jsonb"`
-	Tags         TagsJSON        `json:"tags,omitempty" gorm:"type:jsonb"`
-	Services     []Service       `json:"-" gorm:"foreignKey:UpstreamID"`
+	Tags         domain.TagsJSON `json:"tags,omitempty" gorm:"type:jsonb"`
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
 
-func (t *UpstreamTarget) Validate() error {
+func (t *Target) Validate() error {
 	if t.Weight < 0 {
 		return fmt.Errorf("weight cannot be negative")
 	}
@@ -110,7 +108,7 @@ func (t *UpstreamTarget) Validate() error {
 		if t.Host != "" || t.Port != 0 {
 			return fmt.Errorf("provider-type target cannot have host/port configuration")
 		}
-		var emptyCredentials CredentialsJSON
+		var emptyCredentials domain.CredentialsJSON
 		if t.Credentials == emptyCredentials {
 			return fmt.Errorf("provider-type target requires credentials")
 		}

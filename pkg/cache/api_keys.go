@@ -3,25 +3,26 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 
 	"github.com/go-redis/redis/v8"
 )
 
-func (c *Cache) GetAPIKeys(gatewayID string) ([]models.APIKey, error) {
+func (c *Cache) GetAPIKeys(gatewayID string) ([]apikey.APIKey, error) {
 	key := fmt.Sprintf("apikeys:%s", gatewayID)
 	data, err := c.Client().Get(context.Background(), key).Result()
 	if err != nil {
-		if err == redis.Nil {
-			return []models.APIKey{}, nil
+		if errors.Is(err, redis.Nil) {
+			return []apikey.APIKey{}, nil
 		}
 		return nil, err
 	}
 
-	var keys []models.APIKey
+	var keys []apikey.APIKey
 	if err := json.Unmarshal([]byte(data), &keys); err != nil {
 		return nil, err
 	}
@@ -43,7 +44,7 @@ func (c *Cache) ValidateAPIKey(gatewayID, apiKey string) bool {
 	return key.Active && (key.ExpiresAt.IsZero() || key.ExpiresAt.After(now))
 }
 
-func (c *Cache) GetAPIKey(gatewayID, apiKey string) (*models.APIKey, error) {
+func (c *Cache) GetAPIKey(gatewayID, apiKey string) (*apikey.APIKey, error) {
 	// Get all API keys for the gateway
 	keys, err := c.GetAPIKeys(gatewayID)
 	if err != nil {
@@ -60,7 +61,7 @@ func (c *Cache) GetAPIKey(gatewayID, apiKey string) (*models.APIKey, error) {
 	return nil, nil
 }
 
-func (c *Cache) SaveAPIKey(ctx context.Context, key *models.APIKey) error {
+func (c *Cache) SaveAPIKey(ctx context.Context, key *apikey.APIKey) error {
 	// Get existing keys
 	keys, err := c.GetAPIKeys(key.GatewayID)
 	if err != nil {

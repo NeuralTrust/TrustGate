@@ -6,7 +6,6 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -32,7 +31,7 @@ func (s *getServiceHandler) Handle(c *fiber.Ctx) error {
 	// Try to get from cache first
 	serviceKey := fmt.Sprintf(cache.ServiceKeyPattern, gatewayID, serviceID)
 	if serviceJSON, err := s.cache.Get(c.Context(), serviceKey); err == nil {
-		var entity models.Service
+		var entity service.Service
 		if err := json.Unmarshal([]byte(serviceJSON), &entity); err == nil {
 			return c.Status(fiber.StatusOK).JSON(entity)
 		}

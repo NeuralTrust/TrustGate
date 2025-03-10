@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"gorm.io/gorm"
 )
 
@@ -19,8 +18,8 @@ func NewServiceRepository(db *gorm.DB) service.Repository {
 	}
 }
 
-func (r *ServiceRepository) GetService(ctx context.Context, id string) (*models.Service, error) {
-	var entity models.Service
+func (r *ServiceRepository) GetService(ctx context.Context, id string) (*service.Service, error) {
+	var entity service.Service
 	result := r.db.WithContext(ctx).
 		Preload("Upstream").
 		First(&entity, "id = ?", id)

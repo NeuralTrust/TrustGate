@@ -1,4 +1,4 @@
-package models
+package domain
 
 import (
 	"database/sql/driver"
@@ -8,7 +8,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
-// JSON types for database storage
 type (
 	MethodsJSON     []string
 	HeadersJSON     map[string]string
@@ -17,7 +16,6 @@ type (
 	TagsJSON        []string
 )
 
-// Methods for MethodsJSON
 func (m MethodsJSON) Value() (driver.Value, error) {
 	if m == nil {
 		return nil, nil
@@ -37,7 +35,6 @@ func (m *MethodsJSON) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, m)
 }
 
-// Methods for HeadersJSON
 func (h HeadersJSON) Value() (driver.Value, error) {
 	if h == nil {
 		return nil, nil
@@ -57,7 +54,6 @@ func (h *HeadersJSON) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, h)
 }
 
-// Methods for PluginChainJSON
 func (p PluginChainJSON) Value() (driver.Value, error) {
 	if p == nil {
 		return nil, nil
@@ -77,7 +73,6 @@ func (p *PluginChainJSON) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, p)
 }
 
-// Methods for CredentialsJSON
 func (c CredentialsJSON) Value() (driver.Value, error) {
 	return json.Marshal(c)
 }
@@ -93,7 +88,6 @@ func (c *CredentialsJSON) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, c)
 }
 
-// Methods for TagsJSON
 func (t TagsJSON) Value() (driver.Value, error) {
 	if t == nil {
 		return nil, nil
