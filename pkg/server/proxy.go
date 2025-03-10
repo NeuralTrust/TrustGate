@@ -5,9 +5,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/sirupsen/logrus"
 )
@@ -21,8 +19,6 @@ type (
 	}
 	ProxyServer struct {
 		*BaseServer
-		middlewareTransport middleware.Transport
-		handlerTransport    handlers.HandlerTransport
 	}
 )
 

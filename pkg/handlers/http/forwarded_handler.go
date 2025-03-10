@@ -21,7 +21,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
@@ -475,21 +474,6 @@ func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upst
 
 	h.loadBalancers.Store(upstream.ID, lb)
 	return lb, nil
-}
-
-// Helper functions to convert between models and types
-func (h *forwardedHandler) convertModelToTypesGateway(g *gateway.Gateway) *types.Gateway {
-	var requiredPlugins []types.PluginConfig
-	for _, pluginConfig := range g.RequiredPlugins {
-		requiredPlugins = append(requiredPlugins, pluginConfig)
-	}
-	return &types.Gateway{
-		ID:              g.ID,
-		Name:            g.Name,
-		Subdomain:       g.Subdomain,
-		Status:          g.Status,
-		RequiredPlugins: requiredPlugins,
-	}
 }
 
 func (h *forwardedHandler) doForwardRequest(
