@@ -7,7 +7,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -45,7 +45,7 @@ func (s *listUpstreamHandler) Handle(c *fiber.Ctx) error {
 	// Try to get from cache first
 	upstreamsKey := fmt.Sprintf(cache.UpstreamsKeyPattern, gatewayID)
 	if upstreamsJSON, err := s.cache.Get(c.Context(), upstreamsKey); err == nil {
-		var upstreams []models.Upstream
+		var upstreams []upstream.Upstream
 		if err := json.Unmarshal([]byte(upstreamsJSON), &upstreams); err == nil {
 			return c.Status(fiber.StatusOK).JSON(upstreams)
 		}

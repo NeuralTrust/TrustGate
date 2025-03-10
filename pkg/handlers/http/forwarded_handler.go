@@ -3,7 +3,6 @@ package http
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,10 +21,12 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
+	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
@@ -34,6 +35,12 @@ import (
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fastjson"
 )
+
+var responseBodyPool = sync.Pool{
+	New: func() interface{} {
+		return new([]byte)
+	},
+}
 
 type forwardedHandler struct {
 	logger         *logrus.Logger
@@ -115,7 +122,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
 	}
 
-	// Get metadata from gin context
+	// Get metadata from fiber context
 	var metadata map[string]interface{}
 	if md := c.Locals(common.MetadataKey); md != nil {
 		if m, ok := md.(map[string]interface{}); ok {
@@ -156,14 +163,14 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		Metadata:  make(map[string]interface{}),
 	}
 
-	//// Get gateway data with plugins
-	gatewayData, err := h.getGatewayData(c.Context(), gatewayID)
-	reqCtx.Metadata[string(common.GatewayDataContextKey)] = gatewayData
-
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to get gateway data")
+	// get gateway data set in plugin_chain middleware
+	gatewayData, ok := c.Locals(common.GatewayDataContextKey).(*types.GatewayData)
+	if !ok {
+		h.logger.Error("failed to get gateway data in handler")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
 	}
+
+	reqCtx.Metadata[string(common.GatewayDataContextKey)] = gatewayData
 
 	// Find matching rule
 	var matchingRule *types.ForwardingRule
@@ -182,26 +189,10 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		if !methodAllowed {
 			continue
 		}
+
 		// Check if path matches
 		if strings.HasPrefix(c.Path(), rule.Path) {
-			// Convert the rule to models.ForwardingRule
-			modelRule := types.ForwardingRule{
-				ID:            rule.ID,
-				GatewayID:     rule.GatewayID,
-				Path:          rule.Path,
-				ServiceID:     rule.ServiceID,
-				Methods:       rule.Methods,
-				Headers:       rule.Headers,
-				StripPath:     rule.StripPath,
-				PreserveHost:  rule.PreserveHost,
-				RetryAttempts: rule.RetryAttempts,
-				PluginChain:   rule.PluginChain,
-				Active:        rule.Active,
-				Public:        rule.Public,
-				CreatedAt:     time.Now().Format(time.RFC3339),
-				UpdatedAt:     time.Now().Format(time.RFC3339),
-			}
-			matchingRule = &modelRule
+			matchingRule = &rule
 			// Store rule and service info in context for metrics
 			c.Set(middleware.RouteIDKey, rule.ID)
 			c.Set(middleware.ServiceIDKey, rule.ServiceID)
@@ -377,43 +368,6 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 }
 
-func (h *forwardedHandler) getGatewayDataFromCache(value interface{}) (*types.GatewayData, error) {
-	data, ok := value.(*types.GatewayData)
-	if !ok {
-		return nil, fmt.Errorf("invalid type assertion for gateway data")
-	}
-	return data, nil
-}
-
-func (h *forwardedHandler) getGatewayData(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
-	// Try memory cache first
-	if cached, ok := h.gatewayCache.Get(gatewayID); ok {
-		data, err := h.getGatewayDataFromCache(cached)
-		if err != nil {
-			h.logger.WithError(err).Error("Failed to get gateway data from cache")
-		} else {
-			return data, nil
-		}
-	}
-	// Try Redis cache
-	gatewayData, err := h.getGatewayDataFromRedis(ctx, gatewayID)
-	if err == nil {
-		h.logger.WithFields(logrus.Fields{
-			"gatewayID":  gatewayID,
-			"rulesCount": len(gatewayData.Rules),
-			"fromCache":  "redis",
-		}).Debug("Gateway data found in Redis cache")
-
-		// Store in memory cache
-		h.gatewayCache.Set(gatewayID, gatewayData)
-		return gatewayData, nil
-	}
-	h.logger.WithError(err).Debug("Failed to get gateway data from Redis")
-
-	// Fallback to database
-	return h.getGatewayDataFromDB(ctx, gatewayID)
-}
-
 func (h *forwardedHandler) configurePlugins(gateway *types.Gateway, rule *types.ForwardingRule) error {
 	gatewayChains := h.convertGatewayPlugins(gateway)
 	if err := h.pluginManager.SetPluginChain(types.GatewayLevel, gateway.ID, gatewayChains); err != nil {
@@ -427,21 +381,28 @@ func (h *forwardedHandler) configurePlugins(gateway *types.Gateway, rule *types.
 	return nil
 }
 
-func (h *forwardedHandler) forwardRequest(req *types.RequestContext, rule *types.ForwardingRule) (*types.ResponseContext, error) {
+func (h *forwardedHandler) forwardRequest(
+	req *types.RequestContext,
+	rule *types.ForwardingRule,
+) (*types.ResponseContext, error) {
 	serviceEntity, err := h.serviceFinder.Find(req.Context, rule.GatewayID, rule.ServiceID)
 	if err != nil {
 		return nil, fmt.Errorf("service not found: %w", err)
 	}
 	switch serviceEntity.Type {
-	case models.ServiceTypeUpstream:
+	case domainService.TypeUpstream:
 		return h.handleUpstreamRequest(req, rule, serviceEntity)
-	case models.ServiceTypeEndpoint:
+	case domainService.TypeEndpoint:
 		return h.handleEndpointRequest(req, rule, serviceEntity)
 	default:
 		return nil, fmt.Errorf("unsupported service type: %s", serviceEntity.Type)
 	}
 }
-func (h *forwardedHandler) handleUpstreamRequest(req *types.RequestContext, rule *types.ForwardingRule, serviceEntity *models.Service) (*types.ResponseContext, error) {
+func (h *forwardedHandler) handleUpstreamRequest(
+	req *types.RequestContext,
+	rule *types.ForwardingRule,
+	serviceEntity *domainService.Service,
+) (*types.ResponseContext, error) {
 	upstreamModel, err := h.upstreamFinder.Find(req.Context, serviceEntity.GatewayID, serviceEntity.UpstreamID)
 	if err != nil {
 		return nil, fmt.Errorf("upstream not found: %w", err)
@@ -483,7 +444,11 @@ func (h *forwardedHandler) handleUpstreamRequest(req *types.RequestContext, rule
 	return nil, fmt.Errorf("all retry attempts failed")
 }
 
-func (h *forwardedHandler) handleEndpointRequest(req *types.RequestContext, rule *types.ForwardingRule, serviceEntity *models.Service) (*types.ResponseContext, error) {
+func (h *forwardedHandler) handleEndpointRequest(
+	req *types.RequestContext,
+	rule *types.ForwardingRule,
+	serviceEntity *domainService.Service,
+) (*types.ResponseContext, error) {
 	target := &types.UpstreamTarget{
 		Host:        serviceEntity.Host,
 		Port:        serviceEntity.Port,
@@ -496,7 +461,7 @@ func (h *forwardedHandler) handleEndpointRequest(req *types.RequestContext, rule
 }
 
 // Add helper method to create or get load balancer
-func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *models.Upstream) (*loadbalancer.LoadBalancer, error) {
+func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upstream) (*loadbalancer.LoadBalancer, error) {
 	if lb, ok := h.loadBalancers.Load(upstream.ID); ok {
 		if lb, ok := lb.(*loadbalancer.LoadBalancer); ok {
 			return lb, nil
@@ -512,39 +477,8 @@ func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *models.Upstream) (*
 	return lb, nil
 }
 
-func (h *forwardedHandler) getGatewayDataFromRedis(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
-	// Get gateway from Redis
-	gatewayKey := fmt.Sprintf("gateway:%s", gatewayID)
-	gatewayJSON, err := h.cache.Get(ctx, gatewayKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get gateway from Redis: %w", err)
-	}
-
-	var gateway *models.Gateway
-	if err := json.Unmarshal([]byte(gatewayJSON), &gateway); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal gateway from Redis: %w", err)
-	}
-
-	// Get rules from Redis
-	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
-	rulesJSON, err := h.cache.Get(ctx, rulesKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get rules from Redis: %w", err)
-	}
-
-	var rules []types.ForwardingRule
-	if err := json.Unmarshal([]byte(rulesJSON), &rules); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal rules from Redis: %w", err)
-	}
-
-	return &types.GatewayData{
-		Gateway: h.convertModelToTypesGateway(gateway),
-		Rules:   rules,
-	}, nil
-}
-
 // Helper functions to convert between models and types
-func (h *forwardedHandler) convertModelToTypesGateway(g *models.Gateway) *types.Gateway {
+func (h *forwardedHandler) convertModelToTypesGateway(g *gateway.Gateway) *types.Gateway {
 	var requiredPlugins []types.PluginConfig
 	for _, pluginConfig := range g.RequiredPlugins {
 		requiredPlugins = append(requiredPlugins, pluginConfig)
@@ -556,135 +490,6 @@ func (h *forwardedHandler) convertModelToTypesGateway(g *models.Gateway) *types.
 		Status:          g.Status,
 		RequiredPlugins: requiredPlugins,
 	}
-}
-
-func (h *forwardedHandler) getGatewayDataFromDB(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
-	// Get gateway from database
-	gateway, err := h.repo.GetGateway(ctx, gatewayID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get gateway from database: %w", err)
-	}
-
-	// Get rules from database
-	rules, err := h.repo.ListRules(ctx, gatewayID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get rules from database: %w", err)
-	}
-
-	// Convert models to types
-	gatewayData := &types.GatewayData{
-		Gateway: h.convertModelToTypesGateway(gateway),
-		Rules:   h.convertModelToTypesRules(rules),
-	}
-
-	// Cache the results
-	if err := h.cacheGatewayData(ctx, gatewayID, gateway, rules); err != nil {
-		h.logger.WithError(err).Warn("Failed to cache gateway data")
-	}
-
-	h.logger.WithFields(logrus.Fields{
-		"gatewayID":       gatewayID,
-		"requiredPlugins": gateway.RequiredPlugins,
-		"rulesCount":      len(rules),
-		"fromCache":       "database",
-	}).Debug("Loaded gateway data from database")
-
-	return gatewayData, nil
-}
-
-func (h *forwardedHandler) cacheGatewayData(
-	ctx context.Context,
-	gatewayID string,
-	gateway *models.Gateway,
-	rules []models.ForwardingRule,
-) error {
-	// Cache gateway
-	gatewayJSON, err := json.Marshal(gateway)
-	if err != nil {
-		return fmt.Errorf("failed to marshal gateway: %w", err)
-	}
-	gatewayKey := fmt.Sprintf("gateway:%s", gatewayID)
-	if err := h.cache.Set(ctx, gatewayKey, string(gatewayJSON), 0); err != nil {
-		return fmt.Errorf("failed to cache gateway: %w", err)
-	}
-
-	// Convert and cache rules as types
-	typesRules := h.convertModelToTypesRules(rules)
-	rulesJSON, err := json.Marshal(typesRules)
-	if err != nil {
-		return fmt.Errorf("failed to marshal rules: %w", err)
-	}
-	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
-	if err := h.cache.Set(ctx, rulesKey, string(rulesJSON), 0); err != nil {
-		return fmt.Errorf("failed to cache rules: %w", err)
-	}
-
-	// Cache in memory
-	gatewayData := &types.GatewayData{
-		Gateway: h.convertModelToTypesGateway(gateway),
-		Rules:   typesRules,
-	}
-
-	h.gatewayCache.Set(gatewayID, gatewayData)
-
-	return nil
-}
-
-func (h *forwardedHandler) convertModelToTypesRules(rules []models.ForwardingRule) []types.ForwardingRule {
-	var result []types.ForwardingRule
-	for _, r := range rules {
-		var pluginChain []types.PluginConfig
-
-		jsonBytes, err := h.getJSONBytes(r.PluginChain)
-		if err != nil {
-			return []types.ForwardingRule{}
-		}
-
-		if err := json.Unmarshal(jsonBytes, &pluginChain); err != nil {
-			pluginChain = []types.PluginConfig{} // fallback to empty slice on error
-		}
-
-		result = append(result, types.ForwardingRule{
-			ID:            r.ID,
-			GatewayID:     r.GatewayID,
-			Path:          r.Path,
-			ServiceID:     r.ServiceID,
-			Methods:       r.Methods,
-			Headers:       r.Headers,
-			StripPath:     r.StripPath,
-			PreserveHost:  r.PreserveHost,
-			RetryAttempts: r.RetryAttempts,
-			PluginChain:   pluginChain,
-			Active:        r.Active,
-			Public:        r.Public,
-			CreatedAt:     r.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:     r.UpdatedAt.Format(time.RFC3339),
-		})
-	}
-	return result
-}
-
-func (h *forwardedHandler) getJSONBytes(value interface{}) ([]byte, error) {
-	switch v := value.(type) {
-	case []byte:
-		return v, nil
-	case string:
-		return []byte(v), nil
-	case json.RawMessage:
-		return v, nil
-	default:
-		b, err := json.Marshal(value)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal value to JSON bytes: %w", err)
-		}
-		return b, nil
-	}
-}
-
-var responseBodyPool = sync.Pool{
-	New: func() interface{} {
-		return new([]byte)
-	},
 }
 
 func (h *forwardedHandler) doForwardRequest(

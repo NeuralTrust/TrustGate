@@ -31,13 +31,13 @@ DURATION="30s"
 echo -e "${BLUE}TrustGate Benchmark Tool${NC}\n"
 
 # Test 1: System endpoint (ping)
-echo -e "${GREEN}Testing system ping endpoint...${NC}"
-echo -e "\n${BLUE}Starting system benchmark with ${CONCURRENT_USERS} concurrent users for ${DURATION}...${NC}"
-hey -z ${DURATION} \
-    -c ${CONCURRENT_USERS} \
-    -disable-keepalive \
-    -cpus 2 \
-    "${PROXY_URL}/__/ping"
+#echo -e "${GREEN}Testing system ping endpoint...${NC}"
+#echo -e "\n${BLUE}Starting system benchmark with ${CONCURRENT_USERS} concurrent users for ${DURATION}...${NC}"
+#hey -z ${DURATION} \
+#    -c ${CONCURRENT_USERS} \
+#    -disable-keepalive \
+#    -cpus 2 \
+#    "${PROXY_URL}/__/ping"
 
 # Create test gateway
 echo -e "${GREEN}Creating test gateway...${NC}"

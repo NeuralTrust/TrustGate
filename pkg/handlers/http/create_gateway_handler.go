@@ -5,7 +5,6 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -29,7 +28,7 @@ func NewCreateGatewayHandler(
 }
 
 func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
-	var entity models.Gateway
+	var entity domain.Gateway
 
 	if err := c.BodyParser(&entity); err != nil {
 		h.logger.WithError(err).Error("Failed to bind request")

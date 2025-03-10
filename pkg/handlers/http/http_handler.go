@@ -6,7 +6,11 @@ type Handler interface {
 	Handle(ctx *fiber.Ctx) error
 }
 
-type HandlerTransport struct {
+type HandlerTransport interface {
+	GetTransport() HandlerTransport
+}
+
+type HandlerTransportDTO struct {
 	// Proxy
 	ForwardedHandler Handler
 
@@ -42,4 +46,8 @@ type HandlerTransport struct {
 	ListAPIKeysHandler  Handler
 	GetAPIKeyHandler    Handler
 	DeleteAPIKeyHandler Handler
+}
+
+func (t *HandlerTransportDTO) GetTransport() HandlerTransport {
+	return t
 }

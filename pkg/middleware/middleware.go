@@ -10,4 +10,5 @@ type Transport struct {
 	AuthMiddleware    Middleware
 	GatewayMiddleware Middleware
 	MetricsMiddleware Middleware
+	PluginMiddleware  Middleware
 }

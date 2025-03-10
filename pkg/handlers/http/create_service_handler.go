@@ -3,7 +3,7 @@ package http
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -25,7 +25,7 @@ func NewCreateServiceHandler(logger *logrus.Logger, repo *database.Repository, c
 func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 
-	var service models.Service
+	var service service.Service
 	if err := c.BodyParser(&service); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}

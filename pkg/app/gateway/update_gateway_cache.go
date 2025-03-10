@@ -6,12 +6,12 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/google/uuid"
 )
 
 type UpdateGatewayCache interface {
-	Update(ctx context.Context, gateway *models.Gateway) error
+	Update(ctx context.Context, gateway *gateway.Gateway) error
 }
 
 type updateGatewayCache struct {
@@ -26,7 +26,7 @@ func NewUpdateGatewayCache(cache *cache.Cache) UpdateGatewayCache {
 	}
 }
 
-func (h *updateGatewayCache) Update(ctx context.Context, gateway *models.Gateway) error {
+func (h *updateGatewayCache) Update(ctx context.Context, gateway *gateway.Gateway) error {
 	if err := h.validateGatewayID(gateway.ID); err != nil {
 		return fmt.Errorf("invalid gateway ID: %w", err)
 	}

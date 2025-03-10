@@ -2,10 +2,10 @@ package http
 
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -32,7 +32,7 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	upstreamID := c.Params("upstream_id")
 
-	var entity models.Upstream
+	var entity upstream.Upstream
 	if err := c.BodyParser(&entity); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}

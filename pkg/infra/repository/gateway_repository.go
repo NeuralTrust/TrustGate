@@ -5,7 +5,6 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"gorm.io/gorm"
 )
 
@@ -19,7 +18,7 @@ func NewGatewayRepository(db *gorm.DB) gateway.Repository {
 	}
 }
 
-func (r *gatewayRepository) Save(ctx context.Context, gateway *models.Gateway) error {
+func (r *gatewayRepository) Save(ctx context.Context, gateway *gateway.Gateway) error {
 	ctx = context.WithValue(ctx, common.CacherKey, r)
 	return r.db.WithContext(ctx).Create(gateway).Error
 }

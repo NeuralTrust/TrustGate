@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -36,7 +36,7 @@ func (s *getAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get API key"})
 	}
 
-	var apiKey models.APIKey
+	var apiKey domain.APIKey
 	if err := json.Unmarshal([]byte(apiKeyJSON), &apiKey); err != nil {
 		s.logger.WithError(err).Error("Failed to unmarshal API key")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get API key"})

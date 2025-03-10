@@ -6,7 +6,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	gateway2 "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
@@ -63,7 +63,7 @@ func (h *listGatewayHandler) Handle(c *fiber.Ctx) error {
 		gateways = append(gateways, *output)
 
 		// Update cache in background
-		go func(g models.Gateway) {
+		go func(g gateway2.Gateway) {
 			ctx := context.Background()
 			if err := h.updateGatewayCache.Update(ctx, &g); err != nil {
 				h.logger.WithError(err).Error("Failed to update gateway cache")

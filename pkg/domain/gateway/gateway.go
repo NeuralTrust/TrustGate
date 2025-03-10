@@ -1,21 +1,22 @@
-package models
+package gateway
 
 import (
 	"fmt"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type Gateway struct {
-	ID              string          `json:"id" gorm:"primaryKey"`
-	Name            string          `json:"name"`
-	Subdomain       string          `json:"subdomain" gorm:"uniqueIndex"`
-	Status          string          `json:"status"`
-	RequiredPlugins PluginChainJSON `json:"required_plugins" gorm:"type:jsonb"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID              string                 `json:"id" gorm:"primaryKey"`
+	Name            string                 `json:"name"`
+	Subdomain       string                 `json:"subdomain" gorm:"uniqueIndex"`
+	Status          string                 `json:"status"`
+	RequiredPlugins domain.PluginChainJSON `json:"required_plugins" gorm:"type:jsonb"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
 func (g *Gateway) BeforeCreate(tx *gorm.DB) error {

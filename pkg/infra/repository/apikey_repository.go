@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
 	"gorm.io/gorm"
 )
 
@@ -19,8 +18,8 @@ func NewApiKeyRepository(db *gorm.DB) apikey.Repository {
 	}
 }
 
-func (r *ApiKeyRepository) GetByKey(ctx context.Context, gatewayID, key string) (*models.APIKey, error) {
-	entity := new(models.APIKey)
+func (r *ApiKeyRepository) GetByKey(ctx context.Context, gatewayID, key string) (*apikey.APIKey, error) {
+	entity := new(apikey.APIKey)
 	if err := r.db.WithContext(ctx).
 		Where("key = ? AND gateway_id = ?", key, gatewayID).
 		First(entity).Error; err != nil {

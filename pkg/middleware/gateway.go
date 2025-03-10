@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/gofiber/fiber/v2"
 
@@ -19,14 +20,22 @@ type gatewayMiddleware struct {
 	logger     *logrus.Logger
 	cache      *cache.Cache
 	repo       *database.Repository
+	dataFinder gateway.DataFinder
 	baseDomain string
 }
 
-func NewGatewayMiddleware(logger *logrus.Logger, cache *cache.Cache, repo *database.Repository, baseDomain string) Middleware {
+func NewGatewayMiddleware(
+	logger *logrus.Logger,
+	cache *cache.Cache,
+	repo *database.Repository,
+	dataFinder gateway.DataFinder,
+	baseDomain string,
+) Middleware {
 	return &gatewayMiddleware{
 		logger:     logger,
 		cache:      cache,
 		repo:       repo,
+		dataFinder: dataFinder,
 		baseDomain: baseDomain,
 	}
 }
@@ -66,7 +75,7 @@ func (m *gatewayMiddleware) Middleware() fiber.Handler {
 				// If not in cache, try to get from database
 				m.logger.WithField("subdomain", subdomain).Debug("Cache miss, querying database")
 
-				gateway, err := m.repo.GetGatewayBySubdomain(ctx.Context(), subdomain)
+				gatewayEntity, err := m.repo.GetGatewayBySubdomain(ctx.Context(), subdomain)
 				if err != nil {
 					m.logger.WithFields(logrus.Fields{
 						"subdomain": subdomain,
@@ -77,13 +86,13 @@ func (m *gatewayMiddleware) Middleware() fiber.Handler {
 					return ctx.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Gateway not found"})
 				}
 
-				gatewayID = gateway.ID
+				gatewayID = gatewayEntity.ID
 				// Cache the gateway ID
-				if err := m.cache.Set(ctx.Context(), key, gateway.ID, 24*time.Hour); err != nil {
+				if err := m.cache.Set(ctx.Context(), key, gatewayEntity.ID, 24*time.Hour); err != nil {
 					m.logger.WithFields(logrus.Fields{
 						"error":     err,
 						"key":       key,
-						"gatewayID": gateway.ID,
+						"gatewayID": gatewayEntity.ID,
 					}).Error("Failed to cache gateway ID")
 				}
 			} else {
@@ -95,8 +104,18 @@ func (m *gatewayMiddleware) Middleware() fiber.Handler {
 			}
 		}
 
+		gatewayData, err := m.dataFinder.Find(ctx.Context(), gatewayID)
+		if err != nil {
+			m.logger.WithError(err).Error("failed to fetch gateway data")
+			return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch gateway data"})
+		}
+
 		ctx.Locals(common.GatewayContextKey, gatewayID)
+		ctx.Locals(common.GatewayDataContextKey, gatewayData)
+
 		c := context.WithValue(ctx.Context(), common.GatewayContextKey, gatewayID)
+		c = context.WithValue(c, common.GatewayDataContextKey, gatewayData)
+
 		ctx.SetUserContext(c)
 
 		return ctx.Next()

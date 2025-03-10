@@ -1,17 +1,19 @@
-package models
+package upstream
 
 import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 )
 
 type HealthCheck struct {
-	Passive   bool        `json:"passive"`
-	Path      string      `json:"path"`
-	Headers   HeadersJSON `json:"headers" gorm:"type:jsonb"`
-	Threshold int         `json:"threshold"` // Number of failures before marking as unhealthy
-	Interval  int         `json:"interval"`  // Time in seconds before resetting failure count
+	Passive   bool               `json:"passive"`
+	Path      string             `json:"path"`
+	Headers   domain.HeadersJSON `json:"headers" gorm:"type:jsonb"`
+	Threshold int                `json:"threshold"` // Number of failures before marking as unhealthy
+	Interval  int                `json:"interval"`  // Time in seconds before resetting failure count
 }
 
 func (h *HealthCheck) Validate() error {
@@ -38,5 +40,3 @@ func (h *HealthCheck) Scan(value interface{}) error {
 	}
 	return json.Unmarshal(bytes, h)
 }
-
-// Include all HealthCheck-related methods

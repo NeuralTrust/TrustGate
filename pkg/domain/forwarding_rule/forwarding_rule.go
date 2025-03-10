@@ -1,26 +1,27 @@
-package models
+package forwarding_rule
 
 import (
 	"fmt"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type ForwardingRule struct {
-	ID            string          `gorm:"primaryKey"`
-	GatewayID     string          `gorm:"not null"`
-	ServiceID     string          `gorm:"not null"`
-	Path          string          `gorm:"not null"`
-	Methods       MethodsJSON     `gorm:"type:jsonb"`
-	Headers       HeadersJSON     `gorm:"type:jsonb"`
-	StripPath     bool            `gorm:"default:false"`
-	PreserveHost  bool            `gorm:"default:false"`
-	PluginChain   PluginChainJSON `gorm:"type:jsonb"`
-	Active        bool            `gorm:"default:true"`
-	Public        bool            `gorm:"default:false"`
-	RetryAttempts int             `gorm:"default:1"`
+	ID            string                 `gorm:"primaryKey"`
+	GatewayID     string                 `gorm:"not null"`
+	ServiceID     string                 `gorm:"not null"`
+	Path          string                 `gorm:"not null"`
+	Methods       domain.MethodsJSON     `gorm:"type:jsonb"`
+	Headers       domain.HeadersJSON     `gorm:"type:jsonb"`
+	StripPath     bool                   `gorm:"default:false"`
+	PreserveHost  bool                   `gorm:"default:false"`
+	PluginChain   domain.PluginChainJSON `gorm:"type:jsonb"`
+	Active        bool                   `gorm:"default:true"`
+	Public        bool                   `gorm:"default:false"`
+	RetryAttempts int                    `gorm:"default:1"`
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }

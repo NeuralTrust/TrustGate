@@ -6,7 +6,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
-	"github.com/NeuralTrust/TrustGate/pkg/models"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -37,7 +37,7 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Generate new API key
-	apiKey := &models.APIKey{
+	apiKey := &domain.APIKey{
 		ID:        uuid.NewString(),
 		Name:      req.Name,
 		GatewayID: gatewayID,

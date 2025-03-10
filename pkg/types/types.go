@@ -137,7 +137,6 @@ func containsValue(value, searchValue interface{}) bool {
 	return false
 }
 
-// Add PluginContext type
 type PluginContext struct {
 	Config   PluginConfig
 	Redis    *redis.Client
