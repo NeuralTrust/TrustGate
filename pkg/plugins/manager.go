@@ -37,7 +37,7 @@ type Manager struct {
 	logger         *logrus.Logger
 	bedrockClient  bedrock.Client
 	plugins        map[string]pluginiface.Plugin
-	configurations map[types.Level]map[string][]types.PluginConfig
+	configurations map[string][][]types.PluginConfig
 }
 
 func NewManager(
@@ -49,7 +49,7 @@ func NewManager(
 	once.Do(func() {
 		instance = &Manager{
 			plugins:        make(map[string]pluginiface.Plugin),
-			configurations: make(map[types.Level]map[string][]types.PluginConfig),
+			configurations: make(map[string][][]types.PluginConfig),
 			bedrockClient:  bedrockClient,
 			cache:          cache,
 			logger:         logger,
@@ -121,37 +121,47 @@ func (m *Manager) RegisterPlugin(plugin pluginiface.Plugin) error {
 	return nil
 }
 
-func (m *Manager) SetPluginChain(level types.Level, entityID string, chains []types.PluginConfig) error {
+func (m *Manager) ClearPluginChain(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Validate all plugins exist
+	if _, exists := m.configurations[id]; !exists {
+		return
+	}
+
+	delete(m.configurations, id)
+	return
+}
+
+func (m *Manager) SetPluginChain(gatewayId string, chains []types.PluginConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for _, chain := range chains {
 		if _, exists := m.plugins[chain.Name]; !exists {
 			return fmt.Errorf("plugin %s not registered", chain.Name)
 		}
 	}
 
-	if m.configurations[level] == nil {
-		m.configurations[level] = make(map[string][]types.PluginConfig)
+	if m.configurations[gatewayId] == nil {
+		m.configurations[gatewayId] = [][]types.PluginConfig{}
 	}
 
-	m.configurations[level][entityID] = chains
+	m.configurations[gatewayId] = append(m.configurations[gatewayId], chains)
+
 	return nil
 }
 
 func (m *Manager) ExecuteStage(
 	ctx context.Context,
 	stage types.Stage,
-	gatewayID,
-	ruleID string,
+	gatewayID string,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
 ) (*types.ResponseContext, error) {
 	m.mu.RLock()
 	// Get both gateway and rule level chains
-	gatewayChains := m.getChains(types.GatewayLevel, gatewayID, stage)
-	ruleChains := m.getChains(types.RuleLevel, ruleID, stage)
+	gatewayChains := m.getChains(gatewayID, stage)
 	plugins := m.plugins
 	m.mu.RUnlock()
 
@@ -161,17 +171,12 @@ func (m *Manager) ExecuteStage(
 	// Track executed plugins to prevent duplicates
 	executedPlugins := make(map[string]bool)
 
-	// Execute gateway-level chains first
-	if len(gatewayChains) > 0 {
-		if err := m.executeChains(ctx, plugins, gatewayChains, req, resp, executedPlugins); err != nil {
-			return resp, err
-		}
-	}
-
-	// Then execute rule-level chains
-	if len(ruleChains) > 0 {
-		if err := m.executeChains(ctx, plugins, ruleChains, req, resp, executedPlugins); err != nil {
-			return resp, err
+	// Chains are inserted in PluginChain Middleware and in Forwarded Handler
+	for _, chain := range gatewayChains {
+		if len(chain) > 0 {
+			if err := m.executeChains(ctx, plugins, chain, req, resp, executedPlugins); err != nil {
+				return resp, err
+			}
 		}
 	}
 
@@ -381,55 +386,57 @@ func (m *Manager) executeSequential(ctx context.Context, plugins map[string]plug
 	return nil
 }
 
-func (m *Manager) getChains(level types.Level, entityID string, stage types.Stage) []types.PluginConfig {
-	if configs, exists := m.configurations[level]; exists {
-		if chains, exists := configs[entityID]; exists {
-			var stageChains []types.PluginConfig
-			for _, chain := range chains {
-				// Get the plugin to check its stages
-				plugin, exists := m.plugins[chain.Name]
-				if !exists {
-					continue
-				}
+func (m *Manager) getChains(entityID string, stage types.Stage) [][]types.PluginConfig {
+	chainsGroups, exists := m.configurations[entityID]
+	if !exists {
+		return nil
+	}
 
-				// Check if plugin has fixed stages
-				fixedStages := plugin.Stages()
-				if len(fixedStages) > 0 {
-					// For plugins with fixed stages, check if the current stage is one of them
-					for _, fixedStage := range fixedStages {
-						if fixedStage == stage {
-							chainConfig := chain
-							chainConfig.Stage = stage
-							stageChains = append(stageChains, chainConfig)
-							break
-						}
+	var stageChains [][]types.PluginConfig
+
+	for _, chains := range chainsGroups {
+		var filteredGroup []types.PluginConfig
+
+		for _, chain := range chains {
+			plugin, exists := m.plugins[chain.Name]
+			if !exists {
+				continue
+			}
+
+			fixedStages := plugin.Stages()
+			if len(fixedStages) > 0 {
+				for _, fixedStage := range fixedStages {
+					if fixedStage == stage {
+						chainConfig := chain
+						chainConfig.Stage = stage
+						filteredGroup = append(filteredGroup, chainConfig)
+						break
 					}
-				} else {
-					// For plugins without fixed stages, validate against allowed stages
-					allowedStages := plugin.AllowedStages()
-					// If no stage is configured, skip this plugin
-					if chain.Stage == "" {
-						continue
-					}
-					// Check if the configured stage is allowed and matches current stage
-					if chain.Stage == stage {
-						isAllowed := false
-						for _, allowedStage := range allowedStages {
-							if allowedStage == stage {
-								isAllowed = true
-								break
-							}
-						}
-						if isAllowed {
-							stageChains = append(stageChains, chain)
-						}
+				}
+				continue
+			}
+
+			allowedStages := plugin.AllowedStages()
+			if chain.Stage == "" {
+				continue
+			}
+
+			if chain.Stage == stage {
+				for _, allowedStage := range allowedStages {
+					if allowedStage == stage {
+						filteredGroup = append(filteredGroup, chain)
+						break
 					}
 				}
 			}
-			return stageChains
+		}
+
+		if len(filteredGroup) > 0 {
+			stageChains = append(stageChains, filteredGroup)
 		}
 	}
-	return nil
+
+	return stageChains
 }
 
 // GetPlugin returns a plugin by name

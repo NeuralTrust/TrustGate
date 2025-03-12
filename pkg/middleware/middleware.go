@@ -7,8 +7,23 @@ type Middleware interface {
 }
 
 type Transport struct {
-	AuthMiddleware    Middleware
-	GatewayMiddleware Middleware
-	MetricsMiddleware Middleware
-	PluginMiddleware  Middleware
+	Middlewares []Middleware
+}
+
+func NewTransport(middlewares ...Middleware) *Transport {
+	return &Transport{
+		Middlewares: middlewares,
+	}
+}
+
+func (t *Transport) GetMiddlewares() []interface{} {
+	var handlers []interface{}
+	for _, middleware := range t.Middlewares {
+		handlers = append(handlers, middleware.Middleware())
+	}
+	return handlers
+}
+
+func (t *Transport) RegisterMiddleware(middleware Middleware) {
+	t.Middlewares = append(t.Middlewares, middleware)
 }

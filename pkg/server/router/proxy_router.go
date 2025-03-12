@@ -16,12 +16,12 @@ const (
 )
 
 type proxyRouter struct {
-	middlewareTransport middleware.Transport
+	middlewareTransport *middleware.Transport
 	handlerTransport    handlers.HandlerTransport
 }
 
 func NewProxyRouter(
-	middlewareTransport middleware.Transport,
+	middlewareTransport *middleware.Transport,
 	handlerTransport handlers.HandlerTransport,
 ) ServerRouter {
 	return &proxyRouter{
@@ -60,12 +60,8 @@ func (r *proxyRouter) BuildRoutes(router *fiber.App) error {
 		})
 	})
 
-	router.Use(
-		r.middlewareTransport.GatewayMiddleware.Middleware(),
-		r.middlewareTransport.AuthMiddleware.Middleware(),
-		r.middlewareTransport.MetricsMiddleware.Middleware(),
-		r.middlewareTransport.PluginMiddleware.Middleware(),
-		handlerTransport.ForwardedHandler.Handle,
-	)
+	router.Use(r.middlewareTransport.GetMiddlewares()...)
+	router.Use(handlerTransport.ForwardedHandler.Handle)
+
 	return nil
 }

@@ -59,9 +59,6 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 			m.logger.Error("missing or invalid gateway in context ID")
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid or missing gateway ID"})
 		}
-		if gatewayID == "" {
-			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
-		}
 
 		// Validate API key
 		key, err := m.finder.Find(ctx.Context(), gatewayID, apiKey)

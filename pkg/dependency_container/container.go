@@ -13,6 +13,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -25,13 +26,17 @@ import (
 )
 
 type Container struct {
-	Cache               *cache.Cache
-	BedrockClient       bedrock.Client
-	PluginManager       *plugins.Manager
-	MiddlewareTransport middleware.Transport
-	HandlerTransport    handlers.HandlerTransport
-	RedisListener       infraCache.EventListener
-	Repository          *database.Repository
+	Cache             *cache.Cache
+	BedrockClient     bedrock.Client
+	PluginManager     *plugins.Manager
+	HandlerTransport  handlers.HandlerTransport
+	RedisListener     infraCache.EventListener
+	Repository        *database.Repository
+	AuthMiddleware    middleware.Middleware
+	GatewayMiddleware middleware.Middleware
+	MetricsMiddleware middleware.Middleware
+	PluginMiddleware  middleware.Middleware
+	ApiKeyRepository  domainApikey.Repository
 }
 
 func NewContainer(
@@ -75,7 +80,7 @@ func NewContainer(
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
 	validateRule := rule.NewValidateRule(validatePlugin)
-	gatwayDataFinder := gateway.NewDataFinder(repo, cacheInstance, logger)
+	gatewayDataFinder := gateway.NewDataFinder(repo, cacheInstance, logger)
 
 	// redis publisher
 	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
@@ -99,14 +104,6 @@ func NewContainer(
 	infraCache.RegisterEventSubscriber[event.UpdateGatewayCacheEvent](redisListener, updateGatewaySubscriber)
 	infraCache.RegisterEventSubscriber[event.UpdateUpstreamCacheEvent](redisListener, updateUpstreamSubscriber)
 	infraCache.RegisterEventSubscriber[event.UpdateServiceCacheEvent](redisListener, updateServiceSubscriber)
-
-	//middleware
-	middlewareTransport := middleware.Transport{
-		AuthMiddleware:    middleware.NewAuthMiddleware(logger, apiKeyFinder, false),
-		GatewayMiddleware: middleware.NewGatewayMiddleware(logger, cacheInstance, repo, gatwayDataFinder, cfg.Server.BaseDomain),
-		MetricsMiddleware: middleware.NewMetricsMiddleware(logger),
-		PluginMiddleware:  middleware.NewPluginChainMiddleware(logger),
-	}
 
 	// Handler Transport
 	handlerTransport := &handlers.HandlerTransportDTO{
@@ -145,11 +142,15 @@ func NewContainer(
 	}
 
 	container := &Container{
-		Cache:               cacheInstance,
-		RedisListener:       redisListener,
-		MiddlewareTransport: middlewareTransport,
-		HandlerTransport:    handlerTransport,
-		Repository:          repo,
+		Cache:             cacheInstance,
+		RedisListener:     redisListener,
+		HandlerTransport:  handlerTransport,
+		Repository:        repo,
+		AuthMiddleware:    middleware.NewAuthMiddleware(logger, apiKeyFinder, false),
+		GatewayMiddleware: middleware.NewGatewayMiddleware(logger, cacheInstance, repo, gatewayDataFinder, cfg.Server.BaseDomain),
+		MetricsMiddleware: middleware.NewMetricsMiddleware(logger),
+		PluginMiddleware:  middleware.NewPluginChainMiddleware(pluginManager, logger),
+		ApiKeyRepository:  apiKeyRepository,
 	}
 
 	return container, nil

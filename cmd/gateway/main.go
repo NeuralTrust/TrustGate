@@ -15,6 +15,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/dependency_container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	infraLogger "github.com/NeuralTrust/TrustGate/pkg/infra/logger"
+	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/joho/godotenv"
@@ -60,9 +61,16 @@ func main() {
 		logger.Fatalf("Failed to initialize container: %v", err)
 	}
 
+	proxyTransport := middleware.NewTransport(
+		container.GatewayMiddleware,
+		container.AuthMiddleware,
+		container.MetricsMiddleware,
+		container.PluginMiddleware,
+	)
+
 	//routers
-	proxyRouter := router.NewProxyRouter(container.MiddlewareTransport, container.HandlerTransport)
-	adminRouter := router.NewAdminRouter(container.MiddlewareTransport, container.HandlerTransport)
+	proxyRouter := router.NewProxyRouter(proxyTransport, container.HandlerTransport)
+	adminRouter := router.NewAdminRouter(container.HandlerTransport)
 
 	// Create and initialize the server
 	adminServerDI := server.AdminServerDI{

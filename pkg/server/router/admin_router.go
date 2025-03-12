@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
-	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -13,17 +12,14 @@ var (
 )
 
 type adminRouter struct {
-	middlewareTransport middleware.Transport
-	handlerTransport    handlers.HandlerTransport
+	handlerTransport handlers.HandlerTransport
 }
 
 func NewAdminRouter(
-	middlewareTransport middleware.Transport,
 	handlerTransport handlers.HandlerTransport,
 ) ServerRouter {
 	return &adminRouter{
-		middlewareTransport: middlewareTransport,
-		handlerTransport:    handlerTransport,
+		handlerTransport: handlerTransport,
 	}
 }
 

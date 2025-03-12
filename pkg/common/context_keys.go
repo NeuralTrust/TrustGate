@@ -8,6 +8,7 @@ const (
 	StageKey               contextKey = "stage"
 	GatewayContextKey      contextKey = "gateway_id"
 	ApiKeyContextKey       contextKey = "api_key"
+	ApiKeyIdContextKey     contextKey = "api_key_id"
 	GatewayDataContextKey  contextKey = "gateway_data"
 	PluginsChainContextKey contextKey = "gateway_data"
 )
