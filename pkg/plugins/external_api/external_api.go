@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	PluginName = "external_api"
+	PluginName  = "external_api"
+	stopFlowKey = "stop_flow"
 )
 
 type ExternalApiPlugin struct {
@@ -29,11 +30,11 @@ type FieldMap struct {
 }
 
 type Condition struct {
-	Field          string      `mapstructure:"field"`
-	Operator       string      `mapstructure:"operator"`
-	Value          interface{} `mapstructure:"value"`
-	StopProcessing bool        `mapstructure:"stop_processing"`
-	Message        string      `mapstructure:"message"`
+	Field    string      `mapstructure:"field"`
+	Operator string      `mapstructure:"operator"`
+	Value    interface{} `mapstructure:"value"`
+	StopFlow bool        `mapstructure:"stop_flow"`
+	Message  string      `mapstructure:"message"`
 }
 
 func NewExternalApiPlugin(client *http.Client) pluginiface.Plugin {
@@ -162,11 +163,11 @@ func (v *ExternalApiPlugin) Execute(
 				}
 				condition.Operator = operator
 
-				stopProcessing, err := getBoolFromMap(condMap, "stop_processing")
+				stopFlow, err := getBoolFromMap(condMap, stopFlowKey)
 				if err != nil {
-					return nil, fmt.Errorf("invalid stop_processing: %w", err)
+					return nil, fmt.Errorf("invalid %s: %w", stopFlowKey, err)
 				}
-				condition.StopProcessing = stopProcessing
+				condition.StopFlow = stopFlow
 
 				if msg, ok := condMap["message"].(string); ok {
 					condition.Message = msg
@@ -240,7 +241,7 @@ func (v *ExternalApiPlugin) Execute(
 	for _, condition := range conditions {
 		value := getNestedValue(validationResp, strings.Split(condition.Field, "."))
 		if value != nil {
-			if matches := evaluateCondition(value, condition.Operator, condition.Value); matches && condition.StopProcessing {
+			if matches := evaluateCondition(value, condition.Operator, condition.Value); matches && condition.StopFlow {
 				return nil, &types.PluginError{
 					StatusCode: http.StatusUnprocessableEntity,
 					Message:    condition.Message,
