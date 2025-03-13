@@ -12,6 +12,7 @@ import (
 const (
 	HealthPath = "/health"
 	PingPath   = "/__/ping"
+	MirrorPath = "/__/mirror"
 )
 
 type proxyRouter struct {
@@ -40,11 +41,25 @@ func (r *proxyRouter) BuildRoutes(router *fiber.App) error {
 			"time":   time.Now().Format(time.RFC3339),
 		})
 	})
+
 	router.Get(PingPath, func(ctx *fiber.Ctx) error {
 		return ctx.Status(http.StatusOK).JSON(fiber.Map{
 			"message": "pong",
 		})
 	})
+
+	router.Post(PingPath, func(ctx *fiber.Ctx) error {
+		return ctx.Status(http.StatusOK).JSON(fiber.Map{
+			"message": "pong",
+		})
+	})
+
+	router.Post(MirrorPath, func(ctx *fiber.Ctx) error {
+		return ctx.Status(http.StatusOK).JSON(fiber.Map{
+			"body": string(ctx.Body()),
+		})
+	})
+
 	router.Use(
 		r.middlewareTransport.GatewayMiddleware.Middleware(),
 		r.middlewareTransport.AuthMiddleware.Middleware(),
