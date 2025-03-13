@@ -22,6 +22,7 @@ type LoadBalancer struct {
 	upstream     *upstream.Upstream
 	targetStatus map[string]*TargetStatus
 	successCh    chan *types.UpstreamTarget
+	factory      Factory
 }
 
 type TargetStatus struct {
@@ -31,7 +32,12 @@ type TargetStatus struct {
 	LastError  error
 }
 
-func NewLoadBalancer(upstream *upstream.Upstream, logger *logrus.Logger, cache *cache.Cache) (*LoadBalancer, error) {
+func NewLoadBalancer(
+	factory Factory,
+	upstream *upstream.Upstream,
+	logger *logrus.Logger,
+	cache *cache.Cache,
+) (*LoadBalancer, error) {
 	targets := make([]types.UpstreamTarget, len(upstream.Targets))
 	ctx := context.Background()
 	cacheTTL := time.Hour
@@ -68,7 +74,7 @@ func NewLoadBalancer(upstream *upstream.Upstream, logger *logrus.Logger, cache *
 		}
 	}
 
-	strategy, err := NewBaseFactory().CreateStrategy(upstream.Algorithm, targets)
+	strategy, err := factory.CreateStrategy(upstream.Algorithm, targets)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create load balancing strategy: %w", err)
 	}
@@ -81,6 +87,7 @@ func NewLoadBalancer(upstream *upstream.Upstream, logger *logrus.Logger, cache *
 		upstream:     upstream,
 		targetStatus: make(map[string]*TargetStatus),
 		successCh:    make(chan *types.UpstreamTarget, 1000),
+		factory:      factory,
 	}
 
 	go lb.processSuccessReports()

@@ -42,16 +42,17 @@ var responseBodyPool = sync.Pool{
 }
 
 type forwardedHandler struct {
-	logger         *logrus.Logger
-	repo           *database.Repository
-	cache          *cache.Cache
-	gatewayCache   *common.TTLMap
-	upstreamFinder upstream.Finder
-	serviceFinder  service.Finder
-	providers      map[string]config.ProviderConfig
-	pluginManager  *plugins.Manager
-	loadBalancers  sync.Map
-	client         *fasthttp.Client
+	logger              *logrus.Logger
+	repo                *database.Repository
+	cache               *cache.Cache
+	gatewayCache        *common.TTLMap
+	upstreamFinder      upstream.Finder
+	serviceFinder       service.Finder
+	providers           map[string]config.ProviderConfig
+	pluginManager       *plugins.Manager
+	loadBalancers       sync.Map
+	client              *fasthttp.Client
+	loadBalancerFactory loadbalancer.Factory
 }
 
 func NewForwardedHandler(
@@ -62,6 +63,7 @@ func NewForwardedHandler(
 	serviceFinder service.Finder,
 	providers map[string]config.ProviderConfig,
 	pluginManager *plugins.Manager,
+	loadBalancerFactory loadbalancer.Factory,
 ) Handler {
 
 	client := &fasthttp.Client{
@@ -77,15 +79,16 @@ func NewForwardedHandler(
 	}
 
 	return &forwardedHandler{
-		logger:         logger,
-		repo:           repo,
-		cache:          c,
-		gatewayCache:   c.GetTTLMap(cache.GatewayTTLName),
-		upstreamFinder: upstreamFinder,
-		serviceFinder:  serviceFinder,
-		providers:      providers,
-		pluginManager:  pluginManager,
-		client:         client,
+		logger:              logger,
+		repo:                repo,
+		cache:               c,
+		gatewayCache:        c.GetTTLMap(cache.GatewayTTLName),
+		upstreamFinder:      upstreamFinder,
+		serviceFinder:       serviceFinder,
+		providers:           providers,
+		pluginManager:       pluginManager,
+		client:              client,
+		loadBalancerFactory: loadBalancerFactory,
 	}
 }
 
@@ -462,7 +465,7 @@ func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upst
 		}
 	}
 
-	lb, err := loadbalancer.NewLoadBalancer(upstream, h.logger, h.cache)
+	lb, err := loadbalancer.NewLoadBalancer(h.loadBalancerFactory, upstream, h.logger, h.cache)
 	if err != nil {
 		return nil, err
 	}

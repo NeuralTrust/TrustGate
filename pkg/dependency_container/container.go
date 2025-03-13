@@ -20,6 +20,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
+	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/sirupsen/logrus"
@@ -43,6 +44,7 @@ func NewContainer(
 	cfg *config.Config,
 	logger *logrus.Logger,
 	db *database.DB,
+	lbFactory loadbalancer.Factory,
 	initializeMemoryCache func(cacheInstance *cache.Cache),
 ) (*Container, error) {
 
@@ -84,7 +86,7 @@ func NewContainer(
 
 	// redis publisher
 	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
-	redisListener := infraCache.NewRedisEventListener(logger, cacheInstance)
+	redisListener := infraCache.NewRedisEventListener(logger, cacheInstance, event.GetEventsRegistry())
 
 	// subscribers
 	deleteGatewaySubscriber := subscriber.NewDeleteGatewayCacheEventSubscriber(logger, cacheInstance)
@@ -109,7 +111,14 @@ func NewContainer(
 	handlerTransport := &handlers.HandlerTransportDTO{
 		// Proxy
 		ForwardedHandler: handlers.NewForwardedHandler(
-			logger, repo, cacheInstance, upstreamFinder, serviceFinder, cfg.Providers.Providers, pluginManager,
+			logger,
+			repo,
+			cacheInstance,
+			upstreamFinder,
+			serviceFinder,
+			cfg.Providers.Providers,
+			pluginManager,
+			lbFactory,
 		),
 		// Gateway
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(logger, gatewayRepository, updateGatewayCache),

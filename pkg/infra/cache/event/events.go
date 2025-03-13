@@ -27,3 +27,7 @@ var Registry = map[string]reflect.Type{
 	UpdateServiceCacheEventType:  reflect.TypeOf(UpdateServiceCacheEvent{}),
 	UpdateGatewayCacheEventType:  reflect.TypeOf(UpdateGatewayCacheEvent{}),
 }
+
+func GetEventsRegistry() map[string]reflect.Type {
+	return Registry
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/dependency_container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	infraLogger "github.com/NeuralTrust/TrustGate/pkg/infra/logger"
+	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
@@ -29,6 +30,7 @@ func main() {
 	if envFile == "" {
 		envFile = ".env"
 	}
+
 	err := godotenv.Load(envFile)
 	if err != nil {
 		log.Println("no .env file found, using system environment variables")
@@ -56,7 +58,9 @@ func main() {
 	}
 	defer db.Close()
 
-	container, err := dependency_container.NewContainer(cfg, logger, db, initializeMemoryCache())
+	lbFactory := loadbalancer.NewBaseFactory()
+
+	container, err := dependency_container.NewContainer(cfg, logger, db, lbFactory, initializeMemoryCache())
 	if err != nil {
 		logger.Fatalf("Failed to initialize container: %v", err)
 	}
