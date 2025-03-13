@@ -38,7 +38,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		if metrics.Config.EnableConnections {
 			metrics.GatewayConnections.WithLabelValues(gatewayID, "active").Inc()
 		}
-		
+
 		err := c.Next()
 
 		// Always record request total
