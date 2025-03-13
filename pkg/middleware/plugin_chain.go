@@ -26,7 +26,7 @@ func (m *pluginMiddleware) Middleware() fiber.Handler {
 		if !ok {
 			m.logger.Error("gateway data not found in context")
 			return c.Status(fiber.StatusInternalServerError).JSON(
-				fiber.Map{"error": "failed to get gateway data from context"},
+				fiber.Map{"error": "failed to get gateway data from context in plugin chain middleware"},
 			)
 		}
 		return c.Next()

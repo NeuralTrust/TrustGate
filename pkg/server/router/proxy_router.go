@@ -48,7 +48,7 @@ func (r *proxyRouter) BuildRoutes(router *fiber.App) error {
 	router.Use(
 		r.middlewareTransport.GatewayMiddleware.Middleware(),
 		r.middlewareTransport.AuthMiddleware.Middleware(),
-		//r.middlewareTransport.MetricsMiddleware.Middleware(),
+		r.middlewareTransport.MetricsMiddleware.Middleware(),
 		r.middlewareTransport.PluginMiddleware.Middleware(),
 		handlerTransport.ForwardedHandler.Handle,
 	)

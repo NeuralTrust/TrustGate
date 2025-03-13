@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/gofiber/fiber/v2"
 
@@ -28,19 +29,16 @@ func NewMetricsMiddleware(logger *logrus.Logger) Middleware {
 
 func (m *metricsMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Get gateway ID from Fiber context
-		gatewayID, ok := c.Locals(GatewayIDKey).(string)
+		gatewayID, ok := c.Locals(common.GatewayContextKey).(string)
 		if !ok || gatewayID == "" {
 			m.logger.Error("Gateway ID not found in context")
 			return c.Next()
 		}
 
-		// Record connections if enabled
 		if metrics.Config.EnableConnections {
 			metrics.GatewayConnections.WithLabelValues(gatewayID, "active").Inc()
 		}
-
-		// Process request
+		
 		err := c.Next()
 
 		// Always record request total
