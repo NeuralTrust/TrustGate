@@ -2,6 +2,7 @@ package dependency_container
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -45,6 +46,7 @@ func NewContainer(
 	logger *logrus.Logger,
 	db *database.DB,
 	lbFactory loadbalancer.Factory,
+	eventsRegistry map[string]reflect.Type,
 	initializeMemoryCache func(cacheInstance *cache.Cache),
 ) (*Container, error) {
 
@@ -86,7 +88,7 @@ func NewContainer(
 
 	// redis publisher
 	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
-	redisListener := infraCache.NewRedisEventListener(logger, cacheInstance, event.GetEventsRegistry())
+	redisListener := infraCache.NewRedisEventListener(logger, cacheInstance, eventsRegistry)
 
 	// subscribers
 	deleteGatewaySubscriber := subscriber.NewDeleteGatewayCacheEventSubscriber(logger, cacheInstance)
@@ -160,6 +162,8 @@ func NewContainer(
 		MetricsMiddleware: middleware.NewMetricsMiddleware(logger),
 		PluginMiddleware:  middleware.NewPluginChainMiddleware(pluginManager, logger),
 		ApiKeyRepository:  apiKeyRepository,
+		PluginManager:     pluginManager,
+		BedrockClient:     bedrockClient,
 	}
 
 	return container, nil

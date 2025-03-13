@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
@@ -80,7 +81,14 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 
 		// Store in context
 		ctx.Locals(common.ApiKeyContextKey, apiKey)
+		ctx.Locals(common.ApiKeyIdContextKey, key.ID)
 		ctx.Locals(common.MetadataKey, metadata)
+
+		c := context.WithValue(ctx.Context(), common.ApiKeyContextKey, apiKey)
+		c = context.WithValue(c, common.MetadataKey, metadata)
+		c = context.WithValue(c, common.ApiKeyIdContextKey, key.ID)
+
+		ctx.SetUserContext(c)
 
 		return ctx.Next()
 	}
