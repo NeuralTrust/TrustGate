@@ -85,11 +85,11 @@ func TestExternalApiPlugin_Execute_ConditionMatching(t *testing.T) {
 			"endpoint": ts.URL,
 			"conditions": []interface{}{
 				map[string]interface{}{
-					"field":           "status",
-					"operator":        "eq",
-					"value":           "success",
-					"stop_processing": true,
-					"message":         "Validation failed",
+					"field":     "status",
+					"operator":  "eq",
+					"value":     "success",
+					"stop_flow": true,
+					"message":   "Validation failed",
 				},
 			},
 		},
