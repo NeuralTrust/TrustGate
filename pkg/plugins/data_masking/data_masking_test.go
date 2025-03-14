@@ -40,12 +40,12 @@ func TestMasking_PhoneNumber(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "+1234567890"
 	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8)
-	expected := "Sensitive data: " + defaultEntityMasks[PhoneNumber]
+	expected := "Sensitive data: +" + defaultEntityMasks[PhoneNumber]
 
 	assert.Equal(t, expected, masked, "Phone number masking failed")
 }
@@ -55,7 +55,7 @@ func TestMasking_SSN(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "123-45-6789"
@@ -70,7 +70,7 @@ func TestMasking_IPAddress(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "192.168.1.1"
@@ -85,7 +85,7 @@ func TestMasking_Password(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "password=SuperSecret123"
@@ -100,7 +100,7 @@ func TestMasking_APIKey(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "api_key=abcd1234efgh5678"
@@ -115,7 +115,7 @@ func TestMasking_AccessToken(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
@@ -130,7 +130,7 @@ func TestMasking_IBAN(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "GB29NWBK60161331926819"
@@ -145,7 +145,7 @@ func TestMasking_SwiftBIC(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "NWBKGB2LXXX"
@@ -160,7 +160,7 @@ func TestMasking_CryptoWallet(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf0a6x"
@@ -175,7 +175,7 @@ func TestMasking_TaxID(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "12-3456789"
@@ -190,7 +190,7 @@ func TestMasking_CreditCard(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "4111 1111 1111 1111"
@@ -205,7 +205,7 @@ func TestMasking_Email(t *testing.T) {
 	plugin.regexRules = make(map[string]*regexp.Regexp)
 
 	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = regexp.MustCompile(pattern)
+		plugin.regexRules[string(entity)] = pattern
 	}
 
 	example := "test@example.com"

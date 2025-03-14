@@ -50,6 +50,9 @@ func (m *pluginMiddleware) Middleware() fiber.Handler {
 func (m *pluginMiddleware) configurePlugins(gateway *types.GatewayData) error {
 	m.pluginManager.ClearPluginChain(gateway.Gateway.ID)
 	gatewayChains := m.convertGatewayPlugins(gateway.Gateway)
+	if len(gatewayChains) == 0 {
+		return nil
+	}
 	if err := m.pluginManager.SetPluginChain(gateway.Gateway.ID, gatewayChains); err != nil {
 		return fmt.Errorf("failed to configure gateway plugins: %w", err)
 	}
