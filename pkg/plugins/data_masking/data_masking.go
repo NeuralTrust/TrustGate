@@ -480,27 +480,6 @@ func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64) in
 					maskedValue = strings.Join(words, " ")
 				}
 
-				//// Check for predefined entities if no fuzzy match was found
-				//if maskedValue == val {
-				//	for pattern, regex := range p.regexRules {
-				//		if regex.MatchString(val) {
-				//			// Find the corresponding entity type
-				//			for entityType, entityPattern := range predefinedEntityPatterns {
-				//				if pattern == entityPattern.String() {
-				//					maskedValue = defaultEntityMasks[entityType]
-				//					break
-				//				}
-				//			}
-				//		}
-				//	}
-				//}
-
-				// Check for sensitive keywords in the key name
-				//if maskedValue == val &&
-				//	(strings.Contains(strings.ToLower(key), "secret") ||
-				//		strings.Contains(strings.ToLower(key), "key")) {
-				//	maskedValue = "[MASKED_KEY]"
-				//}
 				result[key] = maskedValue
 			default:
 				result[key] = p.maskJSONData(value, threshold)
