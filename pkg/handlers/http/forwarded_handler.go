@@ -752,31 +752,6 @@ func (h *forwardedHandler) getQueryParams(c *fiber.Ctx) url.Values {
 	return queryParams
 }
 
-func (h *forwardedHandler) convertGatewayPlugins(gateway *types.Gateway) []types.PluginConfig {
-	chains := make([]types.PluginConfig, 0, len(gateway.RequiredPlugins))
-	for _, cfg := range gateway.RequiredPlugins {
-		if !cfg.Enabled {
-			continue
-		}
-
-		plugin := h.pluginManager.GetPlugin(cfg.Name)
-		if plugin == nil {
-			h.logger.WithField("plugin", cfg.Name).Error("Plugin not found")
-			continue
-		}
-
-		pluginConfig := cfg
-		pluginConfig.Level = types.GatewayLevel
-
-		if len(plugin.Stages()) > 0 || cfg.Stage != "" {
-			chains = append(chains, pluginConfig)
-		} else {
-			h.logger.WithField("plugin", cfg.Name).Error("Stage not configured for plugin")
-		}
-	}
-	return chains
-}
-
 func (h *forwardedHandler) transformRequestBody(body []byte, target *types.UpstreamTarget) ([]byte, error) {
 	if len(body) == 0 {
 		return body, nil

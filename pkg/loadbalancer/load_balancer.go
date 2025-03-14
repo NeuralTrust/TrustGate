@@ -129,7 +129,7 @@ func (lb *LoadBalancer) performSuccessUpdate(target *types.UpstreamTarget) {
 }
 
 func (lb *LoadBalancer) NextTarget(ctx context.Context) (*types.UpstreamTarget, error) {
-	target := lb.strategy.Next()
+	target := lb.strategy.Next(ctx)
 	if target == nil {
 		return nil, fmt.Errorf("no available targets")
 	}
@@ -137,11 +137,11 @@ func (lb *LoadBalancer) NextTarget(ctx context.Context) (*types.UpstreamTarget, 
 	if err == nil && health {
 		return target, nil
 	}
-	return lb.fallbackTarget()
+	return lb.fallbackTarget(ctx)
 }
 
-func (lb *LoadBalancer) fallbackTarget() (*types.UpstreamTarget, error) {
-	target := lb.strategy.Next()
+func (lb *LoadBalancer) fallbackTarget(ctx context.Context) (*types.UpstreamTarget, error) {
+	target := lb.strategy.Next(ctx)
 	if target != nil {
 		lb.logger.WithFields(logrus.Fields{
 			"target_id": target.ID,

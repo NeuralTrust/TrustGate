@@ -130,7 +130,6 @@ func (m *Manager) ClearPluginChain(id string) {
 	}
 
 	delete(m.configurations, id)
-	return
 }
 
 func (m *Manager) SetPluginChain(gatewayId string, chains []types.PluginConfig) error {

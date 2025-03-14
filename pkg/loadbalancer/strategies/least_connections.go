@@ -1,6 +1,7 @@
 package strategies
 
 import (
+	"context"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -17,7 +18,7 @@ func NewLeastConnections(targets []types.UpstreamTarget) *LeastConnections {
 	}
 }
 
-func (lc *LeastConnections) Next() *types.UpstreamTarget {
+func (lc *LeastConnections) Next(ctx context.Context) *types.UpstreamTarget {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 
