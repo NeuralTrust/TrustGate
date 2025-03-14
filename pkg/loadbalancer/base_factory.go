@@ -7,7 +7,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
-// BaseFactory implements the Factory interface with basic strategies
 type BaseFactory struct{}
 
 func NewBaseFactory() Factory {

@@ -16,13 +16,19 @@ type redisEventListener struct {
 	logger      *logrus.Logger
 	cache       *cache.Cache
 	subscribers map[reflect.Type]interface{}
+	registry    map[string]reflect.Type
 }
 
-func NewRedisEventListener(logger *logrus.Logger, cache *cache.Cache) EventListener {
+func NewRedisEventListener(
+	logger *logrus.Logger,
+	cache *cache.Cache,
+	registry map[string]reflect.Type,
+) EventListener {
 	return &redisEventListener{
 		logger:      logger,
 		cache:       cache,
 		subscribers: make(map[reflect.Type]interface{}),
+		registry:    registry,
 	}
 }
 
@@ -90,7 +96,7 @@ func (r *redisEventListener) Listen(ctx context.Context, channels ...channel.Cha
 }
 
 func (r *redisEventListener) getEvent(eventType string) (reflect.Type, error) {
-	concreteType, ok := event.Registry[eventType]
+	concreteType, ok := r.registry[eventType]
 	if !ok {
 		return nil, fmt.Errorf("unknown event type: %s", eventType)
 	}

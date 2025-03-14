@@ -1,11 +1,15 @@
 package loadbalancer
 
-import "github.com/NeuralTrust/TrustGate/pkg/types"
+import (
+	"context"
+
+	"github.com/NeuralTrust/TrustGate/pkg/types"
+)
 
 // Strategy defines the interface for load balancing algorithms
 type Strategy interface {
 	// Next returns the next target based on the algorithm
-	Next() *types.UpstreamTarget
+	Next(ctx context.Context) *types.UpstreamTarget
 	// Name returns the name of the strategy
 	Name() string
 }

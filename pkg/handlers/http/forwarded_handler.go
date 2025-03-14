@@ -42,16 +42,17 @@ var responseBodyPool = sync.Pool{
 }
 
 type forwardedHandler struct {
-	logger         *logrus.Logger
-	repo           *database.Repository
-	cache          *cache.Cache
-	gatewayCache   *common.TTLMap
-	upstreamFinder upstream.Finder
-	serviceFinder  service.Finder
-	providers      map[string]config.ProviderConfig
-	pluginManager  *plugins.Manager
-	loadBalancers  sync.Map
-	client         *fasthttp.Client
+	logger              *logrus.Logger
+	repo                *database.Repository
+	cache               *cache.Cache
+	gatewayCache        *common.TTLMap
+	upstreamFinder      upstream.Finder
+	serviceFinder       service.Finder
+	providers           map[string]config.ProviderConfig
+	pluginManager       *plugins.Manager
+	loadBalancers       sync.Map
+	client              *fasthttp.Client
+	loadBalancerFactory loadbalancer.Factory
 }
 
 func NewForwardedHandler(
@@ -62,6 +63,7 @@ func NewForwardedHandler(
 	serviceFinder service.Finder,
 	providers map[string]config.ProviderConfig,
 	pluginManager *plugins.Manager,
+	loadBalancerFactory loadbalancer.Factory,
 ) Handler {
 
 	client := &fasthttp.Client{
@@ -77,15 +79,16 @@ func NewForwardedHandler(
 	}
 
 	return &forwardedHandler{
-		logger:         logger,
-		repo:           repo,
-		cache:          c,
-		gatewayCache:   c.GetTTLMap(cache.GatewayTTLName),
-		upstreamFinder: upstreamFinder,
-		serviceFinder:  serviceFinder,
-		providers:      providers,
-		pluginManager:  pluginManager,
-		client:         client,
+		logger:              logger,
+		repo:                repo,
+		cache:               c,
+		gatewayCache:        c.GetTTLMap(cache.GatewayTTLName),
+		upstreamFinder:      upstreamFinder,
+		serviceFinder:       serviceFinder,
+		providers:           providers,
+		pluginManager:       pluginManager,
+		client:              client,
+		loadBalancerFactory: loadBalancerFactory,
 	}
 }
 
@@ -209,7 +212,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Configure plugins for this request
-	if err := h.configurePlugins(gatewayData.Gateway, matchingRule); err != nil {
+	if err := h.configureRulePlugins(gatewayID, matchingRule); err != nil {
 		h.logger.WithError(err).Error("Failed to configure plugins")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to configure plugins"})
 	}
@@ -218,7 +221,6 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		c.Context(),
 		types.PreRequest,
 		gatewayID,
-		matchingRule.ID,
 		reqCtx,
 		respCtx,
 	); err != nil {
@@ -289,7 +291,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Execute pre-response plugins
-	if _, err := h.pluginManager.ExecuteStage(c.Context(), types.PreResponse, gatewayID, matchingRule.ID, reqCtx, respCtx); err != nil {
+	if _, err := h.pluginManager.ExecuteStage(c.Context(), types.PreResponse, gatewayID, reqCtx, respCtx); err != nil {
 		var pluginErr *types.PluginError
 		if errors.As(err, &pluginErr) {
 			// Copy headers from response context
@@ -312,7 +314,6 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		c.Context(),
 		types.PostResponse,
 		gatewayID,
-		matchingRule.ID,
 		reqCtx,
 		respCtx,
 	); err != nil {
@@ -367,13 +368,10 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 }
 
-func (h *forwardedHandler) configurePlugins(gateway *types.Gateway, rule *types.ForwardingRule) error {
-	gatewayChains := h.convertGatewayPlugins(gateway)
-	if err := h.pluginManager.SetPluginChain(types.GatewayLevel, gateway.ID, gatewayChains); err != nil {
-		return fmt.Errorf("failed to configure gateway plugins: %w", err)
-	}
+func (h *forwardedHandler) configureRulePlugins(gatewayID string, rule *types.ForwardingRule) error {
+	// The last call SetPluginChain is here
 	if rule != nil && len(rule.PluginChain) > 0 {
-		if err := h.pluginManager.SetPluginChain(types.RuleLevel, rule.ID, rule.PluginChain); err != nil {
+		if err := h.pluginManager.SetPluginChain(gatewayID, rule.PluginChain); err != nil {
 			return fmt.Errorf("failed to configure rule plugins: %w", err)
 		}
 	}
@@ -467,7 +465,7 @@ func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upst
 		}
 	}
 
-	lb, err := loadbalancer.NewLoadBalancer(upstream, h.logger, h.cache)
+	lb, err := loadbalancer.NewLoadBalancer(h.loadBalancerFactory, upstream, h.logger, h.cache)
 	if err != nil {
 		return nil, err
 	}
@@ -752,31 +750,6 @@ func (h *forwardedHandler) getQueryParams(c *fiber.Ctx) url.Values {
 		queryParams.Set(string(k), string(v))
 	})
 	return queryParams
-}
-
-func (h *forwardedHandler) convertGatewayPlugins(gateway *types.Gateway) []types.PluginConfig {
-	chains := make([]types.PluginConfig, 0, len(gateway.RequiredPlugins))
-	for _, cfg := range gateway.RequiredPlugins {
-		if !cfg.Enabled {
-			continue
-		}
-
-		plugin := h.pluginManager.GetPlugin(cfg.Name)
-		if plugin == nil {
-			h.logger.WithField("plugin", cfg.Name).Error("Plugin not found")
-			continue
-		}
-
-		pluginConfig := cfg
-		pluginConfig.Level = types.GatewayLevel
-
-		if len(plugin.Stages()) > 0 || cfg.Stage != "" {
-			chains = append(chains, pluginConfig)
-		} else {
-			h.logger.WithField("plugin", cfg.Name).Error("Stage not configured for plugin")
-		}
-	}
-	return chains
 }
 
 func (h *forwardedHandler) transformRequestBody(body []byte, target *types.UpstreamTarget) ([]byte, error) {

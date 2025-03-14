@@ -14,7 +14,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/dependency_container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	infraLogger "github.com/NeuralTrust/TrustGate/pkg/infra/logger"
+	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
+	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/joho/godotenv"
@@ -28,6 +31,7 @@ func main() {
 	if envFile == "" {
 		envFile = ".env"
 	}
+
 	err := godotenv.Load(envFile)
 	if err != nil {
 		log.Println("no .env file found, using system environment variables")
@@ -55,14 +59,30 @@ func main() {
 	}
 	defer db.Close()
 
-	container, err := dependency_container.NewContainer(cfg, logger, db, initializeMemoryCache())
+	lbFactory := loadbalancer.NewBaseFactory()
+
+	container, err := dependency_container.NewContainer(
+		cfg,
+		logger,
+		db,
+		lbFactory,
+		event.GetEventsRegistry(),
+		initializeMemoryCache(),
+	)
 	if err != nil {
 		logger.Fatalf("Failed to initialize container: %v", err)
 	}
 
+	proxyTransport := middleware.NewTransport(
+		container.GatewayMiddleware,
+		container.AuthMiddleware,
+		container.MetricsMiddleware,
+		container.PluginMiddleware,
+	)
+
 	//routers
-	proxyRouter := router.NewProxyRouter(container.MiddlewareTransport, container.HandlerTransport)
-	adminRouter := router.NewAdminRouter(container.MiddlewareTransport, container.HandlerTransport)
+	proxyRouter := router.NewProxyRouter(proxyTransport, container.HandlerTransport)
+	adminRouter := router.NewAdminRouter(container.HandlerTransport)
 
 	// Create and initialize the server
 	adminServerDI := server.AdminServerDI{
