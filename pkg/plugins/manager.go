@@ -345,7 +345,13 @@ func (m *Manager) executeParallel(ctx context.Context, plugins map[string]plugin
 	return nil
 }
 
-func (m *Manager) executeSequential(ctx context.Context, plugins map[string]pluginiface.Plugin, configs []types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) error {
+func (m *Manager) executeSequential(
+	ctx context.Context,
+	plugins map[string]pluginiface.Plugin,
+	configs []types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+) error {
 	sortedConfigs := make([]types.PluginConfig, len(configs))
 	copy(sortedConfigs, configs)
 	sort.Slice(sortedConfigs, func(i, j int) bool {

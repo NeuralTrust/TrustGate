@@ -29,6 +29,7 @@ const (
 	PhoneNumber   PredefinedEntity = "phone_number"
 	SSN           PredefinedEntity = "ssn"
 	IPAddress     PredefinedEntity = "ip_address"
+	IPv6Address   PredefinedEntity = "ip6_address"
 	BankAccount   PredefinedEntity = "bank_account"
 	Password      PredefinedEntity = "password"
 	APIKey        PredefinedEntity = "api_key"
@@ -38,24 +39,32 @@ const (
 	CryptoWallet  PredefinedEntity = "crypto_wallet"
 	TaxID         PredefinedEntity = "tax_id"
 	RoutingNumber PredefinedEntity = "routing_number"
+	UUID          PredefinedEntity = "uuid"
+	JWTToken      PredefinedEntity = "jwt_token"
+	MACAddress    PredefinedEntity = "mac_address"
+	StripeKey     PredefinedEntity = "stripe_key"
 )
 
-// predefinedEntityPatterns maps entity types to their regex patterns
-var predefinedEntityPatterns = map[PredefinedEntity]string{
-	CreditCard:    `\b(?:\d[ -]*?){13,19}\b`,
-	Email:         `\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`,
-	PhoneNumber:   `\+?(\d{1,4}[-\s]?)?(\d{3}[-\s]?\d{3}[-\s]?\d{4})`,
-	SSN:           `\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b`,
-	IPAddress:     `\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`,
-	BankAccount:   `\b\d{8,20}\b`,
-	Password:      `(?i)password[\s]*[=:]\s*\S+`,
-	APIKey:        `(?i)(api[_-]?key|access[_-]?key)[\s]*[=:]\s*\S+`,
-	AccessToken:   `(?i)(access[_-]?token|bearer)[\s]*[=:]\s*\S+`,
-	IBAN:          `\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b`,
-	SwiftBIC:      `\b[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?\b`,
-	CryptoWallet:  `\b(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b`,
-	TaxID:         `\b\d{2}[-\s]?\d{7}\b`,
-	RoutingNumber: `\b\d{9}\b`,
+var predefinedEntityPatterns = map[PredefinedEntity]*regexp.Regexp{
+	CreditCard:    regexp.MustCompile(`\b(?:\d[ -]*?){13,19}\b`),
+	Email:         regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`),
+	SSN:           regexp.MustCompile(`\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b`),
+	IPAddress:     regexp.MustCompile(`\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`),
+	IPv6Address:   regexp.MustCompile(`\b([a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}\b`),
+	BankAccount:   regexp.MustCompile(`\b\d{8,20}\b`),
+	Password:      regexp.MustCompile(`(?i)password[\s]*[=:]\s*\S+`),
+	APIKey:        regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?key)[\s]*[=:]\s*\S+`),
+	AccessToken:   regexp.MustCompile(`(?i)(access[_-]?token|bearer)[\s]*[=:]\s*\S+`),
+	IBAN:          regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b`),
+	PhoneNumber:   regexp.MustCompile(`\b\+?(\d{1,4}[-\s]?)?(\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{4})\b`),
+	SwiftBIC:      regexp.MustCompile(`\b[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?\b`),
+	CryptoWallet:  regexp.MustCompile(`\b(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b`),
+	TaxID:         regexp.MustCompile(`\b\d{2}[-\s]?\d{7}\b`),
+	RoutingNumber: regexp.MustCompile(`\b\d{9}\b`),
+	UUID:          regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`),
+	JWTToken:      regexp.MustCompile(`\beyJ[a-zA-Z0-9-_]+\.eyJ[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+\b`),
+	MACAddress:    regexp.MustCompile(`\b([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b`),
+	StripeKey:     regexp.MustCompile(`(?i)(sk|pk|rk|whsec)_(test|live)_[a-z0-9]{24}`),
 }
 
 var predefinedEntityOrder = []PredefinedEntity{
@@ -65,6 +74,7 @@ var predefinedEntityOrder = []PredefinedEntity{
 	PhoneNumber,
 	SSN,
 	IPAddress,
+	IPv6Address,
 	BankAccount,
 	Password,
 	APIKey,
@@ -73,24 +83,33 @@ var predefinedEntityOrder = []PredefinedEntity{
 	CryptoWallet,
 	TaxID,
 	RoutingNumber,
+	UUID,
+	JWTToken,
+	MACAddress,
+	StripeKey,
 }
 
 // defaultEntityMasks defines default masking for pre-defined entities
 var defaultEntityMasks = map[PredefinedEntity]string{
 	CreditCard:    "[MASKED_CC]",
 	Email:         "[MASKED_EMAIL]",
-	PhoneNumber:   "[MASKED_PHONE]",
 	SSN:           "[MASKED_SSN]",
 	IPAddress:     "[MASKED_IP]",
+	IPv6Address:   "[MASKED_IP6]",
 	BankAccount:   "[MASKED_ACCOUNT]",
 	Password:      "[MASKED_PASSWORD]",
 	APIKey:        "[MASKED_API_KEY]",
 	AccessToken:   "[MASKED_TOKEN]",
 	IBAN:          "[MASKED_IBAN]",
+	PhoneNumber:   "[MASKED_PHONE]",
 	SwiftBIC:      "[MASKED_BIC]",
 	CryptoWallet:  "[MASKED_WALLET]",
 	TaxID:         "[MASKED_TAX_ID]",
 	RoutingNumber: "[MASKED_ROUTING]",
+	UUID:          "[MASKED_UUID]",
+	JWTToken:      "[MASKED_JWT_TOKEN]",
+	MACAddress:    "[MASKED_MAC]",
+	StripeKey:     "[MASKED_API_KEY]",
 }
 
 type DataMaskingPlugin struct {
@@ -103,6 +122,7 @@ type Config struct {
 	Rules               []Rule         `mapstructure:"rules"`
 	SimilarityThreshold float64        `mapstructure:"similarity_threshold"`
 	PredefinedEntities  []EntityConfig `mapstructure:"predefined_entities"`
+	ApplyAll            bool           `mapstructure:"apply_all"`
 }
 
 type EntityConfig struct {
@@ -214,7 +234,7 @@ func (p *DataMaskingPlugin) Name() string {
 }
 
 func (p *DataMaskingPlugin) Stages() []types.Stage {
-	return []types.Stage{types.PreRequest, types.PreResponse}
+	return []types.Stage{}
 }
 
 func (p *DataMaskingPlugin) AllowedStages() []types.Stage {
@@ -227,7 +247,7 @@ func (p *DataMaskingPlugin) ValidateConfig(config types.PluginConfig) error {
 		return fmt.Errorf("failed to decode config: %v", err)
 	}
 
-	if len(cfg.Rules) == 0 && len(cfg.PredefinedEntities) == 0 {
+	if len(cfg.Rules) == 0 && len(cfg.PredefinedEntities) == 0 && !cfg.ApplyAll {
 		return fmt.Errorf("at least one rule or predefined entity must be specified")
 	}
 
@@ -248,10 +268,11 @@ func (p *DataMaskingPlugin) ValidateConfig(config types.PluginConfig) error {
 		}
 	}
 
-	// Validate predefined entities
-	for _, entity := range cfg.PredefinedEntities {
-		if _, exists := predefinedEntityPatterns[PredefinedEntity(entity.Entity)]; !exists {
-			return fmt.Errorf("invalid predefined entity type: %s", entity.Entity)
+	if !cfg.ApplyAll && len(cfg.PredefinedEntities) > 0 {
+		for _, entity := range cfg.PredefinedEntities {
+			if _, exists := predefinedEntityPatterns[PredefinedEntity(entity.Entity)]; !exists {
+				return fmt.Errorf("invalid predefined entity type: %s", entity.Entity)
+			}
 		}
 	}
 
@@ -288,29 +309,36 @@ func (p *DataMaskingPlugin) Execute(
 	p.keywords = make(map[string]string)
 	p.regexRules = make(map[string]*regexp.Regexp)
 
-	// Add predefined entity rules
-	for _, entity := range config.PredefinedEntities {
-		if !entity.Enabled {
-			continue
-		}
+	if config.ApplyAll {
+		for entityType, pattern := range predefinedEntityPatterns {
+			maskValue, exists := defaultEntityMasks[entityType]
+			if !exists {
+				maskValue = "[MASKED]"
+			}
 
-		entityType := PredefinedEntity(entity.Entity)
-		pattern, exists := predefinedEntityPatterns[entityType]
-		if !exists {
-			continue
+			p.regexRules[pattern.String()] = pattern
+			p.keywords[pattern.String()] = maskValue
 		}
+	} else {
+		for _, entity := range config.PredefinedEntities {
+			if !entity.Enabled {
+				continue
+			}
 
-		maskValue := entity.MaskWith
-		if maskValue == "" {
-			maskValue = defaultEntityMasks[entityType]
-		}
+			entityType := PredefinedEntity(entity.Entity)
+			pattern, exists := predefinedEntityPatterns[entityType]
+			if !exists {
+				continue
+			}
 
-		regex, err := regexp.Compile(pattern)
-		if err != nil {
-			return nil, fmt.Errorf("failed to compile predefined pattern for entity %s: %v", entity.Entity, err)
+			maskValue := entity.MaskWith
+			if maskValue == "" {
+				maskValue = defaultEntityMasks[entityType]
+			}
+
+			p.regexRules[pattern.String()] = pattern
+			p.keywords[pattern.String()] = maskValue
 		}
-		p.regexRules[pattern] = regex
-		p.keywords[pattern] = maskValue
 	}
 
 	// Add custom rules
@@ -354,6 +382,7 @@ func (p *DataMaskingPlugin) Execute(
 	if resp != nil && len(resp.Body) > 0 {
 		var jsonData interface{}
 		if err := json.Unmarshal(resp.Body, &jsonData); err == nil {
+			// If it's valid JSON, process it as JSON
 			maskedData := p.maskJSONData(jsonData, threshold)
 			maskedJSON, err := json.Marshal(maskedData)
 			if err != nil {
@@ -361,6 +390,7 @@ func (p *DataMaskingPlugin) Execute(
 			}
 			resp.Body = maskedJSON
 		} else {
+			// If it's not JSON, process it as plain text
 			content := string(resp.Body)
 			maskedContent := p.maskPlainText(content, threshold)
 			resp.Body = []byte(maskedContent)
@@ -436,6 +466,12 @@ func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64) in
 								needsMasking = true
 								break
 							}
+						} else {
+							if p.regexRules[keyword].MatchString(word) {
+								words[i] = maskWith
+								needsMasking = true
+								break
+							}
 						}
 					}
 				}
@@ -444,25 +480,27 @@ func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64) in
 					maskedValue = strings.Join(words, " ")
 				}
 
-				// Check for predefined entities if no fuzzy match was found
-				if maskedValue == val {
-					for pattern, regex := range p.regexRules {
-						if regex.MatchString(val) {
-							// Find the corresponding entity type
-							for entityType, entityPattern := range predefinedEntityPatterns {
-								if pattern == entityPattern {
-									maskedValue = defaultEntityMasks[entityType]
-									break
-								}
-							}
-						}
-					}
-				}
+				//// Check for predefined entities if no fuzzy match was found
+				//if maskedValue == val {
+				//	for pattern, regex := range p.regexRules {
+				//		if regex.MatchString(val) {
+				//			// Find the corresponding entity type
+				//			for entityType, entityPattern := range predefinedEntityPatterns {
+				//				if pattern == entityPattern.String() {
+				//					maskedValue = defaultEntityMasks[entityType]
+				//					break
+				//				}
+				//			}
+				//		}
+				//	}
+				//}
 
 				// Check for sensitive keywords in the key name
-				if maskedValue == val && (strings.Contains(strings.ToLower(key), "secret") || strings.Contains(strings.ToLower(key), "key")) {
-					maskedValue = "[MASKED_KEY]"
-				}
+				//if maskedValue == val &&
+				//	(strings.Contains(strings.ToLower(key), "secret") ||
+				//		strings.Contains(strings.ToLower(key), "key")) {
+				//	maskedValue = "[MASKED_KEY]"
+				//}
 				result[key] = maskedValue
 			default:
 				result[key] = p.maskJSONData(value, threshold)
