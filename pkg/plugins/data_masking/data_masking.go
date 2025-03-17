@@ -70,6 +70,7 @@ const (
 	ChileanRUT     PredefinedEntity = "chilean_rut"    // Chilean tax ID
 	ColombianCC    PredefinedEntity = "colombian_cc"   // Colombian citizen ID
 	PeruvianDNI    PredefinedEntity = "peruvian_dni"   // Peruvian national ID
+	Date           PredefinedEntity = "date"
 )
 
 var predefinedEntityPatterns = map[PredefinedEntity]*regexp.Regexp{
@@ -77,14 +78,14 @@ var predefinedEntityPatterns = map[PredefinedEntity]*regexp.Regexp{
 	Email:          regexp.MustCompile(`\b[A-Za-z0-9._%+-]+\s*@\s*[A-Za-z0-9.-]+\s*\.\s*[A-Za-z]{2,}\b`),
 	SSN:            regexp.MustCompile(`\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b`),
 	IPAddress:      regexp.MustCompile(`\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`),
-	IPv6Address:    regexp.MustCompile(`\b([a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}\b`),
+	IPv6Address:    regexp.MustCompile(`\b(?:[a-fA-F0-9]{1,4}:){1,7}[a-fA-F0-9]{1,4}|\b(?:[a-fA-F0-9]{1,4}:){1,7}:\b`),
 	BankAccount:    regexp.MustCompile(`\b\d{8,20}\b`),
 	Password:       regexp.MustCompile(`(?i)password[\s]*[=:]\s*\S+`),
 	APIKey:         regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?key)[\s]*[=:]\s*\S+`),
 	AccessToken:    regexp.MustCompile(`(?i)(access[_-]?token|bearer)[\s]*[=:]\s*\S+`),
 	IBAN:           regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b`),
 	SwiftBIC:       regexp.MustCompile(`\b[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?\b`),
-	PhoneNumber:    regexp.MustCompile(`\b\+?\d{1,4}[\s-]?(\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{3,4}\b`),
+	PhoneNumber:    regexp.MustCompile(`\b(\+?\d{1,4}[\s-]?)?(\(?\d{2,4}\)?[\s-]?)?\d{2,4}[\s-]?\d{2,4}[\s-]?\d{2,4}\b`),
 	CryptoWallet:   regexp.MustCompile(`\b(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b`),
 	TaxID:          regexp.MustCompile(`\b\d{2}[-\s]?\d{7}\b`),
 	RoutingNumber:  regexp.MustCompile(`\b\d{9}\b`),
@@ -118,6 +119,7 @@ var predefinedEntityPatterns = map[PredefinedEntity]*regexp.Regexp{
 	ChileanRUT:     regexp.MustCompile(`\b\d{1,2}\.?\d{3}\.?\d{3}-?[0-9K]\b`),
 	ColombianCC:    regexp.MustCompile(`\b\d{8,10}\b`),
 	PeruvianDNI:    regexp.MustCompile(`\b\d{8}\b`),
+	Date:           regexp.MustCompile(`\b(\d{4}[-/]\d{2}[-/]\d{2}|\d{1,2}[-/]\d{1,2}[-/]\d{4}|\d{1,2}\s(?:de\s)?[a-zA-Z]+\s(?:de\s)?\d{4}|\d{1,2}(?:st|nd|rd|th)?\s[a-zA-Z]+\s\d{4}|[a-zA-Z]+\s\d{1,2}(?:st|nd|rd|th)?\s\d{4})\b`),
 }
 
 var predefinedEntityOrder = []PredefinedEntity{
@@ -166,6 +168,7 @@ var predefinedEntityOrder = []PredefinedEntity{
 	ChileanRUT,
 	ColombianCC,
 	PeruvianDNI,
+	Date,
 }
 
 // defaultEntityMasks defines default masking for pre-defined entities
@@ -216,6 +219,7 @@ var defaultEntityMasks = map[PredefinedEntity]string{
 	ChileanRUT:     "[MASKED_CL_RUT]",
 	ColombianCC:    "[MASKED_CO_CC]",
 	PeruvianDNI:    "[MASKED_PE_DNI]",
+	Date:           "[MASKED_DATE]",
 }
 
 type DataMaskingPlugin struct {

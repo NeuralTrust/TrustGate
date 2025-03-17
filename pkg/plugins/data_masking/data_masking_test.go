@@ -116,6 +116,30 @@ func TestMasking_PhoneNumber(t *testing.T) {
 	assert.Equal(t, expected, masked, "Phone number masking failed")
 }
 
+func TestMasking_Date(t *testing.T) {
+	plugin := &DataMaskingPlugin{}
+	plugin.regexRules = make(map[string]*regexp.Regexp)
+
+	for entity, pattern := range predefinedEntityPatterns {
+		plugin.regexRules[string(entity)] = pattern
+	}
+
+	config := createTestConfig([]EntityConfig{
+		{
+			Entity:      "date",
+			Enabled:     true,
+			MaskWith:    "[MASKED_DATE]",
+			PreserveLen: true,
+		},
+	}, false)
+
+	example := "07/24/2001" // Changed from "+1234567890"
+	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	expected := "Sensitive data: " + defaultEntityMasks[Date]
+
+	assert.Equal(t, expected, masked, "Date masking failed")
+}
+
 func TestMasking_SSN(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
 	plugin.regexRules = make(map[string]*regexp.Regexp)
