@@ -33,7 +33,7 @@ func NewCreateAPIKeyHandler(logger *logrus.Logger, repo *database.Repository, ca
 // @Accept json
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
-// @Param api_key body object true "API Key request body"
+// @Param api_key body types.CreateAPIKeyRequest true "API Key request body"
 // @Success 201 {object} apikey.APIKey "API Key created successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
