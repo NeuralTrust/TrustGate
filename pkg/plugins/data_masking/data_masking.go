@@ -68,9 +68,9 @@ var predefinedEntityPatterns = map[PredefinedEntity]*regexp.Regexp{
 }
 
 var predefinedEntityOrder = []PredefinedEntity{
+	IBAN,
 	CreditCard,
 	Email,
-	IBAN,
 	PhoneNumber,
 	SSN,
 	IPAddress,

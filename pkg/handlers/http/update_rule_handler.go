@@ -46,7 +46,7 @@ func NewUpdateRuleHandler(
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
 // @Param rule_id path string true "Rule ID"
-// @Param rule body object true "Updated rule data"
+// @Param rule body types.UpdateRuleRequest true "Updated rule data"
 // @Success 204 "Rule updated successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 404 {object} map[string]interface{} "Rule not found"

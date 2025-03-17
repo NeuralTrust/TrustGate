@@ -61,7 +61,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.CreateGatewayRequest"
                         }
                     }
                 ],
@@ -141,7 +141,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.UpdateGatewayRequest"
                         }
                     }
                 ],
@@ -251,7 +251,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.CreateAPIKeyRequest"
                         }
                     }
                 ],
@@ -417,7 +417,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.CreateRuleRequest"
                         }
                     }
                 ],
@@ -478,7 +478,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.UpdateRuleRequest"
                         }
                     }
                 ],
@@ -1174,6 +1174,91 @@ const docTemplate = `{
                 }
             }
         },
+        "types.CreateAPIKeyRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.CreateGatewayRequest": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "required_plugins": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "subdomain": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.CreateRuleRequest": {
+            "type": "object",
+            "required": [
+                "path",
+                "service_id"
+            ],
+            "properties": {
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "methods": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "path": {
+                    "type": "string"
+                },
+                "plugin_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
+                },
+                "preserve_host": {
+                    "type": "boolean"
+                },
+                "retry_attempts": {
+                    "type": "integer"
+                },
+                "service_id": {
+                    "type": "string"
+                },
+                "strip_path": {
+                    "type": "boolean"
+                }
+            }
+        },
         "types.Level": {
             "type": "string",
             "enum": [
@@ -1231,6 +1316,64 @@ const docTemplate = `{
                 "PreResponse",
                 "PostResponse"
             ]
+        },
+        "types.UpdateGatewayRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "required_plugins": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.UpdateRuleRequest": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "methods": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "path": {
+                    "type": "string"
+                },
+                "plugin_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
+                },
+                "preserve_host": {
+                    "type": "boolean"
+                },
+                "retry_attempts": {
+                    "type": "integer"
+                },
+                "service_id": {
+                    "type": "string"
+                },
+                "strip_path": {
+                    "type": "boolean"
+                }
+            }
         },
         "upstream.HealthCheck": {
             "type": "object",

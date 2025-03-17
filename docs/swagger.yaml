@@ -157,6 +157,62 @@ definitions:
         description: Upstream configuration (used when type is "upstream")
         type: string
     type: object
+  types.CreateAPIKeyRequest:
+    properties:
+      expires_at:
+        type: string
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  types.CreateGatewayRequest:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      required_plugins:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      status:
+        type: string
+      subdomain:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  types.CreateRuleRequest:
+    properties:
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      methods:
+        items:
+          type: string
+        type: array
+      path:
+        type: string
+      plugin_chain:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      preserve_host:
+        type: boolean
+      retry_attempts:
+        type: integer
+      service_id:
+        type: string
+      strip_path:
+        type: boolean
+    required:
+    - path
+    - service_id
+    type: object
   types.Level:
     enum:
     - gateway
@@ -199,6 +255,44 @@ definitions:
     - PostRequest
     - PreResponse
     - PostResponse
+  types.UpdateGatewayRequest:
+    properties:
+      name:
+        type: string
+      required_plugins:
+        additionalProperties:
+          $ref: '#/definitions/types.PluginConfig'
+        type: object
+      status:
+        type: string
+    type: object
+  types.UpdateRuleRequest:
+    properties:
+      active:
+        type: boolean
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      methods:
+        items:
+          type: string
+        type: array
+      path:
+        type: string
+      plugin_chain:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      preserve_host:
+        type: boolean
+      retry_attempts:
+        type: integer
+      service_id:
+        type: string
+      strip_path:
+        type: boolean
+    type: object
   upstream.HealthCheck:
     properties:
       headers:
@@ -304,7 +398,7 @@ paths:
         name: gateway
         required: true
         schema:
-          type: object
+          $ref: '#/definitions/types.CreateGatewayRequest'
       produces:
       - application/json
       responses:
@@ -375,7 +469,7 @@ paths:
         name: gateway
         required: true
         schema:
-          type: object
+          $ref: '#/definitions/types.UpdateGatewayRequest'
       produces:
       - application/json
       responses:
@@ -430,7 +524,7 @@ paths:
         name: api_key
         required: true
         schema:
-          type: object
+          $ref: '#/definitions/types.CreateAPIKeyRequest'
       produces:
       - application/json
       responses:
@@ -541,7 +635,7 @@ paths:
         name: rule
         required: true
         schema:
-          type: object
+          $ref: '#/definitions/types.CreateRuleRequest'
       produces:
       - application/json
       responses:
@@ -605,7 +699,7 @@ paths:
         name: rule
         required: true
         schema:
-          type: object
+          $ref: '#/definitions/types.UpdateRuleRequest'
       produces:
       - application/json
       responses:
