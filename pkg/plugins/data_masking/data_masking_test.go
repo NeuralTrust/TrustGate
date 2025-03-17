@@ -87,7 +87,6 @@ func createTestConfig(entities []EntityConfig, applyAll bool) Config {
 		SimilarityThreshold: 0.8,
 		MaxEditDistance:     1,
 		NormalizeInput:      true,
-		FuzzyRegexMatching:  false,
 		ApplyAll:            applyAll,
 		PredefinedEntities:  entities,
 	}
@@ -106,7 +105,6 @@ func TestMasking_PhoneNumber(t *testing.T) {
 			Entity:      "phone_number",
 			Enabled:     true,
 			MaskWith:    "[MASKED_PHONE]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -131,7 +129,6 @@ func TestMasking_SSN(t *testing.T) {
 			Entity:      "ssn",
 			Enabled:     true,
 			MaskWith:    "[MASKED_SSN]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -155,7 +152,6 @@ func TestMasking_IPAddress(t *testing.T) {
 			Entity:      "ip_address",
 			Enabled:     true,
 			MaskWith:    "[MASKED_IP]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -179,7 +175,6 @@ func TestMasking_Password(t *testing.T) {
 			Entity:      "password",
 			Enabled:     true,
 			MaskWith:    "[MASKED_PASSWORD]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -203,7 +198,6 @@ func TestMasking_APIKey(t *testing.T) {
 			Entity:      "api_key",
 			Enabled:     true,
 			MaskWith:    "[MASKED_API_KEY]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -227,7 +221,6 @@ func TestMasking_AccessToken(t *testing.T) {
 			Entity:      "access_token",
 			Enabled:     true,
 			MaskWith:    "[MASKED_TOKEN]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -251,7 +244,6 @@ func TestMasking_IBAN(t *testing.T) {
 			Entity:      "iban",
 			Enabled:     true,
 			MaskWith:    "[MASKED_IBAN]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -275,7 +267,6 @@ func TestMasking_CryptoWallet(t *testing.T) {
 			Entity:      "crypto_wallet",
 			Enabled:     true,
 			MaskWith:    "[MASKED_WALLET]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -299,7 +290,6 @@ func TestMasking_TaxID(t *testing.T) {
 			Entity:      "tax_id",
 			Enabled:     true,
 			MaskWith:    "[MASKED_TAX_ID]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -323,7 +313,6 @@ func TestMasking_Swift(t *testing.T) {
 			Entity:      "swift_bic",
 			Enabled:     true,
 			MaskWith:    "[MASKED_BIC]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -347,7 +336,6 @@ func TestMasking_CreditCard(t *testing.T) {
 			Entity:      "credit_card",
 			Enabled:     true,
 			MaskWith:    "[MASKED_CC]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -371,7 +359,6 @@ func TestMasking_Email(t *testing.T) {
 			Entity:      "email",
 			Enabled:     true,
 			MaskWith:    "[MASKED_EMAIL]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -406,20 +393,17 @@ func TestFuzzyMatching(t *testing.T) {
 		SimilarityThreshold: 0.7,
 		MaxEditDistance:     1,
 		NormalizeInput:      true,
-		FuzzyRegexMatching:  true,
 		PredefinedEntities: []EntityConfig{
 			{
 				Entity:      "credit_card",
 				Enabled:     true,
 				MaskWith:    "[MASKED_CC]",
-				FuzzyMatch:  true,
 				PreserveLen: true,
 			},
 			{
 				Entity:      "ssn",
 				Enabled:     true,
 				MaskWith:    "[MASKED_SSN]",
-				FuzzyMatch:  true,
 				PreserveLen: true,
 			},
 		},
@@ -434,7 +418,7 @@ func TestFuzzyMatching(t *testing.T) {
 	assert.Contains(t, masked, defaultEntityMasks[CreditCard], "Fuzzy regex matching with substitution failed")
 
 	// Test with character deletion
-	masked = plugin.maskPlainText("My SSN is 123-45-678", 0.8, config)
+	masked = plugin.maskPlainText("My SSN is 123-45-6785", 0.8, config)
 	assert.Contains(t, masked, defaultEntityMasks[SSN], "Fuzzy regex matching with deletion failed")
 }
 
@@ -451,7 +435,6 @@ func TestNormalizedInput(t *testing.T) {
 		SimilarityThreshold: 0.8,
 		MaxEditDistance:     1,
 		NormalizeInput:      true,
-		FuzzyRegexMatching:  true,
 		ApplyAll:            true,
 	}
 
@@ -480,21 +463,18 @@ func TestInternationalPII(t *testing.T) {
 			Entity:      "spanish_dni",
 			Enabled:     true,
 			MaskWith:    defaultEntityMasks[SpanishDNI],
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 		{
 			Entity:      "mexican_curp",
 			Enabled:     true,
 			MaskWith:    defaultEntityMasks[MexicanCURP],
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 		{
 			Entity:      "brazilian_cpf",
 			Enabled:     true,
 			MaskWith:    defaultEntityMasks[BrazilianCPF],
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
@@ -567,21 +547,18 @@ func TestJSONMasking(t *testing.T) {
 			Entity:      "credit_card",
 			Enabled:     true,
 			MaskWith:    "[MASKED_CC]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 		{
 			Entity:      "ssn",
 			Enabled:     true,
 			MaskWith:    "[MASKED_SSN]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 		{
 			Entity:      "email",
 			Enabled:     true,
 			MaskWith:    "[MASKED_EMAIL]",
-			FuzzyMatch:  true,
 			PreserveLen: true,
 		},
 	}, false)
