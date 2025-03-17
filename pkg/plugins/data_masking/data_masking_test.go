@@ -603,14 +603,19 @@ func TestJSONMasking(t *testing.T) {
 	maskedJSON := plugin.maskJSONData(jsonData, 0.8, config)
 
 	// Check that email was masked
-	maskedUser := maskedJSON.(map[string]interface{})["user"].(map[string]interface{})
+	maskedUser, ok := maskedJSON.(map[string]interface{})["user"].(map[string]interface{})
+	assert.True(t, ok)
 	assert.Equal(t, defaultEntityMasks[Email], maskedUser["email"])
 
 	// Check that credit card was masked
 	assert.Equal(t, defaultEntityMasks[CreditCard], maskedUser["card"])
 
 	// Check that nested SSN was masked
-	maskedDetails := maskedUser["details"].([]interface{})
-	maskedSSN := maskedDetails[1].(map[string]interface{})["ssn"]
-	assert.Equal(t, defaultEntityMasks[SSN], maskedSSN)
+	maskedDetails, ok := maskedUser["details"].([]interface{})
+	assert.True(t, ok)
+	assert.True(t, len(maskedDetails) > 0)
+	maskedL := maskedDetails[1]
+	maskedSSN, ok := maskedL.(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, defaultEntityMasks[SSN], maskedSSN["ssn"])
 }
