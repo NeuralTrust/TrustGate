@@ -208,7 +208,7 @@ func TestDataMaskingApplyAll(t *testing.T) {
 				"stripe_key": "I logged in using the API key: sk_test_4eC39HqLyjWDarjtT1zdp7dc",
 				"secret_key": "and my secret_key is this_is_secret"
 			}`,
-			expected:   `{"body":"{\"credit_card\":\"this is a credit card [MASKED_CC]\",\"crypto_wallet\":\"[MASKED_WALLET]\",\"email\":\"[MASKED_EMAIL]\",\"iban\":\"[MASKED_IBAN]\",\"secret_key\":\"and my **** is this_is_secret\",\"stripe_key\":\"I logged in using the API key: [MASKED_API_KEY]\",\"swift_bic\":\"[MASKED_BIC]\",\"tax_id\":\"[MASKED_TAX_ID]\"}"}`,
+			expected:   `{"body":"{\"credit_card\":\"this is a credit card *****\",\"crypto_wallet\":\"*****\",\"email\":\"*****\",\"iban\":\"*****\",\"secret_key\":\"and my **** is this_is_secret\",\"stripe_key\":\"I logged in using the API key: *****\",\"swift_bic\":\"*****\",\"tax_id\":\"*****\"}"}`,
 			expectCode: http.StatusOK,
 		},
 	}
