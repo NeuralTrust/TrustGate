@@ -13,3 +13,7 @@ generate-mocks:  ; $(info $(M) Generating mocks ...)	@ ## Generate mocks
 .PHONY: lint
 lint:  ; $(info $(M) Running linter ...)	@ ## Run linter
 	golangci-lint run ./...
+
+.PHONY: swagger
+swagger:  ; $(info $(M) Generate Swagger file ...)	@ ## Run linter
+	swag init -g cmd/gateway/main.go

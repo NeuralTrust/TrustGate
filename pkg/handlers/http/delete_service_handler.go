@@ -30,6 +30,14 @@ func NewDeleteServiceHandler(
 	}
 }
 
+// Handle @Summary Delete a Service
+// @Description Removes a service from a gateway
+// @Tags Services
+// @Param gateway_id path string true "Gateway ID"
+// @Param service_id path string true "Service ID"
+// @Success 204 "Service deleted successfully"
+// @Failure 404 {object} map[string]interface{} "Service not found"
+// @Router /api/v1/gateways/{gateway_id}/services/{service_id} [delete]
 func (s *deleteServiceHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	serviceID := c.Params("service_id")

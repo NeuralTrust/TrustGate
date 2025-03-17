@@ -6,7 +6,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
-	gateway2 "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
@@ -32,6 +32,13 @@ func NewListGatewayHandler(
 	}
 }
 
+// Handle @Summary      List all Gateways
+// @Description  Retrieves a list of all gateways in the system
+// @Tags         Gateways
+// @Produce      json
+// @Success      200 {array} gateway.Gateway "List of gateways"
+// @Failure      500 {object} map[string]interface{} "Internal server error"
+// @Router       /api/v1/gateways [get]
 func (h *listGatewayHandler) Handle(c *fiber.Ctx) error {
 	offset := 0
 	limit := 10
@@ -63,7 +70,7 @@ func (h *listGatewayHandler) Handle(c *fiber.Ctx) error {
 		gateways = append(gateways, *output)
 
 		// Update cache in background
-		go func(g gateway2.Gateway) {
+		go func(g domain.Gateway) {
 			ctx := context.Background()
 			if err := h.updateGatewayCache.Update(ctx, &g); err != nil {
 				h.logger.WithError(err).Error("Failed to update gateway cache")

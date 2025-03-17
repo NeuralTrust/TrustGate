@@ -14,6 +14,17 @@ type createServiceHandler struct {
 	cache  *cache.Cache
 }
 
+// NewCreateServiceHandler @Summary Create a new Service
+// @Description Adds a new service under a gateway
+// @Tags Services
+// @Accept json
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Param service body object true "Service request body"
+// @Success 201 {object} service.Service "Service created successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /api/v1/gateways/{gateway_id}/services [post]
 func NewCreateServiceHandler(logger *logrus.Logger, repo *database.Repository, cache *cache.Cache) Handler {
 	return &createServiceHandler{
 		logger: logger,

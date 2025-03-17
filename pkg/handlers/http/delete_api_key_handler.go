@@ -27,6 +27,14 @@ func NewDeleteAPIKeyHandler(
 	}
 }
 
+// Handle @Summary Delete an API Key
+// @Description Removes an API key from a gateway
+// @Tags API Keys
+// @Param gateway_id path string true "Gateway ID"
+// @Param key_id path string true "API Key ID"
+// @Success 204 "API Key deleted successfully"
+// @Failure 404 {object} map[string]interface{} "API Key not found"
+// @Router /api/v1/gateways/{gateway_id}/keys/{key_id} [delete]
 func (s *deleteAPIKeyHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	keyID := c.Params("key_id")

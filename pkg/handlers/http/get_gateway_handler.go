@@ -31,6 +31,14 @@ func NewGetGatewayHandler(
 	}
 }
 
+// Handle @Summary Retrieve a Gateway by ID
+// @Description Returns details of a specific gateway
+// @Tags Gateways
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Success      200 {object} gateway.Gateway "Gateway"
+// @Failure 404 {object} map[string]interface{} "Gateway not found"
+// @Router /api/v1/gateways/{gateway_id} [get]
 func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 

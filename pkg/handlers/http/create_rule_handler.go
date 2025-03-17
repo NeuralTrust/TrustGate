@@ -34,6 +34,17 @@ func NewCreateRuleHandler(
 	}
 }
 
+// Handle @Summary Create a new Rule
+// @Description Adds a new rule under a gateway
+// @Tags Rules
+// @Accept json
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Param rule body object true "Rule request body"
+// @Success 201 {object} forwarding_rule.ForwardingRule "Rule created successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /api/v1/gateways/{gateway_id}/rules [post]
 func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 
