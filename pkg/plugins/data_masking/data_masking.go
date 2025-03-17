@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/mitchellh/mapstructure"
@@ -410,30 +409,7 @@ func normalizeText(text string) string {
 
 	return text
 }
-func (p *DataMaskingPlugin) relaxRegexPattern(patternStr string, expansion int) string {
-	// Convert \d to allow OCR misinterpretations
-	relaxedPattern := strings.ReplaceAll(patternStr, `\d`, `[\dOoIl]`)
 
-	// Make separators optional and flexible
-	relaxedPattern = strings.ReplaceAll(relaxedPattern, `[-\s]?`, `[-\s]*?`)
-
-	// Remove word boundaries for more flexibility
-	relaxedPattern = strings.ReplaceAll(relaxedPattern, `\b`, "")
-
-	// Convert fixed-size quantifiers {N} to {N, N+expansion}
-	re := regexp.MustCompile(`\{(\d+)\}`)
-	relaxedPattern = re.ReplaceAllStringFunc(relaxedPattern, func(match string) string {
-		numStr := match[1 : len(match)-1] // Extract N from {N}
-		num, err := strconv.Atoi(numStr)
-		initialNum := num - 1
-		if err != nil {
-			return match
-		}
-		return fmt.Sprintf("{%d,%d}", initialNum, num+expansion)
-	})
-
-	return relaxedPattern
-}
 func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, config Config) string {
 	maskedContent := content
 
