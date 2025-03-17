@@ -33,7 +33,7 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 
 	router.Static("/swagger.json", "./docs/swagger.json")
 
-	router.Get("/swagger/*", swagger.New(swagger.Config{
+	router.Get("/docs/*", swagger.New(swagger.Config{
 		URL: "http://localhost:8080/swagger.json",
 	}))
 
@@ -41,16 +41,6 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 	{
 		gateways := v1.Group("/gateways")
 		{
-			// 📌 Documenting Create Gateway Endpoint
-			// @Summary      Create a new Gateway
-			// @Description  Creates a new gateway in the system
-			// @Tags         Gateways
-			// @Accept       json
-			// @Produce      json
-			// @Param        gateway body object true "Gateway data"
-			// @Success      201 {object} domain.Gateway "Gateway created successfully"
-			// @Failure      400 {object} map[string]interface{} "Invalid request data"
-			// @Router       /api/v1/gateways [post]
 			gateways.Post("", handlerTransport.CreateGatewayHandler.Handle)
 			gateways.Get("", handlerTransport.ListGatewayHandler.Handle)
 			gateways.Get("/:gateway_id", handlerTransport.GetGatewayHandler.Handle)

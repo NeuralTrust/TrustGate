@@ -20,6 +20,14 @@ func NewListServicesHandler(logger *logrus.Logger, repo *database.Repository) Ha
 	}
 }
 
+// Handle @Summary Retrieve all Services
+// @Description Returns a list of all services for a gateway
+// @Tags Services
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Success 200 {array} service.Service "List of services"
+// @Failure 404 {object} map[string]interface{} "Gateway not found"
+// @Router /api/v1/gateways/{gateway_id}/services [get]
 func (s *listServicesHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	offset := 0

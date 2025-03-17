@@ -27,6 +27,15 @@ func NewCreateGatewayHandler(
 	}
 }
 
+// Handle @Summary      Create a new Gateway
+// @Description  Creates a new gateway in the system
+// @Tags         Gateways
+// @Accept       json
+// @Produce      json
+// @Param        gateway body object true "Gateway data"
+// @Success      201 {object} gateway.Gateway "Gateway created successfully"
+// @Failure      400 {object} map[string]interface{} "Invalid request data"
+// @Router       /api/v1/gateways [post]
 func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 	var entity domain.Gateway
 

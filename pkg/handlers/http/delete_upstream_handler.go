@@ -31,6 +31,13 @@ func NewDeleteUpstreamHandler(
 	}
 }
 
+// Handle @Summary Delete an Upstream
+// @Description Removes an upstream from a gateway
+// @Tags Upstreams
+// @Param gateway_id path string true "Gateway ID"
+// @Param upstream_id path string true "Upstream ID"
+// @Success 204 "Upstream deleted successfully"
+// @Router /api/v1/gateways/{gateway_id}/upstreams/{upstream_id} [delete]
 func (s *deleteUpstreamHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	upstreamID := c.Params("upstream_id")

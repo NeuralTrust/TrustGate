@@ -22,6 +22,15 @@ func NewCreateUpstreamHandler(logger *logrus.Logger, repo *database.Repository, 
 	}
 }
 
+// Handle @Summary Create a new Upstream
+// @Description Adds a new upstream under a gateway
+// @Tags Upstreams
+// @Accept json
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Param upstream body object true "Upstream data"
+// @Success 201 {object} upstream.Upstream "Upstream created successfully"
+// @Router /api/v1/gateways/{gateway_id}/upstreams [post]
 func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 
