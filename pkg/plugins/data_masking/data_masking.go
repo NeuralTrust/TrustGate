@@ -47,8 +47,6 @@ const (
 	StripeKey      PredefinedEntity = "stripe_key"
 	DriversLicense PredefinedEntity = "drivers_license"
 	Passport       PredefinedEntity = "passport"
-	DateOfBirth    PredefinedEntity = "date_of_birth"
-	FullName       PredefinedEntity = "full_name"
 	Address        PredefinedEntity = "address"
 	ZipCode        PredefinedEntity = "zip_code"
 	SpanishDNI     PredefinedEntity = "spanish_dni"
@@ -87,7 +85,7 @@ var predefinedEntityPatterns = map[PredefinedEntity]*regexp.Regexp{
 	AccessToken:    regexp.MustCompile(`(?i)(access[_-]?token|bearer)[\s]*[=:]\s*\S+`),
 	IBAN:           regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b`),
 	SwiftBIC:       regexp.MustCompile(`\b[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?\b`),
-	PhoneNumber:    regexp.MustCompile(`\b\+?\d{1,4}[\s-]?\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4}\b`),
+	PhoneNumber:    regexp.MustCompile(`\b\+?\d{1,4}[\s-]?(\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{3,4}\b`),
 	CryptoWallet:   regexp.MustCompile(`\b(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b`),
 	TaxID:          regexp.MustCompile(`\b\d{2}[-\s]?\d{7}\b`),
 	RoutingNumber:  regexp.MustCompile(`\b\d{9}\b`),
@@ -97,8 +95,6 @@ var predefinedEntityPatterns = map[PredefinedEntity]*regexp.Regexp{
 	StripeKey:      regexp.MustCompile(`(?i)(sk|pk|rk|whsec)_(test|live)_[a-z0-9]{24}`),
 	DriversLicense: regexp.MustCompile(`\b([A-Z]{1,2}[-\s]?\d{2,7}|\d{9}|\d{3}[-\s]?\d{3}[-\s]?\d{3})\b`),
 	Passport:       regexp.MustCompile(`\b[A-Z]{1,2}[0-9]{6,9}\b`),
-	DateOfBirth:    regexp.MustCompile(`\b(0[1-9]|[12][0-9]|3[01])[/.-](0[1-9]|1[012])[/.-](19|20)\d\d\b`),
-	FullName:       regexp.MustCompile(`\b([A-Z][a-z]+\s+){1,2}[A-Z][a-z]+\b`),
 	Address:        regexp.MustCompile(`\b\d+\s+[A-Za-z\s]+,\s+[A-Za-z\s]+,\s+[A-Z]{2}\s+\d{5}\b`),
 	ZipCode:        regexp.MustCompile(`\b\d{5}(-\d{4})?\b`),
 	SpanishDNI:     regexp.MustCompile(`\b\d{8}[A-HJ-NP-TV-Z]\b`),
@@ -147,8 +143,6 @@ var predefinedEntityOrder = []PredefinedEntity{
 	StripeKey,
 	DriversLicense,
 	Passport,
-	DateOfBirth,
-	FullName,
 	Address,
 	ZipCode,
 	SpanishDNI,
@@ -199,8 +193,6 @@ var defaultEntityMasks = map[PredefinedEntity]string{
 	StripeKey:      "[MASKED_API_KEY]",
 	DriversLicense: "[MASKED_LICENSE]",
 	Passport:       "[MASKED_PASSPORT]",
-	DateOfBirth:    "[MASKED_DOB]",
-	FullName:       "[MASKED_NAME]",
 	Address:        "[MASKED_ADDRESS]",
 	ZipCode:        "[MASKED_ZIP]",
 	SpanishDNI:     "[MASKED_DNI]",
@@ -238,9 +230,8 @@ type Config struct {
 	SimilarityThreshold float64        `mapstructure:"similarity_threshold"`
 	PredefinedEntities  []EntityConfig `mapstructure:"predefined_entities"`
 	ApplyAll            bool           `mapstructure:"apply_all"`
-	FuzzyRegexMatching  bool           `mapstructure:"fuzzy_regex_matching"` // Enable fuzzy matching for regex patterns
-	MaxEditDistance     int            `mapstructure:"max_edit_distance"`    // Maximum edit distance for fuzzy matching
-	NormalizeInput      bool           `mapstructure:"normalize_input"`      // Normalize input before matching
+	MaxEditDistance     int            `mapstructure:"max_edit_distance"` // Maximum edit distance for fuzzy matching
+	NormalizeInput      bool           `mapstructure:"normalize_input"`   // Normalize input before matching
 }
 
 type EntityConfig struct {
@@ -248,7 +239,6 @@ type EntityConfig struct {
 	Enabled     bool   `mapstructure:"enabled"`      // Whether to enable this entity
 	MaskWith    string `mapstructure:"mask_with"`    // Optional custom mask
 	PreserveLen bool   `mapstructure:"preserve_len"` // Whether to preserve length
-	FuzzyMatch  bool   `mapstructure:"fuzzy_match"`  // Whether to use fuzzy matching for this entity
 }
 
 type Rule struct {
@@ -256,7 +246,6 @@ type Rule struct {
 	Type        string `mapstructure:"type"`         // "keyword" or "regex"
 	MaskWith    string `mapstructure:"mask_with"`    // Character or string to mask with
 	PreserveLen bool   `mapstructure:"preserve_len"` // Whether to preserve the length of masked content
-	FuzzyMatch  bool   `mapstructure:"fuzzy_match"`  // Whether to use fuzzy matching for this rule
 }
 
 // levenshteinDistance calculates the minimum number of single-character edits required to change one word into another
@@ -457,11 +446,9 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 
 		// Check if this entity is enabled in the configuration
 		entityEnabled := false
-		entityFuzzyMatch := false
 		for _, entity := range config.PredefinedEntities {
 			if entity.Entity == string(entityType) && entity.Enabled {
 				entityEnabled = true
-				entityFuzzyMatch = entity.FuzzyMatch
 				break
 			}
 		}
@@ -478,37 +465,6 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 		if len(matches) > 0 {
 			for _, match := range matches {
 				maskedContent = strings.ReplaceAll(maskedContent, match, maskValue)
-			}
-		}
-
-		// Apply relaxed regex if no exact matches were found
-		if (entityFuzzyMatch || config.FuzzyRegexMatching) && len(matches) == 0 {
-			relaxedPattern := p.relaxRegexPattern(pattern.String(), 2)
-
-			// Compile the relaxed regex
-			relaxedRegex, err := regexp.Compile(relaxedPattern)
-			if err != nil {
-				p.logger.WithError(err).Error("failed to compile relaxed regex pattern")
-				return maskedContent
-			}
-
-			// Apply relaxed regex masking
-			maskedContent = relaxedRegex.ReplaceAllString(maskedContent, maskValue)
-
-			// If still no match, apply edit-distance fuzzy matching
-			if len(matches) == 0 {
-				words := strings.Fields(maskedContent)
-				for i, word := range words {
-					if len(word) >= 4 {
-						for _, potentialMatch := range p.generateVariants(word, config.MaxEditDistance) {
-							if pattern.MatchString(potentialMatch) {
-								words[i] = maskValue
-								break
-							}
-						}
-					}
-				}
-				maskedContent = strings.Join(words, " ")
 			}
 		}
 	}
