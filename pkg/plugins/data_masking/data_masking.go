@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/mitchellh/mapstructure"
@@ -24,6 +25,7 @@ const (
 type PredefinedEntity string
 
 const (
+	Default        PredefinedEntity = "default"
 	CreditCard     PredefinedEntity = "credit_card"
 	Email          PredefinedEntity = "email"
 	PhoneNumber    PredefinedEntity = "phone_number"
@@ -35,6 +37,7 @@ const (
 	APIKey         PredefinedEntity = "api_key"
 	AccessToken    PredefinedEntity = "access_token"
 	IBAN           PredefinedEntity = "iban"
+	SwiftBIC       PredefinedEntity = "swift_bic"
 	CryptoWallet   PredefinedEntity = "crypto_wallet"
 	TaxID          PredefinedEntity = "tax_id"
 	RoutingNumber  PredefinedEntity = "routing_number"
@@ -74,7 +77,7 @@ const (
 
 var predefinedEntityPatterns = map[PredefinedEntity]*regexp.Regexp{
 	CreditCard:     regexp.MustCompile(`\b(?:\d[ -]*?){13,19}\b`),
-	Email:          regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`),
+	Email:          regexp.MustCompile(`\b[A-Za-z0-9._%+-]+\s*@\s*[A-Za-z0-9.-]+\s*\.\s*[A-Za-z]{2,}\b`),
 	SSN:            regexp.MustCompile(`\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b`),
 	IPAddress:      regexp.MustCompile(`\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`),
 	IPv6Address:    regexp.MustCompile(`\b([a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}\b`),
@@ -83,6 +86,7 @@ var predefinedEntityPatterns = map[PredefinedEntity]*regexp.Regexp{
 	APIKey:         regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?key)[\s]*[=:]\s*\S+`),
 	AccessToken:    regexp.MustCompile(`(?i)(access[_-]?token|bearer)[\s]*[=:]\s*\S+`),
 	IBAN:           regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b`),
+	SwiftBIC:       regexp.MustCompile(`\b[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?\b`),
 	PhoneNumber:    regexp.MustCompile(`\b\+?\d{1,4}[\s-]?\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4}\b`),
 	CryptoWallet:   regexp.MustCompile(`\b(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b`),
 	TaxID:          regexp.MustCompile(`\b\d{2}[-\s]?\d{7}\b`),
@@ -133,6 +137,7 @@ var predefinedEntityOrder = []PredefinedEntity{
 	Password,
 	APIKey,
 	AccessToken,
+	SwiftBIC,
 	CryptoWallet,
 	TaxID,
 	RoutingNumber,
@@ -172,6 +177,7 @@ var predefinedEntityOrder = []PredefinedEntity{
 
 // defaultEntityMasks defines default masking for pre-defined entities
 var defaultEntityMasks = map[PredefinedEntity]string{
+	Default:        "*****",
 	CreditCard:     "[MASKED_CC]",
 	Email:          "[MASKED_EMAIL]",
 	SSN:            "[MASKED_SSN]",
@@ -183,6 +189,7 @@ var defaultEntityMasks = map[PredefinedEntity]string{
 	AccessToken:    "[MASKED_TOKEN]",
 	IBAN:           "[MASKED_IBAN]",
 	PhoneNumber:    "[MASKED_PHONE]",
+	SwiftBIC:       "[MASKED_BIC]",
 	CryptoWallet:   "[MASKED_WALLET]",
 	TaxID:          "[MASKED_TAX_ID]",
 	RoutingNumber:  "[MASKED_ROUTING]",
@@ -402,7 +409,6 @@ func (p *DataMaskingPlugin) maskContent(content string, pattern string, maskWith
 	return maskWith
 }
 
-// Add a normalizeText function to standardize input before matching
 func normalizeText(text string) string {
 	// Convert to lowercase
 	text = strings.ToLower(text)
@@ -415,8 +421,30 @@ func normalizeText(text string) string {
 
 	return text
 }
+func (p *DataMaskingPlugin) relaxRegexPattern(patternStr string, expansion int) string {
+	// Convert \d to allow OCR misinterpretations
+	relaxedPattern := strings.ReplaceAll(patternStr, `\d`, `[\dOoIl]`)
 
-// Enhance the maskPlainText function to use fuzzy regex matching
+	// Make separators optional and flexible
+	relaxedPattern = strings.ReplaceAll(relaxedPattern, `[-\s]?`, `[-\s]*?`)
+
+	// Remove word boundaries for more flexibility
+	relaxedPattern = strings.ReplaceAll(relaxedPattern, `\b`, "")
+
+	// Convert fixed-size quantifiers {N} to {N, N+expansion}
+	re := regexp.MustCompile(`\{(\d+)\}`)
+	relaxedPattern = re.ReplaceAllStringFunc(relaxedPattern, func(match string) string {
+		numStr := match[1 : len(match)-1] // Extract N from {N}
+		num, err := strconv.Atoi(numStr)
+		initialNum := num - 1
+		if err != nil {
+			return match
+		}
+		return fmt.Sprintf("{%d,%d}", initialNum, num+expansion)
+	})
+
+	return relaxedPattern
+}
 func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, config Config) string {
 	maskedContent := content
 
@@ -441,44 +469,47 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 		if !entityEnabled && !config.ApplyAll {
 			continue
 		}
-
+		maskValue := defaultEntityMasks[entityType]
+		if config.ApplyAll {
+			maskValue = defaultEntityMasks[Default]
+		}
 		// Standard regex matching
 		matches := pattern.FindAllString(content, -1)
 		if len(matches) > 0 {
-			maskValue := defaultEntityMasks[entityType]
 			for _, match := range matches {
 				maskedContent = strings.ReplaceAll(maskedContent, match, maskValue)
 			}
 		}
 
-		// Fuzzy regex matching if enabled
+		// Apply relaxed regex if no exact matches were found
 		if (entityFuzzyMatch || config.FuzzyRegexMatching) && len(matches) == 0 {
-			// Split content into words
-			words := strings.Fields(maskedContent)
-			for i, word := range words {
-				// Try to match with relaxed criteria
-				if len(word) >= 4 { // Only try fuzzy matching for words of reasonable length
-					patternStr := pattern.String()
+			relaxedPattern := p.relaxRegexPattern(pattern.String(), 2)
 
-					// Create a more relaxed version of the pattern
-					relaxedPattern := strings.ReplaceAll(patternStr, "\\d", "[\\dOoIl]") // Allow letter substitutions for digits
-					relaxedPattern = strings.ReplaceAll(relaxedPattern, "\\b", "")       // Remove word boundaries
+			// Compile the relaxed regex
+			relaxedRegex, err := regexp.Compile(relaxedPattern)
+			if err != nil {
+				p.logger.WithError(err).Error("failed to compile relaxed regex pattern")
+				return maskedContent
+			}
 
-					relaxedRegex, err := regexp.Compile(relaxedPattern)
-					if err == nil && relaxedRegex.MatchString(word) {
-						words[i] = defaultEntityMasks[entityType]
-					} else {
-						// Try edit distance for shorter patterns
+			// Apply relaxed regex masking
+			maskedContent = relaxedRegex.ReplaceAllString(maskedContent, maskValue)
+
+			// If still no match, apply edit-distance fuzzy matching
+			if len(matches) == 0 {
+				words := strings.Fields(maskedContent)
+				for i, word := range words {
+					if len(word) >= 4 {
 						for _, potentialMatch := range p.generateVariants(word, config.MaxEditDistance) {
 							if pattern.MatchString(potentialMatch) {
-								words[i] = defaultEntityMasks[entityType]
+								words[i] = maskValue
 								break
 							}
 						}
 					}
 				}
+				maskedContent = strings.Join(words, " ")
 			}
-			maskedContent = strings.Join(words, " ")
 		}
 	}
 
@@ -497,25 +528,6 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 	}
 
 	return maskedContent
-}
-
-// Helper function to find the original form of a normalized match in the content
-func findOriginalForm(content, normalizedMatch string) string {
-	// This is a simplified implementation
-	// In a real-world scenario, you'd need a more sophisticated algorithm
-	// to map normalized matches back to their original form
-
-	// Split content into words
-	words := strings.Fields(content)
-
-	// For each word, check if its normalized form matches the normalized match
-	for _, word := range words {
-		if normalizeText(word) == normalizedMatch {
-			return word
-		}
-	}
-
-	return ""
 }
 
 // Add a function to generate variants of a string with edit distance <= maxDistance
@@ -566,7 +578,6 @@ func (p *DataMaskingPlugin) generateVariants(word string, maxDistance int) []str
 	return variants
 }
 
-// Update the Execute method to use the enhanced configuration
 func (p *DataMaskingPlugin) Execute(
 	ctx context.Context,
 	cfg types.PluginConfig,
