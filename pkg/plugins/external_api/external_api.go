@@ -80,16 +80,21 @@ func (v *ExternalApiPlugin) ValidateConfig(config types.PluginConfig) error {
 	// Validate query parameters
 	if params, ok := settings["query_params"].([]interface{}); ok {
 		for _, p := range params {
-			if paramData, ok := p.(map[string]interface{}); ok {
-				if _, ok := paramData["name"].(string); !ok || paramData["name"].(string) == "" {
-					return fmt.Errorf("query parameter must have a non-empty name")
-				}
-
-				if _, ok := paramData["value"].(string); !ok {
-					return fmt.Errorf("query parameter must have a value")
-				}
-			} else {
+			paramData, ok := p.(map[string]interface{})
+			if !ok {
 				return fmt.Errorf("invalid query parameter format")
+			}
+
+			// Check name field
+			name, err := getStringFromMap(paramData, "name")
+			if err != nil || name == "" {
+				return fmt.Errorf("query parameter must have a non-empty name")
+			}
+
+			// Check value field
+			_, err = getStringFromMap(paramData, "value")
+			if err != nil {
+				return fmt.Errorf("query parameter must have a value")
 			}
 		}
 	}
