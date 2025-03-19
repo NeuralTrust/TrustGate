@@ -37,6 +37,12 @@ type Condition struct {
 	Message  string      `mapstructure:"message"`
 }
 
+// Add a new type for query parameters
+type QueryParam struct {
+	Name  string `mapstructure:"name"`
+	Value string `mapstructure:"value"`
+}
+
 func NewExternalApiPlugin(client *http.Client) pluginiface.Plugin {
 	return &ExternalApiPlugin{client: client}
 }
@@ -71,6 +77,23 @@ func (v *ExternalApiPlugin) ValidateConfig(config types.PluginConfig) error {
 		return fmt.Errorf("invalid endpoint URL format: %v", err)
 	}
 
+	// Validate query parameters
+	if params, ok := settings["query_params"].([]interface{}); ok {
+		for _, p := range params {
+			if paramData, ok := p.(map[string]interface{}); ok {
+				if _, ok := paramData["name"].(string); !ok || paramData["name"].(string) == "" {
+					return fmt.Errorf("query parameter must have a non-empty name")
+				}
+
+				if _, ok := paramData["value"].(string); !ok {
+					return fmt.Errorf("query parameter must have a value")
+				}
+			} else {
+				return fmt.Errorf("invalid query parameter format")
+			}
+		}
+	}
+
 	// Validate timeout (optional)
 	if timeout, exists := settings["timeout"].(string); exists {
 		if _, err := time.ParseDuration(timeout); err != nil {
@@ -96,6 +119,43 @@ func (v *ExternalApiPlugin) Execute(
 	endpoint, ok := settings["endpoint"].(string)
 	if !ok || endpoint == "" {
 		return nil, fmt.Errorf("endpoint is required")
+	}
+
+	// Parse the endpoint URL
+	endpointURL, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("invalid endpoint URL: %v", err)
+	}
+
+	// Get query parameters
+	queryParams := make(url.Values)
+	if params, ok := settings["query_params"].([]interface{}); ok {
+		for _, p := range params {
+			if paramData, ok := p.(map[string]interface{}); ok {
+				name, err := getStringFromMap(paramData, "name")
+				if err != nil {
+					return nil, fmt.Errorf("invalid query parameter name: %w", err)
+				}
+
+				value, err := getStringFromMap(paramData, "value")
+				if err != nil {
+					return nil, fmt.Errorf("invalid query parameter value: %w", err)
+				}
+
+				queryParams.Add(name, value)
+			}
+		}
+	}
+
+	// Add query parameters to the URL
+	if len(queryParams) > 0 {
+		q := endpointURL.Query()
+		for k, values := range queryParams {
+			for _, v := range values {
+				q.Add(k, v)
+			}
+		}
+		endpointURL.RawQuery = q.Encode()
 	}
 
 	// Get method (default to POST)
@@ -205,8 +265,8 @@ func (v *ExternalApiPlugin) Execute(
 		return nil, fmt.Errorf("failed to marshal validation request: %w", err)
 	}
 
-	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewBuffer(reqBody))
+	// Create HTTP request with the updated URL that includes query parameters
+	httpReq, err := http.NewRequestWithContext(ctx, method, endpointURL.String(), bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create validation request: %w", err)
 	}
