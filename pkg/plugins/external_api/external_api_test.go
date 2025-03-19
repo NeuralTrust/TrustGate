@@ -218,3 +218,152 @@ func TestPluginMetadata(t *testing.T) {
 	assert.ElementsMatch(t, []types.Stage{}, plugin.Stages())
 	assert.ElementsMatch(t, []types.Stage{types.PreRequest, types.PostResponse}, plugin.AllowedStages())
 }
+
+func TestExternalApiPlugin_Execute_WithQueryParams(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		assert.Equal(t, "small", query.Get("modelSize"))
+		assert.Equal(t, "1.0", query.Get("version"))
+
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte(`{"status": "success", "queryParams": {"modelSize": "small", "version": "1.0"}}`))
+		assert.NoError(t, err)
+	}))
+	defer ts.Close()
+
+	plugin := external_api.NewExternalApiPlugin(ts.Client())
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"endpoint": ts.URL,
+			"method":   "POST",
+			"query_params": []interface{}{
+				map[string]interface{}{
+					"name":  "modelSize",
+					"value": "small",
+				},
+				map[string]interface{}{
+					"name":  "version",
+					"value": "1.0",
+				},
+			},
+		},
+	}
+
+	req := &types.RequestContext{Body: []byte(`{"input": "test"}`)}
+	resp := &types.ResponseContext{}
+
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+
+	assert.NotNil(t, pluginResponse)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, pluginResponse.StatusCode)
+
+	var responseBody map[string]interface{}
+	err = json.Unmarshal(pluginResponse.Body, &responseBody)
+	assert.NoError(t, err)
+
+	queryParams, ok := responseBody["queryParams"].(map[string]interface{})
+	assert.True(t, ok, "expected responseBody['queryParams'] to be a map[string]interface{}")
+	assert.Equal(t, "small", queryParams["modelSize"])
+	assert.Equal(t, "1.0", queryParams["version"])
+}
+
+func TestExternalApiPlugin_ValidateConfig_InvalidQueryParams(t *testing.T) {
+	plugin := external_api.NewExternalApiPlugin(&http.Client{})
+
+	invalidConfig1 := types.PluginConfig{
+		Stage: types.PreRequest,
+		Settings: map[string]interface{}{
+			"endpoint": "https://example.com",
+			"query_params": []interface{}{
+				map[string]interface{}{
+					"value": "small",
+				},
+			},
+		},
+	}
+	err := plugin.ValidateConfig(invalidConfig1)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "query parameter must have a non-empty name")
+
+	invalidConfig2 := types.PluginConfig{
+		Stage: types.PreRequest,
+		Settings: map[string]interface{}{
+			"endpoint": "https://example.com",
+			"query_params": []interface{}{
+				map[string]interface{}{
+					"name": "modelSize",
+				},
+			},
+		},
+	}
+	err = plugin.ValidateConfig(invalidConfig2)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "query parameter must have a value")
+
+	invalidConfig3 := types.PluginConfig{
+		Stage: types.PreRequest,
+		Settings: map[string]interface{}{
+			"endpoint": "https://example.com",
+			"query_params": []interface{}{
+				"invalid",
+			},
+		},
+	}
+	err = plugin.ValidateConfig(invalidConfig3)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid query parameter format")
+
+	validConfig := types.PluginConfig{
+		Stage: types.PreRequest,
+		Settings: map[string]interface{}{
+			"endpoint": "https://example.com",
+			"query_params": []interface{}{
+				map[string]interface{}{
+					"name":  "modelSize",
+					"value": "small",
+				},
+			},
+		},
+	}
+	err = plugin.ValidateConfig(validConfig)
+	assert.NoError(t, err)
+}
+
+func TestExternalApiPlugin_Execute_WithExistingQueryParams(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		assert.Equal(t, "existing", query.Get("param1"))
+		assert.Equal(t, "new", query.Get("param2"))
+
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte(`{"status": "success"}`))
+		assert.NoError(t, err)
+	}))
+	defer ts.Close()
+
+	plugin := external_api.NewExternalApiPlugin(ts.Client())
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"endpoint": ts.URL + "?param1=existing",
+			"method":   "POST",
+			"query_params": []interface{}{
+				map[string]interface{}{
+					"name":  "param2",
+					"value": "new",
+				},
+			},
+		},
+	}
+
+	req := &types.RequestContext{Body: []byte(`{"input": "test"}`)}
+	resp := &types.ResponseContext{}
+
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+
+	assert.NotNil(t, pluginResponse)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, pluginResponse.StatusCode)
+}
