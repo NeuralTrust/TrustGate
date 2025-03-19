@@ -26,6 +26,7 @@ type PredefinedEntity string
 const (
 	Default        PredefinedEntity = "default"
 	CreditCard     PredefinedEntity = "credit_card"
+	CVV            PredefinedEntity = "cvv"
 	Email          PredefinedEntity = "email"
 	PhoneNumber    PredefinedEntity = "phone_number"
 	SSN            PredefinedEntity = "ssn"
@@ -75,6 +76,7 @@ const (
 
 var predefinedEntityPatterns = map[PredefinedEntity]*regexp.Regexp{
 	CreditCard:     regexp.MustCompile(`\b(?:\d[ -]*?){13,19}\b`),
+	CVV:            regexp.MustCompile(`(?i)cvv[\s-]*\d{3}`),
 	Email:          regexp.MustCompile(`\b[A-Za-z0-9._%+-]+\s*@\s*[A-Za-z0-9.-]+\s*\.\s*[A-Za-z]{2,}\b`),
 	SSN:            regexp.MustCompile(`\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b`),
 	IPAddress:      regexp.MustCompile(`\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`),
@@ -126,6 +128,7 @@ var predefinedEntityOrder = []PredefinedEntity{
 	IBAN,
 	PhoneNumber,
 	CreditCard,
+	CVV,
 	Email,
 	SSN,
 	IPAddress,
@@ -175,6 +178,7 @@ var predefinedEntityOrder = []PredefinedEntity{
 var defaultEntityMasks = map[PredefinedEntity]string{
 	Default:        "*****",
 	CreditCard:     "[MASKED_CC]",
+	CVV:            "[MASKED_CVV]",
 	Email:          "[MASKED_EMAIL]",
 	SSN:            "[MASKED_SSN]",
 	IPAddress:      "[MASKED_IP]",
