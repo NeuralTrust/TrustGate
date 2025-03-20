@@ -17,6 +17,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/bedrock_guardrail"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/data_masking"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/external_api"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/injection_protection"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/prompt_moderation"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/request_size_limiter"
@@ -97,6 +98,10 @@ func (m *Manager) initializePlugins() {
 
 	if err := m.RegisterPlugin(request_size_limiter.NewRequestSizeLimiterPlugin(m.logger)); err != nil {
 		m.logger.WithError(err).Error("Failed to register request size limiter plugin")
+  }
+  
+  if err := m.RegisterPlugin(injection_protection.NewInjectionProtectionPlugin(m.logger)); err != nil {
+		m.logger.WithError(err).Error("Failed to register injection protection plugin")
 	}
 }
 
