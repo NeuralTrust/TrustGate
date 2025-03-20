@@ -19,16 +19,26 @@ const (
 	PluginName = "injection_protection"
 )
 
-// InjectionType represents a predefined injection type to detect
-type InjectionType string
+// AttackType represents the type of attack to detect
+type AttackType string
 
 const (
-	SQL               InjectionType = "sql"
-	ServerSideInclude InjectionType = "server_side_include"
-	XPathAbbreviated  InjectionType = "xpath_abbreviated"
-	XPathExtended     InjectionType = "xpath_extended"
-	JavaScript        InjectionType = "javascript"
-	JavaException     InjectionType = "java_exception"
+	SQL               AttackType = "sql"
+	ServerSideInclude AttackType = "server_side_include"
+	XPathAbbreviated  AttackType = "xpath_abbreviated"
+	XPathExtended     AttackType = "xpath_extended"
+	JavaScript        AttackType = "javascript"
+	JavaException     AttackType = "java_exception"
+	NoSQLInjection    AttackType = "nosql"
+	CommandInjection  AttackType = "command"
+	PathTraversal     AttackType = "path"
+	LDAPInjection     AttackType = "ldap"
+	XMLInjection      AttackType = "xml"
+	SSRFAttack        AttackType = "ssrf"
+	FileInclusion     AttackType = "file"
+	TemplateInjection AttackType = "template"
+	XPathInjection    AttackType = "xpath"
+	HeaderInjection   AttackType = "header"
 )
 
 // ContentType represents the type of content to check for injections
@@ -45,18 +55,166 @@ const (
 type Action string
 
 const (
-	Block   Action = "block"
-	LogOnly Action = "log_only"
+	Block Action = "block"
 )
 
-// Predefined regex patterns for common injection types
-var predefinedInjectionPatterns = map[InjectionType]*regexp.Regexp{
-	SQL:               regexp.MustCompile(`(?i)[\s]*((delete)|(exec)|(drop\s*table)|(insert)|(shutdown)|(update)|(\bor\b))`),
-	ServerSideInclude: regexp.MustCompile(`(?i)<!--#(include|exec|echo|config|printenv)\s+.*`),
-	XPathAbbreviated:  regexp.MustCompile(`(?i)(/(@?[\w_?\w:\*]+(\[[^\]]+\])*)?)+ `),
-	XPathExtended:     regexp.MustCompile(`(?i)/?(ancestor(-or-self)?|descendant(-or-self)?|following(-sibling))`),
-	JavaScript:        regexp.MustCompile(`(?i)<\s*script\b[^>]*>[^<]+<\s*/\s*script\s*>`),
-	JavaException:     regexp.MustCompile(`(?i).*?Exception in thread.*`),
+// Enhanced attack patterns
+var attackPatterns = map[AttackType]*regexp.Regexp{
+	SQL: regexp.MustCompile(`(?i)(` +
+		// Basic SQL injection
+		`'\s*OR\s*'?\d+'\s*=\s*'?\d+'|` +
+		`'\s*OR\s*'[^']*'\s*=\s*'[^']*'|` +
+		`'\s*OR\s*\d+\s*=\s*\d+|` +
+		`'\s*OR\s*'[^']+'\s*LIKE\s*'[^']+'|` +
+		// UNION based
+		`UNION\s+(?:ALL\s+)?SELECT|` +
+		// Time-based
+		`SLEEP\s*\(\s*\d+\s*\)|BENCHMARK\s*\(|WAITFOR\s+DELAY|` +
+		// Error based
+		`(?:AND|OR)\s+\d+=(?:CONVERT|SELECT)|` +
+		// Stacked queries
+		`;\s*(?:INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)|` +
+		// Comments
+		`\/\*.*?\*\/|--.*?(?:\n|$)|#.*?(?:\n|$)`),
+
+	NoSQLInjection: regexp.MustCompile(`(?i)(` +
+		// MongoDB injection
+		`\$where\s*:|` +
+		`\$regex\s*:|` +
+		`\$exists\s*:|` +
+		`\$gt\s*:|` +
+		`\$lt\s*:|` +
+		`\$ne\s*:|` +
+		`\$nin\s*:|` +
+		// JavaScript execution
+		`\{\s*\$function\s*:\s*"|` +
+		`function\s*\(\s*\)\s*{|` +
+		// Array operators
+		`\$elemMatch\s*:|` +
+		`\$all\s*:|` +
+		`\$size\s*:`),
+
+	CommandInjection: regexp.MustCompile(`(?i)(` +
+		// Command separators and pipes
+		`\|\s*(?:cmd|command|sh|bash|powershell|cmd\.exe)|` +
+		`[;&\|]\s*(?:ls|dir|cat|type|more|wget|curl|nc|netcat)|` +
+		// Command execution
+		`system\s*\(|exec\s*\(|shell_exec\s*\(|` +
+		// Reverse shells
+		`(?:nc|netcat|ncat)\s+-[ev]|` +
+		`python\s+-c\s*['"]import|` +
+		`ruby\s+-[er]|perl\s+-e|` +
+		// PowerShell execution
+		`powershell\s+-[ec]|` +
+		`IEX\s*\(|Invoke-Expression|` +
+		// Encoded commands
+		`base64\s*-d|` +
+		`echo\s+[A-Za-z0-9+/=]+\s*\|\s*base64\s*-d)`),
+
+	PathTraversal: regexp.MustCompile(`(?i)(` +
+		// Basic traversal
+		`\.\.\/|\.\.\\|` +
+		`%2e%2e%2f|%2e%2e\/|\.\.%2f|%2e%2e%5c|` +
+		// Encoded variants
+		`%c0%ae%c0%ae\/|` +
+		`%uff0e%uff0e\/|` +
+		`\.\.|%2e\.|\.%2e|` +
+		// Double encoding
+		`%252e%252e%252f|` +
+		// Unicode variants
+		`\u002e\u002e\/|` +
+		// Common target files
+		`(?:etc|usr|var|opt|root|home)\/[^\/]+\/(?:passwd|shadow|bash_history|ssh|id_rsa)`),
+
+	LDAPInjection: regexp.MustCompile(`(?i)(` +
+		// LDAP special characters
+		`[()|\&\*,]|` +
+		// Common LDAP injection patterns
+		`\*\)|` +
+		`\(\|\(|` +
+		`\)\)\)|` +
+		`\(\&|` +
+		// Attributes
+		`objectClass=\*|` +
+		`cn=|` +
+		`uid=\*|` +
+		// Wildcards
+		`\*(?:=|~=|\<=|\>=)|` +
+		`[^=]+=\*)`),
+
+	XMLInjection: regexp.MustCompile(`(?i)(` +
+		// XXE patterns
+		`<!ENTITY|` +
+		`<!DOCTYPE|` +
+		`<!ELEMENT|` +
+		`<!ATTLIST|` +
+		// CDATA sections
+		`<!\[CDATA\[|` +
+		// External entity
+		`SYSTEM\s+["']|` +
+		`PUBLIC\s+["']|` +
+		// XML bombs
+		`xmlns(?::\w+)?\s*=|` +
+		// XInclude
+		`<xi:include|` +
+		// Processing instructions
+		`<\?xml`),
+
+	SSRFAttack: regexp.MustCompile(`(?i)(` +
+		// Common SSRF patterns
+		`(?:file|gopher|dict|php|glob|zip|data|phar)://|` +
+		// IP addresses
+		`(?:127\.0\.0\.1|localhost|0\.0\.0\.0|[::]|[0:]+:1)|` +
+		// Cloud metadata
+		`169\.254\.169\.254|` +
+		`(?:metadata|instance)\.(?:cloud|aws)|` +
+		// DNS rebinding
+		`(?:[a-z0-9-]+\.)?127\.0\.0\.1\.(?:xip\.io|nip\.io)|` +
+		// Internal networks
+		`192\.168\.|172\.(?:1[6-9]|2[0-9]|3[0-1])\.|10\.)`),
+
+	FileInclusion: regexp.MustCompile(`(?i)(` +
+		// Local file inclusion
+		`(?:include|require)(?:_once)?\s*\([^)]*(?:\.\.\/|\.\.\\)|` +
+		// PHP wrappers
+		`php://(?:filter|input|data|expect)|` +
+		// Common sensitive files
+		`(?:etc|proc|var|tmp)\/[^\/]+\/(?:passwd|shadow|group|issue)|` +
+		// Remote file inclusion
+		`(?:https?|ftp|smb|file):\/\/[^\/]+\/.*?\.php|` +
+		// Null byte injection
+		`%00(?:\.php|\.inc|\.jpg|\.png)`),
+
+	TemplateInjection: regexp.MustCompile(`(?i)(` +
+		// Template syntax
+		`\{\{.*?\}\}|` +
+		`\${.*?}|` +
+		`#\{.*?\}|` +
+		// Common template functions
+		`__proto__|constructor|prototype|` +
+		// Server-side template injection
+		`<%.*?%>|` +
+		`\[\[.*?\]\]|` +
+		// Template literals
+		`\$\{.*?\}`),
+
+	XPathInjection: regexp.MustCompile(`(?i)(` +
+		// XPath operators
+		`\/\/\*|` +
+		`\[\s*@\*\s*\]|` +
+		`contains\s*\(|` +
+		// XPath functions
+		`(?:substring|concat|string-length|normalize-space|count|sum|position)\s*\(`),
+
+	HeaderInjection: regexp.MustCompile(`(?i)(` +
+		// CRLF injection
+		`[\r\n](?:HTTP\/|Location:|Set-Cookie:|Content-Type:)|` +
+		// Header splitting
+		`\r\n\s*\r\n|` +
+		// HTTP response splitting
+		`[\r\n]\s*(?:HTTP\/1\.[01]|30[1-7]|200)|` +
+		// Cache poisoning
+		`[\r\n](?:X-Forwarded-Host:|X-Forwarded-For:|X-Remote-IP:|X-Remote-Addr:)`),
 }
 
 // Config represents the configuration for the injection protection plugin
@@ -71,8 +229,8 @@ type Config struct {
 
 // InjectionConfig represents configuration for a predefined injection type
 type InjectionConfig struct {
-	Type    string `mapstructure:"type"`
-	Enabled bool   `mapstructure:"enabled"`
+	Type    AttackType `mapstructure:"type"`
+	Enabled bool       `mapstructure:"enabled"`
 }
 
 // CustomInjection represents a custom injection pattern to detect
@@ -128,12 +286,12 @@ func (p *InjectionProtectionPlugin) ValidateConfig(config types.PluginConfig) er
 	}
 
 	// Validate action
-	if cfg.Action != Block && cfg.Action != LogOnly {
+	if cfg.Action != Block {
 		return fmt.Errorf("invalid action: %s", cfg.Action)
 	}
 
-	// Validate status code if action is block
-	if cfg.Action == Block && (cfg.StatusCode < 100 || cfg.StatusCode > 599) {
+	// Validate status code
+	if cfg.StatusCode < 100 || cfg.StatusCode > 599 {
 		return fmt.Errorf("invalid status code: %d", cfg.StatusCode)
 	}
 
@@ -176,16 +334,13 @@ func (p *InjectionProtectionPlugin) Execute(
 	if config.ErrorMessage == "" {
 		config.ErrorMessage = "Potential security threat detected"
 	}
-	if config.Action == "" {
-		config.Action = Block
-	}
 
 	// Initialize enabled predefined injections
-	enabledInjections := make(map[InjectionType]*regexp.Regexp)
+	enabledInjections := make(map[AttackType]*regexp.Regexp)
 	for _, injection := range config.PredefinedInjections {
 		if injection.Enabled {
-			injType := InjectionType(injection.Type)
-			if pattern, exists := predefinedInjectionPatterns[injType]; exists {
+			injType := injection.Type
+			if pattern, exists := attackPatterns[injType]; exists {
 				enabledInjections[injType] = pattern
 			}
 		}
@@ -373,7 +528,7 @@ func (p *InjectionProtectionPlugin) Execute(
 // checkJSONForInjections recursively checks JSON data for injections
 func (p *InjectionProtectionPlugin) checkJSONForInjections(
 	data interface{},
-	enabledInjections map[InjectionType]*regexp.Regexp,
+	enabledInjections map[AttackType]*regexp.Regexp,
 	customInjections map[string]struct {
 		pattern     *regexp.Regexp
 		contentType ContentType
@@ -466,15 +621,7 @@ func (p *InjectionProtectionPlugin) handleInjectionDetected(
 
 	logEntry.Warn(logMessage)
 
-	// If action is log only, allow the request
-	if config.Action == LogOnly {
-		return &types.PluginResponse{
-			StatusCode: http.StatusOK,
-			Message:    "Injection detected but allowed (log only mode)",
-		}, nil
-	}
-
-	// Otherwise block the request
+	// If action is block, block the request
 	return nil, &types.PluginError{
 		StatusCode: config.StatusCode,
 		Message:    config.ErrorMessage,
