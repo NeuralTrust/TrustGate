@@ -325,15 +325,31 @@ func max(a, b int) int {
 }
 
 func (p *DataMaskingPlugin) findSimilarKeyword(text string, threshold float64) (string, string, string, bool) {
-	words := strings.Fields(text)
-	for _, word := range words {
-		for keyword, maskWith := range p.keywords {
-			similarity := calculateSimilarity(word, keyword)
-			if similarity >= threshold {
-				return word, keyword, maskWith, true
-			}
+	// First check for exact matches
+	for keyword, maskWith := range p.keywords {
+		// Skip regex patterns
+		if _, exists := p.regexRules[keyword]; exists {
+			continue
+		}
+
+		if strings.Contains(text, keyword) {
+			return text, keyword, maskWith, true
 		}
 	}
+
+	// Then check for fuzzy matches
+	for keyword, maskWith := range p.keywords {
+		// Skip regex patterns
+		if _, exists := p.regexRules[keyword]; exists {
+			continue
+		}
+
+		similarity := calculateSimilarity(text, keyword)
+		if similarity >= threshold {
+			return text, keyword, maskWith, true
+		}
+	}
+
 	return "", "", "", false
 }
 
@@ -421,7 +437,7 @@ func normalizeText(text string) string {
 func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, config Config) string {
 	maskedContent := content
 
-	// Apply regex masking using the ordered entity list
+	// First apply predefined entity patterns
 	for _, entityType := range predefinedEntityOrder {
 		pattern, exists := predefinedEntityPatterns[entityType]
 		if !exists {
@@ -445,11 +461,51 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 			maskValue = defaultEntityMasks[Default]
 		}
 		// Standard regex matching
-		matches := pattern.FindAllString(content, -1)
+		matches := pattern.FindAllString(maskedContent, -1)
 		if len(matches) > 0 {
 			for _, match := range matches {
 				maskedContent = strings.ReplaceAll(maskedContent, match, maskValue)
 			}
+		}
+	}
+
+	// Then apply custom regex patterns
+	for pattern, regex := range p.regexRules {
+		// Skip predefined entity patterns which are already processed
+		isPredefined := false
+		for _, entityType := range predefinedEntityOrder {
+			if entityPattern, exists := predefinedEntityPatterns[entityType]; exists {
+				if entityPattern.String() == pattern {
+					isPredefined = true
+					break
+				}
+			}
+		}
+
+		if isPredefined {
+			continue
+		}
+
+		// Apply custom regex pattern
+		matches := regex.FindAllString(maskedContent, -1)
+		if len(matches) > 0 {
+			maskValue := p.keywords[pattern]
+			for _, match := range matches {
+				maskedContent = strings.ReplaceAll(maskedContent, match, maskValue)
+			}
+		}
+	}
+
+	// Apply keyword matching (exact, not fuzzy)
+	for keyword, maskValue := range p.keywords {
+		// Skip regex patterns which are already processed
+		if _, exists := p.regexRules[keyword]; exists {
+			continue
+		}
+
+		// Apply exact keyword matching
+		if strings.Contains(maskedContent, keyword) {
+			maskedContent = strings.ReplaceAll(maskedContent, keyword, maskValue)
 		}
 	}
 
@@ -583,10 +639,13 @@ func (p *DataMaskingPlugin) Execute(
 		if rule.Type == "keyword" {
 			p.keywords[rule.Pattern] = maskValue
 		} else if rule.Type == "regex" {
+			// Try to compile the regex
 			regex, err := regexp.Compile(rule.Pattern)
 			if err != nil {
 				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", rule.Pattern, err)
 			}
+
+			// Store both the pattern string and the compiled regex
 			p.regexRules[rule.Pattern] = regex
 			p.keywords[rule.Pattern] = maskValue
 		}

@@ -151,6 +151,12 @@ GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
                         "type": "keyword",
                         "mask_with": "****",
                         "preserve_len": true
+                    },
+                    {
+                        "pattern": "INT-[0-9]{10}",
+                        "type": "regex",
+                        "mask_with": "[MASKED_TICKET_ID]",
+                        "preserve_len": true
                     }
                 ]
             }
@@ -269,10 +275,11 @@ RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
         "swift_bic": "DEUTDEFF500",
         "crypto_wallet": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
         "tax_id": "12-3456789",
-        "secret_key": "this_is_secret",
-        "similar_secrets": "secret_keys_here"
+        "similar_secrets": "secret_keys_here",
+        "ticket_id": "INT-1234567890",
+        "reference": "This is a reference with INT-1234567890 in the middle"
     }')
-
+echo "$RESPONSE"
 # Extract body and status code from response
 BODY=$(echo "$RESPONSE" | sed '$d')
 HTTP_CODE=$(echo "$RESPONSE" | grep "STATUS_CODE:" | cut -d':' -f2)
@@ -288,8 +295,8 @@ if [ "$HTTP_CODE" == "200" ]; then
         "DEUTDEFF500"
         "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
         "12-3456789"
-        "this_is_secret"
         "secret_keys_here"
+        "INT-1234567890"
     )
   
     for pattern in "${PATTERNS[@]}"; do
@@ -310,6 +317,7 @@ if [ "$HTTP_CODE" == "200" ]; then
         "[MASKED_TAX_ID]"
         "[MASKED_KEY]"
         "[MASKED_VALUE]"
+        "[MASKED_TICKET_ID]"
     )
     
     for mask in "${MASKS[@]}"; do
