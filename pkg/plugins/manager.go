@@ -19,6 +19,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/external_api"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/prompt_moderation"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/rate_limiter"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/request_size_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/token_rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_azure"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_openai"
@@ -92,6 +93,10 @@ func (m *Manager) initializePlugins() {
 
 	if err := m.RegisterPlugin(bedrock_guardrail.NewBedrockGuardrailPlugin(m.logger, m.bedrockClient)); err != nil {
 		m.logger.WithError(err).Error("Failed to register bedrock guardrail plugin")
+	}
+
+	if err := m.RegisterPlugin(request_size_limiter.NewRequestSizeLimiterPlugin(m.logger)); err != nil {
+		m.logger.WithError(err).Error("Failed to register request size limiter plugin")
 	}
 }
 
