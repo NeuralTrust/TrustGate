@@ -75,6 +75,23 @@ func (p *TokenRateLimiterPlugin) AllowedStages() []types.Stage {
 	}
 }
 
+// Add token estimation function
+func (p *TokenRateLimiterPlugin) estimateTokensForRequest(req *types.RequestContext) int {
+	tokens := 0
+
+	// Estimate from body length if present
+	if len(req.Body) > 0 {
+		// Rough estimate: 1 token per 4 characters
+		tokens += len(req.Body) / 4
+	}
+
+	// Estimate from path and query
+	tokens += len(req.Path) / 4
+	tokens += len(req.Query.Encode()) / 4
+
+	return tokens
+}
+
 // Execute implements the token bucket rate limiting algorithm
 func (p *TokenRateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
 	// Create a context with timeout and stage information
@@ -107,6 +124,17 @@ func (p *TokenRateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginCo
 	if err := json.Unmarshal(configBytes, &config); err != nil {
 		p.logger.WithError(err).Error("Failed to parse token rate limiter config")
 		return nil, fmt.Errorf("failed to parse token rate limiter config: %w", err)
+	}
+
+	// Estimate tokens needed
+	estimatedTokens := p.estimateTokensForRequest(req)
+
+	// Check if estimated tokens exceed per-request limit
+	if estimatedTokens > config.TokensPerRequest {
+		return nil, &types.PluginError{
+			StatusCode: 429,
+			Message:    fmt.Sprintf("Request would consume %d tokens, exceeding limit of %d tokens per request", estimatedTokens, config.TokensPerRequest),
+		}
 	}
 
 	// Get API key from context
