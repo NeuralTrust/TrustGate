@@ -97,12 +97,12 @@ func (m *Manager) initializePlugins() {
 		m.logger.WithError(err).Error("Failed to register bedrock guardrail plugin")
 	}
 
-	if err := m.RegisterPlugin(injection_protection.NewInjectionProtectionPlugin(m.logger)); err != nil {
-		m.logger.WithError(err).Error("Failed to register injection protection plugin")
-	}
-
 	if err := m.RegisterPlugin(request_size_limiter.NewRequestSizeLimiterPlugin(m.logger)); err != nil {
 		m.logger.WithError(err).Error("Failed to register request size limiter plugin")
+	}
+
+	if err := m.RegisterPlugin(injection_protection.NewInjectionProtectionPlugin(m.logger)); err != nil {
+		m.logger.WithError(err).Error("Failed to register injection protection plugin")
 	}
 
 	if err := m.RegisterPlugin(code_sanitation.NewCodeSanitationPlugin(m.logger)); err != nil {
