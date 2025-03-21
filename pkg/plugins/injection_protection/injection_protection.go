@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"regexp"
 
 	"github.com/mitchellh/mapstructure"
@@ -19,16 +17,28 @@ const (
 	PluginName = "injection_protection"
 )
 
-// InjectionType represents a predefined injection type to detect
-type InjectionType string
+// AttackType represents the type of attack to detect
+type AttackType string
 
 const (
-	SQL               InjectionType = "sql"
-	ServerSideInclude InjectionType = "server_side_include"
-	XPathAbbreviated  InjectionType = "xpath_abbreviated"
-	XPathExtended     InjectionType = "xpath_extended"
-	JavaScript        InjectionType = "javascript"
-	JavaException     InjectionType = "java_exception"
+	SQL               AttackType = "sql"
+	ServerSideInclude AttackType = "server_side_include"
+	XPathAbbreviated  AttackType = "xpath_abbreviated"
+	XPathExtended     AttackType = "xpath_extended"
+	JavaScript        AttackType = "javascript"
+	JavaException     AttackType = "java_exception"
+	NoSQLInjection    AttackType = "nosql"
+	CommandInjection  AttackType = "command"
+	PathTraversal     AttackType = "path"
+	LDAPInjection     AttackType = "ldap"
+	XMLInjection      AttackType = "xml"
+	SSRFAttack        AttackType = "ssrf"
+	FileInclusion     AttackType = "file"
+	TemplateInjection AttackType = "template"
+	XPathInjection    AttackType = "xpath"
+	HeaderInjection   AttackType = "header"
+	XSS               AttackType = "xss"
+	All               AttackType = "all"
 )
 
 // ContentType represents the type of content to check for injections
@@ -45,41 +55,205 @@ const (
 type Action string
 
 const (
-	Block   Action = "block"
-	LogOnly Action = "log_only"
+	Block Action = "block"
 )
 
-// Predefined regex patterns for common injection types
-var predefinedInjectionPatterns = map[InjectionType]*regexp.Regexp{
-	SQL:               regexp.MustCompile(`(?i)[\s]*((delete)|(exec)|(drop\s*table)|(insert)|(shutdown)|(update)|(\bor\b))`),
-	ServerSideInclude: regexp.MustCompile(`(?i)<!--#(include|exec|echo|config|printenv)\s+.*`),
-	XPathAbbreviated:  regexp.MustCompile(`(?i)(/(@?[\w_?\w:\*]+(\[[^\]]+\])*)?)+ `),
-	XPathExtended:     regexp.MustCompile(`(?i)/?(ancestor(-or-self)?|descendant(-or-self)?|following(-sibling))`),
-	JavaScript:        regexp.MustCompile(`(?i)<\s*script\b[^>]*>[^<]+<\s*/\s*script\s*>`),
-	JavaException:     regexp.MustCompile(`(?i).*?Exception in thread.*`),
+// Enhanced attack patterns
+var attackPatterns = map[AttackType]*regexp.Regexp{
+	SQL: regexp.MustCompile(`(?i)(` +
+		// Basic SQL commands
+		`(?:DROP|DELETE|UPDATE|INSERT|ALTER|CREATE|TRUNCATE)\s+(?:TABLE|DATABASE|SCHEMA|VIEW|INDEX|INTO|FROM)|` +
+		// SQL injection patterns
+		`'\s*OR\s*'?\d+'\s*=\s*'?\d+'|` +
+		`'\s*OR\s*'[^']*'\s*=\s*'[^']*'|` +
+		`'\s*OR\s*\d+\s*=\s*\d+|` +
+		`'\s*OR\s*'[^']+'\s*LIKE\s*'[^']+'|` +
+		// UNION based
+		`UNION\s+(?:ALL\s+)?SELECT|` +
+		// Time-based
+		`SLEEP\s*\(\s*\d+\s*\)|` +
+		`BENCHMARK\s*\(\s*\d+\s*\)|` +
+		`WAITFOR\s+DELAY|` +
+		// Error based
+		`(?:AND|OR)\s+\d+=(?:CONVERT|SELECT)|` +
+		// Stacked queries
+		`;\s*(?:INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)|` +
+		// Comments
+		`\/\*.*?\*\/|` +
+		`--.*?(?:\n|$)|` +
+		`#.*?(?:\n|$)` +
+		`)`),
+
+	NoSQLInjection: regexp.MustCompile(`(?i)(` +
+		// MongoDB injection
+		`\$where\s*:|` +
+		`\$regex\s*:|` +
+		`\$exists\s*:|` +
+		`\$gt\s*:|` +
+		`\$lt\s*:|` +
+		`\$ne\s*:|` +
+		`\$nin\s*:|` +
+		// JavaScript execution
+		`\{\s*\$function\s*:\s*"|` +
+		`function\s*\(\s*\)\s*{|` +
+		// Array operators
+		`\$elemMatch\s*:|` +
+		`\$all\s*:|` +
+		`\$size\s*:` +
+		`)`),
+
+	CommandInjection: regexp.MustCompile(`(?i)(` +
+		// Command separators and pipes
+		`\|\s*(?:cmd|command|sh|bash|powershell|cmd\.exe)|` +
+		`[;&\|]\s*(?:ls|dir|cat|type|more|wget|curl|nc|netcat)|` +
+		// Command execution
+		`system\s*\(|exec\s*\(|shell_exec\s*\(|` +
+		// Reverse shells
+		`(?:nc|netcat|ncat)\s+-[ev]|` +
+		`python\s+-c\s*['"]import|` +
+		`ruby\s+-[er]|perl\s+-e|` +
+		// PowerShell execution
+		`powershell\s+-[ec]|` +
+		`IEX\s*\(|Invoke-Expression|` +
+		// Encoded commands
+		`base64\s*-d|` +
+		`echo\s+[A-Za-z0-9+/=]+\s*\|\s*base64\s*-d` +
+		`)`),
+
+	PathTraversal: regexp.MustCompile(`(?i)(` +
+		// Basic traversal
+		`\.\.\/|\.\.\\|` +
+		// Command execution in path
+		`\/(?:bin|etc|proc|usr|var)\/|` +
+		`/(?:exec|eval|system|cmd)/|` +
+		// Encoded variants
+		`%2e%2e%2f|%2e%2e\/|\.\.%2f|%2e%2e%5c|` +
+		`%c0%ae%c0%ae\/|%uff0e%uff0e\/|` +
+		// Common sensitive paths
+		`(?:etc|usr|var|opt|root|home)\/[^\/]+\/(?:passwd|shadow|bash_history|ssh|id_rsa)` +
+		`)`),
+
+	LDAPInjection: regexp.MustCompile(`(?i)(` +
+		// LDAP special characters in suspicious context
+		`\(\s*[|&!]\s*\(|` + // Matches LDAP operations like (|(...)...)
+		`\)\s*\(\s*\||\&|` + // Matches multiple operations
+		// Common LDAP injection patterns
+		`\(\s*\!\s*[^)]*\)|` + // Matches NOT operations
+		`\*(?:[\w-]+\=)|` + // Matches wildcard attributes
+		// Attributes with suspicious values
+		`(?:objectClass|cn|uid|mail)=\*(?:[^)]*\))?|` +
+		// Dangerous operations
+		`[^a-z](?:and|or)\s*\([^)]*=\*|` +
+		`\(\s*[^a-z]*[<>]=?` +
+		`)`),
+
+	XMLInjection: regexp.MustCompile(`(?i)(` +
+		// XXE patterns
+		`<!ENTITY|` +
+		`<!DOCTYPE|` +
+		`<!ELEMENT|` +
+		`<!ATTLIST|` +
+		// CDATA sections
+		`<!\[CDATA\[|` +
+		// External entity
+		`SYSTEM\s+["']|` +
+		`PUBLIC\s+["']|` +
+		// XML bombs
+		`xmlns(?::\w+)?\s*=|` +
+		// XInclude
+		`<xi:include|` +
+		// Processing instructions
+		`<\?xml` +
+		`)`),
+
+	SSRFAttack: regexp.MustCompile(`(?i)(` +
+		// Dangerous protocols
+		`(?:file|gopher|dict|php|glob|zip|data|phar):\/\/|` +
+		// Internal IP addresses
+		`(?:^|\.|\/\/|@)(?:127\.0\.0\.1|localhost|0\.0\.0\.0|[:]{2}|0:0:0:0:0:0:0:1)|` +
+		// Cloud metadata endpoints
+		`169\.254\.169\.254\/|` +
+		`(?:metadata|instance)\.(?:cloud|aws)\/` +
+		`)`),
+
+	FileInclusion: regexp.MustCompile(`(?i)(` +
+		// Local file inclusion
+		`(?:include|require)(?:_once)?\s*\([^)]*(?:\.\.\/|\.\.\\)|` +
+		// PHP wrappers
+		`php://(?:filter|input|data|expect)|` +
+		// Common sensitive files
+		`(?:etc|proc|var|tmp)\/[^\/]+\/(?:passwd|shadow|group|issue)|` +
+		// Remote file inclusion
+		`(?:https?|ftp|smb|file):\/\/[^\/]+\/.*?\.php|` +
+		// Null byte injection
+		`%00(?:\.php|\.inc|\.jpg|\.png)` +
+		`)`),
+
+	TemplateInjection: regexp.MustCompile(`(?i)(` +
+		// Template syntax
+		`\{\{.*?\}\}|` +
+		`\${.*?}|` +
+		`#\{.*?\}|` +
+		// Common template functions
+		`__proto__|constructor|prototype|` +
+		// Server-side template injection
+		`<%.*?%>|` +
+		`\[\[.*?\]\]|` +
+		// Template literals
+		`\$\{.*?\}` +
+		`)`),
+
+	XPathInjection: regexp.MustCompile(`(?i)(` +
+		// XPath operators
+		`\/\/\*|` +
+		`\[\s*@\*\s*\]|` +
+		`contains\s*\(|` +
+		// XPath functions
+		`(?:substring|concat|string-length|normalize-space|count|sum|position)\s*\(` +
+		`)`),
+
+	HeaderInjection: regexp.MustCompile(`(?i)(` +
+		// CRLF with malicious payload
+		`[\r\n](?:HTTP\/|Location:|Set-Cookie:|Content-Type:|Transfer-Encoding:|Content-Length:)|` +
+		// HTTP response splitting with status
+		`[\r\n]\s*HTTP\/1\.[01]\s*(?:200|30[1-7])|` +
+		// Cache poisoning attempts with specific headers
+		`[\r\n](?:X-Forwarded-(?:Host|For|Proto)|X-Host|X-Original-URL|X-Rewrite-URL):\s*[^:\s]+` +
+		`)`),
+
+	XSS: regexp.MustCompile(`(?i)(` +
+		// Script tags
+		`<[^>]*script.*?>|` +
+		// Event handlers
+		`\bon\w+\s*=|` +
+		// JavaScript protocol
+		`javascript:|` +
+		// Common XSS functions
+		`alert\s*\(|confirm\s*\(|prompt\s*\(|eval\s*\(|` +
+		// Data URIs
+		`data:text/javascript|` +
+		// Expression
+		`expression\s*\(|` +
+		// Other dangerous tags
+		`<[^>]*iframe|<[^>]*object|<[^>]*embed|<[^>]*applet` +
+		`)`),
 }
 
 // Config represents the configuration for the injection protection plugin
 type Config struct {
-	PredefinedInjections []InjectionConfig `mapstructure:"predefined_injections"`
-	CustomInjections     []CustomInjection `mapstructure:"custom_injections"`
-	ContentToCheck       []ContentType     `mapstructure:"content_to_check"`
-	Action               Action            `mapstructure:"action"`
-	StatusCode           int               `mapstructure:"status_code"`
-	ErrorMessage         string            `mapstructure:"error_message"`
-}
-
-// InjectionConfig represents configuration for a predefined injection type
-type InjectionConfig struct {
-	Type    string `mapstructure:"type"`
-	Enabled bool   `mapstructure:"enabled"`
-}
-
-// CustomInjection represents a custom injection pattern to detect
-type CustomInjection struct {
-	Name           string      `mapstructure:"name"`
-	Pattern        string      `mapstructure:"pattern"`
-	ContentToCheck ContentType `mapstructure:"content_to_check"`
+	PredefinedInjections []struct {
+		Type    AttackType `mapstructure:"type"`
+		Enabled bool       `mapstructure:"enabled"`
+	} `mapstructure:"predefined_injections"`
+	CustomInjections []struct {
+		Name           string      `mapstructure:"name"`
+		Pattern        string      `mapstructure:"pattern"`
+		ContentToCheck ContentType `mapstructure:"content_to_check"`
+	} `mapstructure:"custom_injections"`
+	ContentToCheck []ContentType `mapstructure:"content_to_check"`
+	Action         Action        `mapstructure:"action"`
+	StatusCode     int           `mapstructure:"status_code"`
+	ErrorMessage   string        `mapstructure:"error_message"`
 }
 
 // InjectionProtectionPlugin implements the injection protection plugin
@@ -128,28 +302,28 @@ func (p *InjectionProtectionPlugin) ValidateConfig(config types.PluginConfig) er
 	}
 
 	// Validate action
-	if cfg.Action != Block && cfg.Action != LogOnly {
+	if cfg.Action != Block {
 		return fmt.Errorf("invalid action: %s", cfg.Action)
 	}
 
-	// Validate status code if action is block
-	if cfg.Action == Block && (cfg.StatusCode < 100 || cfg.StatusCode > 599) {
+	// Validate status code
+	if cfg.StatusCode < 100 || cfg.StatusCode > 599 {
 		return fmt.Errorf("invalid status code: %d", cfg.StatusCode)
 	}
 
 	// Validate custom injections
 	for _, injection := range cfg.CustomInjections {
-		if injection.Name == "" {
-			return fmt.Errorf("custom injection name cannot be empty")
-		}
 		if injection.Pattern == "" {
 			return fmt.Errorf("custom injection pattern cannot be empty")
 		}
 		if _, err := regexp.Compile(injection.Pattern); err != nil {
 			return fmt.Errorf("invalid regex pattern '%s': %v", injection.Pattern, err)
 		}
-		if injection.ContentToCheck != Headers && injection.ContentToCheck != PathAndQuery &&
-			injection.ContentToCheck != Body && injection.ContentToCheck != AllContent {
+		// Validate content type
+		if injection.ContentToCheck != Headers &&
+			injection.ContentToCheck != PathAndQuery &&
+			injection.ContentToCheck != Body &&
+			injection.ContentToCheck != AllContent {
 			return fmt.Errorf("invalid content type for custom injection: %s", injection.ContentToCheck)
 		}
 	}
@@ -157,280 +331,223 @@ func (p *InjectionProtectionPlugin) ValidateConfig(config types.PluginConfig) er
 	return nil
 }
 
-// Execute implements the injection protection logic
-func (p *InjectionProtectionPlugin) Execute(
-	ctx context.Context,
-	cfg types.PluginConfig,
-	req *types.RequestContext,
-	resp *types.ResponseContext,
-) (*types.PluginResponse, error) {
-	var config Config
-	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
+// Execute implements the Plugin interface
+func (p *InjectionProtectionPlugin) Execute(ctx context.Context, pluginConfig types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
+	p.logger.Debug("Starting injection protection check")
+
+	var cfg Config
+	if err := mapstructure.Decode(pluginConfig.Settings, &cfg); err != nil {
+		p.logger.WithError(err).Error("Failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
 
-	// Set defaults if not specified
-	if config.StatusCode == 0 {
-		config.StatusCode = http.StatusBadRequest
+	// Set default values if not provided
+	if cfg.Action == "" {
+		cfg.Action = Block
 	}
-	if config.ErrorMessage == "" {
-		config.ErrorMessage = "Potential security threat detected"
+	if cfg.StatusCode == 0 {
+		cfg.StatusCode = 400
 	}
-	if config.Action == "" {
-		config.Action = Block
+	if cfg.ErrorMessage == "" {
+		cfg.ErrorMessage = "Potential security threat detected"
+	}
+	if len(cfg.ContentToCheck) == 0 {
+		cfg.ContentToCheck = []ContentType{AllContent}
 	}
 
-	// Initialize enabled predefined injections
-	enabledInjections := make(map[InjectionType]*regexp.Regexp)
-	for _, injection := range config.PredefinedInjections {
-		if injection.Enabled {
-			injType := InjectionType(injection.Type)
-			if pattern, exists := predefinedInjectionPatterns[injType]; exists {
-				enabledInjections[injType] = pattern
+	// Initialize patterns to check
+	patterns := make(map[AttackType]*regexp.Regexp)
+	if len(cfg.PredefinedInjections) == 0 || hasAllPattern(cfg.PredefinedInjections) {
+		p.logger.Debug("Enabling all predefined patterns")
+		for attackType, pattern := range attackPatterns {
+			patterns[attackType] = pattern
+			p.logger.Debugf("Enabled pattern: %s", attackType)
+		}
+	} else {
+		for _, injection := range cfg.PredefinedInjections {
+			if injection.Enabled {
+				if pattern, exists := attackPatterns[injection.Type]; exists {
+					patterns[injection.Type] = pattern
+					p.logger.Debugf("Enabled configured pattern: %s", injection.Type)
+				}
 			}
 		}
 	}
 
-	// Initialize custom injections
-	customInjections := make(map[string]struct {
-		pattern     *regexp.Regexp
-		contentType ContentType
-	})
-	for _, injection := range config.CustomInjections {
-		pattern, err := regexp.Compile(injection.Pattern)
+	// Add custom patterns
+	customPatterns := make(map[string]*regexp.Regexp)
+	for _, custom := range cfg.CustomInjections {
+		pattern, err := regexp.Compile(custom.Pattern)
 		if err != nil {
-			p.logger.WithError(err).Errorf("Failed to compile regex pattern: %s", injection.Pattern)
-			continue
+			return nil, fmt.Errorf("invalid custom pattern %s: %v", custom.Name, err)
 		}
-		customInjections[injection.Name] = struct {
-			pattern     *regexp.Regexp
-			contentType ContentType
-		}{
-			pattern:     pattern,
-			contentType: injection.ContentToCheck,
-		}
+		customPatterns[custom.Name] = pattern
 	}
 
-	// Check if we should check headers
-	checkHeaders := false
-	checkPathAndQuery := false
-	checkBody := false
-	for _, contentType := range config.ContentToCheck {
-		if contentType == Headers || contentType == AllContent {
-			checkHeaders = true
-		}
-		if contentType == PathAndQuery || contentType == AllContent {
-			checkPathAndQuery = true
-		}
-		if contentType == Body || contentType == AllContent {
-			checkBody = true
-		}
-	}
-
-	// Check headers for injections
-	if checkHeaders && req.Headers != nil {
-		for header, values := range req.Headers {
+	// Check headers if configured
+	if containsContent(cfg.ContentToCheck, Headers) || containsContent(cfg.ContentToCheck, AllContent) {
+		p.logger.WithField("headers", req.Headers).Debug("Checking headers")
+		for key, values := range req.Headers {
 			for _, value := range values {
-				// Check predefined injections
-				for injType, pattern := range enabledInjections {
+				// Check predefined patterns
+				for attackType, pattern := range patterns {
 					if pattern.MatchString(value) {
-						return p.handleInjectionDetected(config, string(injType), value, "header", header)
+						return p.handleInjectionDetected(cfg, string(attackType), value, "header", key)
 					}
 				}
-
-				// Check custom injections
-				for name, injection := range customInjections {
-					if injection.contentType == Headers || injection.contentType == AllContent {
-						if injection.pattern.MatchString(value) {
-							return p.handleInjectionDetected(config, name, value, "header", header)
-						}
+				// Check custom patterns
+				for name, pattern := range customPatterns {
+					if pattern.MatchString(value) {
+						return p.handleInjectionDetected(cfg, name, value, "header", key)
 					}
 				}
 			}
 		}
 	}
 
-	// Check path and query for injections
-	if checkPathAndQuery {
-		// Check path
-		path := ""
-		query := ""
+	// Check path and query if configured
+	if containsContent(cfg.ContentToCheck, PathAndQuery) || containsContent(cfg.ContentToCheck, AllContent) {
+		path := req.Path
+		query := req.Query.Encode()
+		p.logger.WithFields(logrus.Fields{
+			"path":  path,
+			"query": query,
+		}).Debug("Checking path and query")
 
-		// Extract path from request
-		if req.Path != "" {
-			path = req.Path
-		}
-
-		// Extract query from request
-		if req.Query != nil {
-			query = req.Query.Encode()
-		}
-
-		// If we still don't have path/query, try to get from headers
-		if (path == "" || query == "") && req.Headers != nil {
-			if host, ok := req.Headers["Host"]; ok && len(host) > 0 {
-				if originalURL, ok := req.Headers["X-Original-URL"]; ok && len(originalURL) > 0 {
-					parsedURL, err := url.Parse(originalURL[0])
-					if err == nil {
-						if path == "" {
-							path = parsedURL.Path
-						}
-						query = parsedURL.RawQuery
+		// Check query parameters individually
+		for param, values := range req.Query {
+			for _, value := range values {
+				// Check predefined patterns
+				for attackType, pattern := range patterns {
+					if pattern.MatchString(value) {
+						p.logger.WithFields(logrus.Fields{
+							"param":       param,
+							"value":       value,
+							"attack_type": attackType,
+						}).Info("Query parameter injection detected")
+						return p.handleInjectionDetected(cfg, string(attackType), value, "query", param)
+					}
+				}
+				// Check custom patterns
+				for name, pattern := range customPatterns {
+					if pattern.MatchString(value) {
+						return p.handleInjectionDetected(cfg, name, value, "query", param)
 					}
 				}
 			}
 		}
 
-		// Check path for injections
-		for injType, pattern := range enabledInjections {
-			if pattern.MatchString(path) {
-				return p.handleInjectionDetected(config, string(injType), path, "path", "")
-			}
-		}
-
-		// Check custom injections for path
-		for name, injection := range customInjections {
-			if injection.contentType == PathAndQuery || injection.contentType == AllContent {
-				if injection.pattern.MatchString(path) {
-					return p.handleInjectionDetected(config, name, path, "path", "")
-				}
-			}
-		}
-
-		// Check query parameters
+		// Also check the raw path for path traversal
+		pathStr := path
 		if query != "" {
-			// First check the raw query string
-			for injType, pattern := range enabledInjections {
-				if pattern.MatchString(query) {
-					return p.handleInjectionDetected(config, string(injType), query, "query", "")
-				}
-			}
-
-			// Then check individual parameters
-			queryParams, err := url.ParseQuery(query)
-			if err == nil {
-				for param, values := range queryParams {
-					for _, value := range values {
-						// Check predefined injections
-						for injType, pattern := range enabledInjections {
-							if pattern.MatchString(value) {
-								return p.handleInjectionDetected(config, string(injType), value, "query param", param)
-							}
-						}
-
-						// Check custom injections
-						for name, injection := range customInjections {
-							if injection.contentType == PathAndQuery || injection.contentType == AllContent {
-								if injection.pattern.MatchString(value) {
-									return p.handleInjectionDetected(config, name, value, "query param", param)
-								}
-							}
-						}
-					}
-				}
+			pathStr += "?" + query
+		}
+		for attackType, pattern := range patterns {
+			if pattern.MatchString(pathStr) {
+				return p.handleInjectionDetected(cfg, string(attackType), pathStr, "url", "")
 			}
 		}
 	}
 
-	// Check body for injections
-	if checkBody && len(req.Body) > 0 {
-		// Try to parse as JSON
-		var jsonData interface{}
-		if err := json.Unmarshal(req.Body, &jsonData); err == nil {
-			// If it's valid JSON, check each field
-			if detected, injType, value, field := p.checkJSONForInjections(jsonData, enabledInjections, customInjections); detected {
-				return p.handleInjectionDetected(config, injType, value, "body", field)
-			}
-		} else {
-			// If it's not JSON, check as plain text
+	// Check body if configured
+	if containsContent(cfg.ContentToCheck, Body) || containsContent(cfg.ContentToCheck, AllContent) {
+		if len(req.Body) > 0 {
+			p.logger.WithField("body_length", len(req.Body)).Debug("Checking body")
+			// Convert body to string for pattern matching
 			bodyStr := string(req.Body)
+			p.logger.WithField("body_content", bodyStr).Debug("Body content")
 
-			// Check predefined injections
-			for injType, pattern := range enabledInjections {
+			// Check predefined patterns
+			for attackType, pattern := range patterns {
+				p.logger.WithFields(logrus.Fields{
+					"attack_type": attackType,
+					"pattern":     pattern.String(),
+				}).Debug("Checking pattern")
+
 				if pattern.MatchString(bodyStr) {
-					return p.handleInjectionDetected(config, string(injType), bodyStr, "body", "")
+					p.logger.WithFields(logrus.Fields{
+						"attack_type":     attackType,
+						"matched_content": bodyStr,
+					}).Info("Pattern matched!")
+					return p.handleInjectionDetected(cfg, string(attackType), bodyStr, "body", "")
+				}
+			}
+			// Check custom patterns
+			for name, pattern := range customPatterns {
+				if pattern.MatchString(bodyStr) {
+					return p.handleInjectionDetected(cfg, name, bodyStr, "body", "")
 				}
 			}
 
-			// Check custom injections
-			for name, injection := range customInjections {
-				if injection.contentType == Body || injection.contentType == AllContent {
-					if injection.pattern.MatchString(bodyStr) {
-						return p.handleInjectionDetected(config, name, bodyStr, "body", "")
-					}
+			// Parse JSON for deeper inspection
+			var jsonBody interface{}
+			if err := json.Unmarshal(req.Body, &jsonBody); err == nil {
+				if err := p.checkJSONContent(jsonBody, patterns, customPatterns, cfg); err != nil {
+					return nil, err
 				}
 			}
 		}
 	}
 
-	// No injection detected
-	return &types.PluginResponse{
-		StatusCode: http.StatusOK,
-		Message:    "No injection detected",
-	}, nil
+	p.logger.Debug("Injection protection check completed with no threats detected")
+	return nil, nil
 }
 
-// checkJSONForInjections recursively checks JSON data for injections
-func (p *InjectionProtectionPlugin) checkJSONForInjections(
+// Helper function to check JSON content recursively
+func (p *InjectionProtectionPlugin) checkJSONContent(
 	data interface{},
-	enabledInjections map[InjectionType]*regexp.Regexp,
-	customInjections map[string]struct {
-		pattern     *regexp.Regexp
-		contentType ContentType
-	},
-) (bool, string, string, string) {
+	patterns map[AttackType]*regexp.Regexp,
+	customPatterns map[string]*regexp.Regexp,
+	cfg Config,
+) error {
 	switch v := data.(type) {
 	case map[string]interface{}:
 		for key, value := range v {
-			// Check the key itself
-			keyStr := key
-
-			// Check predefined injections
-			for injType, pattern := range enabledInjections {
-				if pattern.MatchString(keyStr) {
-					return true, string(injType), keyStr, key
-				}
-			}
-
-			// Check custom injections
-			for name, injection := range customInjections {
-				if injection.contentType == Body || injection.contentType == AllContent {
-					if injection.pattern.MatchString(keyStr) {
-						return true, name, keyStr, key
+			// Check both key and value
+			if str, ok := value.(string); ok {
+				for attackType, pattern := range patterns {
+					if pattern.MatchString(str) || pattern.MatchString(key) {
+						return fmt.Errorf("injection detected in JSON: %s", attackType)
 					}
 				}
 			}
-
-			// Recursively check the value
-			if detected, injType, value, field := p.checkJSONForInjections(value, enabledInjections, customInjections); detected {
-				return true, injType, value, field
+			if err := p.checkJSONContent(value, patterns, customPatterns, cfg); err != nil {
+				return err
 			}
 		}
 	case []interface{}:
 		for _, item := range v {
-			if detected, injType, value, field := p.checkJSONForInjections(item, enabledInjections, customInjections); detected {
-				return true, injType, value, field
+			if err := p.checkJSONContent(item, patterns, customPatterns, cfg); err != nil {
+				return err
 			}
 		}
 	case string:
-		// Check predefined injections
-		for injType, pattern := range enabledInjections {
+		// Check predefined patterns
+		for attackType, pattern := range patterns {
 			if pattern.MatchString(v) {
-				return true, string(injType), v, ""
+				resp, err := p.handleInjectionDetected(cfg, string(attackType), v, "json", "")
+				if err != nil {
+					return err
+				}
+				if resp != nil {
+					return fmt.Errorf(resp.Message)
+				}
 			}
 		}
-
-		// Check custom injections
-		for name, injection := range customInjections {
-			if injection.contentType == Body || injection.contentType == AllContent {
-				if injection.pattern.MatchString(v) {
-					return true, name, v, ""
+		// Check custom patterns
+		for name, pattern := range customPatterns {
+			if pattern.MatchString(v) {
+				resp, err := p.handleInjectionDetected(cfg, name, v, "json", "")
+				if err != nil {
+					return err
+				}
+				if resp != nil {
+					return fmt.Errorf(resp.Message)
 				}
 			}
 		}
 	}
-
-	return false, "", "", ""
+	return nil
 }
 
 // handleInjectionDetected handles a detected injection
@@ -441,6 +558,14 @@ func (p *InjectionProtectionPlugin) handleInjectionDetected(
 	location string,
 	field string,
 ) (*types.PluginResponse, error) {
+	p.logger.WithFields(logrus.Fields{
+		"injection_type": injectionType,
+		"location":       location,
+		"field":          field,
+		"config_action":  config.Action,
+		"status_code":    config.StatusCode,
+	}).Debug("Handling detected injection")
+
 	// Truncate value if it's too long
 	if len(value) > 100 {
 		value = value[:97] + "..."
@@ -466,18 +591,33 @@ func (p *InjectionProtectionPlugin) handleInjectionDetected(
 
 	logEntry.Warn(logMessage)
 
-	// If action is log only, allow the request
-	if config.Action == LogOnly {
-		return &types.PluginResponse{
-			StatusCode: http.StatusOK,
-			Message:    "Injection detected but allowed (log only mode)",
-		}, nil
-	}
-
-	// Otherwise block the request
+	// If action is block, block the request
 	return nil, &types.PluginError{
 		StatusCode: config.StatusCode,
 		Message:    config.ErrorMessage,
 		Err:        fmt.Errorf("injection detected: %s", injectionType),
 	}
+}
+
+// containsContent checks if a content type is present in the ContentToCheck slice
+func containsContent(contentToCheck []ContentType, contentType ContentType) bool {
+	for _, ct := range contentToCheck {
+		if ct == contentType {
+			return true
+		}
+	}
+	return false
+}
+
+// Add helper function to check for "all" pattern
+func hasAllPattern(injections []struct {
+	Type    AttackType `mapstructure:"type"`
+	Enabled bool       `mapstructure:"enabled"`
+}) bool {
+	for _, injection := range injections {
+		if injection.Type == All && injection.Enabled {
+			return true
+		}
+	}
+	return false
 }

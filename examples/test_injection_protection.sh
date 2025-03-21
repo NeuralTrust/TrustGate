@@ -29,15 +29,7 @@ GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
             "settings": {
                 "predefined_injections": [
                     {
-                        "type": "sql",
-                        "enabled": true
-                    },
-                    {
-                        "type": "javascript",
-                        "enabled": true
-                    },
-                    {
-                        "type": "server_side_include",
+                        "type": "all",
                         "enabled": true
                     }
                 ],
