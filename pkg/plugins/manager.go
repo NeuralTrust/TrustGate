@@ -15,6 +15,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/bedrock_guardrail"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/code_sanitation"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/data_masking"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/external_api"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/injection_protection"
@@ -102,6 +103,10 @@ func (m *Manager) initializePlugins() {
 
 	if err := m.RegisterPlugin(request_size_limiter.NewRequestSizeLimiterPlugin(m.logger)); err != nil {
 		m.logger.WithError(err).Error("Failed to register request size limiter plugin")
+	}
+
+	if err := m.RegisterPlugin(code_sanitation.NewCodeSanitationPlugin(m.logger)); err != nil {
+		m.logger.WithError(err).Error("Failed to register code sanitation plugin")
 	}
 }
 
