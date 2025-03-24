@@ -48,7 +48,7 @@ type CreateGatewayRequest struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
-type CreateServiceRequest struct {
+type ServiceRequest struct {
 	ID          string   `json:"id" gorm:"primaryKey"`
 	GatewayID   string   `json:"gateway_id" gorm:"not null"`
 	Name        string   `json:"name" gorm:"uniqueIndex:idx_gateway_service_name"`
@@ -68,6 +68,41 @@ type CreateServiceRequest struct {
 	Retries   int `json:"retries,omitempty"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type UpstreamRequest struct {
+	ID           string              `json:"id"`
+	GatewayID    string              `json:"gateway_id"`
+	Name         string              `json:"name"`
+	Algorithm    string              `json:"algorithm"`
+	Targets      []TargetRequest     `json:"targets"`
+	HealthChecks *HealthCheckRequest `json:"health_checks,omitempty"`
+	Tags         []string            `json:"tags,omitempty"`
+}
+
+type TargetRequest struct {
+	ID           string            `json:"id"`
+	Weight       int               `json:"weight,omitempty"`
+	Priority     int               `json:"priority,omitempty"`
+	Tags         []string          `json:"tags,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	Path         string            `json:"path,omitempty"`
+	Host         string            `json:"host,omitempty"`
+	Port         int               `json:"port,omitempty"`
+	Protocol     string            `json:"protocol,omitempty"`
+	Provider     string            `json:"provider,omitempty"`
+	Models       []string          `json:"models,omitempty"`
+	DefaultModel string            `json:"default_model,omitempty"`
+	Credentials  Credentials       `json:"credentials,omitempty"`
+}
+
+type HealthCheckRequest struct {
+	Passive   bool              `json:"passive"`
+	Path      string            `json:"path"`
+	Headers   map[string]string `json:"headers"`
+	Threshold int               `json:"threshold"` // Number of failures before marking as unhealthy
+	Interval  int               `json:"interval"`  // Time in seconds before resetting failure count
+
 }
 
 // GatewayData combines gateway and its rules for caching

@@ -21,7 +21,7 @@ type createServiceHandler struct {
 // @Accept json
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
-// @Param service body object true "Service request body"
+// @Param service body types.ServiceRequest true "Service request body"
 // @Success 201 {object} service.Service "Service created successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
@@ -37,7 +37,7 @@ func NewCreateServiceHandler(logger *logrus.Logger, repo *database.Repository, c
 func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 
-	var req types.CreateServiceRequest
+	var req types.ServiceRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -71,5 +71,5 @@ func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("Failed to cache service")
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(service)
+	return c.Status(fiber.StatusCreated).JSON(entity)
 }

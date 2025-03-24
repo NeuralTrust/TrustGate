@@ -599,7 +599,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.ServiceRequest"
                         }
                     }
                 ],
@@ -700,7 +700,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.ServiceRequest"
                         }
                     }
                 ],
@@ -817,7 +817,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.UpstreamRequest"
                         }
                     }
                 ],
@@ -897,7 +897,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.UpstreamRequest"
                         }
                     }
                 ],
@@ -1118,7 +1118,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "credentials": {
-                    "$ref": "#/definitions/domain.CredentialsJSON"
+                    "$ref": "#/definitions/types.Credentials"
                 },
                 "description": {
                     "type": "string"
@@ -1259,6 +1259,85 @@ const docTemplate = `{
                 }
             }
         },
+        "types.Credentials": {
+            "type": "object",
+            "properties": {
+                "allow_override": {
+                    "description": "General settings",
+                    "type": "boolean"
+                },
+                "aws_access_key_id": {
+                    "description": "AWS auth",
+                    "type": "string"
+                },
+                "aws_secret_access_key": {
+                    "type": "string"
+                },
+                "azure_client_id": {
+                    "type": "string"
+                },
+                "azure_client_secret": {
+                    "type": "string"
+                },
+                "azure_tenant_id": {
+                    "type": "string"
+                },
+                "azure_use_managed_identity": {
+                    "description": "Azure auth",
+                    "type": "boolean"
+                },
+                "gcp_service_account_json": {
+                    "type": "string"
+                },
+                "gcp_use_service_account": {
+                    "description": "GCP auth",
+                    "type": "boolean"
+                },
+                "header_name": {
+                    "description": "Header-based auth",
+                    "type": "string"
+                },
+                "header_value": {
+                    "type": "string"
+                },
+                "param_location": {
+                    "description": "\"query\" or \"body\"",
+                    "type": "string"
+                },
+                "param_name": {
+                    "description": "Parameter-based auth",
+                    "type": "string"
+                },
+                "param_value": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.HealthCheckRequest": {
+            "type": "object",
+            "properties": {
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "interval": {
+                    "description": "Time in seconds before resetting failure count",
+                    "type": "integer"
+                },
+                "passive": {
+                    "type": "boolean"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "threshold": {
+                    "description": "Number of failures before marking as unhealthy",
+                    "type": "integer"
+                }
+            }
+        },
         "types.Level": {
             "type": "string",
             "enum": [
@@ -1302,6 +1381,65 @@ const docTemplate = `{
                 }
             }
         },
+        "types.ServiceRequest": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "credentials": {
+                    "$ref": "#/definitions/types.Credentials"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "gateway_id": {
+                    "type": "string"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "host": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "protocol": {
+                    "type": "string"
+                },
+                "retries": {
+                    "type": "integer"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "upstream_id": {
+                    "type": "string"
+                }
+            }
+        },
         "types.Stage": {
             "type": "string",
             "enum": [
@@ -1316,6 +1454,59 @@ const docTemplate = `{
                 "PreResponse",
                 "PostResponse"
             ]
+        },
+        "types.TargetRequest": {
+            "type": "object",
+            "properties": {
+                "credentials": {
+                    "$ref": "#/definitions/types.Credentials"
+                },
+                "default_model": {
+                    "type": "string"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "host": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "path": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "priority": {
+                    "type": "integer"
+                },
+                "protocol": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "weight": {
+                    "type": "integer"
+                }
+            }
         },
         "types.UpdateGatewayRequest": {
             "type": "object",
@@ -1372,6 +1563,38 @@ const docTemplate = `{
                 },
                 "strip_path": {
                     "type": "boolean"
+                }
+            }
+        },
+        "types.UpstreamRequest": {
+            "type": "object",
+            "properties": {
+                "algorithm": {
+                    "type": "string"
+                },
+                "gateway_id": {
+                    "type": "string"
+                },
+                "health_checks": {
+                    "$ref": "#/definitions/types.HealthCheckRequest"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "targets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.TargetRequest"
+                    }
                 }
             }
         },

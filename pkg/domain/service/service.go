@@ -6,6 +6,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -28,12 +29,12 @@ type Service struct {
 	Upstream   *upstream.Upstream `json:"upstream,omitempty" gorm:"foreignKey:UpstreamID;references:ID"`
 
 	// Direct configuration (used when type is "direct")
-	Host        string                 `json:"host,omitempty"`
-	Port        int                    `json:"port,omitempty"`
-	Protocol    string                 `json:"protocol,omitempty"`
-	Path        string                 `json:"path,omitempty"`
-	Headers     domain.HeadersJSON     `json:"headers,omitempty" gorm:"type:jsonb"`
-	Credentials domain.CredentialsJSON `json:"credentials,omitempty" gorm:"type:jsonb"`
+	Host        string             `json:"host,omitempty"`
+	Port        int                `json:"port,omitempty"`
+	Protocol    string             `json:"protocol,omitempty"`
+	Path        string             `json:"path,omitempty"`
+	Headers     domain.HeadersJSON `json:"headers,omitempty" gorm:"type:jsonb"`
+	Credentials types.Credentials  `json:"credentials,omitempty" gorm:"type:jsonb"`
 
 	// Common settings
 	Retries   int `json:"retries,omitempty"`
@@ -79,7 +80,7 @@ func (s *Service) Validate() error {
 		}
 	} else {
 		// When using upstream, host-specific fields should be empty
-		if s.Host != "" || s.Port != 0 || s.Credentials != (domain.CredentialsJSON{}) {
+		if s.Host != "" || s.Port != 0 {
 			return fmt.Errorf("cannot specify host configuration when using upstream")
 		}
 	}
