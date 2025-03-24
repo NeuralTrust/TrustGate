@@ -67,8 +67,8 @@ func NewForwardedHandler(
 ) Handler {
 
 	client := &fasthttp.Client{
-		ReadTimeout:                   3 * time.Second,
-		WriteTimeout:                  3 * time.Second,
+		ReadTimeout:                   30 * time.Second,
+		WriteTimeout:                  30 * time.Second,
 		MaxConnsPerHost:               16384,
 		MaxIdleConnDuration:           120 * time.Second,
 		ReadBufferSize:                32768,
