@@ -39,6 +39,18 @@ func NewUpdateRuleHandler(
 	}
 }
 
+// Handle @Summary Update a Rule
+// @Description Updates an existing rule
+// @Tags Rules
+// @Accept json
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Param rule_id path string true "Rule ID"
+// @Param rule body types.UpdateRuleRequest true "Updated rule data"
+// @Success 204 "Rule updated successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 404 {object} map[string]interface{} "Rule not found"
+// @Router /api/v1/gateways/{gateway_id}/rules/{rule_id} [put]
 func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	ruleID := c.Params("rule_id")
@@ -151,7 +163,7 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("Failed to publish cache invalidation")
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Rule updated successfully"})
+	return c.Status(fiber.StatusNoContent).JSON(fiber.Map{})
 }
 
 func (s *updateRuleHandler) convertMapToDBHeaders(headers map[string]string) map[string]string {

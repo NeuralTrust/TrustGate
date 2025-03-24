@@ -22,6 +22,15 @@ func NewGetAPIKeyHandler(logger *logrus.Logger, cache *cache.Cache) Handler {
 	}
 }
 
+// Handle @Summary Retrieve an API Key by ID
+// @Description Returns details of a specific API key
+// @Tags API Keys
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Param key_id path string true "API Key ID"
+// @Success 200 {object} apikey.APIKey "API Key details"
+// @Failure 404 {object} map[string]interface{} "API Key not found"
+// @Router /api/v1/gateways/{gateway_id}/keys/{key_id} [get]
 func (s *getAPIKeyHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	keyID := c.Params("key_id")

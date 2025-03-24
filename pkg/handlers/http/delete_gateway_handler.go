@@ -29,6 +29,13 @@ func NewDeleteGatewayHandler(
 	}
 }
 
+// Handle @Summary Delete a Gateway
+// @Description Removes a gateway from the system
+// @Tags Gateways
+// @Param gateway_id path string true "Gateway ID"
+// @Success 204
+// @Failure 404 {object} map[string]interface{} "Gateway not found"
+// @Router /api/v1/gateways/{gateway_id} [delete]
 func (s *deleteGatewayHandler) Handle(c *fiber.Ctx) error {
 	id := c.Params("gateway_id")
 	if id == "" {

@@ -26,6 +26,14 @@ func NewListRulesHandler(logger *logrus.Logger, repo *database.Repository, cache
 	}
 }
 
+// Handle @Summary Retrieve all Rules
+// @Description Returns a list of all rules for a gateway
+// @Tags Rules
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Success 200 {array} forwarding_rule.ForwardingRule "List of rules"
+// @Failure 404 {object} map[string]interface{} "Gateway not found"
+// @Router /api/v1/gateways/{gateway_id}/rules [get]
 func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 

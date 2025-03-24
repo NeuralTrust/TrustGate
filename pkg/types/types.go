@@ -1,11 +1,7 @@
 package types
 
 import (
-	"strings"
 	"time"
-
-	"github.com/go-redis/redis/v8"
-	"github.com/sirupsen/logrus"
 )
 
 type UpdateGatewayRequest struct {
@@ -42,106 +38,71 @@ type UpdateRuleRequest struct {
 	PluginChain   []PluginConfig    `json:"plugin_chain"`
 }
 
-// EvaluateCondition evaluates a response condition against a value
-func EvaluateCondition(condition ResponseCondition, value interface{}) bool {
-	switch condition.Operator {
-	case "eq":
-		return value == condition.Value
-	case "ne":
-		return value != condition.Value
-	case "gt":
-		return compareNumbers(value, condition.Value) > 0
-	case "gte":
-		return compareNumbers(value, condition.Value) >= 0
-	case "lt":
-		return compareNumbers(value, condition.Value) < 0
-	case "lte":
-		return compareNumbers(value, condition.Value) <= 0
-	case "contains":
-		return containsValue(value, condition.Value)
-	case "not_contains":
-		return !containsValue(value, condition.Value)
-	case "exists":
-		return value != nil
-	case "not_exists":
-		return value == nil
-	default:
-		return false
-	}
+type CreateGatewayRequest struct {
+	ID              string         `json:"id" gorm:"primaryKey"`
+	Name            string         `json:"name"`
+	Subdomain       string         `json:"subdomain" gorm:"uniqueIndex"`
+	Status          string         `json:"status"`
+	RequiredPlugins []PluginConfig `json:"required_plugins" gorm:"type:jsonb"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
-// Helper functions for condition evaluation
-func compareNumbers(a, b interface{}) int {
-	var aFloat, bFloat float64
+type ServiceRequest struct {
+	ID          string   `json:"id" gorm:"primaryKey"`
+	GatewayID   string   `json:"gateway_id" gorm:"not null"`
+	Name        string   `json:"name" gorm:"uniqueIndex:idx_gateway_service_name"`
+	Type        string   `json:"type" gorm:"not null"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags,omitempty" gorm:"type:jsonb"`
 
-	switch v := a.(type) {
-	case int:
-		aFloat = float64(v)
-	case int32:
-		aFloat = float64(v)
-	case int64:
-		aFloat = float64(v)
-	case float32:
-		aFloat = float64(v)
-	case float64:
-		aFloat = v
-	default:
-		return 0
-	}
+	UpstreamID string `json:"upstream_id,omitempty"`
 
-	switch v := b.(type) {
-	case int:
-		bFloat = float64(v)
-	case int32:
-		bFloat = float64(v)
-	case int64:
-		bFloat = float64(v)
-	case float32:
-		bFloat = float64(v)
-	case float64:
-		bFloat = v
-	default:
-		return 0
-	}
+	Host        string            `json:"host,omitempty"`
+	Port        int               `json:"port,omitempty"`
+	Protocol    string            `json:"protocol,omitempty"`
+	Path        string            `json:"path,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty" gorm:"type:jsonb"`
+	Credentials Credentials       `json:"credentials,omitempty" gorm:"type:jsonb"`
 
-	if aFloat < bFloat {
-		return -1
-	}
-	if aFloat > bFloat {
-		return 1
-	}
-	return 0
+	Retries   int `json:"retries,omitempty"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
-func containsValue(value, searchValue interface{}) bool {
-	switch v := value.(type) {
-	case string:
-		searchStr, ok := searchValue.(string)
-		if !ok {
-			return false
-		}
-		return strings.Contains(v, searchStr)
-	case []interface{}:
-		for _, item := range v {
-			if item == searchValue {
-				return true
-			}
-		}
-	case map[string]interface{}:
-		for _, item := range v {
-			if item == searchValue {
-				return true
-			}
-		}
-	}
-	return false
+type UpstreamRequest struct {
+	ID           string              `json:"id"`
+	GatewayID    string              `json:"gateway_id"`
+	Name         string              `json:"name"`
+	Algorithm    string              `json:"algorithm"`
+	Targets      []TargetRequest     `json:"targets"`
+	HealthChecks *HealthCheckRequest `json:"health_checks,omitempty"`
+	Tags         []string            `json:"tags,omitempty"`
 }
 
-type PluginContext struct {
-	Config   PluginConfig
-	Redis    *redis.Client
-	Logger   *logrus.Logger
-	Metadata map[string]interface{}
+type TargetRequest struct {
+	ID           string            `json:"id"`
+	Weight       int               `json:"weight,omitempty"`
+	Priority     int               `json:"priority,omitempty"`
+	Tags         []string          `json:"tags,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	Path         string            `json:"path,omitempty"`
+	Host         string            `json:"host,omitempty"`
+	Port         int               `json:"port,omitempty"`
+	Protocol     string            `json:"protocol,omitempty"`
+	Provider     string            `json:"provider,omitempty"`
+	Models       []string          `json:"models,omitempty"`
+	DefaultModel string            `json:"default_model,omitempty"`
+	Credentials  Credentials       `json:"credentials,omitempty"`
+}
+
+type HealthCheckRequest struct {
+	Passive   bool              `json:"passive"`
+	Path      string            `json:"path"`
+	Headers   map[string]string `json:"headers"`
+	Threshold int               `json:"threshold"` // Number of failures before marking as unhealthy
+	Interval  int               `json:"interval"`  // Time in seconds before resetting failure count
+
 }
 
 // GatewayData combines gateway and its rules for caching

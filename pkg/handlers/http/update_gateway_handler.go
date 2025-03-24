@@ -39,6 +39,16 @@ func NewUpdateGatewayHandler(
 	}
 }
 
+// Handle @Summary Update a Gateway
+// @Description Updates an existing gateway
+// @Tags Gateways
+// @Accept json
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Param gateway body types.UpdateGatewayRequest true "Updated gateway data"
+// @Success 200 {object} gateway.Gateway "Gateway updated successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Router /api/v1/gateways/{gateway_id} [put]
 func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 

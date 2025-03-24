@@ -26,6 +26,13 @@ func NewListUpstreamHandler(logger *logrus.Logger, repo *database.Repository, ca
 	}
 }
 
+// Handle @Summary Retrieve all Upstreams
+// @Description Returns a list of all upstreams for a gateway
+// @Tags Upstreams
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Success 200 {array} upstream.Upstream "List of upstreams"
+// @Router /api/v1/gateways/{gateway_id}/upstreams [get]
 func (s *listUpstreamHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	offset := 0

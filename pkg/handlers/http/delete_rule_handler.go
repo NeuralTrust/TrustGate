@@ -33,6 +33,14 @@ func NewDeleteRuleHandler(
 	}
 }
 
+// Handle @Summary Delete a Rule
+// @Description Removes a rule from a gateway
+// @Tags Rules
+// @Param gateway_id path string true "Gateway ID"
+// @Param rule_id path string true "Rule ID"
+// @Success 204 "Rule deleted successfully"
+// @Failure 404 {object} map[string]interface{} "Rule not found"
+// @Router /api/v1/gateways/{gateway_id}/rules/{rule_id} [delete]
 func (s *deleteRuleHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	ruleID := c.Params("rule_id")

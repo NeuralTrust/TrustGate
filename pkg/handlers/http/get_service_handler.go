@@ -24,6 +24,15 @@ func NewGetServiceHandler(logger *logrus.Logger, repo service.Repository, cache 
 	}
 }
 
+// Handle @Summary Retrieve a Service by ID
+// @Description Returns details of a specific service
+// @Tags Services
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Param service_id path string true "Service ID"
+// @Success 200 {object} service.Service "Service details"
+// @Failure 404 {object} map[string]interface{} "Service not found"
+// @Router /api/v1/gateways/{gateway_id}/services/{service_id} [get]
 func (s *getServiceHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	serviceID := c.Params("service_id")

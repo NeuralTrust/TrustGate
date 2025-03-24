@@ -27,6 +27,17 @@ func NewCreateAPIKeyHandler(logger *logrus.Logger, repo *database.Repository, ca
 	}
 }
 
+// Handle @Summary Create a new API Key
+// @Description Generates a new API key for the specified gateway
+// @Tags API Keys
+// @Accept json
+// @Produce json
+// @Param gateway_id path string true "Gateway ID"
+// @Param api_key body types.CreateAPIKeyRequest true "API Key request body"
+// @Success 201 {object} apikey.APIKey "API Key created successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request data"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /api/v1/gateways/{gateway_id}/keys [post]
 func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	var req types.CreateAPIKeyRequest

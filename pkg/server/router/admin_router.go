@@ -5,6 +5,7 @@ import (
 
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/swagger"
 )
 
 var (
@@ -29,6 +30,12 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 	if !ok {
 		return ErrInvalidHandlerTransport
 	}
+
+	router.Static("/swagger.json", "./docs/swagger.json")
+
+	router.Get("/docs/*", swagger.New(swagger.Config{
+		URL: "http://localhost:8080/swagger.json",
+	}))
 
 	v1 := router.Group("/api/v1")
 	{

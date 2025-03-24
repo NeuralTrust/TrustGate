@@ -1,0 +1,1137 @@
+definitions:
+  apikey.APIKey:
+    properties:
+      active:
+        type: boolean
+      created_at:
+        type: string
+      deleted_at:
+        type: string
+      expires_at:
+        type: string
+      gateway_id:
+        type: string
+      id:
+        type: string
+      key:
+        type: string
+      name:
+        type: string
+    type: object
+  domain.CredentialsJSON:
+    properties:
+      allow_override:
+        description: General settings
+        type: boolean
+      aws_access_key_id:
+        description: AWS auth
+        type: string
+      aws_secret_access_key:
+        type: string
+      azure_client_id:
+        type: string
+      azure_client_secret:
+        type: string
+      azure_tenant_id:
+        type: string
+      azure_use_managed_identity:
+        description: Azure auth
+        type: boolean
+      gcp_service_account_json:
+        type: string
+      gcp_use_service_account:
+        description: GCP auth
+        type: boolean
+      header_name:
+        description: Header-based auth
+        type: string
+      header_value:
+        type: string
+      param_location:
+        description: '"query" or "body"'
+        type: string
+      param_name:
+        description: Parameter-based auth
+        type: string
+      param_value:
+        type: string
+    type: object
+  domain.HeadersJSON:
+    additionalProperties:
+      type: string
+    type: object
+  forwarding_rule.ForwardingRule:
+    properties:
+      active:
+        type: boolean
+      createdAt:
+        type: string
+      gatewayID:
+        type: string
+      headers:
+        $ref: '#/definitions/domain.HeadersJSON'
+      id:
+        type: string
+      methods:
+        items:
+          type: string
+        type: array
+      path:
+        type: string
+      pluginChain:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      preserveHost:
+        type: boolean
+      public:
+        type: boolean
+      retryAttempts:
+        type: integer
+      serviceID:
+        type: string
+      stripPath:
+        type: boolean
+      updatedAt:
+        type: string
+    type: object
+  gateway.Gateway:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      required_plugins:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      status:
+        type: string
+      subdomain:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  service.Service:
+    properties:
+      createdAt:
+        type: string
+      credentials:
+        $ref: '#/definitions/types.Credentials'
+      description:
+        type: string
+      gateway_id:
+        type: string
+      headers:
+        $ref: '#/definitions/domain.HeadersJSON'
+      host:
+        description: Direct configuration (used when type is "direct")
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+      port:
+        type: integer
+      protocol:
+        type: string
+      retries:
+        description: Common settings
+        type: integer
+      tags:
+        items:
+          type: string
+        type: array
+      type:
+        description: '"upstream" or "endpoint"'
+        type: string
+      updatedAt:
+        type: string
+      upstream:
+        $ref: '#/definitions/upstream.Upstream'
+      upstream_id:
+        description: Upstream configuration (used when type is "upstream")
+        type: string
+    type: object
+  types.CreateAPIKeyRequest:
+    properties:
+      expires_at:
+        type: string
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  types.CreateGatewayRequest:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      required_plugins:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      status:
+        type: string
+      subdomain:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  types.CreateRuleRequest:
+    properties:
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      methods:
+        items:
+          type: string
+        type: array
+      path:
+        type: string
+      plugin_chain:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      preserve_host:
+        type: boolean
+      retry_attempts:
+        type: integer
+      service_id:
+        type: string
+      strip_path:
+        type: boolean
+    required:
+    - path
+    - service_id
+    type: object
+  types.Credentials:
+    properties:
+      allow_override:
+        description: General settings
+        type: boolean
+      aws_access_key_id:
+        description: AWS auth
+        type: string
+      aws_secret_access_key:
+        type: string
+      azure_client_id:
+        type: string
+      azure_client_secret:
+        type: string
+      azure_tenant_id:
+        type: string
+      azure_use_managed_identity:
+        description: Azure auth
+        type: boolean
+      gcp_service_account_json:
+        type: string
+      gcp_use_service_account:
+        description: GCP auth
+        type: boolean
+      header_name:
+        description: Header-based auth
+        type: string
+      header_value:
+        type: string
+      param_location:
+        description: '"query" or "body"'
+        type: string
+      param_name:
+        description: Parameter-based auth
+        type: string
+      param_value:
+        type: string
+    type: object
+  types.HealthCheckRequest:
+    properties:
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      interval:
+        description: Time in seconds before resetting failure count
+        type: integer
+      passive:
+        type: boolean
+      path:
+        type: string
+      threshold:
+        description: Number of failures before marking as unhealthy
+        type: integer
+    type: object
+  types.Level:
+    enum:
+    - gateway
+    - rule
+    type: string
+    x-enum-varnames:
+    - GatewayLevel
+    - RuleLevel
+  types.PluginConfig:
+    properties:
+      enabled:
+        type: boolean
+      id:
+        description: ID of the gateway or rule this plugin belongs to
+        type: string
+      level:
+        $ref: '#/definitions/types.Level'
+      name:
+        type: string
+      parallel:
+        description: Whether this plugin can run in parallel
+        type: boolean
+      priority:
+        type: integer
+      settings:
+        additionalProperties: true
+        type: object
+      stage:
+        $ref: '#/definitions/types.Stage'
+    type: object
+  types.ServiceRequest:
+    properties:
+      createdAt:
+        type: string
+      credentials:
+        $ref: '#/definitions/types.Credentials'
+      description:
+        type: string
+      gateway_id:
+        type: string
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      host:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+      port:
+        type: integer
+      protocol:
+        type: string
+      retries:
+        type: integer
+      tags:
+        items:
+          type: string
+        type: array
+      type:
+        type: string
+      updatedAt:
+        type: string
+      upstream_id:
+        type: string
+    type: object
+  types.Stage:
+    enum:
+    - pre_request
+    - post_request
+    - pre_response
+    - post_response
+    type: string
+    x-enum-varnames:
+    - PreRequest
+    - PostRequest
+    - PreResponse
+    - PostResponse
+  types.TargetRequest:
+    properties:
+      credentials:
+        $ref: '#/definitions/types.Credentials'
+      default_model:
+        type: string
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      host:
+        type: string
+      id:
+        type: string
+      models:
+        items:
+          type: string
+        type: array
+      path:
+        type: string
+      port:
+        type: integer
+      priority:
+        type: integer
+      protocol:
+        type: string
+      provider:
+        type: string
+      tags:
+        items:
+          type: string
+        type: array
+      weight:
+        type: integer
+    type: object
+  types.UpdateGatewayRequest:
+    properties:
+      name:
+        type: string
+      required_plugins:
+        additionalProperties:
+          $ref: '#/definitions/types.PluginConfig'
+        type: object
+      status:
+        type: string
+    type: object
+  types.UpdateRuleRequest:
+    properties:
+      active:
+        type: boolean
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      methods:
+        items:
+          type: string
+        type: array
+      path:
+        type: string
+      plugin_chain:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      preserve_host:
+        type: boolean
+      retry_attempts:
+        type: integer
+      service_id:
+        type: string
+      strip_path:
+        type: boolean
+    type: object
+  types.UpstreamRequest:
+    properties:
+      algorithm:
+        type: string
+      gateway_id:
+        type: string
+      health_checks:
+        $ref: '#/definitions/types.HealthCheckRequest'
+      id:
+        type: string
+      name:
+        type: string
+      tags:
+        items:
+          type: string
+        type: array
+      targets:
+        items:
+          $ref: '#/definitions/types.TargetRequest'
+        type: array
+    type: object
+  upstream.HealthCheck:
+    properties:
+      headers:
+        $ref: '#/definitions/domain.HeadersJSON'
+      interval:
+        description: Time in seconds before resetting failure count
+        type: integer
+      passive:
+        type: boolean
+      path:
+        type: string
+      threshold:
+        description: Number of failures before marking as unhealthy
+        type: integer
+    type: object
+  upstream.Target:
+    properties:
+      credentials:
+        $ref: '#/definitions/domain.CredentialsJSON'
+      default_model:
+        type: string
+      headers:
+        $ref: '#/definitions/domain.HeadersJSON'
+      host:
+        type: string
+      id:
+        type: string
+      models:
+        items:
+          type: string
+        type: array
+      path:
+        type: string
+      port:
+        type: integer
+      priority:
+        type: integer
+      protocol:
+        type: string
+      provider:
+        type: string
+      tags:
+        items:
+          type: string
+        type: array
+      weight:
+        type: integer
+    type: object
+  upstream.Upstream:
+    properties:
+      algorithm:
+        type: string
+      createdAt:
+        type: string
+      gateway_id:
+        type: string
+      health_checks:
+        $ref: '#/definitions/upstream.HealthCheck'
+      id:
+        type: string
+      name:
+        type: string
+      tags:
+        items:
+          type: string
+        type: array
+      targets:
+        items:
+          $ref: '#/definitions/upstream.Target'
+        type: array
+      updatedAt:
+        type: string
+    type: object
+info:
+  contact: {}
+paths:
+  /api/v1/gateways:
+    get:
+      description: Retrieves a list of all gateways in the system
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of gateways
+          schema:
+            items:
+              $ref: '#/definitions/gateway.Gateway'
+            type: array
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Gateways
+    post:
+      consumes:
+      - application/json
+      description: Creates a new gateway in the system
+      parameters:
+      - description: Gateway data
+        in: body
+        name: gateway
+        required: true
+        schema:
+          $ref: '#/definitions/types.CreateGatewayRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Gateway created successfully
+          schema:
+            $ref: '#/definitions/gateway.Gateway'
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Gateways
+  /api/v1/gateways/{gateway_id}:
+    delete:
+      description: Removes a gateway from the system
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Gateway not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Gateways
+    get:
+      description: Returns details of a specific gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Gateway
+          schema:
+            $ref: '#/definitions/gateway.Gateway'
+        "404":
+          description: Gateway not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Gateways
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Updated gateway data
+        in: body
+        name: gateway
+        required: true
+        schema:
+          $ref: '#/definitions/types.UpdateGatewayRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Gateway updated successfully
+          schema:
+            $ref: '#/definitions/gateway.Gateway'
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Gateways
+  /api/v1/gateways/{gateway_id}/keys:
+    get:
+      description: Returns a list of all API keys for a gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of API Keys
+          schema:
+            items:
+              $ref: '#/definitions/apikey.APIKey'
+            type: array
+        "404":
+          description: Gateway not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - API Keys
+    post:
+      consumes:
+      - application/json
+      description: Generates a new API key for the specified gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: API Key request body
+        in: body
+        name: api_key
+        required: true
+        schema:
+          $ref: '#/definitions/types.CreateAPIKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: API Key created successfully
+          schema:
+            $ref: '#/definitions/apikey.APIKey'
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - API Keys
+  /api/v1/gateways/{gateway_id}/keys/{key_id}:
+    delete:
+      description: Removes an API key from a gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: API Key ID
+        in: path
+        name: key_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: API Key deleted successfully
+        "404":
+          description: API Key not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - API Keys
+    get:
+      description: Returns details of a specific API key
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: API Key ID
+        in: path
+        name: key_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: API Key details
+          schema:
+            $ref: '#/definitions/apikey.APIKey'
+        "404":
+          description: API Key not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - API Keys
+  /api/v1/gateways/{gateway_id}/rules:
+    get:
+      description: Returns a list of all rules for a gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of rules
+          schema:
+            items:
+              $ref: '#/definitions/forwarding_rule.ForwardingRule'
+            type: array
+        "404":
+          description: Gateway not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Rules
+    post:
+      consumes:
+      - application/json
+      description: Adds a new rule under a gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Rule request body
+        in: body
+        name: rule
+        required: true
+        schema:
+          $ref: '#/definitions/types.CreateRuleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Rule created successfully
+          schema:
+            $ref: '#/definitions/forwarding_rule.ForwardingRule'
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Rules
+  /api/v1/gateways/{gateway_id}/rules/{rule_id}:
+    delete:
+      description: Removes a rule from a gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Rule ID
+        in: path
+        name: rule_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Rule deleted successfully
+        "404":
+          description: Rule not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Rules
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing rule
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Rule ID
+        in: path
+        name: rule_id
+        required: true
+        type: string
+      - description: Updated rule data
+        in: body
+        name: rule
+        required: true
+        schema:
+          $ref: '#/definitions/types.UpdateRuleRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Rule updated successfully
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Rule not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Rules
+  /api/v1/gateways/{gateway_id}/services:
+    get:
+      description: Returns a list of all services for a gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of services
+          schema:
+            items:
+              $ref: '#/definitions/service.Service'
+            type: array
+        "404":
+          description: Gateway not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Services
+    post:
+      consumes:
+      - application/json
+      description: Adds a new service under a gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Service request body
+        in: body
+        name: service
+        required: true
+        schema:
+          $ref: '#/definitions/types.ServiceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Service created successfully
+          schema:
+            $ref: '#/definitions/service.Service'
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Services
+  /api/v1/gateways/{gateway_id}/services/{service_id}:
+    delete:
+      description: Removes a service from a gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Service ID
+        in: path
+        name: service_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Service deleted successfully
+        "404":
+          description: Service not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Services
+    get:
+      description: Returns details of a specific service
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Service ID
+        in: path
+        name: service_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Service details
+          schema:
+            $ref: '#/definitions/service.Service'
+        "404":
+          description: Service not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Services
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing service
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Service ID
+        in: path
+        name: service_id
+        required: true
+        type: string
+      - description: Updated service data
+        in: body
+        name: service
+        required: true
+        schema:
+          $ref: '#/definitions/types.ServiceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Service updated successfully
+          schema:
+            $ref: '#/definitions/service.Service'
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Service not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Services
+  /api/v1/gateways/{gateway_id}/upstreams:
+    get:
+      description: Returns a list of all upstreams for a gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of upstreams
+          schema:
+            items:
+              $ref: '#/definitions/upstream.Upstream'
+            type: array
+      tags:
+      - Upstreams
+    post:
+      consumes:
+      - application/json
+      description: Adds a new upstream under a gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Upstream data
+        in: body
+        name: upstream
+        required: true
+        schema:
+          $ref: '#/definitions/types.UpstreamRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Upstream created successfully
+          schema:
+            $ref: '#/definitions/upstream.Upstream'
+      tags:
+      - Upstreams
+  /api/v1/gateways/{gateway_id}/upstreams/{upstream_id}:
+    delete:
+      description: Removes an upstream from a gateway
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Upstream ID
+        in: path
+        name: upstream_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Upstream deleted successfully
+      tags:
+      - Upstreams
+    get:
+      description: Returns details of a specific upstream
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Upstream ID
+        in: path
+        name: upstream_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Upstream details
+          schema:
+            $ref: '#/definitions/upstream.Upstream'
+      tags:
+      - Upstreams
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing upstream
+      parameters:
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Upstream ID
+        in: path
+        name: upstream_id
+        required: true
+        type: string
+      - description: Updated upstream data
+        in: body
+        name: upstream
+        required: true
+        schema:
+          $ref: '#/definitions/types.UpstreamRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Upstream updated successfully
+          schema:
+            $ref: '#/definitions/upstream.Upstream'
+      tags:
+      - Upstreams
+swagger: "2.0"
