@@ -490,7 +490,10 @@ func (p *InjectionProtectionPlugin) Execute(ctx context.Context, pluginConfig ty
 	}
 
 	p.logger.Debug("Injection protection check completed with no threats detected")
-	return nil, nil
+	return &types.PluginResponse{
+		StatusCode: 200,
+		Message:    "Injected content checked successfully",
+	}, nil
 }
 
 // Helper function to check JSON content recursively

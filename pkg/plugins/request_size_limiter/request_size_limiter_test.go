@@ -256,7 +256,7 @@ func TestRequestSizeLimiterPlugin_CountJSONCharacters(t *testing.T) {
 				"key1": "value1",
 				"key2": 123,
 			},
-			expected: 10, // "value1" + "123"
+			expected: 9, // "value1" + "123"
 		},
 		{
 			name: "Array",
