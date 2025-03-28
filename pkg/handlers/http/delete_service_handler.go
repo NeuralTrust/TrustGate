@@ -43,7 +43,7 @@ func (s *deleteServiceHandler) Handle(c *fiber.Ctx) error {
 	serviceID := c.Params("service_id")
 
 	if err := s.repo.DeleteService(c.Context(), serviceID); err != nil {
-		if errors.As(err, &database.ErrServiceIsBeingUsed) {
+		if errors.Is(err, database.ErrServiceIsBeingUsed) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		s.logger.WithError(err).Error("Failed to delete service")
