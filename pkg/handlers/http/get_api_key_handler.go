@@ -41,14 +41,14 @@ func (s *getAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		if err.Error() == "redis: nil" {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "API key not found"})
 		}
-		s.logger.WithError(err).Error("Failed to get API key")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get API key"})
+		s.logger.WithError(err).Error("failed to get API key")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get API key"})
 	}
 
 	var apiKey domain.APIKey
 	if err := json.Unmarshal([]byte(apiKeyJSON), &apiKey); err != nil {
-		s.logger.WithError(err).Error("Failed to unmarshal API key")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get API key"})
+		s.logger.WithError(err).Error("failed to unmarshal API key")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get API key"})
 	}
 
 	// Don't expose the actual key

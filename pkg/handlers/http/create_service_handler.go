@@ -39,7 +39,7 @@ func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 
 	var req types.ServiceRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
 	entity := service.Service{

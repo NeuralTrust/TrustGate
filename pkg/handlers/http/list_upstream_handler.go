@@ -61,14 +61,14 @@ func (s *listUpstreamHandler) Handle(c *fiber.Ctx) error {
 	// If not in cache, get from database
 	upstreams, err := s.repo.ListUpstreams(c.Context(), gatewayID, offset, limit)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to list upstreams")
+		s.logger.WithError(err).Error("failed to list upstreams")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	// Cache the results
 	if upstreamsJSON, err := json.Marshal(upstreams); err == nil {
 		if err := s.cache.Set(c.Context(), upstreamsKey, string(upstreamsJSON), 0); err != nil {
-			s.logger.WithError(err).Error("Failed to cache upstreams list")
+			s.logger.WithError(err).Error("failed to cache upstreams list")
 		}
 	}
 

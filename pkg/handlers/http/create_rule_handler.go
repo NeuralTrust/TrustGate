@@ -52,7 +52,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 
 	if err := c.BodyParser(&req); err != nil {
 		s.logger.WithError(err).Error("Failed to bind request")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
 	// Validate the rule request

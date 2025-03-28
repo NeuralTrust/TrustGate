@@ -51,7 +51,7 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 	entity.GatewayID = gatewayID
 
 	if err := s.repo.UpdateUpstream(c.Context(), &entity); err != nil {
-		s.logger.WithError(err).Error("Failed to update upstream")
+		s.logger.WithError(err).Error("failed to update upstream")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 

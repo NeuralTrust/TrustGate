@@ -59,13 +59,13 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	dbGateway, err := h.repo.GetGateway(c.Context(), gatewayID)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to get gateway")
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Gateway not found"})
+		h.logger.WithError(err).Error("failed to get gateway")
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 	}
 
 	var req types.UpdateGatewayRequest
 	if err := c.BodyParser(&req); err != nil {
-		h.logger.WithError(err).Error("Failed to bind request")
+		h.logger.WithError(err).Error("failed to bind request")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -86,7 +86,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		for _, cfg := range req.RequiredPlugins {
 			if err := h.pluginManager.ValidatePlugin(cfg.Name, cfg); err != nil {
 				h.logger.WithError(err).WithField("plugin", cfg.Name).Error("Invalid plugin configuration")
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("Invalid plugin configuration: %v", err)})
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("invalid plugin configuration: %v", err)})
 			}
 		}
 	}
@@ -95,14 +95,14 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	if err := h.repo.UpdateGateway(c.Context(), dbGateway); err != nil {
 		h.logger.WithError(err).Error("Failed to update gateway")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update gateway"})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update gateway"})
 	}
 
 	// Convert to response type
 	apiGateway, err := h.transformer.Transform(dbGateway)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to convert gateway")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process gateway"})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to process gateway"})
 	}
 
 	response := types.Gateway{
@@ -119,7 +119,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		GatewayID: dbGateway.ID,
 	})
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to publish update gateway cache event")
+		h.logger.WithError(err).Error("failed to publish update gateway cache event")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(response)

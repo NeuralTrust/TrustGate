@@ -7,7 +7,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
-	upstream2 "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -48,7 +48,7 @@ func (s *getUpstreamHandler) Handle(c *fiber.Ctx) error {
 	// Try to get from cache first
 	upstreamKey := fmt.Sprintf(cache.UpstreamKeyPattern, gatewayID, upstreamID)
 	if upstreamJSON, err := s.cache.Get(c.Context(), upstreamKey); err == nil {
-		var entity upstream2.Upstream
+		var entity domain.Upstream
 		if err := json.Unmarshal([]byte(upstreamJSON), &entity); err == nil {
 			return c.Status(fiber.StatusOK).JSON(entity)
 		}
@@ -57,12 +57,12 @@ func (s *getUpstreamHandler) Handle(c *fiber.Ctx) error {
 	// If not in cache, get from database
 	entity, err := s.upstreamFinder.Find(c.Context(), gatewayID, upstreamID)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Upstream not found"})
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "upstream not found"})
 	}
 
 	// Cache the upstream
 	if err := s.cache.SaveUpstream(c.Context(), gatewayID, entity); err != nil {
-		s.logger.WithError(err).Error("Failed to cache upstream")
+		s.logger.WithError(err).Error("failed to cache upstream")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(entity)

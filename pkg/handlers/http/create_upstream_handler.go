@@ -40,7 +40,7 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 
 	var req types.UpstreamRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
 	now := time.Now()

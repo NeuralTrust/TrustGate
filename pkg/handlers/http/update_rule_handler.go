@@ -58,7 +58,7 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 	var req types.UpdateRuleRequest
 	if err := c.BodyParser(&req); err != nil {
 		s.logger.WithError(err).Error("Failed to bind request")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
 	// Convert UpdateRuleRequest to CreateRuleRequest for validation
@@ -137,19 +137,19 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	if !found {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Rule not found"})
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
 	}
 
 	// Save updated rules in cache
 	updatedJSON, err := json.Marshal(rules)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to marshal rules")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update rule"})
 	}
 
 	if err := s.cache.Set(c.Context(), rulesKey, string(updatedJSON), 0); err != nil {
 		s.logger.WithError(err).Error("Failed to save rules")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update rule"})
 	}
 
 	// Invalidate cache after updating the rule
@@ -160,7 +160,7 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 			GatewayID: gatewayID,
 		},
 	); err != nil {
-		s.logger.WithError(err).Error("Failed to publish cache invalidation")
+		s.logger.WithError(err).Error("failed to publish cache invalidation")
 	}
 
 	return c.Status(fiber.StatusNoContent).JSON(fiber.Map{})
