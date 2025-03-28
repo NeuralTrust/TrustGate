@@ -48,7 +48,7 @@ func (s *listServicesHandler) Handle(c *fiber.Ctx) error {
 	// Fetch services from repository
 	services, err := s.repo.ListServices(c.Context(), gatewayID, offset, limit)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to list services")
+		s.logger.WithError(err).Error("failed to list services")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 

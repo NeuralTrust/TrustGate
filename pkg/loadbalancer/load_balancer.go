@@ -189,8 +189,8 @@ func (lb *LoadBalancer) UpdateTargetHealth(target *types.UpstreamTarget, healthy
 				Failures:  int(failures),
 			}
 
-			if err := cacheHealthStatus(ctx, redisClient, key, &status); err != nil {
-				lb.logger.WithError(err).Error("Failed to cache health status")
+			if ok := cacheHealthStatus(ctx, redisClient, key, &status); ok != nil {
+				lb.logger.WithError(ok).Error("Failed to cache health status")
 			}
 		}
 	} else {
@@ -203,8 +203,8 @@ func (lb *LoadBalancer) UpdateTargetHealth(target *types.UpstreamTarget, healthy
 			Failures:  0,
 		}
 
-		if err := cacheHealthStatus(ctx, redisClient, key, &status); err != nil {
-			lb.logger.WithError(err).Error("Failed to cache health status")
+		if ok := cacheHealthStatus(ctx, redisClient, key, &status); ok != nil {
+			lb.logger.WithError(ok).Error("Failed to cache health status")
 		}
 	}
 }

@@ -49,12 +49,12 @@ func (s *getServiceHandler) Handle(c *fiber.Ctx) error {
 	// If not in cache, get from database
 	entity, err := s.repo.GetService(c.Context(), serviceID)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Service not found"})
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "service not found"})
 	}
 
 	// Cache the service
 	if err := s.cache.SaveService(c.Context(), gatewayID, entity); err != nil {
-		s.logger.WithError(err).Error("Failed to cache service")
+		s.logger.WithError(err).Error("failed to cache service")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(entity)

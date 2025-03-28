@@ -42,7 +42,7 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 	var req types.CreateGatewayRequest
 	if err := c.BodyParser(&req); err != nil {
 		h.logger.WithError(err).Error("Failed to bind request")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
 	now := time.Now()

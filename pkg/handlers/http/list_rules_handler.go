@@ -40,8 +40,8 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 	// Get rules from database
 	dbRules, err := s.repo.ListRules(c.Context(), gatewayID)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to get rules from database")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to list rules"})
+		s.logger.WithError(err).Error("failed to get rules from database")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list rules"})
 	}
 
 	// Convert to API response format
@@ -70,7 +70,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 	if err == nil {
 		rulesKey := fmt.Sprintf("rules:%s", gatewayID)
 		if err := s.cache.Set(c.Context(), rulesKey, string(rulesJSON), 0); err != nil {
-			s.logger.WithError(err).Warn("Failed to cache rules")
+			s.logger.WithError(err).Warn("failed to cache rules")
 		}
 	}
 

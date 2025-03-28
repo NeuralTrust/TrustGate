@@ -56,16 +56,16 @@ func (h *listGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	dbGateways, err := h.repo.ListGateways(c.Context(), offset, limit)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to list gateways")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to list gateways"})
+		h.logger.WithError(err).Error("failed to list gateways")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list gateways"})
 	}
 
 	var gateways []types.Gateway
 	for _, dbGateway := range dbGateways {
 		output, err := h.transformer.Transform(&dbGateway)
 		if err != nil {
-			h.logger.WithError(err).Error("Failed to convert gateway")
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process gateway configuration"})
+			h.logger.WithError(err).Error("failed to convert gateway")
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to process gateway configuration"})
 		}
 		gateways = append(gateways, *output)
 
@@ -73,7 +73,7 @@ func (h *listGatewayHandler) Handle(c *fiber.Ctx) error {
 		go func(g domain.Gateway) {
 			ctx := context.Background()
 			if err := h.updateGatewayCache.Update(ctx, &g); err != nil {
-				h.logger.WithError(err).Error("Failed to update gateway cache")
+				h.logger.WithError(err).Error("failed to update gateway cache")
 			}
 		}(dbGateway)
 	}

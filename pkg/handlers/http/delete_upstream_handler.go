@@ -1,8 +1,8 @@
 package http
 
 import (
+	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -43,7 +43,7 @@ func (s *deleteUpstreamHandler) Handle(c *fiber.Ctx) error {
 	upstreamID := c.Params("upstream_id")
 
 	if err := s.repo.DeleteUpstream(c.Context(), upstreamID); err != nil {
-		if strings.Contains(err.Error(), "being used by") {
+		if errors.Is(err, database.ErrUpstreamIsBeingUsed) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		s.logger.WithError(err).Error("Failed to delete upstream")

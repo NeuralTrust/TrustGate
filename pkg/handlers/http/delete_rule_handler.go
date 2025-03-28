@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
@@ -48,7 +49,11 @@ func (s *deleteRuleHandler) Handle(c *fiber.Ctx) error {
 	err := s.repo.DeleteRule(c.Context(), ruleID, gatewayID)
 	if err != nil {
 		if errors.Is(err, database.ErrRuleNotFound) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Rule not found"})
+			return c.Status(fiber.StatusNotFound).JSON(
+				fiber.Map{
+					"error": fmt.Sprintf("rule not found with id %s and gateway %s", ruleID, gatewayID),
+				},
+			)
 		}
 		s.logger.WithError(err).Error("failed to delete rule")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete rule"})
@@ -63,5 +68,5 @@ func (s *deleteRuleHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("failed to publish cache invalidation")
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Rule deleted successfully"})
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "rule deleted successfully"})
 }

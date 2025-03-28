@@ -192,8 +192,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 			continue
 		}
 
-		// Check if path matches
-		if strings.HasPrefix(c.Path(), rule.Path) {
+		if c.Path() == rule.Path {
 			matchingRule = &rule
 			// Store rule and service info in context for metrics
 			c.Set(middleware.RouteIDKey, rule.ID)
@@ -207,8 +206,8 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		h.logger.WithFields(logrus.Fields{
 			"path":   c.Path(),
 			"method": reqData.Method,
-		}).Debug("No matching rule found")
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "No matching rule found"})
+		}).Debug("no matching rule found")
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "no matching rule found"})
 	}
 
 	// Configure plugins for this request
@@ -252,7 +251,10 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	response, err := h.forwardRequest(reqCtx, matchingRule)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to forward request")
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "Failed to forward request"})
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
+			"error":   "failed to forward request",
+			"message": err.Error(),
+		})
 	}
 
 	// Record upstream latency if available
@@ -276,7 +278,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		// Parse the error response
 		var errorResponse map[string]interface{}
 		if err := json.Unmarshal(response.Body, &errorResponse); err != nil {
-			return c.Status(response.StatusCode).JSON(fiber.Map{"error": "Upstream service error"})
+			return c.Status(response.StatusCode).JSON(fiber.Map{"error": "upstream service error"})
 		}
 
 		// Copy all headers from response context to client response
@@ -414,7 +416,7 @@ func (h *forwardedHandler) handleUpstreamRequest(
 	if maxRetries == 0 {
 		maxRetries = 2
 	}
-
+	var reqErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		target, err := lb.NextTarget(req.Context)
 		if err != nil {
@@ -431,6 +433,7 @@ func (h *forwardedHandler) handleUpstreamRequest(
 		}).Debug("Attempting request")
 
 		response, err := h.doForwardRequest(req, rule, target)
+		reqErr = err
 		if err == nil {
 			lb.ReportSuccess(target)
 			return response, nil
@@ -438,7 +441,7 @@ func (h *forwardedHandler) handleUpstreamRequest(
 		lb.ReportFailure(target, err)
 	}
 
-	return nil, fmt.Errorf("all retry attempts failed")
+	return nil, fmt.Errorf("%v", reqErr)
 }
 
 func (h *forwardedHandler) handleEndpointRequest(
@@ -452,7 +455,7 @@ func (h *forwardedHandler) handleEndpointRequest(
 		Protocol:    serviceEntity.Protocol,
 		Path:        serviceEntity.Path,
 		Headers:     serviceEntity.Headers,
-		Credentials: types.Credentials(serviceEntity.Credentials),
+		Credentials: serviceEntity.Credentials,
 	}
 	return h.doForwardRequest(req, rule, target)
 }
@@ -552,7 +555,7 @@ func (h *forwardedHandler) doForwardRequest(
 
 	err := h.client.DoTimeout(fastHttpReq, fastHttpResp, 30*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("failed to forward request: %w", err)
+		return nil, fmt.Errorf("request failed to %s", targetURL)
 	}
 
 	respBodyPtr, ok := responseBodyPool.Get().(*[]byte)

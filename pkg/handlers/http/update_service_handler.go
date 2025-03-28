@@ -43,7 +43,7 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 
 	var req types.ServiceRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
 	entity := service.Service{
@@ -66,7 +66,7 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	if err := s.repo.UpdateService(c.Context(), &entity); err != nil {
-		s.logger.WithError(err).Error("Failed to update service")
+		s.logger.WithError(err).Error("failed to update service")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 

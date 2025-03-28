@@ -31,15 +31,15 @@ func (s *listAPIKeysHandler) Handle(c *fiber.Ctx) error {
 
 	// Verify gateway exists
 	if _, err := s.repo.GetGateway(c.Context(), gatewayID); err != nil {
-		s.logger.WithError(err).Error("Failed to get gateway")
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Gateway not found"})
+		s.logger.WithError(err).Error("failed to get gateway")
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 	}
 
 	// Get API keys from database
 	apiKeys, err := s.repo.ListAPIKeys(c.Context(), gatewayID)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to list API keys")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to list API keys"})
+		s.logger.WithError(err).Error("failed to list API keys")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list API keys"})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

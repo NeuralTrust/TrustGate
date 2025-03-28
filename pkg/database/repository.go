@@ -19,7 +19,9 @@ import (
 )
 
 var (
-	ErrRuleNotFound = fmt.Errorf("rule not found")
+	ErrRuleNotFound        = fmt.Errorf("rule not found")
+	ErrUpstreamIsBeingUsed = fmt.Errorf("upstream is being used by services")
+	ErrServiceIsBeingUsed  = fmt.Errorf("service is being used by forwarding rules")
 )
 
 // Repository handles all database operations
@@ -434,7 +436,7 @@ func (r *Repository) DeleteUpstream(ctx context.Context, id string) error {
 		return err
 	}
 	if count > 0 {
-		return fmt.Errorf("upstream is being used by %d services", count)
+		return ErrUpstreamIsBeingUsed
 	}
 
 	return r.db.WithContext(ctx).Delete(&upstream.Upstream{}, "id = ?", id).Error
@@ -484,7 +486,7 @@ func (r *Repository) DeleteService(ctx context.Context, id string) error {
 		return err
 	}
 	if count > 0 {
-		return fmt.Errorf("service is being used by %d forwarding rules", count)
+		return ErrServiceIsBeingUsed
 	}
 
 	return r.db.WithContext(ctx).Delete(&service.Service{}, "id = ?", id).Error

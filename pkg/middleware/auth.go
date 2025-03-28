@@ -65,12 +65,12 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 		key, err := m.finder.Find(ctx.Context(), gatewayID, apiKey)
 		if err != nil {
 			m.logger.WithError(err).Error("error retrieving apikey")
-			return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal server error"})
+			return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "invalid API key"})
 		}
 
 		if !key.IsValid() {
 			m.logger.Debug("Invalid API key")
-			return ctx.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid API key"})
+			return ctx.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid API key"})
 		}
 
 		// Initialize metadata map

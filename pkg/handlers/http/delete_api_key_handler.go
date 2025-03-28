@@ -50,7 +50,6 @@ func (s *deleteAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		ApiKeyID:  keyID,
 		GatewayID: gatewayID,
 	})
-
 	if err != nil {
 		s.logger.WithError(err).Error("failed to publish apiKey cache invalidation")
 	}

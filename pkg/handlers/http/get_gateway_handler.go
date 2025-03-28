@@ -60,13 +60,13 @@ func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {
 			"user_agent": c.Get("User-Agent"),
 			"referer":    c.Get("Referer"),
 		}).Error("Invalid gateway ID")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Get gateway handler: Invalid gateway ID"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "gateway_id is required"})
 	}
 
 	// Validate UUID format
 	if _, err := uuid.Parse(gatewayID); err != nil {
-		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Invalid UUID format")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Get gateway handler: Invalid gateway ID format"})
+		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("invalid gateway_id format")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id format"})
 	}
 
 	s.logger.WithField("gateway_id", gatewayID).Info("Getting gateway")
@@ -77,20 +77,20 @@ func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {
 		// If not in cache, get from database
 		dbGateway, err := s.repo.GetGateway(c.Context(), gatewayID)
 		if err != nil {
-			s.logger.WithError(err).Error("Failed to get gateway")
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Gateway not found"})
+			s.logger.WithError(err).Error("failed to get gateway")
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 		}
 
 		// Convert to API type
 		entity, err = s.transformer.Transform(dbGateway)
 		if err != nil {
-			s.logger.WithError(err).Error("Failed to convert gateway")
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process gateway configuration"})
+			s.logger.WithError(err).Error("failed to convert gateway")
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to process gateway configuration"})
 		}
 
 		// Store in cache
 		if err := s.updateGatewayCache.Update(c.Context(), dbGateway); err != nil {
-			s.logger.WithError(err).Error("Failed to cache gateway")
+			s.logger.WithError(err).Error("failed to cache gateway")
 		}
 	}
 
