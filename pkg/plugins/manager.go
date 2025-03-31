@@ -10,6 +10,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/trustgate_guardrail"
 	"github.com/sirupsen/logrus"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -107,6 +108,10 @@ func (m *Manager) initializePlugins() {
 
 	if err := m.RegisterPlugin(code_sanitation.NewCodeSanitationPlugin(m.logger)); err != nil {
 		m.logger.WithError(err).Error("Failed to register code sanitation plugin")
+	}
+
+	if err := m.RegisterPlugin(trustgate_guardrail.NewTrustGateGuardrailPlugin(m.logger, &http.Client{})); err != nil {
+		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
 	}
 }
 
