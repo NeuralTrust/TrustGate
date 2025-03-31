@@ -121,6 +121,7 @@ func NewContainer(
 			cfg.Providers.Providers,
 			pluginManager,
 			lbFactory,
+			cfg,
 		),
 		// Gateway
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(logger, gatewayRepository, updateGatewayCache),

@@ -53,6 +53,7 @@ type forwardedHandler struct {
 	loadBalancers       sync.Map
 	client              *fasthttp.Client
 	loadBalancerFactory loadbalancer.Factory
+	cfg                 *config.Config
 }
 
 func NewForwardedHandler(
@@ -64,6 +65,7 @@ func NewForwardedHandler(
 	providers map[string]config.ProviderConfig,
 	pluginManager *plugins.Manager,
 	loadBalancerFactory loadbalancer.Factory,
+	cfg *config.Config,
 ) Handler {
 
 	client := &fasthttp.Client{
@@ -89,6 +91,7 @@ func NewForwardedHandler(
 		pluginManager:       pluginManager,
 		client:              client,
 		loadBalancerFactory: loadBalancerFactory,
+		cfg:                 cfg,
 	}
 }
 
@@ -244,7 +247,9 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 			}
 			return c.Status(respCtx.StatusCode).Send(respCtx.Body)
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
+		if !h.cfg.Plugins.IgnoreErrors {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
+		}
 	}
 
 	// Forward the request
@@ -308,7 +313,9 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 			})
 		}
 
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
+		if !h.cfg.Plugins.IgnoreErrors {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
+		}
 	}
 
 	// Execute post-response plugins
@@ -337,8 +344,10 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
 		}
+		if !h.cfg.Plugins.IgnoreErrors {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
+		}
 
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
 	}
 
 	// Copy all headers from response context to client response

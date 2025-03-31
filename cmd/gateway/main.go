@@ -36,7 +36,6 @@ func main() {
 	if err != nil {
 		log.Println("no .env file found, using system environment variables")
 	}
-
 	logger := infraLogger.NewLogger(serverType)
 
 	// Load configuration
