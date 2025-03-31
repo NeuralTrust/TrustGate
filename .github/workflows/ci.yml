@@ -68,6 +68,8 @@ jobs:
           echo "AZURE_API_KEY=${{ secrets.AZURE_API_KEY }}" >> .env.functional
           echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env.functional
           echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env.functional
+          echo "NEURAL_TRUST_FIREWALL_URL=${{ secrets.NEURAL_TRUST_FIREWALL_URL }}" >> .env.functional
+          echo "NEURAL_TRUST_FIREWALL_API_KEY=${{ secrets.NEURAL_TRUST_FIREWALL_API_KEY }}" >> .env.functional
 
       - name: Debug environment file
         run: cat .env.functional
