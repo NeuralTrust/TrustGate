@@ -23,6 +23,7 @@ type Config struct {
 	Database  DatabaseConfig  `mapstructure:"database"`
 	Redis     RedisConfig     `mapstructure:"redis"`
 	Providers ProvidersConfig `mapstructure:"providers"`
+	Plugins   PluginsConfig   `mapstructure:"plugins"`
 }
 
 type ServerConfig struct {
@@ -49,6 +50,10 @@ type RedisConfig struct {
 	Port     int    `mapstructure:"port"`
 	Password string `mapstructure:"password"`
 	DB       int    `mapstructure:"db"`
+}
+
+type PluginsConfig struct {
+	IgnoreErrors bool `mapstructure:"ignore_errors"`
 }
 
 var globalConfig Config

@@ -175,18 +175,15 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 		}
 		if err != nil {
 			cancel()
-
-			status := http.StatusInternalServerError
 			var guardrailViolationError *guardrailViolationError
 			if errors.As(err, &guardrailViolationError) {
-				status = http.StatusForbidden
+				return nil, &types.PluginError{
+					StatusCode: http.StatusForbidden,
+					Message:    err.Error(),
+					Err:        err,
+				}
 			}
-
-			return nil, &types.PluginError{
-				StatusCode: status,
-				Message:    err.Error(),
-				Err:        err,
-			}
+			return nil, err
 		}
 	case <-done:
 	}
