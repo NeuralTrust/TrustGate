@@ -1,4 +1,4 @@
-package trustgate_guardrail
+package neuraltrust_guardrail
 
 import (
 	"bytes"
@@ -19,14 +19,14 @@ import (
 )
 
 const (
-	PluginName    = "trustgate_guardrail"
+	PluginName    = "neuraltrust_guardrail"
 	toxicityPath  = "/v1/moderation"
 	jailbreakPath = "/v1/firewall"
 	jailbreakType = "jailbreak"
 	toxicityType  = "toxicity"
 )
 
-type TrustGateGuardrailPlugin struct {
+type NeuralTrustGuardrailPlugin struct {
 	client httpx.Client
 	logger *logrus.Logger
 	config Config
@@ -59,32 +59,32 @@ type JailbreakParamBag struct {
 	Enabled   bool    `mapstructure:"enabled"`
 }
 
-func NewTrustGateGuardrailPlugin(
+func NewNeuralTrustGuardrailPlugin(
 	logger *logrus.Logger,
 	client httpx.Client,
 ) pluginiface.Plugin {
 	if client == nil {
 		client = &http.Client{}
 	}
-	return &TrustGateGuardrailPlugin{
+	return &NeuralTrustGuardrailPlugin{
 		client: client,
 		logger: logger,
 	}
 }
 
-func (p *TrustGateGuardrailPlugin) Name() string {
+func (p *NeuralTrustGuardrailPlugin) Name() string {
 	return PluginName
 }
 
-func (p *TrustGateGuardrailPlugin) Stages() []types.Stage {
+func (p *NeuralTrustGuardrailPlugin) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-func (p *TrustGateGuardrailPlugin) AllowedStages() []types.Stage {
+func (p *NeuralTrustGuardrailPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-func (p *TrustGateGuardrailPlugin) ValidateConfig(config types.PluginConfig) error {
+func (p *NeuralTrustGuardrailPlugin) ValidateConfig(config types.PluginConfig) error {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
 		return fmt.Errorf("failed to decode config: %w", err)
@@ -102,7 +102,7 @@ func (p *TrustGateGuardrailPlugin) ValidateConfig(config types.PluginConfig) err
 	return nil
 }
 
-func (p *TrustGateGuardrailPlugin) Execute(
+func (p *NeuralTrustGuardrailPlugin) Execute(
 	ctx context.Context,
 	cfg types.PluginConfig,
 	req *types.RequestContext,
@@ -201,7 +201,7 @@ func (p *TrustGateGuardrailPlugin) Execute(
 	}, nil
 }
 
-func (p *TrustGateGuardrailPlugin) callFirewall(
+func (p *NeuralTrustGuardrailPlugin) callFirewall(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	taggedRequest TaggedRequest,
@@ -270,16 +270,14 @@ func (p *TrustGateGuardrailPlugin) callFirewall(
 
 }
 
-func (p *TrustGateGuardrailPlugin) defineRequestBody(body []byte) ([]byte, error) {
+func (p *NeuralTrustGuardrailPlugin) defineRequestBody(body []byte) ([]byte, error) {
 	var requestBody map[string]interface{}
 	if err := json.Unmarshal(body, &requestBody); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal request body: %w", err)
+		return p.returnDefaultBody(body)
 	}
 
 	if p.config.MappingField == "" {
-		return json.Marshal(map[string]interface{}{
-			"input": string(body),
-		})
+		return p.returnDefaultBody(body)
 	}
 
 	path := strings.Split(p.config.MappingField, ".")
@@ -288,15 +286,11 @@ func (p *TrustGateGuardrailPlugin) defineRequestBody(body []byte) ([]byte, error
 	for _, key := range path {
 		m, ok := current.(map[string]interface{})
 		if !ok {
-			return json.Marshal(map[string]interface{}{
-				"input": string(body),
-			})
+			return p.returnDefaultBody(body)
 		}
 		child, exists := m[key]
 		if !exists {
-			return json.Marshal(map[string]interface{}{
-				"input": string(body),
-			})
+			return p.returnDefaultBody(body)
 		}
 		current = child
 	}
@@ -323,7 +317,13 @@ func (p *TrustGateGuardrailPlugin) defineRequestBody(body []byte) ([]byte, error
 	return result, nil
 }
 
-func (p *TrustGateGuardrailPlugin) sendError(ch chan<- error, err error) {
+func (p *NeuralTrustGuardrailPlugin) returnDefaultBody(body []byte) ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
+		"input": string(body),
+	})
+}
+
+func (p *NeuralTrustGuardrailPlugin) sendError(ch chan<- error, err error) {
 	if err == nil {
 		return
 	}

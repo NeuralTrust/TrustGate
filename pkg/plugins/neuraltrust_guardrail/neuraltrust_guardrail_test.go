@@ -1,4 +1,4 @@
-package trustgate_guardrail_test
+package neuraltrust_guardrail_test
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/mocks"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/trustgate_guardrail"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -17,7 +17,7 @@ import (
 )
 
 func TestTrustGateGuardrailPlugin_ValidateConfig(t *testing.T) {
-	plugin := &trustgate_guardrail.TrustGateGuardrailPlugin{}
+	plugin := &neuraltrust_guardrail.NeuralTrustGuardrailPlugin{}
 
 	validCfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -37,7 +37,7 @@ func TestTrustGateGuardrailPlugin_ValidateConfig(t *testing.T) {
 
 func TestTrustGateGuardrailPlugin_Execute_JailbreakSafe(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
-	plugin := trustgate_guardrail.NewTrustGateGuardrailPlugin(logrus.New(), mockClient)
+	plugin := neuraltrust_guardrail.NewNeuralTrustGuardrailPlugin(logrus.New(), mockClient)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -45,10 +45,10 @@ func TestTrustGateGuardrailPlugin_Execute_JailbreakSafe(t *testing.T) {
 		},
 	}
 
-	jbResp := trustgate_guardrail.FirewallResponse{
+	jbResp := neuraltrust_guardrail.FirewallResponse{
 		Flagged: false,
-		Scores:  trustgate_guardrail.FirewallScores{MaliciousPrompt: 0.1},
-		Prompt:  trustgate_guardrail.FirewallPrompt{MaliciousPrompt: false},
+		Scores:  neuraltrust_guardrail.FirewallScores{MaliciousPrompt: 0.1},
+		Prompt:  neuraltrust_guardrail.FirewallPrompt{MaliciousPrompt: false},
 	}
 	respBytes, err := json.Marshal(jbResp)
 	assert.NoError(t, err)

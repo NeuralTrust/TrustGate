@@ -1,4 +1,4 @@
-package trustgate_guardrail
+package neuraltrust_guardrail
 
 type guardrailViolationError struct {
 	message string
