@@ -240,10 +240,12 @@ func (p *TrustGateGuardrailPlugin) callFirewall(
 			return
 		}
 		if parsed.Scores.MaliciousPrompt > p.config.JailbreakParamBag.Threshold {
-			p.sendError(firewallErrors, fmt.Errorf("%s: score %.2f exceeded threshold %.2f",
+			p.sendError(firewallErrors, NewGuardrailViolation(fmt.Sprintf(
+				"%s: score %.2f exceeded threshold %.2f",
 				taggedRequest.Type,
 				parsed.Scores.MaliciousPrompt,
-				p.config.JailbreakParamBag.Threshold))
+				p.config.JailbreakParamBag.Threshold,
+			)))
 			return
 		}
 	case toxicityType:

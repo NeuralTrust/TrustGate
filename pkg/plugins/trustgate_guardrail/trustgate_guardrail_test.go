@@ -50,7 +50,8 @@ func TestTrustGateGuardrailPlugin_Execute_JailbreakSafe(t *testing.T) {
 		Scores:  trustgate_guardrail.FirewallScores{MaliciousPrompt: 0.1},
 		Prompt:  trustgate_guardrail.FirewallPrompt{MaliciousPrompt: false},
 	}
-	respBytes, _ := json.Marshal(jbResp)
+	respBytes, err := json.Marshal(jbResp)
+	assert.NoError(t, err)
 	mockResp := &http.Response{
 		StatusCode: http.StatusOK,
 		Body:       io.NopCloser(bytes.NewReader(respBytes)),
