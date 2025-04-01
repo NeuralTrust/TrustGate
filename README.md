@@ -15,7 +15,7 @@
 
 
 [Documentation](https://docs.neuraltrust.ai) |
-[Quick Start](https://docs.neuraltrust.ai/category/step-by-step-guide) |
+[Quick Start](https://docs.neuraltrust.ai/trustgate/getting-started/hello-gateway) |
 [Community](https://join.slack.com/t/neuraltrustcommunity/shared_invite/zt-2xl47cag6-_HFNpltIULnA3wh4R6AqBg)
 
 </div>
@@ -121,52 +121,7 @@ scrape_configs:
       - targets: ['localhost:9090']
 ```
 
-For detailed metrics documentation, dashboards, and advanced queries, see our [Monitoring Guide](https://docs.neuraltrust.ai/monitoring).
-
-## 🔌 Plugins
-
-Extend functionality with plugins:
-
-```go
-type Plugin interface {
-    Name() string
-    Stages() []types.Stage
-    AllowedStages() []types.Stage
-    Execute(ctx *Context) error
-}
-```
-
-### Current Plugins:
-**Rate limiting**
-- Rate Limiter
-- Token Rate Limiter
-
-**Prompt moderation**
-- Data Masking (Pre-defined entities, custom keywords, regex)
-- Prompt Moderation (keywords, regex)
-
-**Toxicity Detection**
-- Open AI Moderation API
-- Azure Content Safety API
-
-**Others**
-- External API Call
-
-### 🔜 Work in progress (Coming Soon)
-
-#### Security
-- **Jailbreak Protection**
-  - Azure Prompt Guard
-  - AWS Prompt Guard
-  - GCP Prompt Guard
-
-- **Prompt Moderation**
-  - Topic detection (accepted/denied)
-
-- **Network Security**
-  - CORS protection
-  - SQL Injection prevention
-  - Cross-site injection protection
+For detailed metrics documentation, dashboards, and advanced queries, see our [Monitoring Guide](https://docs.neuraltrust.ai/trustgate/observability/metrics).
 
 ## 🤝 Contributing
 
