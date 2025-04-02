@@ -148,7 +148,7 @@ hey -z ${DURATION} \
     -c ${CONCURRENT_USERS} \
     -disable-keepalive \
     -cpus 2 \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Host: ${SUBDOMAIN}.example.com" \
     -host "${SUBDOMAIN}.example.com" \
     "${PROXY_URL}/test"
