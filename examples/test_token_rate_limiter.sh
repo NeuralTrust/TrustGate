@@ -176,7 +176,7 @@ make_chat_request() {
     local response=$(curl -v -s -i -X POST "${PROXY_URL}/v1/chat/completions" \
         -H "Content-Type: application/json" \
         -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-        -H "X-Api-Key: $API_KEY" \
+        -H "X-TG-API-Key: $API_KEY" \
         -d '{
             "model": "gpt-4o-mini",
             "stream": true,

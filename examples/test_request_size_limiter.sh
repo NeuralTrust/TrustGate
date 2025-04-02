@@ -138,7 +138,7 @@ echo -e "\n${GREEN}6. Testing request size limiter...${NC}"
 echo -e "\n${GREEN}6.1 Testing with small request (should be allowed)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "message": "This is a small request with few characters."
@@ -163,7 +163,7 @@ LARGE_BINARY=$(dd if=/dev/urandom bs=1024 count=12 2>/dev/null | base64)
 
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "binary_data": "'"$LARGE_BINARY"'"
@@ -188,7 +188,7 @@ LARGE_TEXT=$(printf '%.0s-' {1..1100})
 
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "message": "'"$LARGE_TEXT"'"
@@ -209,7 +209,7 @@ fi
 echo -e "\n${GREEN}6.4 Testing with explicit Content-Length header...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -H "Content-Length: 30" \
     -d '{
@@ -230,7 +230,7 @@ fi
 echo -e "\n${GREEN}6.5 Testing with default size unit (megabytes)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "message": "Testing default size unit"

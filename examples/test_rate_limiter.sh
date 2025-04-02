@@ -164,7 +164,7 @@ for i in {1..10}; do
     
     RESPONSE=$(curl -s -w "\n%{http_code}\n%{time_total}" "$PROXY_URL/path2" \
         -H "Host: $SUBDOMAIN.$BASE_DOMAIN" \
-        -H "X-API-Key: $API_KEY")
+        -H "X-TG-API-Key: $API_KEY")
     
     HTTP_CODE=$(echo "$RESPONSE" | tail -n2 | head -n1)
     BODY=$(echo "$RESPONSE" | head -n1)

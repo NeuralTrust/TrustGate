@@ -155,7 +155,7 @@ for i in $(seq 1 $total_requests); do
     RESPONSE_HEADERS=$(curl -s -D - -X POST "$PROXY_URL/v1" \
         -H "Content-Type: application/json" \
         -H "Host: $SUBDOMAIN.$BASE_DOMAIN" \
-        -H "Authorization: Bearer $API_KEY" \
+        -H "X-TG-API-Key: $API_KEY" \
         -d '{
             "model": "'"$MODEL"'",
             "messages": [{"role": "user", "content": "Hello"}],

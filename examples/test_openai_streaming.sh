@@ -130,7 +130,7 @@ echo "Using model: $MODEL"
 curl -N -X POST "$PROXY_URL/v1" \
     -H "Content-Type: application/json" \
     -H "Host: $STREAM_SUBDOMAIN.$BASE_DOMAIN" \
-    -H "Authorization: Bearer $API_KEY" \
+    -H "X-TG-API-Key: $API_KEY" \
     -d '{
         "model": "'"$MODEL"'",
         "stream": true,

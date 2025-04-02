@@ -30,7 +30,6 @@ var (
 )
 
 type Config struct {
-	FirewallCheck             bool   `mapstructure:"firewall_check"`
 	MaxFailures               int    `mapstructure:"max_failures"`
 	BlockDuration             int    `mapstructure:"block_duration"`
 	RateLimitMode             Option `mapstructure:"rate_limit_mode"`
@@ -153,17 +152,16 @@ func (p *ContextualSecurityPlugin) Execute(
 	}
 
 	var similarMaliciousCount, blockedCount int
-	if cfg.FirewallCheck {
-		similarMaliciousCount, err = p.fingerPrintManager.CountMaliciousSimilarFingerprints(ctx, similar, 0.5)
-		if err != nil {
-			p.logger.WithError(err).Error("failed to count malicious fingerprints")
-			return nil, fmt.Errorf("failed to count malicious fingerprints: %w", err)
-		}
-		blockedCount, err = p.fingerPrintManager.CountBlockedSimilarFingerprints(ctx, similar)
-		if err != nil {
-			p.logger.WithError(err).Error("failed to count blocked fingerprints")
-			return nil, fmt.Errorf("failed to count blocked fingerprints: %w", err)
-		}
+
+	similarMaliciousCount, err = p.fingerPrintManager.CountMaliciousSimilarFingerprints(ctx, similar, 0.5)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to count malicious fingerprints")
+		return nil, fmt.Errorf("failed to count malicious fingerprints: %w", err)
+	}
+	blockedCount, err = p.fingerPrintManager.CountBlockedSimilarFingerprints(ctx, similar)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to count blocked fingerprints")
+		return nil, fmt.Errorf("failed to count blocked fingerprints: %w", err)
 	}
 
 	shouldAct := maliciousCount >= cfg.MaxFailures ||
@@ -176,6 +174,12 @@ func (p *ContextualSecurityPlugin) Execute(
 			Message:    "all checks passed",
 		}, nil
 	}
+
+	p.logger.WithFields(
+		logrus.Fields{
+			"similar": similar,
+			"current": dto,
+		}).Debug("similar fingerprints found")
 
 	p.logger.Debug(fmt.Sprintf(
 		"malicious fingerprint detected, malicious: %v  - similar: %v - similarBlocked: %v",

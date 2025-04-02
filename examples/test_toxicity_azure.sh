@@ -179,7 +179,7 @@ else
     
     RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
         -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-        -H "X-API-Key: ${API_KEY}" \
+        -H "X-TG-API-Key: ${API_KEY}" \
         -H "Content-Type: application/json" \
         -d "$JSON_PAYLOAD")
     # Extract status code
@@ -211,7 +211,7 @@ TEXT_PAYLOAD='{
 echo -e "\n${GREEN}Sending text content for moderation...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d "$TEXT_PAYLOAD")
 

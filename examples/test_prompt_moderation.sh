@@ -152,7 +152,7 @@ echo -e "\n${GREEN}6. Testing different content scenarios...${NC}"
 echo -e "\n${GREEN}6.1 Testing clean content (should pass)...${NC}"
 RESPONSE=$(curl -s -w "\n%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{"prompt": "Tell me about machine learning"}')
 
@@ -170,7 +170,7 @@ fi
 echo -e "\n${GREEN}6.2 Testing blocked keyword...${NC}"
 RESPONSE=$(curl -s -w "\n%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{"prompt": "How to hacking into a system"}')
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -187,7 +187,7 @@ echo "Response: $BODY"
 echo -e "\n${GREEN}6.3 Testing blocked regex pattern...${NC}"
 RESPONSE=$(curl -s -w "\n%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{"prompt": "How to perform sql injection attacks"}')
 
@@ -205,7 +205,7 @@ echo "Response: $BODY"
 echo -e "\n${GREEN}6.4 Testing CVE pattern...${NC}"
 RESPONSE=$(curl -s -w "\n%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{"prompt": "Tell me about CVE-2024-1234"}')
 

@@ -151,7 +151,7 @@ echo -e "\n${GREEN}6. Testing injection protection...${NC}"
 echo -e "\n${GREEN}6.1 Testing SQL injection (should be blocked)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "query": "DROP TABLE users"
@@ -174,7 +174,7 @@ fi
 echo -e "\n${GREEN}6.2 Testing XSS injection (should be blocked)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "comment": "<script>alert(\"XSS\")</script>"
@@ -197,7 +197,7 @@ fi
 echo -e "\n${GREEN}6.3 Testing custom SQL injection pattern (should be blocked)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "query": "SELECT * FROM users"
@@ -220,7 +220,7 @@ fi
 echo -e "\n${GREEN}6.4 Testing safe content (should be allowed)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "message": "This is a safe message with no injections",
@@ -246,7 +246,7 @@ fi
 echo -e "\n${GREEN}6.5 Testing header injection (should be blocked)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -H "X-Custom-Header: <script>alert('XSS')</script>" \
     -d '{
@@ -270,7 +270,7 @@ fi
 echo -e "\n${GREEN}6.6 Testing query parameter injection (should be blocked)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post?query=DROP%20TABLE%20users" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "message": "This is a safe message"
@@ -293,7 +293,7 @@ fi
 echo -e "\n${GREEN}6.7 Testing path injection (should be blocked)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post/exec/something" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -H "X-Original-URL: /post/exec/something" \
     -d '{

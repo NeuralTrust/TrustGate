@@ -1,6 +1,8 @@
 package types
 
 import (
+	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -58,7 +60,6 @@ type UpstreamTarget struct {
 	Health       *HealthStatus     `json:"health,omitempty"`
 }
 
-// Add validation/initialization method
 func (t *UpstreamTarget) Initialize(upstreamID string, index int) {
 	if t.ID == "" {
 		t.ID = fmt.Sprintf("%s-%s-%d", upstreamID, t.Provider, index)
@@ -91,4 +92,16 @@ type Credentials struct {
 
 	// General settings
 	AllowOverride bool `json:"allow_override,omitempty"`
+}
+
+func (c *Credentials) Scan(value interface{}) error {
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("failed to scan Credentials: type assertion to []byte failed")
+	}
+	return json.Unmarshal(bytes, c)
+}
+
+func (c Credentials) Value() (driver.Value, error) {
+	return json.Marshal(c)
 }

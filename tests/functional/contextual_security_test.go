@@ -49,7 +49,6 @@ func TestContextualSecurityPlugin(t *testing.T) {
 				"stage":    "pre_request",
 				"parallel": false,
 				"settings": map[string]interface{}{
-					"firewall_check":              true,
 					"max_failures":                5,
 					"block_duration":              600,
 					"rate_limit_mode":             "block",
@@ -277,6 +276,24 @@ func TestContextualSecurityPlugin(t *testing.T) {
 			},
 			expectCode: http.StatusForbidden,
 		},
+		{
+			name:  "IP param changed - Same API KEY - Ok",
+			input: "ok",
+			headers: map[string]string{
+				"X-Forwarded-For": "45.34.89.1",
+				"User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.",
+			},
+			expectCode: http.StatusOK,
+		},
+		{
+			name:  "All params changed - OK",
+			input: "ok",
+			headers: map[string]string{
+				"X-Forwarded-For": "45.34.89.1",
+				"User-Agent":      "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
+			},
+			expectCode: http.StatusOK,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -286,7 +303,7 @@ func TestContextualSecurityPlugin(t *testing.T) {
 			assert.NoError(t, err)
 			req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
 			req.Header.Set("Host", fmt.Sprintf("%s.%s", subdomain, BaseDomain))
-			req.Header.Set("Authorization", "Bearer "+apiKey)
+			req.Header.Set("X-TG-API-Key", apiKey)
 			req.Header.Set("Content-Type", "text/plain")
 
 			for key, value := range tc.headers {

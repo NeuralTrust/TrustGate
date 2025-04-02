@@ -12,6 +12,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const trustgateAuthHeader = "X-TG-API-Key"
+
 type authMiddleware struct {
 	skipAuthCheck bool
 	logger        *logrus.Logger
@@ -41,14 +43,7 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 
 		// Extract API key from X-Api-Key header first, then fallback to Authorization header
 		m.logger.WithField("headers", ctx.GetReqHeaders()).Debug("Extracting API key from headers")
-		apiKey := ctx.Get("X-Api-Key")
-		if apiKey == "" {
-			authHeader := ctx.Get("Authorization")
-			if strings.HasPrefix(authHeader, "Bearer ") {
-				apiKey = strings.TrimPrefix(authHeader, "Bearer ")
-			}
-		}
-
+		apiKey := ctx.Get(trustgateAuthHeader)
 		if apiKey == "" {
 			m.logger.Debug("No API key provided")
 			return ctx.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "API key required"})
