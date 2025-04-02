@@ -16,4 +16,6 @@ type Plugin interface {
 	AllowedStages() []types.Stage
 	Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error)
 	ValidateConfig(config types.PluginConfig) error
+	// RequiredPlugins returns the names of other plugins required by this one.
+	RequiredPlugins() []string
 }

@@ -115,7 +115,7 @@ sleep 2
 echo -e "\n${GREEN}6. Testing with valid API key...${NC}"
 VALID_RESPONSE=$(curl -s -w "\n%{http_code}" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "Authorization: Bearer ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     "${PROXY_URL}/test/get")
 
 VALID_STATUS=$(echo "$VALID_RESPONSE" | tail -n1)
@@ -125,7 +125,7 @@ echo -e "Valid key status code: ${VALID_STATUS}"
 echo -e "\n${GREEN}7. Testing with invalid API key...${NC}"
 INVALID_RESPONSE=$(curl -s -w "\n%{http_code}" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "Authorization: Bearer invalid_key" \
+    -H "X-TG-API-Key: Bearer invalid_key" \
     "${PROXY_URL}/test/get")
 
 INVALID_STATUS=$(echo "$INVALID_RESPONSE" | tail -n1)

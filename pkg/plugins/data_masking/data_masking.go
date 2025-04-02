@@ -365,6 +365,11 @@ func (p *DataMaskingPlugin) Name() string {
 	return PluginName
 }
 
+func (p *DataMaskingPlugin) RequiredPlugins() []string {
+	var requiredPlugins []string
+	return requiredPlugins
+}
+
 func (p *DataMaskingPlugin) Stages() []types.Stage {
 	return []types.Stage{}
 }

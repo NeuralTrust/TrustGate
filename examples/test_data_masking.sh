@@ -266,7 +266,7 @@ echo -e "\n${GREEN}6. Testing data masking...${NC}"
 echo -e "\n${GREEN}6.1 Testing all masking patterns...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "credit_card": "4111-2222-3333-4444",
@@ -335,7 +335,7 @@ fi
 echo -e "\n${GREEN}6.2 Testing fuzzy matching...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{
         "message": "my sekret_key and secret-key should be masked",

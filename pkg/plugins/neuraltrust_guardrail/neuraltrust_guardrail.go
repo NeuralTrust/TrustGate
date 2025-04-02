@@ -10,7 +10,10 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -27,9 +30,10 @@ const (
 )
 
 type NeuralTrustGuardrailPlugin struct {
-	client httpx.Client
-	logger *logrus.Logger
-	config Config
+	client             httpx.Client
+	fingerPrintManager fingerprint.Manager
+	logger             *logrus.Logger
+	config             Config
 }
 
 type TaggedRequest struct {
@@ -42,6 +46,7 @@ type Config struct {
 	ToxicityParamBag  *ToxicityParamBag  `mapstructure:"toxicity"`
 	JailbreakParamBag *JailbreakParamBag `mapstructure:"jailbreak"`
 	MappingField      string             `mapstructure:"mapping_field"`
+	RetentionPeriod   int                `mapstructure:"retention_period"`
 }
 
 type Credentials struct {
@@ -62,18 +67,25 @@ type JailbreakParamBag struct {
 func NewNeuralTrustGuardrailPlugin(
 	logger *logrus.Logger,
 	client httpx.Client,
+	fingerPrintManager fingerprint.Manager,
 ) pluginiface.Plugin {
 	if client == nil {
 		client = &http.Client{}
 	}
 	return &NeuralTrustGuardrailPlugin{
-		client: client,
-		logger: logger,
+		client:             client,
+		logger:             logger,
+		fingerPrintManager: fingerPrintManager,
 	}
 }
 
 func (p *NeuralTrustGuardrailPlugin) Name() string {
 	return PluginName
+}
+
+func (p *NeuralTrustGuardrailPlugin) RequiredPlugins() []string {
+	var requiredPlugins []string
+	return requiredPlugins
 }
 
 func (p *NeuralTrustGuardrailPlugin) Stages() []types.Stage {
@@ -98,6 +110,9 @@ func (p *NeuralTrustGuardrailPlugin) ValidateConfig(config types.PluginConfig) e
 		if cfg.JailbreakParamBag.Threshold > 1 || cfg.JailbreakParamBag.Threshold < 0 {
 			return fmt.Errorf("jailbreak threshold must be between 0 and 1")
 		}
+	}
+	if cfg.JailbreakParamBag == nil && cfg.ToxicityParamBag == nil {
+		return fmt.Errorf("at least one of toxicity or jailbreak must be enabled")
 	}
 	return nil
 }
@@ -174,6 +189,7 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 			break
 		}
 		if err != nil {
+			p.notifyGuardrailViolation(ctx)
 			cancel()
 			var guardrailViolationError *guardrailViolationError
 			if errors.As(err, &guardrailViolationError) {
@@ -196,6 +212,29 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 		},
 		Body: nil,
 	}, nil
+}
+func (p *NeuralTrustGuardrailPlugin) notifyGuardrailViolation(ctx context.Context) {
+	fp, ok := ctx.Value(common.FingerprintIdContextKey).(string)
+	if !ok {
+		return
+	}
+	storedFp, err := p.fingerPrintManager.GetFingerprint(ctx, fp)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to get fingerprint (neuraltrust_guardrail)")
+		return
+	}
+	if storedFp != nil {
+		ttl := fingerprint.DefaultExpiration
+		if p.config.RetentionPeriod == 0 {
+			p.config.RetentionPeriod = 60
+			ttl = time.Duration(p.config.RetentionPeriod) * time.Second
+		}
+		err = p.fingerPrintManager.IncrementMaliciousCount(ctx, fp, ttl)
+		if err != nil {
+			p.logger.WithError(err).Error("failed to increment malicious count")
+			return
+		}
+	}
 }
 
 func (p *NeuralTrustGuardrailPlugin) callFirewall(

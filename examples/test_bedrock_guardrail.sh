@@ -174,7 +174,7 @@ echo -e "\n${GREEN}6. Testing content moderation...${NC}"
 echo -e "\n${GREEN}Testing safe content...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: text/plain" \
     -d "The latest deployment includes performance improvements and bug fixes.")
 
@@ -192,7 +192,7 @@ fi
 echo -e "\n${GREEN}Testing content policy violation...${NC}"
 RESPONSE=$(curl -s -w "\nSTATUS_CODE:%{http_code}" "$PROXY_URL/post" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "X-API-Key: ${API_KEY}" \
+    -H "X-TG-API-Key: ${API_KEY}" \
     -H "Content-Type: text/plain" \
     -d "I dont like obama")
 

@@ -92,7 +92,7 @@ func TestProviderLoadBalancer(t *testing.T) {
 
 		req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
 		req.Header.Set("Host", fmt.Sprintf("%s.%s", subdomain, BaseDomain))
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("X-TG-API-Key", apiKey)
 		req.Header.Set("Content-Type", "application/json")
 
 		client := &http.Client{}

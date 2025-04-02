@@ -51,6 +51,11 @@ func (v *ExternalApiPlugin) Name() string {
 	return PluginName
 }
 
+func (v *ExternalApiPlugin) RequiredPlugins() []string {
+	var requiredPlugins []string
+	return requiredPlugins
+}
+
 func (v *ExternalApiPlugin) Stages() []types.Stage {
 	return []types.Stage{}
 }

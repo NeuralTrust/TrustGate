@@ -100,6 +100,11 @@ func (p *ToxicityAzurePlugin) Name() string {
 	return PluginName
 }
 
+func (p *ToxicityAzurePlugin) RequiredPlugins() []string {
+	var requiredPlugins []string
+	return requiredPlugins
+}
+
 func (p *ToxicityAzurePlugin) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }

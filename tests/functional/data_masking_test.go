@@ -111,7 +111,7 @@ func TestDataMasking(t *testing.T) {
 
 			req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
 			req.Header.Set("Host", fmt.Sprintf("%s.%s", subdomain, BaseDomain))
-			req.Header.Set("X-API-Key", apiKey)
+			req.Header.Set("X-TG-API-Key", apiKey)
 			req.Header.Set("Content-Type", "application/json")
 
 			client := &http.Client{}
@@ -220,7 +220,7 @@ func TestDataMaskingApplyAll(t *testing.T) {
 
 			req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
 			req.Header.Set("Host", fmt.Sprintf("%s.%s", subdomain, BaseDomain))
-			req.Header.Set("X-API-Key", apiKey)
+			req.Header.Set("X-TG-API-Key", apiKey)
 			req.Header.Set("Content-Type", "application/json")
 
 			client := &http.Client{}

@@ -2,8 +2,11 @@ package types
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 )
+
+var ErrRequiredPluginNotFound = fmt.Errorf("plugin is required")
 
 // Stage represents when a plugin should be executed
 type Stage string
@@ -72,6 +75,7 @@ type RequestContext struct {
 	Body      []byte
 	Metadata  map[string]interface{}
 	Stage     Stage // Current execution stage
+	IP        string
 }
 
 // ResponseContext represents the context for a response

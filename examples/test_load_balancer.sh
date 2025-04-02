@@ -370,7 +370,7 @@ test_round_robin() {
     for i in $(seq 1 $total_requests); do
         response=$(curl -s \
             -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-            -H "Authorization: Bearer ${API_KEY}" \
+            -H "X-TG-API-Key: ${API_KEY}" \
             "$PROXY_URL/round-robin")
         
         server=$(echo "$response" | jq -r '.server')
@@ -429,7 +429,7 @@ test_weighted() {
     echo "Performing warmup requests..."
     for i in $(seq 1 20); do
         curl -s -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-            -H "Authorization: Bearer $API_KEY" \
+            -H "X-TG-API-Key: $API_KEY" \
             "$PROXY_URL/weighted" > /dev/null
     done
     echo "Warmup complete"
@@ -437,7 +437,7 @@ test_weighted() {
     
     for i in $(seq 1 $total_requests); do
         response=$(curl -s -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-        -H "Authorization: Bearer $API_KEY" \
+        -H "X-TG-API-Key: $API_KEY" \
         "$PROXY_URL/weighted")
         server=$(echo "$response" | jq -r '.server')
         if [ "$server" != "null" ] && [ ! -z "$server" ]; then

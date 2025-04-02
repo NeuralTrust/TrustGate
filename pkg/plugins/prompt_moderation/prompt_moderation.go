@@ -130,6 +130,11 @@ func (p *PromptModerationPlugin) Name() string {
 	return PluginName
 }
 
+func (p *PromptModerationPlugin) RequiredPlugins() []string {
+	var requiredPlugins []string
+	return requiredPlugins
+}
+
 func (p *PromptModerationPlugin) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }

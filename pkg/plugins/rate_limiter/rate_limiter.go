@@ -69,6 +69,11 @@ func (r *RateLimiterPlugin) Name() string {
 	return PluginName
 }
 
+func (r *RateLimiterPlugin) RequiredPlugins() []string {
+	var requiredPlugins []string
+	return requiredPlugins
+}
+
 func (r *RateLimiterPlugin) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }

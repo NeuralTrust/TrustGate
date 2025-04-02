@@ -100,7 +100,7 @@ func TestOpenAIToxicityDetection(t *testing.T) {
 			assert.NoError(t, err)
 			req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
 			req.Header.Set("Host", fmt.Sprintf("%s.%s", subdomain, BaseDomain))
-			req.Header.Set("X-API-Key", apiKey)
+			req.Header.Set("X-TG-API-Key", apiKey)
 			req.Header.Set("Content-Type", "application/json")
 
 			client := &http.Client{}

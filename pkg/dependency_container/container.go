@@ -20,6 +20,7 @@ import (
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
@@ -28,17 +29,19 @@ import (
 )
 
 type Container struct {
-	Cache             *cache.Cache
-	BedrockClient     bedrock.Client
-	PluginManager     *plugins.Manager
-	HandlerTransport  handlers.HandlerTransport
-	RedisListener     infraCache.EventListener
-	Repository        *database.Repository
-	AuthMiddleware    middleware.Middleware
-	GatewayMiddleware middleware.Middleware
-	MetricsMiddleware middleware.Middleware
-	PluginMiddleware  middleware.Middleware
-	ApiKeyRepository  domainApikey.Repository
+	Cache                 *cache.Cache
+	BedrockClient         bedrock.Client
+	PluginManager         *plugins.Manager
+	HandlerTransport      handlers.HandlerTransport
+	RedisListener         infraCache.EventListener
+	Repository            *database.Repository
+	AuthMiddleware        middleware.Middleware
+	GatewayMiddleware     middleware.Middleware
+	MetricsMiddleware     middleware.Middleware
+	PluginMiddleware      middleware.Middleware
+	FingerPrintMiddleware middleware.Middleware
+	ApiKeyRepository      domainApikey.Repository
+	FingerprintManager    fingerprint.Manager
 }
 
 func NewContainer(
@@ -67,7 +70,8 @@ func NewContainer(
 		return nil, fmt.Errorf("failed to initialize bedrock client: %v", err)
 	}
 
-	pluginManager := plugins.NewManager(cfg, cacheInstance, logger, bedrockClient)
+	fingerprintManager := fingerprint.NewFingerPrintManager(cacheInstance)
+	pluginManager := plugins.NewManager(cfg, cacheInstance, logger, bedrockClient, fingerprintManager)
 
 	// repository
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
@@ -85,6 +89,7 @@ func NewContainer(
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
 	validateRule := rule.NewValidateRule(validatePlugin)
 	gatewayDataFinder := gateway.NewDataFinder(repo, cacheInstance, logger)
+	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager)
 
 	// redis publisher
 	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
@@ -124,7 +129,7 @@ func NewContainer(
 			cfg,
 		),
 		// Gateway
-		CreateGatewayHandler: handlers.NewCreateGatewayHandler(logger, gatewayRepository, updateGatewayCache),
+		CreateGatewayHandler: handlers.NewCreateGatewayHandler(logger, gatewayRepository, updateGatewayCache, pluginChainValidator),
 		ListGatewayHandler:   handlers.NewListGatewayHandler(logger, repo, updateGatewayCache),
 		GetGatewayHandler:    handlers.NewGetGatewayHandler(logger, repo, getGatewayCache, updateGatewayCache),
 		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, repo, pluginManager, redisPublisher),
@@ -154,17 +159,19 @@ func NewContainer(
 	}
 
 	container := &Container{
-		Cache:             cacheInstance,
-		RedisListener:     redisListener,
-		HandlerTransport:  handlerTransport,
-		Repository:        repo,
-		AuthMiddleware:    middleware.NewAuthMiddleware(logger, apiKeyFinder, false),
-		GatewayMiddleware: middleware.NewGatewayMiddleware(logger, cacheInstance, repo, gatewayDataFinder, cfg.Server.BaseDomain),
-		MetricsMiddleware: middleware.NewMetricsMiddleware(logger),
-		PluginMiddleware:  middleware.NewPluginChainMiddleware(pluginManager, logger),
-		ApiKeyRepository:  apiKeyRepository,
-		PluginManager:     pluginManager,
-		BedrockClient:     bedrockClient,
+		Cache:                 cacheInstance,
+		RedisListener:         redisListener,
+		HandlerTransport:      handlerTransport,
+		Repository:            repo,
+		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, false),
+		GatewayMiddleware:     middleware.NewGatewayMiddleware(logger, cacheInstance, repo, gatewayDataFinder, cfg.Server.BaseDomain),
+		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger),
+		PluginMiddleware:      middleware.NewPluginChainMiddleware(pluginManager, logger),
+		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintManager),
+		ApiKeyRepository:      apiKeyRepository,
+		PluginManager:         pluginManager,
+		BedrockClient:         bedrockClient,
+		FingerprintManager:    fingerprintManager,
 	}
 
 	return container, nil

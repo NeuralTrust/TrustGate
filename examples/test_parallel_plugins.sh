@@ -202,7 +202,7 @@ echo -e "${GREEN}4. Testing malicious prompt requests...${NC}"
 for i in {1..1}; do
     response=$(curl -s -w "\n%{http_code}" \
         -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-        -H "Authorization: Bearer $API_KEY" \
+        -H "X-TG-API-Key: $API_KEY" \
         -H "Content-Type: application/json" \
         -d "{\"input\": \"$MALICIOUS_PROMPT\"}" \
         "$PROXY_URL/test")
@@ -220,7 +220,7 @@ SAFE_PROMPT="Hello, how are you?"
 echo -e "${GREEN}5. Testing safe prompt requests...${NC}"
 response=$(curl -s -w "\nSTATUS_CODE:%{http_code}" \
     -H "Host: ${SUBDOMAIN}.${BASE_DOMAIN}" \
-    -H "Authorization: Bearer $API_KEY" \
+    -H "X-TG-API-Key: $API_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"input\": \"$SAFE_PROMPT\"}" \
     "$PROXY_URL/test")

@@ -75,6 +75,11 @@ func (p *BedrockGuardrailPlugin) Name() string {
 	return PluginName
 }
 
+func (p *BedrockGuardrailPlugin) RequiredPlugins() []string {
+	var requiredPlugins []string
+	return requiredPlugins
+}
+
 func (p *BedrockGuardrailPlugin) Stages() []plugintypes.Stage {
 	return []plugintypes.Stage{plugintypes.PreRequest}
 }

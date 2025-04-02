@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
@@ -11,20 +12,23 @@ import (
 )
 
 type createGatewayHandler struct {
-	logger             *logrus.Logger
-	repo               domain.Repository
-	updateGatewayCache gateway.UpdateGatewayCache
+	logger               *logrus.Logger
+	repo                 domain.Repository
+	updateGatewayCache   gateway.UpdateGatewayCache
+	pluginChainValidator plugin.ValidatePluginChain
 }
 
 func NewCreateGatewayHandler(
 	logger *logrus.Logger,
 	repo domain.Repository,
 	updateGatewayCache gateway.UpdateGatewayCache,
+	pluginChainValidator plugin.ValidatePluginChain,
 ) Handler {
 	return &createGatewayHandler{
-		logger:             logger,
-		repo:               repo,
-		updateGatewayCache: updateGatewayCache,
+		logger:               logger,
+		repo:                 repo,
+		updateGatewayCache:   updateGatewayCache,
+		pluginChainValidator: pluginChainValidator,
 	}
 }
 
@@ -57,6 +61,12 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		RequiredPlugins: req.RequiredPlugins,
 		CreatedAt:       req.CreatedAt,
 		UpdatedAt:       req.UpdatedAt,
+	}
+
+	err := h.pluginChainValidator.Validate(entity.RequiredPlugins)
+	if err != nil {
+		h.logger.WithError(err).Error("failed to validate plugin chain")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	if err := h.repo.Save(c.Context(), &entity); err != nil {
