@@ -107,9 +107,14 @@ func (p *manager) CountMaliciousSimilarFingerprints(
 			continue
 		}
 
-		badCount, _ := bad.Int64()
-		seenCount, _ := seen.Int64()
-
+		badCount, err := bad.Int64()
+		if err != nil {
+			continue
+		}
+		seenCount, err := seen.Int64()
+		if err != nil {
+			continue
+		}
 		if seenCount > 0 && float64(badCount)/float64(seenCount) >= blockThreshold {
 			malicious++
 		}

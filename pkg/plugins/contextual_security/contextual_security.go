@@ -44,7 +44,6 @@ type Option string
 type ContextualSecurityPlugin struct {
 	fingerPrintManager fingerprint.Manager
 	logger             *logrus.Logger
-	config             *Config
 }
 
 func NewContextualSecurityPlugin(
