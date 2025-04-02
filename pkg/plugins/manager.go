@@ -12,6 +12,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/contextual_security"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
 	"github.com/sirupsen/logrus"
 
@@ -125,6 +126,12 @@ func (m *Manager) initializePlugins() {
 
 	if err := m.RegisterPlugin(contextual_security.NewContextualSecurityPlugin(
 		m.fingerprintManager,
+		m.logger,
+	)); err != nil {
+		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
+	}
+
+	if err := m.RegisterPlugin(cors.NewCorsPlugin(
 		m.logger,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")

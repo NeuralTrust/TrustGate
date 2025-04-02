@@ -33,7 +33,6 @@ type Config struct {
 	MaxFailures               int    `mapstructure:"max_failures"`
 	BlockDuration             int    `mapstructure:"block_duration"`
 	RateLimitMode             Option `mapstructure:"rate_limit_mode"`
-	Window                    int    `mapstructure:"window"`
 	SimilarMaliciousThreshold int    `mapstructure:"similar_malicious_threshold"`
 	SimilarBlockedThreshold   int    `mapstructure:"similar_blocked_threshold"`
 }
