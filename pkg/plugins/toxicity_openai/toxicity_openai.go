@@ -99,6 +99,11 @@ func (p *ToxicityOpenAIPlugin) Name() string {
 	return PluginName
 }
 
+func (p *ToxicityOpenAIPlugin) RequiredPlugins() []string {
+	var requiredPlugins []string
+	return requiredPlugins
+}
+
 func (p *ToxicityOpenAIPlugin) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }

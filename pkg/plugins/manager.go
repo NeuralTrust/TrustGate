@@ -10,6 +10,8 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/contextual_security"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
 	"github.com/sirupsen/logrus"
 
@@ -35,13 +37,14 @@ var (
 )
 
 type Manager struct {
-	mu             sync.RWMutex
-	config         *config.Config
-	cache          *cache.Cache
-	logger         *logrus.Logger
-	bedrockClient  bedrock.Client
-	plugins        map[string]pluginiface.Plugin
-	configurations map[string][][]types.PluginConfig
+	mu                 sync.RWMutex
+	config             *config.Config
+	cache              *cache.Cache
+	logger             *logrus.Logger
+	bedrockClient      bedrock.Client
+	fingerprintManager *fingerprint.Manager
+	plugins            map[string]pluginiface.Plugin
+	configurations     map[string][][]types.PluginConfig
 }
 
 func NewManager(
@@ -49,15 +52,17 @@ func NewManager(
 	cache *cache.Cache,
 	logger *logrus.Logger,
 	bedrockClient bedrock.Client,
+	fingerprintManager *fingerprint.Manager,
 ) *Manager {
 	once.Do(func() {
 		instance = &Manager{
-			plugins:        make(map[string]pluginiface.Plugin),
-			configurations: make(map[string][][]types.PluginConfig),
-			bedrockClient:  bedrockClient,
-			cache:          cache,
-			logger:         logger,
-			config:         config,
+			plugins:            make(map[string]pluginiface.Plugin),
+			configurations:     make(map[string][][]types.PluginConfig),
+			bedrockClient:      bedrockClient,
+			cache:              cache,
+			logger:             logger,
+			config:             config,
+			fingerprintManager: fingerprintManager,
 		}
 	})
 	instance.initializePlugins()
@@ -110,7 +115,18 @@ func (m *Manager) initializePlugins() {
 		m.logger.WithError(err).Error("Failed to register code sanitation plugin")
 	}
 
-	if err := m.RegisterPlugin(neuraltrust_guardrail.NewNeuralTrustGuardrailPlugin(m.logger, &http.Client{})); err != nil {
+	if err := m.RegisterPlugin(neuraltrust_guardrail.NewNeuralTrustGuardrailPlugin(
+		m.logger,
+		&http.Client{},
+		m.fingerprintManager,
+	)); err != nil {
+		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
+	}
+
+	if err := m.RegisterPlugin(contextual_security.NewContextualSecurityPlugin(
+		m.fingerprintManager,
+		m.logger,
+	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
 	}
 }
