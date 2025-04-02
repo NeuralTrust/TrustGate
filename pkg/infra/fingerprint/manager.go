@@ -22,7 +22,7 @@ const (
 	fingerPrintBlockedKey     = "fp:%s:blocked"
 	fingerPrintMaliciousKey   = "fp:%s:malicious"
 	fingerPrintByIpKey        = "fp_by_ip:%s"
-	fingerPrintByTokenKey     = "fp_by_token:%s"
+	fingerPrintByT0kenKey     = "fp_by_token:%s"
 	fingerPrintByUserKey      = "fp_by_user:%s"
 	fingerPrintByUserAgentKey = "fp_by_ua:%s"
 )
@@ -174,7 +174,7 @@ func (p *manager) Store(
 		pipe.Expire(ctx, key, ttl)
 	}
 	if fp.Token != "" {
-		key := fmt.Sprintf(fingerPrintByTokenKey, fp.Token)
+		key := fmt.Sprintf(fingerPrintByT0kenKey, fp.Token)
 		pipe.SAdd(ctx, key, id)
 		pipe.Expire(ctx, key, ttl)
 	}
@@ -203,7 +203,7 @@ func (p *manager) FindSimilarFingerprints(
 		keys = append(keys, fmt.Sprintf(fingerPrintByIpKey, fp.IP))
 	}
 	if fp.Token != "" {
-		keys = append(keys, fmt.Sprintf(fingerPrintByTokenKey, fp.Token))
+		keys = append(keys, fmt.Sprintf(fingerPrintByT0kenKey, fp.Token))
 	}
 	if fp.UserID != "" {
 		keys = append(keys, fmt.Sprintf(fingerPrintByUserKey, fp.UserID))
