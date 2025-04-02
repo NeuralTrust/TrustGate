@@ -41,7 +41,7 @@ type Container struct {
 	PluginMiddleware      middleware.Middleware
 	FingerPrintMiddleware middleware.Middleware
 	ApiKeyRepository      domainApikey.Repository
-	FingerprintManager    *fingerprint.Manager
+	FingerprintManager    fingerprint.Manager
 }
 
 func NewContainer(

@@ -12,12 +12,12 @@ import (
 
 type fingerPrintMiddleware struct {
 	logger  *logrus.Logger
-	manager *fingerprint.Manager
+	manager fingerprint.Manager
 }
 
 func NewFingerPrintMiddleware(
 	logger *logrus.Logger,
-	manager *fingerprint.Manager,
+	manager fingerprint.Manager,
 ) Middleware {
 	return &fingerPrintMiddleware{
 		logger:  logger,

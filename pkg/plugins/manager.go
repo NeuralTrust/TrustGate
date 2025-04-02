@@ -42,7 +42,7 @@ type Manager struct {
 	cache              *cache.Cache
 	logger             *logrus.Logger
 	bedrockClient      bedrock.Client
-	fingerprintManager *fingerprint.Manager
+	fingerprintManager fingerprint.Manager
 	plugins            map[string]pluginiface.Plugin
 	configurations     map[string][][]types.PluginConfig
 }
@@ -52,7 +52,7 @@ func NewManager(
 	cache *cache.Cache,
 	logger *logrus.Logger,
 	bedrockClient bedrock.Client,
-	fingerprintManager *fingerprint.Manager,
+	fingerprintManager fingerprint.Manager,
 ) *Manager {
 	once.Do(func() {
 		instance = &Manager{

@@ -27,17 +27,59 @@ const (
 	fingerPrintByUserAgentKey = "fp_by_ua:%s"
 )
 
-type Manager struct {
+//go:generate mockery --name=Manager --dir=. --output=../../../mocks --filename=fingerprint_manager_mock.go --case=underscore --with-expecter
+type Manager interface {
+	MakeFingerprint(ctx *fiber.Ctx) Fingerprint
+	CountMaliciousSimilarFingerprints(
+		ctx context.Context,
+		fps []Fingerprint,
+		blockThreshold float64,
+	) (int, error)
+	CountBlockedSimilarFingerprints(
+		ctx context.Context,
+		fps []Fingerprint,
+	) (int, error)
+	Store(
+		ctx context.Context,
+		fp *Fingerprint,
+		ttl time.Duration,
+	) error
+	FindSimilarFingerprints(
+		ctx context.Context,
+		fp *Fingerprint,
+	) ([]Fingerprint, error)
+	GetFingerprint(ctx context.Context, id string) (*Fingerprint, error)
+	IsFingerprintBlocked(
+		ctx context.Context,
+		fp *Fingerprint,
+	) (bool, error)
+	IncrementMaliciousCount(
+		ctx context.Context,
+		id string,
+		ttl time.Duration,
+	) error
+	GetMaliciousCount(
+		ctx context.Context,
+		id string,
+	) (int, error)
+	BlockFingerprint(
+		ctx context.Context,
+		fp *Fingerprint,
+		duration time.Duration,
+	) error
+}
+
+type manager struct {
 	redis *cache.Cache
 }
 
-func NewFingerPrintManager(redis *cache.Cache) *Manager {
-	return &Manager{
+func NewFingerPrintManager(redis *cache.Cache) Manager {
+	return &manager{
 		redis: redis,
 	}
 }
 
-func (p *Manager) MakeFingerprint(ctx *fiber.Ctx) Fingerprint {
+func (p *manager) MakeFingerprint(ctx *fiber.Ctx) Fingerprint {
 	return Fingerprint{
 		UserID:    strings.ToLower(strings.TrimSpace(p.getUserID(ctx))),
 		Token:     strings.ToLower(strings.TrimSpace(p.getAuthToken(ctx))),
@@ -46,7 +88,7 @@ func (p *Manager) MakeFingerprint(ctx *fiber.Ctx) Fingerprint {
 	}
 }
 
-func (p *Manager) CountMaliciousSimilarFingerprints(
+func (p *manager) CountMaliciousSimilarFingerprints(
 	ctx context.Context,
 	fps []Fingerprint,
 	blockThreshold float64,
@@ -75,7 +117,7 @@ func (p *Manager) CountMaliciousSimilarFingerprints(
 	return malicious, nil
 }
 
-func (p *Manager) CountBlockedSimilarFingerprints(
+func (p *manager) CountBlockedSimilarFingerprints(
 	ctx context.Context,
 	fps []Fingerprint,
 ) (int, error) {
@@ -107,7 +149,7 @@ func (p *Manager) CountBlockedSimilarFingerprints(
 	return blocked, nil
 }
 
-func (p *Manager) Store(
+func (p *manager) Store(
 	ctx context.Context,
 	fp *Fingerprint,
 	ttl time.Duration,
@@ -151,7 +193,7 @@ func (p *Manager) Store(
 	return err
 }
 
-func (p *Manager) FindSimilarFingerprints(
+func (p *manager) FindSimilarFingerprints(
 	ctx context.Context,
 	fp *Fingerprint,
 ) ([]Fingerprint, error) {
@@ -212,7 +254,7 @@ func (p *Manager) FindSimilarFingerprints(
 	return results, nil
 }
 
-func (p *Manager) GetFingerprint(ctx context.Context, id string) (*Fingerprint, error) {
+func (p *manager) GetFingerprint(ctx context.Context, id string) (*Fingerprint, error) {
 	key := fmt.Sprintf(fingerPrintKey, id)
 	data, err := p.redis.Client().Get(ctx, key).Bytes()
 	if err != nil {
@@ -230,7 +272,7 @@ func (p *Manager) GetFingerprint(ctx context.Context, id string) (*Fingerprint, 
 	return &fp, nil
 }
 
-func (p *Manager) IsFingerprintBlocked(
+func (p *manager) IsFingerprintBlocked(
 	ctx context.Context,
 	fp *Fingerprint,
 ) (bool, error) {
@@ -242,7 +284,7 @@ func (p *Manager) IsFingerprintBlocked(
 	return exists == 1, nil
 }
 
-func (p *Manager) BlockFingerprint(
+func (p *manager) BlockFingerprint(
 	ctx context.Context,
 	fp *Fingerprint,
 	duration time.Duration,
@@ -251,7 +293,7 @@ func (p *Manager) BlockFingerprint(
 	return p.redis.Client().Set(ctx, blockKey, "1", duration).Err()
 }
 
-func (p *Manager) IncrementMaliciousCount(
+func (p *manager) IncrementMaliciousCount(
 	ctx context.Context,
 	id string,
 	ttl time.Duration,
@@ -266,7 +308,7 @@ func (p *Manager) IncrementMaliciousCount(
 	return nil
 }
 
-func (p *Manager) GetMaliciousCount(
+func (p *manager) GetMaliciousCount(
 	ctx context.Context,
 	id string,
 ) (int, error) {
@@ -280,7 +322,7 @@ func (p *Manager) GetMaliciousCount(
 	return int(count), nil
 }
 
-func (p *Manager) getUserID(ctx *fiber.Ctx) string {
+func (p *manager) getUserID(ctx *fiber.Ctx) string {
 	userHeaders := []string{
 		"X-User-ID",
 		"X-User-Id",
@@ -296,7 +338,7 @@ func (p *Manager) getUserID(ctx *fiber.Ctx) string {
 	return ""
 }
 
-func (p *Manager) getAuthToken(ctx *fiber.Ctx) string {
+func (p *manager) getAuthToken(ctx *fiber.Ctx) string {
 	authHeader := ctx.Get("Authorization")
 	if authHeader != "" {
 		if strings.HasPrefix(authHeader, "Bearer ") {
@@ -318,7 +360,7 @@ func (p *Manager) getAuthToken(ctx *fiber.Ctx) string {
 	return ""
 }
 
-func (p *Manager) getByIp(ctx *fiber.Ctx) string {
+func (p *manager) getByIp(ctx *fiber.Ctx) string {
 	ipHeaders := []string{
 		"X-Real-IP",
 		"X-Forwarded-For",
@@ -341,6 +383,6 @@ func (p *Manager) getByIp(ctx *fiber.Ctx) string {
 	return strings.TrimSpace(ctx.IP())
 }
 
-func (p *Manager) getUserAgent(ctx *fiber.Ctx) string {
+func (p *manager) getUserAgent(ctx *fiber.Ctx) string {
 	return ctx.Get("User-Agent")
 }

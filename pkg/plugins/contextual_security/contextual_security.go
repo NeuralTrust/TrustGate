@@ -42,13 +42,13 @@ type Config struct {
 type Option string
 
 type ContextualSecurityPlugin struct {
-	fingerPrintManager *fingerprint.Manager
+	fingerPrintManager fingerprint.Manager
 	logger             *logrus.Logger
 	config             *Config
 }
 
 func NewContextualSecurityPlugin(
-	fingerprint *fingerprint.Manager,
+	fingerprint fingerprint.Manager,
 	logger *logrus.Logger,
 ) pluginiface.Plugin {
 	return &ContextualSecurityPlugin{

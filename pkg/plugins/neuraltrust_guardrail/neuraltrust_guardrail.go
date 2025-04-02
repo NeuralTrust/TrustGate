@@ -31,7 +31,7 @@ const (
 
 type NeuralTrustGuardrailPlugin struct {
 	client             httpx.Client
-	fingerPrintManager *fingerprint.Manager
+	fingerPrintManager fingerprint.Manager
 	logger             *logrus.Logger
 	config             Config
 }
@@ -67,7 +67,7 @@ type JailbreakParamBag struct {
 func NewNeuralTrustGuardrailPlugin(
 	logger *logrus.Logger,
 	client httpx.Client,
-	fingerPrintManager *fingerprint.Manager,
+	fingerPrintManager fingerprint.Manager,
 ) pluginiface.Plugin {
 	if client == nil {
 		client = &http.Client{}
