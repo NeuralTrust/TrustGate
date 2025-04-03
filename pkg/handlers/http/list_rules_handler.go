@@ -45,7 +45,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 	}
 	// Get rules from database
 	_, err = s.repo.GetGateway(c.Context(), gatewayUUID)
-	
+
 	if err != nil {
 		if errors.As(err, &domain.ErrEntityNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
