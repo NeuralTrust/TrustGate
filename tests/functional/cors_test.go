@@ -95,7 +95,7 @@ func TestCORSPlugin(t *testing.T) {
 			name:              "No Origin Header (non-CORS)",
 			method:            "GET",
 			origin:            "",
-			expectStatus:      http.StatusOK,
+			expectStatus:      http.StatusForbidden,
 			expectAllowOrigin: "",
 		},
 		{

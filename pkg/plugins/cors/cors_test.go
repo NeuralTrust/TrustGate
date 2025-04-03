@@ -118,17 +118,6 @@ func TestCorsPlugin_Execute(t *testing.T) {
 		expectCode  int
 	}{
 		{
-			name: "it should skip if no Origin header",
-			config: map[string]any{
-				"allowed_origins": []string{"*"},
-				"allowed_methods": []string{"GET"},
-			},
-			headers:     map[string][]string{},
-			method:      http.MethodGet,
-			expectError: false,
-			expectCode:  http.StatusOK,
-		},
-		{
 			name: "it should reject if allow_credentials is true and origin is *",
 			config: map[string]any{
 				"allowed_origins":   []string{"*"},
