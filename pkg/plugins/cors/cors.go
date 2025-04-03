@@ -126,10 +126,10 @@ func (p *CorsPlugin) Execute(
 	origin := p.getHeader(req.Headers, "Origin")
 
 	if origin == "" {
-		return &types.PluginResponse{
-			StatusCode: http.StatusOK,
-			Message:    "CORS: no origin header, skipping",
-		}, nil
+		return nil, &types.PluginError{
+			StatusCode: http.StatusForbidden,
+			Message:    `invalid origin`,
+		}
 	}
 
 	if len(conf.AllowOrigins) == 0 {
