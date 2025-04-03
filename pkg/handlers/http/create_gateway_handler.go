@@ -54,8 +54,13 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 	req.CreatedAt = now
 	req.UpdatedAt = now
 
+	id, err := uuid.NewV6()
+	if err != nil {
+		h.logger.WithError(err).Error("failed to generate UUID")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
+	}
 	entity := domain.Gateway{
-		ID:              uuid.New(),
+		ID:              id,
 		Name:            req.Name,
 		Subdomain:       req.Subdomain,
 		Status:          req.Status,
@@ -64,7 +69,7 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		UpdatedAt:       req.UpdatedAt,
 	}
 
-	err := h.pluginChainValidator.Validate(entity.RequiredPlugins)
+	err = h.pluginChainValidator.Validate(entity.RequiredPlugins)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to validate plugin chain")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})

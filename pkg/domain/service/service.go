@@ -37,9 +37,9 @@ type Service struct {
 	Credentials types.Credentials  `json:"credentials,omitempty" gorm:"type:jsonb"`
 
 	// Common settings
-	Retries   int `json:"retries,omitempty"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Retries   int       `json:"retries,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (s *Service) BeforeCreate(tx *gorm.DB) error {

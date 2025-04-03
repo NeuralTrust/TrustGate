@@ -10,6 +10,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -37,8 +38,11 @@ func (s UpdateGatewayCacheEventSubscriber) OnEvent(ctx context.Context, evt even
 	s.logger.WithFields(logrus.Fields{
 		"gatewayID": evt.GatewayID,
 	}).Debug("updating gateway cache")
-
-	entity, err := s.repo.GetGateway(ctx, evt.GatewayID)
+	gatewayUUID, err := uuid.Parse(evt.GatewayID)
+	if err != nil {
+		return fmt.Errorf("failed to parse gateway ID: %v", err)
+	}
+	entity, err := s.repo.GetGateway(ctx, gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Warn("failed to fetch gateway from database")
 	}

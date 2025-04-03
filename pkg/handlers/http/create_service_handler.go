@@ -52,8 +52,14 @@ func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid gateway ID"})
 	}
+
+	id, err := uuid.NewV6()
+	if err != nil {
+		s.logger.WithError(err).Error("failed to generate UUID")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
+	}
 	entity := service.Service{
-		ID:          uuid.New(),
+		ID:          id,
 		GatewayID:   gatewayUUID,
 		Name:        req.Name,
 		Type:        req.Type,

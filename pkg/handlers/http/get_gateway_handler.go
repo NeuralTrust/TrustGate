@@ -41,7 +41,10 @@ func NewGetGatewayHandler(
 // @Router /api/v1/gateways/{gateway_id} [get]
 func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
-
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
+	}
 	// Add request details logging
 	s.logger.WithFields(logrus.Fields{
 		"gateway_id": gatewayID,
@@ -75,7 +78,7 @@ func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {
 	entity, err := s.getGatewayCache.Retrieve(c.Context(), gatewayID)
 	if err != nil {
 		// If not in cache, get from database
-		dbGateway, err := s.repo.GetGateway(c.Context(), gatewayID)
+		dbGateway, err := s.repo.GetGateway(c.Context(), gatewayUUID)
 		if err != nil {
 			s.logger.WithError(err).Error("failed to get gateway")
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})

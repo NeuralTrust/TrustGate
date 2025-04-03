@@ -79,8 +79,15 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway uuid"})
 	}
+
+	id, err := uuid.NewV6()
+	if err != nil {
+		s.logger.WithError(err).Error("failed to generate UUID")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "dailed to generate UUID"})
+	}
+
 	entity := upstream.Upstream{
-		ID:           uuid.New(),
+		ID:           id,
 		GatewayID:    gatewayUUID,
 		Name:         req.Name,
 		Algorithm:    req.Algorithm,

@@ -95,8 +95,8 @@ type Upstream struct {
 	Targets      Targets         `json:"targets" gorm:"type:jsonb"`
 	HealthChecks *HealthCheck    `json:"health_checks,omitempty" gorm:"type:jsonb"`
 	Tags         domain.TagsJSON `json:"tags,omitempty" gorm:"type:jsonb"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 func (t *Target) Validate() error {

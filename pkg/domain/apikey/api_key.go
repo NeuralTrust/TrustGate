@@ -7,11 +7,11 @@ import (
 )
 
 type APIKey struct {
-	ID        uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	ID        uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey"`
 	Key       string     `json:"key" gorm:"index"`
 	Name      string     `json:"name"`
 	Active    bool       `json:"active"`
-	GatewayID string     `json:"gateway_id" gorm:"type:varchar(255);index"`
+	GatewayID uuid.UUID  `json:"gateway_id" gorm:"type:uuid;index"`
 	ExpiresAt time.Time  `json:"expires_at"`
 	CreatedAt time.Time  `json:"created_at"`
 	DeletedAt *time.Time `json:"deleted_at" gorm:"index"`

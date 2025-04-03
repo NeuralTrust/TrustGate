@@ -10,6 +10,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -45,8 +46,15 @@ func NewDeleteRuleHandler(
 func (s *deleteRuleHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	ruleID := c.Params("rule_id")
-
-	err := s.repo.DeleteRule(c.Context(), ruleID, gatewayID)
+	gatewayUUID, err := uuid.Parse(c.Params("gateway_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
+	}
+	ruleUUID, err := uuid.Parse(c.Params("rule_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_id"})
+	}
+	err = s.repo.DeleteRule(c.Context(), ruleUUID, gatewayUUID)
 	if err != nil {
 		if errors.Is(err, database.ErrRuleNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(
@@ -68,5 +76,5 @@ func (s *deleteRuleHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("failed to publish cache invalidation")
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "rule deleted successfully"})
+	return c.Status(fiber.StatusNoContent).JSON(fiber.Map{})
 }

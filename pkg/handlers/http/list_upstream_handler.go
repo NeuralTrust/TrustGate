@@ -9,6 +9,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -38,6 +39,11 @@ func (s *listUpstreamHandler) Handle(c *fiber.Ctx) error {
 	offset := 0
 	limit := 10
 
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
+	}
+
 	if offsetStr := c.Query("offset"); offsetStr != "" {
 		if val, err := strconv.Atoi(offsetStr); err == nil {
 			offset = val
@@ -59,7 +65,7 @@ func (s *listUpstreamHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// If not in cache, get from database
-	upstreams, err := s.repo.ListUpstreams(c.Context(), gatewayID, offset, limit)
+	upstreams, err := s.repo.ListUpstreams(c.Context(), gatewayUUID, offset, limit)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to list upstreams")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})

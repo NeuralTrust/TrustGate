@@ -3,6 +3,7 @@ package http
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -28,15 +29,18 @@ func NewListAPIKeysHandler(logger *logrus.Logger, repo *database.Repository) Han
 // @Router /api/v1/gateways/{gateway_id}/keys [get]
 func (s *listAPIKeysHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
+	}
 
 	// Verify gateway exists
-	if _, err := s.repo.GetGateway(c.Context(), gatewayID); err != nil {
+	if _, err := s.repo.GetGateway(c.Context(), gatewayUUID); err != nil {
 		s.logger.WithError(err).Error("failed to get gateway")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 	}
 
-	// Get API keys from database
-	apiKeys, err := s.repo.ListAPIKeys(c.Context(), gatewayID)
+	apiKeys, err := s.repo.ListAPIKeys(c.Context(), gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to list API keys")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list API keys"})

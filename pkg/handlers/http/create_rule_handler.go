@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
+	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
@@ -17,20 +17,20 @@ import (
 )
 
 type createRuleHandler struct {
-	logger       *logrus.Logger
-	repo         *database.Repository
-	validateRule *rule.ValidateRule
+	logger         *logrus.Logger
+	repo           *database.Repository
+	validatePlugin *plugin.ValidatePlugin
 }
 
 func NewCreateRuleHandler(
 	logger *logrus.Logger,
 	repo *database.Repository,
-	validateRule *rule.ValidateRule,
+	validatePlugin *plugin.ValidatePlugin,
 ) Handler {
 	return &createRuleHandler{
-		logger:       logger,
-		repo:         repo,
-		validateRule: validateRule,
+		logger:         logger,
+		repo:           repo,
+		validatePlugin: validatePlugin,
 	}
 }
 
@@ -56,7 +56,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Validate the rule request
-	if err := s.validateRule.Validate(&req); err != nil {
+	if err := s.validate(&req); err != nil {
 		s.logger.WithError(err).Error("Failed to validate rule")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -93,9 +93,14 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		return fmt.Errorf("failed to parse gateway ID: %v", err)
 	}
 
+	id, err := uuid.NewV6()
+	if err != nil {
+		s.logger.WithError(err).Error("failed to generate UUID")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
+	}
 	// Create the database model
 	dbRule := &forwarding_rule.ForwardingRule{
-		ID:            uuid.New(),
+		ID:            id,
 		GatewayID:     gatewayUUID,
 		Path:          req.Path,
 		ServiceID:     serviceUUID,
@@ -164,4 +169,44 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		CreatedAt:     rule.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
 	}, nil
+}
+
+func (s *createRuleHandler) validate(rule *types.CreateRuleRequest) error {
+
+	if rule.Path == "" {
+		return fmt.Errorf("path is required")
+	}
+
+	if len(rule.Methods) == 0 {
+		return fmt.Errorf("at least one method is required")
+	}
+
+	if rule.ServiceID == "" {
+		return fmt.Errorf("service_id is required")
+	}
+
+	validMethods := map[string]bool{
+		"GET":     true,
+		"POST":    true,
+		"PUT":     true,
+		"DELETE":  true,
+		"PATCH":   true,
+		"HEAD":    true,
+		"OPTIONS": true,
+	}
+	for _, method := range rule.Methods {
+		if !validMethods[strings.ToUpper(method)] {
+			return fmt.Errorf("invalid HTTP method: %s", method)
+		}
+	}
+
+	if len(rule.PluginChain) > 0 {
+		for i, pl := range rule.PluginChain {
+			if err := s.validatePlugin.Validate(pl); err != nil {
+				return fmt.Errorf("plugin %d: %v", i, err)
+			}
+		}
+	}
+
+	return nil
 }

@@ -51,13 +51,12 @@ func NewUpdateGatewayHandler(
 // @Router /api/v1/gateways/{gateway_id} [put]
 func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
-
-	if err := h.validateGatewayID(gatewayID); err != nil {
-		h.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Invalid gateway ID")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
 	}
 
-	dbGateway, err := h.repo.GetGateway(c.Context(), gatewayID)
+	dbGateway, err := h.repo.GetGateway(c.Context(), gatewayUUID)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to get gateway")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
@@ -123,14 +122,4 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusOK).JSON(response)
-}
-
-func (h *updateGatewayHandler) validateGatewayID(id string) error {
-	if id == "" {
-		return fmt.Errorf("gateway ID cannot be empty")
-	}
-	if _, err := uuid.Parse(id); err != nil {
-		return fmt.Errorf("gateway ID must be a valid UUID: %v", err)
-	}
-	return nil
 }

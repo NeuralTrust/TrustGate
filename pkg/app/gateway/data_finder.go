@@ -127,7 +127,7 @@ func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gatew
 }
 
 func (f *dataFinder) getGatewayDataFromDB(ctx context.Context, gatewayID uuid.UUID) (*types.GatewayData, error) {
-	entity, err := f.repo.GetGateway(ctx, gatewayID.String())
+	entity, err := f.repo.GetGateway(ctx, gatewayID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get gateway from database: %w", err)
 	}

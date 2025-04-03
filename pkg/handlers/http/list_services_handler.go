@@ -5,6 +5,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -32,7 +33,10 @@ func (s *listServicesHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	offset := 0
 	limit := 10
-
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
+	}
 	// Parse query parameters
 	if offsetStr := c.Query("offset"); offsetStr != "" {
 		if val, err := strconv.Atoi(offsetStr); err == nil {
@@ -46,7 +50,7 @@ func (s *listServicesHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Fetch services from repository
-	services, err := s.repo.ListServices(c.Context(), gatewayID, offset, limit)
+	services, err := s.repo.ListServices(c.Context(), gatewayUUID, offset, limit)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to list services")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
