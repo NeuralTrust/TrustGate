@@ -2,10 +2,12 @@ package apikey
 
 import (
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type APIKey struct {
-	ID        string     `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	ID        uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	Key       string     `json:"key" gorm:"index"`
 	Name      string     `json:"name"`
 	Active    bool       `json:"active"`

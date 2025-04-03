@@ -52,7 +52,7 @@ func (s UpdateGatewayCacheEventSubscriber) OnEvent(ctx context.Context, evt even
 		return fmt.Errorf("failed to delete rules cache: %w", err)
 	}
 
-	s.memoryCache.Set(entity.ID, entity)
+	s.memoryCache.Set(entity.ID.String(), entity)
 
 	return nil
 }

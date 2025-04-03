@@ -27,7 +27,7 @@ func NewUpdateGatewayCache(cache *cache.Cache) UpdateGatewayCache {
 }
 
 func (h *updateGatewayCache) Update(ctx context.Context, gateway *gateway.Gateway) error {
-	if err := h.validateGatewayID(gateway.ID); err != nil {
+	if err := h.validateGatewayID(gateway.ID.String()); err != nil {
 		return fmt.Errorf("invalid gateway ID: %w", err)
 	}
 

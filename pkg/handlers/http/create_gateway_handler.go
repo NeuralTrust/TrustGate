@@ -8,6 +8,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -54,7 +55,7 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 	req.UpdatedAt = now
 
 	entity := domain.Gateway{
-		ID:              req.ID,
+		ID:              uuid.New(),
 		Name:            req.Name,
 		Subdomain:       req.Subdomain,
 		Status:          req.Status,

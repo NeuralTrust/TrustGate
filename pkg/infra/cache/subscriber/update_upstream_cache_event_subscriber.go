@@ -2,12 +2,14 @@ package subscriber
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -37,7 +39,11 @@ func (s UpdateUpstreamCacheEventSubscriber) OnEvent(ctx context.Context, evt eve
 		"gatewayID":  evt.GatewayID,
 	}).Debug("updating upstream cache")
 
-	entity, err := s.repository.GetUpstream(ctx, evt.UpstreamID)
+	upstreamIDUUID, err := uuid.Parse(evt.UpstreamID)
+	if err != nil {
+		return fmt.Errorf("failed to parse upstream ID: %v", err)
+	}
+	entity, err := s.repository.GetUpstream(ctx, upstreamIDUUID)
 	if err != nil {
 		s.logger.WithError(err).Warn("failed to fetch upstream from database")
 	}
@@ -46,7 +52,7 @@ func (s UpdateUpstreamCacheEventSubscriber) OnEvent(ctx context.Context, evt eve
 		s.logger.WithError(err).Error("failed to cache upstream")
 	}
 
-	s.memoryCache.Set(entity.ID, entity)
+	s.memoryCache.Set(entity.ID.String(), entity)
 
 	return nil
 }

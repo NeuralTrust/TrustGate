@@ -39,7 +39,6 @@ type UpdateRuleRequest struct {
 }
 
 type CreateGatewayRequest struct {
-	ID              string         `json:"id" gorm:"primaryKey"`
 	Name            string         `json:"name"`
 	Subdomain       string         `json:"subdomain" gorm:"uniqueIndex"`
 	Status          string         `json:"status"`

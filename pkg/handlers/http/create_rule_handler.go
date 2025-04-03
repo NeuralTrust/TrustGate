@@ -83,12 +83,22 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		retryAttempts = *req.RetryAttempts
 	}
 
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return fmt.Errorf("failed to parse gateway ID: %v", err)
+	}
+
+	serviceUUID, err := uuid.Parse(req.ServiceID)
+	if err != nil {
+		return fmt.Errorf("failed to parse gateway ID: %v", err)
+	}
+
 	// Create the database model
 	dbRule := &forwarding_rule.ForwardingRule{
-		ID:            uuid.NewString(),
-		GatewayID:     gatewayID,
+		ID:            uuid.New(),
+		GatewayID:     gatewayUUID,
 		Path:          req.Path,
-		ServiceID:     req.ServiceID,
+		ServiceID:     serviceUUID,
 		Methods:       req.Methods,
 		Headers:       domain.HeadersJSON(req.Headers),
 		StripPath:     stripPath,
@@ -139,10 +149,10 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 	}
 
 	return types.ForwardingRule{
-		ID:            rule.ID,
-		GatewayID:     rule.GatewayID,
+		ID:            rule.ID.String(),
+		GatewayID:     rule.GatewayID.String(),
 		Path:          rule.Path,
-		ServiceID:     rule.ServiceID,
+		ServiceID:     rule.ServiceID.String(),
 		Methods:       rule.Methods,
 		Headers:       headers,
 		StripPath:     rule.StripPath,

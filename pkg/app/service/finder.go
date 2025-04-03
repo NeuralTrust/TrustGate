@@ -76,8 +76,8 @@ func (f *finder) getServiceFromMemoryCache(serviceID string) (*domainService.Ser
 }
 
 func (f *finder) saveServiceToMemoryCache(ctx context.Context, service *domainService.Service) {
-	f.memoryCache.Set(service.ID, service)
-	err := f.cache.SaveService(ctx, service.GatewayID, service)
+	f.memoryCache.Set(service.ID.String(), service)
+	err := f.cache.SaveService(ctx, service.GatewayID.String(), service)
 	if err != nil {
 		f.logger.WithError(err).Error("failed to save service to distributed cache")
 	}

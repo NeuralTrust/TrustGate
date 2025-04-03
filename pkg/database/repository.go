@@ -13,6 +13,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/google/uuid"
 
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
@@ -87,7 +88,7 @@ func (r *Repository) UpdateGateway(ctx context.Context, gateway *gateway.Gateway
 	return r.db.WithContext(ctx).Save(gateway).Error
 }
 
-func (r *Repository) DeleteGateway(id string) error {
+func (r *Repository) DeleteGateway(id uuid.UUID) error {
 	// Start a transaction
 	tx := r.db.Begin()
 	tx = tx.Debug()
@@ -173,7 +174,7 @@ func (r *Repository) GetRule(ctx context.Context, id string, gatewayID string) (
 	return &rule, nil
 }
 
-func (r *Repository) ListRules(ctx context.Context, gatewayID string) ([]forwarding_rule.ForwardingRule, error) {
+func (r *Repository) ListRules(ctx context.Context, gatewayID uuid.UUID) ([]forwarding_rule.ForwardingRule, error) {
 	// Try cache first
 	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
 	rulesJSON, err := r.cache.Get(ctx, rulesKey)
@@ -183,11 +184,26 @@ func (r *Repository) ListRules(ctx context.Context, gatewayID string) ([]forward
 			// Convert API rules back to DB models
 			rules := make([]forwarding_rule.ForwardingRule, len(apiRules))
 			for i, apiRule := range apiRules {
+				id, err := uuid.Parse(apiRule.ID)
+				if err != nil {
+					r.logger.WithError(err).Error("failed to parse rule ID")
+					continue
+				}
+				serviceId, err := uuid.Parse(apiRule.ServiceID)
+				if err != nil {
+					r.logger.WithError(err).Error("failed to parse service ID")
+					continue
+				}
+				gatewayId, err := uuid.Parse(apiRule.GatewayID)
+				if err != nil {
+					r.logger.WithError(err).Error("failed to parse gateway ID")
+					continue
+				}
 				rules[i] = forwarding_rule.ForwardingRule{
-					ID:            apiRule.ID,
-					GatewayID:     apiRule.GatewayID,
+					ID:            id,
+					GatewayID:     gatewayId,
 					Path:          apiRule.Path,
-					ServiceID:     apiRule.ServiceID,
+					ServiceID:     serviceId,
 					Methods:       apiRule.Methods,
 					Headers:       apiRule.Headers,
 					StripPath:     apiRule.StripPath,
@@ -347,12 +363,12 @@ func (r *Repository) ValidateAPIKey(ctx context.Context, gatewayID string, apiKe
 }
 
 // UpdateRulesCache updates the rules cache for a gateway
-func (r *Repository) UpdateRulesCache(ctx context.Context, gatewayID string, rules []forwarding_rule.ForwardingRule) error {
+func (r *Repository) UpdateRulesCache(ctx context.Context, gatewayID uuid.UUID, rules []forwarding_rule.ForwardingRule) error {
 	// Convert to API response format
 	apiRules := make([]types.ForwardingRule, len(rules))
 	for i, rule := range rules {
 		// Ensure gateway ID is set
-		if rule.GatewayID == "" {
+		if rule.GatewayID == uuid.Nil {
 			rule.GatewayID = gatewayID
 		}
 
@@ -365,10 +381,10 @@ func (r *Repository) UpdateRulesCache(ctx context.Context, gatewayID string, rul
 		}
 
 		apiRules[i] = types.ForwardingRule{
-			ID:            rule.ID,
-			GatewayID:     rule.GatewayID,
+			ID:            rule.ID.String(),
+			GatewayID:     rule.GatewayID.String(),
 			Path:          rule.Path,
-			ServiceID:     rule.ServiceID,
+			ServiceID:     rule.ServiceID.String(),
 			Methods:       rule.Methods,
 			Headers:       rule.Headers,
 			StripPath:     rule.StripPath,

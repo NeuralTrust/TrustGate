@@ -8,6 +8,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -41,7 +42,13 @@ func (s *deleteGatewayHandler) Handle(c *fiber.Ctx) error {
 	if id == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "gateway_id is required"})
 	}
-	if err := s.repo.DeleteGateway(id); err != nil {
+	parsedId, err := uuid.Parse(id)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to parse gateway id")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
+	}
+
+	if err := s.repo.DeleteGateway(parsedId); err != nil {
 		s.logger.WithError(err).Error("Failed to delete gateway")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

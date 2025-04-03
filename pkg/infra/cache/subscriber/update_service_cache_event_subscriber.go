@@ -46,7 +46,7 @@ func (s UpdateServiceCacheEventSubscriber) OnEvent(ctx context.Context, evt even
 		s.logger.WithError(err).Error("failed to cache service")
 	}
 
-	s.memoryCache.Set(entity.ID, entity)
+	s.memoryCache.Set(entity.ID.String(), entity)
 
 	return nil
 }

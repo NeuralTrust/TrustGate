@@ -106,7 +106,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	response := types.Gateway{
-		ID:              dbGateway.ID,
+		ID:              dbGateway.ID.String(),
 		Name:            dbGateway.Name,
 		Subdomain:       dbGateway.Subdomain,
 		Status:          dbGateway.Status,
@@ -116,7 +116,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	err = h.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateGatewayCacheEvent{
-		GatewayID: dbGateway.ID,
+		GatewayID: dbGateway.ID.String(),
 	})
 	if err != nil {
 		h.logger.WithError(err).Error("failed to publish update gateway cache event")

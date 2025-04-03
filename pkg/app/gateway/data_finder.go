@@ -12,6 +12,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -65,7 +66,11 @@ func (f *dataFinder) Find(ctx context.Context, gatewayID string) (*types.Gateway
 	f.logger.WithError(err).Debug("Failed to get gateway data from Redis")
 
 	// Fallback to database
-	return f.getGatewayDataFromDB(ctx, gatewayID)
+	gatewayIDUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid gateway ID format: %w", err)
+	}
+	return f.getGatewayDataFromDB(ctx, gatewayIDUUID)
 }
 
 func (f *dataFinder) getGatewayDataFromCache(value interface{}) (*types.GatewayData, error) {
@@ -113,7 +118,7 @@ func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gatew
 		requiredPlugins = append(requiredPlugins, pluginConfig)
 	}
 	return &types.Gateway{
-		ID:              g.ID,
+		ID:              g.ID.String(),
 		Name:            g.Name,
 		Subdomain:       g.Subdomain,
 		Status:          g.Status,
@@ -121,8 +126,8 @@ func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gatew
 	}
 }
 
-func (f *dataFinder) getGatewayDataFromDB(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
-	entity, err := f.repo.GetGateway(ctx, gatewayID)
+func (f *dataFinder) getGatewayDataFromDB(ctx context.Context, gatewayID uuid.UUID) (*types.GatewayData, error) {
+	entity, err := f.repo.GetGateway(ctx, gatewayID.String())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get gateway from database: %w", err)
 	}
@@ -138,7 +143,7 @@ func (f *dataFinder) getGatewayDataFromDB(ctx context.Context, gatewayID string)
 	}
 
 	// Cache the results
-	if err := f.cacheGatewayData(ctx, gatewayID, entity, rules); err != nil {
+	if err := f.cacheGatewayData(ctx, gatewayID.String(), entity, rules); err != nil {
 		f.logger.WithError(err).Warn("Failed to cache gateway data")
 	}
 
@@ -167,10 +172,10 @@ func (f *dataFinder) convertModelToTypesRules(rules []forwarding_rule.Forwarding
 		}
 
 		result = append(result, types.ForwardingRule{
-			ID:            r.ID,
-			GatewayID:     r.GatewayID,
+			ID:            r.ID.String(),
+			GatewayID:     r.GatewayID.String(),
 			Path:          r.Path,
-			ServiceID:     r.ServiceID,
+			ServiceID:     r.ServiceID.String(),
 			Methods:       r.Methods,
 			Headers:       r.Headers,
 			StripPath:     r.StripPath,

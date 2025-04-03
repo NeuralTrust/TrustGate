@@ -13,7 +13,7 @@ import (
 )
 
 type Target struct {
-	ID           string                 `json:"id" gorm:"primaryKey"`
+	ID           string                 `json:"id"`
 	Weight       int                    `json:"weight,omitempty"`
 	Priority     int                    `json:"priority,omitempty"`
 	Tags         domain.TagsJSON        `json:"tags,omitempty" gorm:"type:jsonb"`
@@ -88,8 +88,8 @@ func (t *Targets) Scan(value interface{}) error {
 }
 
 type Upstream struct {
-	ID           string          `json:"id" gorm:"primaryKey"`
-	GatewayID    string          `json:"gateway_id" gorm:"not null"`
+	ID           uuid.UUID       `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	GatewayID    uuid.UUID       `json:"gateway_id" gorm:"type:uuid; not null"`
 	Name         string          `json:"name" gorm:"uniqueIndex:idx_gateway_upstream_name"`
 	Algorithm    string          `json:"algorithm" gorm:"default:'round-robin'"`
 	Targets      Targets         `json:"targets" gorm:"type:jsonb"`
@@ -136,8 +136,8 @@ func (t *Target) Validate() error {
 }
 
 func (u *Upstream) BeforeCreate(tx *gorm.DB) error {
-	if u.ID == "" {
-		u.ID = uuid.New().String()
+	if u.ID == uuid.Nil {
+		u.ID = uuid.New()
 	}
 	for i := range u.Targets {
 		if u.Targets[i].ID == "" {

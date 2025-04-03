@@ -9,6 +9,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -74,10 +75,13 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 			Credentials:  domain.CredentialsJSON(target.Credentials),
 		})
 	}
-
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway uuid"})
+	}
 	entity := upstream.Upstream{
-		ID:           req.ID,
-		GatewayID:    gatewayID,
+		ID:           uuid.New(),
+		GatewayID:    gatewayUUID,
 		Name:         req.Name,
 		Algorithm:    req.Algorithm,
 		Targets:      targets,

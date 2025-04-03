@@ -49,7 +49,7 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 
 	// Generate new API key
 	apiKey := &domain.APIKey{
-		ID:        uuid.NewString(),
+		ID:        uuid.New(),
 		Name:      req.Name,
 		GatewayID: gatewayID,
 		Key:       s.generateAPIKey(),

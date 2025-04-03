@@ -10,7 +10,7 @@ import (
 )
 
 type Gateway struct {
-	ID              string                 `json:"id" gorm:"primaryKey"`
+	ID              uuid.UUID              `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	Name            string                 `json:"name"`
 	Subdomain       string                 `json:"subdomain" gorm:"uniqueIndex"`
 	Status          string                 `json:"status"`
@@ -20,8 +20,8 @@ type Gateway struct {
 }
 
 func (g *Gateway) BeforeCreate(tx *gorm.DB) error {
-	if g.ID == "" {
-		g.ID = uuid.New().String()
+	if g.ID == uuid.Nil {
+		g.ID = uuid.New()
 	}
 
 	now := time.Now()

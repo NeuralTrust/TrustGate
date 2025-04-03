@@ -19,7 +19,7 @@ func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) (*types.Gatewa
 		dbGateway.RequiredPlugins = []types.PluginConfig{}
 	}
 	return &types.Gateway{
-		ID:              dbGateway.ID,
+		ID:              dbGateway.ID.String(),
 		Name:            dbGateway.Name,
 		Subdomain:       dbGateway.Subdomain,
 		Status:          dbGateway.Status,
