@@ -18,7 +18,6 @@ const PluginName = "cors"
 
 type CorsPlugin struct {
 	logger *logrus.Logger
-	config Config
 }
 
 type Config struct {
