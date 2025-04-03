@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -17,7 +18,7 @@ func NewUpstreamRepository(db *gorm.DB) upstream.Repository {
 	}
 }
 
-func (r *UpstreamRepository) GetUpstream(ctx context.Context, id string) (*upstream.Upstream, error) {
+func (r *UpstreamRepository) GetUpstream(ctx context.Context, id uuid.UUID) (*upstream.Upstream, error) {
 	var entity upstream.Upstream
 	if err := r.db.WithContext(ctx).First(&entity, "id = ?", id).Error; err != nil {
 		return nil, err

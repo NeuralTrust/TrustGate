@@ -3,16 +3,19 @@ package database
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/google/uuid"
 
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
@@ -38,9 +41,12 @@ func NewRepository(db *gorm.DB, logger logrus.FieldLogger, cache *cache.Cache) *
 		cache:  cache,
 	}
 }
-func (r *Repository) GetGateway(ctx context.Context, id string) (*gateway.Gateway, error) {
+func (r *Repository) GetGateway(ctx context.Context, id uuid.UUID) (*gateway.Gateway, error) {
 	var entity gateway.Gateway
 	if err := r.db.WithContext(ctx).First(&entity, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domain.NewNotFoundError("gateway", id)
+		}
 		return nil, err
 	}
 	if entity.RequiredPlugins == nil {
@@ -87,7 +93,7 @@ func (r *Repository) UpdateGateway(ctx context.Context, gateway *gateway.Gateway
 	return r.db.WithContext(ctx).Save(gateway).Error
 }
 
-func (r *Repository) DeleteGateway(id string) error {
+func (r *Repository) DeleteGateway(id uuid.UUID) error {
 	// Start a transaction
 	tx := r.db.Begin()
 	tx = tx.Debug()
@@ -100,17 +106,14 @@ func (r *Repository) DeleteGateway(id string) error {
 		tx.Rollback()
 		return err
 	}
-
-	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&upstream.Upstream{}).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
-
 	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&service.Service{}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
-
+	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&upstream.Upstream{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&apikey.APIKey{}).Error; err != nil {
 		tx.Rollback()
 		return err
@@ -164,16 +167,16 @@ func (r *Repository) CreateRule(ctx context.Context, rule *forwarding_rule.Forwa
 	return nil
 }
 
-func (r *Repository) GetRule(ctx context.Context, id string, gatewayID string) (*forwarding_rule.ForwardingRule, error) {
+func (r *Repository) GetRule(ctx context.Context, id uuid.UUID, gatewayID uuid.UUID) (*forwarding_rule.ForwardingRule, error) {
 	var rule forwarding_rule.ForwardingRule
-	err := r.db.Where("id = ? AND gateway_id = ?", id, gatewayID).First(&rule).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND gateway_id = ?", id, gatewayID).First(&rule).Error
 	if err != nil {
 		return nil, err
 	}
 	return &rule, nil
 }
 
-func (r *Repository) ListRules(ctx context.Context, gatewayID string) ([]forwarding_rule.ForwardingRule, error) {
+func (r *Repository) ListRules(ctx context.Context, gatewayID uuid.UUID) ([]forwarding_rule.ForwardingRule, error) {
 	// Try cache first
 	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
 	rulesJSON, err := r.cache.Get(ctx, rulesKey)
@@ -183,11 +186,26 @@ func (r *Repository) ListRules(ctx context.Context, gatewayID string) ([]forward
 			// Convert API rules back to DB models
 			rules := make([]forwarding_rule.ForwardingRule, len(apiRules))
 			for i, apiRule := range apiRules {
+				id, err := uuid.Parse(apiRule.ID)
+				if err != nil {
+					r.logger.WithError(err).Error("failed to parse rule ID")
+					continue
+				}
+				serviceId, err := uuid.Parse(apiRule.ServiceID)
+				if err != nil {
+					r.logger.WithError(err).Error("failed to parse service ID")
+					continue
+				}
+				gatewayId, err := uuid.Parse(apiRule.GatewayID)
+				if err != nil {
+					r.logger.WithError(err).Error("failed to parse gateway ID")
+					continue
+				}
 				rules[i] = forwarding_rule.ForwardingRule{
-					ID:            apiRule.ID,
-					GatewayID:     apiRule.GatewayID,
+					ID:            id,
+					GatewayID:     gatewayId,
 					Path:          apiRule.Path,
-					ServiceID:     apiRule.ServiceID,
+					ServiceID:     serviceId,
 					Methods:       apiRule.Methods,
 					Headers:       apiRule.Headers,
 					StripPath:     apiRule.StripPath,
@@ -236,7 +254,7 @@ func (r *Repository) UpdateRule(ctx context.Context, rule *forwarding_rule.Forwa
 	return nil
 }
 
-func (r *Repository) DeleteRule(ctx context.Context, id, gatewayID string) error {
+func (r *Repository) DeleteRule(ctx context.Context, id, gatewayID uuid.UUID) error {
 	result := r.db.WithContext(ctx).Unscoped().Where("id = ? AND gateway_id = ?", id, gatewayID).
 		Delete(&forwarding_rule.ForwardingRule{})
 	if result.Error != nil {
@@ -249,7 +267,7 @@ func (r *Repository) DeleteRule(ctx context.Context, id, gatewayID string) error
 }
 
 func (r *Repository) CreateAPIKey(ctx context.Context, apiKey *apikey.APIKey) error {
-	if apiKey.GatewayID == "" {
+	if apiKey.GatewayID == uuid.Nil {
 		return fmt.Errorf("gateway_id is required")
 	}
 	if apiKey.Name == "" {
@@ -285,7 +303,7 @@ func (r *Repository) GetAPIKey(ctx context.Context, id string) (*apikey.APIKey, 
 	return &entity, nil
 }
 
-func (r *Repository) ListAPIKeys(ctx context.Context, gatewayID string) ([]apikey.APIKey, error) {
+func (r *Repository) ListAPIKeys(ctx context.Context, gatewayID uuid.UUID) ([]apikey.APIKey, error) {
 	var apiKeys []apikey.APIKey
 	err := r.db.WithContext(ctx).Where("gateway_id = ?", gatewayID).Find(&apiKeys).Error
 	return apiKeys, err
@@ -302,7 +320,7 @@ func (r *Repository) UpdateAPIKey(ctx context.Context, apiKey *apikey.APIKey) er
 	return nil
 }
 
-func (r *Repository) DeleteAPIKey(ctx context.Context, id, gatewayID string) error {
+func (r *Repository) DeleteAPIKey(ctx context.Context, id, gatewayID uuid.UUID) error {
 	result := r.db.WithContext(ctx).Where("id = ? AND gateway_id = ?", id, gatewayID).Delete(&apikey.APIKey{})
 	if result.Error != nil {
 		return result.Error
@@ -347,12 +365,12 @@ func (r *Repository) ValidateAPIKey(ctx context.Context, gatewayID string, apiKe
 }
 
 // UpdateRulesCache updates the rules cache for a gateway
-func (r *Repository) UpdateRulesCache(ctx context.Context, gatewayID string, rules []forwarding_rule.ForwardingRule) error {
+func (r *Repository) UpdateRulesCache(ctx context.Context, gatewayID uuid.UUID, rules []forwarding_rule.ForwardingRule) error {
 	// Convert to API response format
 	apiRules := make([]types.ForwardingRule, len(rules))
 	for i, rule := range rules {
 		// Ensure gateway ID is set
-		if rule.GatewayID == "" {
+		if rule.GatewayID == uuid.Nil {
 			rule.GatewayID = gatewayID
 		}
 
@@ -365,10 +383,10 @@ func (r *Repository) UpdateRulesCache(ctx context.Context, gatewayID string, rul
 		}
 
 		apiRules[i] = types.ForwardingRule{
-			ID:            rule.ID,
-			GatewayID:     rule.GatewayID,
+			ID:            rule.ID.String(),
+			GatewayID:     rule.GatewayID.String(),
 			Path:          rule.Path,
-			ServiceID:     rule.ServiceID,
+			ServiceID:     rule.ServiceID.String(),
 			Methods:       rule.Methods,
 			Headers:       rule.Headers,
 			StripPath:     rule.StripPath,
@@ -411,7 +429,7 @@ func (r *Repository) CreateUpstream(ctx context.Context, upstream *upstream.Upst
 	return r.db.WithContext(ctx).Create(upstream).Error
 }
 
-func (r *Repository) ListUpstreams(ctx context.Context, gatewayID string, offset, limit int) ([]upstream.Upstream, error) {
+func (r *Repository) ListUpstreams(ctx context.Context, gatewayID uuid.UUID, offset, limit int) ([]upstream.Upstream, error) {
 	var upstreams []upstream.Upstream
 	query := r.db.WithContext(ctx).Where("gateway_id = ?", gatewayID)
 
@@ -453,7 +471,7 @@ func (r *Repository) CreateService(ctx context.Context, service *service.Service
 	return r.db.WithContext(ctx).Create(service).Error
 }
 
-func (r *Repository) ListServices(ctx context.Context, gatewayID string, offset, limit int) ([]service.Service, error) {
+func (r *Repository) ListServices(ctx context.Context, gatewayID uuid.UUID, offset, limit int) ([]service.Service, error) {
 	var services []service.Service
 	query := r.db.WithContext(ctx).Where("gateway_id = ?", gatewayID).Preload("Upstream")
 

@@ -9,6 +9,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -54,8 +55,20 @@ func (s *getUpstreamHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	gatewayIDUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to parse gateway ID")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
+	}
+
+	upstreamIDUUID, err := uuid.Parse(upstreamID)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to parse upstream ID")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
+	}
+
 	// If not in cache, get from database
-	entity, err := s.upstreamFinder.Find(c.Context(), gatewayID, upstreamID)
+	entity, err := s.upstreamFinder.Find(c.Context(), gatewayIDUUID, upstreamIDUUID)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "upstream not found"})
 	}

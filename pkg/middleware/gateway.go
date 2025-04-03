@@ -86,13 +86,13 @@ func (m *gatewayMiddleware) Middleware() fiber.Handler {
 					return ctx.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Gateway not found"})
 				}
 
-				gatewayID = gatewayEntity.ID
+				gatewayID = gatewayEntity.ID.String()
 				// Cache the gateway ID
-				if err := m.cache.Set(ctx.Context(), key, gatewayEntity.ID, 24*time.Hour); err != nil {
+				if err := m.cache.Set(ctx.Context(), key, gatewayID, 24*time.Hour); err != nil {
 					m.logger.WithFields(logrus.Fields{
 						"error":     err,
 						"key":       key,
-						"gatewayID": gatewayEntity.ID,
+						"gatewayID": gatewayID,
 					}).Error("Failed to cache gateway ID")
 				}
 			} else {

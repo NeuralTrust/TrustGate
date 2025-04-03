@@ -62,21 +62,10 @@ func (c *Cache) GetAPIKey(gatewayID, apiKey string) (*apikey.APIKey, error) {
 }
 
 func (c *Cache) SaveAPIKey(ctx context.Context, key *apikey.APIKey) error {
-	// Get existing keys
-	keys, err := c.GetAPIKeys(key.GatewayID)
+	data, err := json.Marshal(key)
 	if err != nil {
 		return err
 	}
-
-	// Add new key
-	keys = append(keys, *key)
-
-	// Save back to cache
-	data, err := json.Marshal(keys)
-	if err != nil {
-		return err
-	}
-
-	cacheKey := fmt.Sprintf("apikeys:%s", key.GatewayID)
+	cacheKey := fmt.Sprintf(ApiKeyPattern, key.GatewayID.String(), key.Key)
 	return c.Client().Set(ctx, cacheKey, string(data), 0).Err()
 }

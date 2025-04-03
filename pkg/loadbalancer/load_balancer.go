@@ -83,7 +83,7 @@ func NewLoadBalancer(
 		strategy:     strategy,
 		logger:       logger,
 		cache:        cache,
-		upstreamID:   upstream.ID,
+		upstreamID:   upstream.ID.String(),
 		upstream:     upstream,
 		targetStatus: make(map[string]*TargetStatus),
 		successCh:    make(chan *types.UpstreamTarget, 1000),

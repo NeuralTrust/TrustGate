@@ -2,13 +2,16 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -36,9 +39,22 @@ func NewListRulesHandler(logger *logrus.Logger, repo *database.Repository, cache
 // @Router /api/v1/gateways/{gateway_id}/rules [get]
 func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
-
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway uuid"})
+	}
 	// Get rules from database
-	dbRules, err := s.repo.ListRules(c.Context(), gatewayID)
+	_, err = s.repo.GetGateway(c.Context(), gatewayUUID)
+
+	if err != nil {
+		if errors.As(err, &domain.ErrEntityNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
+		}
+		s.logger.WithError(err).Error("failed to get gateway from database")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get gateway"})
+	}
+
+	dbRules, err := s.repo.ListRules(c.Context(), gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to get rules from database")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list rules"})
@@ -48,10 +64,10 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 	rules := make([]types.ForwardingRule, len(dbRules))
 	for i, rule := range dbRules {
 		rules[i] = types.ForwardingRule{
-			ID:            rule.ID,
-			GatewayID:     rule.GatewayID,
+			ID:            rule.ID.String(),
+			GatewayID:     rule.GatewayID.String(),
 			Path:          rule.Path,
-			ServiceID:     rule.ServiceID,
+			ServiceID:     rule.ServiceID.String(),
 			Methods:       rule.Methods,
 			Headers:       rule.Headers,
 			StripPath:     rule.StripPath,

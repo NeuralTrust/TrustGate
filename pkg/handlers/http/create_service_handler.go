@@ -6,6 +6,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -42,14 +43,29 @@ func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
+	upstreamId, err := uuid.Parse(req.UpstreamID)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to parse upstream ID")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid upstream ID"})
+	}
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid gateway ID"})
+	}
+
+	id, err := uuid.NewV6()
+	if err != nil {
+		s.logger.WithError(err).Error("failed to generate UUID")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
+	}
 	entity := service.Service{
-		ID:          req.ID,
-		GatewayID:   gatewayID,
+		ID:          id,
+		GatewayID:   gatewayUUID,
 		Name:        req.Name,
 		Type:        req.Type,
 		Description: req.Description,
 		Tags:        req.Tags,
-		UpstreamID:  req.UpstreamID,
+		UpstreamID:  upstreamId,
 		Host:        req.Host,
 		Port:        req.Port,
 		Protocol:    req.Protocol,

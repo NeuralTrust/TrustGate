@@ -69,6 +69,8 @@ func (c *Cache) Get(ctx context.Context, key string) (string, error) {
 }
 
 func (c *Cache) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	if err := c.client.Set(ctx, key, value, expiration).Err(); err != nil {
 		return err
 	}
@@ -81,6 +83,30 @@ func (c *Cache) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	c.localCache.Delete(key)
+	return nil
+}
+
+func (c *Cache) DeleteAllByGatewayID(ctx context.Context, gatewayID string) error {
+	pattern := fmt.Sprintf("*%s*", gatewayID)
+	var cursor uint64
+	for {
+		keys, nextCursor, err := c.client.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("error scanning keys: %w", err)
+		}
+		if len(keys) > 0 {
+			if err := c.client.Del(ctx, keys...).Err(); err != nil {
+				return fmt.Errorf("error deleting keys: %w", err)
+			}
+			for _, key := range keys {
+				c.localCache.Delete(key)
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
 	return nil
 }
 
@@ -139,14 +165,14 @@ func (c *Cache) GetService(ctx context.Context, gatewayID, serviceID string) (*s
 	if err != nil {
 		return nil, err
 	}
-	service := new(service.Service)
-	if err := json.Unmarshal([]byte(res), service); err != nil {
+	entity := new(service.Service)
+	if err := json.Unmarshal([]byte(res), entity); err != nil {
 		return nil, err
 	}
-	return service, nil
+	return entity, nil
 }
 
-func (c *Cache) GetApiKey(ctx context.Context, gatewayID, key string) (*apikey.APIKey, error) {
+func (c *Cache) GetApiKey(ctx context.Context, gatewayID string, key string) (*apikey.APIKey, error) {
 	apikeyPattern := fmt.Sprintf(ApiKeyPattern, gatewayID, key)
 	res, err := c.Get(ctx, apikeyPattern)
 	if err != nil {

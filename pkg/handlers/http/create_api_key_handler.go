@@ -47,11 +47,21 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
-	// Generate new API key
+	id, err := uuid.NewV6()
+	if err != nil {
+		s.logger.WithError(err).Error("failed to generate UUID")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
+	}
+
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
+	}
+
 	apiKey := &domain.APIKey{
-		ID:        uuid.NewString(),
+		ID:        id,
 		Name:      req.Name,
-		GatewayID: gatewayID,
+		GatewayID: gatewayUUID,
 		Key:       s.generateAPIKey(),
 	}
 

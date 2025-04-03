@@ -17,15 +17,15 @@ const (
 )
 
 type Service struct {
-	ID          string          `json:"id" gorm:"primaryKey"`
-	GatewayID   string          `json:"gateway_id" gorm:"not null"`
+	ID          uuid.UUID       `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	GatewayID   uuid.UUID       `json:"gateway_id" gorm:"type:uuid;not null"`
 	Name        string          `json:"name" gorm:"uniqueIndex:idx_gateway_service_name"`
 	Type        string          `json:"type" gorm:"not null"` // "upstream" or "endpoint"
 	Description string          `json:"description"`
 	Tags        domain.TagsJSON `json:"tags,omitempty" gorm:"type:jsonb"`
 
 	// Upstream configuration (used when type is "upstream")
-	UpstreamID string             `json:"upstream_id,omitempty"`
+	UpstreamID uuid.UUID          `json:"upstream_id,omitempty" gorm:"type:uuid"`
 	Upstream   *upstream.Upstream `json:"upstream,omitempty" gorm:"foreignKey:UpstreamID;references:ID"`
 
 	// Direct configuration (used when type is "direct")
@@ -37,14 +37,14 @@ type Service struct {
 	Credentials types.Credentials  `json:"credentials,omitempty" gorm:"type:jsonb"`
 
 	// Common settings
-	Retries   int `json:"retries,omitempty"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Retries   int       `json:"retries,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (s *Service) BeforeCreate(tx *gorm.DB) error {
-	if s.ID == "" {
-		s.ID = uuid.New().String()
+	if s.ID == uuid.Nil {
+		s.ID = uuid.New()
 	}
 	return s.Validate()
 }
@@ -68,7 +68,7 @@ func (s *Service) Validate() error {
 	}
 
 	// Must have either upstream or direct host configuration
-	if s.UpstreamID == "" {
+	if s.UpstreamID == uuid.Nil {
 		if s.Host == "" {
 			return fmt.Errorf("either upstream_id or host must be specified")
 		}

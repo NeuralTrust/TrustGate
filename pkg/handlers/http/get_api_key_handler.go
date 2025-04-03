@@ -1,24 +1,27 @@
 package http
 
 import (
-	"encoding/json"
-	"fmt"
+	"errors"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
 type getAPIKeyHandler struct {
 	logger *logrus.Logger
 	cache  *cache.Cache
+	repo   apikey.Repository
 }
 
-func NewGetAPIKeyHandler(logger *logrus.Logger, cache *cache.Cache) Handler {
+func NewGetAPIKeyHandler(logger *logrus.Logger, cache *cache.Cache, repo apikey.Repository) Handler {
 	return &getAPIKeyHandler{
 		logger: logger,
 		cache:  cache,
+		repo:   repo,
 	}
 }
 
@@ -32,27 +35,20 @@ func NewGetAPIKeyHandler(logger *logrus.Logger, cache *cache.Cache) Handler {
 // @Failure 404 {object} map[string]interface{} "API Key not found"
 // @Router /api/v1/gateways/{gateway_id}/keys/{key_id} [get]
 func (s *getAPIKeyHandler) Handle(c *fiber.Ctx) error {
-	gatewayID := c.Params("gateway_id")
 	keyID := c.Params("key_id")
-
-	key := fmt.Sprintf("apikey:%s:%s", gatewayID, keyID)
-	apiKeyJSON, err := s.cache.Get(c.Context(), key)
+	keyUUID, err := uuid.Parse(keyID)
 	if err != nil {
-		if err.Error() == "redis: nil" {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "API key not found"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid key_id"})
+	}
+
+	apiKey, err := s.repo.GetByID(c.Context(), keyUUID)
+	if err != nil {
+		if errors.Is(err, domain.ErrEntityNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "API Key not found"})
 		}
-		s.logger.WithError(err).Error("failed to get API key")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get API key"})
+		s.logger.WithError(err).Error("failed to get API Key from database")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get API Key"})
 	}
-
-	var apiKey domain.APIKey
-	if err := json.Unmarshal([]byte(apiKeyJSON), &apiKey); err != nil {
-		s.logger.WithError(err).Error("failed to unmarshal API key")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get API key"})
-	}
-
-	// Don't expose the actual key
-	apiKey.Key = ""
 
 	return c.Status(fiber.StatusOK).JSON(apiKey)
 }

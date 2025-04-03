@@ -27,7 +27,7 @@ func NewUpdateGatewayCache(cache *cache.Cache) UpdateGatewayCache {
 }
 
 func (h *updateGatewayCache) Update(ctx context.Context, gateway *gateway.Gateway) error {
-	if err := h.validateGatewayID(gateway.ID); err != nil {
+	if err := h.validateGatewayID(gateway.ID.String()); err != nil {
 		return fmt.Errorf("invalid gateway ID: %w", err)
 	}
 
@@ -42,7 +42,7 @@ func (h *updateGatewayCache) Update(ctx context.Context, gateway *gateway.Gatewa
 		return fmt.Errorf("failed to marshal gateway: %w", err)
 	}
 
-	key := fmt.Sprintf("gateway:%s", gateway.ID)
+	key := fmt.Sprintf(cache.GatewayKeyPattern, gateway.ID)
 	if err := h.cache.Set(ctx, key, string(gatewayJSON), 0); err != nil {
 		return fmt.Errorf("failed to cache gateway: %w", err)
 	}

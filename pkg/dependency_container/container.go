@@ -7,7 +7,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
-	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -87,7 +86,6 @@ func NewContainer(
 	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
-	validateRule := rule.NewValidateRule(validatePlugin)
 	gatewayDataFinder := gateway.NewDataFinder(repo, cacheInstance, logger)
 	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager)
 
@@ -147,15 +145,15 @@ func NewContainer(
 		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, repo, redisPublisher),
 		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, repo, redisPublisher),
 		// Rule
-		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, repo, validateRule),
+		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, repo, validatePlugin),
 		ListRulesHandler:  handlers.NewListRulesHandler(logger, repo, cacheInstance),
-		UpdateRuleHandler: handlers.NewUpdateRuleHandler(logger, repo, cacheInstance, validateRule, redisPublisher),
+		UpdateRuleHandler: handlers.NewUpdateRuleHandler(logger, repo, cacheInstance, validatePlugin, redisPublisher),
 		DeleteRuleHandler: handlers.NewDeleteRuleHandler(logger, repo, cacheInstance, redisPublisher),
 		// APIKey
 		CreateAPIKeyHandler: handlers.NewCreateAPIKeyHandler(logger, repo, cacheInstance),
 		ListAPIKeysHandler:  handlers.NewListAPIKeysHandler(logger, repo),
-		GetAPIKeyHandler:    handlers.NewGetAPIKeyHandler(logger, cacheInstance),
-		DeleteAPIKeyHandler: handlers.NewDeleteAPIKeyHandler(logger, repo, redisPublisher),
+		GetAPIKeyHandler:    handlers.NewGetAPIKeyHandler(logger, cacheInstance, apiKeyRepository),
+		DeleteAPIKeyHandler: handlers.NewDeleteAPIKeyHandler(logger, repo, apiKeyRepository, redisPublisher),
 	}
 
 	container := &Container{

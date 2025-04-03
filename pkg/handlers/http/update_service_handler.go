@@ -8,6 +8,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -45,15 +46,26 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
-
+	id, err := uuid.Parse(serviceID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service ID"})
+	}
+	upstreamId, err := uuid.Parse(req.UpstreamID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid upstream ID"})
+	}
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
+	}
 	entity := service.Service{
-		ID:          serviceID,
-		GatewayID:   gatewayID,
+		ID:          id,
+		GatewayID:   gatewayUUID,
 		Name:        req.Name,
 		Type:        req.Type,
 		Description: req.Description,
 		Tags:        req.Tags,
-		UpstreamID:  req.UpstreamID,
+		UpstreamID:  upstreamId,
 		Host:        req.Host,
 		Port:        req.Port,
 		Protocol:    req.Protocol,
@@ -71,9 +83,9 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Cache the updated service
-	err := s.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateServiceCacheEvent{
-		ServiceID: entity.ID,
-		GatewayID: entity.GatewayID,
+	err = s.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateServiceCacheEvent{
+		ServiceID: entity.ID.String(),
+		GatewayID: entity.GatewayID.String(),
 	})
 	if err != nil {
 		s.logger.WithError(err).Error("failed to publish update service cache event")

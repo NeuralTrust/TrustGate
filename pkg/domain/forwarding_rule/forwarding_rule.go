@@ -10,9 +10,9 @@ import (
 )
 
 type ForwardingRule struct {
-	ID            string                 `gorm:"primaryKey"`
-	GatewayID     string                 `gorm:"not null"`
-	ServiceID     string                 `gorm:"not null"`
+	ID            uuid.UUID              `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	GatewayID     uuid.UUID              `gorm:"type:uuid;not null"`
+	ServiceID     uuid.UUID              `gorm:"type:uuid;not null"`
 	Path          string                 `gorm:"not null"`
 	Methods       domain.MethodsJSON     `gorm:"type:jsonb"`
 	Headers       domain.HeadersJSON     `gorm:"type:jsonb"`
@@ -32,7 +32,7 @@ func (r *ForwardingRule) Validate() error {
 		return fmt.Errorf("path is required")
 	}
 
-	if r.ServiceID == "" {
+	if r.ServiceID == uuid.Nil {
 		return fmt.Errorf("service_id is required")
 	}
 
@@ -57,8 +57,8 @@ func (r *ForwardingRule) Validate() error {
 // BeforeCreate is called before inserting a new forwarding rule into the database
 func (r *ForwardingRule) BeforeCreate(tx *gorm.DB) error {
 	// Generate UUID if not set
-	if r.ID == "" {
-		r.ID = uuid.New().String()
+	if r.ID == uuid.Nil {
+		r.ID = uuid.New()
 	}
 
 	// Set timestamps
