@@ -8,10 +8,10 @@ import (
 )
 
 type ValidatePlugin struct {
-	manager *plugins.Manager
+	manager plugins.Manager
 }
 
-func NewValidatePlugin(manager *plugins.Manager) *ValidatePlugin {
+func NewValidatePlugin(manager plugins.Manager) *ValidatePlugin {
 	return &ValidatePlugin{
 		manager: manager,
 	}

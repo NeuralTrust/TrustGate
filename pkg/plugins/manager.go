@@ -33,17 +33,35 @@ import (
 )
 
 var (
-	instance *Manager
+	instance Manager
 	once     sync.Once
 )
 
-type Manager struct {
+//go:generate mockery --name=Manager --dir=. --output=../../mocks --filename=plugin_manager_mock.go --case=underscore --with-expecter
+type Manager interface {
+	ValidatePlugin(name string, config types.PluginConfig) error
+	RegisterPlugin(plugin pluginiface.Plugin) error
+	ClearPluginChain(id string)
+	GetChains(entityID string, stage types.Stage) [][]types.PluginConfig
+	SetPluginChain(gatewayId string, chains []types.PluginConfig) error
+	GetPlugin(name string) pluginiface.Plugin
+	InitializePlugins()
+	ExecuteStage(
+		ctx context.Context,
+		stage types.Stage,
+		gatewayID string,
+		req *types.RequestContext,
+		resp *types.ResponseContext,
+	) (*types.ResponseContext, error)
+}
+
+type manager struct {
 	mu                 sync.RWMutex
 	config             *config.Config
 	cache              *cache.Cache
 	logger             *logrus.Logger
 	bedrockClient      bedrock.Client
-	fingerprintManager fingerprint.Manager
+	fingerprintTracker fingerprint.Tracker
 	plugins            map[string]pluginiface.Plugin
 	configurations     map[string][][]types.PluginConfig
 }
@@ -53,24 +71,24 @@ func NewManager(
 	cache *cache.Cache,
 	logger *logrus.Logger,
 	bedrockClient bedrock.Client,
-	fingerprintManager fingerprint.Manager,
-) *Manager {
+	fingerprintTracker fingerprint.Tracker,
+) Manager {
 	once.Do(func() {
-		instance = &Manager{
+		instance = &manager{
 			plugins:            make(map[string]pluginiface.Plugin),
 			configurations:     make(map[string][][]types.PluginConfig),
 			bedrockClient:      bedrockClient,
 			cache:              cache,
 			logger:             logger,
 			config:             config,
-			fingerprintManager: fingerprintManager,
+			fingerprintTracker: fingerprintTracker,
 		}
 	})
-	instance.initializePlugins()
+	instance.InitializePlugins()
 	return instance
 }
 
-func (m *Manager) initializePlugins() {
+func (m *manager) InitializePlugins() {
 
 	if err := m.RegisterPlugin(rate_limiter.NewRateLimiterPlugin(m.cache.Client(), nil)); err != nil {
 		m.logger.WithError(err).Error("Failed to register rate limiter plugin")
@@ -119,13 +137,13 @@ func (m *Manager) initializePlugins() {
 	if err := m.RegisterPlugin(neuraltrust_guardrail.NewNeuralTrustGuardrailPlugin(
 		m.logger,
 		&http.Client{},
-		m.fingerprintManager,
+		m.fingerprintTracker,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
 	}
 
 	if err := m.RegisterPlugin(contextual_security.NewContextualSecurityPlugin(
-		m.fingerprintManager,
+		m.fingerprintTracker,
 		m.logger,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
@@ -139,7 +157,7 @@ func (m *Manager) initializePlugins() {
 }
 
 // ValidatePlugin validates a plugin configuration
-func (m *Manager) ValidatePlugin(name string, config types.PluginConfig) error {
+func (m *manager) ValidatePlugin(name string, config types.PluginConfig) error {
 	plugin, exists := m.plugins[name]
 	if !exists {
 		return fmt.Errorf("unknown plugin: %s", name)
@@ -153,7 +171,7 @@ func (m *Manager) ValidatePlugin(name string, config types.PluginConfig) error {
 	return nil
 }
 
-func (m *Manager) RegisterPlugin(plugin pluginiface.Plugin) error {
+func (m *manager) RegisterPlugin(plugin pluginiface.Plugin) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	name := plugin.Name()
@@ -164,7 +182,7 @@ func (m *Manager) RegisterPlugin(plugin pluginiface.Plugin) error {
 	return nil
 }
 
-func (m *Manager) ClearPluginChain(id string) {
+func (m *manager) ClearPluginChain(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -175,7 +193,7 @@ func (m *Manager) ClearPluginChain(id string) {
 	delete(m.configurations, id)
 }
 
-func (m *Manager) SetPluginChain(gatewayId string, chains []types.PluginConfig) error {
+func (m *manager) SetPluginChain(gatewayId string, chains []types.PluginConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -194,7 +212,7 @@ func (m *Manager) SetPluginChain(gatewayId string, chains []types.PluginConfig) 
 	return nil
 }
 
-func (m *Manager) ExecuteStage(
+func (m *manager) ExecuteStage(
 	ctx context.Context,
 	stage types.Stage,
 	gatewayID string,
@@ -203,7 +221,7 @@ func (m *Manager) ExecuteStage(
 ) (*types.ResponseContext, error) {
 	m.mu.RLock()
 	// Get both gateway and rule level chains
-	gatewayChains := m.getChains(gatewayID, stage)
+	gatewayChains := m.GetChains(gatewayID, stage)
 	plugins := m.plugins
 	m.mu.RUnlock()
 
@@ -225,7 +243,7 @@ func (m *Manager) ExecuteStage(
 	return resp, nil
 }
 
-func (m *Manager) executeChains(
+func (m *manager) executeChains(
 	ctx context.Context,
 	plugins map[string]pluginiface.Plugin,
 	chains []types.PluginConfig,
@@ -273,7 +291,7 @@ func (m *Manager) executeChains(
 	return nil
 }
 
-func (m *Manager) executeParallel(ctx context.Context, plugins map[string]pluginiface.Plugin, configs []types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) error {
+func (m *manager) executeParallel(ctx context.Context, plugins map[string]pluginiface.Plugin, configs []types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) error {
 	// Group plugins by priority
 	priorityGroups := make(map[int][]types.PluginConfig)
 	for _, cfg := range configs {
@@ -388,7 +406,7 @@ func (m *Manager) executeParallel(ctx context.Context, plugins map[string]plugin
 	return nil
 }
 
-func (m *Manager) executeSequential(
+func (m *manager) executeSequential(
 	ctx context.Context,
 	plugins map[string]pluginiface.Plugin,
 	configs []types.PluginConfig,
@@ -434,7 +452,7 @@ func (m *Manager) executeSequential(
 	return nil
 }
 
-func (m *Manager) getChains(entityID string, stage types.Stage) [][]types.PluginConfig {
+func (m *manager) GetChains(entityID string, stage types.Stage) [][]types.PluginConfig {
 	chainsGroups, exists := m.configurations[entityID]
 	if !exists {
 		return nil
@@ -488,7 +506,7 @@ func (m *Manager) getChains(entityID string, stage types.Stage) [][]types.Plugin
 }
 
 // GetPlugin returns a plugin by name
-func (m *Manager) GetPlugin(name string) pluginiface.Plugin {
+func (m *manager) GetPlugin(name string) pluginiface.Plugin {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.plugins[name]

@@ -20,14 +20,14 @@ type updateGatewayHandler struct {
 	logger        *logrus.Logger
 	repo          *database.Repository
 	transformer   *gateway.OutputTransformer
-	pluginManager *plugins.Manager
+	pluginManager plugins.Manager
 	publisher     infraCache.EventPublisher
 }
 
 func NewUpdateGatewayHandler(
 	logger *logrus.Logger,
 	repo *database.Repository,
-	pluginManager *plugins.Manager,
+	pluginManager plugins.Manager,
 	publisher infraCache.EventPublisher,
 ) Handler {
 	return &updateGatewayHandler{

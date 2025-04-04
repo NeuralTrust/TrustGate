@@ -11,12 +11,12 @@ import (
 )
 
 type pluginMiddleware struct {
-	pluginManager *plugins.Manager
+	pluginManager plugins.Manager
 	logger        *logrus.Logger
 }
 
 func NewPluginChainMiddleware(
-	pluginManager *plugins.Manager,
+	pluginManager plugins.Manager,
 	logger *logrus.Logger,
 ) Middleware {
 	return &pluginMiddleware{

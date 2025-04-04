@@ -49,7 +49,7 @@ type forwardedHandler struct {
 	upstreamFinder      upstream.Finder
 	serviceFinder       service.Finder
 	providers           map[string]config.ProviderConfig
-	pluginManager       *plugins.Manager
+	pluginManager       plugins.Manager
 	loadBalancers       sync.Map
 	client              *fasthttp.Client
 	loadBalancerFactory loadbalancer.Factory
@@ -63,7 +63,7 @@ func NewForwardedHandler(
 	upstreamFinder upstream.Finder,
 	serviceFinder service.Finder,
 	providers map[string]config.ProviderConfig,
-	pluginManager *plugins.Manager,
+	pluginManager plugins.Manager,
 	loadBalancerFactory loadbalancer.Factory,
 	cfg *config.Config,
 ) Handler {

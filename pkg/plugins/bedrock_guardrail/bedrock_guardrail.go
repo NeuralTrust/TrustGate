@@ -114,8 +114,11 @@ func (p *BedrockGuardrailPlugin) Execute(
 	// Get content to check
 	content := string(req.Body)
 	if content == "" {
-		p.logger.Warn("Empty content received")
-		return nil, fmt.Errorf("empty content received")
+		p.logger.Warn("empty content received for bedrock guardrail check")
+		return &plugintypes.PluginResponse{
+			StatusCode: 200,
+			Message:    "Content allowed",
+		}, nil
 	}
 
 	// Log the content being sent to Bedrock
