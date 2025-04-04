@@ -40,16 +40,16 @@ type Config struct {
 type Option string
 
 type ContextualSecurityPlugin struct {
-	fingerPrintManager fingerprint.Manager
+	fingerPrintTracker fingerprint.Tracker
 	logger             *logrus.Logger
 }
 
 func NewContextualSecurityPlugin(
-	fingerprint fingerprint.Manager,
+	fingerprint fingerprint.Tracker,
 	logger *logrus.Logger,
 ) pluginiface.Plugin {
 	return &ContextualSecurityPlugin{
-		fingerPrintManager: fingerprint,
+		fingerPrintTracker: fingerprint,
 		logger:             logger,
 	}
 }
@@ -106,7 +106,7 @@ func (p *ContextualSecurityPlugin) Execute(
 		return nil, fmt.Errorf("fingerprint not found in context")
 	}
 
-	dto, err := p.fingerPrintManager.GetFingerprint(ctx, fpID)
+	dto, err := p.fingerPrintTracker.GetFingerprint(ctx, fpID)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to get fingerprint")
 		return nil, fmt.Errorf("failed to get fingerprint: %w", err)
@@ -119,12 +119,12 @@ func (p *ContextualSecurityPlugin) Execute(
 			p.logger.WithError(err).Error("failed to create fingerprint from ID")
 			return nil, fmt.Errorf("failed to create fingerprint from ID: %w", err)
 		}
-		if err := p.fingerPrintManager.Store(ctx, dto, 1*time.Hour); err != nil {
+		if err := p.fingerPrintTracker.Store(ctx, dto, 1*time.Hour); err != nil {
 			p.logger.WithError(err).Error("failed to store fingerprint")
 			return nil, fmt.Errorf("failed to store fingerprint: %w", err)
 		}
 	} else {
-		isBlocked, err = p.fingerPrintManager.IsFingerprintBlocked(ctx, dto)
+		isBlocked, err = p.fingerPrintTracker.IsFingerprintBlocked(ctx, dto)
 		if err != nil {
 			p.logger.WithError(err).Error("failed to check if fingerprint is blocked")
 			return nil, fmt.Errorf("failed to check if fingerprint is blocked: %w", err)
@@ -138,13 +138,13 @@ func (p *ContextualSecurityPlugin) Execute(
 		}
 	}
 
-	maliciousCount, err := p.fingerPrintManager.GetMaliciousCount(ctx, dto.ID())
+	maliciousCount, err := p.fingerPrintTracker.GetMaliciousCount(ctx, dto.ID())
 	if err != nil {
 		p.logger.WithError(err).Error("failed to get malicious count")
 		return nil, fmt.Errorf("failed to get malicious count: %w", err)
 	}
 
-	similar, err := p.fingerPrintManager.FindSimilarFingerprints(ctx, dto)
+	similar, err := p.fingerPrintTracker.FindSimilarFingerprints(ctx, dto)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to find similar fingerprints")
 		return nil, fmt.Errorf("failed to find similar fingerprints: %w", err)
@@ -152,12 +152,12 @@ func (p *ContextualSecurityPlugin) Execute(
 
 	var similarMaliciousCount, blockedCount int
 
-	similarMaliciousCount, err = p.fingerPrintManager.CountMaliciousSimilarFingerprints(ctx, similar, 0.5)
+	similarMaliciousCount, err = p.fingerPrintTracker.CountMaliciousSimilarFingerprints(ctx, similar, 0.5)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to count malicious fingerprints")
 		return nil, fmt.Errorf("failed to count malicious fingerprints: %w", err)
 	}
-	blockedCount, err = p.fingerPrintManager.CountBlockedSimilarFingerprints(ctx, similar)
+	blockedCount, err = p.fingerPrintTracker.CountBlockedSimilarFingerprints(ctx, similar)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to count blocked fingerprints")
 		return nil, fmt.Errorf("failed to count blocked fingerprints: %w", err)
@@ -194,7 +194,7 @@ func (p *ContextualSecurityPlugin) Execute(
 	switch cfg.RateLimitMode {
 	case OptionBlock:
 		p.logger.Debug("executing block mode")
-		if err := p.fingerPrintManager.BlockFingerprint(
+		if err := p.fingerPrintTracker.BlockFingerprint(
 			ctx,
 			dto,
 			time.Duration(cfg.BlockDuration)*time.Second); err != nil {

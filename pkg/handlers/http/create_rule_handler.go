@@ -17,20 +17,20 @@ import (
 )
 
 type createRuleHandler struct {
-	logger         *logrus.Logger
-	repo           *database.Repository
-	validatePlugin *plugin.ValidatePlugin
+	logger               *logrus.Logger
+	repo                 *database.Repository
+	pluginChainValidator plugin.ValidatePluginChain
 }
 
 func NewCreateRuleHandler(
 	logger *logrus.Logger,
 	repo *database.Repository,
-	validatePlugin *plugin.ValidatePlugin,
+	pluginChainValidator plugin.ValidatePluginChain,
 ) Handler {
 	return &createRuleHandler{
-		logger:         logger,
-		repo:           repo,
-		validatePlugin: validatePlugin,
+		logger:               logger,
+		repo:                 repo,
+		pluginChainValidator: pluginChainValidator,
 	}
 }
 
@@ -116,6 +116,14 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		UpdatedAt:     time.Now(),
 	}
 
+	if len(req.PluginChain) > 0 {
+		err = s.pluginChainValidator.Validate(c.Context(), gatewayUUID, req.PluginChain)
+		if err != nil {
+			s.logger.WithError(err).Error("failed to validate plugin chain")
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+	}
+
 	// Store in database
 	if err := s.repo.CreateRule(c.Context(), dbRule); err != nil {
 		s.logger.WithError(err).Error("Failed to create rule")
@@ -197,14 +205,6 @@ func (s *createRuleHandler) validate(rule *types.CreateRuleRequest) error {
 	for _, method := range rule.Methods {
 		if !validMethods[strings.ToUpper(method)] {
 			return fmt.Errorf("invalid HTTP method: %s", method)
-		}
-	}
-
-	if len(rule.PluginChain) > 0 {
-		for i, pl := range rule.PluginChain {
-			if err := s.validatePlugin.Validate(pl); err != nil {
-				return fmt.Errorf("plugin %d: %v", i, err)
-			}
 		}
 	}
 

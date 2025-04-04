@@ -69,7 +69,7 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		UpdatedAt:       req.UpdatedAt,
 	}
 
-	err = h.pluginChainValidator.Validate(entity.RequiredPlugins)
+	err = h.pluginChainValidator.Validate(c.Context(), id, entity.RequiredPlugins)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to validate plugin chain")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})

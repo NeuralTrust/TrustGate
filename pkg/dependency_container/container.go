@@ -30,7 +30,7 @@ import (
 type Container struct {
 	Cache                 *cache.Cache
 	BedrockClient         bedrock.Client
-	PluginManager         *plugins.Manager
+	PluginManager         plugins.Manager
 	HandlerTransport      handlers.HandlerTransport
 	RedisListener         infraCache.EventListener
 	Repository            *database.Repository
@@ -40,7 +40,8 @@ type Container struct {
 	PluginMiddleware      middleware.Middleware
 	FingerPrintMiddleware middleware.Middleware
 	ApiKeyRepository      domainApikey.Repository
-	FingerprintManager    fingerprint.Manager
+	FingerprintTracker    fingerprint.Tracker
+	PluginChainValidator  plugin.ValidatePluginChain
 }
 
 func NewContainer(
@@ -69,8 +70,8 @@ func NewContainer(
 		return nil, fmt.Errorf("failed to initialize bedrock client: %v", err)
 	}
 
-	fingerprintManager := fingerprint.NewFingerPrintManager(cacheInstance)
-	pluginManager := plugins.NewManager(cfg, cacheInstance, logger, bedrockClient, fingerprintManager)
+	fingerprintTracker := fingerprint.NewFingerPrintTracker(cacheInstance)
+	pluginManager := plugins.NewManager(cfg, cacheInstance, logger, bedrockClient, fingerprintTracker)
 
 	// repository
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
@@ -87,7 +88,7 @@ func NewContainer(
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
 	gatewayDataFinder := gateway.NewDataFinder(repo, cacheInstance, logger)
-	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager)
+	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager, gatewayRepository)
 
 	// redis publisher
 	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
@@ -145,7 +146,7 @@ func NewContainer(
 		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, repo, redisPublisher),
 		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, repo, redisPublisher),
 		// Rule
-		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, repo, validatePlugin),
+		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, repo, pluginChainValidator),
 		ListRulesHandler:  handlers.NewListRulesHandler(logger, repo, cacheInstance),
 		UpdateRuleHandler: handlers.NewUpdateRuleHandler(logger, repo, cacheInstance, validatePlugin, redisPublisher),
 		DeleteRuleHandler: handlers.NewDeleteRuleHandler(logger, repo, cacheInstance, redisPublisher),
@@ -165,11 +166,12 @@ func NewContainer(
 		GatewayMiddleware:     middleware.NewGatewayMiddleware(logger, cacheInstance, repo, gatewayDataFinder, cfg.Server.BaseDomain),
 		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger),
 		PluginMiddleware:      middleware.NewPluginChainMiddleware(pluginManager, logger),
-		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintManager),
+		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),
 		ApiKeyRepository:      apiKeyRepository,
 		PluginManager:         pluginManager,
 		BedrockClient:         bedrockClient,
-		FingerprintManager:    fingerprintManager,
+		FingerprintTracker:    fingerprintTracker,
+		PluginChainValidator:  pluginChainValidator,
 	}
 
 	return container, nil

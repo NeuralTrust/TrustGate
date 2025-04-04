@@ -6,6 +6,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
+//go:generate mockery --name=Plugin --dir=. --output=../../mocks --filename=plugin_mock.go --case=underscore --with-expecter
 type Plugin interface {
 	Name() string
 	// Stages returns the fixed stages where the plugin must run.

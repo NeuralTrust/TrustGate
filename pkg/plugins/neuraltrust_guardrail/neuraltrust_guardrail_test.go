@@ -37,8 +37,8 @@ func TestTrustGateGuardrailPlugin_ValidateConfig(t *testing.T) {
 
 func TestTrustGateGuardrailPlugin_Execute_JailbreakSafe(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
-	fingerPrintManagerMock := new(mocks.Manager)
-	plugin := neuraltrust_guardrail.NewNeuralTrustGuardrailPlugin(logrus.New(), mockClient, fingerPrintManagerMock)
+	fingerPrintTrackerMock := new(mocks.Tracker)
+	plugin := neuraltrust_guardrail.NewNeuralTrustGuardrailPlugin(logrus.New(), mockClient, fingerPrintTrackerMock)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
