@@ -41,7 +41,7 @@ func TestRequiredPlugins_Failed(t *testing.T) {
 func TestRequiredPlugins_Success(t *testing.T) {
 	subdomain := fmt.Sprintf("test-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
-		"name":      "Contextual Security Gateway",
+		"name":      "Required Plugins Gateway",
 		"subdomain": subdomain,
 		"required_plugins": []map[string]interface{}{
 			{
@@ -72,7 +72,7 @@ func TestRequiredPlugins_Success(t *testing.T) {
 	gatewayID := CreateGateway(t, gatewayPayload)
 
 	upstreamPayload := map[string]interface{}{
-		"name":      fmt.Sprintf("echo-upstream-%d", time.Now().Unix()),
+		"name":      fmt.Sprintf("required-plugins-upstream-%d", time.Now().Unix()),
 		"algorithm": "round-robin",
 		"targets": []map[string]interface{}{
 			{
