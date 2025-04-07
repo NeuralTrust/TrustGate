@@ -252,6 +252,14 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	if respCtx.StopProcessing {
+		for k, values := range respCtx.Headers {
+			for _, v := range values {
+				c.Set(k, v)
+			}
+		}
+		return c.Status(respCtx.StatusCode).Send(respCtx.Body)
+	}
 	// Forward the request
 	response, err := h.forwardRequest(reqCtx, matchingRule)
 	if err != nil {
