@@ -116,11 +116,7 @@ func (p *Provider) buildTraceRequest(
 	req *types.RequestContext,
 	resp *types.ResponseContext,
 ) (*TraceRequest, error) {
-	userAgentInfo, ok := req.Metadata["user_agent_info"].(*utils.UserAgentInfo)
-	if !ok {
-		return nil, errors.New("user_agent_info not found in request metadata")
-	}
-	return &TraceRequest{
+	trace := &TraceRequest{
 		TraceId:        req.GatewayID,
 		InteractionId:  uuid.New().String(),
 		ConversationId: uuid.New().String(),
@@ -129,11 +125,18 @@ func (p *Provider) buildTraceRequest(
 		Task:           "message",
 		StartTime:      req.ProcessAt.UnixMilli(),
 		EndTime:        resp.ProcessAt.UnixMilli(),
-		Locale:         userAgentInfo.Locale,
-		Device:         userAgentInfo.Device,
-		Os:             userAgentInfo.OS,
-		Browser:        userAgentInfo.Browser,
-	}, nil
+	}
+	userAgentInfo, ok := req.Metadata["user_agent_info"].(*utils.UserAgentInfo)
+	if !ok {
+		return nil, errors.New("user_agent_info not found in request metadata")
+	}
+	if userAgentInfo != nil {
+		trace.Locale = userAgentInfo.Locale
+		trace.Device = userAgentInfo.Device
+		trace.Os = userAgentInfo.OS
+		trace.Browser = userAgentInfo.Browser
+	}
+	return trace, nil
 }
 
 func (p *Provider) buildHttpRequest(ctx context.Context, body []byte) (*http.Request, error) {
