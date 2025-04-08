@@ -153,15 +153,8 @@
                     "required": true
                 },
                 "responses": {
-                    "200": {
-                        "description": "Gateway updated successfully",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/gateway.Gateway"
-                                }
-                            }
-                        }
+                    "204": {
+                        "description": "Gateway updated successfully"
                     },
                     "400": {
                         "description": "Invalid request data",
@@ -1841,6 +1834,9 @@
                     },
                     "status": {
                         "type": "string"
+                    },
+                    "telemetry": {
+                        "$ref": "#/components/schemas/types.TelemetryRequest"
                     }
                 }
             },

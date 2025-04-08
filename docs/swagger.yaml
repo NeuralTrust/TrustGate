@@ -504,6 +504,8 @@ definitions:
         $ref: '#/definitions/types.SecurityConfigRequest'
       status:
         type: string
+      telemetry:
+        $ref: '#/definitions/types.TelemetryRequest'
     type: object
   types.UpdateRuleRequest:
     properties:
@@ -738,10 +740,8 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        "204":
           description: Gateway updated successfully
-          schema:
-            $ref: '#/definitions/gateway.Gateway'
         "400":
           description: Invalid request data
           schema:

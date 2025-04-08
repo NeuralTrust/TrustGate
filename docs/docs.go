@@ -150,11 +150,8 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "Gateway updated successfully",
-                        "schema": {
-                            "$ref": "#/definitions/gateway.Gateway"
-                        }
+                    "204": {
+                        "description": "Gateway updated successfully"
                     },
                     "400": {
                         "description": "Invalid request data",
@@ -1692,6 +1689,9 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "telemetry": {
+                    "$ref": "#/definitions/types.TelemetryRequest"
                 }
             }
         },
