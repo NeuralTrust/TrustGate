@@ -11,9 +11,14 @@ generate-mocks:  ; $(info $(M) Generating mocks ...)	@ ## Generate mocks
 	go generate ./...
 
 .PHONY: lint
-lint:  ; $(info $(M) Running linter ...)	@ ## Run linter
+lint:  ; $(info $(M) Running linter ...)	@
 	golangci-lint run ./...
 
 .PHONY: swagger
-swagger:  ; $(info $(M) Generate Swagger file ...)	@ ## Run linter
+swagger:  ; $(info $(M) Generate Swagger file ...)	@
 	swag init -g cmd/gateway/main.go
+
+.PHONY: openapi
+openapi:  ; $(info $(M) Generate OpenAPI file ...)	@
+	swag init -g cmd/gateway/main.go
+	swagger2openapi docs/swagger.json -o docs/openapi.json

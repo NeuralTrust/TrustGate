@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
@@ -21,7 +21,6 @@ import (
 type updateGatewayHandler struct {
 	logger                    *logrus.Logger
 	repo                      *database.Repository
-	transformer               *gateway.OutputTransformer
 	pluginManager             plugins.Manager
 	publisher                 infraCache.EventPublisher
 	telemetryProvidersBuilder appTelemetry.ProvidersBuilder
@@ -37,7 +36,6 @@ func NewUpdateGatewayHandler(
 	return &updateGatewayHandler{
 		logger:                    logger,
 		repo:                      repo,
-		transformer:               gateway.NewOutputTransformer(),
 		pluginManager:             pluginManager,
 		publisher:                 publisher,
 		telemetryProvidersBuilder: telemetryProvidersBuilder,
@@ -93,6 +91,27 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("invalid plugin configuration: %v", err)})
 			}
 		}
+	}
+
+	var securityConfig *domain.SecurityConfigJSON
+	if req.SecurityConfig != nil {
+		securityConfig = &domain.SecurityConfigJSON{
+			AllowedHosts:            req.SecurityConfig.AllowedHosts,
+			AllowedHostsAreRegex:    req.SecurityConfig.AllowedHostsAreRegex,
+			SSLRedirect:             req.SecurityConfig.SSLRedirect,
+			SSLHost:                 req.SecurityConfig.SSLHost,
+			SSLProxyHeaders:         req.SecurityConfig.SSLProxyHeaders,
+			STSSeconds:              req.SecurityConfig.STSSeconds,
+			STSIncludeSubdomains:    req.SecurityConfig.STSIncludeSubdomains,
+			FrameDeny:               req.SecurityConfig.FrameDeny,
+			CustomFrameOptionsValue: req.SecurityConfig.CustomFrameOptionsValue,
+			ReferrerPolicy:          req.SecurityConfig.ReferrerPolicy,
+			ContentSecurityPolicy:   req.SecurityConfig.ContentSecurityPolicy,
+			ContentTypeNosniff:      req.SecurityConfig.ContentTypeNosniff,
+			BrowserXSSFilter:        req.SecurityConfig.BrowserXSSFilter,
+			IsDevelopment:           req.SecurityConfig.IsDevelopment,
+		}
+		dbGateway.SecurityConfig = securityConfig
 	}
 
 	dbGateway.UpdatedAt = time.Now()

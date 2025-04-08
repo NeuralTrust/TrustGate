@@ -1,7 +1,13 @@
 {
     "swagger": "2.0",
     "info": {
-        "contact": {}
+        "title": "TrustGate",
+        "contact": {
+            "name": "NeuralTrust",
+            "url": "https://neuraltrust.ai/contact",
+            "email": "support@neuraltrust.ai"
+        },
+        "version": "v1.6.10"
     },
     "paths": {
         "/api/v1/gateways": {
@@ -1015,6 +1021,59 @@
                 "type": "string"
             }
         },
+        "domain.SecurityConfigJSON": {
+            "type": "object",
+            "properties": {
+                "allowed_hosts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_hosts_are_regex": {
+                    "type": "boolean"
+                },
+                "browser_xss_filter": {
+                    "type": "boolean"
+                },
+                "content_security_policy": {
+                    "type": "string"
+                },
+                "content_type_nosniff": {
+                    "type": "boolean"
+                },
+                "custom_frame_options_value": {
+                    "type": "string"
+                },
+                "frame_deny": {
+                    "type": "boolean"
+                },
+                "is_development": {
+                    "type": "boolean"
+                },
+                "referrer_policy": {
+                    "type": "string"
+                },
+                "ssl_host": {
+                    "type": "string"
+                },
+                "ssl_proxy_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "ssl_redirect": {
+                    "type": "boolean"
+                },
+                "sts_include_subdomains": {
+                    "type": "boolean"
+                },
+                "sts_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
         "forwarding_rule.ForwardingRule": {
             "type": "object",
             "properties": {
@@ -1085,6 +1144,9 @@
                     "items": {
                         "$ref": "#/definitions/types.PluginConfig"
                     }
+                },
+                "security_config": {
+                    "$ref": "#/definitions/domain.SecurityConfigJSON"
                 },
                 "status": {
                     "type": "string"
@@ -1207,6 +1269,7 @@
                     "type": "string"
                 },
                 "name": {
+                    "description": "@required",
                     "type": "string"
                 },
                 "required_plugins": {
@@ -1215,10 +1278,14 @@
                         "$ref": "#/definitions/types.PluginConfig"
                     }
                 },
+                "security_config": {
+                    "$ref": "#/definitions/types.SecurityConfigRequest"
+                },
                 "status": {
                     "type": "string"
                 },
                 "subdomain": {
+                    "description": "@required",
                     "type": "string"
                 },
                 "telemetry": {
@@ -1405,6 +1472,59 @@
                 }
             }
         },
+        "types.SecurityConfigRequest": {
+            "type": "object",
+            "properties": {
+                "allowed_hosts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_hosts_are_regex": {
+                    "type": "boolean"
+                },
+                "browser_xss_filter": {
+                    "type": "boolean"
+                },
+                "content_security_policy": {
+                    "type": "string"
+                },
+                "content_type_nosniff": {
+                    "type": "boolean"
+                },
+                "custom_frame_options_value": {
+                    "type": "string"
+                },
+                "frame_deny": {
+                    "type": "boolean"
+                },
+                "is_development": {
+                    "type": "boolean"
+                },
+                "referrer_policy": {
+                    "type": "string"
+                },
+                "ssl_host": {
+                    "type": "string"
+                },
+                "ssl_proxy_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "ssl_redirect": {
+                    "type": "boolean"
+                },
+                "sts_include_subdomains": {
+                    "type": "boolean"
+                },
+                "sts_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
         "types.ServiceRequest": {
             "type": "object",
             "properties": {
@@ -1554,6 +1674,9 @@
                     "additionalProperties": {
                         "$ref": "#/definitions/types.PluginConfig"
                     }
+                },
+                "security_config": {
+                    "$ref": "#/definitions/types.SecurityConfigRequest"
                 },
                 "status": {
                     "type": "string"

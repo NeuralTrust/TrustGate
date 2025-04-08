@@ -9,7 +9,11 @@ const docTemplate = `{
     "info": {
         "description": "{{escape .Description}}",
         "title": "{{.Title}}",
-        "contact": {},
+        "contact": {
+            "name": "NeuralTrust",
+            "url": "https://neuraltrust.ai/contact",
+            "email": "support@neuraltrust.ai"
+        },
         "version": "{{.Version}}"
     },
     "host": "{{.Host}}",
@@ -1026,6 +1030,59 @@ const docTemplate = `{
                 "type": "string"
             }
         },
+        "domain.SecurityConfigJSON": {
+            "type": "object",
+            "properties": {
+                "allowed_hosts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_hosts_are_regex": {
+                    "type": "boolean"
+                },
+                "browser_xss_filter": {
+                    "type": "boolean"
+                },
+                "content_security_policy": {
+                    "type": "string"
+                },
+                "content_type_nosniff": {
+                    "type": "boolean"
+                },
+                "custom_frame_options_value": {
+                    "type": "string"
+                },
+                "frame_deny": {
+                    "type": "boolean"
+                },
+                "is_development": {
+                    "type": "boolean"
+                },
+                "referrer_policy": {
+                    "type": "string"
+                },
+                "ssl_host": {
+                    "type": "string"
+                },
+                "ssl_proxy_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "ssl_redirect": {
+                    "type": "boolean"
+                },
+                "sts_include_subdomains": {
+                    "type": "boolean"
+                },
+                "sts_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
         "forwarding_rule.ForwardingRule": {
             "type": "object",
             "properties": {
@@ -1096,6 +1153,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/types.PluginConfig"
                     }
+                },
+                "security_config": {
+                    "$ref": "#/definitions/domain.SecurityConfigJSON"
                 },
                 "status": {
                     "type": "string"
@@ -1218,6 +1278,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "description": "@required",
                     "type": "string"
                 },
                 "required_plugins": {
@@ -1226,10 +1287,14 @@ const docTemplate = `{
                         "$ref": "#/definitions/types.PluginConfig"
                     }
                 },
+                "security_config": {
+                    "$ref": "#/definitions/types.SecurityConfigRequest"
+                },
                 "status": {
                     "type": "string"
                 },
                 "subdomain": {
+                    "description": "@required",
                     "type": "string"
                 },
                 "telemetry": {
@@ -1416,6 +1481,59 @@ const docTemplate = `{
                 }
             }
         },
+        "types.SecurityConfigRequest": {
+            "type": "object",
+            "properties": {
+                "allowed_hosts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_hosts_are_regex": {
+                    "type": "boolean"
+                },
+                "browser_xss_filter": {
+                    "type": "boolean"
+                },
+                "content_security_policy": {
+                    "type": "string"
+                },
+                "content_type_nosniff": {
+                    "type": "boolean"
+                },
+                "custom_frame_options_value": {
+                    "type": "string"
+                },
+                "frame_deny": {
+                    "type": "boolean"
+                },
+                "is_development": {
+                    "type": "boolean"
+                },
+                "referrer_policy": {
+                    "type": "string"
+                },
+                "ssl_host": {
+                    "type": "string"
+                },
+                "ssl_proxy_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "ssl_redirect": {
+                    "type": "boolean"
+                },
+                "sts_include_subdomains": {
+                    "type": "boolean"
+                },
+                "sts_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
         "types.ServiceRequest": {
             "type": "object",
             "properties": {
@@ -1565,6 +1683,9 @@ const docTemplate = `{
                     "additionalProperties": {
                         "$ref": "#/definitions/types.PluginConfig"
                     }
+                },
+                "security_config": {
+                    "$ref": "#/definitions/types.SecurityConfigRequest"
                 },
                 "status": {
                     "type": "string"
@@ -1762,11 +1883,11 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "",
+	Version:          "v1.6.10",
 	Host:             "",
 	BasePath:         "",
 	Schemes:          []string{},
-	Title:            "",
+	Title:            "TrustGate",
 	Description:      "",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,

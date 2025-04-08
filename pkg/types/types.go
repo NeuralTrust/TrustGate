@@ -9,6 +9,7 @@ type UpdateGatewayRequest struct {
 	Status          *string                 `json:"status,omitempty"`
 	RequiredPlugins map[string]PluginConfig `json:"required_plugins,omitempty"`
 	Telemetry       *TelemetryRequest       `json:"telemetry"`
+	SecurityConfig  *SecurityConfigRequest  `json:"security_config"`
 }
 
 type CreateAPIKeyRequest struct {
@@ -40,13 +41,14 @@ type UpdateRuleRequest struct {
 }
 
 type CreateGatewayRequest struct {
-	Name            string           `json:"name"`
-	Subdomain       string           `json:"subdomain"`
-	Status          string           `json:"status"`
-	RequiredPlugins []PluginConfig   `json:"required_plugins"`
-	Telemetry       TelemetryRequest `json:"telemetry"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
+	Name            string                 `json:"name"`      // @required
+	Subdomain       string                 `json:"subdomain"` // @required
+	Status          string                 `json:"status"`
+	RequiredPlugins []PluginConfig         `json:"required_plugins"`
+	Telemetry       TelemetryRequest       `json:"telemetry"`
+	SecurityConfig  *SecurityConfigRequest `json:"security_config"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
 type TelemetryRequest struct {
@@ -56,6 +58,23 @@ type TelemetryRequest struct {
 type ProviderConfigRequest struct {
 	Name     string                 `json:"name"`
 	Settings map[string]interface{} `json:"settings"`
+}
+
+type SecurityConfigRequest struct {
+	AllowedHosts            []string          `json:"allowed_hosts"`
+	AllowedHostsAreRegex    bool              `json:"allowed_hosts_are_regex"`
+	SSLRedirect             bool              `json:"ssl_redirect"`
+	SSLHost                 string            `json:"ssl_host"`
+	SSLProxyHeaders         map[string]string `json:"ssl_proxy_headers"`
+	STSSeconds              int               `json:"sts_seconds"`
+	STSIncludeSubdomains    bool              `json:"sts_include_subdomains"`
+	FrameDeny               bool              `json:"frame_deny"`
+	CustomFrameOptionsValue string            `json:"custom_frame_options_value"`
+	ReferrerPolicy          string            `json:"referrer_policy"`
+	ContentSecurityPolicy   string            `json:"content_security_policy"`
+	ContentTypeNosniff      bool              `json:"content_type_nosniff"`
+	BrowserXSSFilter        bool              `json:"browser_xss_filter"`
+	IsDevelopment           bool              `json:"is_development"`
 }
 
 type ServiceRequest struct {

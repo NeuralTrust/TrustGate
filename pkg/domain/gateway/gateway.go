@@ -11,14 +11,15 @@ import (
 )
 
 type Gateway struct {
-	ID              uuid.UUID              `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	Name            string                 `json:"name"`
-	Subdomain       string                 `json:"subdomain" gorm:"uniqueIndex"`
-	Status          string                 `json:"status"`
-	Telemetry       *telemetry.Telemetry   `json:"telemetry" gorm:"type:jsonb"`
-	RequiredPlugins domain.PluginChainJSON `json:"required_plugins" gorm:"type:jsonb"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	ID              uuid.UUID                  `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Name            string                     `json:"name"`
+	Subdomain       string                     `json:"subdomain" gorm:"uniqueIndex"`
+	Status          string                     `json:"status"`
+	Telemetry       *telemetry.Telemetry       `json:"telemetry" gorm:"type:jsonb"`
+	RequiredPlugins domain.PluginChainJSON     `json:"required_plugins" gorm:"type:jsonb"`
+	SecurityConfig  *domain.SecurityConfigJSON `json:"security_config" gorm:"type:jsonb"`
+	CreatedAt       time.Time                  `json:"created_at"`
+	UpdatedAt       time.Time                  `json:"updated_at"`
 }
 
 func (g *Gateway) BeforeCreate(tx *gorm.DB) error {

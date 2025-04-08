@@ -43,6 +43,7 @@ type Container struct {
 	MetricsMiddleware     middleware.Middleware
 	PluginMiddleware      middleware.Middleware
 	FingerPrintMiddleware middleware.Middleware
+	SecurityMiddleware    middleware.Middleware
 	ApiKeyRepository      domainApikey.Repository
 	FingerprintTracker    fingerprint.Tracker
 	PluginChainValidator  plugin.ValidatePluginChain
@@ -182,6 +183,7 @@ func NewContainer(
 		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, telemetryBuilder),
 		PluginMiddleware:      middleware.NewPluginChainMiddleware(pluginManager, logger),
 		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),
+		SecurityMiddleware:    middleware.NewSecurityMiddleware(logger),
 		ApiKeyRepository:      apiKeyRepository,
 		PluginManager:         pluginManager,
 		BedrockClient:         bedrockClient,

@@ -6,7 +6,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
+	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
@@ -16,7 +17,7 @@ import (
 
 type createGatewayHandler struct {
 	logger                    *logrus.Logger
-	repo                      domain.Repository
+	repo                      domainGateway.Repository
 	updateGatewayCache        gateway.UpdateGatewayCache
 	pluginChainValidator      plugin.ValidatePluginChain
 	telemetryProvidersBuilder appTelemetry.ProvidersBuilder
@@ -24,7 +25,7 @@ type createGatewayHandler struct {
 
 func NewCreateGatewayHandler(
 	logger *logrus.Logger,
-	repo domain.Repository,
+	repo domainGateway.Repository,
 	updateGatewayCache gateway.UpdateGatewayCache,
 	pluginChainValidator plugin.ValidatePluginChain,
 	telemetryProvidersBuilder appTelemetry.ProvidersBuilder,
@@ -77,7 +78,27 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	entity := domain.Gateway{
+	var securityConfig *domain.SecurityConfigJSON
+	if req.SecurityConfig != nil {
+		securityConfig = &domain.SecurityConfigJSON{
+			AllowedHosts:            req.SecurityConfig.AllowedHosts,
+			AllowedHostsAreRegex:    req.SecurityConfig.AllowedHostsAreRegex,
+			SSLRedirect:             req.SecurityConfig.SSLRedirect,
+			SSLHost:                 req.SecurityConfig.SSLHost,
+			SSLProxyHeaders:         req.SecurityConfig.SSLProxyHeaders,
+			STSSeconds:              req.SecurityConfig.STSSeconds,
+			STSIncludeSubdomains:    req.SecurityConfig.STSIncludeSubdomains,
+			FrameDeny:               req.SecurityConfig.FrameDeny,
+			CustomFrameOptionsValue: req.SecurityConfig.CustomFrameOptionsValue,
+			ReferrerPolicy:          req.SecurityConfig.ReferrerPolicy,
+			ContentSecurityPolicy:   req.SecurityConfig.ContentSecurityPolicy,
+			ContentTypeNosniff:      req.SecurityConfig.ContentTypeNosniff,
+			BrowserXSSFilter:        req.SecurityConfig.BrowserXSSFilter,
+			IsDevelopment:           req.SecurityConfig.IsDevelopment,
+		}
+	}
+
+	entity := domainGateway.Gateway{
 		ID:              id,
 		Name:            req.Name,
 		Subdomain:       req.Subdomain,
@@ -86,8 +107,9 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		Telemetry: &telemetry.Telemetry{
 			Configs: h.telemetryProviderConfigsToDomain(telemetryConfigs),
 		},
-		CreatedAt: req.CreatedAt,
-		UpdatedAt: req.UpdatedAt,
+		SecurityConfig: securityConfig,
+		CreatedAt:      req.CreatedAt,
+		UpdatedAt:      req.UpdatedAt,
 	}
 
 	err = h.pluginChainValidator.Validate(c.Context(), id, entity.RequiredPlugins)
