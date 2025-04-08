@@ -225,6 +225,7 @@ definitions:
       created_at:
         type: string
       name:
+        description: '@required'
         type: string
       required_plugins:
         items:
@@ -235,6 +236,7 @@ definitions:
       status:
         type: string
       subdomain:
+        description: '@required'
         type: string
       telemetry:
         $ref: '#/definitions/types.TelemetryRequest'
@@ -498,6 +500,8 @@ definitions:
         additionalProperties:
           $ref: '#/definitions/types.PluginConfig'
         type: object
+      security_config:
+        $ref: '#/definitions/types.SecurityConfigRequest'
       status:
         type: string
     type: object
@@ -623,7 +627,12 @@ definitions:
         type: string
     type: object
 info:
-  contact: {}
+  contact:
+    email: support@neuraltrust.ai
+    name: NeuralTrust
+    url: https://neuraltrust.ai/contact
+  title: TrustGate
+  version: v1.6.10
 paths:
   /api/v1/gateways:
     get:

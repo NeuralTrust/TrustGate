@@ -9,6 +9,7 @@ type UpdateGatewayRequest struct {
 	Status          *string                 `json:"status,omitempty"`
 	RequiredPlugins map[string]PluginConfig `json:"required_plugins,omitempty"`
 	Telemetry       *TelemetryRequest       `json:"telemetry"`
+	SecurityConfig  *SecurityConfigRequest  `json:"security_config"`
 }
 
 type CreateAPIKeyRequest struct {
@@ -40,8 +41,8 @@ type UpdateRuleRequest struct {
 }
 
 type CreateGatewayRequest struct {
-	Name            string                 `json:"name"`
-	Subdomain       string                 `json:"subdomain"`
+	Name            string                 `json:"name"`      // @required
+	Subdomain       string                 `json:"subdomain"` // @required
 	Status          string                 `json:"status"`
 	RequiredPlugins []PluginConfig         `json:"required_plugins"`
 	Telemetry       TelemetryRequest       `json:"telemetry"`

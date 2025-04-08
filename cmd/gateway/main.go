@@ -1,3 +1,8 @@
+// @title TrustGate
+// @version v1.6.10
+// @contact.name NeuralTrust
+// @contact.url https://neuraltrust.ai/contact
+// @contact.email support@neuraltrust.ai
 package main
 
 import (

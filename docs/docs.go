@@ -9,7 +9,11 @@ const docTemplate = `{
     "info": {
         "description": "{{escape .Description}}",
         "title": "{{.Title}}",
-        "contact": {},
+        "contact": {
+            "name": "NeuralTrust",
+            "url": "https://neuraltrust.ai/contact",
+            "email": "support@neuraltrust.ai"
+        },
         "version": "{{.Version}}"
     },
     "host": "{{.Host}}",
@@ -1277,6 +1281,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "description": "@required",
                     "type": "string"
                 },
                 "required_plugins": {
@@ -1292,6 +1297,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "subdomain": {
+                    "description": "@required",
                     "type": "string"
                 },
                 "telemetry": {
@@ -1681,6 +1687,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/types.PluginConfig"
                     }
                 },
+                "security_config": {
+                    "$ref": "#/definitions/types.SecurityConfigRequest"
+                },
                 "status": {
                     "type": "string"
                 }
@@ -1874,11 +1883,11 @@ const docTemplate = `{
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "",
+	Version:          "v1.6.10",
 	Host:             "",
 	BasePath:         "",
 	Schemes:          []string{},
-	Title:            "",
+	Title:            "TrustGate",
 	Description:      "",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,

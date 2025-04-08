@@ -1,7 +1,13 @@
 {
     "swagger": "2.0",
     "info": {
-        "contact": {}
+        "title": "TrustGate",
+        "contact": {
+            "name": "NeuralTrust",
+            "url": "https://neuraltrust.ai/contact",
+            "email": "support@neuraltrust.ai"
+        },
+        "version": "v1.6.10"
     },
     "paths": {
         "/api/v1/gateways": {
@@ -1266,6 +1272,7 @@
                     "type": "string"
                 },
                 "name": {
+                    "description": "@required",
                     "type": "string"
                 },
                 "required_plugins": {
@@ -1281,6 +1288,7 @@
                     "type": "string"
                 },
                 "subdomain": {
+                    "description": "@required",
                     "type": "string"
                 },
                 "telemetry": {
@@ -1669,6 +1677,9 @@
                     "additionalProperties": {
                         "$ref": "#/definitions/types.PluginConfig"
                     }
+                },
+                "security_config": {
+                    "$ref": "#/definitions/types.SecurityConfigRequest"
                 },
                 "status": {
                     "type": "string"
