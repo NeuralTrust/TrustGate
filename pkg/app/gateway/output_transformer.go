@@ -33,10 +33,6 @@ func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) (*types.Gatewa
 			Configs: configs,
 		}
 	}
-
-	if dbGateway.Telemetry != nil {
-
-	}
 	return &types.Gateway{
 		ID:              dbGateway.ID.String(),
 		Name:            dbGateway.Name,

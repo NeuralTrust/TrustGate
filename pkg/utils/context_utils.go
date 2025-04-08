@@ -53,7 +53,7 @@ func LevenshteinDistance(s1, s2 string) int {
 func ParseUserAgent(uaString string, acceptLanguage string) *UserAgentInfo {
 	ua := uasurfer.Parse(uaString)
 
-	device := "Unknown"
+	var device string
 	switch ua.DeviceType {
 	case uasurfer.DeviceComputer:
 		device = "Computer"

@@ -68,10 +68,7 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 	var telemetryConfigs []types.ProviderConfig
 
 	for _, config := range req.Telemetry.Config {
-		telemetryConfigs = append(telemetryConfigs, types.ProviderConfig{
-			Name:     config.Name,
-			Settings: config.Settings,
-		})
+		telemetryConfigs = append(telemetryConfigs, types.ProviderConfig(config))
 	}
 
 	_, err = h.telemetryProvidersBuilder.Build(telemetryConfigs)
