@@ -33,6 +33,27 @@ func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) (*types.Gatewa
 			Configs: configs,
 		}
 	}
+
+	var securityConfig *types.SecurityConfig
+	if dbGateway.SecurityConfig != nil {
+		securityConfig = &types.SecurityConfig{
+			AllowedHosts:            dbGateway.SecurityConfig.AllowedHosts,
+			AllowedHostsAreRegex:    dbGateway.SecurityConfig.AllowedHostsAreRegex,
+			SSLRedirect:             dbGateway.SecurityConfig.SSLRedirect,
+			SSLHost:                 dbGateway.SecurityConfig.SSLHost,
+			SSLProxyHeaders:         dbGateway.SecurityConfig.SSLProxyHeaders,
+			STSSeconds:              dbGateway.SecurityConfig.STSSeconds,
+			STSIncludeSubdomains:    dbGateway.SecurityConfig.STSIncludeSubdomains,
+			FrameDeny:               dbGateway.SecurityConfig.FrameDeny,
+			CustomFrameOptionsValue: dbGateway.SecurityConfig.CustomFrameOptionsValue,
+			ReferrerPolicy:          dbGateway.SecurityConfig.ReferrerPolicy,
+			ContentSecurityPolicy:   dbGateway.SecurityConfig.ContentSecurityPolicy,
+			ContentTypeNosniff:      dbGateway.SecurityConfig.ContentTypeNosniff,
+			BrowserXSSFilter:        dbGateway.SecurityConfig.BrowserXSSFilter,
+			IsDevelopment:           dbGateway.SecurityConfig.IsDevelopment,
+		}
+	}
+
 	return &types.Gateway{
 		ID:              dbGateway.ID.String(),
 		Name:            dbGateway.Name,
@@ -40,6 +61,7 @@ func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) (*types.Gatewa
 		Status:          dbGateway.Status,
 		RequiredPlugins: dbGateway.RequiredPlugins,
 		Telemetry:       telemetry,
+		SecurityConfig:  securityConfig,
 		CreatedAt:       dbGateway.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:       dbGateway.UpdatedAt.Format(time.RFC3339),
 	}, nil

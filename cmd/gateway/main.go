@@ -78,6 +78,7 @@ func main() {
 		container.MetricsMiddleware,
 		container.PluginMiddleware,
 		container.FingerPrintMiddleware,
+		container.SecurityMiddleware,
 	)
 
 	//routers

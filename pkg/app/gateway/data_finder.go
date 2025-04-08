@@ -126,12 +126,33 @@ func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gatew
 			})
 		}
 	}
+	var securityConfig *types.SecurityConfig
+	if g.SecurityConfig != nil {
+		securityConfig = &types.SecurityConfig{
+			AllowedHosts:            g.SecurityConfig.AllowedHosts,
+			AllowedHostsAreRegex:    g.SecurityConfig.AllowedHostsAreRegex,
+			SSLRedirect:             g.SecurityConfig.SSLRedirect,
+			SSLHost:                 g.SecurityConfig.SSLHost,
+			SSLProxyHeaders:         g.SecurityConfig.SSLProxyHeaders,
+			STSSeconds:              g.SecurityConfig.STSSeconds,
+			STSIncludeSubdomains:    g.SecurityConfig.STSIncludeSubdomains,
+			FrameDeny:               g.SecurityConfig.FrameDeny,
+			CustomFrameOptionsValue: g.SecurityConfig.CustomFrameOptionsValue,
+			ReferrerPolicy:          g.SecurityConfig.ReferrerPolicy,
+			ContentSecurityPolicy:   g.SecurityConfig.ContentSecurityPolicy,
+			ContentTypeNosniff:      g.SecurityConfig.ContentTypeNosniff,
+			BrowserXSSFilter:        g.SecurityConfig.BrowserXSSFilter,
+			IsDevelopment:           g.SecurityConfig.IsDevelopment,
+		}
+	}
+
 	return &types.Gateway{
 		ID:              g.ID.String(),
 		Name:            g.Name,
 		Subdomain:       g.Subdomain,
 		Status:          g.Status,
 		RequiredPlugins: requiredPlugins,
+		SecurityConfig:  securityConfig,
 		Telemetry:       &types.Telemetry{Configs: requiredTelemetry},
 	}
 }

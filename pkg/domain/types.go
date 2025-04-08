@@ -9,12 +9,28 @@ import (
 )
 
 type (
-	MethodsJSON     []string
-	HeadersJSON     map[string]string
-	PluginChainJSON []types.PluginConfig
-	CredentialsJSON types.Credentials
-	TagsJSON        []string
+	MethodsJSON        []string
+	HeadersJSON        map[string]string
+	PluginChainJSON    []types.PluginConfig
+	CredentialsJSON    types.Credentials
+	SecurityConfigJSON types.SecurityConfig
+	TagsJSON           []string
 )
+
+func (c SecurityConfigJSON) Value() (driver.Value, error) {
+	return json.Marshal(c)
+}
+
+func (c *SecurityConfigJSON) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("expected []byte, got %T", value)
+	}
+	return json.Unmarshal(bytes, c)
+}
 
 func (m MethodsJSON) Value() (driver.Value, error) {
 	if m == nil {
