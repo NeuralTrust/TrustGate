@@ -39,21 +39,31 @@ type UpdateRuleRequest struct {
 }
 
 type CreateGatewayRequest struct {
-	Name            string         `json:"name"`
-	Subdomain       string         `json:"subdomain" gorm:"uniqueIndex"`
-	Status          string         `json:"status"`
-	RequiredPlugins []PluginConfig `json:"required_plugins" gorm:"type:jsonb"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	Name            string           `json:"name"`
+	Subdomain       string           `json:"subdomain"`
+	Status          string           `json:"status"`
+	RequiredPlugins []PluginConfig   `json:"required_plugins"`
+	Telemetry       TelemetryRequest `json:"telemetry"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
+}
+
+type TelemetryRequest struct {
+	Config []ProviderConfigRequest `json:"config"`
+}
+
+type ProviderConfigRequest struct {
+	Name     string                 `json:"name"`
+	Settings map[string]interface{} `json:"settings"`
 }
 
 type ServiceRequest struct {
-	ID          string   `json:"id" gorm:"primaryKey"`
-	GatewayID   string   `json:"gateway_id" gorm:"not null"`
-	Name        string   `json:"name" gorm:"uniqueIndex:idx_gateway_service_name"`
-	Type        string   `json:"type" gorm:"not null"`
+	ID          string   `json:"id"`
+	GatewayID   string   `json:"gateway_id"`
+	Name        string   `json:"name"`
+	Type        string   `json:"type"`
 	Description string   `json:"description"`
-	Tags        []string `json:"tags,omitempty" gorm:"type:jsonb"`
+	Tags        []string `json:"tags,omitempty"`
 
 	UpstreamID string `json:"upstream_id,omitempty"`
 
@@ -61,8 +71,8 @@ type ServiceRequest struct {
 	Port        int               `json:"port,omitempty"`
 	Protocol    string            `json:"protocol,omitempty"`
 	Path        string            `json:"path,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty" gorm:"type:jsonb"`
-	Credentials Credentials       `json:"credentials,omitempty" gorm:"type:jsonb"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	Credentials Credentials       `json:"credentials,omitempty"`
 
 	Retries   int `json:"retries,omitempty"`
 	CreatedAt time.Time

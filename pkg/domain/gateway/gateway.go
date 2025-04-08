@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -14,6 +15,7 @@ type Gateway struct {
 	Name            string                 `json:"name"`
 	Subdomain       string                 `json:"subdomain" gorm:"uniqueIndex"`
 	Status          string                 `json:"status"`
+	Telemetry       *telemetry.Telemetry   `json:"telemetry" gorm:"type:jsonb"`
 	RequiredPlugins domain.PluginChainJSON `json:"required_plugins" gorm:"type:jsonb"`
 	CreatedAt       time.Time              `json:"created_at"`
 	UpdatedAt       time.Time              `json:"updated_at"`

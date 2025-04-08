@@ -2,12 +2,15 @@ package dependency_container
 
 import (
 	"fmt"
+	"net/http"
 	"reflect"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
+	"github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
@@ -20,6 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
@@ -52,6 +56,9 @@ func NewContainer(
 	eventsRegistry map[string]reflect.Type,
 	initializeMemoryCache func(cacheInstance *cache.Cache),
 ) (*Container, error) {
+
+	httpClient := &http.Client{}
+	breaker := httpx.NewCircuitBreaker("breaker", 10*time.Second, 3)
 
 	cacheConfig := common.CacheConfig{
 		Host:     cfg.Redis.Host,
@@ -89,6 +96,8 @@ func NewContainer(
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
 	gatewayDataFinder := gateway.NewDataFinder(repo, cacheInstance, logger)
 	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager, gatewayRepository)
+
+	telemetryBuilder := telemetry.NewTelemetryProvidersBuilder(breaker, httpClient)
 
 	// redis publisher
 	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
@@ -128,7 +137,13 @@ func NewContainer(
 			cfg,
 		),
 		// Gateway
-		CreateGatewayHandler: handlers.NewCreateGatewayHandler(logger, gatewayRepository, updateGatewayCache, pluginChainValidator),
+		CreateGatewayHandler: handlers.NewCreateGatewayHandler(
+			logger,
+			gatewayRepository,
+			updateGatewayCache,
+			pluginChainValidator,
+			telemetryBuilder,
+		),
 		ListGatewayHandler:   handlers.NewListGatewayHandler(logger, repo, updateGatewayCache),
 		GetGatewayHandler:    handlers.NewGetGatewayHandler(logger, repo, getGatewayCache, updateGatewayCache),
 		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, repo, pluginManager, redisPublisher),
@@ -164,7 +179,7 @@ func NewContainer(
 		Repository:            repo,
 		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, false),
 		GatewayMiddleware:     middleware.NewGatewayMiddleware(logger, cacheInstance, repo, gatewayDataFinder, cfg.Server.BaseDomain),
-		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger),
+		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, telemetryBuilder),
 		PluginMiddleware:      middleware.NewPluginChainMiddleware(pluginManager, logger),
 		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),
 		ApiKeyRepository:      apiKeyRepository,

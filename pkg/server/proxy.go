@@ -23,13 +23,15 @@ type (
 )
 
 func NewProxyServer(di ProxyServerDI) *ProxyServer {
-	metricsConfig := metrics.MetricsConfig{
-		EnableLatency:         di.Config.Metrics.EnableLatency,
-		EnableUpstreamLatency: di.Config.Metrics.EnableUpstream,
-		EnableConnections:     di.Config.Metrics.EnableConnections,
-		EnablePerRoute:        di.Config.Metrics.EnablePerRoute,
+	if di.Config.Metrics.Enabled {
+		metricsConfig := metrics.MetricsConfig{
+			EnableLatency:         di.Config.Metrics.EnableLatency,
+			EnableUpstreamLatency: di.Config.Metrics.EnableUpstream,
+			EnableConnections:     di.Config.Metrics.EnableConnections,
+			EnablePerRoute:        di.Config.Metrics.EnablePerRoute,
+		}
+		metrics.Initialize(metricsConfig)
 	}
-	metrics.Initialize(metricsConfig)
 
 	s := &ProxyServer{
 		BaseServer: NewBaseServer(di.Config, di.Cache, di.Logger).WithRouters(di.Routers...),

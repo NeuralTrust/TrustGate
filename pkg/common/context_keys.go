@@ -12,4 +12,5 @@ const (
 	GatewayDataContextKey   contextKey = "gateway_data"
 	PluginsChainContextKey  contextKey = "gateway_data"
 	FingerprintIdContextKey contextKey = "fingerprint_id"
+	UserAgent
 )

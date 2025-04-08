@@ -5,7 +5,9 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
+	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -13,10 +15,11 @@ import (
 )
 
 type createGatewayHandler struct {
-	logger               *logrus.Logger
-	repo                 domain.Repository
-	updateGatewayCache   gateway.UpdateGatewayCache
-	pluginChainValidator plugin.ValidatePluginChain
+	logger                    *logrus.Logger
+	repo                      domain.Repository
+	updateGatewayCache        gateway.UpdateGatewayCache
+	pluginChainValidator      plugin.ValidatePluginChain
+	telemetryProvidersBuilder appTelemetry.ProvidersBuilder
 }
 
 func NewCreateGatewayHandler(
@@ -24,12 +27,14 @@ func NewCreateGatewayHandler(
 	repo domain.Repository,
 	updateGatewayCache gateway.UpdateGatewayCache,
 	pluginChainValidator plugin.ValidatePluginChain,
+	telemetryProvidersBuilder appTelemetry.ProvidersBuilder,
 ) Handler {
 	return &createGatewayHandler{
-		logger:               logger,
-		repo:                 repo,
-		updateGatewayCache:   updateGatewayCache,
-		pluginChainValidator: pluginChainValidator,
+		logger:                    logger,
+		repo:                      repo,
+		updateGatewayCache:        updateGatewayCache,
+		pluginChainValidator:      pluginChainValidator,
+		telemetryProvidersBuilder: telemetryProvidersBuilder,
 	}
 }
 
@@ -59,14 +64,30 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		h.logger.WithError(err).Error("failed to generate UUID")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
 	}
+
+	var telemetryConfigs []types.ProviderConfig
+
+	for _, config := range req.Telemetry.Config {
+		telemetryConfigs = append(telemetryConfigs, types.ProviderConfig(config))
+	}
+
+	_, err = h.telemetryProvidersBuilder.Build(telemetryConfigs)
+	if err != nil {
+		h.logger.WithError(err).Error("failed to validate telemetry providers")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
 	entity := domain.Gateway{
 		ID:              id,
 		Name:            req.Name,
 		Subdomain:       req.Subdomain,
 		Status:          req.Status,
 		RequiredPlugins: req.RequiredPlugins,
-		CreatedAt:       req.CreatedAt,
-		UpdatedAt:       req.UpdatedAt,
+		Telemetry: &telemetry.Telemetry{
+			Configs: h.telemetryProviderConfigsToDomain(telemetryConfigs),
+		},
+		CreatedAt: req.CreatedAt,
+		UpdatedAt: req.UpdatedAt,
 	}
 
 	err = h.pluginChainValidator.Validate(c.Context(), id, entity.RequiredPlugins)
@@ -85,4 +106,15 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(entity)
+}
+
+func (h *createGatewayHandler) telemetryProviderConfigsToDomain(configs []types.ProviderConfig) []telemetry.ProviderConfig {
+	result := make([]telemetry.ProviderConfig, 0, len(configs))
+	for _, cfg := range configs {
+		result = append(result, telemetry.ProviderConfig{
+			Name:     cfg.Name,
+			Settings: cfg.Settings,
+		})
+	}
+	return result
 }

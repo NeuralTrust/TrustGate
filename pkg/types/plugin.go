@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"time"
 )
 
 var ErrRequiredPluginNotFound = fmt.Errorf("plugin is required")
@@ -74,8 +75,8 @@ type RequestContext struct {
 	Query     url.Values
 	Body      []byte
 	Metadata  map[string]interface{}
-	Stage     Stage // Current execution stage
-	IP        string
+	Stage     Stage
+	ProcessAt *time.Time
 }
 
 // ResponseContext represents the context for a response
@@ -88,6 +89,7 @@ type ResponseContext struct {
 	Metadata       map[string]interface{}
 	Streaming      bool
 	StopProcessing bool
+	ProcessAt      *time.Time
 }
 
 // RateLimiterConfig represents the configuration for rate limiting
