@@ -6,10 +6,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// Create a custom registry
 var registry = prometheus.NewRegistry()
 
-// Create a registerer that uses our registry
 var registerer = prometheus.WrapRegistererWith(nil, registry)
 
 var (
@@ -27,7 +25,6 @@ var (
 		5000, 10000, 30000, // Very slow/timeout (5s-30s)
 	}
 
-	// Basic metrics (always enabled)
 	GatewayRequestTotal = promauto.With(registerer).NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "trustgate_requests_total",
@@ -36,7 +33,6 @@ var (
 		append(commonLabels, "method", "status"),
 	)
 
-	// Latency metrics (configurable)
 	GatewayRequestLatency = promauto.With(registerer).NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "trustgate_latency_ms",
@@ -46,7 +42,6 @@ var (
 		append(commonLabels, "type"), // type can be "total" or "upstream"
 	)
 
-	// Optional detailed metrics
 	GatewayDetailedLatency = promauto.With(registerer).NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "trustgate_detailed_latency_ms",
@@ -56,7 +51,6 @@ var (
 		append(commonLabels, routeLabels...),
 	)
 
-	// Connection metrics
 	GatewayConnections = promauto.With(registerer).NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "trustgate_connections",
@@ -65,7 +59,6 @@ var (
 		append(commonLabels, "state"),
 	)
 
-	// Update GatewayUpstreamLatency to use consistent labels
 	GatewayUpstreamLatency = promauto.With(registerer).NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "trustgate_upstream_latency_ms",
@@ -76,7 +69,6 @@ var (
 	)
 )
 
-// MetricsConfig holds configuration for which metrics to enable
 type MetricsConfig struct {
 	EnableLatency         bool // Basic latency metrics
 	EnableUpstreamLatency bool // Detailed upstream latency (higher cardinality)
@@ -85,7 +77,6 @@ type MetricsConfig struct {
 	EnablePerRoute        bool // Per-route metrics (high cardinality)
 }
 
-// DefaultMetricsConfig returns default metrics configuration with safe defaults
 func DefaultMetricsConfig() MetricsConfig {
 	return MetricsConfig{
 		EnableLatency:         true,  // Basic latency is usually safe
@@ -96,10 +87,8 @@ func DefaultMetricsConfig() MetricsConfig {
 	}
 }
 
-// Config holds the current metrics configuration
 var Config MetricsConfig
 
-// Initialize registers metrics with Prometheus and sets up collectors
 func Initialize(cfg MetricsConfig) {
 	Config = cfg
 	registry.MustRegister(

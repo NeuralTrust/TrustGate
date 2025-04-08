@@ -16,6 +16,15 @@ type Gateway struct {
 	CreatedAt       string         `json:"created_at"`
 	UpdatedAt       string         `json:"updated_at"`
 	RequiredPlugins []PluginConfig `json:"required_plugins"`
+	Telemetry       *Telemetry     `json:"telemetry"`
+}
+
+type Telemetry struct {
+	Configs []ProviderConfig `json:"config"`
+}
+type ProviderConfig struct {
+	Name     string                 `json:"name"`
+	Settings map[string]interface{} `json:"settings"`
 }
 
 // ForwardingRule represents a rule for forwarding requests

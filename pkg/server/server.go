@@ -89,7 +89,10 @@ func (s *BaseServer) WithRouters(routers ...router.ServerRouter) *BaseServer {
 }
 
 func (s *BaseServer) setupMetricsEndpoint() {
-	// Ensure metrics server starts only once
+	if !s.config.Metrics.Enabled {
+		s.logger.Info("prometheus metrics are disabled by configuration")
+		return
+	}
 	if s.metricsStarted {
 		return
 	}

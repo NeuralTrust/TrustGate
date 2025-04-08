@@ -1,6 +1,18 @@
 package utils
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/avct/uasurfer"
+)
+
+type UserAgentInfo struct {
+	Device  string
+	OS      string
+	Browser string
+	Locale  string
+}
 
 func LevenshteinDistance(s1, s2 string) int {
 	s1 = strings.ToLower(s1)
@@ -36,6 +48,52 @@ func LevenshteinDistance(s1, s2 string) int {
 		}
 	}
 	return matrix[len(s1)][len(s2)]
+}
+
+func ParseUserAgent(uaString string, acceptLanguage string) *UserAgentInfo {
+	ua := uasurfer.Parse(uaString)
+
+	device := "Unknown"
+	switch ua.DeviceType {
+	case uasurfer.DeviceComputer:
+		device = "Computer"
+	case uasurfer.DeviceTablet:
+		device = "Tablet"
+	case uasurfer.DevicePhone:
+		device = "Phone"
+	case uasurfer.DeviceConsole:
+		device = "Console"
+	case uasurfer.DeviceWearable:
+		device = "Wearable"
+	case uasurfer.DeviceTV:
+		device = "TV"
+	default:
+		return nil
+	}
+
+	os := fmt.Sprintf("%s %d.%d", ua.OS.Name.String(), ua.OS.Version.Major, ua.OS.Version.Minor)
+
+	browser := fmt.Sprintf("%s %d.%d", ua.Browser.Name.String(), ua.Browser.Version.Major, ua.Browser.Version.Minor)
+
+	locale := ""
+	if len(acceptLanguage) > 0 {
+		for i := 0; i < len(acceptLanguage); i++ {
+			if acceptLanguage[i] == ',' {
+				locale = acceptLanguage[:i]
+				break
+			}
+		}
+		if locale == "" {
+			locale = acceptLanguage
+		}
+	}
+
+	return &UserAgentInfo{
+		Device:  device,
+		OS:      os,
+		Browser: browser,
+		Locale:  locale,
+	}
 }
 
 func min(a, b, c int) int {
