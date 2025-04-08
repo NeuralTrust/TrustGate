@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
@@ -22,7 +21,6 @@ import (
 type updateGatewayHandler struct {
 	logger                    *logrus.Logger
 	repo                      *database.Repository
-	transformer               *gateway.OutputTransformer
 	pluginManager             plugins.Manager
 	publisher                 infraCache.EventPublisher
 	telemetryProvidersBuilder appTelemetry.ProvidersBuilder
@@ -38,7 +36,6 @@ func NewUpdateGatewayHandler(
 	return &updateGatewayHandler{
 		logger:                    logger,
 		repo:                      repo,
-		transformer:               gateway.NewOutputTransformer(),
 		pluginManager:             pluginManager,
 		publisher:                 publisher,
 		telemetryProvidersBuilder: telemetryProvidersBuilder,
