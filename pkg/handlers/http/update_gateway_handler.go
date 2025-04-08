@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -17,11 +19,12 @@ import (
 )
 
 type updateGatewayHandler struct {
-	logger        *logrus.Logger
-	repo          *database.Repository
-	transformer   *gateway.OutputTransformer
-	pluginManager plugins.Manager
-	publisher     infraCache.EventPublisher
+	logger                    *logrus.Logger
+	repo                      *database.Repository
+	transformer               *gateway.OutputTransformer
+	pluginManager             plugins.Manager
+	publisher                 infraCache.EventPublisher
+	telemetryProvidersBuilder appTelemetry.ProvidersBuilder
 }
 
 func NewUpdateGatewayHandler(
@@ -29,13 +32,15 @@ func NewUpdateGatewayHandler(
 	repo *database.Repository,
 	pluginManager plugins.Manager,
 	publisher infraCache.EventPublisher,
+	telemetryProvidersBuilder appTelemetry.ProvidersBuilder,
 ) Handler {
 	return &updateGatewayHandler{
-		logger:        logger,
-		repo:          repo,
-		transformer:   gateway.NewOutputTransformer(),
-		pluginManager: pluginManager,
-		publisher:     publisher,
+		logger:                    logger,
+		repo:                      repo,
+		transformer:               gateway.NewOutputTransformer(),
+		pluginManager:             pluginManager,
+		publisher:                 publisher,
+		telemetryProvidersBuilder: telemetryProvidersBuilder,
 	}
 }
 
@@ -46,7 +51,7 @@ func NewUpdateGatewayHandler(
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
 // @Param gateway body types.UpdateGatewayRequest true "Updated gateway data"
-// @Success 200 {object} gateway.Gateway "Gateway updated successfully"
+// @Success 204 "Gateway updated successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Router /api/v1/gateways/{gateway_id} [put]
 func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
@@ -92,26 +97,24 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	dbGateway.UpdatedAt = time.Now()
 
+	if req.Telemetry != nil {
+		var telemetryConfigs []types.ProviderConfig
+		for _, config := range req.Telemetry.Config {
+			telemetryConfigs = append(telemetryConfigs, types.ProviderConfig(config))
+		}
+		_, err = h.telemetryProvidersBuilder.Build(telemetryConfigs)
+		if err != nil {
+			h.logger.WithError(err).Error("failed to validate telemetry providers")
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		dbGateway.Telemetry = &telemetry.Telemetry{
+			Configs: h.telemetryProviderConfigsToDomain(telemetryConfigs),
+		}
+	}
+
 	if err := h.repo.UpdateGateway(c.Context(), dbGateway); err != nil {
 		h.logger.WithError(err).Error("Failed to update gateway")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update gateway"})
-	}
-
-	// Convert to response type
-	apiGateway, err := h.transformer.Transform(dbGateway)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to convert gateway")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to process gateway"})
-	}
-
-	response := types.Gateway{
-		ID:              dbGateway.ID.String(),
-		Name:            dbGateway.Name,
-		Subdomain:       dbGateway.Subdomain,
-		Status:          dbGateway.Status,
-		CreatedAt:       dbGateway.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:       dbGateway.UpdatedAt.Format(time.RFC3339),
-		RequiredPlugins: apiGateway.RequiredPlugins,
 	}
 
 	err = h.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateGatewayCacheEvent{
@@ -121,5 +124,16 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		h.logger.WithError(err).Error("failed to publish update gateway cache event")
 	}
 
-	return c.Status(fiber.StatusOK).JSON(response)
+	return c.Status(fiber.StatusNoContent).JSON(dbGateway)
+}
+
+func (h *updateGatewayHandler) telemetryProviderConfigsToDomain(configs []types.ProviderConfig) []telemetry.ProviderConfig {
+	result := make([]telemetry.ProviderConfig, 0, len(configs))
+	for _, cfg := range configs {
+		result = append(result, telemetry.ProviderConfig{
+			Name:     cfg.Name,
+			Settings: cfg.Settings,
+		})
+	}
+	return result
 }

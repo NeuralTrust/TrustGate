@@ -135,11 +135,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "Gateway updated successfully",
-                        "schema": {
-                            "$ref": "#/definitions/gateway.Gateway"
-                        }
+                    "204": {
+                        "description": "Gateway updated successfully"
                     },
                     "400": {
                         "description": "Invalid request data",
@@ -1095,6 +1092,9 @@
                 "subdomain": {
                     "type": "string"
                 },
+                "telemetry": {
+                    "$ref": "#/definitions/telemetry.Telemetry"
+                },
                 "updated_at": {
                     "type": "string"
                 }
@@ -1103,7 +1103,7 @@
         "service.Service": {
             "type": "object",
             "properties": {
-                "createdAt": {
+                "created_at": {
                     "type": "string"
                 },
                 "credentials": {
@@ -1151,7 +1151,7 @@
                     "description": "\"upstream\" or \"endpoint\"",
                     "type": "string"
                 },
-                "updatedAt": {
+                "updated_at": {
                     "type": "string"
                 },
                 "upstream": {
@@ -1160,6 +1160,29 @@
                 "upstream_id": {
                     "description": "Upstream configuration (used when type is \"upstream\")",
                     "type": "string"
+                }
+            }
+        },
+        "telemetry.ProviderConfig": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "settings": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        },
+        "telemetry.Telemetry": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/telemetry.ProviderConfig"
+                    }
                 }
             }
         },
@@ -1183,9 +1206,6 @@
                 "created_at": {
                     "type": "string"
                 },
-                "id": {
-                    "type": "string"
-                },
                 "name": {
                     "type": "string"
                 },
@@ -1200,6 +1220,9 @@
                 },
                 "subdomain": {
                     "type": "string"
+                },
+                "telemetry": {
+                    "$ref": "#/definitions/types.TelemetryRequest"
                 },
                 "updated_at": {
                     "type": "string"
@@ -1370,6 +1393,18 @@
                 }
             }
         },
+        "types.ProviderConfigRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "settings": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        },
         "types.ServiceRequest": {
             "type": "object",
             "properties": {
@@ -1497,6 +1532,17 @@
                 }
             }
         },
+        "types.TelemetryRequest": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.ProviderConfigRequest"
+                    }
+                }
+            }
+        },
         "types.UpdateGatewayRequest": {
             "type": "object",
             "properties": {
@@ -1511,6 +1557,9 @@
                 },
                 "status": {
                     "type": "string"
+                },
+                "telemetry": {
+                    "$ref": "#/definitions/types.TelemetryRequest"
                 }
             }
         },
@@ -1665,7 +1714,7 @@
                 "algorithm": {
                     "type": "string"
                 },
-                "createdAt": {
+                "created_at": {
                     "type": "string"
                 },
                 "gateway_id": {
@@ -1692,7 +1741,7 @@
                         "$ref": "#/definitions/upstream.Target"
                     }
                 },
-                "updatedAt": {
+                "updated_at": {
                     "type": "string"
                 }
             }

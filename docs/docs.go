@@ -146,11 +146,8 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "Gateway updated successfully",
-                        "schema": {
-                            "$ref": "#/definitions/gateway.Gateway"
-                        }
+                    "204": {
+                        "description": "Gateway updated successfully"
                     },
                     "400": {
                         "description": "Invalid request data",
@@ -1106,6 +1103,9 @@ const docTemplate = `{
                 "subdomain": {
                     "type": "string"
                 },
+                "telemetry": {
+                    "$ref": "#/definitions/telemetry.Telemetry"
+                },
                 "updated_at": {
                     "type": "string"
                 }
@@ -1114,7 +1114,7 @@ const docTemplate = `{
         "service.Service": {
             "type": "object",
             "properties": {
-                "createdAt": {
+                "created_at": {
                     "type": "string"
                 },
                 "credentials": {
@@ -1162,7 +1162,7 @@ const docTemplate = `{
                     "description": "\"upstream\" or \"endpoint\"",
                     "type": "string"
                 },
-                "updatedAt": {
+                "updated_at": {
                     "type": "string"
                 },
                 "upstream": {
@@ -1171,6 +1171,29 @@ const docTemplate = `{
                 "upstream_id": {
                     "description": "Upstream configuration (used when type is \"upstream\")",
                     "type": "string"
+                }
+            }
+        },
+        "telemetry.ProviderConfig": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "settings": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        },
+        "telemetry.Telemetry": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/telemetry.ProviderConfig"
+                    }
                 }
             }
         },
@@ -1194,9 +1217,6 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
-                "id": {
-                    "type": "string"
-                },
                 "name": {
                     "type": "string"
                 },
@@ -1211,6 +1231,9 @@ const docTemplate = `{
                 },
                 "subdomain": {
                     "type": "string"
+                },
+                "telemetry": {
+                    "$ref": "#/definitions/types.TelemetryRequest"
                 },
                 "updated_at": {
                     "type": "string"
@@ -1381,6 +1404,18 @@ const docTemplate = `{
                 }
             }
         },
+        "types.ProviderConfigRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "settings": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        },
         "types.ServiceRequest": {
             "type": "object",
             "properties": {
@@ -1508,6 +1543,17 @@ const docTemplate = `{
                 }
             }
         },
+        "types.TelemetryRequest": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.ProviderConfigRequest"
+                    }
+                }
+            }
+        },
         "types.UpdateGatewayRequest": {
             "type": "object",
             "properties": {
@@ -1522,6 +1568,9 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "telemetry": {
+                    "$ref": "#/definitions/types.TelemetryRequest"
                 }
             }
         },
@@ -1676,7 +1725,7 @@ const docTemplate = `{
                 "algorithm": {
                     "type": "string"
                 },
-                "createdAt": {
+                "created_at": {
                     "type": "string"
                 },
                 "gateway_id": {
@@ -1703,7 +1752,7 @@ const docTemplate = `{
                         "$ref": "#/definitions/upstream.Target"
                     }
                 },
-                "updatedAt": {
+                "updated_at": {
                     "type": "string"
                 }
             }

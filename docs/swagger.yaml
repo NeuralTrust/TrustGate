@@ -111,12 +111,14 @@ definitions:
         type: string
       subdomain:
         type: string
+      telemetry:
+        $ref: '#/definitions/telemetry.Telemetry'
       updated_at:
         type: string
     type: object
   service.Service:
     properties:
-      createdAt:
+      created_at:
         type: string
       credentials:
         $ref: '#/definitions/types.Credentials'
@@ -149,13 +151,28 @@ definitions:
       type:
         description: '"upstream" or "endpoint"'
         type: string
-      updatedAt:
+      updated_at:
         type: string
       upstream:
         $ref: '#/definitions/upstream.Upstream'
       upstream_id:
         description: Upstream configuration (used when type is "upstream")
         type: string
+    type: object
+  telemetry.ProviderConfig:
+    properties:
+      name:
+        type: string
+      settings:
+        additionalProperties: true
+        type: object
+    type: object
+  telemetry.Telemetry:
+    properties:
+      config:
+        items:
+          $ref: '#/definitions/telemetry.ProviderConfig'
+        type: array
     type: object
   types.CreateAPIKeyRequest:
     properties:
@@ -170,8 +187,6 @@ definitions:
     properties:
       created_at:
         type: string
-      id:
-        type: string
       name:
         type: string
       required_plugins:
@@ -182,6 +197,8 @@ definitions:
         type: string
       subdomain:
         type: string
+      telemetry:
+        $ref: '#/definitions/types.TelemetryRequest'
       updated_at:
         type: string
     type: object
@@ -298,6 +315,14 @@ definitions:
       stage:
         $ref: '#/definitions/types.Stage'
     type: object
+  types.ProviderConfigRequest:
+    properties:
+      name:
+        type: string
+      settings:
+        additionalProperties: true
+        type: object
+    type: object
   types.ServiceRequest:
     properties:
       createdAt:
@@ -384,6 +409,13 @@ definitions:
       weight:
         type: integer
     type: object
+  types.TelemetryRequest:
+    properties:
+      config:
+        items:
+          $ref: '#/definitions/types.ProviderConfigRequest'
+        type: array
+    type: object
   types.UpdateGatewayRequest:
     properties:
       name:
@@ -394,6 +426,8 @@ definitions:
         type: object
       status:
         type: string
+      telemetry:
+        $ref: '#/definitions/types.TelemetryRequest'
     type: object
   types.UpdateRuleRequest:
     properties:
@@ -495,7 +529,7 @@ definitions:
     properties:
       algorithm:
         type: string
-      createdAt:
+      created_at:
         type: string
       gateway_id:
         type: string
@@ -513,7 +547,7 @@ definitions:
         items:
           $ref: '#/definitions/upstream.Target'
         type: array
-      updatedAt:
+      updated_at:
         type: string
     type: object
 info:
@@ -623,10 +657,8 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        "204":
           description: Gateway updated successfully
-          schema:
-            $ref: '#/definitions/gateway.Gateway'
         "400":
           description: Invalid request data
           schema:
