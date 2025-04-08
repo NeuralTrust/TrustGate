@@ -8,6 +8,7 @@ type UpdateGatewayRequest struct {
 	Name            *string                 `json:"name,omitempty"`
 	Status          *string                 `json:"status,omitempty"`
 	RequiredPlugins map[string]PluginConfig `json:"required_plugins,omitempty"`
+	Telemetry       *TelemetryRequest       `json:"telemetry"`
 }
 
 type CreateAPIKeyRequest struct {
