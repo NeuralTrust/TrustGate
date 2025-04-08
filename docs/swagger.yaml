@@ -60,6 +60,41 @@ definitions:
     additionalProperties:
       type: string
     type: object
+  domain.SecurityConfigJSON:
+    properties:
+      allowed_hosts:
+        items:
+          type: string
+        type: array
+      allowed_hosts_are_regex:
+        type: boolean
+      browser_xss_filter:
+        type: boolean
+      content_security_policy:
+        type: string
+      content_type_nosniff:
+        type: boolean
+      custom_frame_options_value:
+        type: string
+      frame_deny:
+        type: boolean
+      is_development:
+        type: boolean
+      referrer_policy:
+        type: string
+      ssl_host:
+        type: string
+      ssl_proxy_headers:
+        additionalProperties:
+          type: string
+        type: object
+      ssl_redirect:
+        type: boolean
+      sts_include_subdomains:
+        type: boolean
+      sts_seconds:
+        type: integer
+    type: object
   forwarding_rule.ForwardingRule:
     properties:
       active:
@@ -107,6 +142,8 @@ definitions:
         items:
           $ref: '#/definitions/types.PluginConfig'
         type: array
+      security_config:
+        $ref: '#/definitions/domain.SecurityConfigJSON'
       status:
         type: string
       subdomain:
@@ -193,6 +230,8 @@ definitions:
         items:
           $ref: '#/definitions/types.PluginConfig'
         type: array
+      security_config:
+        $ref: '#/definitions/types.SecurityConfigRequest'
       status:
         type: string
       subdomain:
@@ -323,6 +362,41 @@ definitions:
         additionalProperties: true
         type: object
     type: object
+  types.SecurityConfigRequest:
+    properties:
+      allowed_hosts:
+        items:
+          type: string
+        type: array
+      allowed_hosts_are_regex:
+        type: boolean
+      browser_xss_filter:
+        type: boolean
+      content_security_policy:
+        type: string
+      content_type_nosniff:
+        type: boolean
+      custom_frame_options_value:
+        type: string
+      frame_deny:
+        type: boolean
+      is_development:
+        type: boolean
+      referrer_policy:
+        type: string
+      ssl_host:
+        type: string
+      ssl_proxy_headers:
+        additionalProperties:
+          type: string
+        type: object
+      ssl_redirect:
+        type: boolean
+      sts_include_subdomains:
+        type: boolean
+      sts_seconds:
+        type: integer
+    type: object
   types.ServiceRequest:
     properties:
       createdAt:
@@ -426,8 +500,6 @@ definitions:
         type: object
       status:
         type: string
-      telemetry:
-        $ref: '#/definitions/types.TelemetryRequest'
     type: object
   types.UpdateRuleRequest:
     properties:
@@ -657,8 +729,10 @@ paths:
       produces:
       - application/json
       responses:
-        "204":
+        "200":
           description: Gateway updated successfully
+          schema:
+            $ref: '#/definitions/gateway.Gateway'
         "400":
           description: Invalid request data
           schema:

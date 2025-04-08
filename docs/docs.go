@@ -146,8 +146,11 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "204": {
-                        "description": "Gateway updated successfully"
+                    "200": {
+                        "description": "Gateway updated successfully",
+                        "schema": {
+                            "$ref": "#/definitions/gateway.Gateway"
+                        }
                     },
                     "400": {
                         "description": "Invalid request data",
@@ -1026,6 +1029,59 @@ const docTemplate = `{
                 "type": "string"
             }
         },
+        "domain.SecurityConfigJSON": {
+            "type": "object",
+            "properties": {
+                "allowed_hosts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_hosts_are_regex": {
+                    "type": "boolean"
+                },
+                "browser_xss_filter": {
+                    "type": "boolean"
+                },
+                "content_security_policy": {
+                    "type": "string"
+                },
+                "content_type_nosniff": {
+                    "type": "boolean"
+                },
+                "custom_frame_options_value": {
+                    "type": "string"
+                },
+                "frame_deny": {
+                    "type": "boolean"
+                },
+                "is_development": {
+                    "type": "boolean"
+                },
+                "referrer_policy": {
+                    "type": "string"
+                },
+                "ssl_host": {
+                    "type": "string"
+                },
+                "ssl_proxy_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "ssl_redirect": {
+                    "type": "boolean"
+                },
+                "sts_include_subdomains": {
+                    "type": "boolean"
+                },
+                "sts_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
         "forwarding_rule.ForwardingRule": {
             "type": "object",
             "properties": {
@@ -1096,6 +1152,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/types.PluginConfig"
                     }
+                },
+                "security_config": {
+                    "$ref": "#/definitions/domain.SecurityConfigJSON"
                 },
                 "status": {
                     "type": "string"
@@ -1225,6 +1284,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/types.PluginConfig"
                     }
+                },
+                "security_config": {
+                    "$ref": "#/definitions/types.SecurityConfigRequest"
                 },
                 "status": {
                     "type": "string"
@@ -1416,6 +1478,59 @@ const docTemplate = `{
                 }
             }
         },
+        "types.SecurityConfigRequest": {
+            "type": "object",
+            "properties": {
+                "allowed_hosts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_hosts_are_regex": {
+                    "type": "boolean"
+                },
+                "browser_xss_filter": {
+                    "type": "boolean"
+                },
+                "content_security_policy": {
+                    "type": "string"
+                },
+                "content_type_nosniff": {
+                    "type": "boolean"
+                },
+                "custom_frame_options_value": {
+                    "type": "string"
+                },
+                "frame_deny": {
+                    "type": "boolean"
+                },
+                "is_development": {
+                    "type": "boolean"
+                },
+                "referrer_policy": {
+                    "type": "string"
+                },
+                "ssl_host": {
+                    "type": "string"
+                },
+                "ssl_proxy_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "ssl_redirect": {
+                    "type": "boolean"
+                },
+                "sts_include_subdomains": {
+                    "type": "boolean"
+                },
+                "sts_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
         "types.ServiceRequest": {
             "type": "object",
             "properties": {
@@ -1568,9 +1683,6 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
-                },
-                "telemetry": {
-                    "$ref": "#/definitions/types.TelemetryRequest"
                 }
             }
         },
