@@ -1,3 +1,12 @@
+.PHONY: run run-functional
+run:
+	@echo "Starting the application..."
+	docker-compose up -d
+
+run-functional:
+	@echo "Starting the application with all services..."
+	docker-compose -f docker-compose.yaml -f docker-compose.functional.yaml up -d
+
 .PHONY: test
 test:  ; $(info $(M) Running unit tests ...)	@ ## Run unit tests
 	go test -v ./pkg/... -coverprofile coverage.out ./...
@@ -33,3 +42,7 @@ create-kafka-topic:
 		--partitions 1 \
 		--topic metrics
 
+
+.PHONY: test-crt
+test-crt:  ; $(info $(M) Testing nginx server ...)	@
+	cd docker/nginx && curl -k https://localhost   --cert client.crt   --key client.key

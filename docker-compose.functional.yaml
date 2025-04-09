@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:stable
+    restart: always
+    ports:
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/server.crt:/etc/nginx/ssl/server.crt:ro
+      - ./docker/nginx/server.key:/etc/nginx/ssl/server.key:ro
+      - ./docker/nginx/ca.crt:/etc/nginx/ssl/ca.crt:ro
