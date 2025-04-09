@@ -1,3 +1,12 @@
+.PHONY: run run-functional
+run:
+	@echo "Starting the application..."
+	docker-compose up -d
+
+run-functional:
+	@echo "Starting the application with all services..."
+	docker-compose -f docker-compose.yaml -f docker-compose.functional.yaml up -d
+
 .PHONY: test
 test:  ; $(info $(M) Running unit tests ...)	@ ## Run unit tests
 	go test -v ./pkg/... -coverprofile coverage.out ./...
@@ -22,3 +31,7 @@ swagger:  ; $(info $(M) Generate Swagger file ...)	@
 openapi:  ; $(info $(M) Generate OpenAPI file ...)	@
 	swag init -g cmd/gateway/main.go
 	swagger2openapi docs/swagger.json -o docs/openapi.json
+
+.PHONY: test-crt
+test-crt:  ; $(info $(M) Testing nginx server ...)	@
+	cd docker/nginx && curl -k https://localhost   --cert client.crt   --key client.key
