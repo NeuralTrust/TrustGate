@@ -1,4 +1,4 @@
-package metrics
+package prometheus
 
 import (
 	"github.com/prometheus/client_golang/prometheus"

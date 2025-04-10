@@ -7,10 +7,10 @@ import (
 )
 
 type Telemetry struct {
-	Configs []ProviderConfig `json:"config"`
+	Exporters []ExporterConfig `json:"exporters"`
 }
 
-type ProviderConfig struct {
+type ExporterConfig struct {
 	Name     string                 `json:"name"`
 	Settings map[string]interface{} `json:"settings"`
 }

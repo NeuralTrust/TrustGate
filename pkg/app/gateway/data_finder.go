@@ -117,10 +117,10 @@ func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gatew
 	for _, pluginConfig := range g.RequiredPlugins {
 		requiredPlugins = append(requiredPlugins, pluginConfig)
 	}
-	var requiredTelemetry []types.ProviderConfig
+	var requiredTelemetry []types.Exporter
 	if g.Telemetry != nil {
-		for _, telemetryConfig := range g.Telemetry.Configs {
-			requiredTelemetry = append(requiredTelemetry, types.ProviderConfig{
+		for _, telemetryConfig := range g.Telemetry.Exporters {
+			requiredTelemetry = append(requiredTelemetry, types.Exporter{
 				Name:     telemetryConfig.Name,
 				Settings: telemetryConfig.Settings,
 			})
@@ -153,7 +153,7 @@ func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gatew
 		Status:          g.Status,
 		RequiredPlugins: requiredPlugins,
 		SecurityConfig:  securityConfig,
-		Telemetry:       &types.Telemetry{Configs: requiredTelemetry},
+		Telemetry:       &types.Telemetry{Exporters: requiredTelemetry},
 	}
 }
 

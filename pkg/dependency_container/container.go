@@ -2,9 +2,7 @@ package dependency_container
 
 import (
 	"fmt"
-	"net/http"
 	"reflect"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -17,14 +15,16 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
+	infraTelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
@@ -58,8 +58,8 @@ func NewContainer(
 	initializeMemoryCache func(cacheInstance *cache.Cache),
 ) (*Container, error) {
 
-	httpClient := &http.Client{}
-	breaker := httpx.NewCircuitBreaker("breaker", 10*time.Second, 3)
+	// httpClient := &http.Client{}
+	// breaker := httpx.NewCircuitBreaker("breaker", 10*time.Second, 3)
 
 	cacheConfig := common.CacheConfig{
 		Host:     cfg.Redis.Host,
@@ -98,7 +98,11 @@ func NewContainer(
 	gatewayDataFinder := gateway.NewDataFinder(repo, cacheInstance, logger)
 	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager, gatewayRepository)
 
-	telemetryBuilder := telemetry.NewTelemetryProvidersBuilder(breaker, httpClient)
+	// telemetry
+	providerLocator := infraTelemetry.NewProviderLocator(map[string]domain.Exporter{
+		kafka.ExporterName: kafka.NewKafkaExporter(),
+	})
+	telemetryBuilder := telemetry.NewTelemetryExportersBuilder(providerLocator)
 
 	// redis publisher
 	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)

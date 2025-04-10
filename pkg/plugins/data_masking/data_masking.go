@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -584,6 +585,7 @@ func (p *DataMaskingPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
+	collector *metrics.Collector,
 ) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {

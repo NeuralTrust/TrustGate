@@ -66,6 +66,7 @@ type PluginChain struct {
 
 // RequestContext represents the context for a request
 type RequestContext struct {
+	TraceID   string
 	Context   context.Context
 	GatewayID string
 	RuleID    string
@@ -81,6 +82,7 @@ type RequestContext struct {
 
 // ResponseContext represents the context for a response
 type ResponseContext struct {
+	TraceID        string
 	Context        context.Context
 	GatewayID      string
 	Headers        map[string][]string

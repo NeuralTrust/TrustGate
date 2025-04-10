@@ -23,8 +23,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
-	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -143,8 +143,15 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	traceID, ok := c.Locals(common.TraceIdKey).(string)
+	if !ok || traceID == "" {
+		h.logger.Error("traceID not found in context")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal server error"})
+	}
+
 	// Create the RequestContext
 	reqCtx := &types.RequestContext{
+		TraceID:   traceID,
 		Context:   c.Context(),
 		GatewayID: gatewayID,
 		Headers:   make(map[string][]string),
@@ -162,6 +169,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	// Create the ResponseContext
 	respCtx := &types.ResponseContext{
+		TraceID:   traceID,
 		Context:   c.Context(),
 		GatewayID: gatewayID,
 		Headers:   make(map[string][]string),
@@ -271,9 +279,9 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Record upstream latency if available
-	if metrics.Config.EnableUpstreamLatency {
+	if prometheus.Config.EnableUpstreamLatency {
 		upstreamLatency := float64(time.Since(startTime).Milliseconds())
-		metrics.GatewayUpstreamLatency.WithLabelValues(
+		prometheus.GatewayUpstreamLatency.WithLabelValues(
 			gatewayID,
 			matchingRule.ServiceID,
 			matchingRule.ID,
@@ -367,15 +375,15 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	duration := time.Since(startTime).Milliseconds()
 
-	if metrics.Config.EnableLatency {
-		metrics.GatewayRequestLatency.WithLabelValues(
+	if prometheus.Config.EnableLatency {
+		prometheus.GatewayRequestLatency.WithLabelValues(
 			gatewayID,
 			c.Path(),
 		).Observe(float64(duration))
 	}
 
-	if metrics.Config.EnablePerRoute {
-		metrics.GatewayDetailedLatency.WithLabelValues(
+	if prometheus.Config.EnablePerRoute {
+		prometheus.GatewayDetailedLatency.WithLabelValues(
 			gatewayID,
 			matchingRule.ServiceID,
 			matchingRule.ID,

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/go-redis/redis/v8"
 	"github.com/sirupsen/logrus"
 
@@ -98,7 +99,13 @@ func (p *TokenRateLimiterPlugin) estimateTokensForRequest(req *types.RequestCont
 }
 
 // Execute implements the token bucket rate limiting algorithm
-func (p *TokenRateLimiterPlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
+func (p *TokenRateLimiterPlugin) Execute(
+	ctx context.Context,
+	cfg types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	collector *metrics.Collector,
+) (*types.PluginResponse, error) {
 	// Create a context with timeout and stage information
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	ctx = context.WithValue(ctx, common.StageKey, req.Stage)

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -263,7 +264,13 @@ func (p *CodeSanitationPlugin) ValidateConfig(config types.PluginConfig) error {
 }
 
 // Execute runs the code sanitation plugin
-func (p *CodeSanitationPlugin) Execute(ctx context.Context, pluginConfig types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
+func (p *CodeSanitationPlugin) Execute(
+	ctx context.Context,
+	pluginConfig types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	collector *metrics.Collector,
+) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(pluginConfig.Settings, &config); err != nil {
 		return nil, &types.PluginError{

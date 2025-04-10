@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/go-redis/redis/v8"
@@ -141,6 +142,7 @@ func (r *RateLimiterPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
+	collector *metrics.Collector,
 ) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
