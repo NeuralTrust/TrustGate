@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
@@ -93,6 +94,7 @@ func (p *BedrockGuardrailPlugin) Execute(
 	cfg plugintypes.PluginConfig,
 	req *plugintypes.RequestContext,
 	resp *plugintypes.ResponseContext,
+	collector *metrics.Collector,
 ) (*plugintypes.PluginResponse, error) {
 	// Parse config
 	var conf Config

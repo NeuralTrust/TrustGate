@@ -8,6 +8,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
@@ -92,6 +93,7 @@ func (p *ContextualSecurityPlugin) Execute(
 	config types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
+	collector *metrics.Collector,
 ) (*types.PluginResponse, error) {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {

@@ -7,11 +7,10 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/gofiber/fiber/v2"
-
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/gofiber/fiber/v2"
 
 	"github.com/sirupsen/logrus"
 )
@@ -57,6 +56,10 @@ func (m *gatewayMiddleware) Middleware() fiber.Handler {
 			m.logger.Error("No host header found")
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Host header required"})
 		}
+
+		ctx.Locals(common.LatencyContextKey, time.Now())
+		c := context.WithValue(ctx.Context(), common.LatencyContextKey, time.Now())
+		ctx.SetUserContext(c)
 
 		subdomain := m.extractSubdomain(host)
 		if subdomain == "" {
@@ -113,7 +116,7 @@ func (m *gatewayMiddleware) Middleware() fiber.Handler {
 		ctx.Locals(common.GatewayContextKey, gatewayID)
 		ctx.Locals(common.GatewayDataContextKey, gatewayData)
 
-		c := context.WithValue(ctx.Context(), common.GatewayContextKey, gatewayID)
+		c = context.WithValue(c, common.GatewayContextKey, gatewayID)
 		c = context.WithValue(c, common.GatewayDataContextKey, gatewayData)
 
 		ctx.SetUserContext(c)

@@ -22,3 +22,14 @@ swagger:  ; $(info $(M) Generate Swagger file ...)	@
 openapi:  ; $(info $(M) Generate OpenAPI file ...)	@
 	swag init -g cmd/gateway/main.go
 	swagger2openapi docs/swagger.json -o docs/openapi.json
+
+.PHONY: create-kafka-topic
+create-kafka-topic:
+	docker-compose exec kafka \
+		kafka-topics --create \
+		--if-not-exists \
+		--bootstrap-server kafka:9092 \
+		--replication-factor 1 \
+		--partitions 1 \
+		--topic metrics
+

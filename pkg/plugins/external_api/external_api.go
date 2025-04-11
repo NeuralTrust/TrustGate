@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -119,6 +120,7 @@ func (v *ExternalApiPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
+	collector *metrics.Collector,
 ) (*types.PluginResponse, error) {
 
 	settings := cfg.Settings

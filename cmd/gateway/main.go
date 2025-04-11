@@ -125,6 +125,7 @@ func main() {
 
 	<-quit
 	fmt.Println("shutting down server...")
+	container.MetricsWorker.Shutdown()
 	if err := srv.Shutdown(); err != nil {
 		fmt.Println("error shutting down server:", err)
 		os.Exit(1)

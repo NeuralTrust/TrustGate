@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/mitchellh/mapstructure"
@@ -113,6 +114,7 @@ func (p *CorsPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
+	collector *metrics.Collector,
 ) (*types.PluginResponse, error) {
 	var conf Config
 	if err := mapstructure.Decode(cfg.Settings, &conf); err != nil {

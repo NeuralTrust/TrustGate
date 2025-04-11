@@ -23,8 +23,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
-	"github.com/NeuralTrust/TrustGate/pkg/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -125,6 +127,11 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	if !ok {
 		h.logger.Error("gateway ID not found in Fiber context")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
+	}
+
+	metricsCollector, ok := c.Locals(metrics.CollectorKey).(*metrics.Collector)
+	if !ok || metricsCollector == nil {
+		return fmt.Errorf("failed to retrieve metrics collector from context")
 	}
 
 	// Get metadata from fiber context
@@ -271,9 +278,9 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Record upstream latency if available
-	if metrics.Config.EnableUpstreamLatency {
+	if prometheus.Config.EnableUpstreamLatency {
 		upstreamLatency := float64(time.Since(startTime).Milliseconds())
-		metrics.GatewayUpstreamLatency.WithLabelValues(
+		prometheus.GatewayUpstreamLatency.WithLabelValues(
 			gatewayID,
 			matchingRule.ServiceID,
 			matchingRule.ID,
@@ -283,6 +290,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	// Copy response to response context
 	respCtx.StatusCode = response.StatusCode
 	respCtx.Body = response.Body
+	respCtx.Target = response.Target
 	for k, v := range response.Headers {
 		respCtx.Headers[k] = v
 	}
@@ -367,21 +375,22 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	duration := time.Since(startTime).Milliseconds()
 
-	if metrics.Config.EnableLatency {
-		metrics.GatewayRequestLatency.WithLabelValues(
+	if prometheus.Config.EnableLatency {
+		prometheus.GatewayRequestLatency.WithLabelValues(
 			gatewayID,
 			c.Path(),
 		).Observe(float64(duration))
 	}
 
-	if metrics.Config.EnablePerRoute {
-		metrics.GatewayDetailedLatency.WithLabelValues(
+	if prometheus.Config.EnablePerRoute {
+		prometheus.GatewayDetailedLatency.WithLabelValues(
 			gatewayID,
 			matchingRule.ServiceID,
 			matchingRule.ID,
 		).Observe(float64(duration))
 	}
 
+	h.registrySuccessEvent(metricsCollector, respCtx)
 	// Write the response body
 	return c.Status(respCtx.StatusCode).Send(respCtx.Body)
 
@@ -452,6 +461,7 @@ func (h *forwardedHandler) handleUpstreamRequest(
 		response, err := h.doForwardRequest(req, rule, target)
 		reqErr = err
 		if err == nil {
+			response.Target = target
 			lb.ReportSuccess(target)
 			return response, nil
 		}
@@ -474,7 +484,12 @@ func (h *forwardedHandler) handleEndpointRequest(
 		Headers:     serviceEntity.Headers,
 		Credentials: serviceEntity.Credentials,
 	}
-	return h.doForwardRequest(req, rule, target)
+	rsp, err := h.doForwardRequest(req, rule, target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to forward request: %w", err)
+	}
+	rsp.Target = target
+	return rsp, nil
 }
 
 // Add helper method to create or get load balancer
@@ -891,4 +906,49 @@ func (h *forwardedHandler) createResponse(resp *fasthttp.Response, body []byte) 
 		response.Headers[k] = append(response.Headers[k], string(value))
 	})
 	return response
+}
+
+func (h *forwardedHandler) registryFailedEvent(
+	collector *metrics.Collector,
+	status int,
+	err error,
+	rsp *types.ResponseContext,
+) {
+	evt := metric_events.NewTraceEvent()
+	evt.Error = err.Error()
+	evt.StatusCode = status
+	if rsp != nil {
+		evt.StatusCode = rsp.StatusCode
+		if rsp.Target != nil {
+			evt.Upstream.Target = metric_events.TargetEvent{
+				Path:     rsp.Target.Path,
+				Host:     rsp.Target.Host,
+				Port:     rsp.Target.Port,
+				Protocol: rsp.Target.Provider,
+				Provider: rsp.Target.Provider,
+				Headers:  rsp.Target.Headers,
+			}
+		}
+	}
+	collector.Emit(evt)
+}
+
+func (h *forwardedHandler) registrySuccessEvent(
+	collector *metrics.Collector,
+	rsp *types.ResponseContext,
+) {
+	evt := metric_events.NewTraceEvent()
+	evt.StatusCode = rsp.StatusCode
+	if rsp.Target != nil {
+		evt.Upstream = &metric_events.UpstreamEvent{}
+		evt.Upstream.Target = metric_events.TargetEvent{
+			Path:     rsp.Target.Path,
+			Host:     rsp.Target.Host,
+			Port:     rsp.Target.Port,
+			Protocol: rsp.Target.Provider,
+			Provider: rsp.Target.Provider,
+			Headers:  rsp.Target.Headers,
+		}
+	}
+	collector.Emit(evt)
 }

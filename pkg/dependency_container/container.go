@@ -2,9 +2,7 @@ package dependency_container
 
 import (
 	"fmt"
-	"net/http"
 	"reflect"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -17,14 +15,17 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
+	infraTelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
@@ -47,6 +48,7 @@ type Container struct {
 	ApiKeyRepository      domainApikey.Repository
 	FingerprintTracker    fingerprint.Tracker
 	PluginChainValidator  plugin.ValidatePluginChain
+	MetricsWorker         metrics.Worker
 }
 
 func NewContainer(
@@ -58,8 +60,8 @@ func NewContainer(
 	initializeMemoryCache func(cacheInstance *cache.Cache),
 ) (*Container, error) {
 
-	httpClient := &http.Client{}
-	breaker := httpx.NewCircuitBreaker("breaker", 10*time.Second, 3)
+	// httpClient := &http.Client{}
+	// breaker := httpx.NewCircuitBreaker("breaker", 10*time.Second, 3)
 
 	cacheConfig := common.CacheConfig{
 		Host:     cfg.Redis.Host,
@@ -98,7 +100,11 @@ func NewContainer(
 	gatewayDataFinder := gateway.NewDataFinder(repo, cacheInstance, logger)
 	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager, gatewayRepository)
 
-	telemetryBuilder := telemetry.NewTelemetryProvidersBuilder(breaker, httpClient)
+	// telemetry
+	providerLocator := infraTelemetry.NewProviderLocator(map[string]domain.Exporter{
+		kafka.ExporterName: kafka.NewKafkaExporter(),
+	})
+	telemetryBuilder := telemetry.NewTelemetryExportersBuilder(providerLocator)
 
 	// redis publisher
 	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
@@ -123,6 +129,7 @@ func NewContainer(
 	infraCache.RegisterEventSubscriber[event.UpdateUpstreamCacheEvent](redisListener, updateUpstreamSubscriber)
 	infraCache.RegisterEventSubscriber[event.UpdateServiceCacheEvent](redisListener, updateServiceSubscriber)
 
+	metricsWorker := metrics.NewWorker(logger, telemetryBuilder)
 	// Handler Transport
 	handlerTransport := &handlers.HandlerTransportDTO{
 		// Proxy
@@ -180,7 +187,7 @@ func NewContainer(
 		Repository:            repo,
 		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, false),
 		GatewayMiddleware:     middleware.NewGatewayMiddleware(logger, cacheInstance, repo, gatewayDataFinder, cfg.Server.BaseDomain),
-		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, telemetryBuilder),
+		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, metricsWorker),
 		PluginMiddleware:      middleware.NewPluginChainMiddleware(pluginManager, logger),
 		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),
 		SecurityMiddleware:    middleware.NewSecurityMiddleware(logger),
@@ -189,6 +196,7 @@ func NewContainer(
 		BedrockClient:         bedrockClient,
 		FingerprintTracker:    fingerprintTracker,
 		PluginChainValidator:  pluginChainValidator,
+		MetricsWorker:         metricsWorker,
 	}
 
 	return container, nil

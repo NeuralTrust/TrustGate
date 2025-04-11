@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -131,6 +132,7 @@ func (p *ToxicityOpenAIPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
+	collector *metrics.Collector,
 ) (*types.PluginResponse, error) {
 	var conf Config
 	if err := mapstructure.Decode(cfg.Settings, &conf); err != nil {

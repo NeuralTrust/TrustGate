@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -337,7 +338,13 @@ func (p *InjectionProtectionPlugin) ValidateConfig(config types.PluginConfig) er
 }
 
 // Execute implements the Plugin interface
-func (p *InjectionProtectionPlugin) Execute(ctx context.Context, pluginConfig types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
+func (p *InjectionProtectionPlugin) Execute(
+	ctx context.Context,
+	pluginConfig types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	collector *metrics.Collector,
+) (*types.PluginResponse, error) {
 	p.logger.Debug("Starting injection protection check")
 
 	var cfg Config

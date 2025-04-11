@@ -5,7 +5,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/sirupsen/logrus"
 )
@@ -24,13 +24,13 @@ type (
 
 func NewProxyServer(di ProxyServerDI) *ProxyServer {
 	if di.Config.Metrics.Enabled {
-		metricsConfig := metrics.MetricsConfig{
+		metricsConfig := prometheus.MetricsConfig{
 			EnableLatency:         di.Config.Metrics.EnableLatency,
 			EnableUpstreamLatency: di.Config.Metrics.EnableUpstream,
 			EnableConnections:     di.Config.Metrics.EnableConnections,
 			EnablePerRoute:        di.Config.Metrics.EnablePerRoute,
 		}
-		metrics.Initialize(metricsConfig)
+		prometheus.Initialize(metricsConfig)
 	}
 
 	s := &ProxyServer{

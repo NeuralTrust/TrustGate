@@ -2,9 +2,11 @@ package utils
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/avct/uasurfer"
+	"github.com/gofiber/fiber/v2"
 )
 
 type UserAgentInfo struct {
@@ -94,6 +96,29 @@ func ParseUserAgent(uaString string, acceptLanguage string) *UserAgentInfo {
 		Browser: browser,
 		Locale:  locale,
 	}
+}
+
+func ExtractIP(ctx *fiber.Ctx) string {
+	ipHeaders := []string{
+		"X-Real-IP",
+		"X-Forwarded-For",
+		"X-Original-Forwarded-For",
+		"True-Client-IP",
+		"CF-Connecting-IP",
+	}
+
+	for _, header := range ipHeaders {
+		if value := ctx.Get(header); value != "" {
+			ips := strings.Split(value, ",")
+			if len(ips) > 0 {
+				ip := strings.TrimSpace(ips[0])
+				if parsedIP := net.ParseIP(ip); parsedIP != nil {
+					return ip
+				}
+			}
+		}
+	}
+	return strings.TrimSpace(ctx.IP())
 }
 
 func min(a, b, c int) int {
