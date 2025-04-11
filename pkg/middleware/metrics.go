@@ -2,15 +2,11 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"net/url"
-	"strconv"
 	"time"
 
-	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/NeuralTrust/TrustGate/pkg/utils"
 	"github.com/gofiber/fiber/v2"
@@ -24,20 +20,15 @@ const (
 )
 
 type metricsMiddleware struct {
-	logger           *logrus.Logger
-	providersBuilder appTelemetry.ExportersBuilder
-	taskChan         chan func()
-	elapsedTime      time.Duration
+	logger *logrus.Logger
+	worker metrics.Worker
 }
 
-func NewMetricsMiddleware(logger *logrus.Logger, providersBuilder appTelemetry.ExportersBuilder) Middleware {
-	m := &metricsMiddleware{
-		logger:           logger,
-		providersBuilder: providersBuilder,
-		taskChan:         make(chan func(), 1000),
+func NewMetricsMiddleware(logger *logrus.Logger, worker metrics.Worker) Middleware {
+	return &metricsMiddleware{
+		logger: logger,
+		worker: worker,
 	}
-	go m.startWorkers(5)
-	return m
 }
 
 func (m *metricsMiddleware) Middleware() fiber.Handler {
@@ -68,6 +59,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		c.SetUserContext(ctx)
 
 		userAgentInfo := utils.ParseUserAgent(m.getUserAgent(c), m.getAcceptLanguage(c))
+
 		inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
 
 		startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
@@ -77,19 +69,17 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		}
 
 		err := c.Next()
-
-		m.elapsedTime = time.Since(startTime)
-
+		endTime := time.Now()
 		outputResponse := m.transformToResponseContext(c, gatewayID)
-		method := c.Method()
-		statusCode := c.Response().StatusCode()
 
-		m.enqueueTask(func() {
-			m.registryMetricsToPrometheus(method, gatewayID, statusCode)
-		}, gatewayID)
-		m.enqueueTask(func() {
-			m.executeMetricsHandlers(metricsCollector, gatewayData, inputRequest, outputResponse)
-		}, gatewayID)
+		m.worker.Process(
+			metricsCollector,
+			gatewayData.Gateway.Telemetry.Exporters,
+			inputRequest,
+			outputResponse,
+			startTime,
+			endTime,
+		)
 
 		return err
 	}
@@ -101,81 +91,6 @@ func (m *metricsMiddleware) getUserAgent(ctx *fiber.Ctx) string {
 
 func (m *metricsMiddleware) getAcceptLanguage(ctx *fiber.Ctx) string {
 	return ctx.Get("Accept-Language")
-}
-
-func (m *metricsMiddleware) startWorkers(n int) {
-	for i := 0; i < n; i++ {
-		go func() {
-			for task := range m.taskChan {
-				task()
-			}
-		}()
-	}
-}
-
-func (m *metricsMiddleware) getStatusClass(status string) string {
-	code, err := strconv.Atoi(status)
-	if err != nil {
-		return "5xx" // Return server error class if status code is invalid
-	}
-	return fmt.Sprintf("%dxx", code/100)
-}
-
-func (m *metricsMiddleware) executeMetricsHandlers(
-	collector *metrics.Collector,
-	gatewayData *types.GatewayData,
-	req *types.RequestContext,
-	resp *types.ResponseContext,
-) {
-	exporters, err := m.providersBuilder.Build(gatewayData.Gateway.Telemetry.Exporters)
-	if err != nil {
-		m.logger.WithError(err).Error("failed to build telemetry providers")
-		return
-	}
-
-	events := collector.Flush()
-
-	for _, exporter := range exporters {
-		for _, metricsEvent := range events {
-			err = exporter.Handle(context.Background(), m.feedEvent(metricsEvent, req, resp))
-			if err != nil {
-				m.logger.
-					WithField("gatewayID", gatewayData.Gateway.ID).
-					WithError(err).
-					Error(fmt.Sprintf("failed to provide metrics to %s", exporter.Name()))
-			}
-		}
-	}
-
-	m.logger.WithFields(logrus.Fields{
-		"gatewayID":  gatewayData.Gateway.ID,
-		"eventCount": len(events),
-		"exporters":  len(exporters),
-	}).Debug("all metrics processed")
-}
-
-func (m *metricsMiddleware) feedEvent(
-	evt *metrics.Event,
-	req *types.RequestContext,
-	resp *types.ResponseContext,
-) *metrics.Event {
-	evt.Latency = m.elapsedTime.Milliseconds()
-	return evt
-}
-
-func (m *metricsMiddleware) registryMetricsToPrometheus(method, gatewayID string, statusCode int) {
-	if prometheus.Config.EnableConnections {
-		prometheus.GatewayConnections.WithLabelValues(gatewayID, "active").Inc()
-	}
-	status := m.getStatusClass(strconv.Itoa(statusCode))
-	prometheus.GatewayRequestTotal.WithLabelValues(
-		gatewayID,
-		method,
-		status,
-	).Inc()
-	if prometheus.Config.EnableConnections {
-		prometheus.GatewayConnections.WithLabelValues(gatewayID, "active").Dec()
-	}
 }
 
 func (m *metricsMiddleware) transformToRequestContext(
@@ -196,6 +111,7 @@ func (m *metricsMiddleware) transformToRequestContext(
 		},
 		Body:      c.Request().Body(),
 		ProcessAt: &now,
+		IP:        utils.ExtractIP(c),
 	}
 	for key, values := range c.GetReqHeaders() {
 		reqCtx.Headers[key] = values
@@ -226,13 +142,4 @@ func (m *metricsMiddleware) getQueryParams(c *fiber.Ctx) url.Values {
 		queryParams.Set(string(k), string(v))
 	})
 	return queryParams
-}
-
-func (m *metricsMiddleware) enqueueTask(task func(), gatewayID string) {
-	select {
-	case m.taskChan <- task:
-	default:
-		m.logger.WithField("gatewayID", gatewayID).
-			Warn("taskChan is full, dropping metrics task")
-	}
 }

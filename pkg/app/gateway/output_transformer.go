@@ -30,7 +30,10 @@ func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) (*types.Gatewa
 			exporters = append(exporters, providerConfig)
 		}
 		telemetry = &types.Telemetry{
-			Exporters: exporters,
+			Exporters:           exporters,
+			ExtraParams:         dbGateway.Telemetry.ExtraParams,
+			EnablePluginTraces:  dbGateway.Telemetry.EnablePluginTraces,
+			EnableRequestTraces: dbGateway.Telemetry.EnableRequestTraces,
 		}
 	}
 

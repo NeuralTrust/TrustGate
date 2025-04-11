@@ -1,9 +1,11 @@
 package external_api
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
+)
 
 type ExternalAPIData struct {
-	metrics.PluginDataEvent
+	metric_events.PluginDataEvent
 
 	Endpoint   string `json:"endpoint"`
 	Method     string `json:"method"`

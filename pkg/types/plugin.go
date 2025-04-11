@@ -1,10 +1,7 @@
 package types
 
 import (
-	"context"
 	"fmt"
-	"net/url"
-	"time"
 )
 
 var ErrRequiredPluginNotFound = fmt.Errorf("plugin is required")
@@ -62,50 +59,4 @@ type PluginChain struct {
 	Stage    Stage          `json:"stage"`
 	Parallel bool           `json:"parallel"`
 	Plugins  []PluginConfig `json:"plugins"`
-}
-
-// RequestContext represents the context for a request
-type RequestContext struct {
-	TraceID   string
-	Context   context.Context
-	GatewayID string
-	RuleID    string
-	Headers   map[string][]string
-	Method    string
-	Path      string
-	Query     url.Values
-	Body      []byte
-	Metadata  map[string]interface{}
-	Stage     Stage
-	ProcessAt *time.Time
-}
-
-// ResponseContext represents the context for a response
-type ResponseContext struct {
-	TraceID        string
-	Context        context.Context
-	GatewayID      string
-	Headers        map[string][]string
-	Body           []byte
-	StatusCode     int
-	Metadata       map[string]interface{}
-	Streaming      bool
-	StopProcessing bool
-	ProcessAt      *time.Time
-}
-
-// RateLimiterConfig represents the configuration for rate limiting
-type RateLimiterConfig struct {
-	Limits  map[string]RateLimit `json:"limits"`
-	Actions RateLimiterActions   `json:"actions"`
-}
-
-type RateLimit struct {
-	Limit  int    `json:"limit"`
-	Window string `json:"window"`
-}
-
-type RateLimiterActions struct {
-	Type       string `json:"type"`
-	RetryAfter string `json:"retry_after"`
 }

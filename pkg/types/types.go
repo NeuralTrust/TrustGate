@@ -52,10 +52,13 @@ type CreateGatewayRequest struct {
 }
 
 type TelemetryRequest struct {
-	Config []ProviderConfigRequest `json:"config"`
+	Exporters           []ExporterRequest `json:"exporters"`
+	ExtraParams         map[string]string `json:"extra_params"`
+	EnablePluginTraces  bool              `json:"enable_plugin_traces"`
+	EnableRequestTraces bool              `json:"enable_request_traces"`
 }
 
-type ProviderConfigRequest struct {
+type ExporterRequest struct {
 	Name     string                 `json:"name"`
 	Settings map[string]interface{} `json:"settings"`
 }

@@ -1,9 +1,11 @@
 package injection_protection
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
+)
 
 type InjectionProtectionData struct {
-	metrics.PluginDataEvent
+	metric_events.PluginDataEvent
 
 	Blocked bool             `json:"blocked"`
 	Events  []InjectionEvent `json:"events"`

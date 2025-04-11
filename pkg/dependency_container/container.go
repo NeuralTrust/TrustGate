@@ -22,6 +22,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	infraTelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
@@ -47,6 +48,7 @@ type Container struct {
 	ApiKeyRepository      domainApikey.Repository
 	FingerprintTracker    fingerprint.Tracker
 	PluginChainValidator  plugin.ValidatePluginChain
+	MetricsWorker         metrics.Worker
 }
 
 func NewContainer(
@@ -127,6 +129,7 @@ func NewContainer(
 	infraCache.RegisterEventSubscriber[event.UpdateUpstreamCacheEvent](redisListener, updateUpstreamSubscriber)
 	infraCache.RegisterEventSubscriber[event.UpdateServiceCacheEvent](redisListener, updateServiceSubscriber)
 
+	metricsWorker := metrics.NewWorker(logger, telemetryBuilder)
 	// Handler Transport
 	handlerTransport := &handlers.HandlerTransportDTO{
 		// Proxy
@@ -184,7 +187,7 @@ func NewContainer(
 		Repository:            repo,
 		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, false),
 		GatewayMiddleware:     middleware.NewGatewayMiddleware(logger, cacheInstance, repo, gatewayDataFinder, cfg.Server.BaseDomain),
-		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, telemetryBuilder),
+		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, metricsWorker),
 		PluginMiddleware:      middleware.NewPluginChainMiddleware(pluginManager, logger),
 		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),
 		SecurityMiddleware:    middleware.NewSecurityMiddleware(logger),
@@ -193,6 +196,7 @@ func NewContainer(
 		BedrockClient:         bedrockClient,
 		FingerprintTracker:    fingerprintTracker,
 		PluginChainValidator:  pluginChainValidator,
+		MetricsWorker:         metricsWorker,
 	}
 
 	return container, nil

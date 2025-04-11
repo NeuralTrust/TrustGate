@@ -1,9 +1,11 @@
 package bedrock_guardrail
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
+)
 
 type BedrockGuardrailData struct {
-	metrics.PluginDataEvent
+	metric_events.PluginDataEvent
 
 	GuardrailID string                  `json:"guardrail_id"`
 	Version     string                  `json:"version"`

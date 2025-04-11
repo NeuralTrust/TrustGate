@@ -7,7 +7,10 @@ import (
 )
 
 type Telemetry struct {
-	Exporters []ExporterConfig `json:"exporters"`
+	Exporters           []ExporterConfig  `json:"exporters"`
+	ExtraParams         map[string]string `json:"extra_params"`
+	EnablePluginTraces  bool              `json:"enable_plugin_traces"`
+	EnableRequestTraces bool              `json:"enable_request_traces"`
 }
 
 type ExporterConfig struct {

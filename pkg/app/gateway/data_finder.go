@@ -153,7 +153,12 @@ func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gatew
 		Status:          g.Status,
 		RequiredPlugins: requiredPlugins,
 		SecurityConfig:  securityConfig,
-		Telemetry:       &types.Telemetry{Exporters: requiredTelemetry},
+		Telemetry: &types.Telemetry{
+			Exporters:           requiredTelemetry,
+			ExtraParams:         g.Telemetry.ExtraParams,
+			EnablePluginTraces:  g.Telemetry.EnablePluginTraces,
+			EnableRequestTraces: g.Telemetry.EnableRequestTraces,
+		},
 	}
 }
 

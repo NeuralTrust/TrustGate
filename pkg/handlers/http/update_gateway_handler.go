@@ -117,17 +117,20 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	dbGateway.UpdatedAt = time.Now()
 
 	if req.Telemetry != nil {
-		var telemetryConfigs []types.Exporter
-		for _, config := range req.Telemetry.Config {
-			telemetryConfigs = append(telemetryConfigs, types.Exporter(config))
+		var exporters []types.Exporter
+		for _, config := range req.Telemetry.Exporters {
+			exporters = append(exporters, types.Exporter(config))
 		}
-		_, err = h.telemetryProvidersBuilder.Build(telemetryConfigs)
+		_, err = h.telemetryProvidersBuilder.Build(exporters)
 		if err != nil {
 			h.logger.WithError(err).Error("failed to validate telemetry providers")
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		dbGateway.Telemetry = &telemetry.Telemetry{
-			Exporters: h.telemetryExporterToDomain(telemetryConfigs),
+			Exporters:           h.telemetryExporterToDomain(exporters),
+			ExtraParams:         req.Telemetry.ExtraParams,
+			EnablePluginTraces:  req.Telemetry.EnablePluginTraces,
+			EnableRequestTraces: req.Telemetry.EnableRequestTraces,
 		}
 	}
 

@@ -1,6 +1,10 @@
 package metrics
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
+)
 
 const CollectorKey = "__metrics_collector"
 
@@ -13,7 +17,7 @@ type Config struct {
 type Collector struct {
 	traceID string
 	mu      sync.Mutex
-	events  []*Event
+	events  []*metric_events.Event
 	cfg     *Config
 }
 
@@ -24,14 +28,14 @@ func NewCollector(traceID string, cfg *Config) *Collector {
 	}
 }
 
-func (rc *Collector) Emit(evt *Event) {
+func (rc *Collector) Emit(evt *metric_events.Event) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 
-	if evt.Type == PluginType && !rc.cfg.EnablePluginTraces {
+	if evt.Type == metric_events.PluginType && !rc.cfg.EnablePluginTraces {
 		return
 	}
-	if evt.Type == TraceType && !rc.cfg.EnableRequestTraces {
+	if evt.Type == metric_events.TraceType && !rc.cfg.EnableRequestTraces {
 		return
 	}
 
@@ -40,11 +44,11 @@ func (rc *Collector) Emit(evt *Event) {
 	rc.events = append(rc.events, evt)
 }
 
-func (rc *Collector) Flush() []*Event {
+func (rc *Collector) Flush() []*metric_events.Event {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 
-	out := make([]*Event, len(rc.events))
+	out := make([]*metric_events.Event, len(rc.events))
 	copy(out, rc.events)
 	rc.events = nil
 	return out

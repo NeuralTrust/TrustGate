@@ -1,9 +1,11 @@
 package cors
 
-import "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+import (
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
+)
 
 type CorsData struct {
-	metrics.PluginDataEvent
+	metric_events.PluginDataEvent
 
 	Origin          string   `json:"origin"`
 	Method          string   `json:"method"`

@@ -66,13 +66,13 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
 	}
 
-	var telemetryConfigs []types.Exporter
+	var exporters []types.Exporter
 
-	for _, config := range req.Telemetry.Config {
-		telemetryConfigs = append(telemetryConfigs, types.Exporter(config))
+	for _, config := range req.Telemetry.Exporters {
+		exporters = append(exporters, types.Exporter(config))
 	}
 
-	_, err = h.telemetryProvidersBuilder.Build(telemetryConfigs)
+	_, err = h.telemetryProvidersBuilder.Build(exporters)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to validate telemetry providers")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -105,7 +105,10 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		Status:          req.Status,
 		RequiredPlugins: req.RequiredPlugins,
 		Telemetry: &telemetry.Telemetry{
-			Exporters: h.telemetryExportersToDomain(telemetryConfigs),
+			Exporters:           h.telemetryExportersToDomain(exporters),
+			ExtraParams:         req.Telemetry.ExtraParams,
+			EnablePluginTraces:  req.Telemetry.EnablePluginTraces,
+			EnableRequestTraces: req.Telemetry.EnableRequestTraces,
 		},
 		SecurityConfig: securityConfig,
 		CreatedAt:      req.CreatedAt,
