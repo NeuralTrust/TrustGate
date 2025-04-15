@@ -917,7 +917,9 @@ func (h *forwardedHandler) registryFailedEvent(
 	rsp *types.ResponseContext,
 ) {
 	evt := metric_events.NewTraceEvent()
-	evt.Error = err.Error()
+	if err != nil {
+		evt.Error = err.Error()
+	}
 	evt.StatusCode = status
 	if rsp != nil {
 		if rsp.Target != nil {
