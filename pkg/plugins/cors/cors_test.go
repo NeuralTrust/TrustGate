@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
@@ -214,7 +215,7 @@ func TestCorsPlugin_Execute(t *testing.T) {
 				Settings: tt.config,
 			}
 
-			result, err := plugin.Execute(context.Background(), config, req, resp)
+			result, err := plugin.Execute(context.Background(), config, req, resp, metrics.NewCollector("", nil))
 
 			if tt.expectError {
 				if err == nil {

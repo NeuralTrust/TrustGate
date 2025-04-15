@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -169,7 +171,13 @@ func (p *PromptModerationPlugin) ValidateConfig(config types.PluginConfig) error
 	return nil
 }
 
-func (p *PromptModerationPlugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
+func (p *PromptModerationPlugin) Execute(
+	ctx context.Context,
+	cfg types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	collector *metrics.Collector,
+) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
 		return nil, fmt.Errorf("failed to decode config: %v", err)
@@ -193,9 +201,18 @@ func (p *PromptModerationPlugin) Execute(ctx context.Context, cfg types.PluginCo
 
 	// Check request body for keywords and patterns
 	content := string(req.Body)
-
+	evt := PromptModerationData{
+		Blocked:             true,
+		SimilarityThreshold: threshold,
+	}
 	// Check for similar keywords
 	if foundWord, keyword, found := p.findSimilarKeyword(content, threshold); found {
+		evt.Reason = ModerationReason{
+			Type:    "keyword",
+			Pattern: keyword,
+			Match:   foundWord,
+		}
+		p.raiseEvent(collector, evt, req.Stage, true, "keyword found in request body")
 		return nil, &types.PluginError{
 			StatusCode: 403,
 			Message:    fmt.Sprintf(config.Actions.Message+" (similar to '%s')", foundWord, keyword),
@@ -204,12 +221,19 @@ func (p *PromptModerationPlugin) Execute(ctx context.Context, cfg types.PluginCo
 	}
 
 	// Check regex patterns
-	for _, regex := range p.regexRules {
-		if regex.MatchString(content) {
+	for _, pattern := range p.regexRules {
+		matches := pattern.FindStringSubmatch(content)
+		if len(matches) > 0 {
+			evt.Reason = ModerationReason{
+				Type:    "regex",
+				Pattern: pattern.String(),
+				Match:   matches[0],
+			}
+			p.raiseEvent(collector, evt, req.Stage, true, "regex pattern found in request body")
 			return nil, &types.PluginError{
 				StatusCode: 403,
-				Message:    fmt.Sprintf(config.Actions.Message, regex.String()),
-				Err:        fmt.Errorf("regex pattern %s found in request body", regex.String()),
+				Message:    fmt.Sprintf(config.Actions.Message, pattern),
+				Err:        fmt.Errorf("regex pattern %s found in request body", pattern),
 			}
 		}
 	}
@@ -219,4 +243,22 @@ func (p *PromptModerationPlugin) Execute(ctx context.Context, cfg types.PluginCo
 		StatusCode: 200,
 		Message:    "Request allowed",
 	}, nil
+}
+
+func (p *PromptModerationPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra PromptModerationData,
+	stage types.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }

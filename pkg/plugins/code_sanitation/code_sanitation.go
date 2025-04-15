@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -263,7 +265,13 @@ func (p *CodeSanitationPlugin) ValidateConfig(config types.PluginConfig) error {
 }
 
 // Execute runs the code sanitation plugin
-func (p *CodeSanitationPlugin) Execute(ctx context.Context, pluginConfig types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
+func (p *CodeSanitationPlugin) Execute(
+	ctx context.Context,
+	pluginConfig types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	collector *metrics.Collector,
+) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(pluginConfig.Settings, &config); err != nil {
 		return nil, &types.PluginError{
@@ -349,6 +357,7 @@ func (p *CodeSanitationPlugin) Execute(ctx context.Context, pluginConfig types.P
 		}
 	}
 
+	var events []CodeSanitationEvent
 	// Check headers
 	if shouldCheckHeaders {
 		sanitizedHeaders := make(http.Header)
@@ -359,8 +368,22 @@ func (p *CodeSanitationPlugin) Execute(ctx context.Context, pluginConfig types.P
 
 				// Check language patterns
 				for lang, pattern := range enabledLanguages {
-					if pattern.MatchString(value) {
+					if match := pattern.FindString(value); match != "" {
+						events = append(events, CodeSanitationEvent{
+							Source:      "headers",
+							Field:       key,
+							Language:    string(lang),
+							PatternName: string(lang),
+							Match:       match,
+						})
 						if config.Action == Block {
+							p.raiseEvent(
+								collector,
+								CodeSanitationData{Sanitized: false, Events: events},
+								req.Stage,
+								true,
+								config.ErrorMessage,
+							)
 							return nil, &types.PluginError{
 								StatusCode: config.StatusCode,
 								Message:    config.ErrorMessage,
@@ -373,19 +396,31 @@ func (p *CodeSanitationPlugin) Execute(ctx context.Context, pluginConfig types.P
 				}
 
 				// Check custom patterns
-				for name, customPattern := range customPatterns {
-					if customPattern.contentType == Headers || customPattern.contentType == AllContent {
-						if customPattern.pattern.MatchString(value) {
-							if config.Action == Block {
-								return nil, &types.PluginError{
-									StatusCode: config.StatusCode,
-									Message:    config.ErrorMessage,
-									Err:        fmt.Errorf("custom pattern detected: %s in header %s", name, key),
-								}
+				for name, cp := range customPatterns {
+					if (cp.contentType == Headers || cp.contentType == AllContent) && cp.pattern.MatchString(value) {
+						match := cp.pattern.FindString(value)
+						events = append(events, CodeSanitationEvent{
+							Source:      "headers",
+							Field:       key,
+							PatternName: name,
+							Match:       match,
+						})
+						if config.Action == Block {
+							p.raiseEvent(
+								collector,
+								CodeSanitationData{Sanitized: false, Events: events},
+								req.Stage,
+								true,
+								config.ErrorMessage,
+							)
+							return nil, &types.PluginError{
+								StatusCode: config.StatusCode,
+								Message:    config.ErrorMessage,
+								Err:        fmt.Errorf("custom pattern detected: %s in header %s", name, key),
 							}
-							sanitized = p.sanitizeCode(sanitized, customPattern.pattern, config.SanitizeChar)
-							detected = true
 						}
+						sanitized = p.sanitizeCode(sanitized, cp.pattern, config.SanitizeChar)
+						detected = true
 					}
 				}
 
@@ -408,8 +443,22 @@ func (p *CodeSanitationPlugin) Execute(ctx context.Context, pluginConfig types.P
 		querySanitized := false
 
 		for lang, pattern := range enabledLanguages {
-			if pattern.MatchString(path) {
+			if match := pattern.FindString(path); match != "" {
+				events = append(events, CodeSanitationEvent{
+					Source:      "query",
+					Field:       "path",
+					PatternName: "path",
+					Language:    string(lang),
+					Match:       match,
+				})
 				if config.Action == Block {
+					p.raiseEvent(
+						collector,
+						CodeSanitationData{Sanitized: false, Events: events},
+						req.Stage,
+						true,
+						config.ErrorMessage,
+					)
 					return nil, &types.PluginError{
 						StatusCode: config.StatusCode,
 						Message:    config.ErrorMessage,
@@ -462,7 +511,12 @@ func (p *CodeSanitationPlugin) Execute(ctx context.Context, pluginConfig types.P
 			req.Body = newBody
 		}
 	}
-
+	if len(events) > 0 {
+		p.raiseEvent(collector, CodeSanitationData{
+			Sanitized: config.Action == Sanitize,
+			Events:    events,
+		}, req.Stage, false, "")
+	}
 	return &types.PluginResponse{
 		StatusCode: http.StatusOK,
 		Message:    "Request sanitized successfully",
@@ -527,4 +581,22 @@ func (p *CodeSanitationPlugin) sanitizeCode(
 	return pattern.ReplaceAllStringFunc(input, func(match string) string {
 		return strings.Repeat(sanitizeChar, len(match))
 	})
+}
+
+func (p *CodeSanitationPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra CodeSanitationData,
+	stage types.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }

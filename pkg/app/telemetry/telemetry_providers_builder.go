@@ -2,38 +2,28 @@ package telemetry
 
 import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	factory "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
-type ProvidersBuilder interface {
-	Build(configs []types.ProviderConfig) ([]domain.Provider, error)
+type ExportersBuilder interface {
+	Build(configs []types.Exporter) ([]domain.Exporter, error)
 }
 
-type providersBuilder struct {
-	breaker httpx.CircuitBreaker
-	client  httpx.Client
+type exportersBuilder struct {
+	locator *factory.ExporterLocator
 }
 
-func NewTelemetryProvidersBuilder(breaker httpx.CircuitBreaker, client httpx.Client) ProvidersBuilder {
-	return &providersBuilder{
-		breaker: breaker,
-		client:  client,
+func NewTelemetryExportersBuilder(locator *factory.ExporterLocator) ExportersBuilder {
+	return &exportersBuilder{
+		locator: locator,
 	}
 }
 
-func (v *providersBuilder) Build(configs []types.ProviderConfig) ([]domain.Provider, error) {
-	var providers []domain.Provider
+func (v *exportersBuilder) Build(configs []types.Exporter) ([]domain.Exporter, error) {
+	var providers []domain.Exporter
 	for _, config := range configs {
-		telemetryProvider, err := factory.NewProvider(config, factory.ProvidersDI{
-			Breaker: v.breaker,
-			Client:  v.client,
-		})
-		if err != nil {
-			return nil, err
-		}
-		err = telemetryProvider.ValidateConfig()
+		telemetryProvider, err := v.locator.GetExporter(config)
 		if err != nil {
 			return nil, err
 		}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_openai"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -99,7 +100,7 @@ func TestToxicityOpenAIPlugin_Execute_Success(t *testing.T) {
 
 	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
 
-	resp, err := plugin.Execute(context.Background(), cf, request, response)
+	resp, err := plugin.Execute(context.Background(), cf, request, response, metrics.NewCollector("", nil))
 
 	assert.NoError(t, err)
 	assert.Equal(t, "Content is safe", resp.Message)
@@ -146,7 +147,7 @@ func TestToxicityOpenAIPlugin_Execute_FlaggedContent(t *testing.T) {
 
 	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)

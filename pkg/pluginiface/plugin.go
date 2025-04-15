@@ -3,6 +3,7 @@ package pluginiface
 import (
 	"context"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
@@ -15,7 +16,13 @@ type Plugin interface {
 	// AllowedStages returns all stages where the plugin is allowed to run.
 	// This is used for validation to ensure the plugin is not configured to run on unsupported stages.
 	AllowedStages() []types.Stage
-	Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error)
+	Execute(
+		ctx context.Context,
+		cfg types.PluginConfig,
+		req *types.RequestContext,
+		resp *types.ResponseContext,
+		collector *metrics.Collector,
+	) (*types.PluginResponse, error)
 	ValidateConfig(config types.PluginConfig) error
 	// RequiredPlugins returns the names of other plugins required by this one.
 	RequiredPlugins() []string

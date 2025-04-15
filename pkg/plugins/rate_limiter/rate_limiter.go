@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/go-redis/redis/v8"
@@ -141,6 +143,7 @@ func (r *RateLimiterPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
+	collector *metrics.Collector,
 ) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
@@ -157,6 +160,8 @@ func (r *RateLimiterPlugin) Execute(
 		limitType    string
 		retryAfter   string
 		currentCount int64
+		window       time.Duration
+		limit        int
 	}
 
 	var finalStatus limitStatus
@@ -211,6 +216,8 @@ func (r *RateLimiterPlugin) Execute(
 					limitType:    limitType,
 					retryAfter:   config.Actions.RetryAfter,
 					currentCount: currentCount,
+					window:       window,
+					limit:        limitCfg.Limit,
 				}
 				break
 			}
@@ -243,6 +250,21 @@ func (r *RateLimiterPlugin) Execute(
 		resp.Metadata["rate_limit_exceeded"] = true
 		resp.Metadata["rate_limit_type"] = finalStatus.limitType
 		resp.Metadata["retry_after"] = finalStatus.retryAfter
+
+		r.raiseEvent(
+			collector,
+			RateLimiterData{
+				RateLimitExceeded: true,
+				ExceededType:      finalStatus.limitType,
+				RetryAfter:        finalStatus.retryAfter,
+				CurrentCount:      finalStatus.currentCount,
+				Window:            finalStatus.window.String(),
+				Limit:             finalStatus.limit,
+			},
+			req.Stage,
+			true,
+			"rate limit exceeded",
+		)
 
 		return nil, &types.PluginError{
 			StatusCode: http.StatusTooManyRequests,
@@ -301,4 +323,22 @@ func (r *RateLimiterPlugin) extractKey(req *types.RequestContext, limitType stri
 	default:
 		return limitType
 	}
+}
+
+func (p *RateLimiterPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra RateLimiterData,
+	stage types.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }

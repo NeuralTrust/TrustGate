@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -48,7 +49,7 @@ func TestPromptModerationPlugin_Execute_NoViolation(t *testing.T) {
 	req := &types.RequestContext{Body: []byte("This is a clean message.")}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)
@@ -70,7 +71,7 @@ func TestPromptModerationPlugin_Execute_KeywordViolation(t *testing.T) {
 	req := &types.RequestContext{Body: []byte("This message contains badword.")}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)
@@ -93,7 +94,7 @@ func TestPromptModerationPlugin_Execute_RegexViolation(t *testing.T) {
 	req := &types.RequestContext{Body: []byte("This message contains forbidden content.")}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)

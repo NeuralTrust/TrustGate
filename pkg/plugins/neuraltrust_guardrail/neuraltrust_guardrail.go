@@ -15,6 +15,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/mitchellh/mapstructure"
@@ -122,6 +124,7 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
+	collector *metrics.Collector,
 ) (*types.PluginResponse, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -169,11 +172,21 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 		requests = append(requests, TaggedRequest{Request: firewallReq, Type: jailbreakType})
 	}
 
+	evt := &NeuralTrustGuardrailData{
+		Blocked: true,
+		Scores:  GuardrailScores{},
+	}
+
+	if p.config.ToxicityParamBag != nil && p.config.JailbreakParamBag != nil {
+		evt.ToxicityThreshold = p.config.ToxicityParamBag.Threshold
+		evt.JailbreakThreshold = p.config.JailbreakParamBag.Threshold
+	}
+
 	firewallErrors := make(chan error, len(requests))
 	var wg sync.WaitGroup
 	for _, request := range requests {
 		wg.Add(1)
-		go p.callFirewall(ctx, &wg, request, firewallErrors)
+		go p.callFirewall(ctx, &wg, request, firewallErrors, evt)
 	}
 
 	done := make(chan struct{})
@@ -193,6 +206,7 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 			cancel()
 			var guardrailViolationError *guardrailViolationError
 			if errors.As(err, &guardrailViolationError) {
+				p.raiseEvent(collector, *evt, req.Stage, true, guardrailViolationError.Error())
 				return nil, &types.PluginError{
 					StatusCode: http.StatusForbidden,
 					Message:    err.Error(),
@@ -242,6 +256,7 @@ func (p *NeuralTrustGuardrailPlugin) callFirewall(
 	wg *sync.WaitGroup,
 	taggedRequest TaggedRequest,
 	firewallErrors chan<- error,
+	evt *NeuralTrustGuardrailData,
 ) {
 	req := taggedRequest.Request
 
@@ -276,6 +291,7 @@ func (p *NeuralTrustGuardrailPlugin) callFirewall(
 			return
 		}
 		if parsed.Scores.MaliciousPrompt > p.config.JailbreakParamBag.Threshold {
+			evt.Scores.Jailbreak = parsed.Scores.MaliciousPrompt
 			p.sendError(firewallErrors, NewGuardrailViolation(fmt.Sprintf(
 				"%s: score %.2f exceeded threshold %.2f",
 				taggedRequest.Type,
@@ -291,6 +307,7 @@ func (p *NeuralTrustGuardrailPlugin) callFirewall(
 			return
 		}
 		if parsed.Scores.ToxicPrompt > p.config.ToxicityParamBag.Threshold {
+			evt.Scores.Toxicity = parsed.Scores.ToxicPrompt
 			p.sendError(firewallErrors, NewGuardrailViolation(fmt.Sprintf(
 				"%s: score %.2f exceeded threshold %.2f",
 				taggedRequest.Type,
@@ -367,4 +384,22 @@ func (p *NeuralTrustGuardrailPlugin) sendError(ch chan<- error, err error) {
 	case ch <- err:
 	default:
 	}
+}
+
+func (p *NeuralTrustGuardrailPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra NeuralTrustGuardrailData,
+	stage types.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }

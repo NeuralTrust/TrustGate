@@ -19,18 +19,21 @@ func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) (*types.Gatewa
 		dbGateway.RequiredPlugins = []types.PluginConfig{}
 	}
 
-	var configs []types.ProviderConfig
+	var exporters []types.Exporter
 	var telemetry *types.Telemetry
 	if dbGateway.Telemetry != nil {
-		for _, config := range dbGateway.Telemetry.Configs {
-			providerConfig := types.ProviderConfig{
+		for _, config := range dbGateway.Telemetry.Exporters {
+			providerConfig := types.Exporter{
 				Name:     config.Name,
 				Settings: config.Settings,
 			}
-			configs = append(configs, providerConfig)
+			exporters = append(exporters, providerConfig)
 		}
 		telemetry = &types.Telemetry{
-			Configs: configs,
+			Exporters:           exporters,
+			ExtraParams:         dbGateway.Telemetry.ExtraParams,
+			EnablePluginTraces:  dbGateway.Telemetry.EnablePluginTraces,
+			EnableRequestTraces: dbGateway.Telemetry.EnableRequestTraces,
 		}
 	}
 

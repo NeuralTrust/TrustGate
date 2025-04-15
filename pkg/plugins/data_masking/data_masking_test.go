@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -110,10 +111,11 @@ func TestMasking_PhoneNumber(t *testing.T) {
 	}, false)
 	// Use a phone number format that won't match the Swift BIC pattern
 	example := "+1 (555) 123-4567" // Changed from "+1234567890"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: +" + defaultEntityMasks[PhoneNumber]
 
 	assert.Equal(t, expected, masked, "Phone number masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_Date(t *testing.T) {
@@ -134,10 +136,11 @@ func TestMasking_Date(t *testing.T) {
 	}, false)
 
 	example := "07/24/2001" // Changed from "+1234567890"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[Date]
 
 	assert.Equal(t, expected, masked, "Date masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_SSN(t *testing.T) {
@@ -157,10 +160,11 @@ func TestMasking_SSN(t *testing.T) {
 		},
 	}, false)
 	example := "123-45-6789"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[SSN]
 
 	assert.Equal(t, expected, masked, "SSN masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_IPAddress(t *testing.T) {
@@ -180,10 +184,11 @@ func TestMasking_IPAddress(t *testing.T) {
 		},
 	}, false)
 	example := "192.168.1.1"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[IPAddress]
 
 	assert.Equal(t, expected, masked, "IP address masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_Password(t *testing.T) {
@@ -203,10 +208,11 @@ func TestMasking_Password(t *testing.T) {
 		},
 	}, false)
 	example := "password=SuperSecret123"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[Password]
 
 	assert.Equal(t, expected, masked, "Password masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_APIKey(t *testing.T) {
@@ -226,10 +232,11 @@ func TestMasking_APIKey(t *testing.T) {
 		},
 	}, false)
 	example := "api_key=abcd1234efgh5678"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[APIKey]
 
 	assert.Equal(t, expected, masked, "API key masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_AccessToken(t *testing.T) {
@@ -249,10 +256,11 @@ func TestMasking_AccessToken(t *testing.T) {
 		},
 	}, false)
 	example := "access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[AccessToken]
 
 	assert.Equal(t, expected, masked, "Access token masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_IBAN(t *testing.T) {
@@ -272,10 +280,11 @@ func TestMasking_IBAN(t *testing.T) {
 		},
 	}, false)
 	example := "GB29NWBK60161331926819"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[IBAN]
 
 	assert.Equal(t, expected, masked, "IBAN masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_CryptoWallet(t *testing.T) {
@@ -295,10 +304,11 @@ func TestMasking_CryptoWallet(t *testing.T) {
 		},
 	}, false)
 	example := "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf0a6x"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[CryptoWallet]
 
 	assert.Equal(t, expected, masked, "Crypto wallet masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_TaxID(t *testing.T) {
@@ -318,10 +328,11 @@ func TestMasking_TaxID(t *testing.T) {
 		},
 	}, false)
 	example := "12-3456789"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[TaxID]
 
 	assert.Equal(t, expected, masked, "Tax ID masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_Swift(t *testing.T) {
@@ -341,10 +352,11 @@ func TestMasking_Swift(t *testing.T) {
 		},
 	}, false)
 	example := "DEUTDEFF500"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[SwiftBIC]
 
 	assert.Equal(t, expected, masked, "Tax ID masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_CreditCard(t *testing.T) {
@@ -364,10 +376,11 @@ func TestMasking_CreditCard(t *testing.T) {
 		},
 	}, false)
 	example := "4111 1111 1111 1111"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[CreditCard]
 
 	assert.Equal(t, expected, masked, "Credit card masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestMasking_Email(t *testing.T) {
@@ -387,10 +400,11 @@ func TestMasking_Email(t *testing.T) {
 		},
 	}, false)
 	example := "test@example.com"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[Email]
 
 	assert.Equal(t, expected, masked, "Email masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestKeywordMasking(t *testing.T) {
@@ -400,8 +414,9 @@ func TestKeywordMasking(t *testing.T) {
 	}
 
 	config := createTestConfig([]EntityConfig{}, false)
-	masked := plugin.maskPlainText("This is a secret", 0.8, config)
+	masked, evt := plugin.maskPlainText("This is a secret", 0.8, config)
 	assert.Equal(t, "This is a [MASKED]", masked)
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestFuzzyMatching(t *testing.T) {
@@ -434,15 +449,15 @@ func TestFuzzyMatching(t *testing.T) {
 	}
 
 	// Test similar keyword
-	masked := plugin.maskPlainText("This is a sekret", 0.7, config)
+	masked, _ := plugin.maskPlainText("This is a sekret", 0.7, config)
 	assert.Equal(t, "This is a [MASKED_SECRET]", masked, "Fuzzy keyword matching failed")
 
 	// Test credit card with character substitution (O instead of 0)
-	masked = plugin.maskPlainText("My card: 4111 1111 1111 1111", 0.8, config)
+	masked, _ = plugin.maskPlainText("My card: 4111 1111 1111 1111", 0.8, config)
 	assert.Contains(t, masked, defaultEntityMasks[CreditCard], "Fuzzy regex matching with substitution failed")
 
 	// Test with character deletion
-	masked = plugin.maskPlainText("My SSN is 123-45-6785", 0.8, config)
+	masked, _ = plugin.maskPlainText("My SSN is 123-45-6785", 0.8, config)
 	assert.Contains(t, masked, defaultEntityMasks[SSN], "Fuzzy regex matching with deletion failed")
 }
 
@@ -464,14 +479,16 @@ func TestNormalizedInput(t *testing.T) {
 
 	// Test credit card with spaces and dashes removed
 	example := "4111-1111-1111-1111"
-	masked := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	expected := "Sensitive data: " + defaultEntityMasks[Default]
 	assert.Equal(t, expected, masked, "Normalized credit card masking failed")
+	assert.Equal(t, 1, len(evt))
 
 	// Test phone number with different format
 	example = "(123) 456-7890"
-	masked = plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt = plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
 	assert.Contains(t, masked, defaultEntityMasks[Default], "Normalized phone number masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestInternationalPII(t *testing.T) {
@@ -505,18 +522,21 @@ func TestInternationalPII(t *testing.T) {
 
 	// Test Spanish DNI
 	example := "12345678Z"
-	masked := plugin.maskPlainText("Spanish ID: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainText("Spanish ID: "+example, 0.8, config)
 	assert.Contains(t, masked, defaultEntityMasks[SpanishDNI], "Spanish DNI masking failed")
+	assert.Equal(t, 1, len(evt))
 
 	// Test Mexican CURP
 	example = "BADD110313HCMLNS09"
-	masked = plugin.maskPlainText("Mexican ID: "+example, 0.8, config)
+	masked, evt = plugin.maskPlainText("Mexican ID: "+example, 0.8, config)
 	assert.Contains(t, masked, defaultEntityMasks[MexicanCURP], "Mexican CURP masking failed")
+	assert.Equal(t, 1, len(evt))
 
 	// Test Brazilian CPF
 	example = "123.456.789-09"
-	masked = plugin.maskPlainText("Brazilian CPF: "+example, 0.8, config)
+	masked, evt = plugin.maskPlainText("Brazilian CPF: "+example, 0.8, config)
 	assert.Contains(t, masked, defaultEntityMasks[BrazilianCPF], "Brazilian CPF masking failed")
+	assert.Equal(t, 1, len(evt))
 }
 
 func TestExecutePlugin(t *testing.T) {
@@ -537,7 +557,7 @@ func TestExecutePlugin(t *testing.T) {
 
 	req := &types.RequestContext{Body: []byte("This is a secret")}
 	resp := &types.ResponseContext{}
-	_, err := plugin.Execute(context.Background(), config, req, resp)
+	_, err := plugin.Execute(context.Background(), config, req, resp, metrics.NewCollector("", nil))
 	assert.NoError(t, err)
 	assert.Equal(t, "This is a [MASKED]", string(req.Body))
 }
@@ -601,8 +621,9 @@ func TestJSONMasking(t *testing.T) {
 		},
 	}
 
-	maskedJSON := plugin.maskJSONData(jsonData, 0.8, config)
+	maskedJSON, evt := plugin.maskJSONData(jsonData, 0.8, config)
 
+	assert.Equal(t, 3, len(evt))
 	// Check that email was masked
 	maskedUser, ok := maskedJSON.(map[string]interface{})["user"].(map[string]interface{})
 	assert.True(t, ok)

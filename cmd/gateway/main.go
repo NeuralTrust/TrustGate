@@ -108,6 +108,7 @@ func main() {
 	if getServerType() == "proxy" {
 		go func() {
 			fmt.Println("starting listening redis events...")
+			container.MetricsWorker.StartWorkers(5)
 			container.RedisListener.Listen(ctx, channel.GatewayEventsChannel)
 		}()
 	}
@@ -125,6 +126,7 @@ func main() {
 
 	<-quit
 	fmt.Println("shutting down server...")
+	container.MetricsWorker.Shutdown()
 	if err := srv.Shutdown(); err != nil {
 		fmt.Println("error shutting down server:", err)
 		os.Exit(1)

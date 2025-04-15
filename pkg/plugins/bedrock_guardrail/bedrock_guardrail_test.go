@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/bedrock_guardrail"
 	plugintypes "github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -73,7 +74,7 @@ func TestExecute_ContentBlockedByPolicy(t *testing.T) {
 
 	req := &plugintypes.RequestContext{Body: []byte("test content")}
 	resp := &plugintypes.ResponseContext{}
-	result, err := plugin.Execute(context.Background(), conf, req, resp)
+	result, err := plugin.Execute(context.Background(), conf, req, resp, metrics.NewCollector("", nil))
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
@@ -100,7 +101,7 @@ func TestExecute_ContentAllowed(t *testing.T) {
 
 	req := &plugintypes.RequestContext{Body: []byte("test content")}
 	resp := &plugintypes.ResponseContext{}
-	result, err := plugin.Execute(context.Background(), conf, req, resp)
+	result, err := plugin.Execute(context.Background(), conf, req, resp, metrics.NewCollector("", nil))
 
 	assert.NotNil(t, result)
 	assert.NoError(t, err)
@@ -124,7 +125,7 @@ func TestExecute_BedrockAPIFailure(t *testing.T) {
 
 	req := &plugintypes.RequestContext{Body: []byte("test content")}
 	resp := &plugintypes.ResponseContext{}
-	result, err := plugin.Execute(context.Background(), conf, req, resp)
+	result, err := plugin.Execute(context.Background(), conf, req, resp, metrics.NewCollector("", nil))
 
 	assert.Nil(t, result)
 	assert.Error(t, err)

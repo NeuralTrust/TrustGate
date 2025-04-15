@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -337,7 +339,13 @@ func (p *InjectionProtectionPlugin) ValidateConfig(config types.PluginConfig) er
 }
 
 // Execute implements the Plugin interface
-func (p *InjectionProtectionPlugin) Execute(ctx context.Context, pluginConfig types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
+func (p *InjectionProtectionPlugin) Execute(
+	ctx context.Context,
+	pluginConfig types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	collector *metrics.Collector,
+) (*types.PluginResponse, error) {
 	p.logger.Debug("Starting injection protection check")
 
 	var cfg Config
@@ -389,6 +397,9 @@ func (p *InjectionProtectionPlugin) Execute(ctx context.Context, pluginConfig ty
 		customPatterns[custom.Name] = pattern
 	}
 
+	data := InjectionProtectionData{
+		Blocked: true,
+	}
 	// Check headers if configured
 	if containsContent(cfg.ContentToCheck, Headers) || containsContent(cfg.ContentToCheck, AllContent) {
 		p.logger.WithField("headers", req.Headers).Debug("Checking headers")
@@ -397,12 +408,24 @@ func (p *InjectionProtectionPlugin) Execute(ctx context.Context, pluginConfig ty
 				// Check predefined patterns
 				for attackType, pattern := range patterns {
 					if pattern.MatchString(value) {
+						data.Event = InjectionEvent{
+							Type:   string(attackType),
+							Source: "header",
+							Match:  value,
+						}
+						p.raiseEvent(collector, data, req.Stage, true, "injection detected")
 						return p.handleInjectionDetected(cfg, string(attackType), value, "header", key)
 					}
 				}
 				// Check custom patterns
 				for name, pattern := range customPatterns {
 					if pattern.MatchString(value) {
+						data.Event = InjectionEvent{
+							Type:   name,
+							Source: "header",
+							Match:  value,
+						}
+						p.raiseEvent(collector, data, req.Stage, true, "injection detected")
 						return p.handleInjectionDetected(cfg, name, value, "header", key)
 					}
 				}
@@ -430,11 +453,23 @@ func (p *InjectionProtectionPlugin) Execute(ctx context.Context, pluginConfig ty
 							"value":       value,
 							"attack_type": attackType,
 						}).Info("Query parameter injection detected")
+						data.Event = InjectionEvent{
+							Type:   string(attackType),
+							Source: "query",
+							Match:  value,
+						}
+						p.raiseEvent(collector, data, req.Stage, true, "injection detected")
 						return p.handleInjectionDetected(cfg, string(attackType), value, "query", param)
 					}
 				}
 				// Check custom patterns
 				for name, pattern := range customPatterns {
+					data.Event = InjectionEvent{
+						Type:   name,
+						Source: "query",
+						Match:  value,
+					}
+					p.raiseEvent(collector, data, req.Stage, true, "injection detected")
 					if pattern.MatchString(value) {
 						return p.handleInjectionDetected(cfg, name, value, "query", param)
 					}
@@ -449,6 +484,12 @@ func (p *InjectionProtectionPlugin) Execute(ctx context.Context, pluginConfig ty
 		}
 		for attackType, pattern := range patterns {
 			if pattern.MatchString(pathStr) {
+				data.Event = InjectionEvent{
+					Type:   string(attackType),
+					Source: "query",
+					Match:  pathStr,
+				}
+				p.raiseEvent(collector, data, req.Stage, true, "injection detected")
 				return p.handleInjectionDetected(cfg, string(attackType), pathStr, "url", "")
 			}
 		}
@@ -474,12 +515,24 @@ func (p *InjectionProtectionPlugin) Execute(ctx context.Context, pluginConfig ty
 						"attack_type":     attackType,
 						"matched_content": bodyStr,
 					}).Info("Pattern matched!")
+					data.Event = InjectionEvent{
+						Type:   string(attackType),
+						Source: "body",
+						Match:  bodyStr,
+					}
+					p.raiseEvent(collector, data, req.Stage, true, "injection detected")
 					return p.handleInjectionDetected(cfg, string(attackType), bodyStr, "body", "")
 				}
 			}
 			// Check custom patterns
 			for name, pattern := range customPatterns {
 				if pattern.MatchString(bodyStr) {
+					data.Event = InjectionEvent{
+						Type:   name,
+						Source: "body",
+						Match:  bodyStr,
+					}
+					p.raiseEvent(collector, data, req.Stage, true, "injection detected")
 					return p.handleInjectionDetected(cfg, name, bodyStr, "body", "")
 				}
 			}
@@ -628,4 +681,22 @@ func hasAllPattern(injections []struct {
 		}
 	}
 	return false
+}
+
+func (p *InjectionProtectionPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra InjectionProtectionData,
+	stage types.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }

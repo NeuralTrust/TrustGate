@@ -20,7 +20,7 @@ type createGatewayHandler struct {
 	repo                      domainGateway.Repository
 	updateGatewayCache        gateway.UpdateGatewayCache
 	pluginChainValidator      plugin.ValidatePluginChain
-	telemetryProvidersBuilder appTelemetry.ProvidersBuilder
+	telemetryProvidersBuilder appTelemetry.ExportersBuilder
 }
 
 func NewCreateGatewayHandler(
@@ -28,7 +28,7 @@ func NewCreateGatewayHandler(
 	repo domainGateway.Repository,
 	updateGatewayCache gateway.UpdateGatewayCache,
 	pluginChainValidator plugin.ValidatePluginChain,
-	telemetryProvidersBuilder appTelemetry.ProvidersBuilder,
+	telemetryProvidersBuilder appTelemetry.ExportersBuilder,
 ) Handler {
 	return &createGatewayHandler{
 		logger:                    logger,
@@ -66,13 +66,13 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
 	}
 
-	var telemetryConfigs []types.ProviderConfig
+	var exporters []types.Exporter
 
-	for _, config := range req.Telemetry.Config {
-		telemetryConfigs = append(telemetryConfigs, types.ProviderConfig(config))
+	for _, config := range req.Telemetry.Exporters {
+		exporters = append(exporters, types.Exporter(config))
 	}
 
-	_, err = h.telemetryProvidersBuilder.Build(telemetryConfigs)
+	_, err = h.telemetryProvidersBuilder.Build(exporters)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to validate telemetry providers")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -105,7 +105,10 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		Status:          req.Status,
 		RequiredPlugins: req.RequiredPlugins,
 		Telemetry: &telemetry.Telemetry{
-			Configs: h.telemetryProviderConfigsToDomain(telemetryConfigs),
+			Exporters:           h.telemetryExportersToDomain(exporters),
+			ExtraParams:         req.Telemetry.ExtraParams,
+			EnablePluginTraces:  req.Telemetry.EnablePluginTraces,
+			EnableRequestTraces: req.Telemetry.EnableRequestTraces,
 		},
 		SecurityConfig: securityConfig,
 		CreatedAt:      req.CreatedAt,
@@ -130,10 +133,10 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(entity)
 }
 
-func (h *createGatewayHandler) telemetryProviderConfigsToDomain(configs []types.ProviderConfig) []telemetry.ProviderConfig {
-	result := make([]telemetry.ProviderConfig, 0, len(configs))
+func (h *createGatewayHandler) telemetryExportersToDomain(configs []types.Exporter) []telemetry.ExporterConfig {
+	result := make([]telemetry.ExporterConfig, 0, len(configs))
 	for _, cfg := range configs {
-		result = append(result, telemetry.ProviderConfig{
+		result = append(result, telemetry.ExporterConfig{
 			Name:     cfg.Name,
 			Settings: cfg.Settings,
 		})

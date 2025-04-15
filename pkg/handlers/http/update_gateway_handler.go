@@ -23,7 +23,7 @@ type updateGatewayHandler struct {
 	repo                      *database.Repository
 	pluginManager             plugins.Manager
 	publisher                 infraCache.EventPublisher
-	telemetryProvidersBuilder appTelemetry.ProvidersBuilder
+	telemetryProvidersBuilder appTelemetry.ExportersBuilder
 }
 
 func NewUpdateGatewayHandler(
@@ -31,7 +31,7 @@ func NewUpdateGatewayHandler(
 	repo *database.Repository,
 	pluginManager plugins.Manager,
 	publisher infraCache.EventPublisher,
-	telemetryProvidersBuilder appTelemetry.ProvidersBuilder,
+	telemetryProvidersBuilder appTelemetry.ExportersBuilder,
 ) Handler {
 	return &updateGatewayHandler{
 		logger:                    logger,
@@ -117,17 +117,20 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	dbGateway.UpdatedAt = time.Now()
 
 	if req.Telemetry != nil {
-		var telemetryConfigs []types.ProviderConfig
-		for _, config := range req.Telemetry.Config {
-			telemetryConfigs = append(telemetryConfigs, types.ProviderConfig(config))
+		var exporters []types.Exporter
+		for _, config := range req.Telemetry.Exporters {
+			exporters = append(exporters, types.Exporter(config))
 		}
-		_, err = h.telemetryProvidersBuilder.Build(telemetryConfigs)
+		_, err = h.telemetryProvidersBuilder.Build(exporters)
 		if err != nil {
 			h.logger.WithError(err).Error("failed to validate telemetry providers")
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		dbGateway.Telemetry = &telemetry.Telemetry{
-			Configs: h.telemetryProviderConfigsToDomain(telemetryConfigs),
+			Exporters:           h.telemetryExporterToDomain(exporters),
+			ExtraParams:         req.Telemetry.ExtraParams,
+			EnablePluginTraces:  req.Telemetry.EnablePluginTraces,
+			EnableRequestTraces: req.Telemetry.EnableRequestTraces,
 		}
 	}
 
@@ -146,10 +149,10 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusNoContent).JSON(dbGateway)
 }
 
-func (h *updateGatewayHandler) telemetryProviderConfigsToDomain(configs []types.ProviderConfig) []telemetry.ProviderConfig {
-	result := make([]telemetry.ProviderConfig, 0, len(configs))
+func (h *updateGatewayHandler) telemetryExporterToDomain(configs []types.Exporter) []telemetry.ExporterConfig {
+	result := make([]telemetry.ExporterConfig, 0, len(configs))
 	for _, cfg := range configs {
-		result = append(result, telemetry.ProviderConfig{
+		result = append(result, telemetry.ExporterConfig{
 			Name:     cfg.Name,
 			Settings: cfg.Settings,
 		})
