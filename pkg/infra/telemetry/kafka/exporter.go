@@ -88,7 +88,10 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 		return fmt.Errorf("failed to produce message: %w", err)
 	}
 	e := <-deliveryChan
-	m := e.(*kafka.Message)
+	m, ok := e.(*kafka.Message)
+	if !ok {
+		return fmt.Errorf("failed to cast message: %w", err)
+	}
 
 	if m.TopicPartition.Error != nil {
 		return fmt.Errorf("delivery failed: %w", m.TopicPartition.Error)

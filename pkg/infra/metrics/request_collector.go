@@ -7,7 +7,9 @@ import (
 	"github.com/google/uuid"
 )
 
-const CollectorKey = "__metrics_collector"
+type contextKey string
+
+const CollectorKey contextKey = "__metrics_collector"
 
 type Config struct {
 	EnablePluginTraces  bool

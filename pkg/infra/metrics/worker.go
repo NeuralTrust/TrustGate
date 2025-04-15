@@ -161,7 +161,7 @@ func (m *worker) feedEvent(
 	evt.IP = req.IP
 	evt.Method = req.Method
 	if userAgent, ok := req.Metadata["user_agent_info"]; ok {
-		if ua := userAgent.(*utils.UserAgentInfo); ua != nil {
+		if ua, ok := userAgent.(*utils.UserAgentInfo); ok {
 			evt.Browser = ua.Browser
 			evt.Device = ua.Device
 			evt.Os = ua.OS
