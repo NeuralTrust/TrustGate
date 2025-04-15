@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
@@ -62,7 +63,7 @@ func TestTrustGateGuardrailPlugin_Execute_JailbreakSafe(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"text":"safe"}`)}
 	res := &types.ResponseContext{}
 
-	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res)
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewCollector("", nil))
 
 	assert.NoError(t, err)
 	assert.NotNil(t, pluginResp)

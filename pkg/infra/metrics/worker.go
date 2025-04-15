@@ -16,6 +16,7 @@ import (
 
 type Worker interface {
 	Shutdown()
+	StartWorkers(n int)
 	Process(
 		metricsCollector *Collector,
 		exporters []types.Exporter,
@@ -43,7 +44,6 @@ func NewWorker(logger *logrus.Logger, providersBuilder appTelemetry.ExportersBui
 		ctx:              ctx,
 		cancel:           cancel,
 	}
-	go m.startWorkers(5)
 	return m
 }
 
@@ -124,7 +124,7 @@ func (m *worker) registryMetricsToPrometheus(method, gatewayID string, statusCod
 	}
 }
 
-func (m *worker) startWorkers(n int) {
+func (m *worker) StartWorkers(n int) {
 	fmt.Println("starting metrics workers...")
 	for i := 0; i < n; i++ {
 		go func(workerID int) {

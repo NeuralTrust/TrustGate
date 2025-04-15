@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/mitchellh/mapstructure"
@@ -126,7 +127,12 @@ func (p *CorsPlugin) Execute(
 	}
 
 	origin := p.getHeader(req.Headers, "Origin")
-
+	data := CorsData{
+		Origin:         origin,
+		Method:         req.Method,
+		AllowedMethods: conf.AllowMethods,
+		Allowed:        true,
+	}
 	if origin == "" {
 		return nil, &types.PluginError{
 			StatusCode: http.StatusForbidden,
@@ -135,6 +141,7 @@ func (p *CorsPlugin) Execute(
 	}
 
 	if len(conf.AllowOrigins) == 0 {
+		p.raiseEvent(collector, data, req.Stage, true, "CORS: no allowed origins configured")
 		return nil, &types.PluginError{
 			StatusCode: http.StatusForbidden,
 			Message:    "CORS: no allowed origins configured",
@@ -144,9 +151,11 @@ func (p *CorsPlugin) Execute(
 	if conf.AllowCredentials {
 		for _, o := range conf.AllowOrigins {
 			if o == "*" {
+				msg := `invalid config: allow_credentials cannot be true when allowed_origins contains "*"`
+				p.raiseEvent(collector, data, req.Stage, true, msg)
 				return nil, &types.PluginError{
 					StatusCode: http.StatusForbidden,
-					Message:    `invalid config: allow_credentials cannot be true when allowed_origins contains "*"`,
+					Message:    msg,
 				}
 			}
 		}
@@ -156,9 +165,12 @@ func (p *CorsPlugin) Execute(
 		if conf.LogViolations {
 			p.logger.WithField("origin", origin).Warn("CORS violation: origin not allowed")
 		}
+		msg := "CORS: origin not allowed"
+		data.Allowed = false
+		p.raiseEvent(collector, data, req.Stage, true, msg)
 		return nil, &types.PluginError{
 			StatusCode: http.StatusForbidden,
-			Message:    "CORS: origin not allowed",
+			Message:    msg,
 		}
 	}
 
@@ -171,17 +183,23 @@ func (p *CorsPlugin) Execute(
 
 	if req.Method == http.MethodOptions {
 		requestedMethod := p.getHeader(req.Headers, "Access-Control-Request-Method")
+		data.RequestedMethod = requestedMethod
 		if requestedMethod == "" {
+			msg := "CORS preflight missing Access-Control-Request-Method header"
+			p.raiseEvent(collector, data, req.Stage, true, msg)
 			return nil, &types.PluginError{
 				StatusCode: http.StatusBadRequest,
-				Message:    "CORS preflight missing Access-Control-Request-Method header",
+				Message:    msg,
 			}
 		}
 
 		if !p.isMethodAllowed(requestedMethod, conf.AllowMethods) {
+			data.Allowed = false
+			msg := "CORS preflight: method not allowed"
+			p.raiseEvent(collector, data, req.Stage, true, msg)
 			return nil, &types.PluginError{
 				StatusCode: http.StatusMethodNotAllowed,
-				Message:    "CORS preflight: method not allowed",
+				Message:    msg,
 			}
 		}
 
@@ -200,10 +218,12 @@ func (p *CorsPlugin) Execute(
 		if conf.MaxAge != "" {
 			resp.Headers["Access-Control-Max-Age"] = []string{conf.MaxAge}
 		}
-
+		data.Preflight = true
+		msg := "CORS preflight handled"
+		p.raiseEvent(collector, data, req.Stage, true, msg)
 		return nil, &types.PluginError{
 			StatusCode: http.StatusNoContent,
-			Message:    "CORS preflight handled",
+			Message:    msg,
 		}
 	}
 
@@ -236,4 +256,22 @@ func (p *CorsPlugin) isMethodAllowed(method string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+func (p *CorsPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra CorsData,
+	stage types.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }

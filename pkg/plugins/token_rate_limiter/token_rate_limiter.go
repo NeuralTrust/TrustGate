@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/go-redis/redis/v8"
 	"github.com/sirupsen/logrus"
 
@@ -202,7 +203,10 @@ func (p *TokenRateLimiterPlugin) Execute(
 				"X-Ratelimit-Reset-Requests":     {fmt.Sprintf("%ds", int(timeUntilRefill.Seconds()))},
 				"X-Ratelimit-Reset-Tokens":       {fmt.Sprintf("%ds", int(timeUntilRefill.Seconds()))},
 			}
-
+			p.raiseEvent(collector, TokenRateLimiterData{
+				Tokens:        bucket.Tokens,
+				LimitExceeded: true,
+			}, req.Stage, true, "rate limit exceeded")
 			return nil, &types.PluginError{
 				StatusCode: 429,
 				Message:    fmt.Sprintf("Rate limit exceeded. Not enough tokens available. Required: %d, Current: %d", tokensToReserve, bucket.Tokens),
@@ -225,7 +229,10 @@ func (p *TokenRateLimiterPlugin) Execute(
 				"X-Ratelimit-Reset-Requests":     {fmt.Sprintf("%ds", int(timeUntilRefill.Seconds()))},
 				"X-Ratelimit-Reset-Tokens":       {fmt.Sprintf("%ds", int(timeUntilRefill.Seconds()))},
 			}
-
+			p.raiseEvent(collector, TokenRateLimiterData{
+				Tokens:        bucket.RequestsRemaining,
+				LimitExceeded: true,
+			}, req.Stage, true, "rate limit exceeded")
 			return nil, &types.PluginError{
 				StatusCode: 429,
 				Message:    "Rate limit exceeded. No requests remaining.",
@@ -451,6 +458,24 @@ func (p *TokenRateLimiterPlugin) saveBucketState(ctx context.Context, key string
 	}
 
 	return nil
+}
+
+func (p *TokenRateLimiterPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra TokenRateLimiterData,
+	stage types.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }
 
 // min returns the minimum of two integers

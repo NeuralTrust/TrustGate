@@ -1,12 +1,6 @@
 package data_masking
 
-import (
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
-)
-
 type DataMaskingData struct {
-	metric_events.PluginDataEvent
-
 	Masked bool           `json:"masked"`
 	Events []MaskingEvent `json:"events"`
 }

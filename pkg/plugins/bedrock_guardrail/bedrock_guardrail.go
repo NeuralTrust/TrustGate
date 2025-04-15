@@ -6,6 +6,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
@@ -183,6 +184,22 @@ func (p *BedrockGuardrailPlugin) Execute(
 						"type":   topic.Type,
 						"action": topic.Action,
 					}).Info("Content blocked due to topic policy violation")
+					p.raiseEvent(
+						collector,
+						BedrockGuardrailData{
+							GuardrailID: conf.GuardrailID,
+							Version:     conf.Version,
+							Blocked:     true,
+							Event: BedrockGuardrailEvent{
+								Type:   "topic_policy",
+								Name:   aws.ToString(topic.Name),
+								Action: string(topic.Action),
+							},
+						},
+						req.Stage,
+						false,
+						"",
+					)
 					return nil, &plugintypes.PluginError{
 						StatusCode: 403,
 						Message:    fmt.Sprintf(conf.Actions.Message, message),
@@ -204,6 +221,22 @@ func (p *BedrockGuardrailPlugin) Execute(
 						"filter_type": filter.Type,
 						"action":      filter.Action,
 					}).Info("Content blocked due to content policy violation")
+					p.raiseEvent(
+						collector,
+						BedrockGuardrailData{
+							GuardrailID: conf.GuardrailID,
+							Version:     conf.Version,
+							Blocked:     true,
+							Event: BedrockGuardrailEvent{
+								Type:   "content_policy",
+								Name:   string(filter.Type),
+								Action: string(filter.Action),
+							},
+						},
+						req.Stage,
+						false,
+						"",
+					)
 					return nil, &plugintypes.PluginError{
 						StatusCode: 403,
 						Message:    fmt.Sprintf(conf.Actions.Message, message),
@@ -223,6 +256,22 @@ func (p *BedrockGuardrailPlugin) Execute(
 							"entity_type": entity.Type,
 							"action":      entity.Action,
 						}).Info("Content blocked due to sensitive information violation")
+						p.raiseEvent(
+							collector,
+							BedrockGuardrailData{
+								GuardrailID: conf.GuardrailID,
+								Version:     conf.Version,
+								Blocked:     true,
+								Event: BedrockGuardrailEvent{
+									Type:   "sensitive_information",
+									Name:   aws.ToString(entity.Match),
+									Action: string(entity.Action),
+								},
+							},
+							req.Stage,
+							false,
+							"",
+						)
 						return nil, &plugintypes.PluginError{
 							StatusCode: 403,
 							Message:    fmt.Sprintf(conf.Actions.Message, message),
@@ -240,4 +289,22 @@ func (p *BedrockGuardrailPlugin) Execute(
 		StatusCode: 200,
 		Message:    "Content allowed",
 	}, nil
+}
+
+func (p *BedrockGuardrailPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra BedrockGuardrailData,
+	stage plugintypes.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }

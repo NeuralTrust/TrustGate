@@ -1,12 +1,6 @@
 package code_sanitation
 
-import (
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
-)
-
 type CodeSanitationData struct {
-	metric_events.PluginDataEvent
-
 	Sanitized bool                  `json:"sanitized"`
 	Events    []CodeSanitationEvent `json:"events"`
 }

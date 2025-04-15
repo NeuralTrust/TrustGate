@@ -9,6 +9,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
@@ -193,6 +194,24 @@ func (p *ContextualSecurityPlugin) Execute(
 	alertHeader := "X-TrustGate-Alert"
 	alertValue := []string{"malicious-request"}
 
+	p.raiseEvent(
+		collector,
+		ContextualSecurityData{
+			FingerprintID:         fpID,
+			Action:                string(cfg.RateLimitMode),
+			MaliciousCount:        maliciousCount,
+			SimilarMaliciousCount: similarMaliciousCount,
+			SimilarBlockedCount:   blockedCount,
+			Thresholds: SecurityThresholds{
+				MaxFailures:      cfg.MaxFailures,
+				SimilarMalicious: cfg.SimilarMaliciousThreshold,
+				SimilarBlocked:   cfg.SimilarBlockedThreshold,
+			},
+		},
+		req.Stage, true,
+		"malicious request detected",
+	)
+
 	switch cfg.RateLimitMode {
 	case OptionBlock:
 		p.logger.Debug("executing block mode")
@@ -244,4 +263,22 @@ func (p *ContextualSecurityPlugin) defineDefaults(cfg *Config) {
 	if cfg.SimilarMaliciousThreshold == 0 {
 		cfg.SimilarMaliciousThreshold = similarMaliciousThreshold
 	}
+}
+
+func (p *ContextualSecurityPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra ContextualSecurityData,
+	stage types.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }

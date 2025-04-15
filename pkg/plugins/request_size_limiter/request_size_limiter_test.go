@@ -2,8 +2,10 @@ package request_size_limiter
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
@@ -200,12 +202,13 @@ func TestRequestSizeLimiterPlugin_Execute(t *testing.T) {
 				Headers: make(map[string][]string),
 			}
 
-			result, err := plugin.Execute(ctx, tt.config, req, resp)
+			result, err := plugin.Execute(ctx, tt.config, req, resp, metrics.NewCollector("", nil))
 
 			if tt.expectError {
 				assert.Error(t, err)
 				// Check if it's a plugin error with the expected status code
-				if pluginErr, ok := err.(*types.PluginError); ok {
+				var pluginErr *types.PluginError
+				if errors.As(err, &pluginErr) {
 					assert.Equal(t, tt.expectedStatus, pluginErr.StatusCode)
 				}
 			} else {

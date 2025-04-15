@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -440,9 +441,9 @@ func normalizeText(text string) string {
 	return text
 }
 
-func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, config Config) string {
+func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, config Config) (string, []MaskingEvent) {
+	var events []MaskingEvent
 	maskedContent := content
-
 	// First apply predefined entity patterns
 	for _, entityType := range predefinedEntityOrder {
 		pattern, exists := predefinedEntityPatterns[entityType]
@@ -470,6 +471,11 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 		matches := pattern.FindAllString(maskedContent, -1)
 		if len(matches) > 0 {
 			for _, match := range matches {
+				events = append(events, MaskingEvent{
+					Entity:        string(entityType),
+					OriginalValue: match,
+					MaskedWith:    maskValue,
+				})
 				maskedContent = strings.ReplaceAll(maskedContent, match, maskValue)
 			}
 		}
@@ -497,6 +503,11 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 		if len(matches) > 0 {
 			maskValue := p.keywords[pattern]
 			for _, match := range matches {
+				events = append(events, MaskingEvent{
+					Entity:        pattern,
+					OriginalValue: match,
+					MaskedWith:    maskValue,
+				})
 				maskedContent = strings.ReplaceAll(maskedContent, match, maskValue)
 			}
 		}
@@ -511,6 +522,11 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 
 		// Apply exact keyword matching
 		if strings.Contains(maskedContent, keyword) {
+			events = append(events, MaskingEvent{
+				Entity:        keyword,
+				OriginalValue: maskedContent,
+				MaskedWith:    maskValue,
+			})
 			maskedContent = strings.ReplaceAll(maskedContent, keyword, maskValue)
 		}
 	}
@@ -529,7 +545,7 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 		maskedContent = strings.Join(words, " ")
 	}
 
-	return maskedContent
+	return maskedContent, events
 }
 
 // Add a function to generate variants of a string with edit distance <= maxDistance
@@ -658,41 +674,46 @@ func (p *DataMaskingPlugin) Execute(
 		}
 	}
 
-	// Process request body if in PreRequest stage
-	if req != nil && len(req.Body) > 0 {
+	var allEvents []MaskingEvent
+
+	processBody := func(body []byte, isRequest bool) ([]byte, error) {
 		var jsonData interface{}
-		if err := json.Unmarshal(req.Body, &jsonData); err == nil {
-			// If it's valid JSON, process it as JSON
-			maskedData := p.maskJSONData(jsonData, config.SimilarityThreshold, config)
+		if err := json.Unmarshal(body, &jsonData); err == nil {
+			maskedData, events := p.maskJSONData(jsonData, config.SimilarityThreshold, config)
 			maskedJSON, err := json.Marshal(maskedData)
 			if err != nil {
 				return nil, fmt.Errorf("failed to marshal masked JSON: %v", err)
 			}
-			req.Body = maskedJSON
-		} else {
-			// If it's not JSON, process it as plain text
-			content := string(req.Body)
-			maskedContent := p.maskPlainText(content, config.SimilarityThreshold, config)
-			req.Body = []byte(maskedContent)
+			allEvents = append(allEvents, events...)
+			return maskedJSON, nil
 		}
+		content := string(body)
+		maskedContent, events := p.maskPlainText(content, config.SimilarityThreshold, config)
+		allEvents = append(allEvents, events...)
+		return []byte(maskedContent), nil
+	}
+
+	if req != nil && len(req.Body) > 0 {
+		maskedBody, err := processBody(req.Body, true)
+		if err != nil {
+			return nil, err
+		}
+		req.Body = maskedBody
 	}
 
 	if resp != nil && len(resp.Body) > 0 {
-		var jsonData interface{}
-		if err := json.Unmarshal(resp.Body, &jsonData); err == nil {
-			// If it's valid JSON, process it as JSON
-			maskedData := p.maskJSONData(jsonData, config.SimilarityThreshold, config)
-			maskedJSON, err := json.Marshal(maskedData)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal masked JSON: %v", err)
-			}
-			resp.Body = maskedJSON
-		} else {
-			// If it's not JSON, process it as plain text
-			content := string(resp.Body)
-			maskedContent := p.maskPlainText(content, config.SimilarityThreshold, config)
-			resp.Body = []byte(maskedContent)
+		maskedBody, err := processBody(resp.Body, false)
+		if err != nil {
+			return nil, err
 		}
+		resp.Body = maskedBody
+	}
+
+	if len(allEvents) > 0 {
+		p.raiseEvent(collector, DataMaskingData{
+			Masked: true,
+			Events: allEvents,
+		}, types.PreRequest, false, "")
 	}
 
 	return &types.PluginResponse{
@@ -702,28 +723,55 @@ func (p *DataMaskingPlugin) Execute(
 }
 
 // Update the maskJSONData function to use the enhanced configuration
-func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64, config Config) interface{} {
+func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64, config Config) (interface{}, []MaskingEvent) {
+	var allEvents []MaskingEvent
+
 	switch v := data.(type) {
 	case map[string]interface{}:
-		result := make(map[string]interface{})
+		// Process each key-value pair in the map
+		result := make(map[string]interface{}, len(v))
 		for key, value := range v {
-			switch val := value.(type) {
-			case string:
-				result[key] = p.maskPlainText(val, threshold, config)
-			default:
-				result[key] = p.maskJSONData(value, threshold, config)
-			}
+			maskedValue, events := p.maskJSONData(value, threshold, config)
+			result[key] = maskedValue
+			allEvents = append(allEvents, events...)
 		}
-		return result
+		return result, allEvents
+
 	case []interface{}:
+		// Process each item in the array
 		result := make([]interface{}, len(v))
 		for i, value := range v {
-			result[i] = p.maskJSONData(value, threshold, config)
+			maskedValue, events := p.maskJSONData(value, threshold, config)
+			result[i] = maskedValue
+			allEvents = append(allEvents, events...)
 		}
-		return result
+		return result, allEvents
+
 	case string:
-		return p.maskPlainText(v, threshold, config)
+		// Process the string value
+		maskedValue, events := p.maskPlainText(v, threshold, config)
+		return maskedValue, events
+
 	default:
-		return v
+		// Return other types (int, bool, etc.) as-is
+		return v, nil
 	}
+}
+
+func (p *DataMaskingPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra DataMaskingData,
+	stage types.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -291,7 +292,7 @@ func (v *ExternalApiPlugin) Execute(
 
 	// Set timeout
 	v.client.Timeout = timeout
-
+	startTime := time.Now()
 	// Make request
 	httpResp, err := v.client.Do(httpReq)
 	if err != nil {
@@ -327,6 +328,15 @@ func (v *ExternalApiPlugin) Execute(
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal response: %w", err)
 	}
+
+	duration := time.Since(startTime)
+	v.raiseEvent(collector, ExternalAPIData{
+		Endpoint:   endpoint,
+		Method:     method,
+		StatusCode: httpResp.StatusCode,
+		DurationMs: duration.Milliseconds(),
+		Response:   string(respBody),
+	}, req.Stage, false, "")
 
 	return &types.PluginResponse{
 		StatusCode: http.StatusOK,
@@ -387,4 +397,22 @@ func getBoolFromMap(data map[string]interface{}, key string) (bool, error) {
 		return false, fmt.Errorf("invalid type assertion for key: %v", key)
 	}
 	return value, nil
+}
+
+func (p *ExternalApiPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra ExternalAPIData,
+	stage types.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }

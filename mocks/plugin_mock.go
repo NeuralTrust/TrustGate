@@ -5,6 +5,7 @@ package mocks
 import (
 	context "context"
 
+	metrics "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	mock "github.com/stretchr/testify/mock"
 
 	types "github.com/NeuralTrust/TrustGate/pkg/types"
@@ -70,9 +71,9 @@ func (_c *Plugin_AllowedStages_Call) RunAndReturn(run func() []types.Stage) *Plu
 	return _c
 }
 
-// Execute provides a mock function with given fields: ctx, cfg, req, resp
-func (_m *Plugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext) (*types.PluginResponse, error) {
-	ret := _m.Called(ctx, cfg, req, resp)
+// Execute provides a mock function with given fields: ctx, cfg, req, resp, collector
+func (_m *Plugin) Execute(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext, collector *metrics.Collector) (*types.PluginResponse, error) {
+	ret := _m.Called(ctx, cfg, req, resp, collector)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Execute")
@@ -80,19 +81,19 @@ func (_m *Plugin) Execute(ctx context.Context, cfg types.PluginConfig, req *type
 
 	var r0 *types.PluginResponse
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, types.PluginConfig, *types.RequestContext, *types.ResponseContext) (*types.PluginResponse, error)); ok {
-		return rf(ctx, cfg, req, resp)
+	if rf, ok := ret.Get(0).(func(context.Context, types.PluginConfig, *types.RequestContext, *types.ResponseContext, *metrics.Collector) (*types.PluginResponse, error)); ok {
+		return rf(ctx, cfg, req, resp, collector)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, types.PluginConfig, *types.RequestContext, *types.ResponseContext) *types.PluginResponse); ok {
-		r0 = rf(ctx, cfg, req, resp)
+	if rf, ok := ret.Get(0).(func(context.Context, types.PluginConfig, *types.RequestContext, *types.ResponseContext, *metrics.Collector) *types.PluginResponse); ok {
+		r0 = rf(ctx, cfg, req, resp, collector)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*types.PluginResponse)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, types.PluginConfig, *types.RequestContext, *types.ResponseContext) error); ok {
-		r1 = rf(ctx, cfg, req, resp)
+	if rf, ok := ret.Get(1).(func(context.Context, types.PluginConfig, *types.RequestContext, *types.ResponseContext, *metrics.Collector) error); ok {
+		r1 = rf(ctx, cfg, req, resp, collector)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -110,13 +111,14 @@ type Plugin_Execute_Call struct {
 //   - cfg types.PluginConfig
 //   - req *types.RequestContext
 //   - resp *types.ResponseContext
-func (_e *Plugin_Expecter) Execute(ctx interface{}, cfg interface{}, req interface{}, resp interface{}) *Plugin_Execute_Call {
-	return &Plugin_Execute_Call{Call: _e.mock.On("Execute", ctx, cfg, req, resp)}
+//   - collector *metrics.Collector
+func (_e *Plugin_Expecter) Execute(ctx interface{}, cfg interface{}, req interface{}, resp interface{}, collector interface{}) *Plugin_Execute_Call {
+	return &Plugin_Execute_Call{Call: _e.mock.On("Execute", ctx, cfg, req, resp, collector)}
 }
 
-func (_c *Plugin_Execute_Call) Run(run func(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext)) *Plugin_Execute_Call {
+func (_c *Plugin_Execute_Call) Run(run func(ctx context.Context, cfg types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext, collector *metrics.Collector)) *Plugin_Execute_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(types.PluginConfig), args[2].(*types.RequestContext), args[3].(*types.ResponseContext))
+		run(args[0].(context.Context), args[1].(types.PluginConfig), args[2].(*types.RequestContext), args[3].(*types.ResponseContext), args[4].(*metrics.Collector))
 	})
 	return _c
 }
@@ -126,7 +128,7 @@ func (_c *Plugin_Execute_Call) Return(_a0 *types.PluginResponse, _a1 error) *Plu
 	return _c
 }
 
-func (_c *Plugin_Execute_Call) RunAndReturn(run func(context.Context, types.PluginConfig, *types.RequestContext, *types.ResponseContext) (*types.PluginResponse, error)) *Plugin_Execute_Call {
+func (_c *Plugin_Execute_Call) RunAndReturn(run func(context.Context, types.PluginConfig, *types.RequestContext, *types.ResponseContext, *metrics.Collector) (*types.PluginResponse, error)) *Plugin_Execute_Call {
 	_c.Call.Return(run)
 	return _c
 }

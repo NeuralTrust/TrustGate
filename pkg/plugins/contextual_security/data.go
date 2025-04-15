@@ -1,12 +1,6 @@
 package contextual_security
 
-import (
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
-)
-
 type ContextualSecurityData struct {
-	metric_events.PluginDataEvent
-
 	FingerprintID         string             `json:"fingerprint_id"`
 	Action                string             `json:"action"` // e.g. "block", "allow", etc.
 	MaliciousCount        int                `json:"malicious_count"`

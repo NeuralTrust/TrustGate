@@ -38,7 +38,7 @@ type Event struct {
 	StatusCode      int                 `json:"status_code"`
 
 	// Plugin Params
-	Extras *PluginDataEvent `json:"extras,omitempty"`
+	Plugin *PluginDataEvent `json:"plugin,omitempty"`
 }
 
 type UpstreamEvent struct {
@@ -55,12 +55,11 @@ type TargetEvent struct {
 }
 
 type PluginDataEvent struct {
-	PluginName    string `json:"plugin_name"`
-	ExecutionTime int64  `json:"execution_time"`
-	Stage         string `json:"stage"`
-	Error         bool   `json:"error"`
-	ErrorMessage  string `json:"error_message,omitempty"`
-	Code          string `json:"code,omitempty"`
+	PluginName   string      `json:"plugin_name"`
+	Stage        string      `json:"stage"`
+	Error        bool        `json:"error"`
+	ErrorMessage string      `json:"error_message,omitempty"`
+	Extras       interface{} `json:"extras,omitempty"`
 }
 
 func NewTraceEvent() *Event {

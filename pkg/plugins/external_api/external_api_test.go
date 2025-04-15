@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/external_api"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -63,7 +64,7 @@ func TestExternalApiPlugin_Execute_Success(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"input": "test"}`)}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)
@@ -98,7 +99,7 @@ func TestExternalApiPlugin_Execute_ConditionMatching(t *testing.T) {
 	req := &types.RequestContext{}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "Validation failed")
@@ -118,7 +119,7 @@ func TestExternalApiPlugin_Execute_Failure(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"input": "test"}`)}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)
@@ -156,7 +157,7 @@ func TestExternalApiPlugin_Execute_WithFieldMapping(t *testing.T) {
 	req := &types.RequestContext{Body: bodyBytes}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)
@@ -206,7 +207,7 @@ func TestExternalApiPlugin_Execute_WithInvalidFieldMapping(t *testing.T) {
 	req := &types.RequestContext{Body: bodyBytes}
 	resp := &types.ResponseContext{}
 
-	_, err = plugin.Execute(context.Background(), cfg, req, resp)
+	_, err = plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.Error(t, err)
 
@@ -253,7 +254,7 @@ func TestExternalApiPlugin_Execute_WithQueryParams(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"input": "test"}`)}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)
@@ -361,7 +362,7 @@ func TestExternalApiPlugin_Execute_WithExistingQueryParams(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"input": "test"}`)}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)

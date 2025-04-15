@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
+	"github.com/google/uuid"
 )
 
 const CollectorKey = "__metrics_collector"
@@ -22,6 +23,9 @@ type Collector struct {
 }
 
 func NewCollector(traceID string, cfg *Config) *Collector {
+	if traceID == "" {
+		traceID = uuid.New().String()
+	}
 	return &Collector{
 		traceID: traceID,
 		cfg:     cfg,
@@ -29,6 +33,9 @@ func NewCollector(traceID string, cfg *Config) *Collector {
 }
 
 func (rc *Collector) Emit(evt *metric_events.Event) {
+	if rc.cfg == nil {
+		return
+	}
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_azure"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -128,7 +129,7 @@ func TestToxicityAzurePlugin_Execute_Success(t *testing.T) {
 
 	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)
@@ -184,7 +185,7 @@ func TestToxicityAzurePlugin_Execute_FlaggedContent(t *testing.T) {
 
 	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp)
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
 
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)

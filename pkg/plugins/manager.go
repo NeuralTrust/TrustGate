@@ -12,6 +12,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/contextual_security"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
@@ -327,11 +328,12 @@ func (m *manager) executeParallel(
 
 		// Create channels for results and errors
 		type pluginResult struct {
-			config    types.PluginConfig
-			response  *types.PluginResponse
-			err       error
-			startTime time.Time
-			endTime   time.Time
+			pluginName string
+			config     types.PluginConfig
+			response   *types.PluginResponse
+			err        error
+			startTime  time.Time
+			endTime    time.Time
 		}
 		resultChan := make(chan pluginResult, len(group))
 
@@ -346,14 +348,14 @@ func (m *manager) executeParallel(
 				pluginStartTime := time.Now()
 				if plugin, exists := plugins[cfg.Name]; exists {
 					pluginResp, err := plugin.Execute(ctx, cfg, req, resp, metricsCollector)
-
 					pluginEndTime := time.Now()
 					resultChan <- pluginResult{
-						config:    cfg,
-						response:  pluginResp,
-						err:       err,
-						startTime: pluginStartTime,
-						endTime:   pluginEndTime,
+						pluginName: cfg.Name,
+						config:     cfg,
+						response:   pluginResp,
+						err:        err,
+						startTime:  pluginStartTime,
+						endTime:    pluginEndTime,
 					}
 				}
 			}(cfg)
@@ -372,6 +374,7 @@ func (m *manager) executeParallel(
 		// Wait for all results or context cancellation
 		for result := range resultChan {
 			if result.err != nil {
+				m.raisePluginErrorEvent(metricsCollector, result.pluginName, string(req.Stage), result.err)
 				errors = append(errors, result.err)
 			}
 			if result.response != nil {
@@ -442,6 +445,7 @@ func (m *manager) executeSequential(
 		if plugin, exists := plugins[cfg.Name]; exists {
 			pluginResp, err := plugin.Execute(ctx, cfg, req, resp, metricsCollector)
 			if err != nil {
+				m.raisePluginErrorEvent(metricsCollector, cfg.Name, string(req.Stage), err)
 				return err
 			}
 			if pluginResp != nil {
@@ -465,6 +469,17 @@ func (m *manager) executeSequential(
 		}
 	}
 	return nil
+}
+
+func (m *manager) raisePluginErrorEvent(metricsCollector *metrics.Collector, pluginName, stage string, err error) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   pluginName,
+		Stage:        stage,
+		Error:        true,
+		ErrorMessage: err.Error(),
+	}
+	metricsCollector.Emit(evt)
 }
 
 func (m *manager) GetChains(entityID string, stage types.Stage) [][]types.PluginConfig {

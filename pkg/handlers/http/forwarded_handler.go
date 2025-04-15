@@ -240,6 +240,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 					c.Set(k, v)
 				}
 			}
+			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx)
 			return c.Status(pluginErr.StatusCode).JSON(fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
@@ -323,6 +324,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 					c.Set(k, v)
 				}
 			}
+			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx)
 			return c.Status(pluginErr.StatusCode).JSON(fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
@@ -354,7 +356,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 					c.Set(k, v)
 				}
 			}
-
+			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx)
 			return c.Status(pluginErr.StatusCode).JSON(fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
@@ -918,7 +920,6 @@ func (h *forwardedHandler) registryFailedEvent(
 	evt.Error = err.Error()
 	evt.StatusCode = status
 	if rsp != nil {
-		evt.StatusCode = rsp.StatusCode
 		if rsp.Target != nil {
 			evt.Upstream.Target = metric_events.TargetEvent{
 				Path:     rsp.Target.Path,
