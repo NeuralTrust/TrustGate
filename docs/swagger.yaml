@@ -196,7 +196,7 @@ definitions:
         description: Upstream configuration (used when type is "upstream")
         type: string
     type: object
-  telemetry.ProviderConfig:
+  telemetry.ExporterConfig:
     properties:
       name:
         type: string
@@ -206,10 +206,18 @@ definitions:
     type: object
   telemetry.Telemetry:
     properties:
-      config:
+      enable_plugin_traces:
+        type: boolean
+      enable_request_traces:
+        type: boolean
+      exporters:
         items:
-          $ref: '#/definitions/telemetry.ProviderConfig'
+          $ref: '#/definitions/telemetry.ExporterConfig'
         type: array
+      extra_params:
+        additionalProperties:
+          type: string
+        type: object
     type: object
   types.CreateAPIKeyRequest:
     properties:
@@ -309,6 +317,14 @@ definitions:
       param_value:
         type: string
     type: object
+  types.ExporterRequest:
+    properties:
+      name:
+        type: string
+      settings:
+        additionalProperties: true
+        type: object
+    type: object
   types.HealthCheckRequest:
     properties:
       headers:
@@ -355,14 +371,6 @@ definitions:
         type: object
       stage:
         $ref: '#/definitions/types.Stage'
-    type: object
-  types.ProviderConfigRequest:
-    properties:
-      name:
-        type: string
-      settings:
-        additionalProperties: true
-        type: object
     type: object
   types.SecurityConfigRequest:
     properties:
@@ -487,10 +495,18 @@ definitions:
     type: object
   types.TelemetryRequest:
     properties:
-      config:
+      enable_plugin_traces:
+        type: boolean
+      enable_request_traces:
+        type: boolean
+      exporters:
         items:
-          $ref: '#/definitions/types.ProviderConfigRequest'
+          $ref: '#/definitions/types.ExporterRequest'
         type: array
+      extra_params:
+        additionalProperties:
+          type: string
+        type: object
     type: object
   types.UpdateGatewayRequest:
     properties:
