@@ -29,3 +29,24 @@ redis:
 plugins:
   ignore_errors: true
 
+tls:
+  disabled: false
+  enable_mtls: true
+  disable_system_ca_pool: false
+  ca_certs:
+    - certs/ca.pem
+  keys:
+    - public_key: certs/server.pem
+      private_key: certs/server.key
+  cipher_suites:
+    - 4865
+    - 4866
+    - 4867
+  curve_preferences:
+    - 23
+    - 24
+    - 25
+  min_version: TLS12
+  max_version: TLS13
+
+

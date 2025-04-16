@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -41,8 +42,24 @@ func NewProxyServer(di ProxyServerDI) *ProxyServer {
 }
 
 func (s *ProxyServer) Run() error {
-	s.logger.WithField("addr", s.config.Server.ProxyPort).Info("Starting proxy server")
-	return s.router.Listen(fmt.Sprintf(":%d", s.config.Server.ProxyPort))
+	addr := fmt.Sprintf(":%d", s.config.Server.ProxyPort)
+	s.logger.WithField("addr", addr).Info("Starting proxy server")
+	if s.config.TLS.Disabled {
+		return s.router.Listen(addr)
+	}
+	tlsConfig, err := config.BuildTLSConfig(&s.config.TLS)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to build TLS config")
+		return err
+	}
+	ln, err := tls.Listen("tcp", addr, tlsConfig)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to start TLS listener")
+		return err
+	}
+
+	s.logger.Info("TLS enabled — serving HTTPS")
+	return s.router.Listener(ln)
 }
 
 func (s *ProxyServer) Shutdown() error {
