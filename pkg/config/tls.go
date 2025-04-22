@@ -44,7 +44,7 @@ func BuildTLSConfig(cfg *TLSConfig) (*tls.Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolve CA cert path: %w", err)
 		}
-		caBytes, err := os.ReadFile(caPath)
+		caBytes, err := os.ReadFile(caPath) // #nosec G304
 		if err != nil {
 			return nil, fmt.Errorf("read CA cert: %w", err)
 		}
@@ -108,7 +108,7 @@ func BuildTLSConfigFromClientConfig(cfg types.ClientTLSConfig) (*tls.Config, err
 		if err != nil {
 			return nil, fmt.Errorf("resolve CA cert path: %w", err)
 		}
-		caBytes, err := os.ReadFile(caPath)
+		caBytes, err := os.ReadFile(caPath) // #nosec G304
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CA cert: %w", err)
 		}
