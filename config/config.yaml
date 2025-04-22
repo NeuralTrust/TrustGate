@@ -30,7 +30,7 @@ plugins:
   ignore_errors: true
 
 tls:
-  disabled: false
+  disabled: true
   enable_mtls: true
   disable_system_ca_pool: false
   ca_cert: ${TLS_CA_CERT}
