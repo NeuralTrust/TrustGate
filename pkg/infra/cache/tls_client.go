@@ -17,9 +17,6 @@ func NewTLSClientCache() *TLSClientCache {
 }
 
 func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config) *fasthttp.Client {
-	if client, ok := c.clients.Load(key); ok {
-		return client.(*fasthttp.Client)
-	}
 	client := &fasthttp.Client{
 		TLSConfig:                     cfg,
 		ReadTimeout:                   30 * time.Second,
@@ -32,6 +29,14 @@ func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config) *fasthttp.Clie
 		DisableHeaderNamesNormalizing: true,
 		DisablePathNormalizing:        true,
 	}
+
+	if cl, ok := c.clients.Load(key); ok {
+		if typedClient, ok := cl.(*fasthttp.Client); ok {
+			return typedClient
+		}
+		return client
+	}
+
 	c.clients.Store(key, client)
 	return client
 }

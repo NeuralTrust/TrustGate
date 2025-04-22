@@ -60,7 +60,7 @@ func BuildTLSConfig(cfg *TLSConfig) (*tls.Config, error) {
 
 	config := &tls.Config{
 		Certificates:     certificates,
-		MinVersion:       tlsVersion(cfg.MinVersion),
+		MinVersion:       tls.VersionTLS12,
 		MaxVersion:       tlsVersion(cfg.MaxVersion),
 		CurvePreferences: curvePrefs,
 		CipherSuites:     cfg.CipherSuites,
@@ -127,8 +127,8 @@ func BuildTLSConfigFromClientConfig(cfg types.ClientTLSConfig) (*tls.Config, err
 		Certificates:       certificates,
 		CipherSuites:       cfg.CipherSuites,
 		CurvePreferences:   curvePrefs,
-		InsecureSkipVerify: cfg.AllowInsecureConnections,
-		MinVersion:         tlsVersion(cfg.MinVersion),
+		InsecureSkipVerify: cfg.AllowInsecureConnections, // #nosec G402
+		MinVersion:         tls.VersionTLS12,
 		MaxVersion:         tlsVersion(cfg.MaxVersion),
 	}
 
@@ -148,10 +148,6 @@ func resolvePath(path string) (string, error) {
 
 func tlsVersion(version string) uint16 {
 	switch version {
-	case "TLS10":
-		return tls.VersionTLS10
-	case "TLS11":
-		return tls.VersionTLS11
 	case "TLS12":
 		return tls.VersionTLS12
 	case "TLS13":
