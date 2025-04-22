@@ -65,7 +65,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.CreateGatewayRequest"
+                            "$ref": "#/definitions/request.CreateGatewayRequest"
                         }
                     }
                 ],
@@ -145,7 +145,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.UpdateGatewayRequest"
+                            "$ref": "#/definitions/request.UpdateGatewayRequest"
                         }
                     }
                 ],
@@ -970,6 +970,12 @@ const docTemplate = `{
                 }
             }
         },
+        "domain.ClientTLSConfig": {
+            "type": "object",
+            "additionalProperties": {
+                "$ref": "#/definitions/types.ClientTLSConfig"
+            }
+        },
         "domain.CredentialsJSON": {
             "type": "object",
             "properties": {
@@ -1139,6 +1145,9 @@ const docTemplate = `{
         "gateway.Gateway": {
             "type": "object",
             "properties": {
+                "client_tls": {
+                    "$ref": "#/definitions/domain.ClientTLSConfig"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -1168,6 +1177,209 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "request.ClientTLSCertRequest": {
+            "type": "object",
+            "properties": {
+                "certificate": {
+                    "type": "string"
+                },
+                "private_key": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.ClientTLSConfigRequest": {
+            "type": "object",
+            "properties": {
+                "allow_insecure_connections": {
+                    "type": "boolean"
+                },
+                "ca_cert": {
+                    "type": "string"
+                },
+                "cipher_suites": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "client_certs": {
+                    "$ref": "#/definitions/request.ClientTLSCertRequest"
+                },
+                "curve_preferences": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "disable_system_ca_pool": {
+                    "type": "boolean"
+                },
+                "max_version": {
+                    "type": "string"
+                },
+                "min_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.CreateGatewayRequest": {
+            "type": "object",
+            "properties": {
+                "client_tls": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/request.ClientTLSConfigRequest"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "description": "@required",
+                    "type": "string"
+                },
+                "required_plugins": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
+                },
+                "security_config": {
+                    "$ref": "#/definitions/request.SecurityConfigRequest"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "subdomain": {
+                    "description": "@required",
+                    "type": "string"
+                },
+                "telemetry": {
+                    "$ref": "#/definitions/request.TelemetryRequest"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.ExporterRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "settings": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        },
+        "request.SecurityConfigRequest": {
+            "type": "object",
+            "properties": {
+                "allowed_hosts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_hosts_are_regex": {
+                    "type": "boolean"
+                },
+                "browser_xss_filter": {
+                    "type": "boolean"
+                },
+                "content_security_policy": {
+                    "type": "string"
+                },
+                "content_type_nosniff": {
+                    "type": "boolean"
+                },
+                "custom_frame_options_value": {
+                    "type": "string"
+                },
+                "frame_deny": {
+                    "type": "boolean"
+                },
+                "is_development": {
+                    "type": "boolean"
+                },
+                "referrer_policy": {
+                    "type": "string"
+                },
+                "ssl_host": {
+                    "type": "string"
+                },
+                "ssl_proxy_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "ssl_redirect": {
+                    "type": "boolean"
+                },
+                "sts_include_subdomains": {
+                    "type": "boolean"
+                },
+                "sts_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
+        "request.TelemetryRequest": {
+            "type": "object",
+            "properties": {
+                "enable_plugin_traces": {
+                    "type": "boolean"
+                },
+                "enable_request_traces": {
+                    "type": "boolean"
+                },
+                "exporters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/request.ExporterRequest"
+                    }
+                },
+                "extra_params": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "request.UpdateGatewayRequest": {
+            "type": "object",
+            "properties": {
+                "client_tls": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/request.ClientTLSConfigRequest"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "required_plugins": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
+                },
+                "security_config": {
+                    "$ref": "#/definitions/request.SecurityConfigRequest"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "telemetry": {
+                    "$ref": "#/definitions/request.TelemetryRequest"
                 }
             }
         },
@@ -1269,6 +1481,52 @@ const docTemplate = `{
                 }
             }
         },
+        "types.ClientTLSCert": {
+            "type": "object",
+            "properties": {
+                "certificate": {
+                    "type": "string"
+                },
+                "private_key": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.ClientTLSConfig": {
+            "type": "object",
+            "properties": {
+                "allow_insecure_connections": {
+                    "type": "boolean"
+                },
+                "ca_certs": {
+                    "type": "string"
+                },
+                "cipher_suites": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "client_certs": {
+                    "$ref": "#/definitions/types.ClientTLSCert"
+                },
+                "curve_preferences": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "disable_system_ca_pool": {
+                    "type": "boolean"
+                },
+                "max_version": {
+                    "type": "string"
+                },
+                "min_version": {
+                    "type": "string"
+                }
+            }
+        },
         "types.CreateAPIKeyRequest": {
             "type": "object",
             "required": [
@@ -1279,40 +1537,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "types.CreateGatewayRequest": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "name": {
-                    "description": "@required",
-                    "type": "string"
-                },
-                "required_plugins": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.PluginConfig"
-                    }
-                },
-                "security_config": {
-                    "$ref": "#/definitions/types.SecurityConfigRequest"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "subdomain": {
-                    "description": "@required",
-                    "type": "string"
-                },
-                "telemetry": {
-                    "$ref": "#/definitions/types.TelemetryRequest"
-                },
-                "updated_at": {
                     "type": "string"
                 }
             }
@@ -1413,18 +1637,6 @@ const docTemplate = `{
                 }
             }
         },
-        "types.ExporterRequest": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string"
-                },
-                "settings": {
-                    "type": "object",
-                    "additionalProperties": true
-                }
-            }
-        },
         "types.HealthCheckRequest": {
             "type": "object",
             "properties": {
@@ -1490,59 +1702,6 @@ const docTemplate = `{
                 },
                 "stage": {
                     "$ref": "#/definitions/types.Stage"
-                }
-            }
-        },
-        "types.SecurityConfigRequest": {
-            "type": "object",
-            "properties": {
-                "allowed_hosts": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "allowed_hosts_are_regex": {
-                    "type": "boolean"
-                },
-                "browser_xss_filter": {
-                    "type": "boolean"
-                },
-                "content_security_policy": {
-                    "type": "string"
-                },
-                "content_type_nosniff": {
-                    "type": "boolean"
-                },
-                "custom_frame_options_value": {
-                    "type": "string"
-                },
-                "frame_deny": {
-                    "type": "boolean"
-                },
-                "is_development": {
-                    "type": "boolean"
-                },
-                "referrer_policy": {
-                    "type": "string"
-                },
-                "ssl_host": {
-                    "type": "string"
-                },
-                "ssl_proxy_headers": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "ssl_redirect": {
-                    "type": "boolean"
-                },
-                "sts_include_subdomains": {
-                    "type": "boolean"
-                },
-                "sts_seconds": {
-                    "type": "integer"
                 }
             }
         },
@@ -1670,52 +1829,6 @@ const docTemplate = `{
                 },
                 "weight": {
                     "type": "integer"
-                }
-            }
-        },
-        "types.TelemetryRequest": {
-            "type": "object",
-            "properties": {
-                "enable_plugin_traces": {
-                    "type": "boolean"
-                },
-                "enable_request_traces": {
-                    "type": "boolean"
-                },
-                "exporters": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.ExporterRequest"
-                    }
-                },
-                "extra_params": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "types.UpdateGatewayRequest": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string"
-                },
-                "required_plugins": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "$ref": "#/definitions/types.PluginConfig"
-                    }
-                },
-                "security_config": {
-                    "$ref": "#/definitions/types.SecurityConfigRequest"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "telemetry": {
-                    "$ref": "#/definitions/types.TelemetryRequest"
                 }
             }
         },

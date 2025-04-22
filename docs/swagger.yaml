@@ -18,6 +18,10 @@ definitions:
       name:
         type: string
     type: object
+  domain.ClientTLSConfig:
+    additionalProperties:
+      $ref: '#/definitions/types.ClientTLSConfig'
+    type: object
   domain.CredentialsJSON:
     properties:
       allow_override:
@@ -132,6 +136,8 @@ definitions:
     type: object
   gateway.Gateway:
     properties:
+      client_tls:
+        $ref: '#/definitions/domain.ClientTLSConfig'
       created_at:
         type: string
       id:
@@ -152,6 +158,140 @@ definitions:
         $ref: '#/definitions/telemetry.Telemetry'
       updated_at:
         type: string
+    type: object
+  request.ClientTLSCertRequest:
+    properties:
+      certificate:
+        type: string
+      private_key:
+        type: string
+    type: object
+  request.ClientTLSConfigRequest:
+    properties:
+      allow_insecure_connections:
+        type: boolean
+      ca_cert:
+        type: string
+      cipher_suites:
+        items:
+          type: integer
+        type: array
+      client_certs:
+        $ref: '#/definitions/request.ClientTLSCertRequest'
+      curve_preferences:
+        items:
+          type: integer
+        type: array
+      disable_system_ca_pool:
+        type: boolean
+      max_version:
+        type: string
+      min_version:
+        type: string
+    type: object
+  request.CreateGatewayRequest:
+    properties:
+      client_tls:
+        additionalProperties:
+          $ref: '#/definitions/request.ClientTLSConfigRequest'
+        type: object
+      created_at:
+        type: string
+      name:
+        description: '@required'
+        type: string
+      required_plugins:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      security_config:
+        $ref: '#/definitions/request.SecurityConfigRequest'
+      status:
+        type: string
+      subdomain:
+        description: '@required'
+        type: string
+      telemetry:
+        $ref: '#/definitions/request.TelemetryRequest'
+      updated_at:
+        type: string
+    type: object
+  request.ExporterRequest:
+    properties:
+      name:
+        type: string
+      settings:
+        additionalProperties: true
+        type: object
+    type: object
+  request.SecurityConfigRequest:
+    properties:
+      allowed_hosts:
+        items:
+          type: string
+        type: array
+      allowed_hosts_are_regex:
+        type: boolean
+      browser_xss_filter:
+        type: boolean
+      content_security_policy:
+        type: string
+      content_type_nosniff:
+        type: boolean
+      custom_frame_options_value:
+        type: string
+      frame_deny:
+        type: boolean
+      is_development:
+        type: boolean
+      referrer_policy:
+        type: string
+      ssl_host:
+        type: string
+      ssl_proxy_headers:
+        additionalProperties:
+          type: string
+        type: object
+      ssl_redirect:
+        type: boolean
+      sts_include_subdomains:
+        type: boolean
+      sts_seconds:
+        type: integer
+    type: object
+  request.TelemetryRequest:
+    properties:
+      enable_plugin_traces:
+        type: boolean
+      enable_request_traces:
+        type: boolean
+      exporters:
+        items:
+          $ref: '#/definitions/request.ExporterRequest'
+        type: array
+      extra_params:
+        additionalProperties:
+          type: string
+        type: object
+    type: object
+  request.UpdateGatewayRequest:
+    properties:
+      client_tls:
+        additionalProperties:
+          $ref: '#/definitions/request.ClientTLSConfigRequest'
+        type: object
+      name:
+        type: string
+      required_plugins:
+        additionalProperties:
+          $ref: '#/definitions/types.PluginConfig'
+        type: object
+      security_config:
+        $ref: '#/definitions/request.SecurityConfigRequest'
+      status:
+        type: string
+      telemetry:
+        $ref: '#/definitions/request.TelemetryRequest'
     type: object
   service.Service:
     properties:
@@ -219,6 +359,36 @@ definitions:
           type: string
         type: object
     type: object
+  types.ClientTLSCert:
+    properties:
+      certificate:
+        type: string
+      private_key:
+        type: string
+    type: object
+  types.ClientTLSConfig:
+    properties:
+      allow_insecure_connections:
+        type: boolean
+      ca_certs:
+        type: string
+      cipher_suites:
+        items:
+          type: integer
+        type: array
+      client_certs:
+        $ref: '#/definitions/types.ClientTLSCert'
+      curve_preferences:
+        items:
+          type: integer
+        type: array
+      disable_system_ca_pool:
+        type: boolean
+      max_version:
+        type: string
+      min_version:
+        type: string
+    type: object
   types.CreateAPIKeyRequest:
     properties:
       expires_at:
@@ -227,29 +397,6 @@ definitions:
         type: string
     required:
     - name
-    type: object
-  types.CreateGatewayRequest:
-    properties:
-      created_at:
-        type: string
-      name:
-        description: '@required'
-        type: string
-      required_plugins:
-        items:
-          $ref: '#/definitions/types.PluginConfig'
-        type: array
-      security_config:
-        $ref: '#/definitions/types.SecurityConfigRequest'
-      status:
-        type: string
-      subdomain:
-        description: '@required'
-        type: string
-      telemetry:
-        $ref: '#/definitions/types.TelemetryRequest'
-      updated_at:
-        type: string
     type: object
   types.CreateRuleRequest:
     properties:
@@ -317,14 +464,6 @@ definitions:
       param_value:
         type: string
     type: object
-  types.ExporterRequest:
-    properties:
-      name:
-        type: string
-      settings:
-        additionalProperties: true
-        type: object
-    type: object
   types.HealthCheckRequest:
     properties:
       headers:
@@ -371,41 +510,6 @@ definitions:
         type: object
       stage:
         $ref: '#/definitions/types.Stage'
-    type: object
-  types.SecurityConfigRequest:
-    properties:
-      allowed_hosts:
-        items:
-          type: string
-        type: array
-      allowed_hosts_are_regex:
-        type: boolean
-      browser_xss_filter:
-        type: boolean
-      content_security_policy:
-        type: string
-      content_type_nosniff:
-        type: boolean
-      custom_frame_options_value:
-        type: string
-      frame_deny:
-        type: boolean
-      is_development:
-        type: boolean
-      referrer_policy:
-        type: string
-      ssl_host:
-        type: string
-      ssl_proxy_headers:
-        additionalProperties:
-          type: string
-        type: object
-      ssl_redirect:
-        type: boolean
-      sts_include_subdomains:
-        type: boolean
-      sts_seconds:
-        type: integer
     type: object
   types.ServiceRequest:
     properties:
@@ -492,36 +596,6 @@ definitions:
         type: array
       weight:
         type: integer
-    type: object
-  types.TelemetryRequest:
-    properties:
-      enable_plugin_traces:
-        type: boolean
-      enable_request_traces:
-        type: boolean
-      exporters:
-        items:
-          $ref: '#/definitions/types.ExporterRequest'
-        type: array
-      extra_params:
-        additionalProperties:
-          type: string
-        type: object
-    type: object
-  types.UpdateGatewayRequest:
-    properties:
-      name:
-        type: string
-      required_plugins:
-        additionalProperties:
-          $ref: '#/definitions/types.PluginConfig'
-        type: object
-      security_config:
-        $ref: '#/definitions/types.SecurityConfigRequest'
-      status:
-        type: string
-      telemetry:
-        $ref: '#/definitions/types.TelemetryRequest'
     type: object
   types.UpdateRuleRequest:
     properties:
@@ -681,7 +755,7 @@ paths:
         name: gateway
         required: true
         schema:
-          $ref: '#/definitions/types.CreateGatewayRequest'
+          $ref: '#/definitions/request.CreateGatewayRequest'
       produces:
       - application/json
       responses:
@@ -752,7 +826,7 @@ paths:
         name: gateway
         required: true
         schema:
-          $ref: '#/definitions/types.UpdateGatewayRequest'
+          $ref: '#/definitions/request.UpdateGatewayRequest'
       produces:
       - application/json
       responses:
