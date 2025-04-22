@@ -8,6 +8,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -48,7 +49,7 @@ func NewUpdateGatewayHandler(
 // @Accept json
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
-// @Param gateway body types.UpdateGatewayRequest true "Updated gateway data"
+// @Param gateway body request.UpdateGatewayRequest true "Updated gateway data"
 // @Success 204 "Gateway updated successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Router /api/v1/gateways/{gateway_id} [put]
@@ -65,7 +66,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 	}
 
-	var req types.UpdateGatewayRequest
+	var req request.UpdateGatewayRequest
 	if err := c.BodyParser(&req); err != nil {
 		h.logger.WithError(err).Error("failed to bind request")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})

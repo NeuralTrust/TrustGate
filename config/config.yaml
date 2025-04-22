@@ -33,11 +33,10 @@ tls:
   disabled: false
   enable_mtls: true
   disable_system_ca_pool: false
-  ca_certs:
-    - certs/ca.pem
+  ca_cert: ${TLS_CA_CERT}
   keys:
-    - public_key: certs/server.pem
-      private_key: certs/server.key
+    public_key: ${TLS_KEYS_PUBLIC_KEY}
+    private_key: ${TLS_KEYS_PRIVATE_KEY
   cipher_suites:
     - 4865
     - 4866

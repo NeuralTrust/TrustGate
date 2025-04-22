@@ -3,10 +3,11 @@ package config
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
 func BuildTLSConfig(cfg *TLSConfig) (*tls.Config, error) {
@@ -14,47 +15,49 @@ func BuildTLSConfig(cfg *TLSConfig) (*tls.Config, error) {
 		return nil, nil
 	}
 
-	var certificates []tls.Certificate
-	for _, key := range cfg.Keys {
-		pub, err := resolvePath(key.PublicKey)
-		if err != nil {
-			return nil, fmt.Errorf("resolve public key path: %w", err)
-		}
-		private, err := resolvePath(key.PrivateKey)
-		if err != nil {
-			return nil, fmt.Errorf("resolve private key path: %w", err)
-		}
-		cert, err := tls.LoadX509KeyPair(pub, private)
-		if err != nil {
-			return nil, fmt.Errorf("load X509 key pair: %w", err)
-		}
-		certificates = append(certificates, cert)
+	pub, err := resolvePath(cfg.Keys.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("resolve public key path: %w", err)
 	}
+	private, err := resolvePath(cfg.Keys.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("resolve private key path: %w", err)
+	}
+	cert, err := tls.LoadX509KeyPair(pub, private)
+	if err != nil {
+		return nil, fmt.Errorf("load X509 key pair: %w", err)
+	}
+	certificates := []tls.Certificate{cert}
 
 	var rootCAs *x509.CertPool
 	if cfg.DisableSystemCAPool {
 		rootCAs = x509.NewCertPool()
 	} else {
-		var err error
 		rootCAs, err = x509.SystemCertPool()
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	for _, ca := range cfg.CACerts {
-		caBytes, err := os.ReadFile(ca)
+	if cfg.CACert != "" {
+		caPath, err := resolvePath(cfg.CACert)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("resolve CA cert path: %w", err)
+		}
+		caBytes, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("read CA cert: %w", err)
 		}
 		if ok := rootCAs.AppendCertsFromPEM(caBytes); !ok {
-			return nil, errors.New("failed to append CA certificate")
+			return nil, fmt.Errorf("failed to append CA certificate from %s", cfg.CACert)
 		}
 	}
+
 	var curvePrefs []tls.CurveID
 	for _, c := range cfg.CurvePreferences {
 		curvePrefs = append(curvePrefs, tls.CurveID(c))
 	}
+
 	config := &tls.Config{
 		Certificates:     certificates,
 		MinVersion:       tlsVersion(cfg.MinVersion),
@@ -69,6 +72,67 @@ func BuildTLSConfig(cfg *TLSConfig) (*tls.Config, error) {
 	}
 
 	return config, nil
+}
+
+func BuildTLSConfigFromClientConfig(cfg types.ClientTLSConfig) (*tls.Config, error) {
+	var certificates []tls.Certificate
+	if cfg.ClientCerts.Certificate != "" && cfg.ClientCerts.PrivateKey != "" {
+		certPath, err := resolvePath(cfg.ClientCerts.Certificate)
+		if err != nil {
+			return nil, fmt.Errorf("resolve client certificate path: %w", err)
+		}
+		keyPath, err := resolvePath(cfg.ClientCerts.PrivateKey)
+		if err != nil {
+			return nil, fmt.Errorf("resolve client private key path: %w", err)
+		}
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate/key: %w", err)
+		}
+		certificates = append(certificates, cert)
+	}
+
+	var rootCAs *x509.CertPool
+	if cfg.DisableSystemCAPool {
+		rootCAs = x509.NewCertPool()
+	} else {
+		var err error
+		rootCAs, err = x509.SystemCertPool()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load system CA pool: %w", err)
+		}
+	}
+
+	if cfg.CACerts != "" {
+		caPath, err := resolvePath(cfg.CACerts)
+		if err != nil {
+			return nil, fmt.Errorf("resolve CA cert path: %w", err)
+		}
+		caBytes, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA cert: %w", err)
+		}
+		if ok := rootCAs.AppendCertsFromPEM(caBytes); !ok {
+			return nil, fmt.Errorf("failed to append CA cert")
+		}
+	}
+
+	var curvePrefs []tls.CurveID
+	for _, c := range cfg.CurvePreferences {
+		curvePrefs = append(curvePrefs, tls.CurveID(c))
+	}
+
+	tlsConfig := &tls.Config{
+		RootCAs:            rootCAs,
+		Certificates:       certificates,
+		CipherSuites:       cfg.CipherSuites,
+		CurvePreferences:   curvePrefs,
+		InsecureSkipVerify: cfg.AllowInsecureConnections,
+		MinVersion:         tlsVersion(cfg.MinVersion),
+		MaxVersion:         tlsVersion(cfg.MaxVersion),
+	}
+
+	return tlsConfig, nil
 }
 
 func resolvePath(path string) (string, error) {

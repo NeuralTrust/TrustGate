@@ -46,13 +46,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 			return c.Next()
 		}
 
-		metricsCollector := metrics.NewCollector(
-			uuid.New().String(),
-			&metrics.Config{
-				EnablePluginTraces:  gatewayData.Gateway.Telemetry.EnablePluginTraces,
-				EnableRequestTraces: gatewayData.Gateway.Telemetry.EnableRequestTraces,
-				ExtraParams:         gatewayData.Gateway.Telemetry.ExtraParams,
-			})
+		metricsCollector := m.getMetricsCollector(gatewayData)
 
 		c.Locals(metrics.CollectorKey, metricsCollector)
 		ctx := context.WithValue(c.Context(), metrics.CollectorKey, metricsCollector)
@@ -72,17 +66,41 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		endTime := time.Now()
 		outputResponse := m.transformToResponseContext(c, gatewayID)
 
+		var exporters []types.Exporter
+		if gatewayData.Gateway.Telemetry != nil {
+			exporters = gatewayData.Gateway.Telemetry.Exporters
+		}
 		m.worker.Process(
 			metricsCollector,
-			gatewayData.Gateway.Telemetry.Exporters,
+			exporters,
 			inputRequest,
 			outputResponse,
 			startTime,
 			endTime,
 		)
-
 		return err
 	}
+}
+
+func (m *metricsMiddleware) getMetricsCollector(gatewayData *types.GatewayData) *metrics.Collector {
+	metricsCollector := metrics.NewCollector(
+		uuid.New().String(),
+		&metrics.Config{
+			EnablePluginTraces:  false,
+			EnableRequestTraces: false,
+			ExtraParams:         nil,
+		},
+	)
+	if gatewayData.Gateway.Telemetry != nil {
+		metricsCollector = metrics.NewCollector(
+			uuid.New().String(),
+			&metrics.Config{
+				EnablePluginTraces:  gatewayData.Gateway.Telemetry.EnablePluginTraces,
+				EnableRequestTraces: gatewayData.Gateway.Telemetry.EnableRequestTraces,
+				ExtraParams:         gatewayData.Gateway.Telemetry.ExtraParams,
+			})
+	}
+	return metricsCollector
 }
 
 func (m *metricsMiddleware) getUserAgent(ctx *fiber.Ctx) string {
