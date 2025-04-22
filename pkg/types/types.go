@@ -4,14 +4,6 @@ import (
 	"time"
 )
 
-type UpdateGatewayRequest struct {
-	Name            *string                 `json:"name,omitempty"`
-	Status          *string                 `json:"status,omitempty"`
-	RequiredPlugins map[string]PluginConfig `json:"required_plugins,omitempty"`
-	Telemetry       *TelemetryRequest       `json:"telemetry"`
-	SecurityConfig  *SecurityConfigRequest  `json:"security_config"`
-}
-
 type CreateAPIKeyRequest struct {
 	Name      string     `json:"name" binding:"required"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -38,46 +30,6 @@ type UpdateRuleRequest struct {
 	RetryAttempts *int              `json:"retry_attempts"`
 	Active        *bool             `json:"active"`
 	PluginChain   []PluginConfig    `json:"plugin_chain"`
-}
-
-type CreateGatewayRequest struct {
-	Name            string                 `json:"name"`      // @required
-	Subdomain       string                 `json:"subdomain"` // @required
-	Status          string                 `json:"status"`
-	RequiredPlugins []PluginConfig         `json:"required_plugins"`
-	Telemetry       TelemetryRequest       `json:"telemetry"`
-	SecurityConfig  *SecurityConfigRequest `json:"security_config"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
-}
-
-type TelemetryRequest struct {
-	Exporters           []ExporterRequest `json:"exporters"`
-	ExtraParams         map[string]string `json:"extra_params"`
-	EnablePluginTraces  bool              `json:"enable_plugin_traces"`
-	EnableRequestTraces bool              `json:"enable_request_traces"`
-}
-
-type ExporterRequest struct {
-	Name     string                 `json:"name"`
-	Settings map[string]interface{} `json:"settings"`
-}
-
-type SecurityConfigRequest struct {
-	AllowedHosts            []string          `json:"allowed_hosts"`
-	AllowedHostsAreRegex    bool              `json:"allowed_hosts_are_regex"`
-	SSLRedirect             bool              `json:"ssl_redirect"`
-	SSLHost                 string            `json:"ssl_host"`
-	SSLProxyHeaders         map[string]string `json:"ssl_proxy_headers"`
-	STSSeconds              int               `json:"sts_seconds"`
-	STSIncludeSubdomains    bool              `json:"sts_include_subdomains"`
-	FrameDeny               bool              `json:"frame_deny"`
-	CustomFrameOptionsValue string            `json:"custom_frame_options_value"`
-	ReferrerPolicy          string            `json:"referrer_policy"`
-	ContentSecurityPolicy   string            `json:"content_security_policy"`
-	ContentTypeNosniff      bool              `json:"content_type_nosniff"`
-	BrowserXSSFilter        bool              `json:"browser_xss_filter"`
-	IsDevelopment           bool              `json:"is_development"`
 }
 
 type ServiceRequest struct {

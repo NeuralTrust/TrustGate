@@ -9,15 +9,16 @@ import (
 
 // Gateway represents a tenant's gateway configuration
 type Gateway struct {
-	ID              string          `json:"id"`
-	Name            string          `json:"name"`
-	Subdomain       string          `json:"subdomain"`
-	Status          string          `json:"status"`
-	RequiredPlugins []PluginConfig  `json:"required_plugins"`
-	Telemetry       *Telemetry      `json:"telemetry"`
-	SecurityConfig  *SecurityConfig `json:"security_config"`
-	CreatedAt       string          `json:"created_at"`
-	UpdatedAt       string          `json:"updated_at"`
+	ID              string                     `json:"id"`
+	Name            string                     `json:"name"`
+	Subdomain       string                     `json:"subdomain"`
+	Status          string                     `json:"status"`
+	RequiredPlugins []PluginConfig             `json:"required_plugins"`
+	Telemetry       *Telemetry                 `json:"telemetry"`
+	SecurityConfig  *SecurityConfig            `json:"security_config"`
+	TlS             map[string]ClientTLSConfig `json:"tls"`
+	CreatedAt       string                     `json:"created_at"`
+	UpdatedAt       string                     `json:"updated_at"`
 }
 
 type Telemetry struct {
@@ -47,6 +48,22 @@ type SecurityConfig struct {
 	ContentTypeNosniff      bool              `json:"content_type_nosniff"`
 	BrowserXSSFilter        bool              `json:"browser_xss_filter"`
 	IsDevelopment           bool              `json:"is_development"`
+}
+
+type ClientTLSConfig struct {
+	AllowInsecureConnections bool          `json:"allow_insecure_connections"`
+	CACerts                  string        `json:"ca_certs"`
+	ClientCerts              ClientTLSCert `json:"client_certs"`
+	CipherSuites             []uint16      `json:"cipher_suites"`
+	CurvePreferences         []uint16      `json:"curve_preferences"`
+	DisableSystemCAPool      bool          `json:"disable_system_ca_pool"`
+	MinVersion               string        `json:"min_version"`
+	MaxVersion               string        `json:"max_version"`
+}
+
+type ClientTLSCert struct {
+	Certificate string `json:"certificate"`
+	PrivateKey  string `json:"private_key"`
 }
 
 // ForwardingRule represents a rule for forwarding requests

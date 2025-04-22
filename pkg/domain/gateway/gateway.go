@@ -15,9 +15,10 @@ type Gateway struct {
 	Name            string                     `json:"name"`
 	Subdomain       string                     `json:"subdomain" gorm:"uniqueIndex"`
 	Status          string                     `json:"status"`
-	Telemetry       *telemetry.Telemetry       `json:"telemetry" gorm:"type:jsonb"`
-	RequiredPlugins domain.PluginChainJSON     `json:"required_plugins" gorm:"type:jsonb"`
-	SecurityConfig  *domain.SecurityConfigJSON `json:"security_config" gorm:"type:jsonb"`
+	Telemetry       *telemetry.Telemetry       `json:"telemetry,omitempty" gorm:"type:jsonb"`
+	RequiredPlugins domain.PluginChainJSON     `json:"required_plugins,omitempty" gorm:"type:jsonb"`
+	SecurityConfig  *domain.SecurityConfigJSON `json:"security_config,omitempty" gorm:"type:jsonb"`
+	ClientTLSConfig domain.ClientTLSConfig     `json:"client_tls,omitempty" gorm:"type:jsonb"`
 	CreatedAt       time.Time                  `json:"created_at"`
 	UpdatedAt       time.Time                  `json:"updated_at"`
 }

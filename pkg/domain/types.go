@@ -14,8 +14,24 @@ type (
 	PluginChainJSON    []types.PluginConfig
 	CredentialsJSON    types.Credentials
 	SecurityConfigJSON types.SecurityConfig
+	ClientTLSConfig    map[string]types.ClientTLSConfig
 	TagsJSON           []string
 )
+
+func (c ClientTLSConfig) Value() (driver.Value, error) {
+	return json.Marshal(c)
+}
+
+func (c *ClientTLSConfig) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("expected []byte, got %T", value)
+	}
+	return json.Unmarshal(bytes, c)
+}
 
 func (c SecurityConfigJSON) Value() (driver.Value, error) {
 	return json.Marshal(c)

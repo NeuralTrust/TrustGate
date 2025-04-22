@@ -24,6 +24,7 @@ type Config struct {
 	Redis     RedisConfig     `mapstructure:"redis"`
 	Providers ProvidersConfig `mapstructure:"providers"`
 	Plugins   PluginsConfig   `mapstructure:"plugins"`
+	TLS       TLSConfig       `mapstructure:"tls"`
 }
 
 type ServerConfig struct {
@@ -54,6 +55,23 @@ type RedisConfig struct {
 
 type PluginsConfig struct {
 	IgnoreErrors bool `mapstructure:"ignore_errors"`
+}
+
+type TLSConfig struct {
+	Disabled            bool       `mapstructure:"disabled"`
+	EnableMTLS          bool       `mapstructure:"enable_mtls"`
+	DisableSystemCAPool bool       `mapstructure:"disable_system_ca_pool"`
+	CACert              string     `mapstructure:"ca_cert"`
+	Keys                TLSKeyPair `mapstructure:"keys"`
+	CipherSuites        []uint16   `mapstructure:"cipher_suites"`
+	CurvePreferences    []uint16   `mapstructure:"curve_preferences"`
+	MinVersion          string     `mapstructure:"min_version"`
+	MaxVersion          string     `mapstructure:"max_version"`
+}
+
+type TLSKeyPair struct {
+	PublicKey  string `mapstructure:"public_key"`
+	PrivateKey string `mapstructure:"private_key"`
 }
 
 var globalConfig Config

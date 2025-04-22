@@ -9,6 +9,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -146,6 +147,16 @@ func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gatew
 		}
 	}
 
+	var telemetryObj *types.Telemetry
+	if g.Telemetry != nil {
+		telemetryObj = &types.Telemetry{
+			Exporters:           requiredTelemetry,
+			ExtraParams:         g.Telemetry.ExtraParams,
+			EnablePluginTraces:  g.Telemetry.EnablePluginTraces,
+			EnableRequestTraces: g.Telemetry.EnableRequestTraces,
+		}
+	}
+
 	return &types.Gateway{
 		ID:              g.ID.String(),
 		Name:            g.Name,
@@ -153,12 +164,8 @@ func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gatew
 		Status:          g.Status,
 		RequiredPlugins: requiredPlugins,
 		SecurityConfig:  securityConfig,
-		Telemetry: &types.Telemetry{
-			Exporters:           requiredTelemetry,
-			ExtraParams:         g.Telemetry.ExtraParams,
-			EnablePluginTraces:  g.Telemetry.EnablePluginTraces,
-			EnableRequestTraces: g.Telemetry.EnableRequestTraces,
-		},
+		Telemetry:       telemetryObj,
+		TlS:             transformClientTLSConfigToType(g.ClientTLSConfig),
 	}
 }
 
@@ -280,4 +287,27 @@ func (f *dataFinder) getJSONBytes(value interface{}) ([]byte, error) {
 		}
 		return b, nil
 	}
+}
+
+func transformClientTLSConfigToType(tls domain.ClientTLSConfig) map[string]types.ClientTLSConfig {
+	if len(tls) == 0 {
+		return nil
+	}
+	result := make(map[string]types.ClientTLSConfig, len(tls))
+	for k, v := range tls {
+		result[k] = types.ClientTLSConfig{
+			AllowInsecureConnections: v.AllowInsecureConnections,
+			CACerts:                  v.CACerts,
+			ClientCerts: types.ClientTLSCert{
+				Certificate: v.ClientCerts.Certificate,
+				PrivateKey:  v.ClientCerts.PrivateKey,
+			},
+			CipherSuites:        v.CipherSuites,
+			CurvePreferences:    v.CurvePreferences,
+			DisableSystemCAPool: v.DisableSystemCAPool,
+			MinVersion:          v.MinVersion,
+			MaxVersion:          v.MaxVersion,
+		}
+	}
+	return result
 }

@@ -65,6 +65,7 @@ func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) (*types.Gatewa
 		RequiredPlugins: dbGateway.RequiredPlugins,
 		Telemetry:       telemetry,
 		SecurityConfig:  securityConfig,
+		TlS:             transformClientTLSConfigToType(dbGateway.ClientTLSConfig),
 		CreatedAt:       dbGateway.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:       dbGateway.UpdatedAt.Format(time.RFC3339),
 	}, nil

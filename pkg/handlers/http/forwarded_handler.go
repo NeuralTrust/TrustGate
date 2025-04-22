@@ -23,6 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
@@ -56,6 +57,7 @@ type forwardedHandler struct {
 	client              *fasthttp.Client
 	loadBalancerFactory loadbalancer.Factory
 	cfg                 *config.Config
+	tlsClientCache      *infraCache.TLSClientCache
 }
 
 func NewForwardedHandler(
@@ -94,6 +96,7 @@ func NewForwardedHandler(
 		client:              client,
 		loadBalancerFactory: loadBalancerFactory,
 		cfg:                 cfg,
+		tlsClientCache:      infraCache.NewTLSClientCache(),
 	}
 }
 
@@ -269,7 +272,11 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(respCtx.StatusCode).Send(respCtx.Body)
 	}
 	// Forward the request
-	response, err := h.forwardRequest(reqCtx, matchingRule)
+	response, err := h.forwardRequest(
+		reqCtx,
+		matchingRule,
+		gatewayData.Gateway.TlS,
+	)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to forward request")
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
@@ -411,6 +418,7 @@ func (h *forwardedHandler) configureRulePlugins(gatewayID string, rule *types.Fo
 func (h *forwardedHandler) forwardRequest(
 	req *types.RequestContext,
 	rule *types.ForwardingRule,
+	tlsConfig map[string]types.ClientTLSConfig,
 ) (*types.ResponseContext, error) {
 	serviceEntity, err := h.serviceFinder.Find(req.Context, rule.GatewayID, rule.ServiceID)
 	if err != nil {
@@ -418,9 +426,9 @@ func (h *forwardedHandler) forwardRequest(
 	}
 	switch serviceEntity.Type {
 	case domainService.TypeUpstream:
-		return h.handleUpstreamRequest(req, rule, serviceEntity)
+		return h.handleUpstreamRequest(req, rule, serviceEntity, tlsConfig)
 	case domainService.TypeEndpoint:
-		return h.handleEndpointRequest(req, rule, serviceEntity)
+		return h.handleEndpointRequest(req, rule, serviceEntity, tlsConfig)
 	default:
 		return nil, fmt.Errorf("unsupported service type: %s", serviceEntity.Type)
 	}
@@ -429,6 +437,7 @@ func (h *forwardedHandler) handleUpstreamRequest(
 	req *types.RequestContext,
 	rule *types.ForwardingRule,
 	serviceEntity *domainService.Service,
+	tlsConfig map[string]types.ClientTLSConfig,
 ) (*types.ResponseContext, error) {
 	upstreamModel, err := h.upstreamFinder.Find(req.Context, serviceEntity.GatewayID, serviceEntity.UpstreamID)
 	if err != nil {
@@ -444,6 +453,7 @@ func (h *forwardedHandler) handleUpstreamRequest(
 	if maxRetries == 0 {
 		maxRetries = 2
 	}
+
 	var reqErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		target, err := lb.NextTarget(req.Context)
@@ -453,14 +463,13 @@ func (h *forwardedHandler) handleUpstreamRequest(
 			}
 			continue
 		}
-
 		go h.logger.WithFields(logrus.Fields{
 			"attempt":   attempt + 1,
 			"provider":  target.Provider,
 			"target_id": target.ID,
 		}).Debug("Attempting request")
 
-		response, err := h.doForwardRequest(req, rule, target)
+		response, err := h.doForwardRequest(tlsConfig, req, rule, target)
 		reqErr = err
 		if err == nil {
 			response.Target = target
@@ -477,6 +486,7 @@ func (h *forwardedHandler) handleEndpointRequest(
 	req *types.RequestContext,
 	rule *types.ForwardingRule,
 	serviceEntity *domainService.Service,
+	tlsConfig map[string]types.ClientTLSConfig,
 ) (*types.ResponseContext, error) {
 	target := &types.UpstreamTarget{
 		Host:        serviceEntity.Host,
@@ -486,7 +496,7 @@ func (h *forwardedHandler) handleEndpointRequest(
 		Headers:     serviceEntity.Headers,
 		Credentials: serviceEntity.Credentials,
 	}
-	rsp, err := h.doForwardRequest(req, rule, target)
+	rsp, err := h.doForwardRequest(tlsConfig, req, rule, target)
 	if err != nil {
 		return nil, fmt.Errorf("failed to forward request: %w", err)
 	}
@@ -512,10 +522,21 @@ func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upst
 }
 
 func (h *forwardedHandler) doForwardRequest(
+	tlsConfig map[string]types.ClientTLSConfig,
 	req *types.RequestContext,
 	rule *types.ForwardingRule,
 	target *types.UpstreamTarget,
 ) (*types.ResponseContext, error) {
+
+	client := h.client
+	tls, ok := tlsConfig[target.Host]
+	if ok {
+		conf, err := config.BuildTLSConfigFromClientConfig(tls)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build TLS config: %w", err)
+		}
+		client = h.tlsClientCache.GetOrCreate(target.ID, conf)
+	}
 
 	var sb strings.Builder
 	if target.Provider != "" {
@@ -587,7 +608,7 @@ func (h *forwardedHandler) doForwardRequest(
 
 	h.applyAuthentication(fastHttpReq, &target.Credentials, req.Body)
 
-	err := h.client.DoTimeout(fastHttpReq, fastHttpResp, 30*time.Second)
+	err := client.DoTimeout(fastHttpReq, fastHttpResp, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("request failed to %s", targetURL)
 	}

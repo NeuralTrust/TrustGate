@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
@@ -33,6 +34,7 @@ type worker struct {
 	taskChan         chan func()
 	ctx              context.Context
 	cancel           context.CancelFunc
+	closed           atomic.Bool
 }
 
 func NewWorker(logger *logrus.Logger, providersBuilder appTelemetry.ExportersBuilder) Worker {
@@ -48,6 +50,7 @@ func NewWorker(logger *logrus.Logger, providersBuilder appTelemetry.ExportersBui
 }
 
 func (m *worker) Shutdown() {
+	m.closed.Store(true)
 	m.logger.Info("shutting down metrics workers")
 	m.cancel()
 	close(m.taskChan)
@@ -141,6 +144,9 @@ func (m *worker) StartWorkers(n int) {
 }
 
 func (m *worker) enqueueTask(task func(), gatewayID string) {
+	if m.closed.Load() {
+		return
+	}
 	select {
 	case m.taskChan <- task:
 	default:
