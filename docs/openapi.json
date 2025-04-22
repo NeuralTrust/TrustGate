@@ -1379,7 +1379,7 @@
                     }
                 }
             },
-            "telemetry.ProviderConfig": {
+            "telemetry.ExporterConfig": {
                 "type": "object",
                 "properties": {
                     "name": {
@@ -1394,10 +1394,22 @@
             "telemetry.Telemetry": {
                 "type": "object",
                 "properties": {
-                    "config": {
+                    "enable_plugin_traces": {
+                        "type": "boolean"
+                    },
+                    "enable_request_traces": {
+                        "type": "boolean"
+                    },
+                    "exporters": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/telemetry.ProviderConfig"
+                            "$ref": "#/components/schemas/telemetry.ExporterConfig"
+                        }
+                    },
+                    "extra_params": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
                         }
                     }
                 }
@@ -1546,6 +1558,18 @@
                     }
                 }
             },
+            "types.ExporterRequest": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "settings": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                }
+            },
             "types.HealthCheckRequest": {
                 "type": "object",
                 "properties": {
@@ -1611,18 +1635,6 @@
                     },
                     "stage": {
                         "$ref": "#/components/schemas/types.Stage"
-                    }
-                }
-            },
-            "types.ProviderConfigRequest": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string"
-                    },
-                    "settings": {
-                        "type": "object",
-                        "additionalProperties": true
                     }
                 }
             },
@@ -1809,10 +1821,22 @@
             "types.TelemetryRequest": {
                 "type": "object",
                 "properties": {
-                    "config": {
+                    "enable_plugin_traces": {
+                        "type": "boolean"
+                    },
+                    "enable_request_traces": {
+                        "type": "boolean"
+                    },
+                    "exporters": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/types.ProviderConfigRequest"
+                            "$ref": "#/components/schemas/types.ExporterRequest"
+                        }
+                    },
+                    "extra_params": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
                         }
                     }
                 }

@@ -1234,7 +1234,7 @@ const docTemplate = `{
                 }
             }
         },
-        "telemetry.ProviderConfig": {
+        "telemetry.ExporterConfig": {
             "type": "object",
             "properties": {
                 "name": {
@@ -1249,10 +1249,22 @@ const docTemplate = `{
         "telemetry.Telemetry": {
             "type": "object",
             "properties": {
-                "config": {
+                "enable_plugin_traces": {
+                    "type": "boolean"
+                },
+                "enable_request_traces": {
+                    "type": "boolean"
+                },
+                "exporters": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/telemetry.ProviderConfig"
+                        "$ref": "#/definitions/telemetry.ExporterConfig"
+                    }
+                },
+                "extra_params": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
                     }
                 }
             }
@@ -1401,6 +1413,18 @@ const docTemplate = `{
                 }
             }
         },
+        "types.ExporterRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "settings": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        },
         "types.HealthCheckRequest": {
             "type": "object",
             "properties": {
@@ -1466,18 +1490,6 @@ const docTemplate = `{
                 },
                 "stage": {
                     "$ref": "#/definitions/types.Stage"
-                }
-            }
-        },
-        "types.ProviderConfigRequest": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string"
-                },
-                "settings": {
-                    "type": "object",
-                    "additionalProperties": true
                 }
             }
         },
@@ -1664,10 +1676,22 @@ const docTemplate = `{
         "types.TelemetryRequest": {
             "type": "object",
             "properties": {
-                "config": {
+                "enable_plugin_traces": {
+                    "type": "boolean"
+                },
+                "enable_request_traces": {
+                    "type": "boolean"
+                },
+                "exporters": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/types.ProviderConfigRequest"
+                        "$ref": "#/definitions/types.ExporterRequest"
+                    }
+                },
+                "extra_params": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
                     }
                 }
             }
