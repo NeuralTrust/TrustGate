@@ -58,7 +58,7 @@ func TestPromptModeration(t *testing.T) {
 	servicePayload := map[string]interface{}{
 		"name":        fmt.Sprintf("httpbin-service-%d", time.Now().Unix()),
 		"type":        "upstream",
-		"description": "HTTPBin test service",
+		"description": "test service",
 		"upstream_id": upstreamID,
 		"strip_path":  true,
 	}
