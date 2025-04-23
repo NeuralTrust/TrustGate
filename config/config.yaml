@@ -27,7 +27,7 @@ redis:
   db: ${REDIS_DB}
 
 plugins:
-  ignore_errors: false
+  ignore_errors: true
 
 tls:
   disabled: true
