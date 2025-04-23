@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.23-alpine AS builder
+FROM golang:1.23-bullseye AS builder
 
 WORKDIR /build
 
@@ -8,8 +8,8 @@ ARG VERSION
 ARG GIT_COMMIT
 ARG BUILD_DATE
 
-# Install build dependencies
-RUN apk add --no-cache git
+# Install build dependencies (added build-base and librdkafka-dev)
+RUN apt-get update && apt-get install -y librdkafka-dev git
 
 # Copy go mod files
 COPY go.mod go.sum ./
@@ -22,7 +22,7 @@ COPY . .
 RUN go mod verify
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/NeuralTrust/TrustGate/pkg/version.Version=${VERSION} \
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags "-X github.com/NeuralTrust/TrustGate/pkg/version.Version=${VERSION} \
                       -X github.com/NeuralTrust/TrustGate/pkg/version.GitCommit=${GIT_COMMIT} \
                       -X github.com/NeuralTrust/TrustGate/pkg/version.BuildDate=${BUILD_DATE}" \
     -o gateway ./cmd/gateway
