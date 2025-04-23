@@ -56,7 +56,8 @@ func (r *proxyRouter) BuildRoutes(router *fiber.App) error {
 
 	router.Post(MirrorPath, func(ctx *fiber.Ctx) error {
 		return ctx.Status(http.StatusOK).JSON(fiber.Map{
-			"body": string(ctx.Body()),
+			"headers": ctx.GetReqHeaders(),
+			"body":    string(ctx.Body()),
 		})
 	})
 

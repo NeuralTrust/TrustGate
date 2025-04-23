@@ -170,6 +170,10 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		reqCtx.Headers[key] = values
 	}
 
+	if interactionId, ok := c.Locals(common.InteractionIDHeader).(string); ok && interactionId != "" {
+		reqCtx.Headers[common.InteractionIDHeader] = []string{interactionId}
+	}
+
 	// Create the ResponseContext
 	respCtx := &types.ResponseContext{
 		Context:   c.Context(),
