@@ -8,7 +8,6 @@ import (
 	"time"
 
 	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -167,16 +166,8 @@ func (m *worker) feedEvent(
 	evt.Latency = elapsedTime.Milliseconds()
 	evt.IP = req.IP
 	evt.Method = req.Method
-
-	if conversationIDs, ok := req.Headers[common.ConversationIDHeader]; ok && len(conversationIDs) > 0 {
-		evt.ConversationID = conversationIDs[0]
-	}
-	if interactionIDs, ok := req.Headers[common.InteractionIDHeader]; ok && len(interactionIDs) > 0 {
-		evt.InteractionID = interactionIDs[0]
-	}
-
 	if userAgent, ok := req.Metadata["user_agent_info"]; ok {
-		if ua, ok := userAgent.(*utils.UserAgentInfo); ok && ua != nil {
+		if ua, ok := userAgent.(*utils.UserAgentInfo); ok {
 			evt.Browser = ua.Browser
 			evt.Device = ua.Device
 			evt.Os = ua.OS
@@ -197,7 +188,7 @@ func (m *worker) feedEvent(
 func (m *worker) getStatusClass(status string) string {
 	code, err := strconv.Atoi(status)
 	if err != nil {
-		return "5xx"
+		return "5xx" // Return server error class if status code is invalid
 	}
 	return fmt.Sprintf("%dxx", code/100)
 }

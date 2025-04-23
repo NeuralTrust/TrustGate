@@ -9,7 +9,4 @@ const (
 	GatewayCacheTTL  = 1 * time.Hour
 	RulesCacheTTL    = 5 * time.Minute
 	PluginCacheTTL   = 30 * time.Minute
-
-	ConversationIDHeader = "X-Conversation-Id"
-	InteractionIDHeader  = "X-Interaction-Id"
 )
