@@ -54,7 +54,6 @@ func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {
 		"referer":    c.Get("Referer"),
 	}).Info("Gateway retrieval request received")
 
-	// Add validation for gateway ID
 	if gatewayID == "" || gatewayID == "null" {
 		s.logger.WithFields(logrus.Fields{
 			"gateway_id": gatewayID,
@@ -66,35 +65,25 @@ func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "gateway_id is required"})
 	}
 
-	// Validate UUID format
 	if _, err := uuid.Parse(gatewayID); err != nil {
 		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("invalid gateway_id format")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id format"})
 	}
 
-	s.logger.WithField("gateway_id", gatewayID).Info("Getting gateway")
-
-	// Try to get from cache first
-	entity, err := s.getGatewayCache.Retrieve(c.Context(), gatewayID)
+	dbGateway, err := s.repo.GetGateway(c.Context(), gatewayUUID)
 	if err != nil {
-		// If not in cache, get from database
-		dbGateway, err := s.repo.GetGateway(c.Context(), gatewayUUID)
-		if err != nil {
-			s.logger.WithError(err).Error("failed to get gateway")
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
-		}
+		s.logger.WithError(err).Error("failed to get gateway")
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
+	}
 
-		// Convert to API type
-		entity, err = s.transformer.Transform(dbGateway)
-		if err != nil {
-			s.logger.WithError(err).Error("failed to convert gateway")
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to process gateway configuration"})
-		}
+	entity, err := s.transformer.Transform(dbGateway)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to convert gateway")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to process gateway configuration"})
+	}
 
-		// Store in cache
-		if err := s.updateGatewayCache.Update(c.Context(), dbGateway); err != nil {
-			s.logger.WithError(err).Error("failed to cache gateway")
-		}
+	if err := s.updateGatewayCache.Update(c.Context(), dbGateway); err != nil {
+		s.logger.WithError(err).Error("failed to cache gateway")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(entity)

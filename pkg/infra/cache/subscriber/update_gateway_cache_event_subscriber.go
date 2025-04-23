@@ -26,10 +26,13 @@ func NewUpdateGatewayCacheEventSubscriber(
 	logger *logrus.Logger,
 	cacheService gateway.UpdateGatewayCache,
 	c *cache.Cache,
+	repo *database.Repository,
 ) infraCache.EventSubscriber[event.UpdateGatewayCacheEvent] {
 	return &UpdateGatewayCacheEventSubscriber{
 		logger:       logger,
 		cacheService: cacheService,
+		cache:        c,
+		repo:         repo,
 		memoryCache:  c.GetTTLMap(cache.UpstreamTTLName),
 	}
 }

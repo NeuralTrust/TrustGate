@@ -116,6 +116,11 @@ func sendRequest(t *testing.T, method, url string, body interface{}) (int, map[s
 	assert.NoError(t, err)
 	defer resp.Body.Close()
 
+	// For 204 No Content responses, return empty map
+	if resp.StatusCode == http.StatusNoContent {
+		return resp.StatusCode, map[string]interface{}{}
+	}
+
 	// Read response body
 	respBytes, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)

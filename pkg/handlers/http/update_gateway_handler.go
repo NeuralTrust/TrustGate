@@ -147,7 +147,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		h.logger.WithError(err).Error("failed to publish update gateway cache event")
 	}
 
-	return c.Status(fiber.StatusNoContent).JSON(dbGateway)
+	return c.Status(fiber.StatusNoContent).JSON(fiber.Map{})
 }
 
 func (h *updateGatewayHandler) telemetryExporterToDomain(configs []types.Exporter) []telemetry.ExporterConfig {
