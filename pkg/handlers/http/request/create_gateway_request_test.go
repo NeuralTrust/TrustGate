@@ -55,7 +55,7 @@ func TestCreateGatewayRequest_Validate(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "invalid key in header_mapping: unsupported_key. Only 'conversation_id' and 'interaction_id' are allowed",
+			errMsg:  "invalid key in header_mapping: unsupported_key. only 'conversation_id' and 'interaction_id' are allowed",
 		},
 		{
 			name: "Invalid HeaderMapping with mix of valid and invalid keys",
@@ -68,7 +68,7 @@ func TestCreateGatewayRequest_Validate(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "invalid key in header_mapping: unsupported_key. Only 'conversation_id' and 'interaction_id' are allowed",
+			errMsg:  "invalid key in header_mapping: unsupported_key. only 'conversation_id' and 'interaction_id' are allowed",
 		},
 		{
 			name: "Nil Telemetry",

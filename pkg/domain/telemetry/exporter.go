@@ -8,7 +8,7 @@ import (
 
 type Exporter interface {
 	Name() string
-	ValidateConfig() error
+	ValidateConfig(settings map[string]interface{}) error
 	Handle(ctx context.Context, evt *metric_events.Event) error
 	WithSettings(settings map[string]interface{}) (Exporter, error)
 	Close()

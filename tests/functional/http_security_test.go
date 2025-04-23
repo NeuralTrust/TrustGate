@@ -43,9 +43,10 @@ func TestSecurityMiddleware(t *testing.T) {
 		"algorithm": "round-robin",
 		"targets": []map[string]interface{}{
 			{
-				"host":     "httpbin.org",
-				"port":     443,
-				"protocol": "https",
+				"host":     "localhost",
+				"port":     8081,
+				"protocol": "http",
+				"path":     "/__/ping",
 				"weight":   100,
 				"priority": 1,
 			},

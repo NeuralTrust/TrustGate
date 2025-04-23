@@ -35,14 +35,18 @@ func (p *Exporter) Name() string {
 	return ExporterName
 }
 
-func (p *Exporter) ValidateConfig() error {
-	if p.cfg.Host == "" {
+func (p *Exporter) ValidateConfig(settings map[string]interface{}) error {
+	var conf Config
+	if err := mapstructure.Decode(settings, &conf); err != nil {
+		return fmt.Errorf("invalid kafka config: %w", err)
+	}
+	if conf.Host == "" {
 		return errors.New("kafka host is required")
 	}
-	if p.cfg.Port == "" {
+	if conf.Port == "" {
 		return errors.New("kafka port is required")
 	}
-	if p.cfg.Topic == "" {
+	if conf.Topic == "" {
 		return errors.New("kafka topic is required")
 	}
 	return nil
@@ -63,10 +67,6 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 		cfg:      conf,
 		producer: producer,
 	}
-
-	if err := newProvider.ValidateConfig(); err != nil {
-		return nil, err
-	}
 	return newProvider, nil
 }
 
@@ -79,7 +79,7 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 	deliveryChan := make(chan kafka.Event)
-	fmt.Println(string(data))
+
 	err = p.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &p.cfg.Topic, Partition: kafka.PartitionAny},
 		Value:          data,

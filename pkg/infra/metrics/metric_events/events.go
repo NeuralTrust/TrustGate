@@ -64,7 +64,6 @@ type PluginDataEvent struct {
 
 func NewTraceEvent() *Event {
 	return &Event{
-		InteractionID:  uuid.New().String(),
 		ConversationID: uuid.New().String(),
 		Task:           "message",
 		Type:           TraceType,
@@ -74,7 +73,6 @@ func NewTraceEvent() *Event {
 
 func NewPluginEvent() *Event {
 	return &Event{
-		InteractionID:  uuid.New().String(),
 		ConversationID: uuid.New().String(),
 		Task:           "message",
 		Type:           PluginType,
