@@ -8,6 +8,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
+const (
+	conversationIDKey = "conversation_id"
+	interactionIDKey  = "interaction_id"
+)
+
 var allowedTLSVersions = map[string]uint16{
 	"TLS10": tls.VersionTLS10,
 	"TLS11": tls.VersionTLS11,
@@ -32,6 +37,7 @@ type TelemetryRequest struct {
 	ExtraParams         map[string]string `json:"extra_params"`
 	EnablePluginTraces  bool              `json:"enable_plugin_traces"`
 	EnableRequestTraces bool              `json:"enable_request_traces"`
+	HeaderMapping       map[string]string `json:"header_mapping"`
 }
 
 type ExporterRequest struct {
@@ -73,7 +79,19 @@ type SecurityConfigRequest struct {
 }
 
 func (r *CreateGatewayRequest) Validate() error {
-	return validateTls(r.TlS)
+	if err := validateTls(r.TlS); err != nil {
+		return err
+	}
+
+	if r.Telemetry != nil && r.Telemetry.HeaderMapping != nil {
+		for key := range r.Telemetry.HeaderMapping {
+			if key != conversationIDKey && key != interactionIDKey {
+				return fmt.Errorf("invalid key in header_mapping: %s. Only 'conversation_id' and 'interaction_id' are allowed", key)
+			}
+		}
+	}
+
+	return nil
 }
 
 func validateTls(tls map[string]ClientTLSConfigRequest) error {

@@ -9,7 +9,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
-	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -22,10 +21,11 @@ type DataFinder interface {
 }
 
 type dataFinder struct {
-	repo        *database.Repository
-	cache       *cache.Cache
-	memoryCache *common.TTLMap
-	logger      *logrus.Logger
+	repo              *database.Repository
+	cache             *cache.Cache
+	memoryCache       *common.TTLMap
+	logger            *logrus.Logger
+	outputTransformer *OutputTransformer
 }
 
 func NewDataFinder(
@@ -34,10 +34,11 @@ func NewDataFinder(
 	logger *logrus.Logger,
 ) DataFinder {
 	return &dataFinder{
-		repo:        repository,
-		cache:       c,
-		logger:      logger,
-		memoryCache: c.GetTTLMap(cache.GatewayTTLName),
+		repo:              repository,
+		cache:             c,
+		logger:            logger,
+		memoryCache:       c.GetTTLMap(cache.GatewayTTLName),
+		outputTransformer: NewOutputTransformer(),
 	}
 }
 
@@ -114,59 +115,7 @@ func (f *dataFinder) getGatewayDataFromRedis(ctx context.Context, gatewayID stri
 }
 
 func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gateway {
-	var requiredPlugins []types.PluginConfig
-	for _, pluginConfig := range g.RequiredPlugins {
-		requiredPlugins = append(requiredPlugins, pluginConfig)
-	}
-	var requiredTelemetry []types.Exporter
-	if g.Telemetry != nil {
-		for _, telemetryConfig := range g.Telemetry.Exporters {
-			requiredTelemetry = append(requiredTelemetry, types.Exporter{
-				Name:     telemetryConfig.Name,
-				Settings: telemetryConfig.Settings,
-			})
-		}
-	}
-	var securityConfig *types.SecurityConfig
-	if g.SecurityConfig != nil {
-		securityConfig = &types.SecurityConfig{
-			AllowedHosts:            g.SecurityConfig.AllowedHosts,
-			AllowedHostsAreRegex:    g.SecurityConfig.AllowedHostsAreRegex,
-			SSLRedirect:             g.SecurityConfig.SSLRedirect,
-			SSLHost:                 g.SecurityConfig.SSLHost,
-			SSLProxyHeaders:         g.SecurityConfig.SSLProxyHeaders,
-			STSSeconds:              g.SecurityConfig.STSSeconds,
-			STSIncludeSubdomains:    g.SecurityConfig.STSIncludeSubdomains,
-			FrameDeny:               g.SecurityConfig.FrameDeny,
-			CustomFrameOptionsValue: g.SecurityConfig.CustomFrameOptionsValue,
-			ReferrerPolicy:          g.SecurityConfig.ReferrerPolicy,
-			ContentSecurityPolicy:   g.SecurityConfig.ContentSecurityPolicy,
-			ContentTypeNosniff:      g.SecurityConfig.ContentTypeNosniff,
-			BrowserXSSFilter:        g.SecurityConfig.BrowserXSSFilter,
-			IsDevelopment:           g.SecurityConfig.IsDevelopment,
-		}
-	}
-
-	var telemetryObj *types.Telemetry
-	if g.Telemetry != nil {
-		telemetryObj = &types.Telemetry{
-			Exporters:           requiredTelemetry,
-			ExtraParams:         g.Telemetry.ExtraParams,
-			EnablePluginTraces:  g.Telemetry.EnablePluginTraces,
-			EnableRequestTraces: g.Telemetry.EnableRequestTraces,
-		}
-	}
-
-	return &types.Gateway{
-		ID:              g.ID.String(),
-		Name:            g.Name,
-		Subdomain:       g.Subdomain,
-		Status:          g.Status,
-		RequiredPlugins: requiredPlugins,
-		SecurityConfig:  securityConfig,
-		Telemetry:       telemetryObj,
-		TlS:             transformClientTLSConfigToType(g.ClientTLSConfig),
-	}
+	return f.outputTransformer.convertGatewayToTypes(g)
 }
 
 func (f *dataFinder) getGatewayDataFromDB(ctx context.Context, gatewayID uuid.UUID) (*types.GatewayData, error) {
@@ -287,27 +236,4 @@ func (f *dataFinder) getJSONBytes(value interface{}) ([]byte, error) {
 		}
 		return b, nil
 	}
-}
-
-func transformClientTLSConfigToType(tls domain.ClientTLSConfig) map[string]types.ClientTLSConfig {
-	if len(tls) == 0 {
-		return nil
-	}
-	result := make(map[string]types.ClientTLSConfig, len(tls))
-	for k, v := range tls {
-		result[k] = types.ClientTLSConfig{
-			AllowInsecureConnections: v.AllowInsecureConnections,
-			CACerts:                  v.CACerts,
-			ClientCerts: types.ClientTLSCert{
-				Certificate: v.ClientCerts.Certificate,
-				PrivateKey:  v.ClientCerts.PrivateKey,
-			},
-			CipherSuites:        v.CipherSuites,
-			CurvePreferences:    v.CurvePreferences,
-			DisableSystemCAPool: v.DisableSystemCAPool,
-			MinVersion:          v.MinVersion,
-			MaxVersion:          v.MaxVersion,
-		}
-	}
-	return result
 }

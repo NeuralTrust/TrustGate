@@ -3,6 +3,7 @@ package gateway
 import (
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
@@ -14,59 +15,89 @@ func NewOutputTransformer() *OutputTransformer {
 	return &OutputTransformer{}
 }
 
-func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) (*types.Gateway, error) {
-	if dbGateway.RequiredPlugins == nil {
-		dbGateway.RequiredPlugins = []types.PluginConfig{}
+func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) *types.Gateway {
+	return ot.convertGatewayToTypes(dbGateway)
+}
+
+func (ot OutputTransformer) convertGatewayToTypes(g *gateway.Gateway) *types.Gateway {
+	if g.RequiredPlugins == nil {
+		g.RequiredPlugins = []types.PluginConfig{}
 	}
 
-	var exporters []types.Exporter
 	var telemetry *types.Telemetry
-	if dbGateway.Telemetry != nil {
-		for _, config := range dbGateway.Telemetry.Exporters {
-			providerConfig := types.Exporter{
+	if g.Telemetry != nil {
+		var exporters []types.Exporter
+		for _, config := range g.Telemetry.Exporters {
+			exporters = append(exporters, types.Exporter{
 				Name:     config.Name,
 				Settings: config.Settings,
-			}
-			exporters = append(exporters, providerConfig)
+			})
 		}
 		telemetry = &types.Telemetry{
 			Exporters:           exporters,
-			ExtraParams:         dbGateway.Telemetry.ExtraParams,
-			EnablePluginTraces:  dbGateway.Telemetry.EnablePluginTraces,
-			EnableRequestTraces: dbGateway.Telemetry.EnableRequestTraces,
+			ExtraParams:         g.Telemetry.ExtraParams,
+			EnablePluginTraces:  g.Telemetry.EnablePluginTraces,
+			EnableRequestTraces: g.Telemetry.EnableRequestTraces,
+			HeaderMapping:       g.Telemetry.HeaderMapping,
 		}
 	}
 
 	var securityConfig *types.SecurityConfig
-	if dbGateway.SecurityConfig != nil {
+	if g.SecurityConfig != nil {
 		securityConfig = &types.SecurityConfig{
-			AllowedHosts:            dbGateway.SecurityConfig.AllowedHosts,
-			AllowedHostsAreRegex:    dbGateway.SecurityConfig.AllowedHostsAreRegex,
-			SSLRedirect:             dbGateway.SecurityConfig.SSLRedirect,
-			SSLHost:                 dbGateway.SecurityConfig.SSLHost,
-			SSLProxyHeaders:         dbGateway.SecurityConfig.SSLProxyHeaders,
-			STSSeconds:              dbGateway.SecurityConfig.STSSeconds,
-			STSIncludeSubdomains:    dbGateway.SecurityConfig.STSIncludeSubdomains,
-			FrameDeny:               dbGateway.SecurityConfig.FrameDeny,
-			CustomFrameOptionsValue: dbGateway.SecurityConfig.CustomFrameOptionsValue,
-			ReferrerPolicy:          dbGateway.SecurityConfig.ReferrerPolicy,
-			ContentSecurityPolicy:   dbGateway.SecurityConfig.ContentSecurityPolicy,
-			ContentTypeNosniff:      dbGateway.SecurityConfig.ContentTypeNosniff,
-			BrowserXSSFilter:        dbGateway.SecurityConfig.BrowserXSSFilter,
-			IsDevelopment:           dbGateway.SecurityConfig.IsDevelopment,
+			AllowedHosts:            g.SecurityConfig.AllowedHosts,
+			AllowedHostsAreRegex:    g.SecurityConfig.AllowedHostsAreRegex,
+			SSLRedirect:             g.SecurityConfig.SSLRedirect,
+			SSLHost:                 g.SecurityConfig.SSLHost,
+			SSLProxyHeaders:         g.SecurityConfig.SSLProxyHeaders,
+			STSSeconds:              g.SecurityConfig.STSSeconds,
+			STSIncludeSubdomains:    g.SecurityConfig.STSIncludeSubdomains,
+			FrameDeny:               g.SecurityConfig.FrameDeny,
+			CustomFrameOptionsValue: g.SecurityConfig.CustomFrameOptionsValue,
+			ReferrerPolicy:          g.SecurityConfig.ReferrerPolicy,
+			ContentSecurityPolicy:   g.SecurityConfig.ContentSecurityPolicy,
+			ContentTypeNosniff:      g.SecurityConfig.ContentTypeNosniff,
+			BrowserXSSFilter:        g.SecurityConfig.BrowserXSSFilter,
+			IsDevelopment:           g.SecurityConfig.IsDevelopment,
 		}
 	}
 
-	return &types.Gateway{
-		ID:              dbGateway.ID.String(),
-		Name:            dbGateway.Name,
-		Subdomain:       dbGateway.Subdomain,
-		Status:          dbGateway.Status,
-		RequiredPlugins: dbGateway.RequiredPlugins,
-		Telemetry:       telemetry,
+	result := &types.Gateway{
+		ID:              g.ID.String(),
+		Name:            g.Name,
+		Subdomain:       g.Subdomain,
+		Status:          g.Status,
+		RequiredPlugins: g.RequiredPlugins,
 		SecurityConfig:  securityConfig,
-		TlS:             transformClientTLSConfigToType(dbGateway.ClientTLSConfig),
-		CreatedAt:       dbGateway.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:       dbGateway.UpdatedAt.Format(time.RFC3339),
-	}, nil
+		Telemetry:       telemetry,
+		TlS:             ot.transformClientTLSConfigToType(g.ClientTLSConfig),
+	}
+
+	result.CreatedAt = g.CreatedAt.Format(time.RFC3339)
+	result.UpdatedAt = g.UpdatedAt.Format(time.RFC3339)
+
+	return result
+}
+
+func (ot OutputTransformer) transformClientTLSConfigToType(tls domain.ClientTLSConfig) map[string]types.ClientTLSConfig {
+	if len(tls) == 0 {
+		return nil
+	}
+	result := make(map[string]types.ClientTLSConfig, len(tls))
+	for k, v := range tls {
+		result[k] = types.ClientTLSConfig{
+			AllowInsecureConnections: v.AllowInsecureConnections,
+			CACerts:                  v.CACerts,
+			ClientCerts: types.ClientTLSCert{
+				Certificate: v.ClientCerts.Certificate,
+				PrivateKey:  v.ClientCerts.PrivateKey,
+			},
+			CipherSuites:        v.CipherSuites,
+			CurvePreferences:    v.CurvePreferences,
+			DisableSystemCAPool: v.DisableSystemCAPool,
+			MinVersion:          v.MinVersion,
+			MaxVersion:          v.MaxVersion,
+		}
+	}
+	return result
 }

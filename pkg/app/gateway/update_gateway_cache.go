@@ -31,10 +31,7 @@ func (h *updateGatewayCache) Update(ctx context.Context, gateway *gateway.Gatewa
 		return fmt.Errorf("invalid gateway ID: %w", err)
 	}
 
-	apiGateway, err := h.transformer.Transform(gateway)
-	if err != nil {
-		return fmt.Errorf("failed to convert gateway: %w", err)
-	}
+	apiGateway := h.transformer.Transform(gateway)
 
 	// Cache the gateway
 	gatewayJSON, err := json.Marshal(apiGateway)

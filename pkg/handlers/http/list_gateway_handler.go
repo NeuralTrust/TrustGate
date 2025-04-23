@@ -62,14 +62,8 @@ func (h *listGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	var gateways []types.Gateway
 	for _, dbGateway := range dbGateways {
-		output, err := h.transformer.Transform(&dbGateway)
-		if err != nil {
-			h.logger.WithError(err).Error("failed to convert gateway")
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to process gateway configuration"})
-		}
+		output := h.transformer.Transform(&dbGateway)
 		gateways = append(gateways, *output)
-
-		// Update cache in background
 		go func(g domain.Gateway) {
 			ctx := context.Background()
 			if err := h.updateGatewayCache.Update(ctx, &g); err != nil {

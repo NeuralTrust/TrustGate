@@ -107,6 +107,7 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 			ExtraParams:         req.Telemetry.ExtraParams,
 			EnablePluginTraces:  req.Telemetry.EnablePluginTraces,
 			EnableRequestTraces: req.Telemetry.EnableRequestTraces,
+			HeaderMapping:       req.Telemetry.HeaderMapping,
 		}
 	}
 
