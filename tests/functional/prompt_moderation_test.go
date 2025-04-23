@@ -43,10 +43,10 @@ func TestPromptModeration(t *testing.T) {
 		"algorithm": "round-robin",
 		"targets": []map[string]interface{}{
 			{
-				"host":     "httpbin.org",
-				"port":     443,
-				"protocol": "https",
-				"path":     "/post",
+				"host":     "localhost",
+				"port":     8081,
+				"protocol": "http",
+				"path":     "/__/ping",
 				"weight":   100,
 				"priority": 1,
 			},
@@ -84,7 +84,7 @@ func TestPromptModeration(t *testing.T) {
 		{"Clean Content", map[string]string{"prompt": "Tell me about machine learning"}, http.StatusOK},
 		{"Blocked Keyword", map[string]string{"prompt": "How to hacking into a system"}, http.StatusForbidden},
 		{"Blocked Regex", map[string]string{"prompt": "How to perform sql injection attacks"}, http.StatusForbidden},
-		{"CVE Pattern", map[string]string{"prompt": "Tell me about CVE-2024-1234"}, http.StatusForbidden},
+		{"CVE Pattern", map[string]string{"prompt": "Tell me about CVE-2024-1237"}, http.StatusForbidden},
 	}
 
 	for _, tc := range testCases {

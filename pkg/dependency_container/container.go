@@ -105,6 +105,7 @@ func NewContainer(
 		kafka.ExporterName: kafka.NewKafkaExporter(),
 	})
 	telemetryBuilder := telemetry.NewTelemetryExportersBuilder(providerLocator)
+	telemetryValidator := telemetry.NewTelemetryExportersValidator(providerLocator)
 
 	// redis publisher
 	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
@@ -150,11 +151,11 @@ func NewContainer(
 			gatewayRepository,
 			updateGatewayCache,
 			pluginChainValidator,
-			telemetryBuilder,
+			telemetryValidator,
 		),
 		ListGatewayHandler:   handlers.NewListGatewayHandler(logger, repo, updateGatewayCache),
 		GetGatewayHandler:    handlers.NewGetGatewayHandler(logger, repo, getGatewayCache, updateGatewayCache),
-		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, repo, pluginManager, redisPublisher, telemetryBuilder),
+		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, repo, pluginManager, redisPublisher, telemetryValidator),
 		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(logger, repo, redisPublisher),
 		// Upstream
 		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, repo, cacheInstance),

@@ -22,9 +22,20 @@ func (p *ExporterLocator) GetExporter(exporter types.Exporter) (telemetry.Export
 	if !ok {
 		return nil, fmt.Errorf("unknown provider: %s", exporter.Name)
 	}
+	if err := base.ValidateConfig(exporter.Settings); err != nil {
+		return nil, err
+	}
 	provider, err := base.WithSettings(exporter.Settings)
 	if err != nil {
 		return nil, err
 	}
 	return provider, nil
+}
+
+func (p *ExporterLocator) ValidateExporter(exporter types.Exporter) error {
+	base, ok := p.exporters[exporter.Name]
+	if !ok {
+		return fmt.Errorf("unknown provider: %s", exporter.Name)
+	}
+	return base.ValidateConfig(exporter.Settings)
 }

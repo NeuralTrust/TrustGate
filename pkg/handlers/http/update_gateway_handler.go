@@ -20,11 +20,11 @@ import (
 )
 
 type updateGatewayHandler struct {
-	logger                    *logrus.Logger
-	repo                      *database.Repository
-	pluginManager             plugins.Manager
-	publisher                 infraCache.EventPublisher
-	telemetryProvidersBuilder appTelemetry.ExportersBuilder
+	logger                      *logrus.Logger
+	repo                        *database.Repository
+	pluginManager               plugins.Manager
+	publisher                   infraCache.EventPublisher
+	telemetryProvidersValidator appTelemetry.ExportersValidator
 }
 
 func NewUpdateGatewayHandler(
@@ -32,14 +32,14 @@ func NewUpdateGatewayHandler(
 	repo *database.Repository,
 	pluginManager plugins.Manager,
 	publisher infraCache.EventPublisher,
-	telemetryProvidersBuilder appTelemetry.ExportersBuilder,
+	telemetryProvidersValidator appTelemetry.ExportersValidator,
 ) Handler {
 	return &updateGatewayHandler{
-		logger:                    logger,
-		repo:                      repo,
-		pluginManager:             pluginManager,
-		publisher:                 publisher,
-		telemetryProvidersBuilder: telemetryProvidersBuilder,
+		logger:                      logger,
+		repo:                        repo,
+		pluginManager:               pluginManager,
+		publisher:                   publisher,
+		telemetryProvidersValidator: telemetryProvidersValidator,
 	}
 }
 
@@ -122,7 +122,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		for _, config := range req.Telemetry.Exporters {
 			exporters = append(exporters, types.Exporter(config))
 		}
-		_, err = h.telemetryProvidersBuilder.Build(exporters)
+		err = h.telemetryProvidersValidator.Validate(exporters)
 		if err != nil {
 			h.logger.WithError(err).Error("failed to validate telemetry providers")
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
