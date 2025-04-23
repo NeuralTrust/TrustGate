@@ -190,5 +190,15 @@ func (m *metricsMiddleware) setTelemetryHeaders(c *fiber.Ctx, gatewayData *types
 	}
 
 	setHeaderLocal("conversation_id", common.ConversationIDHeader)
-	setHeaderLocal("interaction_id", common.InteractionIDHeader)
+
+	interactionIDHeaderKey, ok := mapping["interaction_id"]
+	if !ok {
+		interactionIDHeaderKey = common.InteractionIDHeader
+	}
+
+	if value := c.Get(interactionIDHeaderKey); value != "" {
+		c.Locals(common.InteractionIDHeader, value)
+	} else {
+		c.Locals(common.InteractionIDHeader, uuid.New().String())
+	}
 }

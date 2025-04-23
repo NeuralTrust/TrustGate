@@ -197,7 +197,7 @@ func (m *worker) feedEvent(
 func (m *worker) getStatusClass(status string) string {
 	code, err := strconv.Atoi(status)
 	if err != nil {
-		return "5xx"
+		return "5xx" // Return server error class if status code is invalid
 	}
 	return fmt.Sprintf("%dxx", code/100)
 }
