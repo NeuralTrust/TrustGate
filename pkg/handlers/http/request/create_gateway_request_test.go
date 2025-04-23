@@ -39,7 +39,7 @@ func TestCreateGatewayRequest_Validate(t *testing.T) {
 				Telemetry: &TelemetryRequest{
 					HeaderMapping: map[string]string{
 						"conversation_id": "X-CONVERSATION-ID",
-						"interaction_id":  "X-INTERACTION-ID",
+						"interaction_id": "X-INTERACTION-ID",
 					},
 				},
 			},
