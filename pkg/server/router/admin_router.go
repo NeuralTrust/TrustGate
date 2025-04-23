@@ -37,8 +37,10 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 		URL: "http://localhost:8080/swagger.json",
 	}))
 
+	router.Get("/version", handlerTransport.GetVersionHandler.Handle)
 	v1 := router.Group("/api/v1")
 	{
+		// Version endpoint
 		gateways := v1.Group("/gateways")
 		{
 			gateways.Post("", handlerTransport.CreateGatewayHandler.Handle)

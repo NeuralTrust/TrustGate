@@ -116,7 +116,7 @@ func NewContainer(
 	deleteServiceSubscriber := subscriber.NewDeleteServiceCacheEventSubscriber(logger, cacheInstance)
 	deleteUpstreamSubscriber := subscriber.NewDeleteUpstreamCacheEventSubscriber(logger, cacheInstance)
 	deleteApiKeySubscriber := subscriber.NewDeleteApiKeyCacheEventSubscriber(logger, cacheInstance)
-	updateGatewaySubscriber := subscriber.NewUpdateGatewayCacheEventSubscriber(logger, updateGatewayCache, cacheInstance)
+	updateGatewaySubscriber := subscriber.NewUpdateGatewayCacheEventSubscriber(logger, updateGatewayCache, cacheInstance, repo)
 	updateUpstreamSubscriber := subscriber.NewUpdateUpstreamCacheEventSubscriber(logger, cacheInstance, upstreamRepository)
 	updateServiceSubscriber := subscriber.NewUpdateServiceCacheEventSubscriber(logger, cacheInstance, serviceRepository)
 
@@ -178,6 +178,8 @@ func NewContainer(
 		ListAPIKeysHandler:  handlers.NewListAPIKeysHandler(logger, repo),
 		GetAPIKeyHandler:    handlers.NewGetAPIKeyHandler(logger, cacheInstance, apiKeyRepository),
 		DeleteAPIKeyHandler: handlers.NewDeleteAPIKeyHandler(logger, repo, apiKeyRepository, redisPublisher),
+		// Version
+		GetVersionHandler: handlers.NewGetVersionHandler(logger),
 	}
 
 	container := &Container{

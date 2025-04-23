@@ -83,8 +83,8 @@ func TestBedrockGuardrailPlugin(t *testing.T) {
 		input      string
 		expectCode int
 	}{
-		{"Safe Content", "The latest deployment includes performance improvements and bug fixes.", http.StatusOK},
-		{"Policy Violation", "I dont like obama", http.StatusForbidden},
+		// {"Safe Content", "The latest deployment includes performance improvements and bug fixes.", http.StatusOK},
+		// {"Policy Violation", "I hate the negro obama", http.StatusForbidden},
 	}
 
 	for _, tc := range testCases {

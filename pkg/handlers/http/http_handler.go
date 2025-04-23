@@ -46,6 +46,9 @@ type HandlerTransportDTO struct {
 	ListAPIKeysHandler  Handler
 	GetAPIKeyHandler    Handler
 	DeleteAPIKeyHandler Handler
+
+	// Version
+	GetVersionHandler Handler
 }
 
 func (t *HandlerTransportDTO) GetTransport() HandlerTransport {
