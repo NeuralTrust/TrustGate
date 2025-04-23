@@ -54,6 +54,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 
 		userAgentInfo := utils.ParseUserAgent(m.getUserAgent(c), m.getAcceptLanguage(c))
 
+		m.setTelemetryHeaders(c, gatewayData)
 		inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
 
 		startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
@@ -134,6 +135,14 @@ func (m *metricsMiddleware) transformToRequestContext(
 	for key, values := range c.GetReqHeaders() {
 		reqCtx.Headers[key] = values
 	}
+
+	if conversationID, ok := c.Locals(common.ConversationIDHeader).(string); ok && conversationID != "" {
+		reqCtx.Headers[common.ConversationIDHeader] = []string{conversationID}
+	}
+	if interactionID, ok := c.Locals(common.InteractionIDHeader).(string); ok && interactionID != "" {
+		reqCtx.Headers[common.InteractionIDHeader] = []string{interactionID}
+	}
+
 	return reqCtx
 }
 
@@ -160,4 +169,26 @@ func (m *metricsMiddleware) getQueryParams(c *fiber.Ctx) url.Values {
 		queryParams.Set(string(k), string(v))
 	})
 	return queryParams
+}
+
+func (m *metricsMiddleware) setTelemetryHeaders(c *fiber.Ctx, gatewayData *types.GatewayData) {
+	mapping := make(map[string]string)
+	if gatewayData.Gateway != nil &&
+		gatewayData.Gateway.Telemetry != nil &&
+		gatewayData.Gateway.Telemetry.HeaderMapping != nil {
+		mapping = gatewayData.Gateway.Telemetry.HeaderMapping
+	}
+
+	setHeaderLocal := func(mappingKey, defaultHeader string) {
+		headerKey, ok := mapping[mappingKey]
+		if !ok {
+			headerKey = defaultHeader
+		}
+		if value := c.Get(headerKey); value != "" {
+			c.Locals(defaultHeader, value)
+		}
+	}
+
+	setHeaderLocal("conversation_id", common.ConversationIDHeader)
+	setHeaderLocal("interaction_id", common.InteractionIDHeader)
 }

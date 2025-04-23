@@ -76,15 +76,11 @@ func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 	}
 
-	entity, err := s.transformer.Transform(dbGateway)
-	if err != nil {
-		s.logger.WithError(err).Error("failed to convert gateway")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to process gateway configuration"})
-	}
+	output := s.transformer.Transform(dbGateway)
 
 	if err := s.updateGatewayCache.Update(c.Context(), dbGateway); err != nil {
 		s.logger.WithError(err).Error("failed to cache gateway")
 	}
 
-	return c.Status(fiber.StatusOK).JSON(entity)
+	return c.Status(fiber.StatusOK).JSON(output)
 }
