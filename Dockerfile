@@ -28,25 +28,20 @@ RUN CGO_ENABLED=1 GOOS=linux go build -ldflags "-X github.com/NeuralTrust/TrustG
     -o gateway ./cmd/gateway
 
 # Final stage
-FROM alpine:3.18
+FROM debian:bullseye-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 
-# Copy binary and config files
 COPY --from=builder /build/gateway /app/
 COPY config/ /app/config/
 
-# Set environment variables
 ENV GIN_MODE=release
 
-# Add entrypoint script
 COPY scripts/docker-entrypoint.sh /app/
 RUN chmod +x /app/docker-entrypoint.sh
 
-# Expose API and metrics ports
 EXPOSE 8080 8081 9090
 
-ENTRYPOINT ["/app/docker-entrypoint.sh"] 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
