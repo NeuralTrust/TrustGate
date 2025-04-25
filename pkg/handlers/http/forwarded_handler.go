@@ -460,7 +460,7 @@ func (h *forwardedHandler) handleUpstreamRequest(
 
 	var reqErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		target, err := lb.NextTarget(req.Context)
+		target, err := lb.NextTarget(req)
 		if err != nil {
 			if attempt == maxRetries {
 				return nil, fmt.Errorf("failed to get target after retries: %w", err)
@@ -508,7 +508,6 @@ func (h *forwardedHandler) handleEndpointRequest(
 	return rsp, nil
 }
 
-// Add helper method to create or get load balancer
 func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upstream) (*loadbalancer.LoadBalancer, error) {
 	if lb, ok := h.loadBalancers.Load(upstream.ID); ok {
 		if lb, ok := lb.(*loadbalancer.LoadBalancer); ok {

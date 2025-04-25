@@ -12,4 +12,6 @@ const (
 
 	ConversationIDHeader = "X-Conversation-Id"
 	InteractionIDHeader  = "X-Interaction-Id"
+
+	SemanticStrategyName = "semantic"
 )

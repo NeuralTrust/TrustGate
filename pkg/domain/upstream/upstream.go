@@ -12,6 +12,27 @@ import (
 	"gorm.io/gorm"
 )
 
+type EmbeddingConfig struct {
+	Provider    string                 `json:"provider"`
+	Model       string                 `json:"model"`
+	Credentials domain.CredentialsJSON `json:"credentials,omitempty" gorm:"type:jsonb"`
+}
+
+func (e EmbeddingConfig) Value() (driver.Value, error) {
+	return json.Marshal(e)
+}
+
+func (e *EmbeddingConfig) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("expected []byte, got %T", value)
+	}
+	return json.Unmarshal(bytes, e)
+}
+
 type Target struct {
 	ID           string                 `json:"id"`
 	Weight       int                    `json:"weight,omitempty"`
@@ -25,6 +46,7 @@ type Target struct {
 	Provider     string                 `json:"provider,omitempty"`
 	Models       ModelsJSON             `json:"models,omitempty" gorm:"type:jsonb"`
 	DefaultModel string                 `json:"default_model,omitempty"`
+	Description  string                 `json:"description,omitempty"`
 	Credentials  domain.CredentialsJSON `json:"credentials,omitempty" gorm:"type:jsonb"`
 }
 
@@ -88,15 +110,16 @@ func (t *Targets) Scan(value interface{}) error {
 }
 
 type Upstream struct {
-	ID           uuid.UUID       `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	GatewayID    uuid.UUID       `json:"gateway_id" gorm:"type:uuid; not null"`
-	Name         string          `json:"name" gorm:"uniqueIndex:idx_gateway_upstream_name"`
-	Algorithm    string          `json:"algorithm" gorm:"default:'round-robin'"`
-	Targets      Targets         `json:"targets" gorm:"type:jsonb"`
-	HealthChecks *HealthCheck    `json:"health_checks,omitempty" gorm:"type:jsonb"`
-	Tags         domain.TagsJSON `json:"tags,omitempty" gorm:"type:jsonb"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID              uuid.UUID        `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	GatewayID       uuid.UUID        `json:"gateway_id" gorm:"type:uuid; not null"`
+	Name            string           `json:"name" gorm:"uniqueIndex:idx_gateway_upstream_name"`
+	Algorithm       string           `json:"algorithm" gorm:"default:'round-robin'"`
+	Targets         Targets          `json:"targets" gorm:"type:jsonb"`
+	EmbeddingConfig *EmbeddingConfig `json:"embedding_config,omitempty" gorm:"type:jsonb"`
+	HealthChecks    *HealthCheck     `json:"health_checks,omitempty" gorm:"type:jsonb"`
+	Tags            domain.TagsJSON  `json:"tags,omitempty" gorm:"type:jsonb"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
 func (t *Target) Validate() error {
@@ -165,15 +188,37 @@ func (u *Upstream) Validate() error {
 		"round-robin":          true,
 		"weighted-round-robin": true,
 		"least-conn":           true,
+		"semantic":             true,
 	}
 
 	if !validAlgorithms[u.Algorithm] {
 		return fmt.Errorf("invalid algorithm: %s", u.Algorithm)
 	}
 
+	if u.Algorithm == "semantic" {
+		if u.EmbeddingConfig == nil {
+			return fmt.Errorf("embedding configuration is required when algorithm is semantic")
+		}
+		if u.EmbeddingConfig.Model == "" {
+			return fmt.Errorf("embedding model is required when algorithm is semantic")
+		}
+		if u.EmbeddingConfig.Credentials.HeaderName == "" {
+			return fmt.Errorf("embedding credentials header_name is required when algorithm is semantic")
+		}
+		if u.EmbeddingConfig.Credentials.HeaderValue == "" {
+			return fmt.Errorf("embedding credentials header_value is required when algorithm is semantic")
+		}
+	}
+
 	for i, target := range u.Targets {
 		if err := target.Validate(); err != nil {
 			return fmt.Errorf("invalid target %d: %w", i, err)
+		}
+
+		if u.Algorithm == "semantic" {
+			if target.Description == "" {
+				return fmt.Errorf("target %d: description is required when algorithm is semantic", i)
+			}
 		}
 	}
 

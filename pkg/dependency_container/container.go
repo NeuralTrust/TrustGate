@@ -3,24 +3,29 @@ package dependency_container
 import (
 	"fmt"
 	"reflect"
+	"time"
+
+	"github.com/valyala/fasthttp"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
+	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	domainEmbedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
@@ -46,6 +51,7 @@ type Container struct {
 	FingerPrintMiddleware middleware.Middleware
 	SecurityMiddleware    middleware.Middleware
 	ApiKeyRepository      domainApikey.Repository
+	EmbeddingRepository   domainEmbedding.Repository
 	FingerprintTracker    fingerprint.Tracker
 	PluginChainValidator  plugin.ValidatePluginChain
 	MetricsWorker         metrics.Worker
@@ -55,12 +61,21 @@ func NewContainer(
 	cfg *config.Config,
 	logger *logrus.Logger,
 	db *database.DB,
-	lbFactory loadbalancer.Factory,
 	eventsRegistry map[string]reflect.Type,
 	initializeMemoryCache func(cacheInstance *cache.Cache),
 ) (*Container, error) {
 
-	// httpClient := &http.Client{}
+	httpClient := &fasthttp.Client{
+		ReadTimeout:                   10 * time.Second,
+		WriteTimeout:                  10 * time.Second,
+		MaxConnsPerHost:               16384,
+		MaxIdleConnDuration:           120 * time.Second,
+		ReadBufferSize:                32768,
+		WriteBufferSize:               32768,
+		NoDefaultUserAgentHeader:      true,
+		DisableHeaderNamesNormalizing: true,
+		DisablePathNormalizing:        true,
+	}
 	// breaker := httpx.NewCircuitBreaker("breaker", 10*time.Second, 3)
 
 	cacheConfig := common.CacheConfig{
@@ -91,7 +106,7 @@ func NewContainer(
 	gatewayRepository := repository.NewGatewayRepository(db.DB)
 
 	// service
-	upstreamFinder := upstream.NewFinder(upstreamRepository, cacheInstance, logger)
+	upstreamFinder := appUpstream.NewFinder(upstreamRepository, cacheInstance, logger)
 	serviceFinder := service.NewFinder(serviceRepository, cacheInstance, logger)
 	apiKeyFinder := apikey.NewFinder(apiKeyRepository, cacheInstance, logger)
 	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
@@ -99,6 +114,11 @@ func NewContainer(
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
 	gatewayDataFinder := gateway.NewDataFinder(repo, cacheInstance, logger)
 	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager, gatewayRepository)
+
+	// embedding services
+	embeddingServiceLocator := factory.NewServiceLocator(logger, httpClient)
+	embeddingRepository := repository.NewRedisEmbeddingRepository(cacheInstance)
+	descriptionEmbeddingCreator := appUpstream.NewDescriptionEmbeddingCreator(embeddingServiceLocator, embeddingRepository, logger)
 
 	// telemetry
 	providerLocator := infraTelemetry.NewProviderLocator(map[string]domain.Exporter{
@@ -130,6 +150,8 @@ func NewContainer(
 	infraCache.RegisterEventSubscriber[event.UpdateUpstreamCacheEvent](redisListener, updateUpstreamSubscriber)
 	infraCache.RegisterEventSubscriber[event.UpdateServiceCacheEvent](redisListener, updateServiceSubscriber)
 
+	lbFactory := loadbalancer.NewBaseFactory(embeddingRepository, embeddingServiceLocator)
+
 	metricsWorker := metrics.NewWorker(logger, telemetryBuilder)
 	// Handler Transport
 	handlerTransport := &handlers.HandlerTransportDTO{
@@ -158,10 +180,10 @@ func NewContainer(
 		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, repo, pluginManager, redisPublisher, telemetryValidator),
 		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(logger, repo, redisPublisher),
 		// Upstream
-		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, repo, cacheInstance),
+		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, repo, cacheInstance, descriptionEmbeddingCreator, cfg),
 		ListUpstreamHandler:   handlers.NewListUpstreamHandler(logger, repo, cacheInstance),
 		GetUpstreamHandler:    handlers.NewGetUpstreamHandler(logger, repo, cacheInstance, upstreamFinder),
-		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(logger, repo, redisPublisher),
+		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(logger, repo, redisPublisher, cacheInstance, descriptionEmbeddingCreator, cfg),
 		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(logger, repo, redisPublisher),
 		// Service
 		CreateServiceHandler: handlers.NewCreateServiceHandler(logger, repo, cacheInstance),
@@ -195,6 +217,7 @@ func NewContainer(
 		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),
 		SecurityMiddleware:    middleware.NewSecurityMiddleware(logger),
 		ApiKeyRepository:      apiKeyRepository,
+		EmbeddingRepository:   embeddingRepository,
 		PluginManager:         pluginManager,
 		BedrockClient:         bedrockClient,
 		FingerprintTracker:    fingerprintTracker,

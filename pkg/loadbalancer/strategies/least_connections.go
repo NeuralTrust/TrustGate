@@ -1,7 +1,6 @@
 package strategies
 
 import (
-	"context"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -18,7 +17,7 @@ func NewLeastConnections(targets []types.UpstreamTarget) *LeastConnections {
 	}
 }
 
-func (lc *LeastConnections) Next(ctx context.Context) *types.UpstreamTarget {
+func (lc *LeastConnections) Next(req *types.RequestContext) *types.UpstreamTarget {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 
@@ -26,7 +25,6 @@ func (lc *LeastConnections) Next(ctx context.Context) *types.UpstreamTarget {
 		return nil
 	}
 
-	// For now, just do round-robin since connection tracking is handled at LoadBalancer level
 	selected := &lc.targets[0]
 	lc.targets = append(lc.targets[1:], lc.targets[0])
 	return selected
