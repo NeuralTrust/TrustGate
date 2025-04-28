@@ -21,7 +21,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	infraLogger "github.com/NeuralTrust/TrustGate/pkg/infra/logger"
-	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
@@ -63,13 +62,10 @@ func main() {
 	}
 	defer db.Close()
 
-	lbFactory := loadbalancer.NewBaseFactory()
-
 	container, err := dependency_container.NewContainer(
 		cfg,
 		logger,
 		db,
-		lbFactory,
 		event.GetEventsRegistry(),
 		initializeMemoryCache(),
 	)

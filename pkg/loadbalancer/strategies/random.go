@@ -1,7 +1,6 @@
 package strategies
 
 import (
-	"context"
 	"crypto/rand"
 	"math/big"
 	"sync"
@@ -20,7 +19,7 @@ func NewRandom(targets []types.UpstreamTarget) *Random {
 	}
 }
 
-func (r *Random) Next(ctx context.Context) *types.UpstreamTarget {
+func (r *Random) Next(req *types.RequestContext) *types.UpstreamTarget {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

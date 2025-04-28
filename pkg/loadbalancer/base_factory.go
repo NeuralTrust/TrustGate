@@ -3,27 +3,40 @@ package loadbalancer
 import (
 	"fmt"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer/strategies"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
-type BaseFactory struct{}
-
-func NewBaseFactory() Factory {
-	return &BaseFactory{}
+type BaseFactory struct {
+	embeddingRepo  embedding.Repository
+	serviceLocator *factory.EmbeddingServiceLocator
 }
 
-func (f *BaseFactory) CreateStrategy(algorithm string, targets []types.UpstreamTarget) (Strategy, error) {
-	switch algorithm {
+func NewBaseFactory(
+	embeddingRepo embedding.Repository,
+	serviceLocator *factory.EmbeddingServiceLocator,
+) Factory {
+	return &BaseFactory{
+		embeddingRepo:  embeddingRepo,
+		serviceLocator: serviceLocator,
+	}
+}
+
+func (f *BaseFactory) CreateStrategy(upstream *types.Upstream) (Strategy, error) {
+	switch upstream.Algorithm {
 	case "round-robin":
-		return strategies.NewRoundRobin(targets), nil
+		return strategies.NewRoundRobin(upstream.Targets), nil
 	case "random":
-		return strategies.NewRandom(targets), nil
+		return strategies.NewRandom(upstream.Targets), nil
 	case "weighted-round-robin":
-		return strategies.NewWeightedRoundRobin(targets), nil
+		return strategies.NewWeightedRoundRobin(upstream.Targets), nil
 	case "least-connections":
-		return strategies.NewLeastConnections(targets), nil
+		return strategies.NewLeastConnections(upstream.Targets), nil
+	case "semantic":
+		return strategies.NewSemantic(upstream.EmbeddingConfig, upstream.Targets, f.embeddingRepo, f.serviceLocator), nil
 	default:
-		return nil, fmt.Errorf("unsupported load balancing algorithm: %s", algorithm)
+		return nil, fmt.Errorf("unsupported load balancing algorithm: %s", upstream.Algorithm)
 	}
 }

@@ -1,7 +1,6 @@
 package strategies
 
 import (
-	"context"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -29,7 +28,7 @@ func NewWeightedRoundRobin(targets []types.UpstreamTarget) *WeightedRoundRobin {
 	}
 }
 
-func (wrr *WeightedRoundRobin) Next(ctx context.Context) *types.UpstreamTarget {
+func (wrr *WeightedRoundRobin) Next(req *types.RequestContext) *types.UpstreamTarget {
 	wrr.mu.Lock()
 	defer wrr.mu.Unlock()
 

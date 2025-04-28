@@ -43,6 +43,8 @@ func NewLoadBalancer(
 	cacheTTL := time.Hour
 	now := time.Now()
 
+	var embeddingConfig *types.EmbeddingConfig
+
 	for i, t := range upstream.Targets {
 		credentials := types.Credentials(t.Credentials)
 
@@ -67,14 +69,27 @@ func NewLoadBalancer(
 			Provider:     t.Provider,
 			Models:       t.Models,
 			DefaultModel: t.DefaultModel,
+			Description:  t.Description,
 			Credentials:  credentials,
 			Headers:      t.Headers,
 			Path:         t.Path,
 			Health:       healthStatus,
 		}
 	}
-
-	strategy, err := factory.CreateStrategy(upstream.Algorithm, targets)
+	if upstream.EmbeddingConfig != nil {
+		embeddingConfig = &types.EmbeddingConfig{
+			Provider:    upstream.EmbeddingConfig.Provider,
+			Model:       upstream.EmbeddingConfig.Model,
+			Credentials: types.Credentials(upstream.EmbeddingConfig.Credentials),
+		}
+	}
+	strategy, err := factory.CreateStrategy(
+		&types.Upstream{
+			Algorithm:       upstream.Algorithm,
+			EmbeddingConfig: embeddingConfig,
+			Targets:         targets,
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create load balancing strategy: %w", err)
 	}
@@ -128,20 +143,20 @@ func (lb *LoadBalancer) performSuccessUpdate(target *types.UpstreamTarget) {
 	_, _ = pipe.Exec(ctx)
 }
 
-func (lb *LoadBalancer) NextTarget(ctx context.Context) (*types.UpstreamTarget, error) {
-	target := lb.strategy.Next(ctx)
+func (lb *LoadBalancer) NextTarget(req *types.RequestContext) (*types.UpstreamTarget, error) {
+	target := lb.strategy.Next(req)
 	if target == nil {
 		return nil, fmt.Errorf("no available targets")
 	}
-	health, err := lb.isTargetHealthy(ctx, target.ID)
+	health, err := lb.isTargetHealthy(req, target.ID)
 	if err == nil && health {
 		return target, nil
 	}
-	return lb.fallbackTarget(ctx)
+	return lb.fallbackTarget(req)
 }
 
-func (lb *LoadBalancer) fallbackTarget(ctx context.Context) (*types.UpstreamTarget, error) {
-	target := lb.strategy.Next(ctx)
+func (lb *LoadBalancer) fallbackTarget(req *types.RequestContext) (*types.UpstreamTarget, error) {
+	target := lb.strategy.Next(req)
 	if target != nil {
 		lb.logger.WithFields(logrus.Fields{
 			"target_id": target.ID,
@@ -152,9 +167,9 @@ func (lb *LoadBalancer) fallbackTarget(ctx context.Context) (*types.UpstreamTarg
 	return nil, fmt.Errorf("no targets available for fallback")
 }
 
-func (lb *LoadBalancer) isTargetHealthy(ctx context.Context, targetID string) (bool, error) {
+func (lb *LoadBalancer) isTargetHealthy(req *types.RequestContext, targetID string) (bool, error) {
 	key := fmt.Sprintf("lb:health:%s:%s", lb.upstreamID, targetID)
-	val, err := lb.cache.Get(ctx, key)
+	val, err := lb.cache.Get(req.Context, key)
 	if err != nil {
 		return false, err
 	}

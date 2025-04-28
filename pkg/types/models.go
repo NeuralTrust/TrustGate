@@ -93,6 +93,18 @@ type HealthStatus struct {
 	ActiveConn int32
 }
 
+type Upstream struct {
+	ID              string           `json:"id"`
+	Algorithm       string           `json:"algorithm"`
+	EmbeddingConfig *EmbeddingConfig `json:"embedding_config"`
+	Targets         []UpstreamTarget `json:"targets"`
+}
+
+type EmbeddingConfig struct {
+	Provider    string      `json:"provider"`
+	Model       string      `json:"model"`
+	Credentials Credentials `json:"credentials,omitempty"`
+}
 type UpstreamTarget struct {
 	ID           string            `json:"id"`
 	Weight       int               `json:"weight"`
@@ -103,16 +115,11 @@ type UpstreamTarget struct {
 	Provider     string            `json:"provider"`
 	Models       []string          `json:"models"`
 	DefaultModel string            `json:"default_model"`
+	Description  string            `json:"description"`
 	Credentials  Credentials       `json:"credentials"`
 	Headers      map[string]string `json:"headers"`
 	Path         string            `json:"path"`
 	Health       *HealthStatus     `json:"health,omitempty"`
-}
-
-func (t *UpstreamTarget) Initialize(upstreamID string, index int) {
-	if t.ID == "" {
-		t.ID = fmt.Sprintf("%s-%s-%d", upstreamID, t.Provider, index)
-	}
 }
 
 type Credentials struct {
