@@ -15,7 +15,6 @@ import (
 const trustgateAuthHeader = "X-TG-API-Key"
 
 type authMiddleware struct {
-	skipAuthCheck bool
 	logger        *logrus.Logger
 	keyFinder     apikey.Finder
 	gatewayFinder gateway.DataFinder

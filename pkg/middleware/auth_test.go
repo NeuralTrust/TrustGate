@@ -185,11 +185,21 @@ func TestAuthMiddleware_Success(t *testing.T) {
 	app := fiber.New()
 	app.Use(authMiddleware.Middleware())
 	app.Get("/test", func(c *fiber.Ctx) error {
-		contextAPIKey = c.Locals(common.ApiKeyContextKey).(string)
-		contextGatewayID = c.Locals(common.GatewayContextKey).(string)
-		contextAPIKeyID = c.Locals(common.ApiKeyIdContextKey).(string)
-		contextMetadata = c.Locals(common.MetadataKey).(map[string]interface{})
-		contextGatewayData = c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
+		if apiKey, ok := c.Locals(common.ApiKeyContextKey).(string); ok {
+			contextAPIKey = apiKey
+		}
+		if gatewayID, ok := c.Locals(common.GatewayContextKey).(string); ok {
+			contextGatewayID = gatewayID
+		}
+		if apiKeyID, ok := c.Locals(common.ApiKeyIdContextKey).(string); ok {
+			contextAPIKeyID = apiKeyID
+		}
+		if metadata, ok := c.Locals(common.MetadataKey).(map[string]interface{}); ok {
+			contextMetadata = metadata
+		}
+		if gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData); ok {
+			contextGatewayData = gatewayData
+		}
 		return c.SendString("OK")
 	})
 
