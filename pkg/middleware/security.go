@@ -31,7 +31,7 @@ func (m *securityMiddleware) Middleware() fiber.Handler {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "gateway ID not found in context"})
 		}
 
-		gatewayData, ok := c.Locals(common.GatewayDataContextKey).(*types.GatewayData)
+		gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
 		if !ok {
 			m.logger.
 				WithField("gatewayID", gatewayID).

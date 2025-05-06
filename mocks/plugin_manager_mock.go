@@ -5,8 +5,10 @@ package mocks
 import (
 	context "context"
 
-	pluginiface "github.com/NeuralTrust/TrustGate/pkg/pluginiface"
+	metrics "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	mock "github.com/stretchr/testify/mock"
+
+	pluginiface "github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 
 	types "github.com/NeuralTrust/TrustGate/pkg/types"
 )
@@ -57,9 +59,9 @@ func (_c *Manager_ClearPluginChain_Call) RunAndReturn(run func(string)) *Manager
 	return _c
 }
 
-// ExecuteStage provides a mock function with given fields: ctx, stage, gatewayID, req, resp
-func (_m *Manager) ExecuteStage(ctx context.Context, stage types.Stage, gatewayID string, req *types.RequestContext, resp *types.ResponseContext) (*types.ResponseContext, error) {
-	ret := _m.Called(ctx, stage, gatewayID, req, resp)
+// ExecuteStage provides a mock function with given fields: ctx, stage, gatewayID, req, resp, collector
+func (_m *Manager) ExecuteStage(ctx context.Context, stage types.Stage, gatewayID string, req *types.RequestContext, resp *types.ResponseContext, collector *metrics.Collector) (*types.ResponseContext, error) {
+	ret := _m.Called(ctx, stage, gatewayID, req, resp, collector)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ExecuteStage")
@@ -67,19 +69,19 @@ func (_m *Manager) ExecuteStage(ctx context.Context, stage types.Stage, gatewayI
 
 	var r0 *types.ResponseContext
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, types.Stage, string, *types.RequestContext, *types.ResponseContext) (*types.ResponseContext, error)); ok {
-		return rf(ctx, stage, gatewayID, req, resp)
+	if rf, ok := ret.Get(0).(func(context.Context, types.Stage, string, *types.RequestContext, *types.ResponseContext, *metrics.Collector) (*types.ResponseContext, error)); ok {
+		return rf(ctx, stage, gatewayID, req, resp, collector)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, types.Stage, string, *types.RequestContext, *types.ResponseContext) *types.ResponseContext); ok {
-		r0 = rf(ctx, stage, gatewayID, req, resp)
+	if rf, ok := ret.Get(0).(func(context.Context, types.Stage, string, *types.RequestContext, *types.ResponseContext, *metrics.Collector) *types.ResponseContext); ok {
+		r0 = rf(ctx, stage, gatewayID, req, resp, collector)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*types.ResponseContext)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, types.Stage, string, *types.RequestContext, *types.ResponseContext) error); ok {
-		r1 = rf(ctx, stage, gatewayID, req, resp)
+	if rf, ok := ret.Get(1).(func(context.Context, types.Stage, string, *types.RequestContext, *types.ResponseContext, *metrics.Collector) error); ok {
+		r1 = rf(ctx, stage, gatewayID, req, resp, collector)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -98,13 +100,14 @@ type Manager_ExecuteStage_Call struct {
 //   - gatewayID string
 //   - req *types.RequestContext
 //   - resp *types.ResponseContext
-func (_e *Manager_Expecter) ExecuteStage(ctx interface{}, stage interface{}, gatewayID interface{}, req interface{}, resp interface{}) *Manager_ExecuteStage_Call {
-	return &Manager_ExecuteStage_Call{Call: _e.mock.On("ExecuteStage", ctx, stage, gatewayID, req, resp)}
+//   - collector *metrics.Collector
+func (_e *Manager_Expecter) ExecuteStage(ctx interface{}, stage interface{}, gatewayID interface{}, req interface{}, resp interface{}, collector interface{}) *Manager_ExecuteStage_Call {
+	return &Manager_ExecuteStage_Call{Call: _e.mock.On("ExecuteStage", ctx, stage, gatewayID, req, resp, collector)}
 }
 
-func (_c *Manager_ExecuteStage_Call) Run(run func(ctx context.Context, stage types.Stage, gatewayID string, req *types.RequestContext, resp *types.ResponseContext)) *Manager_ExecuteStage_Call {
+func (_c *Manager_ExecuteStage_Call) Run(run func(ctx context.Context, stage types.Stage, gatewayID string, req *types.RequestContext, resp *types.ResponseContext, collector *metrics.Collector)) *Manager_ExecuteStage_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(types.Stage), args[2].(string), args[3].(*types.RequestContext), args[4].(*types.ResponseContext))
+		run(args[0].(context.Context), args[1].(types.Stage), args[2].(string), args[3].(*types.RequestContext), args[4].(*types.ResponseContext), args[5].(*metrics.Collector))
 	})
 	return _c
 }
@@ -114,7 +117,7 @@ func (_c *Manager_ExecuteStage_Call) Return(_a0 *types.ResponseContext, _a1 erro
 	return _c
 }
 
-func (_c *Manager_ExecuteStage_Call) RunAndReturn(run func(context.Context, types.Stage, string, *types.RequestContext, *types.ResponseContext) (*types.ResponseContext, error)) *Manager_ExecuteStage_Call {
+func (_c *Manager_ExecuteStage_Call) RunAndReturn(run func(context.Context, types.Stage, string, *types.RequestContext, *types.ResponseContext, *metrics.Collector) (*types.ResponseContext, error)) *Manager_ExecuteStage_Call {
 	_c.Call.Return(run)
 	return _c
 }

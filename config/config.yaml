@@ -29,6 +29,11 @@ redis:
 plugins:
   ignore_errors: true
 
+websocket:
+  max_connections: 1000
+  ping_period: "30s"
+  pong_wait: "2m"
+
 tls:
   disabled: true
   enable_mtls: true
@@ -47,5 +52,3 @@ tls:
     - 25
   min_version: TLS12
   max_version: TLS13
-
-

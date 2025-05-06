@@ -24,6 +24,7 @@ type Config struct {
 	Redis     RedisConfig     `mapstructure:"redis"`
 	Providers ProvidersConfig `mapstructure:"providers"`
 	Plugins   PluginsConfig   `mapstructure:"plugins"`
+	WebSocket WebSocketConfig `mapstructure:"websocket"`
 	TLS       TLSConfig       `mapstructure:"tls"`
 }
 
@@ -55,6 +56,12 @@ type RedisConfig struct {
 
 type PluginsConfig struct {
 	IgnoreErrors bool `mapstructure:"ignore_errors"`
+}
+
+type WebSocketConfig struct {
+	MaxConnections int    `mapstructure:"max_connections"`
+	PingPeriod     string `mapstructure:"ping_period"`
+	PongWait       string `mapstructure:"pong_wait"`
 }
 
 type TLSConfig struct {

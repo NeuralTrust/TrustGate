@@ -38,7 +38,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 			m.logger.Error("Gateway ID not found in context")
 			return c.Next()
 		}
-		gatewayData, ok := c.Locals(common.GatewayDataContextKey).(*types.GatewayData)
+		gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
 		if !ok {
 			m.logger.
 				WithField("gatewayID", gatewayID).
@@ -48,8 +48,8 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 
 		metricsCollector := m.getMetricsCollector(gatewayData)
 
-		c.Locals(metrics.CollectorKey, metricsCollector)
-		ctx := context.WithValue(c.Context(), metrics.CollectorKey, metricsCollector)
+		c.Locals(string(metrics.CollectorKey), metricsCollector)
+		ctx := context.WithValue(c.Context(), string(metrics.CollectorKey), metricsCollector)
 		c.SetUserContext(ctx)
 
 		userAgentInfo := utils.ParseUserAgent(m.getUserAgent(c), m.getAcceptLanguage(c))

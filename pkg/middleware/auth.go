@@ -95,7 +95,7 @@ func (m *authMiddleware) isPublicRoute(ctx *fiber.Ctx) bool {
 		return true
 	}
 	// Get gateway data from context
-	gatewayData := ctx.Locals(common.GatewayDataContextKey)
+	gatewayData := ctx.Locals(string(common.GatewayDataContextKey))
 	if gatewayData == "" {
 		return false
 	}

@@ -132,7 +132,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
 	}
 
-	metricsCollector, ok := c.Locals(metrics.CollectorKey).(*metrics.Collector)
+	metricsCollector, ok := c.Locals(string(metrics.CollectorKey)).(*metrics.Collector)
 	if !ok || metricsCollector == nil {
 		return fmt.Errorf("failed to retrieve metrics collector from context")
 	}
@@ -183,7 +183,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// get gateway data set in plugin_chain middleware
-	gatewayData, ok := c.Locals(common.GatewayDataContextKey).(*types.GatewayData)
+	gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
 	if !ok {
 		h.logger.Error("failed to get gateway data in handler")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
@@ -239,6 +239,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		gatewayID,
 		reqCtx,
 		respCtx,
+		metricsCollector,
 	); err != nil {
 		var pluginErr *types.PluginError
 		if errors.As(err, &pluginErr) {
@@ -326,7 +327,14 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Execute pre-response plugins
-	if _, err := h.pluginManager.ExecuteStage(c.Context(), types.PreResponse, gatewayID, reqCtx, respCtx); err != nil {
+	if _, err := h.pluginManager.ExecuteStage(
+		c.Context(),
+		types.PreResponse,
+		gatewayID,
+		reqCtx,
+		respCtx,
+		metricsCollector,
+	); err != nil {
 		var pluginErr *types.PluginError
 		if errors.As(err, &pluginErr) {
 			// Copy headers from response context
@@ -354,6 +362,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		gatewayID,
 		reqCtx,
 		respCtx,
+		metricsCollector,
 	); err != nil {
 		var pluginErr *types.PluginError
 		if errors.As(err, &pluginErr) {
