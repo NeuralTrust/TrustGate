@@ -21,6 +21,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	infraLogger "github.com/NeuralTrust/TrustGate/pkg/infra/logger"
+	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
@@ -68,6 +69,7 @@ func main() {
 		db,
 		event.GetEventsRegistry(),
 		initializeMemoryCache(),
+		loadbalancer.NewBaseFactory,
 	)
 	if err != nil {
 		logger.Fatalf("Failed to initialize container: %v", err)

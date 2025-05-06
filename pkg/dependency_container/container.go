@@ -66,6 +66,7 @@ func NewContainer(
 	db *database.DB,
 	eventsRegistry map[string]reflect.Type,
 	initializeMemoryCache func(cacheInstance *cache.Cache),
+	initializeLoadBalancerFactory loadbalancer.FactoryInitializer,
 ) (*Container, error) {
 
 	httpClient := &fasthttp.Client{
@@ -153,7 +154,7 @@ func NewContainer(
 	infraCache.RegisterEventSubscriber[event.UpdateUpstreamCacheEvent](redisListener, updateUpstreamSubscriber)
 	infraCache.RegisterEventSubscriber[event.UpdateServiceCacheEvent](redisListener, updateServiceSubscriber)
 
-	lbFactory := loadbalancer.NewBaseFactory(embeddingRepository, embeddingServiceLocator)
+	lbFactory := initializeLoadBalancerFactory(embeddingRepository, embeddingServiceLocator)
 
 	metricsWorker := metrics.NewWorker(logger, telemetryBuilder)
 
