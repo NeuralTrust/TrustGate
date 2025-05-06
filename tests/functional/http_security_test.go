@@ -96,7 +96,7 @@ func TestSecurityMiddleware(t *testing.T) {
 		assert.Contains(t, resp.Header.Get("Strict-Transport-Security"), "max-age=86400")
 		assert.Contains(t, resp.Header.Get("Content-Security-Policy"), "default-src 'self'")
 	})
-	
+
 	t.Run("Redirects HTTP to HTTPS", func(t *testing.T) {
 		req, err := http.NewRequest("GET", ProxyUrl+"/security-test", nil)
 		assert.NoError(t, err)
