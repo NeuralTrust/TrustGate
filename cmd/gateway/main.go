@@ -80,10 +80,16 @@ func main() {
 		container.PluginMiddleware,
 		container.FingerPrintMiddleware,
 		container.SecurityMiddleware,
+		container.WebSocketMiddleware,
 	)
 
 	//routers
-	proxyRouter := router.NewProxyRouter(proxyTransport, container.HandlerTransport)
+	proxyRouter := router.NewProxyRouter(
+		proxyTransport,
+		container.HandlerTransport,
+		container.WSHandlerTransport,
+		cfg,
+	)
 	adminRouter := router.NewAdminRouter(container.HandlerTransport)
 
 	// Create and initialize the server

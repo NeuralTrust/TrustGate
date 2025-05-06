@@ -2,20 +2,22 @@ package request
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
 type UpstreamRequest struct {
-	ID           string              `json:"id"`
-	GatewayID    string              `json:"gateway_id"`
-	Name         string              `json:"name"`
-	Algorithm    string              `json:"algorithm"`
-	Targets      []TargetRequest     `json:"targets"`
-	Embedding    *EmbeddingRequest   `json:"embedding,omitempty"`
-	HealthChecks *HealthCheckRequest `json:"health_checks,omitempty"`
-	Tags         []string            `json:"tags,omitempty"`
+	ID            string                `json:"id"`
+	GatewayID     string                `json:"gateway_id"`
+	Name          string                `json:"name"`
+	Algorithm     string                `json:"algorithm"`
+	Targets       []TargetRequest       `json:"targets"`
+	Embedding     *EmbeddingRequest     `json:"embedding,omitempty"`
+	HealthChecks  *HealthCheckRequest   `json:"health_checks,omitempty"`
+	Tags          []string              `json:"tags,omitempty"`
+	WebhookConfig *WebhookConfigRequest `json:"websocket_config,omitempty"`
 }
 
 type EmbeddingRequest struct {
@@ -50,6 +52,40 @@ type HealthCheckRequest struct {
 
 }
 
+type WebhookConfigRequest struct {
+	ReturnErrorDetails bool   `json:"return_error_details"`
+	PingPeriod         string `json:"ping_period"`
+	PongWait           string `json:"pong_wait"`
+	HandshakeTimeout   string `json:"handshake_timeout"`
+	ReadBufferSize     int    `json:"read_buffer_size"`
+	WriteBufferSize    int    `json:"write_buffer_size"`
+}
+
+func (r *WebhookConfigRequest) Validate() error {
+	if r.PingPeriod != "" {
+		if _, err := time.ParseDuration(r.PingPeriod); err != nil {
+			return fmt.Errorf("invalid ping_period format: %w", err)
+		}
+	}
+	if r.PongWait != "" {
+		if _, err := time.ParseDuration(r.PongWait); err != nil {
+			return fmt.Errorf("invalid pong_wait format: %w", err)
+		}
+	}
+	if r.HandshakeTimeout != "" {
+		if _, err := time.ParseDuration(r.HandshakeTimeout); err != nil {
+			return fmt.Errorf("invalid handshake_timeout format: %w", err)
+		}
+	}
+	if r.ReadBufferSize < 0 {
+		return fmt.Errorf("read_buffer_size must be a positive value")
+	}
+	if r.WriteBufferSize < 0 {
+		return fmt.Errorf("write_buffer_size must be a positive value")
+	}
+	return nil
+}
+
 func (r *UpstreamRequest) Validate() error {
 	if r.Algorithm == common.SemanticStrategyName {
 		for i, target := range r.Targets {
@@ -70,5 +106,12 @@ func (r *UpstreamRequest) Validate() error {
 			return fmt.Errorf("embedding credentials header_value is required when algorithm is semantic")
 		}
 	}
+
+	if r.WebhookConfig != nil {
+		if err := r.WebhookConfig.Validate(); err != nil {
+			return fmt.Errorf("webhook_config validation failed: %w", err)
+		}
+	}
+
 	return nil
 }

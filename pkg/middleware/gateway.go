@@ -114,10 +114,12 @@ func (m *gatewayMiddleware) Middleware() fiber.Handler {
 		}
 
 		ctx.Locals(common.GatewayContextKey, gatewayID)
-		ctx.Locals(common.GatewayDataContextKey, gatewayData)
+		//nolint
+		ctx.Locals(string(common.GatewayDataContextKey), gatewayData)
 
 		c = context.WithValue(c, common.GatewayContextKey, gatewayID)
-		c = context.WithValue(c, common.GatewayDataContextKey, gatewayData)
+		//nolint
+		c = context.WithValue(c, string(common.GatewayDataContextKey), gatewayData)
 
 		ctx.SetUserContext(c)
 

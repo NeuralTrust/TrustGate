@@ -54,6 +54,7 @@ type Manager interface {
 		gatewayID string,
 		req *types.RequestContext,
 		resp *types.ResponseContext,
+		collector *metrics.Collector,
 	) (*types.ResponseContext, error)
 }
 
@@ -220,6 +221,7 @@ func (m *manager) ExecuteStage(
 	gatewayID string,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
+	collector *metrics.Collector,
 ) (*types.ResponseContext, error) {
 	m.mu.RLock()
 	// Get both gateway and rule level chains
@@ -236,7 +238,7 @@ func (m *manager) ExecuteStage(
 	// Chains are inserted in PluginChain Middleware and in Forwarded Handler
 	for _, chain := range gatewayChains {
 		if len(chain) > 0 {
-			if err := m.executeChains(ctx, plugins, chain, req, resp, executedPlugins); err != nil {
+			if err := m.executeChains(ctx, plugins, chain, req, resp, executedPlugins, collector); err != nil {
 				return resp, err
 			}
 		}
@@ -252,6 +254,7 @@ func (m *manager) executeChains(
 	req *types.RequestContext,
 	resp *types.ResponseContext,
 	executedPlugins map[string]bool,
+	collector *metrics.Collector,
 ) error {
 	// Group parallel and sequential chains
 	var parallelChains, sequentialChains []types.PluginConfig
@@ -276,21 +279,16 @@ func (m *manager) executeChains(
 		}
 	}
 
-	metricsCollector, ok := ctx.Value(metrics.CollectorKey).(*metrics.Collector)
-	if !ok {
-		return fmt.Errorf("failed to retrieve metrics collector from context")
-	}
-
 	// Execute parallel chains first
 	if len(parallelChains) > 0 {
-		if err := m.executeParallel(ctx, plugins, parallelChains, req, resp, metricsCollector); err != nil {
+		if err := m.executeParallel(ctx, plugins, parallelChains, req, resp, collector); err != nil {
 			return err
 		}
 	}
 
 	// Then execute sequential chains
 	if len(sequentialChains) > 0 {
-		if err := m.executeSequential(ctx, plugins, sequentialChains, req, resp, metricsCollector); err != nil {
+		if err := m.executeSequential(ctx, plugins, sequentialChains, req, resp, collector); err != nil {
 			return err
 		}
 	}

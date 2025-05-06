@@ -21,6 +21,7 @@ import (
 	domainEmbedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
+	wsHandlers "github.com/NeuralTrust/TrustGate/pkg/handlers/websocket"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -42,6 +43,7 @@ type Container struct {
 	BedrockClient         bedrock.Client
 	PluginManager         plugins.Manager
 	HandlerTransport      handlers.HandlerTransport
+	WSHandlerTransport    wsHandlers.HandlerTransport
 	RedisListener         infraCache.EventListener
 	Repository            *database.Repository
 	AuthMiddleware        middleware.Middleware
@@ -50,6 +52,7 @@ type Container struct {
 	PluginMiddleware      middleware.Middleware
 	FingerPrintMiddleware middleware.Middleware
 	SecurityMiddleware    middleware.Middleware
+	WebSocketMiddleware   middleware.Middleware
 	ApiKeyRepository      domainApikey.Repository
 	EmbeddingRepository   domainEmbedding.Repository
 	FingerprintTracker    fingerprint.Tracker
@@ -153,6 +156,20 @@ func NewContainer(
 	lbFactory := loadbalancer.NewBaseFactory(embeddingRepository, embeddingServiceLocator)
 
 	metricsWorker := metrics.NewWorker(logger, telemetryBuilder)
+
+	// WebSocket handler transport
+	wsHandlerTransport := &wsHandlers.HandlerTransportDTO{
+		ForwardedHandler: wsHandlers.NewWebsocketHandler(
+			cfg,
+			logger,
+			upstreamFinder,
+			serviceFinder,
+			lbFactory,
+			cacheInstance,
+			pluginManager,
+		),
+	}
+
 	// Handler Transport
 	handlerTransport := &handlers.HandlerTransportDTO{
 		// Proxy
@@ -209,6 +226,7 @@ func NewContainer(
 		Cache:                 cacheInstance,
 		RedisListener:         redisListener,
 		HandlerTransport:      handlerTransport,
+		WSHandlerTransport:    wsHandlerTransport,
 		Repository:            repo,
 		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, false),
 		GatewayMiddleware:     middleware.NewGatewayMiddleware(logger, cacheInstance, repo, gatewayDataFinder, cfg.Server.BaseDomain),
@@ -216,6 +234,7 @@ func NewContainer(
 		PluginMiddleware:      middleware.NewPluginChainMiddleware(pluginManager, logger),
 		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),
 		SecurityMiddleware:    middleware.NewSecurityMiddleware(logger),
+		WebSocketMiddleware:   middleware.NewWebsocketMiddleware(cfg, logger),
 		ApiKeyRepository:      apiKeyRepository,
 		EmbeddingRepository:   embeddingRepository,
 		PluginManager:         pluginManager,

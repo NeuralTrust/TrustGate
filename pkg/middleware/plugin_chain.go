@@ -27,7 +27,7 @@ func NewPluginChainMiddleware(
 
 func (m *pluginMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		gatewayData, ok := c.Locals(common.GatewayDataContextKey).(*types.GatewayData)
+		gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
 		if !ok {
 			m.logger.Error("gateway data not found in context")
 			return c.Status(fiber.StatusInternalServerError).JSON(

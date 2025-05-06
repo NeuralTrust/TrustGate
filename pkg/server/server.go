@@ -37,7 +37,6 @@ func NewBaseServer(config *config.Config, cache *cache.Cache, logger *logrus.Log
 		ReduceMemoryUsage:     true,
 		Network:               fiber.NetworkTCP,
 		EnablePrintRoutes:     false,
-		DisableKeepalive:      true,
 		BodyLimit:             8 * 1024 * 1024,
 		ReadTimeout:           3 * time.Second,
 		WriteTimeout:          3 * time.Second,

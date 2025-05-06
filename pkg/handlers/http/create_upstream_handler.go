@@ -64,7 +64,8 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 
 	if req.Embedding != nil && req.Embedding.Provider != "" {
 		if req.Embedding.Provider != factory.OpenAIProvider {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("embedding provider '%s' is not allowed", req.Embedding.Provider)})
+			return c.Status(fiber.StatusBadRequest).
+				JSON(fiber.Map{"error": fmt.Sprintf("embedding provider '%s' is not allowed", req.Embedding.Provider)})
 		}
 	}
 
@@ -148,6 +149,19 @@ func (s *createUpstreamHandler) createUpstreamEntity(
 		}
 	}
 
+	var websocket *upstream.WebsocketConfig
+	if req.WebhookConfig != nil {
+		websocket = &upstream.WebsocketConfig{
+			EnableDirectCommunication: true,
+			ReturnErrorDetails:        req.WebhookConfig.ReturnErrorDetails,
+			PingPeriod:                req.WebhookConfig.PingPeriod,
+			PongWait:                  req.WebhookConfig.PongWait,
+			HandshakeTimeout:          req.WebhookConfig.HandshakeTimeout,
+			ReadBufferSize:            req.WebhookConfig.ReadBufferSize,
+			WriteBufferSize:           req.WebhookConfig.WriteBufferSize,
+		}
+	}
+
 	entity := upstream.Upstream{
 		ID:              id,
 		GatewayID:       gatewayUUID,
@@ -156,6 +170,7 @@ func (s *createUpstreamHandler) createUpstreamEntity(
 		Targets:         targets,
 		EmbeddingConfig: embedding,
 		HealthChecks:    healthCheck,
+		Websocket:       websocket,
 		Tags:            req.Tags,
 		CreatedAt:       now,
 		UpdatedAt:       now,

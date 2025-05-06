@@ -118,8 +118,34 @@ type Upstream struct {
 	EmbeddingConfig *EmbeddingConfig `json:"embedding_config,omitempty" gorm:"type:jsonb"`
 	HealthChecks    *HealthCheck     `json:"health_checks,omitempty" gorm:"type:jsonb"`
 	Tags            domain.TagsJSON  `json:"tags,omitempty" gorm:"type:jsonb"`
+	Websocket       *WebsocketConfig `json:"websocket_config,omitempty" gorm:"type:jsonb"`
 	CreatedAt       time.Time        `json:"created_at"`
 	UpdatedAt       time.Time        `json:"updated_at"`
+}
+
+type WebsocketConfig struct {
+	EnableDirectCommunication bool   `json:"enable_direct_communication"`
+	ReturnErrorDetails        bool   `json:"return_error_details"`
+	PingPeriod                string `json:"ping_period"`
+	PongWait                  string `json:"pong_wait"`
+	HandshakeTimeout          string `json:"handshake_timeout"`
+	ReadBufferSize            int    `json:"read_buffer_size"`
+	WriteBufferSize           int    `json:"write_buffer_size"`
+}
+
+func (e WebsocketConfig) Value() (driver.Value, error) {
+	return json.Marshal(e)
+}
+
+func (e *WebsocketConfig) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("expected []byte, got %T", value)
+	}
+	return json.Unmarshal(bytes, e)
 }
 
 func (t *Target) Validate() error {

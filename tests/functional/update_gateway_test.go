@@ -135,8 +135,8 @@ func TestUpdateGateway(t *testing.T) {
 
 		// Update the gateway's required plugins
 		updatePayload := map[string]interface{}{
-			"required_plugins": map[string]interface{}{
-				"rate_limiter": map[string]interface{}{
+			"required_plugins": []map[string]interface{}{
+				{
 					"name":     "rate_limiter",
 					"enabled":  true,
 					"priority": 1,
