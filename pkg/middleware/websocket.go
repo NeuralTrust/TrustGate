@@ -82,7 +82,7 @@ func (m *websocketMiddleware) Middleware() fiber.Handler {
 			}
 			return fiber.ErrUpgradeRequired
 		}
-		return nil
+		return c.Next()
 	}
 }
 

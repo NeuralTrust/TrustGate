@@ -10,6 +10,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -169,8 +170,11 @@ func (p *ToxicityOpenAIPlugin) Execute(
 	}
 
 	if httpResp.StatusCode != http.StatusOK {
+		p.raiseEvent(collector, ToxicityOpenaiData{Flagged: true, Response: body}, req.Stage, true, string(body))
 		return nil, fmt.Errorf("OpenAI API returned error: %s", string(body))
 	}
+
+	p.raiseEvent(collector, ToxicityOpenaiData{Flagged: false, Response: body}, req.Stage, false, "")
 
 	var moderationResp OpenAIModerationResponse
 	if err := json.Unmarshal(body, &moderationResp); err != nil {
@@ -226,4 +230,22 @@ func (p *ToxicityOpenAIPlugin) analyzeModerationResponse(results []ModerationRes
 		}
 	}
 	return &types.PluginResponse{StatusCode: 200, Message: "Content is safe"}, nil
+}
+
+func (p *ToxicityOpenAIPlugin) raiseEvent(
+	collector *metrics.Collector,
+	extra ToxicityOpenaiData,
+	stage types.Stage,
+	error bool,
+	errorMessage string,
+) {
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   PluginName,
+		Stage:        string(stage),
+		Extras:       extra,
+		Error:        error,
+		ErrorMessage: errorMessage,
+	}
+	collector.Emit(evt)
 }
