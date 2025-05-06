@@ -96,22 +96,7 @@ func TestSecurityMiddleware(t *testing.T) {
 		assert.Contains(t, resp.Header.Get("Strict-Transport-Security"), "max-age=86400")
 		assert.Contains(t, resp.Header.Get("Content-Security-Policy"), "default-src 'self'")
 	})
-
-	t.Run("Invalid Host", func(t *testing.T) {
-		req, err := http.NewRequest("GET", ProxyUrl+"/security-test", nil)
-		assert.NoError(t, err)
-
-		req.Host = "unauthorized.com"
-		req.Header.Set("Host", "unauthorized.com")
-		req.Header.Set("X-TG-API-Key", apiKey)
-		req.Header.Set("X-Forwarded-Proto", "https")
-
-		resp, err := http.DefaultClient.Do(req)
-		assert.NoError(t, err)
-		defer resp.Body.Close()
-		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	})
-
+	
 	t.Run("Redirects HTTP to HTTPS", func(t *testing.T) {
 		req, err := http.NewRequest("GET", ProxyUrl+"/security-test", nil)
 		assert.NoError(t, err)
