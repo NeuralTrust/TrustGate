@@ -89,6 +89,7 @@ func (h *forwardedWebsocketHandler) Handle(c *websocket.Conn) {
 		return
 	}
 
+	//nolint
 	gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
 	if !ok || gatewayData == nil {
 		h.logger.Error("missing gateway data in websocket connection")
@@ -277,10 +278,11 @@ func (h *forwardedWebsocketHandler) handleDirectCommunication(
 		for {
 			_, message, err := targetConn.ReadMessage()
 			if err != nil {
+				lb.ReportFailure(target, err)
 				h.logger.WithError(err).Error("error reading message from target")
 				return
 			}
-
+			lb.ReportSuccess(target)
 			// Execute PostResponse plugins
 			respCtx.Body = message
 			if _, err := h.pluginManager.ExecuteStage(
@@ -298,7 +300,10 @@ func (h *forwardedWebsocketHandler) handleDirectCommunication(
 						"retry_after": respCtx.Metadata["retry_after"],
 					}
 					if data, err := json.Marshal(errorPayload); err == nil {
-						_ = clientConn.WriteMessage(websocket.TextMessage, data)
+						err = clientConn.WriteMessage(websocket.TextMessage, data)
+						if err != nil {
+							h.logger.WithError(err).Error("failed to send error message to client")
+						}
 					} else {
 						h.logger.WithError(err).Error("failed to serialize plugin error")
 					}
@@ -306,14 +311,20 @@ func (h *forwardedWebsocketHandler) handleDirectCommunication(
 				}
 
 				if respCtx.StopProcessing {
-					_ = clientConn.WriteMessage(websocket.TextMessage, respCtx.Body)
+					err = clientConn.WriteMessage(websocket.TextMessage, respCtx.Body)
+					if err != nil {
+						h.logger.WithError(err).Error("failed to send error message to client")
+					}
 					continue
 				}
 
 				if !h.config.Plugins.IgnoreErrors {
 					errPayload := fiber.Map{"error": "plugin execution failed"}
 					if data, err := json.Marshal(errPayload); err == nil {
-						_ = clientConn.WriteMessage(websocket.TextMessage, data)
+						err = clientConn.WriteMessage(websocket.TextMessage, data)
+						if err != nil {
+							h.logger.WithError(err).Error("failed to send error message to client")
+						}
 					}
 					continue
 				}
@@ -368,7 +379,10 @@ func (h *forwardedWebsocketHandler) handleDirectCommunication(
 						"retry_after": respCtx.Metadata["retry_after"],
 					}
 					if data, err := json.Marshal(errorPayload); err == nil {
-						_ = clientConn.WriteMessage(websocket.TextMessage, data)
+						err = clientConn.WriteMessage(websocket.TextMessage, data)
+						if err != nil {
+							h.logger.WithError(err).Error("failed to send error message to client")
+						}
 					} else {
 						h.logger.WithError(err).Error("failed to serialize plugin error")
 					}
@@ -376,22 +390,26 @@ func (h *forwardedWebsocketHandler) handleDirectCommunication(
 				}
 
 				if respCtx.StopProcessing {
-					_ = clientConn.WriteMessage(websocket.TextMessage, respCtx.Body)
+					err = clientConn.WriteMessage(websocket.TextMessage, respCtx.Body)
+					if err != nil {
+						h.logger.WithError(err).Error("failed to send error message to client")
+					}
 					continue
 				}
 
 				if !h.config.Plugins.IgnoreErrors {
 					errPayload := fiber.Map{"error": "plugin execution failed"}
 					if data, err := json.Marshal(errPayload); err == nil {
-						_ = clientConn.WriteMessage(websocket.TextMessage, data)
+						err = clientConn.WriteMessage(websocket.TextMessage, data)
+						if err != nil {
+							h.logger.WithError(err).Error("failed to send error message to client")
+						}
 					}
 					continue
 				}
 			}
 
-			lb.ReportSuccess(target)
 			if err := targetConn.WriteMessage(mt, reqCtx.Body); err != nil {
-				lb.ReportFailure(target, err)
 				h.logger.WithError(err).Error("error writing message to target")
 				return err
 			}
@@ -835,7 +853,10 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 					"retry_after": respCtx.Metadata["retry_after"],
 				}
 				if data, err := json.Marshal(errorPayload); err == nil {
-					_ = clientConn.WriteMessage(websocket.TextMessage, data)
+					err = clientConn.WriteMessage(websocket.TextMessage, data)
+					if err != nil {
+						h.logger.WithError(err).Error("failed to send error message to client")
+					}
 				} else {
 					h.logger.WithError(err).Error("failed to serialize plugin error")
 				}
@@ -843,14 +864,20 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 			}
 
 			if respCtx.StopProcessing {
-				_ = clientConn.WriteMessage(websocket.TextMessage, respCtx.Body)
+				err = clientConn.WriteMessage(websocket.TextMessage, respCtx.Body)
+				if err != nil {
+					h.logger.WithError(err).Error("failed to send stop processing message to client")
+				}
 				return
 			}
 
 			if !h.config.Plugins.IgnoreErrors {
 				errPayload := fiber.Map{"error": "plugin execution failed"}
 				if data, err := json.Marshal(errPayload); err == nil {
-					_ = clientConn.WriteMessage(websocket.TextMessage, data)
+					err = clientConn.WriteMessage(websocket.TextMessage, data)
+					if err != nil {
+						h.logger.WithError(err).Error("failed to send error message to client")
+					}
 				}
 				return
 			}

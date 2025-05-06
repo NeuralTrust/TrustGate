@@ -74,6 +74,7 @@ func (m *websocketMiddleware) Middleware() fiber.Handler {
 				}
 
 				c.Locals(string(common.WsRequestContextContextKey), reqCtx)
+				//nolint
 				ctx := context.WithValue(c.Context(), string(common.GatewayContextKey), gatewayID)
 				c.SetUserContext(ctx)
 

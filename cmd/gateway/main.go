@@ -85,9 +85,9 @@ func main() {
 
 	//routers
 	proxyRouter := router.NewProxyRouter(
-		proxyTransport, 
-		container.HandlerTransport, 
-		container.WSHandlerTransport, 
+		proxyTransport,
+		container.HandlerTransport,
+		container.WSHandlerTransport,
 		cfg,
 	)
 	adminRouter := router.NewAdminRouter(container.HandlerTransport)

@@ -49,6 +49,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		metricsCollector := m.getMetricsCollector(gatewayData)
 
 		c.Locals(string(metrics.CollectorKey), metricsCollector)
+		//nolint
 		ctx := context.WithValue(c.Context(), string(metrics.CollectorKey), metricsCollector)
 		c.SetUserContext(ctx)
 
