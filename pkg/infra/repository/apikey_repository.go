@@ -22,10 +22,10 @@ func NewApiKeyRepository(db *gorm.DB) apikey.Repository {
 	}
 }
 
-func (r *ApiKeyRepository) GetByKey(ctx context.Context, gatewayID string, key string) (*apikey.APIKey, error) {
+func (r *ApiKeyRepository) GetByKey(ctx context.Context, key string) (*apikey.APIKey, error) {
 	entity := new(apikey.APIKey)
 	if err := r.db.WithContext(ctx).
-		Where("key = ? AND gateway_id = ?", key, gatewayID).
+		Where("key = ?", key).
 		First(entity).Error; err != nil {
 		return nil, fmt.Errorf("apikey not found: %w", err)
 	}

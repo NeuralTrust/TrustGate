@@ -34,7 +34,6 @@ type ServerConfig struct {
 	MetricsPort int    `mapstructure:"metrics_port"`
 	Type        string `mapstructure:"type"`
 	Port        int    `mapstructure:"port"`
-	BaseDomain  string `mapstructure:"base_domain"`
 	Host        string `mapstructure:"host"`
 }
 

@@ -2,7 +2,6 @@ server:
   admin_port: ${SERVER_ADMIN_PORT}
   metrics_port: ${SERVER_METRICS_PORT}
   proxy_port: ${SERVER_PROXY_PORT}
-  base_domain: ${BASE_DOMAIN}
 
 metrics:
   enabled: true

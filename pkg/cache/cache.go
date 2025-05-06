@@ -32,7 +32,7 @@ const (
 	UpstreamKeyPattern  = "gateway:%s:upstream:%s"
 	ServicesKeyPattern  = "gateway:%s:services"
 	ServiceKeyPattern   = "gateway:%s:service:%s"
-	ApiKeyPattern       = "gateway:%s:apikey:%s"
+	ApiKeyPattern       = "apikey:%s"
 
 	GatewayTTLName  = "gateway"
 	ApiKeyTTLName   = "api_key"
@@ -172,8 +172,8 @@ func (c *Cache) GetService(ctx context.Context, gatewayID, serviceID string) (*s
 	return entity, nil
 }
 
-func (c *Cache) GetApiKey(ctx context.Context, gatewayID string, key string) (*apikey.APIKey, error) {
-	apikeyPattern := fmt.Sprintf(ApiKeyPattern, gatewayID, key)
+func (c *Cache) GetApiKey(ctx context.Context, key string) (*apikey.APIKey, error) {
+	apikeyPattern := fmt.Sprintf(ApiKeyPattern, key)
 	res, err := c.Get(ctx, apikeyPattern)
 	if err != nil {
 		return nil, err
