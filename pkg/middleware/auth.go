@@ -58,7 +58,7 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 
 		gatewayData, err := m.gatewayFinder.Find(ctx.Context(), key.GatewayID)
 		if err != nil {
-			m.logger.WithError(err).Error("failed to fetch gateway data")
+			m.logger.WithError(err).Error("failed to fetch gateway data.")
 			return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch gateway data"})
 		}
 
