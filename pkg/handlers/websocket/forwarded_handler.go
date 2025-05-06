@@ -467,7 +467,10 @@ func (h *forwardedWebsocketHandler) handleMultiplexing(
 			delete(h.clientChannels, targetKey)
 			h.connectionMutex.Lock()
 			if conn, exists := h.connections[targetKey]; exists {
-				conn.Close()
+				err := conn.Close()
+				if err != nil {
+					h.logger.WithError(err).Error("failed to close target connection")
+				}
 				delete(h.connections, targetKey)
 			}
 			h.connectionMutex.Unlock()
@@ -642,7 +645,10 @@ func (h *forwardedWebsocketHandler) connectToTarget(
 	})
 
 	if err := conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
-		conn.Close()
+		errConn := conn.Close()
+		if errConn != nil {
+			h.logger.WithError(errConn).Error("failed to close client connection")
+		}
 		return nil, fmt.Errorf("failed to set read deadline on target connection: %w", err)
 	}
 
@@ -663,7 +669,10 @@ func (h *forwardedWebsocketHandler) readFromTarget(
 		h.connectionMutex.Lock()
 		delete(h.connections, targetKey)
 		h.connectionMutex.Unlock()
-		targetConn.Close()
+		err := targetConn.Close()
+		if err != nil {
+			h.logger.WithError(err).Error("failed to close target connection")
+		}
 	}()
 
 	pingPeriod, err := time.ParseDuration(h.config.WebSocket.PingPeriod)
