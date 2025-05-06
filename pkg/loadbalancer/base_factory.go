@@ -9,6 +9,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
+type FactoryInitializer func(
+	embeddingRepo embedding.Repository,
+	serviceLocator *factory.EmbeddingServiceLocator,
+) Factory
+
 type BaseFactory struct {
 	embeddingRepo  embedding.Repository
 	serviceLocator *factory.EmbeddingServiceLocator
