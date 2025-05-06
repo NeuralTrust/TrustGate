@@ -12,8 +12,9 @@ import (
 
 var ErrInvalidCacheType = errors.New("invalid type assertion for apikey model")
 
+//go:generate mockery --name=Finder --dir=. --output=../../../mocks --filename=apikey_data_finder_mock.go --case=underscore --with-expecter
 type Finder interface {
-	Find(ctx context.Context, gatewayID string, key string) (*domain.APIKey, error)
+	Find(ctx context.Context, key string) (*domain.APIKey, error)
 }
 
 type finder struct {
@@ -36,21 +37,21 @@ func NewFinder(
 	}
 }
 
-func (f *finder) Find(ctx context.Context, gatewayID string, key string) (*domain.APIKey, error) {
+func (f *finder) Find(ctx context.Context, key string) (*domain.APIKey, error) {
 	if entity, err := f.getFromMemoryCache(key); err == nil {
 		return entity, nil
 	} else if !errors.Is(err, ErrInvalidCacheType) {
 		f.logger.WithError(err).Warn("memory cache read apikey failure")
 	}
 
-	if cachedService, err := f.cache.GetApiKey(ctx, gatewayID, key); err == nil && cachedService != nil {
+	if cachedService, err := f.cache.GetApiKey(ctx, key); err == nil && cachedService != nil {
 		f.saveToMemoryCache(ctx, cachedService)
 		return cachedService, nil
 	} else if err != nil {
 		f.logger.WithError(err).Warn("distributed cache read apikey failure")
 	}
 
-	entity, err := f.repo.GetByKey(ctx, gatewayID, key)
+	entity, err := f.repo.GetByKey(ctx, key)
 	if err != nil {
 		f.logger.WithError(err).Error("failed to fetch apikey from repository")
 		return nil, err

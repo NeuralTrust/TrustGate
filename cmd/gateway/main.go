@@ -76,7 +76,6 @@ func main() {
 	}
 
 	proxyTransport := middleware.NewTransport(
-		container.GatewayMiddleware,
 		container.AuthMiddleware,
 		container.MetricsMiddleware,
 		container.PluginMiddleware,

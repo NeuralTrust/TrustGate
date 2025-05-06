@@ -66,6 +66,6 @@ func (c *Cache) SaveAPIKey(ctx context.Context, key *apikey.APIKey) error {
 	if err != nil {
 		return err
 	}
-	cacheKey := fmt.Sprintf(ApiKeyPattern, key.GatewayID.String(), key.Key)
+	cacheKey := fmt.Sprintf(ApiKeyPattern, key.Key)
 	return c.Client().Set(ctx, cacheKey, string(data), 0).Err()
 }

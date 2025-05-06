@@ -16,8 +16,9 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+//go:generate mockery --name=DataFinder --dir=. --output=../../../mocks --filename=gateway_data_finder_mock.go --case=underscore --with-expecter
 type DataFinder interface {
-	Find(ctx context.Context, gatewayID string) (*types.GatewayData, error)
+	Find(ctx context.Context, gatewayID uuid.UUID) (*types.GatewayData, error)
 }
 
 type dataFinder struct {
@@ -42,9 +43,9 @@ func NewDataFinder(
 	}
 }
 
-func (f *dataFinder) Find(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
+func (f *dataFinder) Find(ctx context.Context, gatewayID uuid.UUID) (*types.GatewayData, error) {
 	// Try memory cache first
-	if cached, ok := f.memoryCache.Get(gatewayID); ok {
+	if cached, ok := f.memoryCache.Get(gatewayID.String()); ok {
 		data, err := f.getGatewayDataFromCache(cached)
 		if err != nil {
 			f.logger.WithError(err).Error("failed to get gateway data from cache")
@@ -53,7 +54,7 @@ func (f *dataFinder) Find(ctx context.Context, gatewayID string) (*types.Gateway
 		}
 	}
 	// Try Redis cache
-	gatewayData, err := f.getGatewayDataFromRedis(ctx, gatewayID)
+	gatewayData, err := f.getGatewayDataFromRedis(ctx, gatewayID.String())
 	if err == nil {
 		f.logger.WithFields(logrus.Fields{
 			"gatewayID":  gatewayID,
@@ -62,17 +63,12 @@ func (f *dataFinder) Find(ctx context.Context, gatewayID string) (*types.Gateway
 		}).Debug("Gateway data found in Redis cache")
 
 		// Store in memory cache
-		f.memoryCache.Set(gatewayID, gatewayData)
+		f.memoryCache.Set(gatewayID.String(), gatewayData)
 		return gatewayData, nil
 	}
 	f.logger.WithError(err).Debug("Failed to get gateway data from Redis")
 
-	// Fallback to database
-	gatewayIDUUID, err := uuid.Parse(gatewayID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid gateway ID format: %w", err)
-	}
-	return f.getGatewayDataFromDB(ctx, gatewayIDUUID)
+	return f.getGatewayDataFromDB(ctx, gatewayID)
 }
 
 func (f *dataFinder) getGatewayDataFromCache(value interface{}) (*types.GatewayData, error) {

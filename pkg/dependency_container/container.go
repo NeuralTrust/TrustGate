@@ -47,7 +47,6 @@ type Container struct {
 	RedisListener         infraCache.EventListener
 	Repository            *database.Repository
 	AuthMiddleware        middleware.Middleware
-	GatewayMiddleware     middleware.Middleware
 	MetricsMiddleware     middleware.Middleware
 	PluginMiddleware      middleware.Middleware
 	FingerPrintMiddleware middleware.Middleware
@@ -229,8 +228,7 @@ func NewContainer(
 		HandlerTransport:      handlerTransport,
 		WSHandlerTransport:    wsHandlerTransport,
 		Repository:            repo,
-		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, false),
-		GatewayMiddleware:     middleware.NewGatewayMiddleware(logger, cacheInstance, repo, gatewayDataFinder, cfg.Server.BaseDomain),
+		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, gatewayDataFinder),
 		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, metricsWorker),
 		PluginMiddleware:      middleware.NewPluginChainMiddleware(pluginManager, logger),
 		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),

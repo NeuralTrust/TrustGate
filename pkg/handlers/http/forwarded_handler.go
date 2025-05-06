@@ -641,9 +641,11 @@ func (h *forwardedHandler) doForwardRequest(
 		return nil, fmt.Errorf("upstream returned status code %d: %s", statusCode, string(*respBodyPtr))
 	}
 
-	go h.logger.WithFields(logrus.Fields{
-		"provider": target.Provider,
-	}).Debug("Selected provider")
+	if target.Provider != "" {
+		go h.logger.WithFields(logrus.Fields{
+			"provider": target.Provider,
+		}).Debug("Selected provider")
+	}
 
 	response := h.createResponse(fastHttpResp, *respBodyPtr)
 	responseBodyPool.Put(respBodyPtr)
