@@ -155,6 +155,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	// Create the RequestContext
 	reqCtx := &types.RequestContext{
+		C:         c,
 		Context:   c.Context(),
 		GatewayID: gatewayID,
 		Headers:   make(map[string][]string),
@@ -290,6 +291,10 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		})
 	}
 
+	if response.Streaming {
+		return nil
+	}
+
 	// Record upstream latency if available
 	if prometheus.Config.EnableUpstreamLatency {
 		upstreamLatency := float64(time.Since(startTime).Milliseconds())
@@ -304,26 +309,24 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	respCtx.StatusCode = response.StatusCode
 	respCtx.Body = response.Body
 	respCtx.Target = response.Target
+
 	for k, v := range response.Headers {
 		respCtx.Headers[k] = v
 	}
 
 	if response.StatusCode >= http.StatusBadRequest {
-		// Parse the error response
-		var errorResponse map[string]interface{}
-		if err := json.Unmarshal(response.Body, &errorResponse); err != nil {
-			return c.Status(response.StatusCode).JSON(fiber.Map{"error": "upstream service error"})
-		}
-
-		// Copy all headers from response context to client response
 		for k, values := range respCtx.Headers {
 			for _, v := range values {
 				c.Set(k, v)
 			}
 		}
-
-		// Return the original error response
-		return c.Status(response.StatusCode).JSON(errorResponse)
+		var jsonBody interface{}
+		if err := json.Unmarshal(response.Body, &jsonBody); err == nil {
+			return c.Status(response.StatusCode).JSON(jsonBody)
+		}
+		return c.Status(response.StatusCode).JSON(fiber.Map{
+			"error": string(response.Body),
+		})
 	}
 
 	// Execute pre-response plugins
@@ -508,6 +511,7 @@ func (h *forwardedHandler) handleEndpointRequest(
 		Path:        serviceEntity.Path,
 		Headers:     serviceEntity.Headers,
 		Credentials: serviceEntity.Credentials,
+		Stream:      serviceEntity.Stream,
 	}
 	rsp, err := h.doForwardRequest(tlsConfig, req, rule, target)
 	if err != nil {
@@ -550,27 +554,10 @@ func (h *forwardedHandler) doForwardRequest(
 		client = h.tlsClientCache.GetOrCreate(target.ID, conf)
 	}
 
-	var sb strings.Builder
-	if target.Provider != "" {
-		providerConfig, ok := h.providers[target.Provider]
-		if !ok {
-			return nil, fmt.Errorf("unsupported provider: %s", target.Provider)
-		}
-		endpointConfig, ok := providerConfig.Endpoints[target.Path]
-		if !ok {
-			return nil, fmt.Errorf("unsupported endpoint path: %s", target.Path)
-		}
-		sb.WriteString(providerConfig.BaseURL)
-		sb.WriteString(endpointConfig.Path)
-	} else {
-		sb.WriteString(target.Protocol)
-		sb.WriteString("://")
-		sb.WriteString(target.Host)
-		sb.WriteString(":")
-		sb.WriteString(strconv.Itoa(target.Port))
-		sb.WriteString(target.Path)
+	targetURL, err := h.buildTargetURL(target)
+	if err != nil {
+		return nil, err
 	}
-	targetURL := sb.String()
 
 	if rule.StripPath {
 		targetURL = strings.TrimSuffix(targetURL, "/") + strings.TrimPrefix(req.Path, rule.Path)
@@ -585,17 +572,13 @@ func (h *forwardedHandler) doForwardRequest(
 	fastHttpReq.SetRequestURI(targetURL)
 	fastHttpReq.Header.SetMethod(req.Method)
 
+	if target.Stream {
+		return h.handleStreamingRequest(req, target)
+	}
+
 	if len(req.Body) > 0 {
-		var requestBody map[string]interface{}
-		if err := json.Unmarshal(req.Body, &requestBody); err == nil {
-			if streamValue, exists := requestBody["stream"]; exists {
-				if isStream, ok := streamValue.(bool); ok && isStream {
-					return h.handleStreamingRequest(req, target)
-				}
-			}
-		}
 		if target.Provider != "" {
-			transformedBody, err := h.transformRequestBody(req.Body, target)
+			transformedBody, err := h.transformRequestBodyToProvider(req.Body, target)
 			if err != nil {
 				return nil, fmt.Errorf("failed to transform request body: %w", err)
 			}
@@ -620,7 +603,7 @@ func (h *forwardedHandler) doForwardRequest(
 
 	h.applyAuthentication(fastHttpReq, &target.Credentials, req.Body)
 
-	err := client.DoTimeout(fastHttpReq, fastHttpResp, 30*time.Second)
+	err = client.DoTimeout(fastHttpReq, fastHttpResp, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("request failed to %s", targetURL)
 	}
@@ -690,54 +673,80 @@ func (h *forwardedHandler) handleStreamingRequest(
 	req *types.RequestContext,
 	target *types.UpstreamTarget,
 ) (*types.ResponseContext, error) {
-	// Transform request body if needed
-	transformedBody, err := h.transformRequestBody(req.Body, target)
-	if err != nil {
-		return nil, fmt.Errorf("failed to transform streaming request: %w", err)
+	var providerConfig *config.ProviderConfig
+	if target.Provider != "" {
+		pConf, ok := h.providers[target.Provider]
+		if !ok {
+			return nil, fmt.Errorf("unsupported provider: %s", target.Provider)
+		}
+		providerConfig = &pConf
+		transformedBody, err := h.transformRequestBodyToProvider(req.Body, target)
+		if err != nil {
+			return nil, fmt.Errorf("failed to transform streaming request: %w", err)
+		}
+		req.Body = transformedBody
 	}
+	return h.handleStreamingResponse(req, target, providerConfig)
+}
 
-	req.Body = transformedBody
+func (h *forwardedHandler) buildUpstreamTargetUrl(target *types.UpstreamTarget) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s://%s", target.Protocol, target.Host))
+	if (target.Protocol == "https" && target.Port != 443) || (target.Protocol == "http" && target.Port != 80) {
+		sb.WriteString(fmt.Sprintf(":%d", target.Port))
+	}
+	sb.WriteString(target.Path)
+	return sb.String()
+}
 
-	return h.handleStreamingResponse(req, target)
+func (h *forwardedHandler) buildTargetURL(target *types.UpstreamTarget) (string, error) {
+	if target.Provider == "" {
+		return h.buildUpstreamTargetUrl(target), nil
+	}
+	providerConfig, ok := h.providers[target.Provider]
+	if !ok {
+		return "", fmt.Errorf("unsupported provider: %s", target.Provider)
+	}
+	endpointConfig, ok := providerConfig.Endpoints[target.Path]
+	if !ok {
+		return "", fmt.Errorf("unsupported endpoint path: %s", target.Path)
+	}
+	return fmt.Sprintf("%s%s", providerConfig.BaseURL, endpointConfig.Path), nil
 }
 
 func (h *forwardedHandler) handleStreamingResponse(
 	req *types.RequestContext,
 	target *types.UpstreamTarget,
+	providerConfig *config.ProviderConfig,
 ) (*types.ResponseContext, error) {
-	providerConfig, ok := h.providers[target.Provider]
-	if !ok {
-		return nil, fmt.Errorf("unsupported provider: %s", target.Provider)
-	}
 
-	endpointConfig, ok := providerConfig.Endpoints[target.Path]
-	if !ok {
-		return nil, fmt.Errorf("unsupported endpoint path: %s", target.Path)
+	upstreamURL := h.buildUpstreamTargetUrl(target)
+	if providerConfig != nil {
+		if endpointConfig, ok := providerConfig.Endpoints[target.Path]; ok {
+			upstreamURL = fmt.Sprintf("%s%s", providerConfig.BaseURL, endpointConfig.Path)
+		} else {
+			return nil, fmt.Errorf("unsupported endpoint path: %s", target.Path)
+		}
 	}
-
-	upstreamURL := fmt.Sprintf("%s%s", providerConfig.BaseURL, endpointConfig.Path)
 
 	httpReq, err := http.NewRequestWithContext(req.Context, req.Method, upstreamURL, bytes.NewReader(req.Body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Copy headers
-	for k, v := range req.Headers {
+	for k, values := range req.Headers {
 		if k != "Host" {
-			for _, val := range v {
-				httpReq.Header.Add(k, val)
+			for _, v := range values {
+				httpReq.Header.Add(k, v)
 			}
 		}
 	}
 
-	// Set required headers for streaming
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Cache-Control", "no-cache")
 	httpReq.Header.Set("Connection", "keep-alive")
 
-	// Apply authentication and target headers
 	if target.Credentials.HeaderValue != "" {
 		httpReq.Header.Set(target.Credentials.HeaderName, target.Credentials.HeaderValue)
 	}
@@ -749,68 +758,68 @@ func (h *forwardedHandler) handleStreamingResponse(
 	if err != nil {
 		return nil, fmt.Errorf("failed to make streaming request: %w", err)
 	}
-	defer resp.Body.Close()
 
 	responseHeaders := make(map[string][]string)
 	for k, v := range resp.Header {
 		responseHeaders[k] = v
 	}
-	responseHeaders["X-Selected-Provider"] = []string{target.Provider}
-
+	if target.Provider != "" {
+		responseHeaders["X-Selected-Provider"] = []string{target.Provider}
+	}
 	if rateLimitHeaders, ok := req.Metadata["rate_limit_headers"].(map[string][]string); ok {
 		for k, v := range rateLimitHeaders {
 			responseHeaders[k] = v
 		}
 	}
 
-	reader := bufio.NewReader(resp.Body)
-	var lastUsage map[string]interface{}
-	var responseBody []byte
+	req.C.Set("Content-Type", "text/event-stream")
+	req.C.Set("Cache-Control", "no-cache")
+	req.C.Set("Connection", "keep-alive")
+	req.C.Set("X-Accel-Buffering", "no")
 
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
+	req.C.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		defer resp.Body.Close()
+		reader := bufio.NewReader(resp.Body)
+
+		for {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				if err == io.EOF {
+					fmt.Fprint(w, "data: [DONE]\n")
+					_ = w.Flush()
+					break
+				}
+				h.logger.WithError(err).Error("error reading streaming response")
 				break
 			}
-			h.logger.WithError(err).Error("Error reading streaming response")
-			break
-		}
 
-		if bytes.HasPrefix(line, []byte("data: ")) {
-			if bytes.Equal(line, []byte("data: [DONE]\n")) {
-				if lastUsage != nil {
-					req.Metadata["token_usage"] = lastUsage
-					h.logger.WithFields(logrus.Fields{
-						"token_usage": lastUsage,
-					}).Debug("Stored token usage from streaming response")
-				}
-				responseBody = append(responseBody, line...)
-				continue
+			if bytes.HasPrefix(line, []byte("data: ")) {
+				line = bytes.TrimPrefix(line, []byte("data: "))
 			}
 
-			jsonData := line[6:]
-			var response map[string]interface{}
-			if err := json.Unmarshal(jsonData, &response); err == nil {
-				if usage, ok := response["usage"].(map[string]interface{}); ok {
-					lastUsage = usage
+			if len(line) > 1 {
+				var parsed map[string]interface{}
+				if err := json.Unmarshal(line, &parsed); err != nil {
+					fmt.Println("Error:", err)
+					return
 				}
+				var buffer bytes.Buffer
+				encoder := json.NewEncoder(&buffer)
+				encoder.SetEscapeHTML(false)
+
+				if err := encoder.Encode(parsed); err != nil {
+					fmt.Println("Error encoding:", err)
+					return
+				}
+				fmt.Fprintf(w, "data: %s\n", buffer.String())
+				_ = w.Flush()
 			}
 		}
-		responseBody = append(responseBody, line...)
-	}
-
-	if lastUsage != nil && req.Metadata["token_usage"] == nil {
-		req.Metadata["token_usage"] = lastUsage
-		h.logger.WithFields(logrus.Fields{
-			"token_usage": lastUsage,
-		}).Debug("Stored token usage from last chunk")
-	}
+	})
 
 	return &types.ResponseContext{
 		StatusCode: resp.StatusCode,
 		Headers:    responseHeaders,
-		Body:       responseBody,
 		Streaming:  true,
 		Metadata:   req.Metadata,
 	}, nil
@@ -824,7 +833,7 @@ func (h *forwardedHandler) getQueryParams(c *fiber.Ctx) url.Values {
 	return queryParams
 }
 
-func (h *forwardedHandler) transformRequestBody(body []byte, target *types.UpstreamTarget) ([]byte, error) {
+func (h *forwardedHandler) transformRequestBodyToProvider(body []byte, target *types.UpstreamTarget) ([]byte, error) {
 	if len(body) == 0 {
 		return body, nil
 	}

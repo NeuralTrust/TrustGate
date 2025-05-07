@@ -53,34 +53,34 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		ctx := context.WithValue(c.Context(), string(metrics.CollectorKey), metricsCollector)
 		c.SetUserContext(ctx)
 
-		userAgentInfo := utils.ParseUserAgent(m.getUserAgent(c), m.getAcceptLanguage(c))
+		//userAgentInfo := utils.ParseUserAgent(m.getUserAgent(c), m.getAcceptLanguage(c))
 
 		m.setTelemetryHeaders(c, gatewayData)
-		inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
+		//inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
+		//
+		//startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
+		//if !ok {
+		//	m.logger.Error("start_time not found in context")
+		//	startTime = time.Now()
+		//}
 
-		startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
-		if !ok {
-			m.logger.Error("start_time not found in context")
-			startTime = time.Now()
-		}
-
-		err := c.Next()
-		endTime := time.Now()
-		outputResponse := m.transformToResponseContext(c, gatewayID)
-
-		var exporters []types.Exporter
-		if gatewayData.Gateway.Telemetry != nil {
-			exporters = gatewayData.Gateway.Telemetry.Exporters
-		}
-		m.worker.Process(
-			metricsCollector,
-			exporters,
-			inputRequest,
-			outputResponse,
-			startTime,
-			endTime,
-		)
-		return err
+		return c.Next()
+		//endTime := time.Now()
+		//outputResponse := m.transformToResponseContext(c, gatewayID)
+		//
+		//var exporters []types.Exporter
+		//if gatewayData.Gateway.Telemetry != nil {
+		//	exporters = gatewayData.Gateway.Telemetry.Exporters
+		//}
+		//m.worker.Process(
+		//	metricsCollector,
+		//	exporters,
+		//	inputRequest,
+		//	outputResponse,
+		//	startTime,
+		//	endTime,
+		//)
+		//return err
 	}
 }
 

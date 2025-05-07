@@ -4,10 +4,13 @@ import (
 	"context"
 	"net/url"
 	"time"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 // RequestContext represents the context for a request
 type RequestContext struct {
+	C         *fiber.Ctx
 	Context   context.Context
 	GatewayID string
 	RuleID    string
