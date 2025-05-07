@@ -42,6 +42,7 @@ func NewBaseServer(config *config.Config, cache *cache.Cache, logger *logrus.Log
 		WriteTimeout:          3 * time.Second,
 		IdleTimeout:           120 * time.Second,
 		Concurrency:           16384,
+		StreamRequestBody:     true,
 	})
 
 	r.Server().MaxConnsPerIP = 1024

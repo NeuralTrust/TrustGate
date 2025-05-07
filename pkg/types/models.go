@@ -120,6 +120,7 @@ type UpstreamTarget struct {
 	Headers      map[string]string `json:"headers"`
 	Path         string            `json:"path"`
 	Health       *HealthStatus     `json:"health,omitempty"`
+	Stream       bool              `json:"stream"`
 }
 
 type Credentials struct {

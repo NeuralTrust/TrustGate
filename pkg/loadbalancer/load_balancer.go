@@ -74,6 +74,7 @@ func NewLoadBalancer(
 			Headers:      t.Headers,
 			Path:         t.Path,
 			Health:       healthStatus,
+			Stream:       t.Stream,
 		}
 	}
 	if upstream.EmbeddingConfig != nil {

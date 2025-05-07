@@ -40,6 +40,7 @@ type TargetRequest struct {
 	Models       []string          `json:"models,omitempty"`
 	DefaultModel string            `json:"default_model,omitempty"`
 	Description  string            `json:"description,omitempty"`
+	Stream       bool              `json:"stream"`
 	Credentials  types.Credentials `json:"credentials,omitempty"`
 }
 
