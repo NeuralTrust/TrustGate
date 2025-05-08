@@ -77,6 +77,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 			startTime = time.Now()
 		}
 
+		// TODO metrics for websockets
 		if strings.Contains(c.Path(), "/ws/") {
 			return c.Next()
 		}
@@ -84,13 +85,14 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			select {
 			case mode := <-streamMode:
-				defer wg.Done()
 				if mode {
 					streamDetected = true
 				}
-
+			case <-time.After(30 * time.Second):
+				m.logger.Warn("timeout waiting for stream mode signal")
 			}
 		}()
 

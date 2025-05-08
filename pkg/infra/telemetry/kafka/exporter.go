@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
@@ -63,11 +64,15 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kafka producer: %w", err)
 	}
-	newProvider := &Exporter{
+	exporter := &Exporter{
 		cfg:      conf,
 		producer: producer,
 	}
-	return newProvider, nil
+	if err := exporter.createTopicIfNotExists(conf.Topic); err != nil {
+		producer.Close()
+		return nil, fmt.Errorf("failed to ensure topic exists: %w", err)
+	}
+	return exporter, nil
 }
 
 func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
@@ -106,4 +111,37 @@ func (p *Exporter) Close() {
 		p.producer.Flush(5000)
 		p.producer.Close()
 	}
+}
+
+func (p *Exporter) createTopicIfNotExists(topic string) error {
+	adminClient, err := kafka.NewAdminClientFromProducer(p.producer)
+	if err != nil {
+		return fmt.Errorf("failed to create kafka admin client: %w", err)
+	}
+	defer adminClient.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	topicSpec := []kafka.TopicSpecification{
+		{
+			Topic:             topic,
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		},
+	}
+
+	results, err := adminClient.CreateTopics(ctx, topicSpec)
+	if err != nil {
+		return fmt.Errorf("failed to create topic: %w", err)
+	}
+
+	for _, result := range results {
+		if result.Error.Code() != kafka.ErrNoError && result.Error.Code() != kafka.ErrTopicAlreadyExists {
+			return fmt.Errorf("failed to create topic %s: %w", result.Topic, result.Error)
+		}
+	}
+
+	p.cfg.Topic = topic
+	return nil
 }

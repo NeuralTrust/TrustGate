@@ -880,6 +880,7 @@ func (h *forwardedHandler) handleStreamingResponse(
 		Headers:    responseHeaders,
 		Streaming:  true,
 		Metadata:   req.Metadata,
+		Target:     target,
 	}, nil
 }
 
