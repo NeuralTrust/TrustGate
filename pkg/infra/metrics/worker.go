@@ -66,13 +66,11 @@ func (m *worker) Process(
 	startTime,
 	endTime time.Time,
 ) {
-	fmt.Println("starting collector goroutines")
 	m.enqueueTask(func() {
 		m.registryMetricsToPrometheus(req.Method, req.GatewayID, resp.StatusCode)
 	}, req.GatewayID)
 
 	m.enqueueTask(func() {
-		fmt.Println("enqueue exporter task")
 		m.registryMetricsToExporters(metricsCollector, exporters, req, resp, startTime, endTime)
 	}, req.GatewayID)
 }
@@ -85,7 +83,6 @@ func (m *worker) registryMetricsToExporters(
 	startTime,
 	endTime time.Time,
 ) {
-	fmt.Println("registry metrics to exporters")
 	exp, err := m.providersBuilder.Build(exporters)
 	if err != nil {
 		fmt.Println("failed to build telemetry providers")
@@ -93,14 +90,10 @@ func (m *worker) registryMetricsToExporters(
 		return
 	}
 	events := collector.Flush()
-	if len(events) == 0 {
-		fmt.Println("no metrics events to export")
-	}
 	var failedExporters []string
 	for _, exporter := range exp {
 		defer exporter.Close()
 		for _, metricsEvent := range events {
-			fmt.Println("sending event to kafka")
 			err = exporter.Handle(context.Background(), m.feedEvent(metricsEvent, req, resp, startTime, endTime))
 			if err != nil {
 				m.logger.WithFields(logrus.Fields{
@@ -137,7 +130,6 @@ func (m *worker) registryMetricsToPrometheus(method, gatewayID string, statusCod
 }
 
 func (m *worker) StartWorkers(n int) {
-	fmt.Println("starting metrics workers...")
 	for i := 0; i < n; i++ {
 		go func(workerID int) {
 			for {

@@ -54,7 +54,6 @@ func (p *Exporter) ValidateConfig(settings map[string]interface{}) error {
 }
 
 func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Exporter, error) {
-	fmt.Println("building kafka provider with settings")
 	var conf Config
 	if err := mapstructure.Decode(settings, &conf); err != nil {
 		return nil, fmt.Errorf("invalid kafka config: %w", err)
@@ -66,7 +65,6 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 		fmt.Println("cannot connect with kafka: ", err, " ", conf.Host, " ", conf.Port, " ", conf.Topic, "")
 		return nil, fmt.Errorf("failed to create kafka producer: %w", err)
 	}
-	fmt.Println("producer created")
 	exporter := &Exporter{
 		cfg:      conf,
 		producer: producer,
@@ -81,7 +79,6 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 
 func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 	if p.producer == nil {
-		fmt.Println("kafka producer is not initialized")
 		return errors.New("kafka producer is not initialized")
 	}
 	data, err := json.Marshal(evt)
@@ -95,10 +92,9 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 		Value:          data,
 	}, deliveryChan)
 	if err != nil {
-		fmt.Println("error sent event to kafka: ", err, " ", string(data), "")
 		return fmt.Errorf("failed to produce message: %w", err)
 	}
-	fmt.Println("sent event to kafka: ", string(data), "")
+
 	e := <-deliveryChan
 	m, ok := e.(*kafka.Message)
 	if !ok {
@@ -139,7 +135,6 @@ func (p *Exporter) createTopicIfNotExists(topic string) error {
 			ReplicationFactor: 1,
 		},
 	}
-	fmt.Println("staring creating topic")
 	results, err := adminClient.CreateTopics(ctx, topicSpec)
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
