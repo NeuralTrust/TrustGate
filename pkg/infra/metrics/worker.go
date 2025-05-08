@@ -85,14 +85,19 @@ func (m *worker) registryMetricsToExporters(
 ) {
 	exp, err := m.providersBuilder.Build(exporters)
 	if err != nil {
+		fmt.Println("failed to build telemetry providers")
 		m.logger.WithError(err).Error("failed to build telemetry providers")
 		return
 	}
 	events := collector.Flush()
+	if len(events) == 0 {
+		fmt.Println("no metrics events to export")
+	}
 	var failedExporters []string
 	for _, exporter := range exp {
 		defer exporter.Close()
 		for _, metricsEvent := range events {
+			fmt.Println("sending event to kafka")
 			err = exporter.Handle(context.Background(), m.feedEvent(metricsEvent, req, resp, startTime, endTime))
 			if err != nil {
 				m.logger.WithFields(logrus.Fields{

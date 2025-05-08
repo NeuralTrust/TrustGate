@@ -1056,5 +1056,6 @@ func (h *forwardedHandler) registrySuccessEvent(
 			Headers:  rsp.Target.Headers,
 		}
 	}
+	fmt.Println("emit stream response event")
 	collector.Emit(evt)
 }
