@@ -785,8 +785,6 @@ func (h *forwardedHandler) handleStreamingResponse(
 			line, err := reader.ReadBytes('\n')
 			if err != nil {
 				if err == io.EOF {
-					fmt.Fprint(w, "data: [DONE]\n")
-					_ = w.Flush()
 					break
 				}
 				h.logger.WithError(err).Error("error reading streaming response")
