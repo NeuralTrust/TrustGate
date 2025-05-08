@@ -1,8 +1,11 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
 	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
@@ -46,41 +49,114 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 			return c.Next()
 		}
 
+		streamResponse := make(chan []byte)
+		streamMode := make(chan bool, 1)
+		defer close(streamMode)
+
+		var streamResponseBody bytes.Buffer
+		var streamDetected bool
+
 		metricsCollector := m.getMetricsCollector(gatewayData)
 
+		c.Locals(common.StreamResponseContextKey, streamResponse)
+		c.Locals(common.StreamModeContextKey, streamMode)
 		c.Locals(string(metrics.CollectorKey), metricsCollector)
-		//nolint
 		ctx := context.WithValue(c.Context(), string(metrics.CollectorKey), metricsCollector)
+		ctx = context.WithValue(ctx, common.StreamResponseContextKey, streamResponse)
+		ctx = context.WithValue(ctx, common.StreamModeContextKey, streamMode)
 		c.SetUserContext(ctx)
 
-		//userAgentInfo := utils.ParseUserAgent(m.getUserAgent(c), m.getAcceptLanguage(c))
+		userAgentInfo := utils.ParseUserAgent(m.getUserAgent(c), m.getAcceptLanguage(c))
 
 		m.setTelemetryHeaders(c, gatewayData)
-		//inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
-		//
-		//startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
-		//if !ok {
-		//	m.logger.Error("start_time not found in context")
-		//	startTime = time.Now()
-		//}
+		inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
 
-		return c.Next()
-		//endTime := time.Now()
-		//outputResponse := m.transformToResponseContext(c, gatewayID)
-		//
-		//var exporters []types.Exporter
-		//if gatewayData.Gateway.Telemetry != nil {
-		//	exporters = gatewayData.Gateway.Telemetry.Exporters
-		//}
-		//m.worker.Process(
-		//	metricsCollector,
-		//	exporters,
-		//	inputRequest,
-		//	outputResponse,
-		//	startTime,
-		//	endTime,
-		//)
-		//return err
+		startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
+		if !ok {
+			m.logger.Error("start_time not found in context")
+			startTime = time.Now()
+		}
+
+		if strings.Contains(c.Path(), "/ws/") {
+			return c.Next()
+		}
+
+		wg := &sync.WaitGroup{}
+		wg.Add(1)
+		go func() {
+			select {
+			case mode := <-streamMode:
+				defer wg.Done()
+				if mode {
+					streamDetected = true
+				}
+
+			}
+		}()
+
+		err := c.Next()
+
+		endTime := time.Now()
+
+		var exporters []types.Exporter
+		if gatewayData.Gateway.Telemetry != nil {
+			exporters = gatewayData.Gateway.Telemetry.Exporters
+		}
+
+		headers := make(map[string][]string)
+		for key, values := range c.GetRespHeaders() {
+			headers[key] = values
+		}
+		statusCode := c.Response().StatusCode()
+
+		wg.Wait()
+		var once sync.Once
+		if streamDetected {
+			go func() {
+				for line := range streamResponse {
+					if len(line) > 0 {
+						_, err := streamResponseBody.Write(line)
+						if err != nil {
+							m.logger.WithError(err).Error("error writing to stream buffer")
+						}
+					}
+				}
+				once.Do(func() {
+					m.logger.Debug("stream channel closed")
+					now := time.Now()
+					m.worker.Process(
+						metricsCollector,
+						exporters,
+						inputRequest,
+						&types.ResponseContext{
+							Context:    context.Background(),
+							GatewayID:  gatewayID,
+							Headers:    headers,
+							Metadata:   nil,
+							Body:       streamResponseBody.Bytes(),
+							StatusCode: statusCode,
+							ProcessAt:  &now,
+						},
+						startTime,
+						time.Now(),
+					)
+				})
+			}()
+			return err
+		}
+
+		outputResponse := m.transformToResponseContext(c, gatewayID)
+		m.logger.Debug("processing metrics as non stream mode")
+		m.worker.Process(
+			metricsCollector,
+			exporters,
+			inputRequest,
+			outputResponse,
+			startTime,
+			endTime,
+		)
+
+		return err
 	}
 }
 
@@ -147,7 +223,10 @@ func (m *metricsMiddleware) transformToRequestContext(
 	return reqCtx
 }
 
-func (m *metricsMiddleware) transformToResponseContext(c *fiber.Ctx, gatewayID string) *types.ResponseContext {
+func (m *metricsMiddleware) transformToResponseContext(
+	c *fiber.Ctx,
+	gatewayID string,
+) *types.ResponseContext {
 	now := time.Now()
 	reqCtx := &types.ResponseContext{
 		Context:    context.Background(),
