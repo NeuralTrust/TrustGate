@@ -120,7 +120,6 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 			go func() {
 				fmt.Println("processing streamResponse channel")
 				for line := range streamResponse {
-					fmt.Println("capturing response line: ", string(line))
 					if len(line) > 0 {
 						_, err := streamResponseBody.Write(line)
 						if err != nil {

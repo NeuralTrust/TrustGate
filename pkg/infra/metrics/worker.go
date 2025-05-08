@@ -72,6 +72,7 @@ func (m *worker) Process(
 	}, req.GatewayID)
 
 	m.enqueueTask(func() {
+		fmt.Println("enqueue exporter task")
 		m.registryMetricsToExporters(metricsCollector, exporters, req, resp, startTime, endTime)
 	}, req.GatewayID)
 }
@@ -84,6 +85,7 @@ func (m *worker) registryMetricsToExporters(
 	startTime,
 	endTime time.Time,
 ) {
+	fmt.Println("registry metrics to exporters")
 	exp, err := m.providersBuilder.Build(exporters)
 	if err != nil {
 		fmt.Println("failed to build telemetry providers")
