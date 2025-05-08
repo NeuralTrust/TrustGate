@@ -62,6 +62,7 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 		"bootstrap.servers": fmt.Sprintf("%s:%s", conf.Host, conf.Port),
 	})
 	if err != nil {
+		fmt.Println("cannot connect with kafka: ", err, " ", conf.Host, " ", conf.Port, " ", conf.Topic, "")
 		return nil, fmt.Errorf("failed to create kafka producer: %w", err)
 	}
 	exporter := &Exporter{
@@ -77,6 +78,7 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 
 func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 	if p.producer == nil {
+		fmt.Println("kafka producer is not initialized")
 		return errors.New("kafka producer is not initialized")
 	}
 	data, err := json.Marshal(evt)
