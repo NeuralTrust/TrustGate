@@ -54,6 +54,7 @@ func (p *Exporter) ValidateConfig(settings map[string]interface{}) error {
 }
 
 func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Exporter, error) {
+	fmt.Println("building kafka provider with settings")
 	var conf Config
 	if err := mapstructure.Decode(settings, &conf); err != nil {
 		return nil, fmt.Errorf("invalid kafka config: %w", err)
@@ -65,10 +66,12 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 		fmt.Println("cannot connect with kafka: ", err, " ", conf.Host, " ", conf.Port, " ", conf.Topic, "")
 		return nil, fmt.Errorf("failed to create kafka producer: %w", err)
 	}
+	fmt.Println("producer created")
 	exporter := &Exporter{
 		cfg:      conf,
 		producer: producer,
 	}
+	fmt.Println("trying to create topic: ", conf.Topic, "")
 	if err := exporter.createTopicIfNotExists(conf.Topic); err != nil {
 		producer.Close()
 		return nil, fmt.Errorf("failed to ensure topic exists: %w", err)
@@ -118,13 +121,15 @@ func (p *Exporter) Close() {
 }
 
 func (p *Exporter) createTopicIfNotExists(topic string) error {
+	fmt.Println("attempting to create topic: " + topic)
 	adminClient, err := kafka.NewAdminClientFromProducer(p.producer)
 	if err != nil {
+		fmt.Println("cannot create kafka admin client")
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
 	defer adminClient.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	topicSpec := []kafka.TopicSpecification{
@@ -134,7 +139,7 @@ func (p *Exporter) createTopicIfNotExists(topic string) error {
 			ReplicationFactor: 1,
 		},
 	}
-
+	fmt.Println("staring creating topic")
 	results, err := adminClient.CreateTopics(ctx, topicSpec)
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
