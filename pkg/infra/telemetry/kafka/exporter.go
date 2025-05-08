@@ -90,8 +90,10 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 		Value:          data,
 	}, deliveryChan)
 	if err != nil {
+		fmt.Println("error sent event to kafka: ", err, " ", string(data), "")
 		return fmt.Errorf("failed to produce message: %w", err)
 	}
+	fmt.Println("sent event to kafka: ", string(data), "")
 	e := <-deliveryChan
 	m, ok := e.(*kafka.Message)
 	if !ok {
@@ -138,10 +140,11 @@ func (p *Exporter) createTopicIfNotExists(topic string) error {
 
 	for _, result := range results {
 		if result.Error.Code() != kafka.ErrNoError && result.Error.Code() != kafka.ErrTopicAlreadyExists {
+			fmt.Println("create topic error: ", result.Error.Code(), result.Error.String(), " ", result.Topic, "")
 			return fmt.Errorf("failed to create topic %s: %w", result.Topic, result.Error)
 		}
 	}
-
+	fmt.Println("create topic result: ", results)
 	p.cfg.Topic = topic
 	return nil
 }
