@@ -22,6 +22,7 @@ type ForwardingRule struct {
 	Active        bool                   `gorm:"default:true"`
 	Public        bool                   `gorm:"default:false"`
 	RetryAttempts int                    `gorm:"default:1"`
+	TrustLens     *domain.TrustLensJSON  `gorm:"type:jsonb"`
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }

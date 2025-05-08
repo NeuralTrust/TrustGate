@@ -16,8 +16,23 @@ type (
 	SecurityConfigJSON types.SecurityConfig
 	ClientTLSConfig    map[string]types.ClientTLSConfig
 	TagsJSON           []string
+	TrustLensJSON      types.TrustLensConfig
 )
 
+func (c TrustLensJSON) Value() (driver.Value, error) {
+	return json.Marshal(c)
+}
+
+func (c *TrustLensJSON) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("expected []byte, got %T", value)
+	}
+	return json.Unmarshal(bytes, c)
+}
 func (c ClientTLSConfig) Value() (driver.Value, error) {
 	return json.Marshal(c)
 }

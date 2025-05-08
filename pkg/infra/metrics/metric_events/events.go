@@ -21,8 +21,8 @@ type Event struct {
 	Type           string            `json:"type"`
 	StartTimestamp int64             `json:"start_timestamp"`
 	EndTimestamp   int64             `json:"end_timestamp"`
-	Latency        int64             `json:"latency_ms"`
-	IP             string            `json:"ip,omitempty"`
+	Latency        int64             `json:"latency"`
+	IP             string            `json:"user_ip,omitempty"`
 	Params         map[string]string `json:"params,omitempty"`
 
 	// Trace Params
@@ -36,6 +36,9 @@ type Event struct {
 	RequestHeaders  map[string][]string `json:"request_headers,omitempty"`
 	ResponseHeaders map[string][]string `json:"response_headers,omitempty"`
 	StatusCode      int                 `json:"status_code"`
+
+	TeamID string `json:"team_id,omitempty"`
+	AppID  string `json:"app_id,omitempty"`
 
 	// Plugin Params
 	Plugin *PluginDataEvent `json:"plugin,omitempty"`

@@ -18,7 +18,6 @@ func NewProviderLocator(providers map[string]telemetry.Exporter) *ExporterLocato
 }
 
 func (p *ExporterLocator) GetExporter(exporter types.Exporter) (telemetry.Exporter, error) {
-	fmt.Println("getting exporter")
 	base, ok := p.exporters[exporter.Name]
 	if !ok {
 		return nil, fmt.Errorf("unknown provider: %s", exporter.Name)
@@ -26,7 +25,6 @@ func (p *ExporterLocator) GetExporter(exporter types.Exporter) (telemetry.Export
 	if err := base.ValidateConfig(exporter.Settings); err != nil {
 		return nil, err
 	}
-	fmt.Println("building provider with settings")
 	provider, err := base.WithSettings(exporter.Settings)
 	if err != nil {
 		return nil, err

@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
 	"github.com/valyala/fasthttp"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
@@ -125,7 +126,8 @@ func NewContainer(
 
 	// telemetry
 	providerLocator := infraTelemetry.NewProviderLocator(map[string]domain.Exporter{
-		kafka.ExporterName: kafka.NewKafkaExporter(),
+		kafka.ExporterName:     kafka.NewKafkaExporter(),
+		trustlens.ExporterName: trustlens.NewTrustLensExporter(),
 	})
 	telemetryBuilder := telemetry.NewTelemetryExportersBuilder(providerLocator)
 	telemetryValidator := telemetry.NewTelemetryExportersValidator(providerLocator)

@@ -98,6 +98,20 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("failed to generate UUID")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
 	}
+
+	var trustLensConfig *domain.TrustLensJSON
+	if req.TrustLens != nil {
+		if req.TrustLens.AppID == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "trust lens app id is required"})
+		}
+		if req.TrustLens.TeamID == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "trust lens team id is required"})
+		}
+		trustLensConfig = &domain.TrustLensJSON{
+			AppID:  req.TrustLens.AppID,
+			TeamID: req.TrustLens.TeamID,
+		}
+	}
 	// Create the database model
 	dbRule := &forwarding_rule.ForwardingRule{
 		ID:            id,
@@ -112,6 +126,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		PluginChain:   req.PluginChain,
 		Active:        true,
 		Public:        false,
+		TrustLens:     trustLensConfig,
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
 	}
@@ -152,12 +167,19 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		}
 	}
 
-	// Convert headers from pq.StringArray to map[string]string
 	headers := make(map[string]string)
 	for _, h := range rule.Headers {
 		parts := strings.SplitN(h, ":", 2)
 		if len(parts) == 2 {
 			headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+
+	var trustLensConfig *types.TrustLensConfig
+	if rule.TrustLens != nil {
+		trustLensConfig = &types.TrustLensConfig{
+			AppID:  rule.TrustLens.AppID,
+			TeamID: rule.TrustLens.TeamID,
 		}
 	}
 
@@ -174,6 +196,7 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		PluginChain:   pluginChain,
 		Active:        rule.Active,
 		Public:        rule.Public,
+		TrustLens:     trustLensConfig,
 		CreatedAt:     rule.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
 	}, nil
@@ -205,6 +228,15 @@ func (s *createRuleHandler) validate(rule *types.CreateRuleRequest) error {
 	for _, method := range rule.Methods {
 		if !validMethods[strings.ToUpper(method)] {
 			return fmt.Errorf("invalid HTTP method: %s", method)
+		}
+	}
+
+	if rule.TrustLens != nil {
+		if rule.TrustLens.AppID == "" {
+			return fmt.Errorf("trust lens app id is required")
+		}
+		if rule.TrustLens.TeamID == "" {
+			return fmt.Errorf("trust lens team id is required")
 		}
 	}
 
