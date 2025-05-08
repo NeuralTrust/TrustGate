@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/url"
 	"strings"
 	"sync"
@@ -112,10 +113,14 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		statusCode := c.Response().StatusCode()
 
 		wg.Wait()
+		fmt.Println("waiting for stream mode signal")
 		var once sync.Once
 		if streamDetected {
+			fmt.Println("stream mode detected")
 			go func() {
+				fmt.Println("processing streamResponse channel")
 				for line := range streamResponse {
+					fmt.Println("capturing response line: ", string(line))
 					if len(line) > 0 {
 						_, err := streamResponseBody.Write(line)
 						if err != nil {
@@ -126,6 +131,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 				once.Do(func() {
 					m.logger.Debug("stream channel closed")
 					now := time.Now()
+					fmt.Println("starting metrics in stream mode")
 					m.worker.Process(
 						metricsCollector,
 						exporters,
@@ -144,11 +150,13 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 					)
 				})
 			}()
+			fmt.Println("sending stream mode signal")
 			return err
 		}
 
 		outputResponse := m.transformToResponseContext(c, gatewayID)
 		m.logger.Debug("processing metrics as non stream mode")
+		fmt.Println("starting metrics in non stream mode")
 		m.worker.Process(
 			metricsCollector,
 			exporters,

@@ -66,6 +66,7 @@ func (m *worker) Process(
 	startTime,
 	endTime time.Time,
 ) {
+	fmt.Println("starting collector goroutines")
 	m.enqueueTask(func() {
 		m.registryMetricsToPrometheus(req.Method, req.GatewayID, resp.StatusCode)
 	}, req.GatewayID)
