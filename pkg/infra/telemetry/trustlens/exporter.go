@@ -92,11 +92,35 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 	if p.producer == nil {
 		return errors.New("kafka (trustlens) producer is not initialized")
 	}
-	data, err := json.Marshal(evt)
+
+	// Apply mapping transformations to the event and get extracted fields
+	extractedFields, err := p.applyMappingTransformations(evt)
+	if err != nil {
+		return fmt.Errorf("failed to apply mapping transformations: %w", err)
+	}
+
+	// Convert event to map
+	eventMap := make(map[string]interface{})
+	eventBytes, err := json.Marshal(evt)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
-	fmt.Println(string(data))
+
+	if err := json.Unmarshal(eventBytes, &eventMap); err != nil {
+		return fmt.Errorf("failed to unmarshal event: %w", err)
+	}
+
+	// Add extracted fields to the event map
+	for field, value := range extractedFields {
+		eventMap[field] = value
+	}
+
+	// Marshal the event map with extracted fields
+	data, err := json.Marshal(eventMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
 	deliveryChan := make(chan kafka.Event)
 
 	err = p.producer.Produce(&kafka.Message{
@@ -126,6 +150,89 @@ func (p *Exporter) Close() {
 		p.producer.Flush(5000)
 		p.producer.Close()
 	}
+}
+
+func (p *Exporter) applyMappingTransformations(evt *metric_events.Event) (map[string]interface{}, error) {
+	extractedFields := make(map[string]interface{})
+
+	if len(p.cfg.Mapping.Input.ExtractFields) > 0 || len(p.cfg.Mapping.Input.DataProjection) > 0 {
+		fields, err := p.applyMapping(evt, true)
+		if err != nil {
+			return nil, fmt.Errorf("failed to apply input mapping: %w", err)
+		}
+		for k, v := range fields {
+			extractedFields[k] = v
+		}
+	}
+	if len(p.cfg.Mapping.Output.ExtractFields) > 0 || len(p.cfg.Mapping.Output.DataProjection) > 0 {
+		fields, err := p.applyMapping(evt, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to apply output mapping: %w", err)
+		}
+		for k, v := range fields {
+			extractedFields[k] = v
+		}
+	}
+	return extractedFields, nil
+}
+
+func (p *Exporter) applyMapping(evt *metric_events.Event, isInput bool) (map[string]interface{}, error) {
+	var (
+		jsonData  string
+		mapping   DataMapping
+		fieldName string
+	)
+
+	if isInput {
+		jsonData = evt.Input
+		mapping = p.cfg.Mapping.Input
+		fieldName = "input"
+	} else {
+		jsonData = evt.Output
+		mapping = p.cfg.Mapping.Output
+		fieldName = "output"
+	}
+
+	if jsonData == "" {
+		return nil, nil
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonData), &data); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal %s JSON: %w", fieldName, err)
+	}
+
+	extractedFields := make(map[string]interface{})
+	if len(mapping.ExtractFields) > 0 {
+		for eventField, dataField := range mapping.ExtractFields {
+			if value, ok := data[dataField]; ok {
+				extractedFields[eventField] = value
+			}
+		}
+	}
+
+	if len(mapping.DataProjection) > 0 {
+		projectedData := make(map[string]interface{})
+		for targetField, sourceField := range mapping.DataProjection {
+			if value, ok := data[sourceField]; ok {
+				projectedData[targetField] = value
+			}
+		}
+		data = projectedData
+	}
+
+	transformedJSON, err := json.Marshal(data)
+	if err != nil {
+		return extractedFields, fmt.Errorf("failed to marshal transformed %s: %w", fieldName, err)
+	}
+
+	if isInput {
+		evt.Input = string(transformedJSON)
+	} else {
+		evt.Output = string(transformedJSON)
+	}
+
+	return extractedFields, nil
 }
 
 func (p *Exporter) createTopicIfNotExists(topic string) error {

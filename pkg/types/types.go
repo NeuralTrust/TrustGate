@@ -18,7 +18,7 @@ type CreateRuleRequest struct {
 	PreserveHost  *bool             `json:"preserve_host"`
 	RetryAttempts *int              `json:"retry_attempts"`
 	PluginChain   []PluginConfig    `json:"plugin_chain"`
-	TrustLens     *TrustLensConfig  `json:"trust_lens,omitempty"`
+	TrustLens     *TrustLensConfig  `json:"trustlens,omitempty"`
 }
 
 type UpdateRuleRequest struct {

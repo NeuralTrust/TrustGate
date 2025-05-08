@@ -167,7 +167,6 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		}
 	}
 
-	// Convert headers from pq.StringArray to map[string]string
 	headers := make(map[string]string)
 	for _, h := range rule.Headers {
 		parts := strings.SplitN(h, ":", 2)
@@ -229,6 +228,15 @@ func (s *createRuleHandler) validate(rule *types.CreateRuleRequest) error {
 	for _, method := range rule.Methods {
 		if !validMethods[strings.ToUpper(method)] {
 			return fmt.Errorf("invalid HTTP method: %s", method)
+		}
+	}
+
+	if rule.TrustLens != nil {
+		if rule.TrustLens.AppID == "" {
+			return fmt.Errorf("trust lens app id is required")
+		}
+		if rule.TrustLens.TeamID == "" {
+			return fmt.Errorf("trust lens team id is required")
 		}
 	}
 

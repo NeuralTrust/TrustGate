@@ -81,7 +81,7 @@ type ForwardingRule struct {
 	PluginChain   []PluginConfig    `json:"plugin_chain"`
 	Active        bool              `json:"active"`
 	Public        bool              `json:"public"`
-	TrustLens     *TrustLensConfig  `json:"trust_lens,omitempty"`
+	TrustLens     *TrustLensConfig  `json:"trustlens,omitempty"`
 	CreatedAt     string            `json:"created_at"`
 	UpdatedAt     string            `json:"updated_at"`
 }
