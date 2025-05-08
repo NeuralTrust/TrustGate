@@ -108,7 +108,46 @@ type RequestData struct {
 	Method  string
 }
 
+func (h *forwardedHandler) handleErrorResponse(c *fiber.Ctx, status int, message fiber.Map) error {
+	streamMode, ok := c.Locals(common.StreamModeContextKey).(chan bool)
+	if !ok {
+		h.logger.Error("failed to get stream mode channel")
+		return fmt.Errorf("failed to get stream mode channel")
+	}
+	streamMode <- false
+	return c.Status(status).JSON(message)
+}
+
+func (h *forwardedHandler) handleSuccessResponse(c *fiber.Ctx, status int, message []byte) error {
+	streamMode, ok := c.Locals(common.StreamModeContextKey).(chan bool)
+	if !ok {
+		h.logger.Error("failed to get stream mode channel")
+		return fmt.Errorf("failed to get stream mode channel")
+	}
+	select {
+	case streamMode <- false:
+		h.logger.Debug("stream mode disabled")
+	default:
+	}
+	return c.Status(status).Send(message)
+}
+
+func (h *forwardedHandler) handleSuccessJSONResponse(c *fiber.Ctx, status int, message interface{}) error {
+	streamMode, ok := c.Locals(common.StreamModeContextKey).(chan bool)
+	if !ok {
+		h.logger.Error("failed to get stream mode channel")
+		return fmt.Errorf("failed to get stream mode channel")
+	}
+	select {
+	case streamMode <- false:
+		h.logger.Debug("stream mode disabled")
+	default:
+	}
+	return c.Status(status).JSON(message)
+}
+
 func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
+
 	reqData := RequestData{
 		Headers: c.GetReqHeaders(),
 		Body:    c.Body(),
@@ -123,18 +162,19 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	if gatewayIDAny == "" {
 		h.logger.Error("gateway ID not found in Fiber context")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal server error"})
+		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "Internal server error"})
 	}
 
 	gatewayID, ok := gatewayIDAny.(string)
 	if !ok {
 		h.logger.Error("gateway ID not found in Fiber context")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
+		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "Internal server error"})
 	}
 
 	metricsCollector, ok := c.Locals(string(metrics.CollectorKey)).(*metrics.Collector)
 	if !ok || metricsCollector == nil {
-		return fmt.Errorf("failed to retrieve metrics collector from context")
+		h.logger.Error("failed to retrieve metrics collector from context")
+		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "internal server error"})
 	}
 
 	// Get metadata from fiber context
@@ -187,7 +227,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
 	if !ok {
 		h.logger.Error("failed to get gateway data in handler")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
+		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "internal server error"})
 	}
 
 	reqCtx.Metadata[string(common.GatewayDataContextKey)] = gatewayData
@@ -225,13 +265,13 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 			"path":   c.Path(),
 			"method": reqData.Method,
 		}).Debug("no matching rule found")
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "no matching rule found"})
+		return h.handleErrorResponse(c, fiber.StatusNotFound, fiber.Map{"error": "no matching rule found"})
 	}
 
 	// Configure plugins for this request
 	if err := h.configureRulePlugins(gatewayID, matchingRule); err != nil {
 		h.logger.WithError(err).Error("Failed to configure plugins")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to configure plugins"})
+		return h.handleErrorResponse(c, fiber.StatusNotFound, fiber.Map{"error": "failed to configure plugins"})
 	}
 
 	if _, err := h.pluginManager.ExecuteStage(
@@ -250,7 +290,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 				}
 			}
 			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx)
-			return c.Status(pluginErr.StatusCode).JSON(fiber.Map{
+			return h.handleErrorResponse(c, pluginErr.StatusCode, fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
@@ -262,10 +302,10 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 					c.Set(k, v)
 				}
 			}
-			return c.Status(respCtx.StatusCode).Send(respCtx.Body)
+			return h.handleSuccessResponse(c, respCtx.StatusCode, respCtx.Body)
 		}
 		if !h.cfg.Plugins.IgnoreErrors {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
+			return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "Plugin execution failed"})
 		}
 	}
 
@@ -275,7 +315,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 				c.Set(k, v)
 			}
 		}
-		return c.Status(respCtx.StatusCode).Send(respCtx.Body)
+		return h.handleSuccessResponse(c, respCtx.StatusCode, respCtx.Body)
 	}
 	// Forward the request
 	response, err := h.forwardRequest(
@@ -285,13 +325,15 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to forward request")
-		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
+		h.registryFailedEvent(metricsCollector, fiber.StatusInternalServerError, err, respCtx)
+		return h.handleErrorResponse(c, fiber.StatusBadGateway, fiber.Map{
 			"error":   "failed to forward request",
 			"message": err.Error(),
 		})
 	}
 
 	if response.Streaming {
+		h.registrySuccessEvent(metricsCollector, respCtx)
 		return nil
 	}
 
@@ -322,9 +364,9 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		}
 		var jsonBody interface{}
 		if err := json.Unmarshal(response.Body, &jsonBody); err == nil {
-			return c.Status(response.StatusCode).JSON(jsonBody)
+			return h.handleSuccessJSONResponse(c, response.StatusCode, jsonBody)
 		}
-		return c.Status(response.StatusCode).JSON(fiber.Map{
+		return h.handleErrorResponse(c, response.StatusCode, fiber.Map{
 			"error": string(response.Body),
 		})
 	}
@@ -347,14 +389,14 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 				}
 			}
 			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx)
-			return c.Status(pluginErr.StatusCode).JSON(fiber.Map{
+			return h.handleErrorResponse(c, pluginErr.StatusCode, fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
 		}
 
 		if !h.cfg.Plugins.IgnoreErrors {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
+			return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "Plugin execution failed"})
 		}
 	}
 
@@ -380,13 +422,13 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 				}
 			}
 			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx)
-			return c.Status(pluginErr.StatusCode).JSON(fiber.Map{
+			return h.handleErrorResponse(c, pluginErr.StatusCode, fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
 		}
 		if !h.cfg.Plugins.IgnoreErrors {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Plugin execution failed"})
+			return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "Plugin execution failed"})
 		}
 
 	}
@@ -417,7 +459,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	h.registrySuccessEvent(metricsCollector, respCtx)
 	// Write the response body
-	return c.Status(respCtx.StatusCode).Send(respCtx.Body)
+	return h.handleSuccessResponse(c, respCtx.StatusCode, respCtx.Body)
 
 }
 
@@ -572,8 +614,23 @@ func (h *forwardedHandler) doForwardRequest(
 	fastHttpReq.SetRequestURI(targetURL)
 	fastHttpReq.Header.SetMethod(req.Method)
 
+	streamResponse, ok := req.C.Locals(common.StreamResponseContextKey).(chan []byte)
+	if !ok || streamResponse == nil {
+		h.logger.Error("failed to get stream response channel")
+		return nil, fmt.Errorf("failed to make read response channel")
+	}
+
+	streamMode, ok := req.C.Locals(common.StreamModeContextKey).(chan bool)
+	if !ok {
+		h.logger.Error("failed to get stream mode channel")
+		return nil, fmt.Errorf("failed to get stream mode channel")
+	}
+
 	if target.Stream {
-		return h.handleStreamingRequest(req, target)
+		streamMode <- true
+		return h.handleStreamingRequest(req, target, streamResponse)
+	} else {
+		close(streamResponse)
 	}
 
 	if len(req.Body) > 0 {
@@ -672,6 +729,7 @@ func (h *forwardedHandler) applyAuthentication(req *fasthttp.Request, creds *typ
 func (h *forwardedHandler) handleStreamingRequest(
 	req *types.RequestContext,
 	target *types.UpstreamTarget,
+	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
 	var providerConfig *config.ProviderConfig
 	if target.Provider != "" {
@@ -686,7 +744,7 @@ func (h *forwardedHandler) handleStreamingRequest(
 		}
 		req.Body = transformedBody
 	}
-	return h.handleStreamingResponse(req, target, providerConfig)
+	return h.handleStreamingResponse(req, target, providerConfig, streamResponse)
 }
 
 func (h *forwardedHandler) buildUpstreamTargetUrl(target *types.UpstreamTarget) string {
@@ -718,6 +776,7 @@ func (h *forwardedHandler) handleStreamingResponse(
 	req *types.RequestContext,
 	target *types.UpstreamTarget,
 	providerConfig *config.ProviderConfig,
+	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
 
 	upstreamURL := h.buildUpstreamTargetUrl(target)
@@ -779,8 +838,8 @@ func (h *forwardedHandler) handleStreamingResponse(
 
 	req.C.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer resp.Body.Close()
+		defer close(streamResponse)
 		reader := bufio.NewReader(resp.Body)
-
 		for {
 			line, err := reader.ReadBytes('\n')
 			if err != nil {
@@ -809,6 +868,7 @@ func (h *forwardedHandler) handleStreamingResponse(
 					fmt.Println("Error encoding:", err)
 					return
 				}
+				streamResponse <- buffer.Bytes()
 				fmt.Fprintf(w, "data: %s\n", buffer.String())
 				_ = w.Flush()
 			}
@@ -820,6 +880,7 @@ func (h *forwardedHandler) handleStreamingResponse(
 		Headers:    responseHeaders,
 		Streaming:  true,
 		Metadata:   req.Metadata,
+		Target:     target,
 	}, nil
 }
 

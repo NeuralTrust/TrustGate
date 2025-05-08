@@ -14,4 +14,6 @@ const (
 	FingerprintIdContextKey    contextKey = "fingerprint_id"
 	LatencyContextKey          contextKey = "__execution_time"
 	WsRequestContextContextKey contextKey = "__req_context"
+	StreamResponseContextKey   contextKey = "__stream_response"
+	StreamModeContextKey       contextKey = "__stream_mode"
 )
