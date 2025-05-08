@@ -382,6 +382,14 @@ func (r *Repository) UpdateRulesCache(ctx context.Context, gatewayID uuid.UUID, 
 			rule.UpdatedAt = time.Now()
 		}
 
+		var trustLensConfig *types.TrustLensConfig
+		if rule.TrustLens != nil {
+			trustLensConfig = &types.TrustLensConfig{
+				AppID:  rule.TrustLens.AppID,
+				TeamID: rule.TrustLens.TeamID,
+			}
+		}
+
 		apiRules[i] = types.ForwardingRule{
 			ID:            rule.ID.String(),
 			GatewayID:     rule.GatewayID.String(),
@@ -395,6 +403,7 @@ func (r *Repository) UpdateRulesCache(ctx context.Context, gatewayID uuid.UUID, 
 			PluginChain:   rule.PluginChain,
 			Active:        rule.Active,
 			Public:        rule.Public,
+			TrustLens:     trustLensConfig,
 			CreatedAt:     rule.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
 		}

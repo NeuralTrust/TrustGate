@@ -159,6 +159,14 @@ func (f *dataFinder) convertModelToTypesRules(rules []forwarding_rule.Forwarding
 			pluginChain = []types.PluginConfig{} // fallback to empty slice on error
 		}
 
+		var trustLensConfig *types.TrustLensConfig
+		if r.TrustLens != nil {
+			trustLensConfig = &types.TrustLensConfig{
+				AppID:  r.TrustLens.AppID,
+				TeamID: r.TrustLens.TeamID,
+			}
+		}
+
 		result = append(result, types.ForwardingRule{
 			ID:            r.ID.String(),
 			GatewayID:     r.GatewayID.String(),
@@ -172,6 +180,7 @@ func (f *dataFinder) convertModelToTypesRules(rules []forwarding_rule.Forwarding
 			PluginChain:   pluginChain,
 			Active:        r.Active,
 			Public:        r.Public,
+			TrustLens:     trustLensConfig,
 			CreatedAt:     r.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:     r.UpdatedAt.Format(time.RFC3339),
 		})

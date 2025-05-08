@@ -63,6 +63,13 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 	// Convert to API response format
 	rules := make([]types.ForwardingRule, len(dbRules))
 	for i, rule := range dbRules {
+		var trustLensConfig *types.TrustLensConfig
+		if rule.TrustLens != nil {
+			trustLensConfig = &types.TrustLensConfig{
+				AppID:  rule.TrustLens.AppID,
+				TeamID: rule.TrustLens.TeamID,
+			}
+		}
 		rules[i] = types.ForwardingRule{
 			ID:            rule.ID.String(),
 			GatewayID:     rule.GatewayID.String(),
@@ -76,6 +83,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			PluginChain:   rule.PluginChain,
 			Active:        rule.Active,
 			Public:        rule.Public,
+			TrustLens:     trustLensConfig,
 			CreatedAt:     rule.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
 		}

@@ -11,6 +11,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
+	domainTypes "github.com/NeuralTrust/TrustGate/pkg/domain"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
@@ -67,20 +68,8 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
-	// Convert UpdateRuleRequest to CreateRuleRequest for validation
-	validateReq := types.UpdateRuleRequest{
-		Path:          req.Path,
-		ServiceID:     req.ServiceID,
-		Methods:       req.Methods,
-		Headers:       req.Headers,
-		StripPath:     req.StripPath,
-		PreserveHost:  req.PreserveHost,
-		RetryAttempts: req.RetryAttempts,
-		PluginChain:   req.PluginChain,
-	}
-
 	// Validate the rule request
-	if err := s.validate(&validateReq); err != nil {
+	if err := s.validate(&req); err != nil {
 		s.logger.WithError(err).Error("Rule validation failed")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -93,7 +82,7 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_id"})
 	}
 
-	err = s.updateForwardingRuleDB(c.Context(), gatewayUUID, ruleUUID, validateReq)
+	err = s.updateForwardingRuleDB(c.Context(), gatewayUUID, ruleUUID, req)
 	if err != nil {
 		if errors.As(err, &domain.ErrEntityNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
@@ -228,6 +217,15 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 		forwardingRule.Active = *req.Active
 	}
 
+	var trustLensConfig *domainTypes.TrustLensJSON
+	if req.TrustLens != nil {
+		trustLensConfig = &domainTypes.TrustLensJSON{
+			AppID:  req.TrustLens.AppID,
+			TeamID: req.TrustLens.TeamID,
+		}
+		forwardingRule.TrustLens = trustLensConfig
+	}
+
 	forwardingRule.PluginChain = req.PluginChain
 	forwardingRule.UpdatedAt = time.Now()
 
@@ -281,6 +279,15 @@ func (s *updateRuleHandler) validate(rule *types.UpdateRuleRequest) error {
 			if err := s.validatePlugin.Validate(pl); err != nil {
 				return fmt.Errorf("plugin %d: %v", i, err)
 			}
+		}
+	}
+
+	if rule.TrustLens != nil {
+		if rule.TrustLens.AppID == "" {
+			return fmt.Errorf("trust lens app id is required")
+		}
+		if rule.TrustLens.TeamID == "" {
+			return fmt.Errorf("trust lens team id is required")
 		}
 	}
 

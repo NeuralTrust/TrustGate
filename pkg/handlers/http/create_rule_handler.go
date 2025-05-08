@@ -98,6 +98,20 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("failed to generate UUID")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
 	}
+
+	var trustLensConfig *domain.TrustLensJSON
+	if req.TrustLens != nil {
+		if req.TrustLens.AppID == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "trust lens app id is required"})
+		}
+		if req.TrustLens.TeamID == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "trust lens team id is required"})
+		}
+		trustLensConfig = &domain.TrustLensJSON{
+			AppID:  req.TrustLens.AppID,
+			TeamID: req.TrustLens.TeamID,
+		}
+	}
 	// Create the database model
 	dbRule := &forwarding_rule.ForwardingRule{
 		ID:            id,
@@ -112,6 +126,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		PluginChain:   req.PluginChain,
 		Active:        true,
 		Public:        false,
+		TrustLens:     trustLensConfig,
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
 	}
@@ -161,6 +176,14 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		}
 	}
 
+	var trustLensConfig *types.TrustLensConfig
+	if rule.TrustLens != nil {
+		trustLensConfig = &types.TrustLensConfig{
+			AppID:  rule.TrustLens.AppID,
+			TeamID: rule.TrustLens.TeamID,
+		}
+	}
+
 	return types.ForwardingRule{
 		ID:            rule.ID.String(),
 		GatewayID:     rule.GatewayID.String(),
@@ -174,6 +197,7 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		PluginChain:   pluginChain,
 		Active:        rule.Active,
 		Public:        rule.Public,
+		TrustLens:     trustLensConfig,
 		CreatedAt:     rule.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
 	}, nil

@@ -1,4 +1,4 @@
-package kafka
+package trustlens
 
 import (
 	"context"
@@ -14,13 +14,24 @@ import (
 )
 
 const (
-	ExporterName = "kafka"
+	ExporterName = "trustlens"
 )
 
 type Config struct {
-	Host  string `mapstructure:"host"`
-	Port  string `mapstructure:"port"`
-	Topic string `mapstructure:"Topic"`
+	Host    string  `mapstructure:"host"`
+	Port    string  `mapstructure:"port"`
+	Topic   string  `mapstructure:"Topic"`
+	Mapping Mapping `mapstructure:"mapping"`
+}
+
+type Mapping struct {
+	Input  DataMapping `mapstructure:"input"`
+	Output DataMapping `mapstructure:"output"`
+}
+
+type DataMapping struct {
+	ExtractFields  map[string]string `mapstructure:"extract_fields"`
+	DataProjection map[string]string `mapstructure:"data_projection"`
 }
 
 type Exporter struct {
@@ -28,7 +39,7 @@ type Exporter struct {
 	producer *kafka.Producer
 }
 
-func NewKafkaExporter() *Exporter {
+func NewTrustLensExporter() *Exporter {
 	return &Exporter{}
 }
 
@@ -56,13 +67,13 @@ func (p *Exporter) ValidateConfig(settings map[string]interface{}) error {
 func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Exporter, error) {
 	var conf Config
 	if err := mapstructure.Decode(settings, &conf); err != nil {
-		return nil, fmt.Errorf("invalid kafka config: %w", err)
+		return nil, fmt.Errorf("invalid kafka (trustlens) config: %w", err)
 	}
 	producer, err := kafka.NewProducer(&kafka.ConfigMap{
 		"bootstrap.servers": fmt.Sprintf("%s:%s", conf.Host, conf.Port),
 	})
 	if err != nil {
-		fmt.Println("cannot connect with kafka: ", err, " ", conf.Host, " ", conf.Port, " ", conf.Topic, "")
+		fmt.Println("cannot connect with kafka (trustlens): ", err, " ", conf.Host, " ", conf.Port, " ", conf.Topic, "")
 		return nil, fmt.Errorf("failed to create kafka producer: %w", err)
 	}
 	exporter := &Exporter{
@@ -79,7 +90,7 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 
 func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 	if p.producer == nil {
-		return errors.New("kafka producer is not initialized")
+		return errors.New("kafka (trustlens) producer is not initialized")
 	}
 	data, err := json.Marshal(evt)
 	if err != nil {
@@ -93,17 +104,17 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 		Value:          data,
 	}, deliveryChan)
 	if err != nil {
-		return fmt.Errorf("failed to produce message: %w", err)
+		return fmt.Errorf("failed to produce message (trustlens): %w", err)
 	}
 
 	e := <-deliveryChan
 	m, ok := e.(*kafka.Message)
 	if !ok {
-		return fmt.Errorf("failed to cast message: %w", err)
+		return fmt.Errorf("failed to cast message (trustlens): %w", err)
 	}
 
 	if m.TopicPartition.Error != nil {
-		return fmt.Errorf("delivery failed: %w", m.TopicPartition.Error)
+		return fmt.Errorf("delivery failed (trustlens): %w", m.TopicPartition.Error)
 	}
 
 	close(deliveryChan)

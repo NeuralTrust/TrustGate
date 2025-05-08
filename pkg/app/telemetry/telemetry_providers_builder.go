@@ -1,8 +1,6 @@
 package telemetry
 
 import (
-	"fmt"
-
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	factory "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -25,7 +23,6 @@ func NewTelemetryExportersBuilder(locator *factory.ExporterLocator) ExportersBui
 func (v *exportersBuilder) Build(configs []types.Exporter) ([]domain.Exporter, error) {
 	var providers []domain.Exporter
 	for _, config := range configs {
-		fmt.Println("build exporter: " + config.Name)
 		telemetryProvider, err := v.locator.GetExporter(config)
 		if err != nil {
 			return nil, err
