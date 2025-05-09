@@ -177,65 +177,12 @@ func (r *Repository) GetRule(ctx context.Context, id uuid.UUID, gatewayID uuid.U
 }
 
 func (r *Repository) ListRules(ctx context.Context, gatewayID uuid.UUID) ([]forwarding_rule.ForwardingRule, error) {
-	// Try cache first
-	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
-	rulesJSON, err := r.cache.Get(ctx, rulesKey)
-	if err == nil {
-		var apiRules []types.ForwardingRule
-		if err := json.Unmarshal([]byte(rulesJSON), &apiRules); err == nil {
-			// Convert API rules back to DB models
-			rules := make([]forwarding_rule.ForwardingRule, len(apiRules))
-			for i, apiRule := range apiRules {
-				id, err := uuid.Parse(apiRule.ID)
-				if err != nil {
-					r.logger.WithError(err).Error("failed to parse rule ID")
-					continue
-				}
-				serviceId, err := uuid.Parse(apiRule.ServiceID)
-				if err != nil {
-					r.logger.WithError(err).Error("failed to parse service ID")
-					continue
-				}
-				gatewayId, err := uuid.Parse(apiRule.GatewayID)
-				if err != nil {
-					r.logger.WithError(err).Error("failed to parse gateway ID")
-					continue
-				}
-				rules[i] = forwarding_rule.ForwardingRule{
-					ID:            id,
-					GatewayID:     gatewayId,
-					Path:          apiRule.Path,
-					ServiceID:     serviceId,
-					Methods:       apiRule.Methods,
-					Headers:       apiRule.Headers,
-					StripPath:     apiRule.StripPath,
-					PreserveHost:  apiRule.PreserveHost,
-					RetryAttempts: apiRule.RetryAttempts,
-					PluginChain:   apiRule.PluginChain,
-					Active:        apiRule.Active,
-					Public:        apiRule.Public,
-				}
-				// Parse timestamps
-				if t, err := time.Parse(time.RFC3339, apiRule.CreatedAt); err == nil {
-					rules[i].CreatedAt = t
-				}
-				if t, err := time.Parse(time.RFC3339, apiRule.UpdatedAt); err == nil {
-					rules[i].UpdatedAt = t
-				}
-			}
-			return rules, nil
-		}
-		// If unmarshal fails, continue to database
-	}
-
-	// Get from database
 	var rules []forwarding_rule.ForwardingRule
-	err = r.db.Where("gateway_id = ?", gatewayID).Find(&rules).Error
+	err := r.db.Where("gateway_id = ?", gatewayID).Find(&rules).Error
 	if err != nil {
 		return nil, err
 	}
 
-	// Update cache with fresh data
 	if err := r.UpdateRulesCache(ctx, gatewayID, rules); err != nil {
 		r.logger.WithError(err).Error("failed to update rules cache")
 	}
