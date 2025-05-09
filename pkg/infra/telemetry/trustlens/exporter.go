@@ -110,12 +110,10 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 		return fmt.Errorf("failed to unmarshal event: %w", err)
 	}
 
-	// Add extracted fields to the event map
 	for field, value := range extractedFields {
 		eventMap[field] = value
 	}
 
-	// Marshal the event map with extracted fields
 	data, err := json.Marshal(eventMap)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
@@ -130,7 +128,7 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to produce message (trustlens): %w", err)
 	}
-
+	fmt.Println("produced message (trustlens)")
 	e := <-deliveryChan
 	m, ok := e.(*kafka.Message)
 	if !ok {
@@ -212,24 +210,41 @@ func (p *Exporter) applyMapping(evt *metric_events.Event, isInput bool) (map[str
 	}
 
 	if len(mapping.DataProjection) > 0 {
-		projectedData := make(map[string]interface{})
-		for targetField, sourceField := range mapping.DataProjection {
+		var concatenatedValues string
+		for _, sourceField := range mapping.DataProjection {
 			if value, ok := data[sourceField]; ok {
-				projectedData[targetField] = value
+				switch v := value.(type) {
+				case string:
+					concatenatedValues += v + " "
+				default:
+					valueJSON, err := json.Marshal(v)
+					if err == nil {
+						concatenatedValues += string(valueJSON) + " "
+					}
+				}
 			}
 		}
-		data = projectedData
-	}
 
-	transformedJSON, err := json.Marshal(data)
-	if err != nil {
-		return extractedFields, fmt.Errorf("failed to marshal transformed %s: %w", fieldName, err)
-	}
+		if len(concatenatedValues) > 0 {
+			concatenatedValues = concatenatedValues[:len(concatenatedValues)-1]
+		}
 
-	if isInput {
-		evt.Input = string(transformedJSON)
+		if isInput {
+			evt.Input = concatenatedValues
+		} else {
+			evt.Output = concatenatedValues
+		}
 	} else {
-		evt.Output = string(transformedJSON)
+		transformedJSON, err := json.Marshal(data)
+		if err != nil {
+			return extractedFields, fmt.Errorf("failed to marshal transformed %s: %w", fieldName, err)
+		}
+
+		if isInput {
+			evt.Input = string(transformedJSON)
+		} else {
+			evt.Output = string(transformedJSON)
+		}
 	}
 
 	return extractedFields, nil
