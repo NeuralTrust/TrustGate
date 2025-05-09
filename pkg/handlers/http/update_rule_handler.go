@@ -82,7 +82,7 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_id"})
 	}
 
-	err = s.updateForwardingRuleDB(c.Context(), gatewayUUID, ruleUUID, req)
+	err = s.updateForwardingRuleDB(c.Context(), ruleUUID, gatewayUUID, req)
 	if err != nil {
 		if errors.As(err, &domain.ErrEntityNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
