@@ -61,7 +61,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		c.Locals(common.StreamResponseContextKey, streamResponse)
 		c.Locals(common.StreamModeContextKey, streamMode)
 		c.Locals(string(metrics.CollectorKey), metricsCollector)
-		ctx := context.WithValue(c.Context(), string(metrics.CollectorKey), metricsCollector)
+		ctx := context.WithValue(c.Context(), string(metrics.CollectorKey), metricsCollector) //nolint
 		ctx = context.WithValue(ctx, common.StreamResponseContextKey, streamResponse)
 		ctx = context.WithValue(ctx, common.StreamModeContextKey, streamMode)
 		c.SetUserContext(ctx)
