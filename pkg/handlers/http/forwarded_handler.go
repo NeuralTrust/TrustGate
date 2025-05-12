@@ -299,7 +299,6 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 				pluginErr.StatusCode,
 				pluginErr.Err,
 				respCtx,
-				matchingRule,
 			)
 			return h.handleErrorResponse(c, pluginErr.StatusCode, fiber.Map{
 				"error":       pluginErr.Message,
@@ -336,7 +335,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to forward request")
-		h.registryFailedEvent(metricsCollector, fiber.StatusInternalServerError, err, respCtx, matchingRule)
+		h.registryFailedEvent(metricsCollector, fiber.StatusInternalServerError, err, respCtx)
 		return h.handleErrorResponse(c, fiber.StatusBadGateway, fiber.Map{
 			"error":   "failed to forward request",
 			"message": err.Error(),
@@ -344,7 +343,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	if response.Streaming {
-		h.registrySuccessEvent(metricsCollector, respCtx, matchingRule)
+		h.registrySuccessEvent(metricsCollector, respCtx)
 		return nil
 	}
 
@@ -399,7 +398,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 					c.Set(k, v)
 				}
 			}
-			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx, matchingRule)
+			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx)
 			return h.handleErrorResponse(c, pluginErr.StatusCode, fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
@@ -432,7 +431,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 					c.Set(k, v)
 				}
 			}
-			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx, matchingRule)
+			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx)
 			return h.handleErrorResponse(c, pluginErr.StatusCode, fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
@@ -468,7 +467,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		).Observe(float64(duration))
 	}
 
-	h.registrySuccessEvent(metricsCollector, respCtx, matchingRule)
+	h.registrySuccessEvent(metricsCollector, respCtx)
 	// Write the response body
 	return h.handleSuccessResponse(c, respCtx.StatusCode, respCtx.Body)
 
@@ -1029,13 +1028,8 @@ func (h *forwardedHandler) registryFailedEvent(
 	status int,
 	err error,
 	rsp *types.ResponseContext,
-	rule *types.ForwardingRule,
 ) {
 	evt := metric_events.NewTraceEvent()
-	if rule.TrustLens != nil {
-		evt.AppID = rule.TrustLens.AppID
-		evt.TeamID = rule.TrustLens.TeamID
-	}
 	if err != nil {
 		evt.Error = err.Error()
 	}
@@ -1058,13 +1052,8 @@ func (h *forwardedHandler) registryFailedEvent(
 func (h *forwardedHandler) registrySuccessEvent(
 	collector *metrics.Collector,
 	rsp *types.ResponseContext,
-	rule *types.ForwardingRule,
 ) {
 	evt := metric_events.NewTraceEvent()
-	if rule.TrustLens != nil {
-		evt.AppID = rule.TrustLens.AppID
-		evt.TeamID = rule.TrustLens.TeamID
-	}
 	evt.StatusCode = rsp.StatusCode
 	if rsp.Target != nil {
 		evt.Upstream = &metric_events.UpstreamEvent{}

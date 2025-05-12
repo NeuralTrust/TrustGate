@@ -273,7 +273,27 @@ func (r *RateLimiterPlugin) Execute(
 		}
 	}
 
-	return nil, nil
+	r.raiseEvent(
+		collector,
+		RateLimiterData{
+			RateLimitExceeded: false,
+			ExceededType:      finalStatus.limitType,
+			RetryAfter:        finalStatus.retryAfter,
+			CurrentCount:      finalStatus.currentCount,
+			Window:            finalStatus.window.String(),
+			Limit:             finalStatus.limit,
+		},
+		req.Stage,
+		false,
+		"",
+	)
+
+	return &types.PluginResponse{
+		StatusCode: http.StatusOK,
+		Headers:    resp.Headers,
+		Body:       resp.Body,
+		Metadata:   resp.Metadata,
+	}, nil
 }
 
 func (r *RateLimiterPlugin) extractKey(req *types.RequestContext, limitType string) string {

@@ -38,7 +38,10 @@ type worker struct {
 	closed           atomic.Bool
 }
 
-func NewWorker(logger *logrus.Logger, providersBuilder appTelemetry.ExportersBuilder) Worker {
+func NewWorker(
+	logger *logrus.Logger,
+	providersBuilder appTelemetry.ExportersBuilder,
+) Worker {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &worker{
 		logger:           logger,
@@ -89,6 +92,7 @@ func (m *worker) registryMetricsToExporters(
 		m.logger.WithError(err).Error("failed to build telemetry providers")
 		return
 	}
+
 	events := collector.Flush()
 	var failedExporters []string
 	for _, exporter := range exp {
@@ -167,6 +171,13 @@ func (m *worker) feedEvent(
 	evt.Latency = elapsedTime.Milliseconds()
 	evt.IP = req.IP
 	evt.Method = req.Method
+
+	if resp.Rule != nil {
+		if resp.Rule.TrustLens != nil {
+			evt.AppID = resp.Rule.TrustLens.AppID
+			evt.TeamID = resp.Rule.TrustLens.TeamID
+		}
+	}
 
 	if conversationIDs, ok := req.Headers[common.ConversationIDHeader]; ok && len(conversationIDs) > 0 {
 		evt.ConversationID = conversationIDs[0]
