@@ -280,6 +280,10 @@ func (p *InjectionProtectionPlugin) RequiredPlugins() []string {
 	return requiredPlugins
 }
 
+func (p *InjectionProtectionPlugin) SetUp(config types.PluginConfig) error {
+	return nil
+}
+
 // Stages returns the fixed stages where this plugin must run
 func (p *InjectionProtectionPlugin) Stages() []types.Stage {
 	return []types.Stage{}

@@ -5,6 +5,7 @@ import (
 )
 
 type Repository interface {
-	Store(ctx context.Context, targetID string, embeddingData *Embedding) error
+	Store(ctx context.Context, targetID string, embeddingData *Embedding, key string) error
+
 	GetByTargetID(ctx context.Context, targetID string) (*Embedding, error)
 }

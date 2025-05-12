@@ -13,12 +13,16 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/google/uuid"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 )
@@ -29,12 +33,15 @@ const (
 	jailbreakPath = "/v1/firewall"
 	jailbreakType = "jailbreak"
 	toxicityType  = "toxicity"
+	cacheKey      = "plugin:%s:neuraltrust_guardrail:deny_sample:%s"
 )
 
 type NeuralTrustGuardrailPlugin struct {
 	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
+	embeddingRepo      embedding.Repository
+	serviceLocator     *factory.EmbeddingServiceLocator
 	config             Config
 }
 
@@ -44,11 +51,12 @@ type TaggedRequest struct {
 }
 
 type Config struct {
-	Credentials       Credentials        `mapstructure:"credentials"`
-	ToxicityParamBag  *ToxicityParamBag  `mapstructure:"toxicity"`
-	JailbreakParamBag *JailbreakParamBag `mapstructure:"jailbreak"`
-	MappingField      string             `mapstructure:"mapping_field"`
-	RetentionPeriod   int                `mapstructure:"retention_period"`
+	Credentials        Credentials         `mapstructure:"credentials"`
+	ToxicityParamBag   *ToxicityParamBag   `mapstructure:"toxicity"`
+	JailbreakParamBag  *JailbreakParamBag  `mapstructure:"jailbreak"`
+	ModerationParamBag *ModerationParamBag `mapstructure:"moderation"`
+	MappingField       string              `mapstructure:"mapping_field"`
+	RetentionPeriod    int                 `mapstructure:"retention_period"`
 }
 
 type Credentials struct {
@@ -66,10 +74,31 @@ type JailbreakParamBag struct {
 	Enabled   bool    `mapstructure:"enabled"`
 }
 
+type ModerationParamBag struct {
+	EmbeddingsConfig EmbeddingsConfig `mapstructure:"embedding_config"`
+	Threshold        float64          `mapstructure:"threshold"`
+	DenyTopicAction  string           `mapstructure:"deny_topic_action"`
+	DenySamples      []string         `mapstructure:"deny_samples"`
+	Enabled          bool             `mapstructure:"enabled"`
+}
+
+type EmbeddingsConfig struct {
+	Provider    string                `mapstructure:"provider"`
+	Model       string                `mapstructure:"model"`
+	Credentials EmbeddingsCredentials `mapstructure:"credentials,omitempty"`
+}
+
+type EmbeddingsCredentials struct {
+	HeaderName  string `mapstructure:"header_name,omitempty"`
+	HeaderValue string `mapstructure:"header_value,omitempty"`
+}
+
 func NewNeuralTrustGuardrailPlugin(
 	logger *logrus.Logger,
 	client httpx.Client,
 	fingerPrintManager fingerprint.Tracker,
+	embeddingRepo embedding.Repository,
+	serviceLocator *factory.EmbeddingServiceLocator,
 ) pluginiface.Plugin {
 	if client == nil {
 		client = &http.Client{}
@@ -78,6 +107,8 @@ func NewNeuralTrustGuardrailPlugin(
 		client:             client,
 		logger:             logger,
 		fingerPrintManager: fingerPrintManager,
+		embeddingRepo:      embeddingRepo,
+		serviceLocator:     serviceLocator,
 	}
 }
 
@@ -113,9 +144,36 @@ func (p *NeuralTrustGuardrailPlugin) ValidateConfig(config types.PluginConfig) e
 			return fmt.Errorf("jailbreak threshold must be between 0 and 1")
 		}
 	}
-	if cfg.JailbreakParamBag == nil && cfg.ToxicityParamBag == nil {
-		return fmt.Errorf("at least one of toxicity or jailbreak must be enabled")
+	if cfg.ModerationParamBag != nil {
+		if cfg.ModerationParamBag.Threshold > 1 || cfg.ModerationParamBag.Threshold < 0 {
+			return fmt.Errorf("moderation threshold must be between 0 and 1")
+		}
+		if cfg.ModerationParamBag.EmbeddingsConfig.Provider != factory.OpenAIProvider {
+			return fmt.Errorf("only openai embeddings are supported")
+		}
+		if cfg.ModerationParamBag.EmbeddingsConfig.Credentials.HeaderValue == "" {
+			return fmt.Errorf("header_value is required")
+		}
+		if cfg.ModerationParamBag.EmbeddingsConfig.Credentials.HeaderName == "" {
+			return fmt.Errorf("header_name is required")
+		}
+		if cfg.ModerationParamBag.EmbeddingsConfig.Model == "" {
+			return fmt.Errorf("openai model is required")
+		}
+		if cfg.ModerationParamBag.Enabled && len(cfg.ModerationParamBag.DenySamples) == 0 {
+			return fmt.Errorf("deny samples are required when moderation is enabled")
+		}
+		if cfg.ModerationParamBag.DenyTopicAction == "" {
+			return fmt.Errorf("deny topic action [block] is required")
+		}
+		if cfg.ModerationParamBag.DenyTopicAction != "block" {
+			return fmt.Errorf("deny topic action must be block")
+		}
 	}
+	if cfg.JailbreakParamBag == nil && cfg.ToxicityParamBag == nil && cfg.ModerationParamBag == nil {
+		return fmt.Errorf("at least one of [toxicity, jailbreak, moderation] must be enabled")
+	}
+
 	return nil
 }
 
@@ -172,6 +230,16 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 		requests = append(requests, TaggedRequest{Request: firewallReq, Type: jailbreakType})
 	}
 
+	if p.config.ModerationParamBag != nil && p.config.ModerationParamBag.Enabled {
+		if len(p.config.ModerationParamBag.DenySamples) > 0 {
+			err = p.createEmbeddings(ctx, p.config.ModerationParamBag, req.GatewayID)
+			if err != nil {
+				p.logger.WithError(err).Error("failed to create deny samples embeddings")
+				return nil, fmt.Errorf("failed to create deny samples embeddings: %w", err)
+			}
+		}
+	}
+
 	evt := &NeuralTrustGuardrailData{
 		Blocked: true,
 		Scores:  GuardrailScores{},
@@ -180,6 +248,7 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 	if p.config.ToxicityParamBag != nil && p.config.JailbreakParamBag != nil {
 		evt.ToxicityThreshold = p.config.ToxicityParamBag.Threshold
 		evt.JailbreakThreshold = p.config.JailbreakParamBag.Threshold
+		evt.ModerationThreshold = p.config.ModerationParamBag.Threshold
 	}
 
 	firewallErrors := make(chan error, len(requests))
@@ -227,6 +296,71 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 		Body: nil,
 	}, nil
 }
+
+func (p *NeuralTrustGuardrailPlugin) createEmbeddings(
+	ctx context.Context,
+	cfg *ModerationParamBag,
+	gatewayID string,
+) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if len(cfg.DenySamples) == 0 {
+		return nil
+	}
+
+	creator, err := p.serviceLocator.GetService(cfg.EmbeddingsConfig.Provider)
+	if err != nil {
+		return fmt.Errorf("failed to create embeddings: %w", err)
+	}
+	config := &embedding.Config{
+		Provider: cfg.EmbeddingsConfig.Provider,
+		Model:    cfg.EmbeddingsConfig.Model,
+		Credentials: domain.CredentialsJSON{
+			HeaderValue: cfg.EmbeddingsConfig.Credentials.HeaderValue,
+			HeaderName:  cfg.EmbeddingsConfig.Credentials.HeaderName,
+		},
+	}
+	wg := &sync.WaitGroup{}
+	wg.Add(len(cfg.DenySamples))
+	for _, sample := range cfg.DenySamples {
+		go p.generateSampleEmbedding(
+			wg,
+			ctx,
+			cfg.EmbeddingsConfig.Model,
+			sample,
+			gatewayID,
+			creator,
+			config,
+		)
+	}
+	wg.Wait()
+	return nil
+}
+func (p *NeuralTrustGuardrailPlugin) generateSampleEmbedding(
+	wg *sync.WaitGroup,
+	ctx context.Context,
+	model, sample, gatewayID string,
+	creator embedding.Creator,
+	config *embedding.Config,
+) {
+	defer wg.Done()
+	embeddingData, err := creator.Generate(ctx, sample, model, config)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to generate embedding for sample " + sample)
+	}
+
+	err = p.embeddingRepo.Store(
+		ctx,
+		uuid.New().String(),
+		embeddingData,
+		fmt.Sprintf(cacheKey, gatewayID, uuid.New().String()),
+	)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to store embedding for sample " + sample)
+	}
+}
+
 func (p *NeuralTrustGuardrailPlugin) notifyGuardrailViolation(ctx context.Context) {
 	fp, ok := ctx.Value(common.FingerprintIdContextKey).(string)
 	if !ok {

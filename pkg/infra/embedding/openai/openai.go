@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 )
@@ -32,7 +31,7 @@ func NewOpenAIEmbeddingService(client *fasthttp.Client, logger *logrus.Logger) e
 func (s *embeddingService) Generate(
 	ctx context.Context,
 	text, model string,
-	upstreamEmbedding upstream.EmbeddingConfig,
+	upstreamEmbedding *embedding.Config,
 ) (*embedding.Embedding, error) {
 	var emptyData *embedding.Embedding = nil
 

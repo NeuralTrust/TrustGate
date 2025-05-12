@@ -83,6 +83,10 @@ func (p *ContextualSecurityPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
+func (p *ContextualSecurityPlugin) SetUp(config types.PluginConfig) error {
+	return nil
+}
+
 func (p *ContextualSecurityPlugin) RequiredPlugins() []string {
 	return []string{
 		neuraltrust_guardrail.PluginName,

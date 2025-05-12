@@ -106,6 +106,10 @@ func (p *ToxicityAzurePlugin) RequiredPlugins() []string {
 	return requiredPlugins
 }
 
+func (p *ToxicityAzurePlugin) SetUp(config types.PluginConfig) error {
+	return nil
+}
+
 func (p *ToxicityAzurePlugin) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }

@@ -56,10 +56,8 @@ func NewLogger(serverType string) *logrus.Logger {
 
 	logger.SetOutput(asyncWriter)
 
-	if logLevel == "debug" {
-		asyncConsoleHook := NewConsoleHook()
-		logger.AddHook(asyncConsoleHook)
-	}
-
+	asyncConsoleHook := NewConsoleHook()
+	logger.AddHook(asyncConsoleHook)
+	
 	return logger
 }

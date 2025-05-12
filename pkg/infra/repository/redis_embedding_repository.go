@@ -29,9 +29,12 @@ func (r *redisEmbeddingRepository) Store(
 	ctx context.Context,
 	targetID string,
 	embeddingData *embedding.Embedding,
+	key string,
 ) error {
 	embeddingData.EntityID = targetID
-	key := fmt.Sprintf(EmbeddingCacheKeyPattern, targetID)
+	if key == "" {
+		key = fmt.Sprintf(EmbeddingCacheKeyPattern, targetID)
+	}
 	jsonData, err := json.Marshal(embeddingData)
 	if err != nil {
 		return fmt.Errorf("failed to marshal embedding data: %w", err)

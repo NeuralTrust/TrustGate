@@ -62,6 +62,10 @@ func (p *TokenRateLimiterPlugin) RequiredPlugins() []string {
 	return requiredPlugins
 }
 
+func (p *TokenRateLimiterPlugin) SetUp(config types.PluginConfig) error {
+	return nil
+}
+
 func (p *TokenRateLimiterPlugin) ValidateConfig(config types.PluginConfig) error {
 	return fmt.Errorf("method not implemented")
 }

@@ -86,6 +86,10 @@ func (p *BedrockGuardrailPlugin) Stages() []plugintypes.Stage {
 	return []plugintypes.Stage{plugintypes.PreRequest}
 }
 
+func (p *BedrockGuardrailPlugin) SetUp(config plugintypes.PluginConfig) error {
+	return nil
+}
+
 func (p *BedrockGuardrailPlugin) AllowedStages() []plugintypes.Stage {
 	return []plugintypes.Stage{plugintypes.PreRequest}
 }

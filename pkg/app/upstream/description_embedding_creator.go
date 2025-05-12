@@ -47,6 +47,12 @@ func (s *descriptionEmbeddingCreator) Process(ctx context.Context, upstream *ups
 		return fmt.Errorf("failed to get embedding service: %w", err)
 	}
 
+	embeddingConfig := &embedding.Config{
+		Provider:    upstream.EmbeddingConfig.Provider,
+		Model:       upstream.EmbeddingConfig.Model,
+		Credentials: upstream.EmbeddingConfig.Credentials,
+	}
+
 	for _, target := range upstream.Targets {
 		if target.Description == "" {
 			s.logger.Warnf("target %s has no description, skipping embedding generation", target.ID)
@@ -56,14 +62,14 @@ func (s *descriptionEmbeddingCreator) Process(ctx context.Context, upstream *ups
 			ctx,
 			target.Description,
 			upstream.EmbeddingConfig.Model,
-			*upstream.EmbeddingConfig,
+			embeddingConfig,
 		)
 		if err != nil {
 			s.logger.WithError(err).Errorf("Failed to generate embedding for target %s", target.ID)
 			continue
 		}
 
-		err = s.embeddingRepository.Store(ctx, target.ID, embData)
+		err = s.embeddingRepository.Store(ctx, target.ID, embData, "")
 		if err != nil {
 			s.logger.WithError(err).Errorf("Failed to store embedding for target %s", target.ID)
 			continue

@@ -39,5 +39,8 @@ func (s DeleteRulesEventSubscriber) OnEvent(ctx context.Context, evt event.Delet
 	if err := s.cache.Delete(ctx, rulesKey); err != nil {
 		s.logger.WithError(err).Warn("failed to delete rules from redis cache")
 	}
+	if err := s.cache.DeleteAllByGatewayID(ctx, evt.GatewayID); err != nil {
+		s.logger.WithError(err).Warn("failed to delete plugin data from redis cache")
+	}
 	return nil
 }
