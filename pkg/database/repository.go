@@ -176,6 +176,15 @@ func (r *Repository) GetRule(ctx context.Context, id uuid.UUID, gatewayID uuid.U
 	return &rule, nil
 }
 
+func (r *Repository) GetRuleByID(ctx context.Context, id uuid.UUID) (*forwarding_rule.ForwardingRule, error) {
+	var rule forwarding_rule.ForwardingRule
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&rule).Error
+	if err != nil {
+		return nil, err
+	}
+	return &rule, nil
+}
+
 func (r *Repository) ListRules(ctx context.Context, gatewayID uuid.UUID) ([]forwarding_rule.ForwardingRule, error) {
 	var rules []forwarding_rule.ForwardingRule
 	err := r.db.Where("gateway_id = ?", gatewayID).Find(&rules).Error

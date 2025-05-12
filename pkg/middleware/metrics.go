@@ -98,6 +98,11 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 
 		err := c.Next()
 
+		rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRule)
+		if !ok || rule == nil {
+			m.logger.Error("failed to get matched rule from context")
+		}
+
 		endTime := time.Now()
 
 		var exporters []types.Exporter
@@ -138,6 +143,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 							Body:       streamResponseBody.Bytes(),
 							StatusCode: statusCode,
 							ProcessAt:  &now,
+							Rule:       rule,
 						},
 						startTime,
 						time.Now(),
@@ -147,7 +153,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 			return err
 		}
 
-		outputResponse := m.transformToResponseContext(c, gatewayID)
+		outputResponse := m.transformToResponseContext(c, gatewayID, rule)
 		m.logger.Debug("processing metrics as non stream mode")
 		m.worker.Process(
 			metricsCollector,
@@ -228,6 +234,7 @@ func (m *metricsMiddleware) transformToRequestContext(
 func (m *metricsMiddleware) transformToResponseContext(
 	c *fiber.Ctx,
 	gatewayID string,
+	rule *types.ForwardingRule,
 ) *types.ResponseContext {
 	now := time.Now()
 	reqCtx := &types.ResponseContext{
@@ -237,6 +244,7 @@ func (m *metricsMiddleware) transformToResponseContext(
 		Metadata:   nil,
 		Body:       c.Response().Body(),
 		StatusCode: c.Response().StatusCode(),
+		Rule:       rule,
 		ProcessAt:  &now,
 	}
 	for key, values := range c.GetRespHeaders() {

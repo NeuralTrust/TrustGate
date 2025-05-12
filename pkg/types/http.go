@@ -37,4 +37,5 @@ type ResponseContext struct {
 	StopProcessing bool
 	ProcessAt      *time.Time
 	Target         *UpstreamTarget
+	Rule           *ForwardingRule
 }

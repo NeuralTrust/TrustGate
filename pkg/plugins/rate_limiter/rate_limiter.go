@@ -273,6 +273,21 @@ func (r *RateLimiterPlugin) Execute(
 		}
 	}
 
+	r.raiseEvent(
+		collector,
+		RateLimiterData{
+			RateLimitExceeded: false,
+			ExceededType:      finalStatus.limitType,
+			RetryAfter:        finalStatus.retryAfter,
+			CurrentCount:      finalStatus.currentCount,
+			Window:            finalStatus.window.String(),
+			Limit:             finalStatus.limit,
+		},
+		req.Stage,
+		false,
+		"",
+	)
+
 	return nil, nil
 }
 
