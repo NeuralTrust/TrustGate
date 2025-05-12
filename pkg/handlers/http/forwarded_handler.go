@@ -115,7 +115,11 @@ func (h *forwardedHandler) handleErrorResponse(c *fiber.Ctx, status int, message
 		h.logger.Error("failed to get stream mode channel")
 		return fmt.Errorf("failed to get stream mode channel")
 	}
-	streamMode <- false
+	select {
+	case streamMode <- false:
+		h.logger.Debug("stream mode disabled")
+	default:
+	}
 	return c.Status(status).JSON(message)
 }
 
@@ -507,6 +511,19 @@ func (h *forwardedHandler) handleUpstreamRequest(
 	serviceEntity *domainService.Service,
 	tlsConfig map[string]types.ClientTLSConfig,
 ) (*types.ResponseContext, error) {
+
+	streamResponse, ok := req.C.Locals(common.StreamResponseContextKey).(chan []byte)
+	if !ok || streamResponse == nil {
+		h.logger.Error("failed to get stream response channel")
+		return nil, fmt.Errorf("failed to make read response channel")
+	}
+
+	streamMode, ok := req.C.Locals(common.StreamModeContextKey).(chan bool)
+	if !ok {
+		h.logger.Error("failed to get stream mode channel")
+		return nil, fmt.Errorf("failed to get stream mode channel")
+	}
+
 	upstreamModel, err := h.upstreamFinder.Find(req.Context, serviceEntity.GatewayID, serviceEntity.UpstreamID)
 	if err != nil {
 		return nil, fmt.Errorf("upstream not found: %w", err)
@@ -537,16 +554,30 @@ func (h *forwardedHandler) handleUpstreamRequest(
 			"target_id": target.ID,
 		}).Debug("Attempting request")
 
-		response, err := h.doForwardRequest(tlsConfig, req, rule, target)
+		select {
+		case streamMode <- target.Stream:
+		default:
+			h.logger.Warn("stream mode channel not ready, skipping")
+		}
+
+		response, err := h.doForwardRequest(tlsConfig, req, rule, target, streamResponse)
 		reqErr = err
 		if err == nil {
+			if !target.Stream {
+				close(streamResponse)
+			}
 			response.Target = target
 			lb.ReportSuccess(target)
 			return response, nil
 		}
 		lb.ReportFailure(target, err)
 	}
-
+	select {
+	case <-streamResponse:
+		// Already closed, do nothing
+	default:
+		close(streamResponse)
+	}
 	return nil, fmt.Errorf("%v", reqErr)
 }
 
@@ -556,6 +587,12 @@ func (h *forwardedHandler) handleEndpointRequest(
 	serviceEntity *domainService.Service,
 	tlsConfig map[string]types.ClientTLSConfig,
 ) (*types.ResponseContext, error) {
+	streamResponse, ok := req.C.Locals(common.StreamResponseContextKey).(chan []byte)
+	if !ok || streamResponse == nil {
+		h.logger.Error("failed to get stream response channel")
+		return nil, fmt.Errorf("failed to make read response channel")
+	}
+
 	target := &types.UpstreamTarget{
 		Host:        serviceEntity.Host,
 		Port:        serviceEntity.Port,
@@ -565,9 +602,19 @@ func (h *forwardedHandler) handleEndpointRequest(
 		Credentials: serviceEntity.Credentials,
 		Stream:      serviceEntity.Stream,
 	}
-	rsp, err := h.doForwardRequest(tlsConfig, req, rule, target)
+	rsp, err := h.doForwardRequest(tlsConfig, req, rule, target, streamResponse)
 	if err != nil {
+		h.logger.WithError(err).Error("failed to forward request")
+		select {
+		case <-streamResponse:
+			// Channel already closed, skip
+		default:
+			close(streamResponse)
+		}
 		return nil, fmt.Errorf("failed to forward request: %w", err)
+	}
+	if !target.Stream {
+		close(streamResponse)
 	}
 	rsp.Target = target
 	return rsp, nil
@@ -594,6 +641,7 @@ func (h *forwardedHandler) doForwardRequest(
 	req *types.RequestContext,
 	rule *types.ForwardingRule,
 	target *types.UpstreamTarget,
+	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
 
 	client := h.client
@@ -624,23 +672,8 @@ func (h *forwardedHandler) doForwardRequest(
 	fastHttpReq.SetRequestURI(targetURL)
 	fastHttpReq.Header.SetMethod(req.Method)
 
-	streamResponse, ok := req.C.Locals(common.StreamResponseContextKey).(chan []byte)
-	if !ok || streamResponse == nil {
-		h.logger.Error("failed to get stream response channel")
-		return nil, fmt.Errorf("failed to make read response channel")
-	}
-
-	streamMode, ok := req.C.Locals(common.StreamModeContextKey).(chan bool)
-	if !ok {
-		h.logger.Error("failed to get stream mode channel")
-		return nil, fmt.Errorf("failed to get stream mode channel")
-	}
-
 	if target.Stream {
-		streamMode <- true
 		return h.handleStreamingRequest(req, target, streamResponse)
-	} else {
-		close(streamResponse)
 	}
 
 	if len(req.Body) > 0 {
@@ -822,10 +855,16 @@ func (h *forwardedHandler) handleStreamingResponse(
 	for k, v := range target.Headers {
 		httpReq.Header.Set(k, v)
 	}
-
-	resp, err := http.DefaultClient.Do(httpReq)
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+	}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make streaming request: %w", err)
+	}
+
+	if resp.StatusCode > 299 {
+		return nil, fmt.Errorf("failed to make streaming request: %s", resp.Status)
 	}
 
 	responseHeaders := make(map[string][]string)
@@ -833,7 +872,7 @@ func (h *forwardedHandler) handleStreamingResponse(
 		responseHeaders[k] = v
 	}
 	if target.Provider != "" {
-		responseHeaders["X-Selected-Provider"] = []string{target.Provider}
+		req.C.Set("X-Selected-Provider", target.Provider)
 	}
 	if rateLimitHeaders, ok := req.Metadata["rate_limit_headers"].(map[string][]string); ok {
 		for k, v := range rateLimitHeaders {
@@ -866,21 +905,24 @@ func (h *forwardedHandler) handleStreamingResponse(
 
 			if len(line) > 1 {
 				var parsed map[string]interface{}
-				if err := json.Unmarshal(line, &parsed); err != nil {
-					fmt.Println("Error:", err)
-					return
-				}
 				var buffer bytes.Buffer
-				encoder := json.NewEncoder(&buffer)
-				encoder.SetEscapeHTML(false)
 
-				if err := encoder.Encode(parsed); err != nil {
-					fmt.Println("Error encoding:", err)
-					return
+				if err := json.Unmarshal(line, &parsed); err != nil {
+					streamResponse <- line
+					fmt.Fprintf(w, "data: %s\n", string(line))
+					_ = w.Flush()
+				} else {
+					encoder := json.NewEncoder(&buffer)
+					encoder.SetEscapeHTML(false)
+
+					if err := encoder.Encode(parsed); err != nil {
+						fmt.Println("Error encoding:", err)
+						return
+					}
+					streamResponse <- buffer.Bytes()
+					fmt.Fprintf(w, "data: %s\n", buffer.String())
+					_ = w.Flush()
 				}
-				streamResponse <- buffer.Bytes()
-				fmt.Fprintf(w, "data: %s\n", buffer.String())
-				_ = w.Flush()
 			}
 		}
 	})
