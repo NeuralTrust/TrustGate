@@ -288,12 +288,7 @@ func (r *RateLimiterPlugin) Execute(
 		"",
 	)
 
-	return &types.PluginResponse{
-		StatusCode: http.StatusOK,
-		Headers:    resp.Headers,
-		Body:       resp.Body,
-		Metadata:   resp.Metadata,
-	}, nil
+	return nil, nil
 }
 
 func (r *RateLimiterPlugin) extractKey(req *types.RequestContext, limitType string) string {
