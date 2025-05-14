@@ -11,7 +11,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
@@ -21,15 +20,15 @@ type Semantic struct {
 	embeddingConfig *types.EmbeddingConfig
 	targets         []types.UpstreamTarget
 	client          *http.Client
-	embeddingRepo   embedding.Repository
-	serviceLocator  *factory.EmbeddingServiceLocator
+	embeddingRepo   embedding.EmbeddingRepository
+	serviceLocator  factory.EmbeddingServiceLocator
 }
 
 func NewSemantic(
 	embeddingConfig *types.EmbeddingConfig,
 	targets []types.UpstreamTarget,
-	embeddingRepo embedding.Repository,
-	serviceLocator *factory.EmbeddingServiceLocator,
+	embeddingRepo embedding.EmbeddingRepository,
+	serviceLocator factory.EmbeddingServiceLocator,
 ) *Semantic {
 	return &Semantic{
 		embeddingConfig: embeddingConfig,
@@ -108,7 +107,7 @@ func (s *Semantic) generateEmbedding(text string) ([]float64, error) {
 	if s.embeddingConfig == nil {
 		return nil, fmt.Errorf("embedding config not found")
 	}
-	embeddingConfig := upstream.EmbeddingConfig{
+	embeddingConfig := &embedding.Config{
 		Provider: s.embeddingConfig.Provider,
 		Model:    s.embeddingConfig.Model,
 		Credentials: domain.CredentialsJSON{

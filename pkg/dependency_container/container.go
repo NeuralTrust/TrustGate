@@ -54,10 +54,11 @@ type Container struct {
 	SecurityMiddleware    middleware.Middleware
 	WebSocketMiddleware   middleware.Middleware
 	ApiKeyRepository      domainApikey.Repository
-	EmbeddingRepository   domainEmbedding.Repository
+	EmbeddingRepository   domainEmbedding.EmbeddingRepository
 	FingerprintTracker    fingerprint.Tracker
 	PluginChainValidator  plugin.ValidatePluginChain
 	MetricsWorker         metrics.Worker
+	RedisIndexCreator     infraCache.RedisIndexCreator
 }
 
 func NewContainer(
@@ -94,13 +95,28 @@ func NewContainer(
 	}
 	initializeMemoryCache(cacheInstance)
 
+	redisIndexCreator := infraCache.NewRedisIndexCreator(cacheInstance.Client(), logger)
+
 	bedrockClient, err := bedrock.NewClient(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize bedrock client: %v", err)
 	}
 
+	// embedding services
+	embeddingServiceLocator := factory.NewServiceLocator(logger, httpClient)
+	embeddingRepository := repository.NewRedisEmbeddingRepository(cacheInstance)
+	descriptionEmbeddingCreator := appUpstream.NewDescriptionEmbeddingCreator(embeddingServiceLocator, embeddingRepository, logger)
+
 	fingerprintTracker := fingerprint.NewFingerPrintTracker(cacheInstance)
-	pluginManager := plugins.NewManager(cfg, cacheInstance, logger, bedrockClient, fingerprintTracker)
+	pluginManager := plugins.NewManager(
+		cfg,
+		cacheInstance,
+		logger,
+		bedrockClient,
+		fingerprintTracker,
+		embeddingRepository,
+		embeddingServiceLocator,
+	)
 
 	// repository
 	repo := database.NewRepository(db.DB, logger, cacheInstance)
@@ -118,11 +134,6 @@ func NewContainer(
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
 	gatewayDataFinder := gateway.NewDataFinder(repo, cacheInstance, logger)
 	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager, gatewayRepository)
-
-	// embedding services
-	embeddingServiceLocator := factory.NewServiceLocator(logger, httpClient)
-	embeddingRepository := repository.NewRedisEmbeddingRepository(cacheInstance)
-	descriptionEmbeddingCreator := appUpstream.NewDescriptionEmbeddingCreator(embeddingServiceLocator, embeddingRepository, logger)
 
 	// telemetry
 	providerLocator := infraTelemetry.NewProviderLocator(map[string]domain.Exporter{
@@ -243,6 +254,7 @@ func NewContainer(
 		FingerprintTracker:    fingerprintTracker,
 		PluginChainValidator:  pluginChainValidator,
 		MetricsWorker:         metricsWorker,
+		RedisIndexCreator:     redisIndexCreator,
 	}
 
 	return container, nil

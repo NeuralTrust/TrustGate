@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
@@ -65,6 +67,8 @@ type manager struct {
 	logger             *logrus.Logger
 	bedrockClient      bedrock.Client
 	fingerprintTracker fingerprint.Tracker
+	embeddingRepo      embedding.EmbeddingRepository
+	serviceLocator     factory.EmbeddingServiceLocator
 	plugins            map[string]pluginiface.Plugin
 	configurations     map[string][][]types.PluginConfig
 }
@@ -75,6 +79,8 @@ func NewManager(
 	logger *logrus.Logger,
 	bedrockClient bedrock.Client,
 	fingerprintTracker fingerprint.Tracker,
+	embeddingRepo embedding.EmbeddingRepository,
+	serviceLocator factory.EmbeddingServiceLocator,
 ) Manager {
 	once.Do(func() {
 		instance = &manager{
@@ -85,6 +91,8 @@ func NewManager(
 			logger:             logger,
 			config:             config,
 			fingerprintTracker: fingerprintTracker,
+			embeddingRepo:      embeddingRepo,
+			serviceLocator:     serviceLocator,
 		}
 	})
 	instance.InitializePlugins()
@@ -141,6 +149,8 @@ func (m *manager) InitializePlugins() {
 		m.logger,
 		&http.Client{},
 		m.fingerprintTracker,
+		m.embeddingRepo,
+		m.serviceLocator,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
 	}

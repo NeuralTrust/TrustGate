@@ -1,9 +1,11 @@
 services:
   redis:
-    image: redis:7-alpine
+    image: redis/redis-stack:latest
     restart: always
     ports:
       - "6379:6379"
+    environment:
+      - REDISEARCH_ARGS=MAXSEARCHRESULTS 10000
   redis-insight:
     image: redis/redisinsight:latest
     restart: always

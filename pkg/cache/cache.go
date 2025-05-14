@@ -33,6 +33,7 @@ const (
 	ServicesKeyPattern  = "gateway:%s:services"
 	ServiceKeyPattern   = "gateway:%s:service:%s"
 	ApiKeyPattern       = "apikey:%s"
+	PluginKeyPattern    = "plugin:%s"
 
 	GatewayTTLName  = "gateway"
 	ApiKeyTTLName   = "api_key"
@@ -83,6 +84,30 @@ func (c *Cache) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	c.localCache.Delete(key)
+	return nil
+}
+
+func (c *Cache) DeleteAllPluginsData(ctx context.Context, gatewayID string) error {
+	pattern := fmt.Sprintf("*plugin:%s*", gatewayID)
+	var cursor uint64
+	for {
+		keys, nextCursor, err := c.client.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("error scanning keys: %w", err)
+		}
+		if len(keys) > 0 {
+			if err := c.client.Del(ctx, keys...).Err(); err != nil {
+				return fmt.Errorf("error deleting keys: %w", err)
+			}
+			for _, key := range keys {
+				c.localCache.Delete(key)
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
 	return nil
 }
 

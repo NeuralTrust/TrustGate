@@ -13,6 +13,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
+	"github.com/google/uuid"
 
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
@@ -39,34 +40,38 @@ type Condition struct {
 	Message  string      `mapstructure:"message"`
 }
 
-// Add a new type for query parameters
 type QueryParam struct {
 	Name  string `mapstructure:"name"`
 	Value string `mapstructure:"value"`
 }
 
 func NewExternalApiPlugin(client *http.Client) pluginiface.Plugin {
+
 	return &ExternalApiPlugin{client: client}
 }
 
-func (v *ExternalApiPlugin) Name() string {
+func (p *ExternalApiPlugin) Name() string {
 	return PluginName
 }
 
-func (v *ExternalApiPlugin) RequiredPlugins() []string {
+func (p *ExternalApiPlugin) RequiredPlugins() []string {
 	var requiredPlugins []string
 	return requiredPlugins
 }
 
-func (v *ExternalApiPlugin) Stages() []types.Stage {
+func (p *ExternalApiPlugin) Stages() []types.Stage {
 	return []types.Stage{}
 }
 
-func (v *ExternalApiPlugin) AllowedStages() []types.Stage {
+func (p *ExternalApiPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest, types.PostResponse}
 }
 
-func (v *ExternalApiPlugin) ValidateConfig(config types.PluginConfig) error {
+func (p *ExternalApiPlugin) SetUp(gatewayID uuid.UUID, config types.PluginConfig) error {
+	return nil
+}
+
+func (p *ExternalApiPlugin) ValidateConfig(config types.PluginConfig) error {
 	if config.Stage != types.PreRequest {
 		return fmt.Errorf("external validator must be in pre_request stage")
 	}
@@ -116,7 +121,7 @@ func (v *ExternalApiPlugin) ValidateConfig(config types.PluginConfig) error {
 	return nil
 }
 
-func (v *ExternalApiPlugin) Execute(
+func (p *ExternalApiPlugin) Execute(
 	ctx context.Context,
 	cfg types.PluginConfig,
 	req *types.RequestContext,
@@ -291,10 +296,10 @@ func (v *ExternalApiPlugin) Execute(
 	}
 
 	// Set timeout
-	v.client.Timeout = timeout
+	p.client.Timeout = timeout
 	startTime := time.Now()
 	// Make request
-	httpResp, err := v.client.Do(httpReq)
+	httpResp, err := p.client.Do(httpReq)
 	if err != nil {
 		return nil, &types.PluginError{
 			StatusCode: http.StatusBadGateway,
@@ -330,7 +335,7 @@ func (v *ExternalApiPlugin) Execute(
 	}
 
 	duration := time.Since(startTime)
-	v.raiseEvent(collector, ExternalAPIData{
+	p.raiseEvent(collector, ExternalAPIData{
 		Endpoint:   endpoint,
 		Method:     method,
 		StatusCode: httpResp.StatusCode,

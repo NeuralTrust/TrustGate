@@ -61,5 +61,9 @@ func (s UpdateGatewayCacheEventSubscriber) OnEvent(ctx context.Context, evt even
 
 	s.memoryCache.Set(entity.ID.String(), entity)
 
+	if err := s.cache.DeleteAllPluginsData(ctx, evt.GatewayID); err != nil {
+		s.logger.WithError(err).Warn("failed to delete plugin data from redis cache")
+	}
+
 	return nil
 }

@@ -2,10 +2,10 @@ package embedding
 
 import (
 	"context"
-
-	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 )
 
+//go:generate mockery --name=Creator --dir=. --output=../../../mocks --filename=embedding_creator_mock.go --case=underscore --with-expecter
+
 type Creator interface {
-	Generate(ctx context.Context, text, model string, credentials upstream.EmbeddingConfig) (*Embedding, error)
+	Generate(ctx context.Context, text, model string, credentials *Config) (*Embedding, error)
 }

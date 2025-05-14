@@ -67,24 +67,24 @@ func NewRateLimiterPlugin(redisClient *redis.Client, opts *RateLimiterOpts) plug
 	}
 }
 
-func (r *RateLimiterPlugin) Name() string {
+func (p *RateLimiterPlugin) Name() string {
 	return PluginName
 }
 
-func (r *RateLimiterPlugin) RequiredPlugins() []string {
+func (p *RateLimiterPlugin) RequiredPlugins() []string {
 	var requiredPlugins []string
 	return requiredPlugins
 }
 
-func (r *RateLimiterPlugin) Stages() []types.Stage {
+func (p *RateLimiterPlugin) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-func (r *RateLimiterPlugin) AllowedStages() []types.Stage {
+func (p *RateLimiterPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-func (r *RateLimiterPlugin) ValidateConfig(config types.PluginConfig) error {
+func (p *RateLimiterPlugin) ValidateConfig(config types.PluginConfig) error {
 	if config.Stage != types.PreRequest {
 		return fmt.Errorf("rate limiter plugin must be in pre_request stage")
 	}
@@ -138,7 +138,7 @@ func (r *RateLimiterPlugin) ValidateConfig(config types.PluginConfig) error {
 	return nil
 }
 
-func (r *RateLimiterPlugin) Execute(
+func (p *RateLimiterPlugin) Execute(
 	ctx context.Context,
 	cfg types.PluginConfig,
 	req *types.RequestContext,
@@ -173,7 +173,7 @@ func (r *RateLimiterPlugin) Execute(
 		if limitCfg, ok := config.Limits[limitType]; ok {
 			// Skip per_user check if user is anonymous
 			if limitType == "per_user" {
-				userKey := r.extractKey(req, limitType)
+				userKey := p.extractKey(req, limitType)
 				if userKey == "anonymous" {
 					continue
 				}
@@ -188,14 +188,14 @@ func (r *RateLimiterPlugin) Execute(
 				cfg.Level,
 				cfg.ID,
 				limitType,
-				r.extractKey(req, limitType),
+				p.extractKey(req, limitType),
 			)
 
-			now := r.timeProvider()
+			now := p.timeProvider()
 			windowStart := now.Add(-window).Unix()
 
 			// Check current count
-			currentCount, err := r.redis.ZCount(ctx, key,
+			currentCount, err := p.redis.ZCount(ctx, key,
 				strconv.FormatInt(windowStart, 10),
 				strconv.FormatInt(now.Unix(), 10)).Result()
 			if err != nil {
@@ -222,10 +222,10 @@ func (r *RateLimiterPlugin) Execute(
 				break
 			}
 
-			uid := r.uuidProvider()
+			uid := p.uuidProvider()
 			// Only increment counter if not exceeded
 			requestID := fmt.Sprintf("%d:%s", now.Unix(), uid.String())
-			pipe := r.redis.TxPipeline()
+			pipe := p.redis.TxPipeline()
 
 			pipe.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(windowStart, 10))
 			pipe.ZAdd(ctx, key, &redis.Z{
@@ -251,7 +251,7 @@ func (r *RateLimiterPlugin) Execute(
 		resp.Metadata["rate_limit_type"] = finalStatus.limitType
 		resp.Metadata["retry_after"] = finalStatus.retryAfter
 
-		r.raiseEvent(
+		p.raiseEvent(
 			collector,
 			RateLimiterData{
 				RateLimitExceeded: true,
@@ -273,7 +273,7 @@ func (r *RateLimiterPlugin) Execute(
 		}
 	}
 
-	r.raiseEvent(
+	p.raiseEvent(
 		collector,
 		RateLimiterData{
 			RateLimitExceeded: false,
@@ -291,7 +291,7 @@ func (r *RateLimiterPlugin) Execute(
 	return nil, nil
 }
 
-func (r *RateLimiterPlugin) extractKey(req *types.RequestContext, limitType string) string {
+func (p *RateLimiterPlugin) extractKey(req *types.RequestContext, limitType string) string {
 	switch limitType {
 	case "global":
 		return "global"
