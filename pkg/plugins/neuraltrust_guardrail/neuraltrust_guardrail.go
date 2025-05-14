@@ -232,7 +232,11 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 
 	var requests []TaggedRequest
 	if p.config.ToxicityParamBag != nil && p.config.ToxicityParamBag.Enabled {
-		tr := p.requestPool.Get().(*TaggedRequest)
+		tr, ok := p.requestPool.Get().(*TaggedRequest)
+		if !ok {
+			p.logger.Error("failed to get request from pool")
+			return nil, fmt.Errorf("failed to get request from pool")
+		}
 		tr.Type = toxicityType
 		tr.Request, err = http.NewRequestWithContext(
 			ctx,
@@ -249,7 +253,11 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 	}
 
 	if p.config.JailbreakParamBag != nil && p.config.JailbreakParamBag.Enabled {
-		tr := p.requestPool.Get().(*TaggedRequest)
+		tr, ok := p.requestPool.Get().(*TaggedRequest)
+		if !ok {
+			p.logger.Error("failed to get request from pool")
+			return nil, fmt.Errorf("failed to get request from pool")
+		}
 		tr.Type = jailbreakType
 		tr.Request, err = http.NewRequestWithContext(
 			ctx,
@@ -528,7 +536,11 @@ func (p *NeuralTrustGuardrailPlugin) callFirewall(
 	}
 	defer resp.Body.Close()
 
-	buf := p.bufferPool.Get().(*bytes.Buffer)
+	buf, ok := p.bufferPool.Get().(*bytes.Buffer)
+	if !ok {
+		p.logger.Error("failed to get buffer from pool")
+		return
+	}
 	buf.Reset()
 	defer p.bufferPool.Put(buf)
 
@@ -579,7 +591,10 @@ func (p *NeuralTrustGuardrailPlugin) callFirewall(
 }
 
 func (p *NeuralTrustGuardrailPlugin) defineRequestBody(body []byte) ([]byte, error) {
-	buf := p.bufferPool.Get().(*bytes.Buffer)
+	buf, ok := p.bufferPool.Get().(*bytes.Buffer)
+	if !ok {
+		return nil, fmt.Errorf("failed to get buffer from pool")
+	}
 	buf.Reset()
 	defer p.bufferPool.Put(buf)
 

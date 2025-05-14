@@ -267,9 +267,9 @@ func TestTrustGateGuardrailPlugin_Execute_ModerationSafe(t *testing.T) {
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
 			"moderation": map[string]interface{}{
-				"threshold":    0.7,
-				"enabled":      true,
-				"deny_samples": []string{"bad content"},
+				"threshold":         0.7,
+				"enabled":           true,
+				"deny_samples":      []string{"bad content"},
 				"deny_topic_action": "block",
 				"embedding_config": map[string]interface{}{
 					"provider": "openai",
@@ -334,9 +334,9 @@ func TestTrustGateGuardrailPlugin_Execute_ModerationUnsafe(t *testing.T) {
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
 			"moderation": map[string]interface{}{
-				"threshold":    0.7,
-				"enabled":      true,
-				"deny_samples": []string{"bad content"},
+				"threshold":         0.7,
+				"enabled":           true,
+				"deny_samples":      []string{"bad content"},
 				"deny_topic_action": "block",
 				"embedding_config": map[string]interface{}{
 					"provider": "openai",

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"strconv"
 	"time"
 
@@ -190,19 +189,4 @@ func (r *redisEmbeddingRepository) hashGatewayID(value string) string {
 	h := sha256.New()
 	h.Write([]byte(value))
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-func (r *redisEmbeddingRepository) normalizeEmbedding(embedding []float32) []float32 {
-	sumSquares := float32(0)
-	for _, v := range embedding {
-		sumSquares += v * v
-	}
-	norm := float32(math.Sqrt(float64(sumSquares)))
-
-	if norm > 0 {
-		for i := range embedding {
-			embedding[i] /= norm
-		}
-	}
-	return embedding
 }

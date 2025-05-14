@@ -58,6 +58,6 @@ func NewLogger(serverType string) *logrus.Logger {
 
 	asyncConsoleHook := NewConsoleHook()
 	logger.AddHook(asyncConsoleHook)
-	
+
 	return logger
 }

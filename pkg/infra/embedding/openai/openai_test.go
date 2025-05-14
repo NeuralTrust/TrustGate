@@ -234,7 +234,7 @@ func TestGenerate_SuccessfulRequest(t *testing.T) {
 			},
 		},
 	}
-	responseBody, _ := json.Marshal(responseData)
+	responseBody, _ := json.Marshal(responseData) //nolint:errcheck
 
 	// Set up the mock to return a successful response
 	mockClient.On("DoTimeout", mock.Anything, mock.Anything, mock.Anything).
@@ -350,7 +350,7 @@ func TestGenerate_EmptyEmbeddings(t *testing.T) {
 	responseData := map[string]interface{}{
 		"data": []map[string]interface{}{},
 	}
-	responseBody, _ := json.Marshal(responseData)
+	responseBody, _ := json.Marshal(responseData) //nolint:errcheck
 
 	// Set up the mock to return a response with empty embeddings
 	mockClient.On("DoTimeout", mock.Anything, mock.Anything, mock.Anything).
@@ -388,7 +388,7 @@ func TestGenerate_ZeroNorm(t *testing.T) {
 			},
 		},
 	}
-	responseBody, _ := json.Marshal(responseData)
+	responseBody, _ := json.Marshal(responseData) //nolint:errcheck
 
 	// Set up the mock to return a response with zero embeddings
 	mockClient.On("DoTimeout", mock.Anything, mock.Anything, mock.Anything).
