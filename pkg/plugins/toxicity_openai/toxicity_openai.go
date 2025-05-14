@@ -106,10 +106,6 @@ func (p *ToxicityOpenAIPlugin) RequiredPlugins() []string {
 	return requiredPlugins
 }
 
-func (p *ToxicityOpenAIPlugin) SetUp(config types.PluginConfig) error {
-	return nil
-}
-
 func (p *ToxicityOpenAIPlugin) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }

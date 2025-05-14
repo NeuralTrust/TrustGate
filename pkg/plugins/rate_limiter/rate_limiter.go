@@ -76,10 +76,6 @@ func (p *RateLimiterPlugin) RequiredPlugins() []string {
 	return requiredPlugins
 }
 
-func (p *RateLimiterPlugin) SetUp(config types.PluginConfig) error {
-	return nil
-}
-
 func (p *RateLimiterPlugin) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }

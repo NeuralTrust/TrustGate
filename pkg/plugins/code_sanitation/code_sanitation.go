@@ -211,10 +211,6 @@ func (p *CodeSanitationPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-func (p *CodeSanitationPlugin) SetUp(config types.PluginConfig) error {
-	return nil
-}
-
 // ValidateConfig validates the plugin configuration
 func (p *CodeSanitationPlugin) ValidateConfig(config types.PluginConfig) error {
 	var cfg Config

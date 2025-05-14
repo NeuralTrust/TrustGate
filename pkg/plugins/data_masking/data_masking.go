@@ -380,10 +380,6 @@ func (p *DataMaskingPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest, types.PreResponse}
 }
 
-func (p *DataMaskingPlugin) SetUp(config types.PluginConfig) error {
-	return nil
-}
-
 func (p *DataMaskingPlugin) ValidateConfig(config types.PluginConfig) error {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {

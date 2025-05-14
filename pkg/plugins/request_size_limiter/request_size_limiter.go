@@ -63,10 +63,6 @@ func (p *RequestSizeLimiterPlugin) RequiredPlugins() []string {
 	return requiredPlugins
 }
 
-func (p *RequestSizeLimiterPlugin) SetUp(config types.PluginConfig) error {
-	return nil
-}
-
 // Stages returns the fixed stages where this plugin must run
 func (p *RequestSizeLimiterPlugin) Stages() []types.Stage {
 	return []types.Stage{}
