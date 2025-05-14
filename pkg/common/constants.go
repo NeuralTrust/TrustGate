@@ -14,4 +14,6 @@ const (
 	InteractionIDHeader  = "X-Interaction-Id"
 
 	SemanticStrategyName = "semantic"
+
+	NeuralTrustGuardRailIndexName = "neuraltrust_guardrail"
 )

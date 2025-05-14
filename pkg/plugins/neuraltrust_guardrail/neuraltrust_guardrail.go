@@ -3,6 +3,8 @@ package neuraltrust_guardrail
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,9 +42,12 @@ type NeuralTrustGuardrailPlugin struct {
 	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
-	embeddingRepo      embedding.Repository
-	serviceLocator     *factory.EmbeddingServiceLocator
+	embeddingRepo      embedding.EmbeddingRepository
+	serviceLocator     factory.EmbeddingServiceLocator
 	config             Config
+	bufferPool         sync.Pool
+	byteSlicePool      sync.Pool
+	requestPool        sync.Pool
 }
 
 type TaggedRequest struct {
@@ -97,8 +102,8 @@ func NewNeuralTrustGuardrailPlugin(
 	logger *logrus.Logger,
 	client httpx.Client,
 	fingerPrintManager fingerprint.Tracker,
-	embeddingRepo embedding.Repository,
-	serviceLocator *factory.EmbeddingServiceLocator,
+	embeddingRepo embedding.EmbeddingRepository,
+	serviceLocator factory.EmbeddingServiceLocator,
 ) pluginiface.Plugin {
 	if client == nil {
 		client = &http.Client{}
@@ -109,6 +114,24 @@ func NewNeuralTrustGuardrailPlugin(
 		fingerPrintManager: fingerPrintManager,
 		embeddingRepo:      embeddingRepo,
 		serviceLocator:     serviceLocator,
+		bufferPool: sync.Pool{
+			New: func() any {
+				return new(bytes.Buffer)
+			},
+		},
+		byteSlicePool: sync.Pool{
+			New: func() any {
+				return make([]byte, 4096)
+			},
+		},
+		requestPool: sync.Pool{
+			New: func() any {
+				return &TaggedRequest{
+					Request: &http.Request{},
+					Type:    "",
+				}
+			},
+		},
 	}
 }
 
@@ -195,7 +218,13 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 	}
 	p.config = conf
 
-	body, err := p.defineRequestBody(req.Body)
+	inputBody := req.Body
+
+	if req.Stage == types.PostRequest {
+		inputBody = resp.Body
+	}
+
+	body, err := p.defineRequestBody(inputBody)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
@@ -203,7 +232,9 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 
 	var requests []TaggedRequest
 	if p.config.ToxicityParamBag != nil && p.config.ToxicityParamBag.Enabled {
-		firewallReq, err := http.NewRequestWithContext(
+		tr := p.requestPool.Get().(*TaggedRequest)
+		tr.Type = toxicityType
+		tr.Request, err = http.NewRequestWithContext(
 			ctx,
 			http.MethodPost,
 			p.config.Credentials.BaseURL+toxicityPath,
@@ -211,13 +242,16 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 		)
 		if err != nil {
 			p.logger.WithError(err).Error("failed to create toxicity request")
+			p.requestPool.Put(tr)
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		requests = append(requests, TaggedRequest{Request: firewallReq, Type: toxicityType})
+		requests = append(requests, *tr)
 	}
 
 	if p.config.JailbreakParamBag != nil && p.config.JailbreakParamBag.Enabled {
-		firewallReq, err := http.NewRequestWithContext(
+		tr := p.requestPool.Get().(*TaggedRequest)
+		tr.Type = jailbreakType
+		tr.Request, err = http.NewRequestWithContext(
 			ctx,
 			http.MethodPost,
 			p.config.Credentials.BaseURL+jailbreakPath,
@@ -225,9 +259,10 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 		)
 		if err != nil {
 			p.logger.WithError(err).Error("failed to create jailbreak request")
+			p.requestPool.Put(tr)
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
-		requests = append(requests, TaggedRequest{Request: firewallReq, Type: jailbreakType})
+		requests = append(requests, *tr)
 	}
 
 	if p.config.ModerationParamBag != nil && p.config.ModerationParamBag.Enabled {
@@ -256,6 +291,11 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 	for _, request := range requests {
 		wg.Add(1)
 		go p.callFirewall(ctx, &wg, request, firewallErrors, evt)
+	}
+
+	if p.config.ModerationParamBag != nil && p.config.ModerationParamBag.Enabled {
+		wg.Add(1)
+		go p.callModeration(ctx, p.config.ModerationParamBag, &wg, inputBody, req.GatewayID, firewallErrors, evt)
 	}
 
 	done := make(chan struct{})
@@ -309,6 +349,14 @@ func (p *NeuralTrustGuardrailPlugin) createEmbeddings(
 		return nil
 	}
 
+	total, err := p.embeddingRepo.Count(ctx, common.NeuralTrustGuardRailIndexName, gatewayID)
+	if err != nil {
+		return fmt.Errorf("failed to count embeddings: %w", err)
+	}
+	if total >= len(cfg.DenySamples) {
+		return nil
+	}
+
 	creator, err := p.serviceLocator.GetService(cfg.EmbeddingsConfig.Provider)
 	if err != nil {
 		return fmt.Errorf("failed to create embeddings: %w", err)
@@ -322,8 +370,8 @@ func (p *NeuralTrustGuardrailPlugin) createEmbeddings(
 		},
 	}
 	wg := &sync.WaitGroup{}
-	wg.Add(len(cfg.DenySamples))
 	for _, sample := range cfg.DenySamples {
+		wg.Add(1)
 		go p.generateSampleEmbedding(
 			wg,
 			ctx,
@@ -350,17 +398,23 @@ func (p *NeuralTrustGuardrailPlugin) generateSampleEmbedding(
 		p.logger.WithError(err).Error("failed to generate embedding for sample " + sample)
 	}
 
-	err = p.embeddingRepo.Store(
+	err = p.embeddingRepo.StoreWithHMSet(
 		ctx,
-		uuid.New().String(),
-		embeddingData,
+		common.NeuralTrustGuardRailIndexName,
 		fmt.Sprintf(cacheKey, gatewayID, uuid.New().String()),
+		gatewayID,
+		embeddingData,
+		[]byte(sample),
 	)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to store embedding for sample " + sample)
 	}
 }
-
+func (p *NeuralTrustGuardrailPlugin) hashGatewayID(value string) string {
+	h := sha256.New()
+	h.Write([]byte(value))
+	return hex.EncodeToString(h.Sum(nil))
+}
 func (p *NeuralTrustGuardrailPlugin) notifyGuardrailViolation(ctx context.Context) {
 	fp, ok := ctx.Value(common.FingerprintIdContextKey).(string)
 	if !ok {
@@ -385,6 +439,72 @@ func (p *NeuralTrustGuardrailPlugin) notifyGuardrailViolation(ctx context.Contex
 	}
 }
 
+func (p *NeuralTrustGuardrailPlugin) callModeration(
+	ctx context.Context,
+	cfg *ModerationParamBag,
+	wg *sync.WaitGroup,
+	inputBody []byte,
+	gatewayID string,
+	firewallErrors chan<- error,
+	evt *NeuralTrustGuardrailData,
+) {
+	defer wg.Done()
+	if len(inputBody) == 0 {
+		return
+	}
+	creator, err := p.serviceLocator.GetService(cfg.EmbeddingsConfig.Provider)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to get embeddings service")
+		p.sendError(firewallErrors, err)
+	}
+	config := &embedding.Config{
+		Provider: cfg.EmbeddingsConfig.Provider,
+		Model:    cfg.EmbeddingsConfig.Model,
+		Credentials: domain.CredentialsJSON{
+			HeaderValue: cfg.EmbeddingsConfig.Credentials.HeaderValue,
+			HeaderName:  cfg.EmbeddingsConfig.Credentials.HeaderName,
+		},
+	}
+	emb, err := creator.Generate(ctx, string(inputBody), cfg.EmbeddingsConfig.Model, config)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to generate body embedding")
+		p.sendError(firewallErrors, err)
+		return
+	}
+
+	query := fmt.Sprintf("@gateway_id:{%s}=>[KNN 5 @embedding $BLOB AS score]", p.hashGatewayID(gatewayID))
+
+	results, err := p.embeddingRepo.Search(ctx, common.NeuralTrustGuardRailIndexName, query, emb)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to search embeddings")
+		p.sendError(firewallErrors, err)
+		return
+	}
+	if len(results) == 0 {
+		return
+	}
+
+	for _, result := range results {
+		fmt.Printf("Checking result %s with similarity score: %f (threshold: %f)\n",
+			result.Key, result.Score, cfg.Threshold)
+
+		if result.Score >= cfg.Threshold {
+			fmt.Printf("Content blocked: best match %s with similarity score %f exceeds threshold %f\n",
+				result.Key, result.Score, cfg.Threshold)
+			p.sendError(
+				firewallErrors,
+				NewGuardrailViolation(fmt.Sprintf("content blocked: with similarity score %f exceeds threshold %f",
+					result.Score,
+					cfg.Threshold,
+				),
+				),
+			)
+			return
+		}
+	}
+	fmt.Println("content allowed: no similarity scores above threshold")
+}
+
 func (p *NeuralTrustGuardrailPlugin) callFirewall(
 	ctx context.Context,
 	wg *sync.WaitGroup,
@@ -392,30 +512,32 @@ func (p *NeuralTrustGuardrailPlugin) callFirewall(
 	firewallErrors chan<- error,
 	evt *NeuralTrustGuardrailData,
 ) {
-	req := taggedRequest.Request
-
 	defer wg.Done()
+
+	req := taggedRequest.Request
+	defer p.requestPool.Put(&taggedRequest)
+
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Token", p.config.Credentials.Token)
+
 	resp, err := p.client.Do(req)
 	if err != nil {
-		p.logger.WithError(err).Error("failed firewall request")
 		p.sendError(firewallErrors, err)
 		return
 	}
-	if resp.StatusCode != http.StatusOK {
-		p.logger.WithError(err).Error(fmt.Errorf("%s request failed: %s", taggedRequest.Type, resp.Status))
-		p.sendError(firewallErrors, fmt.Errorf("%s request failed: %s", taggedRequest.Type, resp.Status))
-		return
-	}
 	defer resp.Body.Close()
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		p.logger.WithError(err).Error(fmt.Errorf("%s response read error: %w", taggedRequest.Type, err))
+
+	buf := p.bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer p.bufferPool.Put(buf)
+
+	if _, err := io.Copy(buf, resp.Body); err != nil {
 		p.sendError(firewallErrors, fmt.Errorf("%s response read error: %w", taggedRequest.Type, err))
 		return
 	}
+
+	bodyBytes := buf.Bytes()
 
 	switch taggedRequest.Type {
 	case jailbreakType:
@@ -454,10 +576,13 @@ func (p *NeuralTrustGuardrailPlugin) callFirewall(
 		p.sendError(firewallErrors, fmt.Errorf("unknown response type: %s", taggedRequest.Type))
 		return
 	}
-
 }
 
 func (p *NeuralTrustGuardrailPlugin) defineRequestBody(body []byte) ([]byte, error) {
+	buf := p.bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer p.bufferPool.Put(buf)
+
 	var requestBody map[string]interface{}
 	if err := json.Unmarshal(body, &requestBody); err != nil {
 		return p.returnDefaultBody(body)
@@ -487,11 +612,10 @@ func (p *NeuralTrustGuardrailPlugin) defineRequestBody(body []byte) ([]byte, err
 	case string:
 		inputString = v
 	default:
-		marshaled, err := json.Marshal(v)
-		if err != nil {
+		if err := json.NewEncoder(buf).Encode(v); err != nil {
 			return nil, fmt.Errorf("failed to stringify extracted value: %w", err)
 		}
-		inputString = string(marshaled)
+		inputString = buf.String()
 	}
 
 	result, err := json.Marshal(map[string]interface{}{

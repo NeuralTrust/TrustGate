@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/sirupsen/logrus"
@@ -29,51 +30,45 @@ func NewRedisIndexCreator(redis *redis.Client, logger *logrus.Logger) RedisIndex
 }
 
 func (c *redisIndexCreator) CreateIndexes(ctx context.Context, keys ...string) error {
-	fmt.Println("creating redis indexes")
+
 	moduleListCmd := c.redis.Do(ctx, "MODULE", "LIST")
 	if moduleListCmd.Err() != nil {
 		c.logger.WithError(moduleListCmd.Err()).Warn("failed to list Redis modules")
-		return nil
+		return moduleListCmd.Err()
 	}
 
-	// Parse the module list to check if RediSearch is available
 	modules, ok := moduleListCmd.Val().([]interface{})
 	if !ok {
 		c.logger.Warn("failed to parse Redis modules list")
-		return nil
+		return fmt.Errorf("failed to parse Redis modules list")
 	}
 
 	redisSearchAvailable := false
 	for _, module := range modules {
-		moduleInfo, ok := module.([]interface{})
-		if !ok || len(moduleInfo) < 2 {
+		info, ok := module.([]interface{})
+		if !ok || len(info) < 2 {
 			continue
 		}
 
-		moduleName, ok := moduleInfo[1].(string)
-		if !ok {
-			continue
-		}
-
-		if moduleName == "search" || moduleName == "redisearch" {
+		name, ok := info[1].(string)
+		if ok && (name == "search" || name == "redisearch") {
 			redisSearchAvailable = true
 			break
 		}
 	}
 
 	if !redisSearchAvailable {
-		fmt.Println("redis search module is not available")
-		c.logger.Warn("redis search module is not available. vector search functionality will be disabled.")
-		return nil
+		c.logger.Warn("redisSearch module is not available")
+		return fmt.Errorf("RedisSearch module not found")
 	}
 
+	c.logger.Info("redisSearch module found, creating indexes...")
+
 	for _, key := range keys {
-		dropArgs := []interface{}{
-			"FT.DROPINDEX", key,
-		}
+		dropArgs := []interface{}{"FT.DROPINDEX", key, "DD"}
 		err := c.redis.Do(ctx, dropArgs...).Err()
-		if err != nil {
-			c.logger.WithError(err).Warn("failed to drop index %s", key)
+		if err != nil && !strings.Contains(err.Error(), "Unknown Index name") {
+			c.logger.WithError(err).Warnf("Failed to drop index %s", key)
 		}
 
 		args := []interface{}{
@@ -81,19 +76,22 @@ func (c *redisIndexCreator) CreateIndexes(ctx context.Context, keys ...string) e
 			"ON", "HASH",
 			"PREFIX", "1", key + ":",
 			"SCHEMA",
-			"rule_id", "TAG",
-			"response", "TEXT",
+			"gateway_id", "TAG", "SEPARATOR", ",",
+			"data", "TEXT",
 			"embedding", "VECTOR", "FLAT", "6",
 			"TYPE", "FLOAT32",
 			"DIM", strconv.Itoa(vectorDimension),
 			"DISTANCE_METRIC", "COSINE",
 		}
+
 		err = c.redis.Do(ctx, args...).Err()
 		if err != nil {
-			c.logger.WithError(err).Error("failed to create vector index")
+			c.logger.WithError(err).Errorf("Failed to create vector index: %s", key)
 			return err
 		}
-		c.logger.Info("vector index created successfully: " + key)
+
+		c.logger.Infof("Vector index created successfully: %s", key)
 	}
+
 	return nil
 }

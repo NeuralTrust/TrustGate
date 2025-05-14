@@ -20,15 +20,15 @@ type Semantic struct {
 	embeddingConfig *types.EmbeddingConfig
 	targets         []types.UpstreamTarget
 	client          *http.Client
-	embeddingRepo   embedding.Repository
-	serviceLocator  *factory.EmbeddingServiceLocator
+	embeddingRepo   embedding.EmbeddingRepository
+	serviceLocator  factory.EmbeddingServiceLocator
 }
 
 func NewSemantic(
 	embeddingConfig *types.EmbeddingConfig,
 	targets []types.UpstreamTarget,
-	embeddingRepo embedding.Repository,
-	serviceLocator *factory.EmbeddingServiceLocator,
+	embeddingRepo embedding.EmbeddingRepository,
+	serviceLocator factory.EmbeddingServiceLocator,
 ) *Semantic {
 	return &Semantic{
 		embeddingConfig: embeddingConfig,

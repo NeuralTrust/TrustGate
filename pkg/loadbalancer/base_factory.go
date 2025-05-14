@@ -10,18 +10,18 @@ import (
 )
 
 type FactoryInitializer func(
-	embeddingRepo embedding.Repository,
-	serviceLocator *factory.EmbeddingServiceLocator,
+	embeddingRepo embedding.EmbeddingRepository,
+	serviceLocator factory.EmbeddingServiceLocator,
 ) Factory
 
 type BaseFactory struct {
-	embeddingRepo  embedding.Repository
-	serviceLocator *factory.EmbeddingServiceLocator
+	embeddingRepo  embedding.EmbeddingRepository
+	serviceLocator factory.EmbeddingServiceLocator
 }
 
 func NewBaseFactory(
-	embeddingRepo embedding.Repository,
-	serviceLocator *factory.EmbeddingServiceLocator,
+	embeddingRepo embedding.EmbeddingRepository,
+	serviceLocator factory.EmbeddingServiceLocator,
 ) Factory {
 	return &BaseFactory{
 		embeddingRepo:  embeddingRepo,

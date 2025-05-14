@@ -109,7 +109,7 @@ func main() {
 	}
 
 	if getServerType() == "proxy" {
-		err = container.RedisIndexCreator.CreateIndexes(ctx, "neuraltrust_guardrail")
+		err = container.RedisIndexCreator.CreateIndexes(ctx, common.NeuralTrustGuardRailIndexName)
 		if err != nil {
 			logger.Fatalf("Failed to create redis indexes: %v", err)
 		}

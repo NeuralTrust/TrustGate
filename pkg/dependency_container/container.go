@@ -54,7 +54,7 @@ type Container struct {
 	SecurityMiddleware    middleware.Middleware
 	WebSocketMiddleware   middleware.Middleware
 	ApiKeyRepository      domainApikey.Repository
-	EmbeddingRepository   domainEmbedding.Repository
+	EmbeddingRepository   domainEmbedding.EmbeddingRepository
 	FingerprintTracker    fingerprint.Tracker
 	PluginChainValidator  plugin.ValidatePluginChain
 	MetricsWorker         metrics.Worker

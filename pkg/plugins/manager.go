@@ -67,8 +67,8 @@ type manager struct {
 	logger             *logrus.Logger
 	bedrockClient      bedrock.Client
 	fingerprintTracker fingerprint.Tracker
-	embeddingRepo      embedding.Repository
-	serviceLocator     *factory.EmbeddingServiceLocator
+	embeddingRepo      embedding.EmbeddingRepository
+	serviceLocator     factory.EmbeddingServiceLocator
 	plugins            map[string]pluginiface.Plugin
 	configurations     map[string][][]types.PluginConfig
 }
@@ -79,8 +79,8 @@ func NewManager(
 	logger *logrus.Logger,
 	bedrockClient bedrock.Client,
 	fingerprintTracker fingerprint.Tracker,
-	embeddingRepo embedding.Repository,
-	serviceLocator *factory.EmbeddingServiceLocator,
+	embeddingRepo embedding.EmbeddingRepository,
+	serviceLocator factory.EmbeddingServiceLocator,
 ) Manager {
 	once.Do(func() {
 		instance = &manager{
