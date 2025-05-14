@@ -291,6 +291,9 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 	if p.config.ToxicityParamBag != nil && p.config.JailbreakParamBag != nil {
 		evt.ToxicityThreshold = p.config.ToxicityParamBag.Threshold
 		evt.JailbreakThreshold = p.config.JailbreakParamBag.Threshold
+
+	}
+	if p.config.ModerationParamBag != nil {
 		evt.ModerationThreshold = p.config.ModerationParamBag.Threshold
 	}
 
