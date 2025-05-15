@@ -2,7 +2,6 @@ package plugins
 
 import (
 	"context"
-	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
@@ -12,7 +11,6 @@ import (
 type PluginWrapper struct {
 	Plugin           pluginiface.Plugin
 	MetricsCollector *metrics.Collector
-	mu               sync.Mutex
 }
 
 func NewPluginWrapper(plugin pluginiface.Plugin, collector *metrics.Collector) *PluginWrapper {
