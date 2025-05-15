@@ -53,7 +53,7 @@ func NewUpdateUpstreamHandler(
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
 // @Param upstream_id path string true "Upstream ID"
-// @Param upstream body types.UpstreamRequest true "Updated upstream data"
+// @Param upstream body request.UpstreamRequest true "Updated upstream data"
 // @Success 200 {object} upstream.Upstream "Upstream updated successfully"
 // @Router /api/v1/gateways/{gateway_id}/upstreams/{upstream_id} [put]
 func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {

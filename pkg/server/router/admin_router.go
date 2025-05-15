@@ -40,7 +40,10 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 	router.Get("/version", handlerTransport.GetVersionHandler.Handle)
 	v1 := router.Group("/api/v1")
 	{
-		// Version endpoint
+		// Plugins endpoint
+		v1.Get("/plugins", handlerTransport.ListPluginsHandler.Handle)
+
+		// Gateway endpoints
 		gateways := v1.Group("/gateways")
 		{
 			gateways.Post("", handlerTransport.CreateGatewayHandler.Handle)

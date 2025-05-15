@@ -47,7 +47,7 @@ func NewCreateUpstreamHandler(
 // @Accept json
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
-// @Param upstream body types.UpstreamRequest true "Upstream data"
+// @Param upstream body request.UpstreamRequest true "Upstream data"
 // @Success 201 {object} upstream.Upstream "Upstream created successfully"
 // @Router /api/v1/gateways/{gateway_id}/upstreams [post]
 func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {

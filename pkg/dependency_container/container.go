@@ -233,6 +233,7 @@ func NewContainer(
 		DeleteAPIKeyHandler: handlers.NewDeleteAPIKeyHandler(logger, repo, apiKeyRepository, redisPublisher),
 		// Version
 		GetVersionHandler: handlers.NewGetVersionHandler(logger),
+		ListPluginsHandler: handlers.NewListPluginsHandler(logger),
 	}
 
 	container := &Container{
