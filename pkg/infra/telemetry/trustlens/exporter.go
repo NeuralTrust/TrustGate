@@ -122,7 +122,7 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 	}
 
 	deliveryChan := make(chan kafka.Event)
-	fmt.Println(string(data))
+
 	err = p.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &p.cfg.Topic, Partition: kafka.PartitionAny},
 		Value:          data,
