@@ -3,13 +3,13 @@ package token_rate_limiter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/go-redis/redis/v8"
 	"github.com/sirupsen/logrus"
 
@@ -105,7 +105,7 @@ func (p *TokenRateLimiterPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
-	collector *metrics.Collector,
+	evtCtx *metrics.EventContext,
 ) (*types.PluginResponse, error) {
 	// Create a context with timeout and stage information
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -203,10 +203,11 @@ func (p *TokenRateLimiterPlugin) Execute(
 				"X-Ratelimit-Reset-Requests":     {fmt.Sprintf("%ds", int(timeUntilRefill.Seconds()))},
 				"X-Ratelimit-Reset-Tokens":       {fmt.Sprintf("%ds", int(timeUntilRefill.Seconds()))},
 			}
-			p.raiseEvent(collector, TokenRateLimiterData{
+			evtCtx.SetError(errors.New("token rate limit exceeded"))
+			evtCtx.SetExtras(TokenRateLimiterData{
 				Tokens:        bucket.Tokens,
 				LimitExceeded: true,
-			}, req.Stage, true, "rate limit exceeded")
+			})
 			return nil, &types.PluginError{
 				StatusCode: 429,
 				Message:    fmt.Sprintf("Rate limit exceeded. Not enough tokens available. Required: %d, Current: %d", tokensToReserve, bucket.Tokens),
@@ -229,10 +230,11 @@ func (p *TokenRateLimiterPlugin) Execute(
 				"X-Ratelimit-Reset-Requests":     {fmt.Sprintf("%ds", int(timeUntilRefill.Seconds()))},
 				"X-Ratelimit-Reset-Tokens":       {fmt.Sprintf("%ds", int(timeUntilRefill.Seconds()))},
 			}
-			p.raiseEvent(collector, TokenRateLimiterData{
+			evtCtx.SetError(errors.New("token rate limit exceeded"))
+			evtCtx.SetExtras(TokenRateLimiterData{
 				Tokens:        bucket.RequestsRemaining,
 				LimitExceeded: true,
-			}, req.Stage, true, "rate limit exceeded")
+			})
 			return nil, &types.PluginError{
 				StatusCode: 429,
 				Message:    "Rate limit exceeded. No requests remaining.",
@@ -267,7 +269,10 @@ func (p *TokenRateLimiterPlugin) Execute(
 				"X-Ratelimit-Reset-Tokens":       {fmt.Sprintf("%ds", int(timeUntilRefill.Seconds()))},
 			}
 		}
-
+		evtCtx.SetExtras(TokenRateLimiterData{
+			Tokens:        bucket.RequestsRemaining,
+			LimitExceeded: false,
+		})
 		return &types.PluginResponse{
 			Headers: map[string][]string{
 				"X-Ratelimit-Limit-Requests":     {strconv.Itoa(config.RequestsPerMinute)},
@@ -319,6 +324,10 @@ func (p *TokenRateLimiterPlugin) Execute(
 					"requests_remaining": bucket.RequestsRemaining,
 				}).Debug("Token rate limiter post-response update for streaming")
 
+				evtCtx.SetExtras(TokenRateLimiterData{
+					Tokens:        bucket.RequestsRemaining,
+					LimitExceeded: false,
+				})
 				return &types.PluginResponse{
 					Headers: map[string][]string{
 						"X-Ratelimit-Limit-Requests":     {strconv.Itoa(config.RequestsPerMinute)},
@@ -372,6 +381,10 @@ func (p *TokenRateLimiterPlugin) Execute(
 			"last_refill":        bucket.LastRefill,
 		}).Debug("Updated bucket state")
 
+		evtCtx.SetExtras(TokenRateLimiterData{
+			Tokens:        bucket.RequestsRemaining,
+			LimitExceeded: false,
+		})
 		return &types.PluginResponse{
 			StatusCode: resp.StatusCode,
 			Headers: map[string][]string{
@@ -458,24 +471,6 @@ func (p *TokenRateLimiterPlugin) saveBucketState(ctx context.Context, key string
 	}
 
 	return nil
-}
-
-func (p *TokenRateLimiterPlugin) raiseEvent(
-	collector *metrics.Collector,
-	extra TokenRateLimiterData,
-	stage types.Stage,
-	error bool,
-	errorMessage string,
-) {
-	evt := metric_events.NewPluginEvent()
-	evt.Plugin = &metric_events.PluginDataEvent{
-		PluginName:   PluginName,
-		Stage:        string(stage),
-		Extras:       extra,
-		Error:        error,
-		ErrorMessage: errorMessage,
-	}
-	collector.Emit(evt)
 }
 
 // min returns the minimum of two integers

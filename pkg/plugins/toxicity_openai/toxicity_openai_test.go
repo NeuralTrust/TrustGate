@@ -100,7 +100,7 @@ func TestToxicityOpenAIPlugin_Execute_Success(t *testing.T) {
 
 	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
 
-	resp, err := plugin.Execute(context.Background(), cf, request, response, metrics.NewCollector("", nil))
+	resp, err := plugin.Execute(context.Background(), cf, request, response, metrics.NewEventContext("", "", nil))
 
 	assert.NoError(t, err)
 	assert.Equal(t, "Content is safe", resp.Message)
@@ -147,7 +147,7 @@ func TestToxicityOpenAIPlugin_Execute_FlaggedContent(t *testing.T) {
 
 	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)

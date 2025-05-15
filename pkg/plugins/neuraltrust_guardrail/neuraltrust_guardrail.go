@@ -21,7 +21,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
@@ -205,7 +204,7 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
-	collector *metrics.Collector,
+	evtCtx *metrics.EventContext,
 ) (*types.PluginResponse, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -285,7 +284,7 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 
 	evt := &NeuralTrustGuardrailData{
 		Blocked: true,
-		Scores:  GuardrailScores{},
+		Scores:  &GuardrailScores{},
 	}
 
 	if p.config.ToxicityParamBag != nil && p.config.JailbreakParamBag != nil {
@@ -327,7 +326,8 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 			cancel()
 			var guardrailViolationError *guardrailViolationError
 			if errors.As(err, &guardrailViolationError) {
-				p.raiseEvent(collector, *evt, req.Stage, true, guardrailViolationError.Error())
+				evtCtx.SetError(guardrailViolationError)
+				evtCtx.SetExtras(evt)
 				return nil, &types.PluginError{
 					StatusCode: http.StatusForbidden,
 					Message:    err.Error(),
@@ -338,6 +338,9 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 		}
 	case <-done:
 	}
+
+	evt.Blocked = false
+	evtCtx.SetExtras(evt)
 
 	return &types.PluginResponse{
 		StatusCode: 200,
@@ -496,13 +499,16 @@ func (p *NeuralTrustGuardrailPlugin) callModeration(
 		return
 	}
 
+	scores := make(map[string]float64, len(results))
 	for _, result := range results {
-		fmt.Printf("Checking result %s with similarity score: %f (threshold: %f)\n",
-			result.Key, result.Score, cfg.Threshold)
+		scores[result.Data] = result.Score
+	}
 
+	evt.Scores.ModerationScores = scores
+	evt.ModerationThreshold = cfg.Threshold
+
+	for _, result := range results {
 		if result.Score >= cfg.Threshold {
-			fmt.Printf("Content blocked: best match %s with similarity score %f exceeds threshold %f\n",
-				result.Key, result.Score, cfg.Threshold)
 			p.sendError(
 				firewallErrors,
 				NewGuardrailViolation(fmt.Sprintf("content blocked: with similarity score %f exceeds threshold %f",
@@ -514,7 +520,6 @@ func (p *NeuralTrustGuardrailPlugin) callModeration(
 			return
 		}
 	}
-	fmt.Println("content allowed: no similarity scores above threshold")
 }
 
 func (p *NeuralTrustGuardrailPlugin) callFirewall(
@@ -661,22 +666,4 @@ func (p *NeuralTrustGuardrailPlugin) sendError(ch chan<- error, err error) {
 	case ch <- err:
 	default:
 	}
-}
-
-func (p *NeuralTrustGuardrailPlugin) raiseEvent(
-	collector *metrics.Collector,
-	extra NeuralTrustGuardrailData,
-	stage types.Stage,
-	error bool,
-	errorMessage string,
-) {
-	evt := metric_events.NewPluginEvent()
-	evt.Plugin = &metric_events.PluginDataEvent{
-		PluginName:   PluginName,
-		Stage:        string(stage),
-		Extras:       extra,
-		Error:        error,
-		ErrorMessage: errorMessage,
-	}
-	collector.Emit(evt)
 }

@@ -2,12 +2,12 @@ package request_size_limiter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -104,7 +104,7 @@ func (p *RequestSizeLimiterPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
-	collector *metrics.Collector,
+	evtCtx *metrics.EventContext,
 ) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
@@ -158,18 +158,14 @@ func (p *RequestSizeLimiterPlugin) Execute(
 			"max_size_bytes":     maxSizeBytes,
 			"size_unit":          config.SizeUnit,
 		}).Warn("Request size limit exceeded")
-		p.raiseEvent(
-			collector,
-			RequestSizeLimiterData{
-				RequestSizeBytes: byteSize,
-				MaxSizeBytes:     maxSizeBytes,
-				LimitExceeded:    true,
-				ExceededType:     "bytes",
-			},
-			req.Stage,
-			true,
-			"request size limit exceeded",
-		)
+
+		evtCtx.SetError(errors.New("request size limit exceeded"))
+		evtCtx.SetExtras(RequestSizeLimiterData{
+			RequestSizeBytes: byteSize,
+			MaxSizeBytes:     maxSizeBytes,
+			LimitExceeded:    true,
+			ExceededType:     "bytes",
+		})
 		return nil, &types.PluginError{
 			StatusCode: 413, // Payload Too Large
 			Message:    fmt.Sprintf("Request size limit exceeded. Received: %d bytes", byteSize),
@@ -185,18 +181,13 @@ func (p *RequestSizeLimiterPlugin) Execute(
 			"char_count":            charCount,
 			"max_chars_per_request": config.MaxCharsPerRequest,
 		}).Warn("Character limit per request exceeded")
-		p.raiseEvent(
-			collector,
-			RequestSizeLimiterData{
-				RequestSizeChars:   charCount,
-				MaxCharsPerRequest: int(config.MaxCharsPerRequest),
-				LimitExceeded:      true,
-				ExceededType:       "chars",
-			},
-			req.Stage,
-			true,
-			"request size limit exceeded",
-		)
+		evtCtx.SetError(errors.New("request size limit exceeded"))
+		evtCtx.SetExtras(RequestSizeLimiterData{
+			RequestSizeChars:   charCount,
+			MaxCharsPerRequest: int(config.MaxCharsPerRequest),
+			LimitExceeded:      true,
+			ExceededType:       "chars",
+		})
 		return nil, &types.PluginError{
 			StatusCode: 413, // Payload Too Large
 			Message:    fmt.Sprintf("Character limit exceeded. Received: %d characters", charCount),
@@ -210,6 +201,12 @@ func (p *RequestSizeLimiterPlugin) Execute(
 		"X-Size-Limit-Bytes":   {strconv.Itoa(maxSizeBytes)},
 		"X-Size-Limit-Chars":   {strconv.FormatInt(config.MaxCharsPerRequest, 10)},
 	}
+
+	evtCtx.SetExtras(RequestSizeLimiterData{
+		RequestSizeChars:   charCount,
+		MaxCharsPerRequest: int(config.MaxCharsPerRequest),
+		LimitExceeded:      false,
+	})
 
 	return &types.PluginResponse{
 		StatusCode: 200,
@@ -264,22 +261,4 @@ func removeSpecialChars(s string, pattern string) string {
 		result = strings.ReplaceAll(result, c, "")
 	}
 	return result
-}
-
-func (p *RequestSizeLimiterPlugin) raiseEvent(
-	collector *metrics.Collector,
-	extra RequestSizeLimiterData,
-	stage types.Stage,
-	error bool,
-	errorMessage string,
-) {
-	evt := metric_events.NewPluginEvent()
-	evt.Plugin = &metric_events.PluginDataEvent{
-		PluginName:   PluginName,
-		Stage:        string(stage),
-		Extras:       extra,
-		Error:        error,
-		ErrorMessage: errorMessage,
-	}
-	collector.Emit(evt)
 }

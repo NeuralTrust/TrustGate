@@ -116,7 +116,7 @@ func TestInjectionProtectionPlugin_Execute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, err := plugin.Execute(context.Background(), config, tt.req, tt.resp, metrics.NewCollector("", nil))
+			resp, err := plugin.Execute(context.Background(), config, tt.req, tt.resp, metrics.NewEventContext("", "", nil))
 
 			if tt.expectError {
 				assert.Error(t, err)

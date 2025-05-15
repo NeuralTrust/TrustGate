@@ -10,7 +10,6 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -133,7 +132,7 @@ func (p *ToxicityOpenAIPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
-	collector *metrics.Collector,
+	evtCtx *metrics.EventContext,
 ) (*types.PluginResponse, error) {
 	var conf Config
 	if err := mapstructure.Decode(cfg.Settings, &conf); err != nil {
@@ -169,19 +168,17 @@ func (p *ToxicityOpenAIPlugin) Execute(
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
+	bodyStr := string(body)
 	if httpResp.StatusCode != http.StatusOK {
-		p.raiseEvent(collector, ToxicityOpenaiData{Flagged: true, Response: body}, req.Stage, true, string(body))
-		return nil, fmt.Errorf("OpenAI API returned error: %s", string(body))
+		return nil, fmt.Errorf("OpenAI API returned error: %s", bodyStr)
 	}
-
-	p.raiseEvent(collector, ToxicityOpenaiData{Flagged: false, Response: body}, req.Stage, false, "")
 
 	var moderationResp OpenAIModerationResponse
 	if err := json.Unmarshal(body, &moderationResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal moderation response: %w", err)
 	}
 
-	return p.analyzeModerationResponse(moderationResp.Results)
+	return p.analyzeModerationResponse(moderationResp.Results, evtCtx, bodyStr)
 }
 
 func (p *ToxicityOpenAIPlugin) extractModerationInputs(messages []Message) []ModerationInput {
@@ -209,7 +206,11 @@ func (p *ToxicityOpenAIPlugin) sendModerationRequest(ctx context.Context, key st
 	return p.client.Do(httpReq)
 }
 
-func (p *ToxicityOpenAIPlugin) analyzeModerationResponse(results []ModerationResult) (*types.PluginResponse, error) {
+func (p *ToxicityOpenAIPlugin) analyzeModerationResponse(
+	results []ModerationResult,
+	evtCtx *metrics.EventContext,
+	body string,
+) (*types.PluginResponse, error) {
 	if len(results) == 0 {
 		return nil, fmt.Errorf("no moderation results returned")
 	}
@@ -223,29 +224,14 @@ func (p *ToxicityOpenAIPlugin) analyzeModerationResponse(results []ModerationRes
 	}
 
 	if len(flaggedCategories) > 0 {
+		evtCtx.SetError(fmt.Errorf("content flagged for categories: %v", flaggedCategories))
+		evtCtx.SetExtras(ToxicityOpenaiData{Flagged: true, Response: body, FlaggedCategories: flaggedCategories})
 		return nil, &types.PluginError{
 			StatusCode: http.StatusForbidden,
 			Message:    fmt.Sprintf(p.config.Actions.Message+" flagged categories: %v", flaggedCategories),
 			Err:        fmt.Errorf("content flagged for categories: %v", flaggedCategories),
 		}
 	}
+	evtCtx.SetExtras(ToxicityOpenaiData{Flagged: false, Response: body})
 	return &types.PluginResponse{StatusCode: 200, Message: "Content is safe"}, nil
-}
-
-func (p *ToxicityOpenAIPlugin) raiseEvent(
-	collector *metrics.Collector,
-	extra ToxicityOpenaiData,
-	stage types.Stage,
-	error bool,
-	errorMessage string,
-) {
-	evt := metric_events.NewPluginEvent()
-	evt.Plugin = &metric_events.PluginDataEvent{
-		PluginName:   PluginName,
-		Stage:        string(stage),
-		Extras:       extra,
-		Error:        error,
-		ErrorMessage: errorMessage,
-	}
-	collector.Emit(evt)
 }

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -601,7 +600,7 @@ func (p *DataMaskingPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
-	collector *metrics.Collector,
+	evtCtx *metrics.EventContext,
 ) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
@@ -709,12 +708,10 @@ func (p *DataMaskingPlugin) Execute(
 		resp.Body = maskedBody
 	}
 
-	if len(allEvents) > 0 {
-		p.raiseEvent(collector, DataMaskingData{
-			Masked: true,
-			Events: allEvents,
-		}, types.PreRequest, false, "")
-	}
+	evtCtx.SetExtras(DataMaskingData{
+		Masked: len(allEvents) > 0,
+		Events: allEvents,
+	})
 
 	return &types.PluginResponse{
 		StatusCode: 200,
@@ -756,22 +753,4 @@ func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64, co
 		// Return other types (int, bool, etc.) as-is
 		return v, nil
 	}
-}
-
-func (p *DataMaskingPlugin) raiseEvent(
-	collector *metrics.Collector,
-	extra DataMaskingData,
-	stage types.Stage,
-	error bool,
-	errorMessage string,
-) {
-	evt := metric_events.NewPluginEvent()
-	evt.Plugin = &metric_events.PluginDataEvent{
-		PluginName:   PluginName,
-		Stage:        string(stage),
-		Extras:       extra,
-		Error:        error,
-		ErrorMessage: errorMessage,
-	}
-	collector.Emit(evt)
 }

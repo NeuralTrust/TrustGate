@@ -289,7 +289,7 @@ func (p *ToxicityAzurePlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
-	collector *metrics.Collector,
+	evtCtx *metrics.EventContext,
 ) (*types.PluginResponse, error) {
 	var conf Config
 	if err := mapstructure.Decode(cfg.Settings, &conf); err != nil {
@@ -351,6 +351,11 @@ func (p *ToxicityAzurePlugin) Execute(
 
 	var jsonData []byte
 	var err error
+
+	contentType := "text"
+	if isImageContent {
+		contentType = "image"
+	}
 
 	if isImageContent {
 		azureReq := AzureImageRequest{
@@ -600,7 +605,12 @@ func (p *ToxicityAzurePlugin) Execute(
 		}, nil
 	}
 
-	// If no categories exceed severity level, allow the request
+	evtCtx.SetExtras(ToxicityAzureData{
+		Endpoint:    endpoint,
+		Flagged:     false,
+		ContentType: contentType,
+	})
+
 	return &types.PluginResponse{
 		StatusCode: 200,
 		Message:    "Text content is safe",
