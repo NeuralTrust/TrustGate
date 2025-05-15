@@ -1,10 +1,10 @@
 package toxicity_azure
 
 type ToxicityAzureData struct {
-	Endpoint    string     `json:"endpoint"`
-	Flagged     bool       `json:"flagged"`
-	ContentType string     `json:"content_type"`
-	Scores      ScoresData `json:"scores"`
+	Endpoint    string      `json:"endpoint"`
+	Flagged     bool        `json:"flagged"`
+	ContentType string      `json:"content_type"`
+	Scores      *ScoresData `json:"scores,omitempty"`
 }
 
 type ScoresData struct {

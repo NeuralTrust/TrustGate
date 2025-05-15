@@ -158,17 +158,21 @@ func (r *redisEmbeddingRepository) Search(
 			continue
 		}
 
-		score := 0.0
-		if i+1 < len(resSlice) {
-			if fields, ok := resSlice[i+1].([]interface{}); ok {
-				for j := 0; j < len(fields); j += 2 {
-					if j+1 < len(fields) {
-						fieldName, fnOk := fields[j].(string)
-						if fnOk && fieldName == "score" {
-							if scoreStr, scoreOk := fields[j+1].(string); scoreOk {
-								if scoreVal, err := strconv.ParseFloat(scoreStr, 64); err == nil {
-									score = 1.0 - scoreVal
-								}
+		var data string
+		var score float64
+
+		if fields, ok := resSlice[i+1].([]interface{}); ok {
+			for j := 0; j < len(fields); j += 2 {
+				if j+1 < len(fields) {
+					fieldName, fnOk := fields[j].(string)
+					fieldValue, fvOk := fields[j+1].(string)
+					if fnOk && fvOk {
+						switch fieldName {
+						case "data":
+							data = fieldValue
+						case "score":
+							if scoreVal, err := strconv.ParseFloat(fieldValue, 64); err == nil {
+								score = 1.0 - scoreVal
 							}
 						}
 					}
@@ -179,6 +183,7 @@ func (r *redisEmbeddingRepository) Search(
 		results = append(results, embedding.SearchResult{
 			Key:   key,
 			Score: score,
+			Data:  data,
 		})
 	}
 

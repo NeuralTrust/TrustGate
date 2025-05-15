@@ -64,7 +64,7 @@ func TestExternalApiPlugin_Execute_Success(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"input": "test"}`)}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)
@@ -99,7 +99,7 @@ func TestExternalApiPlugin_Execute_ConditionMatching(t *testing.T) {
 	req := &types.RequestContext{}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "Validation failed")
@@ -119,7 +119,7 @@ func TestExternalApiPlugin_Execute_Failure(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"input": "test"}`)}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)
@@ -157,7 +157,7 @@ func TestExternalApiPlugin_Execute_WithFieldMapping(t *testing.T) {
 	req := &types.RequestContext{Body: bodyBytes}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)
@@ -207,7 +207,7 @@ func TestExternalApiPlugin_Execute_WithInvalidFieldMapping(t *testing.T) {
 	req := &types.RequestContext{Body: bodyBytes}
 	resp := &types.ResponseContext{}
 
-	_, err = plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	_, err = plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.Error(t, err)
 
@@ -254,7 +254,7 @@ func TestExternalApiPlugin_Execute_WithQueryParams(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"input": "test"}`)}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)
@@ -362,7 +362,7 @@ func TestExternalApiPlugin_Execute_WithExistingQueryParams(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"input": "test"}`)}
 	resp := &types.ResponseContext{}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)

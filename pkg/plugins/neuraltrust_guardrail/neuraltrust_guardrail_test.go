@@ -80,7 +80,7 @@ func TestTrustGateGuardrailPlugin_Execute_JailbreakSafe(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"text":"safe"}`)}
 	res := &types.ResponseContext{}
 
-	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewCollector("", nil))
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
 
 	assert.NoError(t, err)
 	assert.NotNil(t, pluginResp)
@@ -129,7 +129,7 @@ func TestTrustGateGuardrailPlugin_Execute_JailbreakUnsafe(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"text":"unsafe jailbreak attempt"}`)}
 	res := &types.ResponseContext{}
 
-	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewCollector("", nil))
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "jailbreak: score 0.80 exceeded threshold 0.50")
@@ -178,7 +178,7 @@ func TestTrustGateGuardrailPlugin_Execute_ToxicitySafe(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"text":"non-toxic content"}`)}
 	res := &types.ResponseContext{}
 
-	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewCollector("", nil))
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
 
 	assert.NoError(t, err)
 	assert.NotNil(t, pluginResp)
@@ -227,7 +227,7 @@ func TestTrustGateGuardrailPlugin_Execute_ToxicityUnsafe(t *testing.T) {
 	req := &types.RequestContext{Body: []byte(`{"text":"toxic content"}`)}
 	res := &types.ResponseContext{}
 
-	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewCollector("", nil))
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "toxicity: score 0.80 exceeded threshold 0.50")
@@ -289,7 +289,7 @@ func TestTrustGateGuardrailPlugin_Execute_ModerationSafe(t *testing.T) {
 	}
 	res := &types.ResponseContext{}
 
-	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewCollector("", nil))
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
 
 	assert.NoError(t, err)
 	assert.NotNil(t, pluginResp)
@@ -356,7 +356,7 @@ func TestTrustGateGuardrailPlugin_Execute_ModerationUnsafe(t *testing.T) {
 	}
 	res := &types.ResponseContext{}
 
-	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewCollector("", nil))
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "content blocked: with similarity score 0.9")

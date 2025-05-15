@@ -1,8 +1,8 @@
 package injection_protection
 
 type InjectionProtectionData struct {
-	Blocked bool           `json:"blocked"`
-	Event   InjectionEvent `json:"event"`
+	Blocked bool            `json:"blocked"`
+	Event   *InjectionEvent `json:"event,omitempty"`
 }
 
 type InjectionEvent struct {

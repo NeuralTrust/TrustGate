@@ -557,7 +557,7 @@ func TestExecutePlugin(t *testing.T) {
 
 	req := &types.RequestContext{Body: []byte("This is a secret")}
 	resp := &types.ResponseContext{}
-	_, err := plugin.Execute(context.Background(), config, req, resp, metrics.NewCollector("", nil))
+	_, err := plugin.Execute(context.Background(), config, req, resp, metrics.NewEventContext("", "", nil))
 	assert.NoError(t, err)
 	assert.Equal(t, "This is a [MASKED]", string(req.Body))
 }

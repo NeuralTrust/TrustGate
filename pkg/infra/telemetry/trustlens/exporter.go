@@ -92,7 +92,9 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 	if p.producer == nil {
 		return errors.New("kafka (trustlens) producer is not initialized")
 	}
-
+	if evt.IsTypePlugin() {
+		return nil
+	}
 	// Apply mapping transformations to the event and get extracted fields
 	extractedFields, err := p.applyMappingTransformations(evt)
 	if err != nil {

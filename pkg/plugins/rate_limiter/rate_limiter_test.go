@@ -92,7 +92,7 @@ func TestRateLimiterPlugin_Execute_LimitExceeded(t *testing.T) {
 	req := &types.RequestContext{Headers: map[string][]string{"X-Real-IP": {"127.0.0.1"}}}
 	resp := &types.ResponseContext{Headers: make(map[string][]string), Metadata: make(map[string]interface{})}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)
@@ -157,7 +157,7 @@ func TestRateLimiterPlugin_Execute_NoLimitExceeded(t *testing.T) {
 	req := &types.RequestContext{Headers: map[string][]string{"X-Real-IP": {"127.0.0.1"}}}
 	resp := &types.ResponseContext{Headers: make(map[string][]string), Metadata: make(map[string]interface{})}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.Nil(t, pluginResponse)
 	assert.NoError(t, err)
@@ -204,7 +204,7 @@ func TestRateLimiterPlugin_Execute_PerUser_NoLimitExceeded(t *testing.T) {
 	req := &types.RequestContext{Headers: map[string][]string{"X-User-ID": {"user123"}}}
 	resp := &types.ResponseContext{Headers: make(map[string][]string), Metadata: make(map[string]interface{})}
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.Nil(t, pluginResponse)
 	assert.NoError(t, err)

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/google/uuid"
 
@@ -126,7 +125,7 @@ func (p *ExternalApiPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
-	collector *metrics.Collector,
+	evtCtx *metrics.EventContext,
 ) (*types.PluginResponse, error) {
 
 	settings := cfg.Settings
@@ -315,11 +314,18 @@ func (p *ExternalApiPlugin) Execute(
 		return nil, fmt.Errorf("failed to parse validation response: %w", err)
 	}
 
+	duration := time.Since(startTime)
 	// Check conditions
 	for _, condition := range conditions {
 		value := getNestedValue(validationResp, strings.Split(condition.Field, "."))
 		if value != nil {
 			if matches := evaluateCondition(value, condition.Operator, condition.Value); matches && condition.StopFlow {
+				evtCtx.SetExtras(ExternalAPIData{
+					Endpoint:   endpoint,
+					Method:     method,
+					StatusCode: http.StatusUnprocessableEntity,
+					DurationMs: duration.Milliseconds(),
+				})
 				return nil, &types.PluginError{
 					StatusCode: http.StatusUnprocessableEntity,
 					Message:    condition.Message,
@@ -334,15 +340,13 @@ func (p *ExternalApiPlugin) Execute(
 		return nil, fmt.Errorf("failed to marshal response: %w", err)
 	}
 
-	duration := time.Since(startTime)
-	p.raiseEvent(collector, ExternalAPIData{
+	evtCtx.SetExtras(ExternalAPIData{
 		Endpoint:   endpoint,
 		Method:     method,
 		StatusCode: httpResp.StatusCode,
 		DurationMs: duration.Milliseconds(),
 		Response:   string(respBody),
-	}, req.Stage, false, "")
-
+	})
 	return &types.PluginResponse{
 		StatusCode: http.StatusOK,
 		Message:    "Validation passed",
@@ -402,22 +406,4 @@ func getBoolFromMap(data map[string]interface{}, key string) (bool, error) {
 		return false, fmt.Errorf("invalid type assertion for key: %v", key)
 	}
 	return value, nil
-}
-
-func (p *ExternalApiPlugin) raiseEvent(
-	collector *metrics.Collector,
-	extra ExternalAPIData,
-	stage types.Stage,
-	error bool,
-	errorMessage string,
-) {
-	evt := metric_events.NewPluginEvent()
-	evt.Plugin = &metric_events.PluginDataEvent{
-		PluginName:   PluginName,
-		Stage:        string(stage),
-		Extras:       extra,
-		Error:        error,
-		ErrorMessage: errorMessage,
-	}
-	collector.Emit(evt)
 }

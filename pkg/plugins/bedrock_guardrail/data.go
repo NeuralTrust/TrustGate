@@ -1,10 +1,10 @@
 package bedrock_guardrail
 
 type BedrockGuardrailData struct {
-	GuardrailID string                `json:"guardrail_id"`
-	Version     string                `json:"version"`
-	Blocked     bool                  `json:"blocked"`
-	Event       BedrockGuardrailEvent `json:"events"`
+	GuardrailID string                 `json:"guardrail_id"`
+	Version     string                 `json:"version"`
+	Blocked     bool                   `json:"blocked"`
+	Event       *BedrockGuardrailEvent `json:"events,omitempty"`
 }
 
 type BedrockGuardrailEvent struct {

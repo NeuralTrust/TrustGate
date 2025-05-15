@@ -171,6 +171,7 @@ func (m *worker) feedEvent(
 	evt.Latency = elapsedTime.Milliseconds()
 	evt.IP = req.IP
 	evt.Method = req.Method
+	evt.Path = req.Path
 
 	if resp.Rule != nil {
 		if resp.Rule.TrustLens != nil {

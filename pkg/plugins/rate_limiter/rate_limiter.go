@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/go-redis/redis/v8"
@@ -43,6 +42,15 @@ type Config struct {
 		Type       string `json:"type"`
 		RetryAfter string `json:"retry_after"`
 	} `json:"actions"`
+}
+
+type limitStatus struct {
+	exceeded     bool
+	limitType    string
+	retryAfter   string
+	currentCount int64
+	window       time.Duration
+	limit        int
 }
 
 func NewRateLimiterPlugin(redisClient *redis.Client, opts *RateLimiterOpts) pluginiface.Plugin {
@@ -143,7 +151,7 @@ func (p *RateLimiterPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
-	collector *metrics.Collector,
+	evtCtx *metrics.EventContext,
 ) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
@@ -153,15 +161,6 @@ func (p *RateLimiterPlugin) Execute(
 	// Initialize headers map if nil
 	if resp.Headers == nil {
 		resp.Headers = make(map[string][]string)
-	}
-
-	type limitStatus struct {
-		exceeded     bool
-		limitType    string
-		retryAfter   string
-		currentCount int64
-		window       time.Duration
-		limit        int
 	}
 
 	var finalStatus limitStatus
@@ -240,31 +239,17 @@ func (p *RateLimiterPlugin) Execute(
 		}
 	}
 
-	// Return error if any limit was exceeded
-	if finalStatus.exceeded {
-		if finalStatus.retryAfter == "" {
-			finalStatus.retryAfter = "60"
-		}
+	if finalStatus.retryAfter == "" {
+		finalStatus.retryAfter = "60"
+	}
 
+	if finalStatus.exceeded {
 		resp.Headers["Retry-After"] = []string{finalStatus.retryAfter}
 		resp.Metadata["rate_limit_exceeded"] = true
 		resp.Metadata["rate_limit_type"] = finalStatus.limitType
 		resp.Metadata["retry_after"] = finalStatus.retryAfter
 
-		p.raiseEvent(
-			collector,
-			RateLimiterData{
-				RateLimitExceeded: true,
-				ExceededType:      finalStatus.limitType,
-				RetryAfter:        finalStatus.retryAfter,
-				CurrentCount:      finalStatus.currentCount,
-				Window:            finalStatus.window.String(),
-				Limit:             finalStatus.limit,
-			},
-			req.Stage,
-			true,
-			"rate limit exceeded",
-		)
+		p.setEventAsError(evtCtx, finalStatus)
 
 		return nil, &types.PluginError{
 			StatusCode: http.StatusTooManyRequests,
@@ -273,20 +258,7 @@ func (p *RateLimiterPlugin) Execute(
 		}
 	}
 
-	p.raiseEvent(
-		collector,
-		RateLimiterData{
-			RateLimitExceeded: false,
-			ExceededType:      finalStatus.limitType,
-			RetryAfter:        finalStatus.retryAfter,
-			CurrentCount:      finalStatus.currentCount,
-			Window:            finalStatus.window.String(),
-			Limit:             finalStatus.limit,
-		},
-		req.Stage,
-		false,
-		"",
-	)
+	p.setEventAsSuccess(evtCtx, finalStatus)
 
 	return nil, nil
 }
@@ -340,20 +312,29 @@ func (p *RateLimiterPlugin) extractKey(req *types.RequestContext, limitType stri
 	}
 }
 
-func (p *RateLimiterPlugin) raiseEvent(
-	collector *metrics.Collector,
-	extra RateLimiterData,
-	stage types.Stage,
-	error bool,
-	errorMessage string,
+func (p *RateLimiterPlugin) setEventAsError(
+	evtCtx *metrics.EventContext,
+	finalStatus limitStatus,
 ) {
-	evt := metric_events.NewPluginEvent()
-	evt.Plugin = &metric_events.PluginDataEvent{
-		PluginName:   PluginName,
-		Stage:        string(stage),
-		Extras:       extra,
-		Error:        error,
-		ErrorMessage: errorMessage,
-	}
-	collector.Emit(evt)
+	evtCtx.SetExtras(RateLimiterData{
+		RateLimitExceeded: true,
+		ExceededType:      finalStatus.limitType,
+		CurrentCount:      finalStatus.currentCount,
+		Window:            finalStatus.window.String(),
+		Limit:             finalStatus.limit,
+	})
+	evtCtx.SetError(fmt.Errorf("%s rate limit exceeded", finalStatus.limitType))
+}
+
+func (p *RateLimiterPlugin) setEventAsSuccess(
+	evtCtx *metrics.EventContext,
+	finalStatus limitStatus,
+) {
+	evtCtx.SetExtras(RateLimiterData{
+		RateLimitExceeded: false,
+		ExceededType:      finalStatus.limitType,
+		CurrentCount:      finalStatus.currentCount,
+		Window:            finalStatus.window.String(),
+		Limit:             finalStatus.limit,
+	})
 }

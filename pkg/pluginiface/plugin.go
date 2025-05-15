@@ -21,7 +21,7 @@ type Plugin interface {
 		cfg types.PluginConfig,
 		req *types.RequestContext,
 		resp *types.ResponseContext,
-		collector *metrics.Collector,
+		evtCtx *metrics.EventContext,
 	) (*types.PluginResponse, error)
 	ValidateConfig(config types.PluginConfig) error
 	// RequiredPlugins returns the names of other plugins required by this one.

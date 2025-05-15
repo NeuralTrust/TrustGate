@@ -202,7 +202,7 @@ func TestRequestSizeLimiterPlugin_Execute(t *testing.T) {
 				Headers: make(map[string][]string),
 			}
 
-			result, err := plugin.Execute(ctx, tt.config, req, resp, metrics.NewCollector("", nil))
+			result, err := plugin.Execute(ctx, tt.config, req, resp, metrics.NewEventContext("", "", nil))
 
 			if tt.expectError {
 				assert.Error(t, err)

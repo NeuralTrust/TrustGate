@@ -129,7 +129,7 @@ func TestToxicityAzurePlugin_Execute_Success(t *testing.T) {
 
 	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)
@@ -185,7 +185,7 @@ func TestToxicityAzurePlugin_Execute_FlaggedContent(t *testing.T) {
 
 	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
 
-	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewCollector("", nil))
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.Nil(t, pluginResponse)
 	assert.Error(t, err)

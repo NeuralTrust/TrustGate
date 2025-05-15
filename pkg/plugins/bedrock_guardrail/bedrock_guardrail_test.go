@@ -74,7 +74,7 @@ func TestExecute_ContentBlockedByPolicy(t *testing.T) {
 
 	req := &plugintypes.RequestContext{Body: []byte("test content")}
 	resp := &plugintypes.ResponseContext{}
-	result, err := plugin.Execute(context.Background(), conf, req, resp, metrics.NewCollector("", nil))
+	result, err := plugin.Execute(context.Background(), conf, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.Nil(t, result)
 	assert.Error(t, err)
@@ -101,7 +101,7 @@ func TestExecute_ContentAllowed(t *testing.T) {
 
 	req := &plugintypes.RequestContext{Body: []byte("test content")}
 	resp := &plugintypes.ResponseContext{}
-	result, err := plugin.Execute(context.Background(), conf, req, resp, metrics.NewCollector("", nil))
+	result, err := plugin.Execute(context.Background(), conf, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.NotNil(t, result)
 	assert.NoError(t, err)
@@ -125,7 +125,7 @@ func TestExecute_BedrockAPIFailure(t *testing.T) {
 
 	req := &plugintypes.RequestContext{Body: []byte("test content")}
 	resp := &plugintypes.ResponseContext{}
-	result, err := plugin.Execute(context.Background(), conf, req, resp, metrics.NewCollector("", nil))
+	result, err := plugin.Execute(context.Background(), conf, req, resp, metrics.NewEventContext("", "", nil))
 
 	assert.Nil(t, result)
 	assert.Error(t, err)

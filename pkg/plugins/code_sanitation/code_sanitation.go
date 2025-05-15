@@ -3,13 +3,13 @@ package code_sanitation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -270,7 +270,7 @@ func (p *CodeSanitationPlugin) Execute(
 	pluginConfig types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
-	collector *metrics.Collector,
+	evtCtx *metrics.EventContext,
 ) (*types.PluginResponse, error) {
 	var config Config
 	if err := mapstructure.Decode(pluginConfig.Settings, &config); err != nil {
@@ -377,13 +377,8 @@ func (p *CodeSanitationPlugin) Execute(
 							Match:       match,
 						})
 						if config.Action == Block {
-							p.raiseEvent(
-								collector,
-								CodeSanitationData{Sanitized: false, Events: events},
-								req.Stage,
-								true,
-								config.ErrorMessage,
-							)
+							evtCtx.SetError(errors.New(config.ErrorMessage))
+							evtCtx.SetExtras(CodeSanitationData{Sanitized: false, Events: events})
 							return nil, &types.PluginError{
 								StatusCode: config.StatusCode,
 								Message:    config.ErrorMessage,
@@ -406,13 +401,8 @@ func (p *CodeSanitationPlugin) Execute(
 							Match:       match,
 						})
 						if config.Action == Block {
-							p.raiseEvent(
-								collector,
-								CodeSanitationData{Sanitized: false, Events: events},
-								req.Stage,
-								true,
-								config.ErrorMessage,
-							)
+							evtCtx.SetError(errors.New(config.ErrorMessage))
+							evtCtx.SetExtras(CodeSanitationData{Sanitized: false, Events: events})
 							return nil, &types.PluginError{
 								StatusCode: config.StatusCode,
 								Message:    config.ErrorMessage,
@@ -452,13 +442,8 @@ func (p *CodeSanitationPlugin) Execute(
 					Match:       match,
 				})
 				if config.Action == Block {
-					p.raiseEvent(
-						collector,
-						CodeSanitationData{Sanitized: false, Events: events},
-						req.Stage,
-						true,
-						config.ErrorMessage,
-					)
+					evtCtx.SetError(errors.New(config.ErrorMessage))
+					evtCtx.SetExtras(CodeSanitationData{Sanitized: false, Events: events})
 					return nil, &types.PluginError{
 						StatusCode: config.StatusCode,
 						Message:    config.ErrorMessage,
@@ -511,12 +496,12 @@ func (p *CodeSanitationPlugin) Execute(
 			req.Body = newBody
 		}
 	}
-	if len(events) > 0 {
-		p.raiseEvent(collector, CodeSanitationData{
-			Sanitized: config.Action == Sanitize,
-			Events:    events,
-		}, req.Stage, false, "")
-	}
+
+	evtCtx.SetExtras(CodeSanitationData{
+		Sanitized: config.Action == Sanitize,
+		Events:    events,
+	})
+
 	return &types.PluginResponse{
 		StatusCode: http.StatusOK,
 		Message:    "Request sanitized successfully",
@@ -581,22 +566,4 @@ func (p *CodeSanitationPlugin) sanitizeCode(
 	return pattern.ReplaceAllStringFunc(input, func(match string) string {
 		return strings.Repeat(sanitizeChar, len(match))
 	})
-}
-
-func (p *CodeSanitationPlugin) raiseEvent(
-	collector *metrics.Collector,
-	extra CodeSanitationData,
-	stage types.Stage,
-	error bool,
-	errorMessage string,
-) {
-	evt := metric_events.NewPluginEvent()
-	evt.Plugin = &metric_events.PluginDataEvent{
-		PluginName:   PluginName,
-		Stage:        string(stage),
-		Extras:       extra,
-		Error:        error,
-		ErrorMessage: errorMessage,
-	}
-	collector.Emit(evt)
 }

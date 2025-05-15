@@ -2,6 +2,7 @@ package cors
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,7 +10,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/mitchellh/mapstructure"
@@ -115,7 +115,7 @@ func (p *CorsPlugin) Execute(
 	cfg types.PluginConfig,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
-	collector *metrics.Collector,
+	evtCtx *metrics.EventContext,
 ) (*types.PluginResponse, error) {
 	var conf Config
 	if err := mapstructure.Decode(cfg.Settings, &conf); err != nil {
@@ -127,13 +127,15 @@ func (p *CorsPlugin) Execute(
 	}
 
 	origin := p.getHeader(req.Headers, "Origin")
-	data := CorsData{
-		Origin:         origin,
-		Method:         req.Method,
-		AllowedMethods: conf.AllowMethods,
-		Allowed:        true,
-	}
+
 	if origin == "" {
+		evtCtx.SetError(errors.New("invalid origin"))
+		evtCtx.SetExtras(CorsData{
+			Origin:         origin,
+			Method:         req.Method,
+			AllowedMethods: conf.AllowMethods,
+			Allowed:        false,
+		})
 		return nil, &types.PluginError{
 			StatusCode: http.StatusForbidden,
 			Message:    `invalid origin`,
@@ -141,7 +143,13 @@ func (p *CorsPlugin) Execute(
 	}
 
 	if len(conf.AllowOrigins) == 0 {
-		p.raiseEvent(collector, data, req.Stage, true, "CORS: no allowed origins configured")
+		evtCtx.SetError(errors.New("CORS: no allowed origins configured"))
+		evtCtx.SetExtras(CorsData{
+			Origin:         origin,
+			Method:         req.Method,
+			AllowedMethods: conf.AllowMethods,
+			Allowed:        false,
+		})
 		return nil, &types.PluginError{
 			StatusCode: http.StatusForbidden,
 			Message:    "CORS: no allowed origins configured",
@@ -152,7 +160,13 @@ func (p *CorsPlugin) Execute(
 		for _, o := range conf.AllowOrigins {
 			if o == "*" {
 				msg := `invalid config: allow_credentials cannot be true when allowed_origins contains "*"`
-				p.raiseEvent(collector, data, req.Stage, true, msg)
+				evtCtx.SetError(errors.New(msg))
+				evtCtx.SetExtras(CorsData{
+					Origin:         origin,
+					Method:         req.Method,
+					AllowedMethods: conf.AllowMethods,
+					Allowed:        false,
+				})
 				return nil, &types.PluginError{
 					StatusCode: http.StatusForbidden,
 					Message:    msg,
@@ -166,8 +180,13 @@ func (p *CorsPlugin) Execute(
 			p.logger.WithField("origin", origin).Warn("CORS violation: origin not allowed")
 		}
 		msg := "CORS: origin not allowed"
-		data.Allowed = false
-		p.raiseEvent(collector, data, req.Stage, true, msg)
+		evtCtx.SetError(errors.New(msg))
+		evtCtx.SetExtras(CorsData{
+			Origin:         origin,
+			Method:         req.Method,
+			AllowedMethods: conf.AllowMethods,
+			Allowed:        false,
+		})
 		return nil, &types.PluginError{
 			StatusCode: http.StatusForbidden,
 			Message:    msg,
@@ -183,10 +202,16 @@ func (p *CorsPlugin) Execute(
 
 	if req.Method == http.MethodOptions {
 		requestedMethod := p.getHeader(req.Headers, "Access-Control-Request-Method")
-		data.RequestedMethod = requestedMethod
 		if requestedMethod == "" {
 			msg := "CORS preflight missing Access-Control-Request-Method header"
-			p.raiseEvent(collector, data, req.Stage, true, msg)
+			evtCtx.SetError(errors.New(msg))
+			evtCtx.SetExtras(CorsData{
+				Origin:          origin,
+				Method:          req.Method,
+				AllowedMethods:  conf.AllowMethods,
+				RequestedMethod: requestedMethod,
+				Allowed:         false,
+			})
 			return nil, &types.PluginError{
 				StatusCode: http.StatusBadRequest,
 				Message:    msg,
@@ -194,9 +219,15 @@ func (p *CorsPlugin) Execute(
 		}
 
 		if !p.isMethodAllowed(requestedMethod, conf.AllowMethods) {
-			data.Allowed = false
 			msg := "CORS preflight: method not allowed"
-			p.raiseEvent(collector, data, req.Stage, true, msg)
+			evtCtx.SetError(errors.New(msg))
+			evtCtx.SetExtras(CorsData{
+				Origin:          origin,
+				Method:          req.Method,
+				AllowedMethods:  conf.AllowMethods,
+				RequestedMethod: requestedMethod,
+				Allowed:         false,
+			})
 			return nil, &types.PluginError{
 				StatusCode: http.StatusMethodNotAllowed,
 				Message:    msg,
@@ -218,14 +249,28 @@ func (p *CorsPlugin) Execute(
 		if conf.MaxAge != "" {
 			resp.Headers["Access-Control-Max-Age"] = []string{conf.MaxAge}
 		}
-		data.Preflight = true
 		msg := "CORS preflight handled"
-		p.raiseEvent(collector, data, req.Stage, true, msg)
+		evtCtx.SetError(errors.New(msg))
+		evtCtx.SetExtras(CorsData{
+			Origin:          origin,
+			Method:          req.Method,
+			AllowedMethods:  conf.AllowMethods,
+			RequestedMethod: requestedMethod,
+			Allowed:         false,
+			Preflight:       true,
+		})
 		return nil, &types.PluginError{
 			StatusCode: http.StatusNoContent,
 			Message:    msg,
 		}
 	}
+
+	evtCtx.SetExtras(CorsData{
+		Origin:         origin,
+		Method:         req.Method,
+		AllowedMethods: conf.AllowMethods,
+		Allowed:        true,
+	})
 
 	return &types.PluginResponse{
 		StatusCode: http.StatusOK,
@@ -256,22 +301,4 @@ func (p *CorsPlugin) isMethodAllowed(method string, allowed []string) bool {
 		}
 	}
 	return false
-}
-
-func (p *CorsPlugin) raiseEvent(
-	collector *metrics.Collector,
-	extra CorsData,
-	stage types.Stage,
-	error bool,
-	errorMessage string,
-) {
-	evt := metric_events.NewPluginEvent()
-	evt.Plugin = &metric_events.PluginDataEvent{
-		PluginName:   PluginName,
-		Stage:        string(stage),
-		Extras:       extra,
-		Error:        error,
-		ErrorMessage: errorMessage,
-	}
-	collector.Emit(evt)
 }

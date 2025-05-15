@@ -340,6 +340,7 @@ func (m *manager) executeParallel(
 			config     types.PluginConfig
 			response   *types.PluginResponse
 			err        error
+			traceEvent *metric_events.Event
 			startTime  time.Time
 			endTime    time.Time
 		}
@@ -349,19 +350,26 @@ func (m *manager) executeParallel(
 		var wg sync.WaitGroup
 		for i := range group {
 			cfg := group[i]
+
 			wg.Add(1)
 			go func(cfg types.PluginConfig) {
 				defer wg.Done()
-
-				pluginStartTime := time.Now()
+				evt := metric_events.NewPluginEvent()
+				evt.Plugin = &metric_events.PluginDataEvent{
+					PluginName: cfg.Name,
+					Stage:      string(req.Stage),
+				}
 				if plugin, exists := plugins[cfg.Name]; exists {
-					pluginResp, err := plugin.Execute(ctx, cfg, req, resp, metricsCollector)
+					wrappedPlugin := NewPluginWrapper(plugin, metricsCollector)
+					pluginStartTime := time.Now()
+					pluginResp, err := wrappedPlugin.Execute(ctx, cfg, req, resp)
 					pluginEndTime := time.Now()
 					resultChan <- pluginResult{
 						pluginName: cfg.Name,
 						config:     cfg,
 						response:   pluginResp,
 						err:        err,
+						traceEvent: evt,
 						startTime:  pluginStartTime,
 						endTime:    pluginEndTime,
 					}
@@ -382,7 +390,6 @@ func (m *manager) executeParallel(
 		// Wait for all results or context cancellation
 		for result := range resultChan {
 			if result.err != nil {
-				m.raisePluginErrorEvent(metricsCollector, result.pluginName, string(req.Stage), result.err)
 				errors = append(errors, result.err)
 			}
 			if result.response != nil {
@@ -451,9 +458,9 @@ func (m *manager) executeSequential(
 		}
 
 		if plugin, exists := plugins[cfg.Name]; exists {
-			pluginResp, err := plugin.Execute(ctx, cfg, req, resp, metricsCollector)
+			wrappedPlugin := NewPluginWrapper(plugin, metricsCollector)
+			pluginResp, err := wrappedPlugin.Execute(ctx, cfg, req, resp)
 			if err != nil {
-				m.raisePluginErrorEvent(metricsCollector, cfg.Name, string(req.Stage), err)
 				return err
 			}
 			if pluginResp != nil {
@@ -477,17 +484,6 @@ func (m *manager) executeSequential(
 		}
 	}
 	return nil
-}
-
-func (m *manager) raisePluginErrorEvent(metricsCollector *metrics.Collector, pluginName, stage string, err error) {
-	evt := metric_events.NewPluginEvent()
-	evt.Plugin = &metric_events.PluginDataEvent{
-		PluginName:   pluginName,
-		Stage:        stage,
-		Error:        true,
-		ErrorMessage: err.Error(),
-	}
-	metricsCollector.Emit(evt)
 }
 
 func (m *manager) GetChains(entityID string, stage types.Stage) [][]types.PluginConfig {

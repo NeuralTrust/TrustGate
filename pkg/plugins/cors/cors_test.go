@@ -215,7 +215,7 @@ func TestCorsPlugin_Execute(t *testing.T) {
 				Settings: tt.config,
 			}
 
-			result, err := plugin.Execute(context.Background(), config, req, resp, metrics.NewCollector("", nil))
+			result, err := plugin.Execute(context.Background(), config, req, resp, metrics.NewEventContext("", "", nil))
 
 			if tt.expectError {
 				if err == nil {

@@ -15,6 +15,7 @@ type Event struct {
 	TraceID        string            `json:"trace_id"`
 	InteractionID  string            `json:"interaction_id"`
 	ConversationID string            `json:"conversation_id"`
+	Path           string            `json:"path"`
 	Input          string            `json:"input"`
 	Output         string            `json:"output"`
 	Task           string            `json:"task"`
