@@ -232,7 +232,7 @@ func NewContainer(
 		GetAPIKeyHandler:    handlers.NewGetAPIKeyHandler(logger, cacheInstance, apiKeyRepository),
 		DeleteAPIKeyHandler: handlers.NewDeleteAPIKeyHandler(logger, repo, apiKeyRepository, redisPublisher),
 		// Version
-		GetVersionHandler: handlers.NewGetVersionHandler(logger),
+		GetVersionHandler:  handlers.NewGetVersionHandler(logger),
 		ListPluginsHandler: handlers.NewListPluginsHandler(logger),
 	}
 

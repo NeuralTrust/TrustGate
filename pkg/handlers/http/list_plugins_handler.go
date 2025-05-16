@@ -25,6 +25,6 @@ func NewListPluginsHandler(logger *logrus.Logger) Handler {
 // @Router /api/v1/plugins [get]
 func (h *listPluginsHandler) Handle(c *fiber.Ctx) error {
 	h.logger.Info("Handling request to list plugins")
-	
+
 	return c.Status(fiber.StatusOK).JSON(plugins.PluginList)
 }
