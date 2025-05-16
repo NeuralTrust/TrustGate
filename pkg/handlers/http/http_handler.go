@@ -49,6 +49,9 @@ type HandlerTransportDTO struct {
 
 	// Version
 	GetVersionHandler Handler
+
+	// Plugins
+	ListPluginsHandler Handler
 }
 
 func (t *HandlerTransportDTO) GetTransport() HandlerTransport {

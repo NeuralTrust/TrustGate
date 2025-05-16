@@ -818,7 +818,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.UpstreamRequest"
+                            "$ref": "#/definitions/request.UpstreamRequest"
                         }
                     }
                 ],
@@ -898,7 +898,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.UpstreamRequest"
+                            "$ref": "#/definitions/request.UpstreamRequest"
                         }
                     }
                 ],
@@ -935,6 +935,54 @@ const docTemplate = `{
                 "responses": {
                     "204": {
                         "description": "Upstream deleted successfully"
+                    }
+                }
+            }
+        },
+        "/api/v1/plugins": {
+            "get": {
+                "description": "Returns the list of available plugins",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Plugins"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of plugins",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/plugins.PluginDefinition"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/version": {
+            "get": {
+                "description": "Returns the current version of the AI-Gateway",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Version"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Version information",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
@@ -1089,6 +1137,17 @@ const docTemplate = `{
                 }
             }
         },
+        "domain.TrustLensJSON": {
+            "type": "object",
+            "properties": {
+                "app_id": {
+                    "type": "string"
+                },
+                "team_id": {
+                    "type": "string"
+                }
+            }
+        },
         "forwarding_rule.ForwardingRule": {
             "type": "object",
             "properties": {
@@ -1137,6 +1196,9 @@ const docTemplate = `{
                 "stripPath": {
                     "type": "boolean"
                 },
+                "trustLens": {
+                    "$ref": "#/definitions/domain.TrustLensJSON"
+                },
                 "updatedAt": {
                     "type": "string"
                 }
@@ -1176,6 +1238,29 @@ const docTemplate = `{
                     "$ref": "#/definitions/telemetry.Telemetry"
                 },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "plugins.PluginDefinition": {
+            "type": "object",
+            "properties": {
+                "allowed_stages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Stage"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "uuid": {
                     "type": "string"
                 }
             }
@@ -1266,6 +1351,20 @@ const docTemplate = `{
                 }
             }
         },
+        "request.EmbeddingRequest": {
+            "type": "object",
+            "properties": {
+                "credentials": {
+                    "$ref": "#/definitions/types.Credentials"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                }
+            }
+        },
         "request.ExporterRequest": {
             "type": "object",
             "properties": {
@@ -1275,6 +1374,31 @@ const docTemplate = `{
                 "settings": {
                     "type": "object",
                     "additionalProperties": true
+                }
+            }
+        },
+        "request.HealthCheckRequest": {
+            "type": "object",
+            "properties": {
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "interval": {
+                    "description": "Time in seconds before resetting failure count",
+                    "type": "integer"
+                },
+                "passive": {
+                    "type": "boolean"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "threshold": {
+                    "description": "Number of failures before marking as unhealthy",
+                    "type": "integer"
                 }
             }
         },
@@ -1331,6 +1455,65 @@ const docTemplate = `{
                 }
             }
         },
+        "request.TargetRequest": {
+            "type": "object",
+            "properties": {
+                "credentials": {
+                    "$ref": "#/definitions/types.Credentials"
+                },
+                "default_model": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "host": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "path": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "priority": {
+                    "type": "integer"
+                },
+                "protocol": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "stream": {
+                    "type": "boolean"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "weight": {
+                    "type": "integer"
+                }
+            }
+        },
         "request.TelemetryRequest": {
             "type": "object",
             "properties": {
@@ -1351,6 +1534,12 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
+                },
+                "header_mapping": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -1367,8 +1556,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "required_plugins": {
-                    "type": "object",
-                    "additionalProperties": {
+                    "type": "array",
+                    "items": {
                         "$ref": "#/definitions/types.PluginConfig"
                     }
                 },
@@ -1380,6 +1569,67 @@ const docTemplate = `{
                 },
                 "telemetry": {
                     "$ref": "#/definitions/request.TelemetryRequest"
+                }
+            }
+        },
+        "request.UpstreamRequest": {
+            "type": "object",
+            "properties": {
+                "algorithm": {
+                    "type": "string"
+                },
+                "embedding": {
+                    "$ref": "#/definitions/request.EmbeddingRequest"
+                },
+                "gateway_id": {
+                    "type": "string"
+                },
+                "health_checks": {
+                    "$ref": "#/definitions/request.HealthCheckRequest"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "targets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/request.TargetRequest"
+                    }
+                },
+                "websocket_config": {
+                    "$ref": "#/definitions/request.WebhookConfigRequest"
+                }
+            }
+        },
+        "request.WebhookConfigRequest": {
+            "type": "object",
+            "properties": {
+                "handshake_timeout": {
+                    "type": "string"
+                },
+                "ping_period": {
+                    "type": "string"
+                },
+                "pong_wait": {
+                    "type": "string"
+                },
+                "read_buffer_size": {
+                    "type": "integer"
+                },
+                "return_error_details": {
+                    "type": "boolean"
+                },
+                "write_buffer_size": {
+                    "type": "integer"
                 }
             }
         },
@@ -1423,6 +1673,9 @@ const docTemplate = `{
                 "retries": {
                     "description": "Common settings",
                     "type": "integer"
+                },
+                "stream": {
+                    "type": "boolean"
                 },
                 "tags": {
                     "type": "array",
@@ -1474,6 +1727,12 @@ const docTemplate = `{
                     }
                 },
                 "extra_params": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "header_mapping": {
                     "type": "object",
                     "additionalProperties": {
                         "type": "string"
@@ -1580,6 +1839,9 @@ const docTemplate = `{
                 },
                 "strip_path": {
                     "type": "boolean"
+                },
+                "trustlens": {
+                    "$ref": "#/definitions/types.TrustLensConfig"
                 }
             }
         },
@@ -1634,31 +1896,6 @@ const docTemplate = `{
                 },
                 "param_value": {
                     "type": "string"
-                }
-            }
-        },
-        "types.HealthCheckRequest": {
-            "type": "object",
-            "properties": {
-                "headers": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "interval": {
-                    "description": "Time in seconds before resetting failure count",
-                    "type": "integer"
-                },
-                "passive": {
-                    "type": "boolean"
-                },
-                "path": {
-                    "type": "string"
-                },
-                "threshold": {
-                    "description": "Number of failures before marking as unhealthy",
-                    "type": "integer"
                 }
             }
         },
@@ -1779,56 +2016,14 @@ const docTemplate = `{
                 "PostResponse"
             ]
         },
-        "types.TargetRequest": {
+        "types.TrustLensConfig": {
             "type": "object",
             "properties": {
-                "credentials": {
-                    "$ref": "#/definitions/types.Credentials"
-                },
-                "default_model": {
+                "app_id": {
                     "type": "string"
                 },
-                "headers": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "host": {
+                "team_id": {
                     "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "models": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "path": {
-                    "type": "string"
-                },
-                "port": {
-                    "type": "integer"
-                },
-                "priority": {
-                    "type": "integer"
-                },
-                "protocol": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "weight": {
-                    "type": "integer"
                 }
             }
         },
@@ -1870,38 +2065,23 @@ const docTemplate = `{
                 },
                 "strip_path": {
                     "type": "boolean"
+                },
+                "trust_lens": {
+                    "$ref": "#/definitions/types.TrustLensConfig"
                 }
             }
         },
-        "types.UpstreamRequest": {
+        "upstream.EmbeddingConfig": {
             "type": "object",
             "properties": {
-                "algorithm": {
+                "credentials": {
+                    "$ref": "#/definitions/domain.CredentialsJSON"
+                },
+                "model": {
                     "type": "string"
                 },
-                "gateway_id": {
+                "provider": {
                     "type": "string"
-                },
-                "health_checks": {
-                    "$ref": "#/definitions/types.HealthCheckRequest"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "targets": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.TargetRequest"
-                    }
                 }
             }
         },
@@ -1936,6 +2116,9 @@ const docTemplate = `{
                 "default_model": {
                     "type": "string"
                 },
+                "description": {
+                    "type": "string"
+                },
                 "headers": {
                     "$ref": "#/definitions/domain.HeadersJSON"
                 },
@@ -1966,6 +2149,9 @@ const docTemplate = `{
                 "provider": {
                     "type": "string"
                 },
+                "stream": {
+                    "type": "boolean"
+                },
                 "tags": {
                     "type": "array",
                     "items": {
@@ -1985,6 +2171,9 @@ const docTemplate = `{
                 },
                 "created_at": {
                     "type": "string"
+                },
+                "embedding_config": {
+                    "$ref": "#/definitions/upstream.EmbeddingConfig"
                 },
                 "gateway_id": {
                     "type": "string"
@@ -2012,6 +2201,35 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "websocket_config": {
+                    "$ref": "#/definitions/upstream.WebsocketConfig"
+                }
+            }
+        },
+        "upstream.WebsocketConfig": {
+            "type": "object",
+            "properties": {
+                "enable_direct_communication": {
+                    "type": "boolean"
+                },
+                "handshake_timeout": {
+                    "type": "string"
+                },
+                "ping_period": {
+                    "type": "string"
+                },
+                "pong_wait": {
+                    "type": "string"
+                },
+                "read_buffer_size": {
+                    "type": "integer"
+                },
+                "return_error_details": {
+                    "type": "boolean"
+                },
+                "write_buffer_size": {
+                    "type": "integer"
                 }
             }
         }
