@@ -3,8 +3,6 @@ package neuraltrust_guardrail
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,8 +13,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -36,8 +32,6 @@ type NeuralTrustGuardrailPlugin struct {
 	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
-	embeddingRepo      embedding.EmbeddingRepository
-	serviceLocator     factory.EmbeddingServiceLocator
 	config             Config
 	bufferPool         sync.Pool
 	byteSlicePool      sync.Pool
@@ -245,12 +239,6 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 		},
 		Body: nil,
 	}, nil
-}
-
-func (p *NeuralTrustGuardrailPlugin) hashGatewayID(value string) string {
-	h := sha256.New()
-	h.Write([]byte(value))
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (p *NeuralTrustGuardrailPlugin) notifyGuardrailViolation(ctx context.Context) {

@@ -318,7 +318,7 @@ func (p *ToxicityNeuralTrust) notifyGuardrailViolation(ctx context.Context) {
 		return
 	}
 	if storedFp != nil {
-		ttl := fingerprint.DefaultExpiration
+		var ttl time.Duration
 		if p.config.RetentionPeriod > 0 {
 			ttl = time.Duration(p.config.RetentionPeriod) * time.Second
 		} else {

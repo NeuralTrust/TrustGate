@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -27,8 +26,8 @@ import (
 )
 
 const (
-	PluginName   = "neuraltrust_moderation"
-	cacheKey     = "plugin:%s:neuraltrust_moderation:deny_sample:%s"
+	PluginName = "neuraltrust_moderation"
+	cacheKey   = "plugin:%s:neuraltrust_moderation:deny_sample:%s"
 )
 
 type NeuralTrustModerationPlugin struct {
@@ -173,8 +172,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 
 	if p.config.ModerationParamBag != nil && p.config.ModerationParamBag.Enabled {
 		if len(p.config.ModerationParamBag.DenySamples) > 0 {
-			var err error
-			err = p.createEmbeddings(ctx, p.config.ModerationParamBag, req.GatewayID)
+			err := p.createEmbeddings(ctx, p.config.ModerationParamBag, req.GatewayID)
 			if err != nil {
 				p.logger.WithError(err).Error("failed to create deny samples embeddings")
 				return nil, fmt.Errorf("failed to create deny samples embeddings: %w", err)
@@ -420,49 +418,6 @@ func (p *NeuralTrustModerationPlugin) callModeration(
 			return
 		}
 	}
-}
-
-func (p *NeuralTrustModerationPlugin) defineRequestBody(body []byte) ([]byte, error) {
-	if len(body) == 0 {
-		return nil, fmt.Errorf("empty body")
-	}
-
-	var data map[string]interface{}
-	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal body: %w", err)
-	}
-
-	messages, ok := data["messages"].([]interface{})
-	if !ok {
-		return p.returnDefaultBody(body)
-	}
-
-	if len(messages) == 0 {
-		return p.returnDefaultBody(body)
-	}
-
-	var content string
-	for _, message := range messages {
-		msg, ok := message.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		c, ok := msg["content"].(string)
-		if !ok {
-			continue
-		}
-		content += c + "\n"
-	}
-
-	if content == "" {
-		return p.returnDefaultBody(body)
-	}
-
-	return []byte(content), nil
-}
-
-func (p *NeuralTrustModerationPlugin) returnDefaultBody(body []byte) ([]byte, error) {
-	return body, nil
 }
 
 func (p *NeuralTrustModerationPlugin) sendError(ch chan<- error, err error) {
