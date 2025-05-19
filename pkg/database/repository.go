@@ -185,20 +185,6 @@ func (r *Repository) GetRuleByID(ctx context.Context, id uuid.UUID) (*forwarding
 	return &rule, nil
 }
 
-func (r *Repository) ListRules(ctx context.Context, gatewayID uuid.UUID) ([]forwarding_rule.ForwardingRule, error) {
-	var rules []forwarding_rule.ForwardingRule
-	err := r.db.Where("gateway_id = ?", gatewayID).Find(&rules).Error
-	if err != nil {
-		return nil, err
-	}
-
-	if err := r.UpdateRulesCache(ctx, gatewayID, rules); err != nil {
-		r.logger.WithError(err).Error("failed to update rules cache")
-	}
-
-	return rules, nil
-}
-
 func (r *Repository) UpdateRule(ctx context.Context, rule *forwarding_rule.ForwardingRule) error {
 	result := r.db.WithContext(ctx).Save(rule)
 	if result.Error != nil {

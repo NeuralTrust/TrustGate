@@ -23,6 +23,7 @@ type DataFinder interface {
 
 type dataFinder struct {
 	repo              *database.Repository
+	ruleRepository    forwarding_rule.Repository
 	cache             *cache.Cache
 	memoryCache       *common.TTLMap
 	logger            *logrus.Logger
@@ -31,11 +32,13 @@ type dataFinder struct {
 
 func NewDataFinder(
 	repository *database.Repository,
+	ruleRepository forwarding_rule.Repository,
 	c *cache.Cache,
 	logger *logrus.Logger,
 ) DataFinder {
 	return &dataFinder{
 		repo:              repository,
+		ruleRepository:    ruleRepository,
 		cache:             c,
 		logger:            logger,
 		memoryCache:       c.GetTTLMap(cache.GatewayTTLName),
@@ -120,7 +123,7 @@ func (f *dataFinder) getGatewayDataFromDB(ctx context.Context, gatewayID uuid.UU
 		return nil, fmt.Errorf("failed to get gateway from database: %w", err)
 	}
 
-	rules, err := f.repo.ListRules(ctx, gatewayID)
+	rules, err := f.ruleRepository.ListRules(ctx, gatewayID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get rules from database: %w", err)
 	}
