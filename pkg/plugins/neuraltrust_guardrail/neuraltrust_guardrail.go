@@ -57,7 +57,6 @@ type Credentials struct {
 
 type JailbreakParamBag struct {
 	Threshold float64 `mapstructure:"threshold"`
-	Enabled   bool    `mapstructure:"enabled"`
 }
 
 func NewNeuralTrustGuardrailPlugin(
@@ -161,7 +160,7 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 
 	var requests []TaggedRequest
 
-	if p.config.JailbreakParamBag != nil && p.config.JailbreakParamBag.Enabled {
+	if p.config.JailbreakParamBag != nil {
 		tr, ok := p.requestPool.Get().(*TaggedRequest)
 		if !ok {
 			p.logger.Error("failed to get request from pool")

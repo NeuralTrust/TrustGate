@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -46,9 +47,10 @@ type NeuralTrustModerationPlugin struct {
 }
 
 type Config struct {
-	EmbeddingParamBag *EmbeddingParamBag `mapstructure:"moderation"`
-	KeyRegParamBag    *KeyRegParamBag    `mapstructure:"keyreg"`
+	EmbeddingParamBag *EmbeddingParamBag `mapstructure:"embedding_moderation"`
+	KeyRegParamBag    *KeyRegParamBag    `mapstructure:"keyreg_moderation"`
 	RetentionPeriod   int                `mapstructure:"retention_period"`
+	MappingField      string             `mapstructure:"mapping_field"`
 }
 
 type EmbeddingParamBag struct {
@@ -184,19 +186,14 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	p.config = conf
 
 	inputBody := req.Body
+	inputBody, err := p.defineRequestBody(inputBody)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to define request body")
+		return nil, fmt.Errorf("failed to define request body: %w", err)
+	}
 
 	if req.Stage == types.PostRequest {
 		inputBody = resp.Body
-	}
-
-	if p.config.EmbeddingParamBag != nil && p.config.EmbeddingParamBag.Enabled {
-		if len(p.config.EmbeddingParamBag.DenySamples) > 0 {
-			err := p.createEmbeddings(ctx, p.config.EmbeddingParamBag, req.GatewayID)
-			if err != nil {
-				p.logger.WithError(err).Error("failed to create deny samples embeddings")
-				return nil, fmt.Errorf("failed to create deny samples embeddings: %w", err)
-			}
-		}
 	}
 
 	evt := &NeuralTrustModerationData{
@@ -211,13 +208,10 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		},
 	}
 
-	if p.config.EmbeddingParamBag != nil {
-		evt.EmbeddingModeration.Threshold = p.config.EmbeddingParamBag.Threshold
-	}
-
 	firewallErrors := make(chan error, 1)
 	var wg sync.WaitGroup
 
+	keyRegFound := false
 	if p.config.KeyRegParamBag != nil && p.config.KeyRegParamBag.Enabled {
 		p.keywords = p.config.KeyRegParamBag.Keywords
 		p.regexRules = make([]*regexp.Regexp, len(p.config.KeyRegParamBag.Regex))
@@ -229,16 +223,21 @@ func (p *NeuralTrustModerationPlugin) Execute(
 			}
 			p.regexRules[i] = regex
 		}
+		keyRegFound = p.callKeyRegModeration(ctx, p.config.KeyRegParamBag, inputBody, firewallErrors, evt)
 	}
 
-	if p.config.EmbeddingParamBag != nil && p.config.EmbeddingParamBag.Enabled {
+	if !keyRegFound && p.config.EmbeddingParamBag != nil && p.config.EmbeddingParamBag.Enabled {
+		evt.EmbeddingModeration.Threshold = p.config.EmbeddingParamBag.Threshold
+		if len(p.config.EmbeddingParamBag.DenySamples) > 0 {
+			err := p.createEmbeddings(ctx, p.config.EmbeddingParamBag, req.GatewayID)
+			if err != nil {
+				p.logger.WithError(err).Error("failed to create deny samples embeddings")
+				return nil, fmt.Errorf("failed to create deny samples embeddings: %w", err)
+			}
+		}
+
 		wg.Add(1)
 		go p.callModeration(ctx, p.config.EmbeddingParamBag, &wg, inputBody, req.GatewayID, firewallErrors, evt)
-	}
-
-	if p.config.KeyRegParamBag != nil && p.config.KeyRegParamBag.Enabled {
-		wg.Add(1)
-		go p.callKeyRegModeration(ctx, p.config.KeyRegParamBag, &wg, inputBody, firewallErrors, evt)
 	}
 
 	done := make(chan struct{})
@@ -474,14 +473,12 @@ func (p *NeuralTrustModerationPlugin) sendError(ch chan<- error, err error) {
 func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 	ctx context.Context,
 	cfg *KeyRegParamBag,
-	wg *sync.WaitGroup,
 	inputBody []byte,
 	firewallErrors chan<- error,
 	evt *NeuralTrustModerationData,
-) {
-	defer wg.Done()
+) bool {
 	if len(inputBody) == 0 {
-		return
+		return false
 	}
 
 	content := string(inputBody)
@@ -500,9 +497,14 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 		}
 		p.sendError(
 			firewallErrors,
-			NewModerationViolation(fmt.Sprintf("content blocked: word '%s' is similar to blocked keyword '%s'", foundWord, keyword)),
+			NewModerationViolation(
+				fmt.Sprintf("content blocked: word '%s' is similar to blocked keyword '%s'",
+					foundWord,
+					keyword,
+				),
+			),
 		)
-		return
+		return true
 	}
 
 	for _, pattern := range p.regexRules {
@@ -519,9 +521,69 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 				firewallErrors,
 				NewModerationViolation(fmt.Sprintf("content blocked: regex pattern %s found in request body", pattern)),
 			)
-			return
+			return true
 		}
 	}
+	return false
+}
+
+func (p *NeuralTrustModerationPlugin) defineRequestBody(body []byte) ([]byte, error) {
+	buf, ok := p.bufferPool.Get().(*bytes.Buffer)
+	if !ok {
+		return nil, fmt.Errorf("failed to get buffer from pool")
+	}
+	buf.Reset()
+	defer p.bufferPool.Put(buf)
+
+	var requestBody map[string]interface{}
+	if err := json.Unmarshal(body, &requestBody); err != nil {
+		return p.returnDefaultBody(body)
+	}
+
+	if p.config.MappingField == "" {
+		return p.returnDefaultBody(body)
+	}
+
+	path := strings.Split(p.config.MappingField, ".")
+	current := any(requestBody)
+
+	for _, key := range path {
+		m, ok := current.(map[string]interface{})
+		if !ok {
+			return p.returnDefaultBody(body)
+		}
+		child, exists := m[key]
+		if !exists {
+			return p.returnDefaultBody(body)
+		}
+		current = child
+	}
+
+	var inputString string
+	switch v := current.(type) {
+	case string:
+		inputString = v
+	default:
+		if err := json.NewEncoder(buf).Encode(v); err != nil {
+			return nil, fmt.Errorf("failed to stringify extracted value: %w", err)
+		}
+		inputString = buf.String()
+	}
+
+	result, err := json.Marshal(map[string]interface{}{
+		"input": inputString,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal wrapped input: %w", err)
+	}
+
+	return result, nil
+}
+
+func (p *NeuralTrustModerationPlugin) returnDefaultBody(body []byte) ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
+		"input": string(body),
+	})
 }
 
 func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {

@@ -24,7 +24,6 @@ func TestNeuralTrustGuardrailPlugin_JailBreak(t *testing.T) {
 				"priority": 1,
 				"settings": map[string]interface{}{
 					"jailbreak": map[string]interface{}{
-						"enabled":   true,
 						"threshold": 0.5,
 					},
 					"credentials": map[string]string{

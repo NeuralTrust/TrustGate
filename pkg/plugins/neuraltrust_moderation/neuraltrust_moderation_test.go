@@ -125,7 +125,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	t.Run("Invalid Configuration - Missing Threshold", func(t *testing.T) {
 		invalidConfig := types.PluginConfig{
 			Settings: map[string]interface{}{
-				"moderation": map[string]interface{}{
+				"embedding_moderation": map[string]interface{}{
 					"enabled": true,
 				},
 			},
@@ -138,7 +138,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	t.Run("Invalid Configuration - Invalid Threshold", func(t *testing.T) {
 		invalidConfig := types.PluginConfig{
 			Settings: map[string]interface{}{
-				"moderation": map[string]interface{}{
+				"embedding_moderation": map[string]interface{}{
 					"threshold": 1.5, // Invalid: > 1
 					"enabled":   true,
 				},
@@ -248,7 +248,7 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationUnsafe(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"moderation": map[string]interface{}{
+			"embedding_moderation": map[string]interface{}{
 				"threshold":         0.7,
 				"enabled":           true,
 				"deny_topic_action": "block",
@@ -303,7 +303,7 @@ func TestNeuralTrustModerationPlugin_Execute_EmbeddingError(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"moderation": map[string]interface{}{
+			"embedding_moderation": map[string]interface{}{
 				"threshold":         0.7,
 				"enabled":           true,
 				"deny_topic_action": "block",
@@ -348,7 +348,7 @@ func TestNeuralTrustModerationPlugin_Execute_DisabledPlugin(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"moderation": map[string]interface{}{
+			"embedding_moderation": map[string]interface{}{
 				"threshold": 0.7,
 				"enabled":   false,
 			},
@@ -384,7 +384,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSafe(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"keyreg": map[string]interface{}{
+			"keyreg_moderation": map[string]interface{}{
 				"enabled":              true,
 				"similarity_threshold": 0.8,
 				"keywords":             []string{"password", "secret", "api_key"},
@@ -426,7 +426,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegKeywordBlocked(t *testing.T) 
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"keyreg": map[string]interface{}{
+			"keyreg_moderation": map[string]interface{}{
 				"enabled":              true,
 				"similarity_threshold": 0.8,
 				"keywords":             []string{"password", "secret", "api_key"},
@@ -468,7 +468,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSimilarWordBlocked(t *testing
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"keyreg": map[string]interface{}{
+			"keyreg_moderation": map[string]interface{}{
 				"enabled":              true,
 				"similarity_threshold": 0.8,
 				"keywords":             []string{"password", "secret", "api_key"},
@@ -510,11 +510,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegRegexBlocked(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"credentials": map[string]interface{}{
-				"base_url": "https://api.neuraltrust.ai",
-				"token":    "test-token",
-			},
-			"keyreg": map[string]interface{}{
+			"keyreg_moderation": map[string]interface{}{
 				"enabled":              true,
 				"similarity_threshold": 0.8,
 				"keywords":             []string{"password", "secret", "api_key"},

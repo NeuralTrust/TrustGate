@@ -22,13 +22,12 @@ func TestTrustGateGuardrailPlugin_ValidateConfig(t *testing.T) {
 
 	validCfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"toxicity":  map[string]interface{}{"threshold": 0.5, "enabled": true},
-			"jailbreak": map[string]interface{}{"threshold": 0.3, "enabled": true},
+			"jailbreak": map[string]interface{}{"threshold": 0.3},
 		},
 	}
 	invalidCfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"toxicity": map[string]interface{}{"threshold": 1.5},
+			"jailbreak": map[string]interface{}{"threshold": 1.5},
 		},
 	}
 
@@ -48,7 +47,7 @@ func TestTrustGateGuardrailPlugin_Execute_JailbreakSafe(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"jailbreak": map[string]interface{}{"threshold": 0.9, "enabled": true},
+			"jailbreak": map[string]interface{}{"threshold": 0.9},
 		},
 	}
 
@@ -88,7 +87,7 @@ func TestTrustGateGuardrailPlugin_Execute_JailbreakUnsafe(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"jailbreak": map[string]interface{}{"threshold": 0.5, "enabled": true},
+			"jailbreak": map[string]interface{}{"threshold": 0.5},
 		},
 	}
 

@@ -23,7 +23,7 @@ func TestNeuralTrustModerationPlugin(t *testing.T) {
 				"stage":    "pre_request",
 				"priority": 1,
 				"settings": map[string]interface{}{
-					"moderation": map[string]interface{}{
+					"embedding_moderation": map[string]interface{}{
 						"enabled":           true,
 						"threshold":         0.8,
 						"deny_topic_action": "block",
@@ -140,7 +140,7 @@ func TestNeuralTrustModerationPlugin_KeyReg(t *testing.T) {
 				"stage":    "pre_request",
 				"priority": 1,
 				"settings": map[string]interface{}{
-					"keyreg": map[string]interface{}{
+					"keyreg_moderation": map[string]interface{}{
 						"enabled":              true,
 						"similarity_threshold": 0.8,
 						"keywords":             []string{"password", "secret", "api_key"},
