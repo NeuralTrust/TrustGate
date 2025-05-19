@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,20 +41,17 @@ type NeuralTrustModerationPlugin struct {
 	config             Config
 	bufferPool         sync.Pool
 	byteSlicePool      sync.Pool
+	keywords           []string
+	regexRules         []*regexp.Regexp
 }
 
 type Config struct {
-	Credentials        Credentials         `mapstructure:"credentials"`
-	ModerationParamBag *ModerationParamBag `mapstructure:"moderation"`
-	RetentionPeriod    int                 `mapstructure:"retention_period"`
+	EmbeddingParamBag *EmbeddingParamBag `mapstructure:"moderation"`
+	KeyRegParamBag    *KeyRegParamBag    `mapstructure:"keyreg"`
+	RetentionPeriod   int                `mapstructure:"retention_period"`
 }
 
-type Credentials struct {
-	BaseURL string `mapstructure:"base_url"`
-	Token   string `mapstructure:"token"`
-}
-
-type ModerationParamBag struct {
+type EmbeddingParamBag struct {
 	EmbeddingsConfig EmbeddingsConfig `mapstructure:"embedding_config"`
 	Threshold        float64          `mapstructure:"threshold"`
 	DenyTopicAction  string           `mapstructure:"deny_topic_action"`
@@ -71,6 +70,19 @@ type EmbeddingsCredentials struct {
 	HeaderValue string `mapstructure:"header_value,omitempty"`
 }
 
+type KeyRegParamBag struct {
+	Keywords            []string `mapstructure:"keywords"`
+	Regex               []string `mapstructure:"regex"`
+	Actions             Actions  `mapstructure:"actions"`
+	SimilarityThreshold float64  `mapstructure:"similarity_threshold"`
+	Enabled             bool     `mapstructure:"enabled"`
+}
+
+type Actions struct {
+	Type    string `mapstructure:"type"`
+	Message string `mapstructure:"message"`
+}
+
 func NewNeuralTrustModerationPlugin(
 	logger *logrus.Logger,
 	client httpx.Client,
@@ -87,6 +99,8 @@ func NewNeuralTrustModerationPlugin(
 		fingerPrintManager: fingerPrintManager,
 		embeddingRepo:      embeddingRepo,
 		serviceLocator:     serviceLocator,
+		keywords:           make([]string, 0),
+		regexRules:         make([]*regexp.Regexp, 0),
 		bufferPool: sync.Pool{
 			New: func() any {
 				return new(bytes.Buffer)
@@ -123,24 +137,29 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config types.PluginConfig) 
 		return fmt.Errorf("failed to decode config: %w", err)
 	}
 
-	if cfg.Credentials.BaseURL == "" {
-		return fmt.Errorf("base_url is required")
-	}
-
-	if cfg.Credentials.Token == "" {
-		return fmt.Errorf("token is required")
-	}
-
-	if cfg.ModerationParamBag == nil {
-		return fmt.Errorf("moderation configuration is required")
-	}
-
-	if cfg.ModerationParamBag.Enabled {
-		if cfg.ModerationParamBag.Threshold == 0 {
+	if cfg.EmbeddingParamBag != nil && cfg.EmbeddingParamBag.Enabled {
+		if cfg.EmbeddingParamBag.Threshold == 0 {
 			return fmt.Errorf("moderation threshold is required")
 		}
-		if cfg.ModerationParamBag.DenyTopicAction != "block" {
+		if cfg.EmbeddingParamBag.Threshold > 1 {
+			return fmt.Errorf("moderation threshold must be between 0 and 1")
+		}
+		if cfg.EmbeddingParamBag.DenyTopicAction != "block" {
 			return fmt.Errorf("deny topic action must be block")
+		}
+	}
+
+	if cfg.KeyRegParamBag != nil && cfg.KeyRegParamBag.Enabled {
+		if len(cfg.KeyRegParamBag.Keywords) == 0 && len(cfg.KeyRegParamBag.Regex) == 0 {
+			return fmt.Errorf("at least one keyword or regex pattern must be specified")
+		}
+		for _, pattern := range cfg.KeyRegParamBag.Regex {
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fmt.Errorf("invalid regex pattern '%s': %v", pattern, err)
+			}
+		}
+		if cfg.KeyRegParamBag.Actions.Type == "" {
+			return fmt.Errorf("action type must be specified")
 		}
 	}
 
@@ -170,9 +189,9 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		inputBody = resp.Body
 	}
 
-	if p.config.ModerationParamBag != nil && p.config.ModerationParamBag.Enabled {
-		if len(p.config.ModerationParamBag.DenySamples) > 0 {
-			err := p.createEmbeddings(ctx, p.config.ModerationParamBag, req.GatewayID)
+	if p.config.EmbeddingParamBag != nil && p.config.EmbeddingParamBag.Enabled {
+		if len(p.config.EmbeddingParamBag.DenySamples) > 0 {
+			err := p.createEmbeddings(ctx, p.config.EmbeddingParamBag, req.GatewayID)
 			if err != nil {
 				p.logger.WithError(err).Error("failed to create deny samples embeddings")
 				return nil, fmt.Errorf("failed to create deny samples embeddings: %w", err)
@@ -182,19 +201,44 @@ func (p *NeuralTrustModerationPlugin) Execute(
 
 	evt := &NeuralTrustModerationData{
 		Blocked: true,
-		Scores:  &ModerationScores{},
+		EmbeddingModeration: &EmbeddingModeration{
+			Scores: &EmbeddingScores{
+				Scores: make(map[string]float64),
+			},
+		},
+		KeyRegModeration: &KeyRegModeration{
+			Reason: KeyRegReason{},
+		},
 	}
 
-	if p.config.ModerationParamBag != nil {
-		evt.ModerationThreshold = p.config.ModerationParamBag.Threshold
+	if p.config.EmbeddingParamBag != nil {
+		evt.EmbeddingModeration.Threshold = p.config.EmbeddingParamBag.Threshold
 	}
 
 	firewallErrors := make(chan error, 1)
 	var wg sync.WaitGroup
 
-	if p.config.ModerationParamBag != nil && p.config.ModerationParamBag.Enabled {
+	if p.config.KeyRegParamBag != nil && p.config.KeyRegParamBag.Enabled {
+		p.keywords = p.config.KeyRegParamBag.Keywords
+		p.regexRules = make([]*regexp.Regexp, len(p.config.KeyRegParamBag.Regex))
+		for i, pattern := range p.config.KeyRegParamBag.Regex {
+			regex, err := regexp.Compile(pattern)
+			if err != nil {
+				p.logger.WithError(err).Error("failed to compile regex pattern")
+				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", pattern, err)
+			}
+			p.regexRules[i] = regex
+		}
+	}
+
+	if p.config.EmbeddingParamBag != nil && p.config.EmbeddingParamBag.Enabled {
 		wg.Add(1)
-		go p.callModeration(ctx, p.config.ModerationParamBag, &wg, inputBody, req.GatewayID, firewallErrors, evt)
+		go p.callModeration(ctx, p.config.EmbeddingParamBag, &wg, inputBody, req.GatewayID, firewallErrors, evt)
+	}
+
+	if p.config.KeyRegParamBag != nil && p.config.KeyRegParamBag.Enabled {
+		wg.Add(1)
+		go p.callKeyRegModeration(ctx, p.config.KeyRegParamBag, &wg, inputBody, firewallErrors, evt)
 	}
 
 	done := make(chan struct{})
@@ -249,7 +293,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 
 func (p *NeuralTrustModerationPlugin) createEmbeddings(
 	ctx context.Context,
-	cfg *ModerationParamBag,
+	cfg *EmbeddingParamBag,
 	gatewayID string,
 ) error {
 	if !cfg.Enabled {
@@ -354,7 +398,7 @@ func (p *NeuralTrustModerationPlugin) notifyGuardrailViolation(ctx context.Conte
 
 func (p *NeuralTrustModerationPlugin) callModeration(
 	ctx context.Context,
-	cfg *ModerationParamBag,
+	cfg *EmbeddingParamBag,
 	wg *sync.WaitGroup,
 	inputBody []byte,
 	gatewayID string,
@@ -402,8 +446,8 @@ func (p *NeuralTrustModerationPlugin) callModeration(
 		scores[result.Data] = result.Score
 	}
 
-	evt.Scores.ModerationScores = scores
-	evt.ModerationThreshold = cfg.Threshold
+	evt.EmbeddingModeration.Scores.Scores = scores
+	evt.EmbeddingModeration.Threshold = cfg.Threshold
 
 	for _, result := range results {
 		if result.Score >= cfg.Threshold {
@@ -425,4 +469,115 @@ func (p *NeuralTrustModerationPlugin) sendError(ch chan<- error, err error) {
 	case ch <- err:
 	default:
 	}
+}
+
+func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
+	ctx context.Context,
+	cfg *KeyRegParamBag,
+	wg *sync.WaitGroup,
+	inputBody []byte,
+	firewallErrors chan<- error,
+	evt *NeuralTrustModerationData,
+) {
+	defer wg.Done()
+	if len(inputBody) == 0 {
+		return
+	}
+
+	content := string(inputBody)
+	threshold := cfg.SimilarityThreshold
+	if threshold == 0 {
+		threshold = 0.8
+	}
+
+	if foundWord, keyword, found := p.findSimilarKeyword(content, threshold); found {
+		evt.Blocked = true
+		evt.KeyRegModeration.SimilarityThreshold = threshold
+		evt.KeyRegModeration.Reason = KeyRegReason{
+			Type:    "keyword",
+			Pattern: keyword,
+			Match:   foundWord,
+		}
+		p.sendError(
+			firewallErrors,
+			NewModerationViolation(fmt.Sprintf("content blocked: word '%s' is similar to blocked keyword '%s'", foundWord, keyword)),
+		)
+		return
+	}
+
+	for _, pattern := range p.regexRules {
+		matches := pattern.FindStringSubmatch(content)
+		if len(matches) > 0 {
+			evt.Blocked = true
+			evt.KeyRegModeration.SimilarityThreshold = threshold
+			evt.KeyRegModeration.Reason = KeyRegReason{
+				Type:    "regex",
+				Pattern: pattern.String(),
+				Match:   matches[0],
+			}
+			p.sendError(
+				firewallErrors,
+				NewModerationViolation(fmt.Sprintf("content blocked: regex pattern %s found in request body", pattern)),
+			)
+			return
+		}
+	}
+}
+
+func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
+	s1 = strings.ToLower(s1)
+	s2 = strings.ToLower(s2)
+
+	if len(s1) == 0 {
+		return len(s2)
+	}
+	if len(s2) == 0 {
+		return len(s1)
+	}
+
+	matrix := make([][]int, len(s1)+1)
+	for i := range matrix {
+		matrix[i] = make([]int, len(s2)+1)
+		matrix[i][0] = i
+	}
+	for j := range matrix[0] {
+		matrix[0][j] = j
+	}
+
+	for i := 1; i <= len(s1); i++ {
+		for j := 1; j <= len(s2); j++ {
+			cost := 1
+			if s1[i-1] == s2[j-1] {
+				cost = 0
+			}
+			matrix[i][j] = min(
+				matrix[i-1][j]+1,
+				matrix[i][j-1]+1,
+				matrix[i-1][j-1]+cost,
+			)
+		}
+	}
+	return matrix[len(s1)][len(s2)]
+}
+
+func (p *NeuralTrustModerationPlugin) calculateSimilarity(s1, s2 string) float64 {
+	distance := p.levenshteinDistance(s1, s2)
+	maxLen := float64(max(len(s1), len(s2)))
+	if maxLen == 0 {
+		return 1.0
+	}
+	return 1.0 - float64(distance)/maxLen
+}
+
+func (p *NeuralTrustModerationPlugin) findSimilarKeyword(text string, threshold float64) (string, string, bool) {
+	words := strings.Fields(text)
+	for _, word := range words {
+		for _, keyword := range p.keywords {
+			similarity := p.calculateSimilarity(word, keyword)
+			if similarity >= threshold {
+				return word, keyword, true
+			}
+		}
+	}
+	return "", "", false
 }

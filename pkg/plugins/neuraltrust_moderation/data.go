@@ -1,11 +1,27 @@
 package neuraltrust_moderation
 
 type NeuralTrustModerationData struct {
-	ModerationThreshold float64           `json:"moderation_threshold"`
-	Blocked             bool              `json:"blocked"`
-	Scores              *ModerationScores `json:"scores,omitempty"`
+	Blocked             bool                 `json:"blocked"`
+	EmbeddingModeration *EmbeddingModeration `json:"embedding_moderation,omitempty"`
+	KeyRegModeration    *KeyRegModeration    `json:"keyreg_moderation,omitempty"`
 }
 
-type ModerationScores struct {
-	ModerationScores map[string]float64 `json:"moderation_scores"`
+type EmbeddingScores struct {
+	Scores map[string]float64 `json:"scores"`
+}
+
+type KeyRegReason struct {
+	Type    string `json:"type"`
+	Pattern string `json:"pattern"`
+	Match   string `json:"match"`
+}
+
+type EmbeddingModeration struct {
+	Scores    *EmbeddingScores `json:"scores,omitempty"`
+	Threshold float64          `json:"threshold"`
+}
+
+type KeyRegModeration struct {
+	Reason              KeyRegReason `json:"reason"`
+	SimilarityThreshold float64      `json:"similarity_threshold"`
 }

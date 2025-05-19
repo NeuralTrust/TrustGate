@@ -101,10 +101,6 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	t.Run("Valid Configuration", func(t *testing.T) {
 		validConfig := types.PluginConfig{
 			Settings: map[string]interface{}{
-				"credentials": map[string]interface{}{
-					"base_url": "https://api.neuraltrust.ai",
-					"token":    "test-token",
-				},
 				"moderation": map[string]interface{}{
 					"threshold":         0.7,
 					"enabled":           true,
@@ -129,11 +125,9 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	t.Run("Invalid Configuration - Missing Threshold", func(t *testing.T) {
 		invalidConfig := types.PluginConfig{
 			Settings: map[string]interface{}{
-				"credentials": map[string]interface{}{
-					"base_url": "https://api.neuraltrust.ai",
-					"token":    "test-token",
+				"moderation": map[string]interface{}{
+					"enabled": true,
 				},
-				"enabled": true,
 			},
 		}
 
@@ -144,12 +138,10 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	t.Run("Invalid Configuration - Invalid Threshold", func(t *testing.T) {
 		invalidConfig := types.PluginConfig{
 			Settings: map[string]interface{}{
-				"credentials": map[string]interface{}{
-					"base_url": "https://api.neuraltrust.ai",
-					"token":    "test-token",
+				"moderation": map[string]interface{}{
+					"threshold": 1.5, // Invalid: > 1
+					"enabled":   true,
 				},
-				"threshold": 1.5, // Invalid: > 1
-				"enabled":   true,
 			},
 		}
 
@@ -189,10 +181,6 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationSafe(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"credentials": map[string]interface{}{
-				"base_url": "https://api.neuraltrust.ai",
-				"token":    "test-token",
-			},
 			"moderation": map[string]interface{}{
 				"threshold":         0.7,
 				"enabled":           true,
@@ -260,10 +248,6 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationUnsafe(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"credentials": map[string]interface{}{
-				"base_url": "https://api.neuraltrust.ai",
-				"token":    "test-token",
-			},
 			"moderation": map[string]interface{}{
 				"threshold":         0.7,
 				"enabled":           true,
@@ -319,10 +303,6 @@ func TestNeuralTrustModerationPlugin_Execute_EmbeddingError(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"credentials": map[string]interface{}{
-				"base_url": "https://api.neuraltrust.ai",
-				"token":    "test-token",
-			},
 			"moderation": map[string]interface{}{
 				"threshold":         0.7,
 				"enabled":           true,
@@ -368,10 +348,6 @@ func TestNeuralTrustModerationPlugin_Execute_DisabledPlugin(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"credentials": map[string]interface{}{
-				"base_url": "https://api.neuraltrust.ai",
-				"token":    "test-token",
-			},
 			"moderation": map[string]interface{}{
 				"threshold": 0.7,
 				"enabled":   false,
@@ -390,4 +366,176 @@ func TestNeuralTrustModerationPlugin_Execute_DisabledPlugin(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, pluginResp)
 	assert.Equal(t, 200, pluginResp.StatusCode)
+}
+
+func TestNeuralTrustModerationPlugin_Execute_KeyRegSafe(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(mocks.Tracker)
+	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
+	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		embeddingRepositoryMock,
+		embeddingLocatorMock,
+	)
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"keyreg": map[string]interface{}{
+				"enabled":              true,
+				"similarity_threshold": 0.8,
+				"keywords":             []string{"password", "secret", "api_key"},
+				"regex":                []string{"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"},
+				"actions": map[string]interface{}{
+					"type":    "block",
+					"message": "Content contains sensitive information",
+				},
+			},
+		},
+	}
+
+	req := &types.RequestContext{
+		Body:      []byte(`safe content without any sensitive information`),
+		GatewayID: "test-gateway",
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	assert.NoError(t, err)
+	assert.NotNil(t, pluginResp)
+	assert.Equal(t, 200, pluginResp.StatusCode)
+}
+
+func TestNeuralTrustModerationPlugin_Execute_KeyRegKeywordBlocked(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(mocks.Tracker)
+	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
+	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		embeddingRepositoryMock,
+		embeddingLocatorMock,
+	)
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"keyreg": map[string]interface{}{
+				"enabled":              true,
+				"similarity_threshold": 0.8,
+				"keywords":             []string{"password", "secret", "api_key"},
+				"regex":                []string{"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"},
+				"actions": map[string]interface{}{
+					"type":    "block",
+					"message": "Content contains sensitive information",
+				},
+			},
+		},
+	}
+
+	req := &types.RequestContext{
+		Body:      []byte(`my password is 12345`),
+		GatewayID: "test-gateway",
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	assert.Error(t, err)
+	assert.Nil(t, pluginResp)
+	assert.Contains(t, err.Error(), "content blocked")
+}
+
+func TestNeuralTrustModerationPlugin_Execute_KeyRegSimilarWordBlocked(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(mocks.Tracker)
+	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
+	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		embeddingRepositoryMock,
+		embeddingLocatorMock,
+	)
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"keyreg": map[string]interface{}{
+				"enabled":              true,
+				"similarity_threshold": 0.8,
+				"keywords":             []string{"password", "secret", "api_key"},
+				"regex":                []string{"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"},
+				"actions": map[string]interface{}{
+					"type":    "block",
+					"message": "Content contains sensitive information",
+				},
+			},
+		},
+	}
+
+	req := &types.RequestContext{
+		Body:      []byte(`my passw0rd is 12345`),
+		GatewayID: "test-gateway",
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	assert.Error(t, err)
+	assert.Nil(t, pluginResp)
+	assert.Contains(t, err.Error(), "content blocked")
+}
+
+func TestNeuralTrustModerationPlugin_Execute_KeyRegRegexBlocked(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(mocks.Tracker)
+	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
+	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		embeddingRepositoryMock,
+		embeddingLocatorMock,
+	)
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"credentials": map[string]interface{}{
+				"base_url": "https://api.neuraltrust.ai",
+				"token":    "test-token",
+			},
+			"keyreg": map[string]interface{}{
+				"enabled":              true,
+				"similarity_threshold": 0.8,
+				"keywords":             []string{"password", "secret", "api_key"},
+				"regex":                []string{"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"},
+				"actions": map[string]interface{}{
+					"type":    "block",
+					"message": "Content contains sensitive information",
+				},
+			},
+		},
+	}
+
+	req := &types.RequestContext{
+		Body:      []byte(`my email is test@example.com`),
+		GatewayID: "test-gateway",
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	assert.Error(t, err)
+	assert.Nil(t, pluginResp)
+	assert.Contains(t, err.Error(), "content blocked")
 }

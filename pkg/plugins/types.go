@@ -69,12 +69,6 @@ var PluginList = []PluginDefinition{
 		AllowedStages: []types.Stage{types.PreRequest},
 	},
 	{
-		UUID:          GeneratePluginUUID("prompt_moderation"),
-		Name:          "prompt_moderation",
-		Description:   "Moderates prompts for inappropriate content",
-		AllowedStages: []types.Stage{types.PreRequest},
-	},
-	{
 		UUID:          GeneratePluginUUID("rate_limiter"),
 		Name:          "rate_limiter",
 		Description:   "Limits request rates to prevent abuse",

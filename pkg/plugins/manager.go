@@ -29,7 +29,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/data_masking"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/external_api"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/injection_protection"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/prompt_moderation"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/request_size_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/token_rate_limiter"
@@ -113,10 +112,6 @@ func (m *manager) InitializePlugins() {
 
 	if err := m.RegisterPlugin(token_rate_limiter.NewTokenRateLimiterPlugin(m.logger, m.cache.Client())); err != nil {
 		m.logger.WithError(err).Error("Failed to register token rate limiter plugin")
-	}
-
-	if err := m.RegisterPlugin(prompt_moderation.NewPromptModerationPlugin(m.logger)); err != nil {
-		m.logger.WithError(err).Error("Failed to register prompt moderation plugin")
 	}
 
 	if err := m.RegisterPlugin(data_masking.NewDataMaskingPlugin(m.logger)); err != nil {

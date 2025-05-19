@@ -1,0 +1,88 @@
+{
+  "gateway": {
+    "plugin_chain": [
+      {
+        "id": "01f03495-e1df-6476-90cf-fc5cee906c4d-toxicity_neuraltrust-0",
+        "name": "toxicity_neuraltrust",
+        "enabled": true,
+        "level": "",
+        "stage": "pre_request",
+        "priority": 0,
+        "parallel": true,
+        "settings": {
+          "credentials": {
+            "base_url": "https://data-dev.neuraltrust.ai",
+            "token": "eyJhbGciOiJIUzI1NiJ9.eyJ0ZWFtSWQiOiIxNWU2NTQ0Zi04ODkzLTQ3MWQtYmQwMS1iYmYxNTYzNGNlNzMiLCJhcHBJZCI6ImQ1NzMwNzVhLTg3NGYtNDllYi04MjdhLTk3NTM3YWI3ZWZhNiIsInB1cnBvc2UiOiJ0ZWxlbWV0cnkiLCJpYXQiOjE3NDIzNzYyMDd9.HnpOKWO6PvlkfuJUq6NQ3XXJtd2JOgAzl7vDBr7Yzns"
+          },
+          "mapping_field": "input",
+          "toxicity": {
+            "threshold": 0.6
+          }
+        }
+      }
+    ]
+  },
+  "consumer_group": {
+    "plugin_chain": [
+      {
+        "id": "01f03495-e1df-6476-90cf-fc5cee906c4d-toxicity_neuraltrust-0",
+        "name": "toxicity_neuraltrust",
+        "enabled": true,
+        "level": "",
+        "stage": "pre_request",
+        "priority": 0,
+        "parallel": true,
+        "settings": {
+          "credentials": {
+            "base_url": "https://data-dev.neuraltrust.ai",
+            "token": "eyJhbGciOiJIUzI1NiJ9.eyJ0ZWFtSWQiOiIxNWU2NTQ0Zi04ODkzLTQ3MWQtYmQwMS1iYmYxNTYzNGNlNzMiLCJhcHBJZCI6ImQ1NzMwNzVhLTg3NGYtNDllYi04MjdhLTk3NTM3YWI3ZWZhNiIsInB1cnBvc2UiOiJ0ZWxlbWV0cnkiLCJpYXQiOjE3NDIzNzYyMDd9.HnpOKWO6PvlkfuJUq6NQ3XXJtd2JOgAzl7vDBr7Yzns"
+          },
+          "mapping_field": "input",
+          "toxicity": {
+            "threshold": 0.6
+          }
+        }
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "01f03495-e785-615c-90cf-fc5cee906c4d",
+      "gateway_id": "01f03495-e1df-6476-90cf-fc5cee906c4d",
+      "path": "/test",
+      "service_id": "01f03495-e5e8-6544-90cf-fc5cee906c4d",
+      "methods": [
+        "POST"
+      ],
+      "headers": null,
+      "strip_path": true,
+      "preserve_host": false,
+      "retry_attempts": 1,
+      "plugin_chain": [
+        {
+          "id": "01f03495-e1df-6476-90cf-fc5cee906c4d-toxicity_neuraltrust-0",
+          "name": "toxicity_neuraltrust",
+          "enabled": true,
+          "level": "",
+          "stage": "pre_request",
+          "priority": 0,
+          "parallel": true,
+          "settings": {
+            "credentials": {
+              "base_url": "https://data-dev.neuraltrust.ai",
+              "token": "eyJhbGciOiJIUzI1NiJ9.eyJ0ZWFtSWQiOiIxNWU2NTQ0Zi04ODkzLTQ3MWQtYmQwMS1iYmYxNTYzNGNlNzMiLCJhcHBJZCI6ImQ1NzMwNzVhLTg3NGYtNDllYi04MjdhLTk3NTM3YWI3ZWZhNiIsInB1cnBvc2UiOiJ0ZWxlbWV0cnkiLCJpYXQiOjE3NDIzNzYyMDd9.HnpOKWO6PvlkfuJUq6NQ3XXJtd2JOgAzl7vDBr7Yzns"
+            },
+            "mapping_field": "input",
+            "toxicity": {
+              "threshold": 0.6
+            }
+          }
+        }
+      ],
+      "active": true,
+      "public": false,
+      "created_at": "2025-05-19T11:44:48+02:00",
+      "updated_at": "2025-05-19T11:44:48+02:00"
+    }
+  ]
+}
