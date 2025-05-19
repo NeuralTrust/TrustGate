@@ -18,6 +18,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/contextual_security"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_moderation"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_neuraltrust"
 	"github.com/sirupsen/logrus"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -149,8 +151,6 @@ func (m *manager) InitializePlugins() {
 		m.logger,
 		&http.Client{},
 		m.fingerprintTracker,
-		m.embeddingRepo,
-		m.serviceLocator,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
 	}
@@ -166,6 +166,24 @@ func (m *manager) InitializePlugins() {
 		m.logger,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
+	}
+
+	if err := m.RegisterPlugin(toxicity_neuraltrust.NewToxicityNeuralTrust(
+		m.logger,
+		m.fingerprintTracker,
+		&http.Client{},
+	)); err != nil {
+		m.logger.WithError(err).Error("Failed to register toxicity neuraltrust plugin")
+	}
+
+	if err := m.RegisterPlugin(neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		m.logger,
+		&http.Client{},
+		m.fingerprintTracker,
+		m.embeddingRepo,
+		m.serviceLocator,
+	)); err != nil {
+		m.logger.WithError(err).Error("Failed to register toxicity neuraltrust plugin")
 	}
 }
 

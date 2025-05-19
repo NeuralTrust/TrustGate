@@ -57,6 +57,18 @@ var PluginList = []PluginDefinition{
 		AllowedStages: []types.Stage{types.PreRequest},
 	},
 	{
+		UUID:          GeneratePluginUUID("neuraltrust_moderation"),
+		Name:          "neuraltrust_moderation",
+		Description:   "Applies NeuralTrust's moderation to filter content",
+		AllowedStages: []types.Stage{types.PreRequest},
+	},
+	{
+		UUID:          GeneratePluginUUID("toxicity_neuraltrust"),
+		Name:          "toxicity_neuraltrust",
+		Description:   "Applies NeuralTrust's toxicity to filter content",
+		AllowedStages: []types.Stage{types.PreRequest},
+	},
+	{
 		UUID:          GeneratePluginUUID("prompt_moderation"),
 		Name:          "prompt_moderation",
 		Description:   "Moderates prompts for inappropriate content",
