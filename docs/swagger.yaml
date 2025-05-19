@@ -174,13 +174,13 @@ definitions:
         items:
           $ref: '#/definitions/types.Stage'
         type: array
+      category:
+        type: string
       description:
         type: string
       id:
         type: string
       name:
-        type: string
-      uuid:
         type: string
     type: object
   request.ClientTLSCertRequest:
@@ -425,6 +425,72 @@ definitions:
         type: boolean
       write_buffer_size:
         type: integer
+    type: object
+  response.ForwardingRuleOutput:
+    properties:
+      active:
+        type: boolean
+      created_at:
+        type: string
+      headers:
+        $ref: '#/definitions/domain.HeadersJSON'
+      id:
+        type: string
+      methods:
+        items:
+          type: string
+        type: array
+      path:
+        type: string
+      plugin_chain:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      service_id:
+        type: string
+      trustlens:
+        $ref: '#/definitions/domain.TrustLensJSON'
+      updated_at:
+        type: string
+      upstream:
+        $ref: '#/definitions/response.UpstreamOutput'
+    type: object
+  response.GatewayOutput:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      plugin_chain:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  response.ListRulesOutput:
+    properties:
+      gateway:
+        $ref: '#/definitions/response.GatewayOutput'
+      rules:
+        items:
+          $ref: '#/definitions/response.ForwardingRuleOutput'
+        type: array
+    type: object
+  response.UpstreamOutput:
+    properties:
+      algorithm:
+        type: string
+      name:
+        type: string
+      targets:
+        items:
+          $ref: '#/definitions/upstream.Target'
+        type: array
     type: object
   service.Service:
     properties:
@@ -1076,9 +1142,7 @@ paths:
         "200":
           description: List of rules
           schema:
-            items:
-              $ref: '#/definitions/forwarding_rule.ForwardingRule'
-            type: array
+            $ref: '#/definitions/response.ListRulesOutput'
         "404":
           description: Gateway not found
           schema:

@@ -426,10 +426,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/components/schemas/forwarding_rule.ForwardingRule"
-                                    }
+                                    "$ref": "#/components/schemas/response.ListRulesOutput"
                                 }
                             }
                         }
@@ -1392,6 +1389,9 @@
                             "$ref": "#/components/schemas/types.Stage"
                         }
                     },
+                    "category": {
+                        "type": "string"
+                    },
                     "description": {
                         "type": "string"
                     },
@@ -1399,9 +1399,6 @@
                         "type": "string"
                     },
                     "name": {
-                        "type": "string"
-                    },
-                    "uuid": {
                         "type": "string"
                     }
                 }
@@ -1771,6 +1768,107 @@
                     },
                     "write_buffer_size": {
                         "type": "integer"
+                    }
+                }
+            },
+            "response.ForwardingRuleOutput": {
+                "type": "object",
+                "properties": {
+                    "active": {
+                        "type": "boolean"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "headers": {
+                        "$ref": "#/components/schemas/domain.HeadersJSON"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "methods": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "path": {
+                        "type": "string"
+                    },
+                    "plugin_chain": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/types.PluginConfig"
+                        }
+                    },
+                    "service_id": {
+                        "type": "string"
+                    },
+                    "trustlens": {
+                        "$ref": "#/components/schemas/domain.TrustLensJSON"
+                    },
+                    "updated_at": {
+                        "type": "string"
+                    },
+                    "upstream": {
+                        "$ref": "#/components/schemas/response.UpstreamOutput"
+                    }
+                }
+            },
+            "response.GatewayOutput": {
+                "type": "object",
+                "properties": {
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "plugin_chain": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/types.PluginConfig"
+                        }
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "updated_at": {
+                        "type": "string"
+                    }
+                }
+            },
+            "response.ListRulesOutput": {
+                "type": "object",
+                "properties": {
+                    "gateway": {
+                        "$ref": "#/components/schemas/response.GatewayOutput"
+                    },
+                    "rules": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/response.ForwardingRuleOutput"
+                        }
+                    }
+                }
+            },
+            "response.UpstreamOutput": {
+                "type": "object",
+                "properties": {
+                    "algorithm": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "targets": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/upstream.Target"
+                        }
                     }
                 }
             },
