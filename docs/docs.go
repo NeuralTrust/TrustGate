@@ -378,10 +378,7 @@ const docTemplate = `{
                     "200": {
                         "description": "List of rules",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/forwarding_rule.ForwardingRule"
-                            }
+                            "$ref": "#/definitions/response.ListRulesOutput"
                         }
                     },
                     "404": {
@@ -1251,6 +1248,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/types.Stage"
                     }
                 },
+                "category": {
+                    "type": "string"
+                },
                 "description": {
                     "type": "string"
                 },
@@ -1258,9 +1258,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
-                    "type": "string"
-                },
-                "uuid": {
                     "type": "string"
                 }
             }
@@ -1630,6 +1627,107 @@ const docTemplate = `{
                 },
                 "write_buffer_size": {
                     "type": "integer"
+                }
+            }
+        },
+        "response.ForwardingRuleOutput": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "headers": {
+                    "$ref": "#/definitions/domain.HeadersJSON"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "methods": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "path": {
+                    "type": "string"
+                },
+                "plugin_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
+                },
+                "service_id": {
+                    "type": "string"
+                },
+                "trustlens": {
+                    "$ref": "#/definitions/domain.TrustLensJSON"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "upstream": {
+                    "$ref": "#/definitions/response.UpstreamOutput"
+                }
+            }
+        },
+        "response.GatewayOutput": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "plugin_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "response.ListRulesOutput": {
+            "type": "object",
+            "properties": {
+                "gateway": {
+                    "$ref": "#/definitions/response.GatewayOutput"
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/response.ForwardingRuleOutput"
+                    }
+                }
+            }
+        },
+        "response.UpstreamOutput": {
+            "type": "object",
+            "properties": {
+                "algorithm": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "targets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/upstream.Target"
+                    }
                 }
             }
         },

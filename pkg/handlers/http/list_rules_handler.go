@@ -47,7 +47,7 @@ func NewListRulesHandler(
 // @Tags Rules
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
-// @Success 200 {array} forwarding_rule.ForwardingRule "List of rules"
+// @Success 200 {object} response.ListRulesOutput "List of rules"
 // @Failure 404 {object} map[string]interface{} "Gateway not found"
 // @Router /api/v1/gateways/{gateway_id}/rules [get]
 func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
