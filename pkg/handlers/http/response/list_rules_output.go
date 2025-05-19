@@ -28,7 +28,7 @@ type ForwardingRuleOutput struct {
 	Path        string                 `json:"path"`
 	Methods     domain.MethodsJSON     `json:"methods"`
 	Headers     domain.HeadersJSON     `json:"headers"`
-	PluginChain domain.PluginChainJSON `json:"plugin_chain, omitempty"`
+	PluginChain domain.PluginChainJSON `json:"plugin_chain,omitempty"`
 	Active      bool                   `json:"active"`
 	TrustLens   *domain.TrustLensJSON  `json:"trustlens"`
 	CreatedAt   time.Time              `json:"created_at"`
