@@ -18,6 +18,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/contextual_security"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_moderation"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_neuraltrust"
 	"github.com/sirupsen/logrus"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -27,7 +29,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/data_masking"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/external_api"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/injection_protection"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/prompt_moderation"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/request_size_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/token_rate_limiter"
@@ -113,10 +114,6 @@ func (m *manager) InitializePlugins() {
 		m.logger.WithError(err).Error("Failed to register token rate limiter plugin")
 	}
 
-	if err := m.RegisterPlugin(prompt_moderation.NewPromptModerationPlugin(m.logger)); err != nil {
-		m.logger.WithError(err).Error("Failed to register prompt moderation plugin")
-	}
-
 	if err := m.RegisterPlugin(data_masking.NewDataMaskingPlugin(m.logger)); err != nil {
 		m.logger.WithError(err).Error("Failed to register data masking plugin")
 	}
@@ -149,8 +146,6 @@ func (m *manager) InitializePlugins() {
 		m.logger,
 		&http.Client{},
 		m.fingerprintTracker,
-		m.embeddingRepo,
-		m.serviceLocator,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
 	}
@@ -166,6 +161,24 @@ func (m *manager) InitializePlugins() {
 		m.logger,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
+	}
+
+	if err := m.RegisterPlugin(toxicity_neuraltrust.NewToxicityNeuralTrust(
+		m.logger,
+		m.fingerprintTracker,
+		&http.Client{},
+	)); err != nil {
+		m.logger.WithError(err).Error("Failed to register toxicity neuraltrust plugin")
+	}
+
+	if err := m.RegisterPlugin(neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		m.logger,
+		&http.Client{},
+		m.fingerprintTracker,
+		m.embeddingRepo,
+		m.serviceLocator,
+	)); err != nil {
+		m.logger.WithError(err).Error("Failed to register toxicity neuraltrust plugin")
 	}
 }
 

@@ -99,6 +99,13 @@ definitions:
       sts_seconds:
         type: integer
     type: object
+  domain.TrustLensJSON:
+    properties:
+      app_id:
+        type: string
+      team_id:
+        type: string
+    type: object
   forwarding_rule.ForwardingRule:
     properties:
       active:
@@ -131,6 +138,8 @@ definitions:
         type: string
       stripPath:
         type: boolean
+      trustLens:
+        $ref: '#/definitions/domain.TrustLensJSON'
       updatedAt:
         type: string
     type: object
@@ -157,6 +166,21 @@ definitions:
       telemetry:
         $ref: '#/definitions/telemetry.Telemetry'
       updated_at:
+        type: string
+    type: object
+  plugins.PluginDefinition:
+    properties:
+      allowed_stages:
+        items:
+          $ref: '#/definitions/types.Stage'
+        type: array
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      uuid:
         type: string
     type: object
   request.ClientTLSCertRequest:
@@ -216,6 +240,15 @@ definitions:
       updated_at:
         type: string
     type: object
+  request.EmbeddingRequest:
+    properties:
+      credentials:
+        $ref: '#/definitions/types.Credentials'
+      model:
+        type: string
+      provider:
+        type: string
+    type: object
   request.ExporterRequest:
     properties:
       name:
@@ -223,6 +256,23 @@ definitions:
       settings:
         additionalProperties: true
         type: object
+    type: object
+  request.HealthCheckRequest:
+    properties:
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      interval:
+        description: Time in seconds before resetting failure count
+        type: integer
+      passive:
+        type: boolean
+      path:
+        type: string
+      threshold:
+        description: Number of failures before marking as unhealthy
+        type: integer
     type: object
   request.SecurityConfigRequest:
     properties:
@@ -259,6 +309,45 @@ definitions:
       sts_seconds:
         type: integer
     type: object
+  request.TargetRequest:
+    properties:
+      credentials:
+        $ref: '#/definitions/types.Credentials'
+      default_model:
+        type: string
+      description:
+        type: string
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      host:
+        type: string
+      id:
+        type: string
+      models:
+        items:
+          type: string
+        type: array
+      path:
+        type: string
+      port:
+        type: integer
+      priority:
+        type: integer
+      protocol:
+        type: string
+      provider:
+        type: string
+      stream:
+        type: boolean
+      tags:
+        items:
+          type: string
+        type: array
+      weight:
+        type: integer
+    type: object
   request.TelemetryRequest:
     properties:
       enable_plugin_traces:
@@ -273,6 +362,10 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      header_mapping:
+        additionalProperties:
+          type: string
+        type: object
     type: object
   request.UpdateGatewayRequest:
     properties:
@@ -283,15 +376,55 @@ definitions:
       name:
         type: string
       required_plugins:
-        additionalProperties:
+        items:
           $ref: '#/definitions/types.PluginConfig'
-        type: object
+        type: array
       security_config:
         $ref: '#/definitions/request.SecurityConfigRequest'
       status:
         type: string
       telemetry:
         $ref: '#/definitions/request.TelemetryRequest'
+    type: object
+  request.UpstreamRequest:
+    properties:
+      algorithm:
+        type: string
+      embedding:
+        $ref: '#/definitions/request.EmbeddingRequest'
+      gateway_id:
+        type: string
+      health_checks:
+        $ref: '#/definitions/request.HealthCheckRequest'
+      id:
+        type: string
+      name:
+        type: string
+      tags:
+        items:
+          type: string
+        type: array
+      targets:
+        items:
+          $ref: '#/definitions/request.TargetRequest'
+        type: array
+      websocket_config:
+        $ref: '#/definitions/request.WebhookConfigRequest'
+    type: object
+  request.WebhookConfigRequest:
+    properties:
+      handshake_timeout:
+        type: string
+      ping_period:
+        type: string
+      pong_wait:
+        type: string
+      read_buffer_size:
+        type: integer
+      return_error_details:
+        type: boolean
+      write_buffer_size:
+        type: integer
     type: object
   service.Service:
     properties:
@@ -321,6 +454,8 @@ definitions:
       retries:
         description: Common settings
         type: integer
+      stream:
+        type: boolean
       tags:
         items:
           type: string
@@ -355,6 +490,10 @@ definitions:
           $ref: '#/definitions/telemetry.ExporterConfig'
         type: array
       extra_params:
+        additionalProperties:
+          type: string
+        type: object
+      header_mapping:
         additionalProperties:
           type: string
         type: object
@@ -422,6 +561,8 @@ definitions:
         type: string
       strip_path:
         type: boolean
+      trustlens:
+        $ref: '#/definitions/types.TrustLensConfig'
     required:
     - path
     - service_id
@@ -463,23 +604,6 @@ definitions:
         type: string
       param_value:
         type: string
-    type: object
-  types.HealthCheckRequest:
-    properties:
-      headers:
-        additionalProperties:
-          type: string
-        type: object
-      interval:
-        description: Time in seconds before resetting failure count
-        type: integer
-      passive:
-        type: boolean
-      path:
-        type: string
-      threshold:
-        description: Number of failures before marking as unhealthy
-        type: integer
     type: object
   types.Level:
     enum:
@@ -562,40 +686,12 @@ definitions:
     - PostRequest
     - PreResponse
     - PostResponse
-  types.TargetRequest:
+  types.TrustLensConfig:
     properties:
-      credentials:
-        $ref: '#/definitions/types.Credentials'
-      default_model:
+      app_id:
         type: string
-      headers:
-        additionalProperties:
-          type: string
-        type: object
-      host:
+      team_id:
         type: string
-      id:
-        type: string
-      models:
-        items:
-          type: string
-        type: array
-      path:
-        type: string
-      port:
-        type: integer
-      priority:
-        type: integer
-      protocol:
-        type: string
-      provider:
-        type: string
-      tags:
-        items:
-          type: string
-        type: array
-      weight:
-        type: integer
     type: object
   types.UpdateRuleRequest:
     properties:
@@ -623,27 +719,17 @@ definitions:
         type: string
       strip_path:
         type: boolean
+      trust_lens:
+        $ref: '#/definitions/types.TrustLensConfig'
     type: object
-  types.UpstreamRequest:
+  upstream.EmbeddingConfig:
     properties:
-      algorithm:
+      credentials:
+        $ref: '#/definitions/domain.CredentialsJSON'
+      model:
         type: string
-      gateway_id:
+      provider:
         type: string
-      health_checks:
-        $ref: '#/definitions/types.HealthCheckRequest'
-      id:
-        type: string
-      name:
-        type: string
-      tags:
-        items:
-          type: string
-        type: array
-      targets:
-        items:
-          $ref: '#/definitions/types.TargetRequest'
-        type: array
     type: object
   upstream.HealthCheck:
     properties:
@@ -666,6 +752,8 @@ definitions:
         $ref: '#/definitions/domain.CredentialsJSON'
       default_model:
         type: string
+      description:
+        type: string
       headers:
         $ref: '#/definitions/domain.HeadersJSON'
       host:
@@ -686,6 +774,8 @@ definitions:
         type: string
       provider:
         type: string
+      stream:
+        type: boolean
       tags:
         items:
           type: string
@@ -699,6 +789,8 @@ definitions:
         type: string
       created_at:
         type: string
+      embedding_config:
+        $ref: '#/definitions/upstream.EmbeddingConfig'
       gateway_id:
         type: string
       health_checks:
@@ -717,6 +809,25 @@ definitions:
         type: array
       updated_at:
         type: string
+      websocket_config:
+        $ref: '#/definitions/upstream.WebsocketConfig'
+    type: object
+  upstream.WebsocketConfig:
+    properties:
+      enable_direct_communication:
+        type: boolean
+      handshake_timeout:
+        type: string
+      ping_period:
+        type: string
+      pong_wait:
+        type: string
+      read_buffer_size:
+        type: integer
+      return_error_details:
+        type: boolean
+      write_buffer_size:
+        type: integer
     type: object
 info:
   contact:
@@ -1258,7 +1369,7 @@ paths:
         name: upstream
         required: true
         schema:
-          $ref: '#/definitions/types.UpstreamRequest'
+          $ref: '#/definitions/request.UpstreamRequest'
       produces:
       - application/json
       responses:
@@ -1329,7 +1440,7 @@ paths:
         name: upstream
         required: true
         schema:
-          $ref: '#/definitions/types.UpstreamRequest'
+          $ref: '#/definitions/request.UpstreamRequest'
       produces:
       - application/json
       responses:
@@ -1339,4 +1450,35 @@ paths:
             $ref: '#/definitions/upstream.Upstream'
       tags:
       - Upstreams
+  /api/v1/plugins:
+    get:
+      consumes:
+      - application/json
+      description: Returns the list of available plugins
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of plugins
+          schema:
+            items:
+              $ref: '#/definitions/plugins.PluginDefinition'
+            type: array
+      tags:
+      - Plugins
+  /api/v1/version:
+    get:
+      consumes:
+      - application/json
+      description: Returns the current version of the AI-Gateway
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Version information
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Version
 swagger: "2.0"
