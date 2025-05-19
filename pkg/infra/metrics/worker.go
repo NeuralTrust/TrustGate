@@ -172,6 +172,7 @@ func (m *worker) feedEvent(
 	evt.IP = req.IP
 	evt.Method = req.Method
 	evt.Path = req.Path
+	evt.GatewayID = req.GatewayID
 
 	if resp.Rule != nil {
 		if resp.Rule.TrustLens != nil {

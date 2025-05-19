@@ -7,8 +7,11 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
+	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/response"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -16,16 +19,26 @@ import (
 )
 
 type listRulesHandler struct {
-	logger *logrus.Logger
-	repo   *database.Repository
-	cache  *cache.Cache
+	logger      *logrus.Logger
+	ruleRepo    forwarding_rule.Repository
+	gatewayRepo gateway.Repository
+	serviceRepo service.Repository
+	cache       *cache.Cache
 }
 
-func NewListRulesHandler(logger *logrus.Logger, repo *database.Repository, cache *cache.Cache) Handler {
+func NewListRulesHandler(
+	logger *logrus.Logger,
+	ruleRepo forwarding_rule.Repository,
+	gatewayRepo gateway.Repository,
+	serviceRepo service.Repository,
+	cache *cache.Cache,
+) Handler {
 	return &listRulesHandler{
-		logger: logger,
-		repo:   repo,
-		cache:  cache,
+		logger:      logger,
+		ruleRepo:    ruleRepo,
+		gatewayRepo: gatewayRepo,
+		serviceRepo: serviceRepo,
+		cache:       cache,
 	}
 }
 
@@ -43,8 +56,8 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway uuid"})
 	}
-	// Get rules from database
-	_, err = s.repo.GetGateway(c.Context(), gatewayUUID)
+
+	gw, err := s.gatewayRepo.GetGateway(c.Context(), gatewayUUID)
 
 	if err != nil {
 		if errors.As(err, &domain.ErrEntityNotFound) {
@@ -54,14 +67,14 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get gateway"})
 	}
 
-	dbRules, err := s.repo.ListRules(c.Context(), gatewayUUID)
+	dbRules, err := s.ruleRepo.ListRules(c.Context(), gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to get rules from database")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list rules"})
 	}
 
-	// Convert to API response format
 	rules := make([]types.ForwardingRule, len(dbRules))
+	rulesOutput := make([]response.ForwardingRuleOutput, len(dbRules))
 	for i, rule := range dbRules {
 		var trustLensConfig *types.TrustLensConfig
 		if rule.TrustLens != nil {
@@ -87,9 +100,37 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			CreatedAt:     rule.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
 		}
+
+		srv, err := s.serviceRepo.GetService(c.Context(), rule.ServiceID.String())
+		if err != nil {
+			s.logger.WithError(err).Error("failed to get service from database")
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get service"})
+		}
+		var upstreamOutput *response.UpstreamOutput
+		if srv != nil {
+			if srv.Upstream != nil {
+				upstreamOutput = &response.UpstreamOutput{
+					Name:      srv.Upstream.Name,
+					Algorithm: srv.Upstream.Algorithm,
+					Targets:   srv.Upstream.Targets,
+				}
+			}
+		}
+		rulesOutput[i] = response.ForwardingRuleOutput{
+			ID:          rule.ID.String(),
+			Upstream:    upstreamOutput,
+			ServiceID:   rule.ServiceID.String(),
+			Path:        rule.Path,
+			Methods:     rule.Methods,
+			Headers:     rule.Headers,
+			PluginChain: rule.PluginChain,
+			Active:      rule.Active,
+			TrustLens:   rule.TrustLens,
+			CreatedAt:   rule.CreatedAt,
+			UpdatedAt:   rule.UpdatedAt,
+		}
 	}
 
-	// Cache the rules for future requests
 	rulesJSON, err := json.Marshal(rules)
 	if err == nil {
 		rulesKey := fmt.Sprintf("rules:%s", gatewayID)
@@ -98,5 +139,16 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	return c.Status(fiber.StatusOK).JSON(rules)
+	output := response.ListRulesOutput{
+		Gateway: response.GatewayOutput{
+			ID:              gw.ID.String(),
+			Status:          gw.Status,
+			RequiredPlugins: gw.RequiredPlugins,
+			CreatedAt:       gw.CreatedAt,
+			UpdatedAt:       gw.UpdatedAt,
+		},
+		Rules: rulesOutput,
+	}
+
+	return c.Status(fiber.StatusOK).JSON(output)
 }

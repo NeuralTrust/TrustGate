@@ -12,6 +12,7 @@ const (
 )
 
 type Event struct {
+	GatewayID      string            `json:"gateway_id"`
 	TraceID        string            `json:"trace_id"`
 	InteractionID  string            `json:"interaction_id"`
 	ConversationID string            `json:"conversation_id"`

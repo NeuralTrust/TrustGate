@@ -124,6 +124,7 @@ func NewContainer(
 	serviceRepository := repository.NewServiceRepository(db.DB)
 	apiKeyRepository := repository.NewApiKeyRepository(db.DB)
 	gatewayRepository := repository.NewGatewayRepository(db.DB)
+	ruleRepository := repository.NewForwardedRuleRepository(db.DB, logger, cacheInstance)
 
 	// service
 	upstreamFinder := appUpstream.NewFinder(upstreamRepository, cacheInstance, logger)
@@ -132,7 +133,7 @@ func NewContainer(
 	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
-	gatewayDataFinder := gateway.NewDataFinder(repo, cacheInstance, logger)
+	gatewayDataFinder := gateway.NewDataFinder(repo, ruleRepository, cacheInstance, logger)
 	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager, gatewayRepository)
 
 	// telemetry
@@ -223,7 +224,13 @@ func NewContainer(
 		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, repo, redisPublisher),
 		// Rule
 		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, repo, pluginChainValidator),
-		ListRulesHandler:  handlers.NewListRulesHandler(logger, repo, cacheInstance),
+		ListRulesHandler: handlers.NewListRulesHandler(
+			logger,
+			ruleRepository,
+			gatewayRepository,
+			serviceRepository,
+			cacheInstance,
+		),
 		UpdateRuleHandler: handlers.NewUpdateRuleHandler(logger, repo, cacheInstance, validatePlugin, redisPublisher),
 		DeleteRuleHandler: handlers.NewDeleteRuleHandler(logger, repo, cacheInstance, redisPublisher),
 		// APIKey
