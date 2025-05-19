@@ -30,12 +30,25 @@ func TestContextualSecurityPlugin(t *testing.T) {
 						"token":    os.Getenv("NEURAL_TRUST_FIREWALL_API_KEY"),
 						"base_url": os.Getenv("NEURAL_TRUST_FIREWALL_URL"),
 					},
-					"toxicity": map[string]interface{}{
-						"enabled":   true,
+					"jailbreak": map[string]interface{}{
 						"threshold": 0.6,
 					},
-					"jailbreak": map[string]interface{}{
-						"enabled":   true,
+					"mapping_field":    "input.test",
+					"retention_period": 600,
+				},
+			},
+			{
+				"name":     "toxicity_neuraltrust",
+				"enabled":  true,
+				"priority": 1,
+				"stage":    "pre_request",
+				"parallel": false,
+				"settings": map[string]interface{}{
+					"credentials": map[string]interface{}{
+						"token":    os.Getenv("NEURAL_TRUST_FIREWALL_API_KEY"),
+						"base_url": os.Getenv("NEURAL_TRUST_FIREWALL_URL"),
+					},
+					"toxicity": map[string]interface{}{
 						"threshold": 0.6,
 					},
 					"mapping_field":    "input.test",
