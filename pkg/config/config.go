@@ -35,6 +35,7 @@ type ServerConfig struct {
 	Type        string `mapstructure:"type"`
 	Port        int    `mapstructure:"port"`
 	Host        string `mapstructure:"host"`
+	SecretKey   string `mapstructure:"secret_key"`
 }
 
 type DatabaseConfig struct {

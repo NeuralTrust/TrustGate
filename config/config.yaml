@@ -2,6 +2,7 @@ server:
   admin_port: ${SERVER_ADMIN_PORT}
   metrics_port: ${SERVER_METRICS_PORT}
   proxy_port: ${SERVER_PROXY_PORT}
+  secret: ${ADMIN_SECRET_KEY}
 
 metrics:
   enabled: true

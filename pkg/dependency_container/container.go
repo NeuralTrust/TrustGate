@@ -30,6 +30,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	infraTelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
@@ -49,6 +50,7 @@ type Container struct {
 	RedisListener         infraCache.EventListener
 	Repository            *database.Repository
 	AuthMiddleware        middleware.Middleware
+	AdminAuthMiddleware   middleware.Middleware
 	MetricsMiddleware     middleware.Middleware
 	PluginMiddleware      middleware.Middleware
 	FingerPrintMiddleware middleware.Middleware
@@ -60,6 +62,7 @@ type Container struct {
 	PluginChainValidator  plugin.ValidatePluginChain
 	MetricsWorker         metrics.Worker
 	RedisIndexCreator     infraCache.RedisIndexCreator
+	JWTManager            jwt.Manager
 }
 
 func NewContainer(
@@ -175,6 +178,8 @@ func NewContainer(
 
 	metricsWorker := metrics.NewWorker(logger, telemetryBuilder)
 
+	jwtManager := jwt.NewJwtManager(&cfg.Server)
+
 	// WebSocket handler transport
 	wsHandlerTransport := &wsHandlers.HandlerTransportDTO{
 		ForwardedHandler: wsHandlers.NewWebsocketHandler(
@@ -254,6 +259,7 @@ func NewContainer(
 		WSHandlerTransport:    wsHandlerTransport,
 		Repository:            repo,
 		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, gatewayDataFinder),
+		AdminAuthMiddleware:   middleware.NewAdminAuthMiddleware(logger, jwtManager),
 		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, metricsWorker),
 		PluginMiddleware:      middleware.NewPluginChainMiddleware(pluginManager, logger),
 		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),
@@ -267,6 +273,7 @@ func NewContainer(
 		PluginChainValidator:  pluginChainValidator,
 		MetricsWorker:         metricsWorker,
 		RedisIndexCreator:     redisIndexCreator,
+		JWTManager:            jwtManager,
 	}
 
 	return container, nil

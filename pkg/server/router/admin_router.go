@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
+	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/swagger"
 )
@@ -13,14 +14,17 @@ var (
 )
 
 type adminRouter struct {
-	handlerTransport handlers.HandlerTransport
+	middlewareTransport *middleware.Transport
+	handlerTransport    handlers.HandlerTransport
 }
 
 func NewAdminRouter(
+	middlewareTransport *middleware.Transport,
 	handlerTransport handlers.HandlerTransport,
 ) ServerRouter {
 	return &adminRouter{
-		handlerTransport: handlerTransport,
+		middlewareTransport: middlewareTransport,
+		handlerTransport:    handlerTransport,
 	}
 }
 
@@ -40,6 +44,9 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 	router.Get("/version", handlerTransport.GetVersionHandler.Handle)
 	v1 := router.Group("/api/v1")
 	{
+		if r.middlewareTransport.GetMiddlewares() != nil {
+			v1.Use(r.middlewareTransport.GetMiddlewares()...)
+		}
 		// Plugins endpoint
 		v1.Get("/plugins", handlerTransport.ListPluginsHandler.Handle)
 

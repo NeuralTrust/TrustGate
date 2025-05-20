@@ -91,7 +91,11 @@ func main() {
 		container.WSHandlerTransport,
 		cfg,
 	)
-	adminRouter := router.NewAdminRouter(container.HandlerTransport)
+
+	adminTransport := middleware.NewTransport(
+		container.AdminAuthMiddleware,
+	)
+	adminRouter := router.NewAdminRouter(adminTransport, container.HandlerTransport)
 
 	// Create and initialize the server
 	adminServerDI := server.AdminServerDI{
