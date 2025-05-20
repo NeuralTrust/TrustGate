@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -44,7 +45,9 @@ func (c *FastHTTPClient) Do(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 		fastReq.SetBody(body)
-		req.Body.Close()
+		if err := req.Body.Close(); err != nil {
+			return nil, fmt.Errorf("failed to close request body: %w", err)
+		}
 	}
 
 	if req.Host != "" {
