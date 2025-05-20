@@ -69,7 +69,6 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 		cfg:      conf,
 		producer: producer,
 	}
-	fmt.Println("trying to create topic: ", conf.Topic, "")
 	if err := exporter.createTopicIfNotExists(conf.Topic); err != nil {
 		producer.Close()
 		return nil, fmt.Errorf("failed to ensure topic exists: %w", err)

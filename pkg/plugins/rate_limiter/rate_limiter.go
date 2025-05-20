@@ -209,15 +209,18 @@ func (p *RateLimiterPlugin) Execute(
 			resp.Headers[headerPrefix+"-Reset"] = []string{strconv.FormatInt(resetTime.Unix(), 10)}
 
 			// Check if limit would be exceeded
+
+			finalStatus = limitStatus{
+				exceeded:     false,
+				limitType:    limitType,
+				retryAfter:   config.Actions.RetryAfter,
+				currentCount: currentCount,
+				window:       window,
+				limit:        limitCfg.Limit,
+			}
+
 			if currentCount >= int64(limitCfg.Limit) {
-				finalStatus = limitStatus{
-					exceeded:     true,
-					limitType:    limitType,
-					retryAfter:   config.Actions.RetryAfter,
-					currentCount: currentCount,
-					window:       window,
-					limit:        limitCfg.Limit,
-				}
+				finalStatus.exceeded = true
 				break
 			}
 
@@ -322,6 +325,7 @@ func (p *RateLimiterPlugin) setEventAsError(
 		CurrentCount:      finalStatus.currentCount,
 		Window:            finalStatus.window.String(),
 		Limit:             finalStatus.limit,
+		RetryAfter:        finalStatus.retryAfter,
 	})
 	evtCtx.SetError(fmt.Errorf("%s rate limit exceeded", finalStatus.limitType))
 }
@@ -336,5 +340,6 @@ func (p *RateLimiterPlugin) setEventAsSuccess(
 		CurrentCount:      finalStatus.currentCount,
 		Window:            finalStatus.window.String(),
 		Limit:             finalStatus.limit,
+		RetryAfter:        finalStatus.retryAfter,
 	})
 }
