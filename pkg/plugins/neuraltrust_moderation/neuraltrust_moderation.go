@@ -21,6 +21,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
@@ -33,6 +35,12 @@ const (
 	cacheKey   = "plugin:%s:neuraltrust_moderation:deny_sample:%s"
 )
 
+type LLMResponse struct {
+	Topic            string `json:"topic"`
+	InstructionMatch string `json:"instruction_match"`
+	Flagged          bool   `json:"flagged"`
+}
+
 type NeuralTrustModerationPlugin struct {
 	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
@@ -40,49 +48,11 @@ type NeuralTrustModerationPlugin struct {
 	embeddingRepo      embedding.EmbeddingRepository
 	serviceLocator     factory.EmbeddingServiceLocator
 	config             Config
+	providerLocator    providersFactory.ProviderLocator
 	bufferPool         sync.Pool
 	byteSlicePool      sync.Pool
 	keywords           []string
 	regexRules         []*regexp.Regexp
-}
-
-type Config struct {
-	EmbeddingParamBag *EmbeddingParamBag `mapstructure:"embedding_moderation"`
-	KeyRegParamBag    *KeyRegParamBag    `mapstructure:"keyreg_moderation"`
-	RetentionPeriod   int                `mapstructure:"retention_period"`
-	MappingField      string             `mapstructure:"mapping_field"`
-}
-
-type EmbeddingParamBag struct {
-	EmbeddingsConfig EmbeddingsConfig `mapstructure:"embedding_config"`
-	Threshold        float64          `mapstructure:"threshold"`
-	DenyTopicAction  string           `mapstructure:"deny_topic_action"`
-	DenySamples      []string         `mapstructure:"deny_samples"`
-	Enabled          bool             `mapstructure:"enabled"`
-}
-
-type EmbeddingsConfig struct {
-	Provider    string                `mapstructure:"provider"`
-	Model       string                `mapstructure:"model"`
-	Credentials EmbeddingsCredentials `mapstructure:"credentials,omitempty"`
-}
-
-type EmbeddingsCredentials struct {
-	HeaderName  string `mapstructure:"header_name,omitempty"`
-	HeaderValue string `mapstructure:"header_value,omitempty"`
-}
-
-type KeyRegParamBag struct {
-	Keywords            []string `mapstructure:"keywords"`
-	Regex               []string `mapstructure:"regex"`
-	Actions             Actions  `mapstructure:"actions"`
-	SimilarityThreshold float64  `mapstructure:"similarity_threshold"`
-	Enabled             bool     `mapstructure:"enabled"`
-}
-
-type Actions struct {
-	Type    string `mapstructure:"type"`
-	Message string `mapstructure:"message"`
 }
 
 func NewNeuralTrustModerationPlugin(
@@ -91,6 +61,7 @@ func NewNeuralTrustModerationPlugin(
 	fingerPrintManager fingerprint.Tracker,
 	embeddingRepo embedding.EmbeddingRepository,
 	serviceLocator factory.EmbeddingServiceLocator,
+	providerLocator providersFactory.ProviderLocator,
 ) pluginiface.Plugin {
 	if client == nil {
 		client = &http.Client{}
@@ -103,6 +74,7 @@ func NewNeuralTrustModerationPlugin(
 		serviceLocator:     serviceLocator,
 		keywords:           make([]string, 0),
 		regexRules:         make([]*regexp.Regexp, 0),
+		providerLocator:    providerLocator,
 		bufferPool: sync.Pool{
 			New: func() any {
 				return new(bytes.Buffer)
@@ -149,6 +121,10 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config types.PluginConfig) 
 		if cfg.EmbeddingParamBag.DenyTopicAction != "block" {
 			return fmt.Errorf("deny topic action must be block")
 		}
+		err := p.validateCredentials(cfg.EmbeddingParamBag.EmbeddingsConfig.Credentials)
+		if err != nil {
+			return err
+		}
 	}
 
 	if cfg.KeyRegParamBag != nil && cfg.KeyRegParamBag.Enabled {
@@ -165,6 +141,30 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config types.PluginConfig) 
 		}
 	}
 
+	if cfg.LLMParamBag != nil {
+		if cfg.LLMParamBag.Provider != providersFactory.ProviderOpenAI &&
+			cfg.LLMParamBag.Provider != providersFactory.ProviderGemini {
+			return fmt.Errorf("LLM provider must be either '%s' or '%s'",
+				providersFactory.ProviderOpenAI,
+				providersFactory.ProviderGemini,
+			)
+		}
+		if cfg.LLMParamBag.Model == "" {
+			return fmt.Errorf("LLM model cannot be empty")
+		}
+		err := p.validateCredentials(cfg.LLMParamBag.Credentials)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (p *NeuralTrustModerationPlugin) validateCredentials(credentials Credentials) error {
+	if credentials.HeaderName == "" || credentials.HeaderValue == "" {
+		return fmt.Errorf("credentials must be specified")
+	}
 	return nil
 }
 
@@ -237,7 +237,19 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		}
 
 		wg.Add(1)
-		go p.callModeration(ctx, p.config.EmbeddingParamBag, &wg, inputBody, req.GatewayID, firewallErrors, evt)
+		go p.callEmbeddingModeration(ctx, p.config.EmbeddingParamBag, &wg, inputBody, req.GatewayID, firewallErrors, evt)
+	}
+
+	if !keyRegFound && p.config.LLMParamBag != nil && p.config.LLMParamBag.Enabled {
+		wg.Add(1)
+		go p.callAIModeration(
+			ctx,
+			p.config.LLMParamBag,
+			&wg,
+			inputBody,
+			firewallErrors,
+			evt,
+		)
 	}
 
 	done := make(chan struct{})
@@ -395,7 +407,73 @@ func (p *NeuralTrustModerationPlugin) notifyGuardrailViolation(ctx context.Conte
 	}
 }
 
-func (p *NeuralTrustModerationPlugin) callModeration(
+func (p *NeuralTrustModerationPlugin) callAIModeration(
+	ctx context.Context,
+	cfg *LLMModParamBag,
+	wg *sync.WaitGroup,
+	inputBody []byte,
+	firewallErrors chan<- error,
+	evt *NeuralTrustModerationData,
+) {
+	defer wg.Done()
+
+	client, err := p.providerLocator.Get(cfg.Provider)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to get llm provider")
+		p.sendError(firewallErrors, err)
+		return
+	}
+
+	maxTokens := cfg.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 1000
+	}
+
+	response, err := client.Ask(ctx, &providers.Config{
+		Credentials: providers.Credentials{
+			HeaderKey:   cfg.Credentials.HeaderName,
+			HeaderValue: cfg.Credentials.HeaderValue,
+		},
+		Model:        cfg.Model,
+		MaxTokens:    maxTokens,
+		Temperature:  0.5,
+		SystemPrompt: SystemPrompt,
+		Instructions: cfg.Instructions,
+	}, string(inputBody))
+	if err != nil {
+		p.logger.WithError(err).Error("failed to call llm provider")
+		p.sendError(firewallErrors, err)
+		return
+	}
+
+	if response == nil {
+		err := errors.New("llm provider returned nil response")
+		p.logger.WithError(err).Error("nil response from provider")
+		p.sendError(firewallErrors, err)
+		return
+	}
+
+	var resp LLMResponse
+	if err := json.Unmarshal([]byte(response.Response), &resp); err != nil {
+		p.logger.WithError(err).Error("failed to unmarshal llm response")
+		p.sendError(firewallErrors, err)
+		return
+	}
+
+	evt.LLMModeration = &LLMModeration{
+		Blocked:          resp.Flagged,
+		InstructionMatch: resp.InstructionMatch,
+		Model:            cfg.Model,
+		Provider:         cfg.Provider,
+		Topic:            resp.Topic,
+	}
+
+	if resp.Flagged {
+		p.sendError(firewallErrors, NewModerationViolation("content blocked"))
+	}
+}
+
+func (p *NeuralTrustModerationPlugin) callEmbeddingModeration(
 	ctx context.Context,
 	cfg *EmbeddingParamBag,
 	wg *sync.WaitGroup,
@@ -412,6 +490,7 @@ func (p *NeuralTrustModerationPlugin) callModeration(
 	if err != nil {
 		p.logger.WithError(err).Error("failed to get embeddings service")
 		p.sendError(firewallErrors, err)
+		return
 	}
 	config := &embedding.Config{
 		Provider: cfg.EmbeddingsConfig.Provider,

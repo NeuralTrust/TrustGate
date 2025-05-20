@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"time"
 
+	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
 	"github.com/valyala/fasthttp"
 
@@ -107,6 +108,8 @@ func NewContainer(
 	embeddingRepository := repository.NewRedisEmbeddingRepository(cacheInstance)
 	descriptionEmbeddingCreator := appUpstream.NewDescriptionEmbeddingCreator(embeddingServiceLocator, embeddingRepository, logger)
 
+	providerFactory := providersFactory.NewProviderLocator(httpClient)
+
 	fingerprintTracker := fingerprint.NewFingerPrintTracker(cacheInstance)
 	pluginManager := plugins.NewManager(
 		cfg,
@@ -116,6 +119,7 @@ func NewContainer(
 		fingerprintTracker,
 		embeddingRepository,
 		embeddingServiceLocator,
+		providerFactory,
 	)
 
 	// repository

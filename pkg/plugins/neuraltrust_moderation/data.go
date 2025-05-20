@@ -4,6 +4,7 @@ type NeuralTrustModerationData struct {
 	Blocked             bool                 `json:"blocked"`
 	EmbeddingModeration *EmbeddingModeration `json:"embedding_moderation,omitempty"`
 	KeyRegModeration    *KeyRegModeration    `json:"keyreg_moderation,omitempty"`
+	LLMModeration       *LLMModeration       `json:"llm_moderation,omitempty"`
 }
 
 type EmbeddingScores struct {
@@ -24,4 +25,12 @@ type EmbeddingModeration struct {
 type KeyRegModeration struct {
 	Reason              KeyRegReason `json:"reason"`
 	SimilarityThreshold float64      `json:"similarity_threshold"`
+}
+
+type LLMModeration struct {
+	InstructionMatch string `json:"instruction_match"`
+	Blocked          bool   `json:"blocked"`
+	Provider         string `json:"provider"`
+	Model            string `json:"model"`
+	Topic            string `json:"topic"`
 }

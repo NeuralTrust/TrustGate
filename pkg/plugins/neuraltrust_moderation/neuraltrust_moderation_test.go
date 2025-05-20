@@ -2,6 +2,7 @@ package neuraltrust_moderation_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,6 +10,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	providerMocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory/mocks"
+	clientMocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_moderation"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
@@ -21,13 +25,14 @@ func TestNeuralTrustModerationPlugin_Name(t *testing.T) {
 	fingerPrintTrackerMock := new(mocks.Tracker)
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
-
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
 		mockClient,
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	assert.Equal(t, "neuraltrust_moderation", plugin.Name())
@@ -38,13 +43,14 @@ func TestNeuralTrustModerationPlugin_RequiredPlugins(t *testing.T) {
 	fingerPrintTrackerMock := new(mocks.Tracker)
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
-
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
 		mockClient,
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	assert.Empty(t, plugin.RequiredPlugins())
@@ -55,6 +61,7 @@ func TestNeuralTrustModerationPlugin_Stages(t *testing.T) {
 	fingerPrintTrackerMock := new(mocks.Tracker)
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
@@ -62,6 +69,7 @@ func TestNeuralTrustModerationPlugin_Stages(t *testing.T) {
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	assert.Equal(t, []types.Stage{types.PreRequest}, plugin.Stages())
@@ -72,6 +80,7 @@ func TestNeuralTrustModerationPlugin_AllowedStages(t *testing.T) {
 	fingerPrintTrackerMock := new(mocks.Tracker)
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
@@ -79,6 +88,7 @@ func TestNeuralTrustModerationPlugin_AllowedStages(t *testing.T) {
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	assert.Equal(t, []types.Stage{types.PreRequest}, plugin.AllowedStages())
@@ -89,6 +99,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	fingerPrintTrackerMock := new(mocks.Tracker)
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
@@ -96,12 +107,13 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	t.Run("Valid Configuration", func(t *testing.T) {
 		validConfig := types.PluginConfig{
 			Settings: map[string]interface{}{
-				"moderation": map[string]interface{}{
+				"embedding_moderation": map[string]interface{}{
 					"threshold":         0.7,
 					"enabled":           true,
 					"deny_topic_action": "block",
@@ -148,6 +160,80 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 		err := plugin.ValidateConfig(invalidConfig)
 		assert.Error(t, err)
 	})
+
+	t.Run("Valid Configuration - LLM Provider", func(t *testing.T) {
+		validConfig := types.PluginConfig{
+			Settings: map[string]interface{}{
+				"llm_moderation": map[string]interface{}{
+					"provider": "openai",
+					"model":    "gpt-4",
+					"credentials": map[string]interface{}{
+						"header_name":  "Authorization",
+						"header_value": "Bearer test-token",
+					},
+					"instructions": []string{"Be safe"},
+				},
+			},
+		}
+
+		err := plugin.ValidateConfig(validConfig)
+		assert.NoError(t, err)
+
+		validConfig = types.PluginConfig{
+			Settings: map[string]interface{}{
+				"llm_moderation": map[string]interface{}{
+					"provider": "gemini",
+					"model":    "gemini-pro",
+					"credentials": map[string]interface{}{
+						"header_name":  "Authorization",
+						"header_value": "Bearer test-token",
+					},
+					"instructions": []string{"Be safe"},
+				},
+			},
+		}
+
+		err = plugin.ValidateConfig(validConfig)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Invalid Configuration - LLM Provider", func(t *testing.T) {
+		invalidConfig := types.PluginConfig{
+			Settings: map[string]interface{}{
+				"llm_moderation": map[string]interface{}{
+					"provider": "invalid-provider", // Invalid: not openai or gemini
+					"model":    "some-model",
+					"credentials": map[string]interface{}{
+						"header_name":  "Authorization",
+						"header_value": "Bearer test-token",
+					},
+					"instructions": []string{"Be safe"},
+				},
+			},
+		}
+
+		err := plugin.ValidateConfig(invalidConfig)
+		assert.Error(t, err)
+	})
+
+	t.Run("Invalid Configuration - Empty LLM Model", func(t *testing.T) {
+		invalidConfig := types.PluginConfig{
+			Settings: map[string]interface{}{
+				"llm_moderation": map[string]interface{}{
+					"provider": "openai",
+					"model":    "", // Invalid: empty model
+					"credentials": map[string]interface{}{
+						"header_name":  "Authorization",
+						"header_value": "Bearer test-token",
+					},
+					"instructions": []string{"Be safe"},
+				},
+			},
+		}
+
+		err := plugin.ValidateConfig(invalidConfig)
+		assert.Error(t, err)
+	})
 }
 
 func TestNeuralTrustModerationPlugin_Execute_ModerationSafe(t *testing.T) {
@@ -156,6 +242,7 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationSafe(t *testing.T) {
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
 	embeddingCreatorMock := new(mocks.Creator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 
 	embeddingLocatorMock.On("GetService", "openai").Return(embeddingCreatorMock, nil)
 	embeddingCreatorMock.On("Generate", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
@@ -177,11 +264,12 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationSafe(t *testing.T) {
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
-			"moderation": map[string]interface{}{
+			"embedding_moderation": map[string]interface{}{
 				"threshold":         0.7,
 				"enabled":           true,
 				"deny_topic_action": "block",
@@ -217,6 +305,7 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationUnsafe(t *testing.T) {
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
 	embeddingCreatorMock := new(mocks.Creator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 
 	embeddingLocatorMock.On("GetService", "openai").Return(embeddingCreatorMock, nil)
 	embeddingCreatorMock.On("Generate", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
@@ -244,6 +333,7 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationUnsafe(t *testing.T) {
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	cfg := types.PluginConfig{
@@ -284,6 +374,7 @@ func TestNeuralTrustModerationPlugin_Execute_EmbeddingError(t *testing.T) {
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
 	embeddingCreatorMock := new(mocks.Creator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 
 	embeddingLocatorMock.On("GetService", "openai").Return(embeddingCreatorMock, nil)
 	embeddingCreatorMock.On("Generate", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
@@ -299,6 +390,7 @@ func TestNeuralTrustModerationPlugin_Execute_EmbeddingError(t *testing.T) {
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	cfg := types.PluginConfig{
@@ -337,6 +429,7 @@ func TestNeuralTrustModerationPlugin_Execute_DisabledPlugin(t *testing.T) {
 	fingerPrintTrackerMock := new(mocks.Tracker)
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
@@ -344,6 +437,7 @@ func TestNeuralTrustModerationPlugin_Execute_DisabledPlugin(t *testing.T) {
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	cfg := types.PluginConfig{
@@ -373,6 +467,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSafe(t *testing.T) {
 	fingerPrintTrackerMock := new(mocks.Tracker)
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
@@ -380,6 +475,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSafe(t *testing.T) {
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	cfg := types.PluginConfig{
@@ -415,6 +511,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegKeywordBlocked(t *testing.T) 
 	fingerPrintTrackerMock := new(mocks.Tracker)
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
@@ -422,6 +519,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegKeywordBlocked(t *testing.T) 
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	cfg := types.PluginConfig{
@@ -457,6 +555,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSimilarWordBlocked(t *testing
 	fingerPrintTrackerMock := new(mocks.Tracker)
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
@@ -464,6 +563,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSimilarWordBlocked(t *testing
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	cfg := types.PluginConfig{
@@ -499,6 +599,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegRegexBlocked(t *testing.T) {
 	fingerPrintTrackerMock := new(mocks.Tracker)
 	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
 	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
@@ -506,6 +607,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegRegexBlocked(t *testing.T) {
 		fingerPrintTrackerMock,
 		embeddingRepositoryMock,
 		embeddingLocatorMock,
+		providerLocatorMock,
 	)
 
 	cfg := types.PluginConfig{
@@ -534,4 +636,142 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegRegexBlocked(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, pluginResp)
 	assert.Contains(t, err.Error(), "content blocked")
+}
+
+func TestNeuralTrustModerationPlugin_Execute_LLMModeration(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(mocks.Tracker)
+	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
+	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
+	clientMock := new(clientMocks.Client)
+
+	// Setup mock response for LLM moderation
+	llmResponse := neuraltrust_moderation.LLMResponse{
+		Topic:            "politics",
+		InstructionMatch: "Block if it mentions politics",
+		Flagged:          true,
+	}
+	responseJSON, err := json.Marshal(llmResponse)
+	if err != nil {
+		t.Fatalf("Failed to marshal LLM response: %v", err)
+	}
+
+	// Setup expectations for provider locator and client
+	providerLocatorMock.On("Get", "openai").Return(clientMock, nil)
+	clientMock.On("Ask", mock.Anything, mock.Anything, mock.Anything).Return(&providers.CompletionResponse{
+		ID:       "test-id",
+		Model:    "gpt-4",
+		Response: string(responseJSON),
+		Usage: providers.Usage{
+			PromptTokens:     10,
+			CompletionTokens: 20,
+			TotalTokens:      30,
+		},
+	}, nil)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		embeddingRepositoryMock,
+		embeddingLocatorMock,
+		providerLocatorMock,
+	)
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"llm_moderation": map[string]interface{}{
+				"provider": "openai",
+				"model":    "gpt-4",
+				"enabled":  true,
+				"credentials": map[string]interface{}{
+					"header_name":  "Authorization",
+					"header_value": "Bearer test-token",
+				},
+				"instructions": []string{"Block if it mentions politics"},
+			},
+		},
+	}
+
+	req := &types.RequestContext{
+		Body:      []byte(`{"text":"Let's discuss the upcoming elections"}`),
+		GatewayID: "test-gateway",
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	assert.Error(t, err)
+	assert.Nil(t, pluginResp)
+	assert.Contains(t, err.Error(), "content blocked")
+}
+
+func TestNeuralTrustModerationPlugin_Execute_LLMModerationSafe(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(mocks.Tracker)
+	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
+	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
+	clientMock := new(clientMocks.Client)
+
+	// Setup mock response for LLM moderation (safe content)
+	llmResponse := neuraltrust_moderation.LLMResponse{
+		Topic:            "other",
+		InstructionMatch: "",
+		Flagged:          false,
+	}
+	responseJSON, err := json.Marshal(llmResponse)
+	if err != nil {
+		t.Fatalf("Failed to marshal LLM response: %v", err)
+	}
+
+	// Setup expectations for provider locator and client
+	providerLocatorMock.On("Get", "openai").Return(clientMock, nil)
+	clientMock.On("Ask", mock.Anything, mock.Anything, mock.Anything).Return(&providers.CompletionResponse{
+		ID:       "test-id",
+		Model:    "gpt-4",
+		Response: string(responseJSON),
+		Usage: providers.Usage{
+			PromptTokens:     10,
+			CompletionTokens: 20,
+			TotalTokens:      30,
+		},
+	}, nil)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		embeddingRepositoryMock,
+		embeddingLocatorMock,
+		providerLocatorMock,
+	)
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"llm_moderation": map[string]interface{}{
+				"provider": "openai",
+				"model":    "gpt-4",
+				"enabled":  true,
+				"credentials": map[string]interface{}{
+					"header_name":  "Authorization",
+					"header_value": "Bearer test-token",
+				},
+				"instructions": []string{"Block if it mentions politics"},
+			},
+		},
+	}
+
+	req := &types.RequestContext{
+		Body:      []byte(`{"text":"This is a safe message about technology"}`),
+		GatewayID: "test-gateway",
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	assert.NoError(t, err)
+	assert.NotNil(t, pluginResp)
+	assert.Equal(t, 200, pluginResp.StatusCode)
 }

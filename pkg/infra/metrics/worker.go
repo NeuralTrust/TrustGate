@@ -167,7 +167,7 @@ func (m *worker) feedEvent(
 	startTime, endTime time.Time,
 ) *metric_events.Event {
 	elapsedTime := endTime.Sub(startTime)
-	evt.StartTimestamp = startTime.Unix()
+	evt.StartTimestamp = startTime.UnixMilli()
 	evt.Latency = elapsedTime.Milliseconds()
 	evt.IP = req.IP
 	evt.Method = req.Method
@@ -203,7 +203,7 @@ func (m *worker) feedEvent(
 	}
 	evt.RequestHeaders = req.Headers
 	evt.ResponseHeaders = resp.Headers
-	evt.EndTimestamp = endTime.Unix()
+	evt.EndTimestamp = endTime.UnixMilli()
 	return evt
 }
 
