@@ -86,7 +86,7 @@ func (c *client) Ask(
 			Content: config.SystemPrompt,
 		})
 	}
-	if config.Instructions != nil && len(config.Instructions) > 0 {
+	if len(config.Instructions) > 0 {
 		msgs = append(msgs, messages{
 			Role:    "developer",
 			Content: providers.FormatInstructions(config.Instructions),

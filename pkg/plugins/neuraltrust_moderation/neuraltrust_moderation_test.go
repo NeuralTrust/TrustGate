@@ -652,7 +652,10 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModeration(t *testing.T) {
 		InstructionMatch: "Block if it mentions politics",
 		Flagged:          true,
 	}
-	responseJSON, _ := json.Marshal(llmResponse)
+	responseJSON, err := json.Marshal(llmResponse)
+	if err != nil {
+		t.Fatalf("Failed to marshal LLM response: %v", err)
+	}
 
 	// Setup expectations for provider locator and client
 	providerLocatorMock.On("Get", "openai").Return(clientMock, nil)
@@ -718,7 +721,10 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModerationSafe(t *testing.T) {
 		InstructionMatch: "",
 		Flagged:          false,
 	}
-	responseJSON, _ := json.Marshal(llmResponse)
+	responseJSON, err := json.Marshal(llmResponse)
+	if err != nil {
+		t.Fatalf("Failed to marshal LLM response: %v", err)
+	}
 
 	// Setup expectations for provider locator and client
 	providerLocatorMock.On("Get", "openai").Return(clientMock, nil)

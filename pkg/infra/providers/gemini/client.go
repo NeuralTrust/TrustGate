@@ -14,22 +14,19 @@ type client struct {
 	genaiClient *genai.Client
 }
 
-func NewGeminiClient(apiKey string) providers.Client {
+func NewGeminiClient(apiKey string) (providers.Client, error) {
 	ctx := context.Background()
 	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
-		// Since the original function doesn't return an error, we'll log it and return nil
-		// This will cause a panic when the client is used, but it's consistent with the original behavior
-		// In a real-world scenario, we might want to modify the function signature to return an error
-		return nil
+		return nil, err
 	}
 
 	return &client{
 		genaiClient: genaiClient,
-	}
+	}, nil
 }
 
 func (c *client) Ask(
@@ -51,7 +48,7 @@ func (c *client) Ask(
 			Text: config.SystemPrompt,
 		})
 	}
-	if config.Instructions != nil && len(config.Instructions) > 0 {
+	if len(config.Instructions) > 0 {
 		parts = append(parts, &genai.Part{
 			Text: providers.FormatInstructions(config.Instructions),
 		})
@@ -77,7 +74,7 @@ func (c *client) Ask(
 	responseText = strings.TrimSuffix(responseText, "```")
 	responseText = strings.TrimSpace(responseText)
 
-	id := "gemini"
+	var id string
 	if requestID := ctx.Value("requestID"); requestID != nil {
 		id = fmt.Sprintf("gemini-%v", requestID)
 	} else {
