@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
@@ -15,26 +16,25 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/contextual_security"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/cors"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_moderation"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_neuraltrust"
-	"github.com/sirupsen/logrus"
-
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/bedrock_guardrail"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/code_sanitation"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/contextual_security"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/data_masking"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/external_api"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/injection_protection"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_moderation"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/request_size_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/token_rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_azure"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_neuraltrust"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_openai"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -72,6 +72,7 @@ type manager struct {
 	serviceLocator     factory.EmbeddingServiceLocator
 	plugins            map[string]pluginiface.Plugin
 	configurations     map[string][][]types.PluginConfig
+	providerLocator    providersFactory.ProviderLocator
 }
 
 func NewManager(
@@ -82,6 +83,7 @@ func NewManager(
 	fingerprintTracker fingerprint.Tracker,
 	embeddingRepo embedding.EmbeddingRepository,
 	serviceLocator factory.EmbeddingServiceLocator,
+	providerFactory providersFactory.ProviderLocator,
 ) Manager {
 	once.Do(func() {
 		instance = &manager{
@@ -94,6 +96,7 @@ func NewManager(
 			fingerprintTracker: fingerprintTracker,
 			embeddingRepo:      embeddingRepo,
 			serviceLocator:     serviceLocator,
+			providerLocator:    providerFactory,
 		}
 	})
 	instance.InitializePlugins()
@@ -177,6 +180,7 @@ func (m *manager) InitializePlugins() {
 		m.fingerprintTracker,
 		m.embeddingRepo,
 		m.serviceLocator,
+		m.providerLocator,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register toxicity neuraltrust plugin")
 	}
