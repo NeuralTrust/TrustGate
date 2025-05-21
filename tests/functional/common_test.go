@@ -12,7 +12,14 @@ import (
 )
 
 func CreateGateway(t *testing.T, gatewayPayload map[string]interface{}) string {
-	status, gatewayResp := sendRequest(t, http.MethodPost, AdminUrl+"/gateways", gatewayPayload)
+	status, gatewayResp := sendRequest(
+		t,
+		http.MethodPost, AdminUrl+"/gateways",
+		map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		},
+		gatewayPayload,
+	)
 	assert.Equal(t, http.StatusCreated, status)
 	if status != http.StatusCreated {
 		t.Fatalf("❌ Failed to create gateway. Status: %d, Response: %v", status, gatewayResp)
@@ -33,7 +40,15 @@ func CreateApiKey(t *testing.T, gatewayID string) string {
 		"name":       "Test Key",
 		"expires_at": "2026-01-01T00:00:00Z",
 	}
-	status, apiKeyResp := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, gatewayID), apiKeyPayload)
+	status, apiKeyResp := sendRequest(
+		t,
+		http.MethodPost,
+		fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, gatewayID),
+		map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		},
+		apiKeyPayload,
+	)
 	assert.Equal(t, http.StatusCreated, status)
 	if status != http.StatusCreated {
 		t.Fatalf("❌ Failed to create apiKey. Status: %d, Response: %v", status, apiKeyResp)
@@ -47,7 +62,15 @@ func CreateApiKey(t *testing.T, gatewayID string) string {
 }
 
 func CreateUpstream(t *testing.T, gatewayID string, upstreamPayload map[string]interface{}) string {
-	status, upstreamResp := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), upstreamPayload)
+	status, upstreamResp := sendRequest(
+		t,
+		http.MethodPost,
+		fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID),
+		map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		},
+		upstreamPayload,
+	)
 	assert.Equal(t, http.StatusCreated, status)
 	if status != http.StatusCreated {
 		t.Fatalf("❌ Failed to create upstream. Status: %d, Response: %v", status, upstreamResp)
@@ -64,7 +87,15 @@ func CreateUpstream(t *testing.T, gatewayID string, upstreamPayload map[string]i
 }
 
 func CreateService(t *testing.T, gatewayID string, servicePayload map[string]interface{}) string {
-	status, serviceResp := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/services", AdminUrl, gatewayID), servicePayload)
+	status, serviceResp := sendRequest(
+		t,
+		http.MethodPost,
+		fmt.Sprintf("%s/gateways/%s/services", AdminUrl, gatewayID),
+		map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		},
+		servicePayload,
+	)
 	assert.Equal(t, http.StatusCreated, status)
 	if status != http.StatusCreated {
 		t.Fatalf("❌ Failed to create service. Status: %d, Response: %v", status, serviceResp)
@@ -88,7 +119,12 @@ func CreateRules(t *testing.T, gatewayID string, rulesPayload map[string]interfa
 		fmt.Sprintf("%s/gateways/%s/rules",
 			AdminUrl,
 			gatewayID,
-		), rulesPayload)
+		),
+		map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		},
+		rulesPayload,
+	)
 	assert.Equal(t, http.StatusCreated, status)
 	if status != http.StatusCreated {
 		t.Fatalf("❌ Failed to create rules. Status: %d, Response: %v", status, rulesResp)
@@ -96,7 +132,7 @@ func CreateRules(t *testing.T, gatewayID string, rulesPayload map[string]interfa
 	t.Logf("✅ Rules created for gateway: %s", gatewayID)
 }
 
-func sendRequest(t *testing.T, method, url string, body interface{}) (int, map[string]interface{}) {
+func sendRequest(t *testing.T, method, url string, headers map[string]string, body interface{}) (int, map[string]interface{}) {
 	var reqBody io.Reader
 	if body != nil {
 		bodyBytes, err := json.Marshal(body)
@@ -109,6 +145,12 @@ func sendRequest(t *testing.T, method, url string, body interface{}) (int, map[s
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	if len(headers) > 0 {
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
 	}
 
 	client := &http.Client{}

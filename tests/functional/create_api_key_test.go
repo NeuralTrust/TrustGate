@@ -22,7 +22,9 @@ func TestCreateAPIKey(t *testing.T) {
 			"name": "Test API Key",
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, gatewayID), apiKeyPayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, apiKeyPayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -39,7 +41,9 @@ func TestCreateAPIKey(t *testing.T) {
 			"expires_at": expirationDate,
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, gatewayID), apiKeyPayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, apiKeyPayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -55,7 +59,9 @@ func TestCreateAPIKey(t *testing.T) {
 			"expires_at": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 		}
 
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, gatewayID), apiKeyPayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, apiKeyPayload)
 		assert.Equal(t, http.StatusInternalServerError, status)
 	})
 
@@ -65,7 +71,9 @@ func TestCreateAPIKey(t *testing.T) {
 		}
 
 		invalidGatewayID := "invalid-uuid"
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, invalidGatewayID), apiKeyPayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, invalidGatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, apiKeyPayload)
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
@@ -75,7 +83,9 @@ func TestCreateAPIKey(t *testing.T) {
 		}
 
 		nonExistentGatewayID := uuid.New().String()
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, nonExistentGatewayID), apiKeyPayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, nonExistentGatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, apiKeyPayload)
 		assert.Equal(t, http.StatusCreated, status)
 	})
 

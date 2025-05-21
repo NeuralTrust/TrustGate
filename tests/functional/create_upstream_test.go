@@ -31,7 +31,9 @@ func TestCreateUpstream(t *testing.T) {
 			},
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), upstreamPayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -63,7 +65,9 @@ func TestCreateUpstream(t *testing.T) {
 			},
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), upstreamPayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -99,7 +103,9 @@ func TestCreateUpstream(t *testing.T) {
 			},
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), upstreamPayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -123,7 +129,9 @@ func TestCreateUpstream(t *testing.T) {
 			"tags": []string{"production", "api", "external"},
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), upstreamPayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -148,7 +156,9 @@ func TestCreateUpstream(t *testing.T) {
 			},
 		}
 
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), upstreamPayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
 		assert.Equal(t, http.StatusInternalServerError, status)
 	})
 
@@ -158,7 +168,9 @@ func TestCreateUpstream(t *testing.T) {
 			"algorithm": "round-robin",
 		}
 
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), upstreamPayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
 		assert.Equal(t, http.StatusInternalServerError, status)
 	})
 
@@ -177,7 +189,9 @@ func TestCreateUpstream(t *testing.T) {
 		}
 
 		invalidGatewayID := "invalid-uuid"
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, invalidGatewayID), upstreamPayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, invalidGatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
@@ -196,7 +210,9 @@ func TestCreateUpstream(t *testing.T) {
 		}
 
 		nonExistentGatewayID := uuid.New().String()
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, nonExistentGatewayID), upstreamPayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, nonExistentGatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
 		assert.Equal(t, http.StatusCreated, status)
 	})
 }

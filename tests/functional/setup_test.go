@@ -25,6 +25,7 @@ var (
 	AdminUrl     = getEnv("ADMIN_URL", "http://localhost:8080/api/v1")
 	ProxyUrl     = getEnv("PROXY_URL", "http://localhost:8081")
 	BaseDomain   = getEnv("BASE_DOMAIN", "example.com")
+	AdminToken   = getEnv("ADMIN_TOKEN", "<PASSWORD>")
 )
 
 const (

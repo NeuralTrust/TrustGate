@@ -23,11 +23,15 @@ func TestUpdateGateway(t *testing.T) {
 			"name": "Updated Gateway Name",
 		}
 
-		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), updatePayload)
+		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, updatePayload)
 		assert.Equal(t, http.StatusNoContent, status)
 
 		// Verify the gateway was updated by fetching it
-		getStatus, getResponse := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), nil)
+		getStatus, getResponse := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, nil)
 		assert.Equal(t, http.StatusOK, getStatus)
 		assert.Equal(t, "Updated Gateway Name", getResponse["name"])
 	})
@@ -44,11 +48,15 @@ func TestUpdateGateway(t *testing.T) {
 			"status": "disabled",
 		}
 
-		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), updatePayload)
+		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, updatePayload)
 		assert.Equal(t, http.StatusNoContent, status)
 
 		// Verify the gateway was updated by fetching it
-		getStatus, getResponse := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), nil)
+		getStatus, getResponse := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, nil)
 		assert.Equal(t, http.StatusOK, getStatus)
 		assert.Equal(t, "disabled", getResponse["status"])
 	})
@@ -78,11 +86,15 @@ func TestUpdateGateway(t *testing.T) {
 			},
 		}
 
-		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), updatePayload)
+		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, updatePayload)
 		assert.Equal(t, http.StatusNoContent, status)
 
 		// Verify the gateway was updated by fetching it
-		getStatus, getResponse := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), nil)
+		getStatus, getResponse := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, nil)
 		assert.Equal(t, http.StatusOK, getStatus)
 		assert.NotNil(t, getResponse["security_config"])
 
@@ -117,11 +129,15 @@ func TestUpdateGateway(t *testing.T) {
 			},
 		}
 
-		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), updatePayload)
+		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, updatePayload)
 		assert.Equal(t, http.StatusNoContent, status)
 
 		// Verify the gateway was updated by fetching it
-		getStatus, getResponse := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), nil)
+		getStatus, getResponse := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, nil)
 		assert.Equal(t, http.StatusOK, getStatus)
 		assert.NotNil(t, getResponse["telemetry"])
 	})
@@ -158,11 +174,15 @@ func TestUpdateGateway(t *testing.T) {
 			},
 		}
 
-		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), updatePayload)
+		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, updatePayload)
 		assert.Equal(t, http.StatusNoContent, status)
 
 		// Verify the gateway was updated by fetching it
-		getStatus, getResponse := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), nil)
+		getStatus, getResponse := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, nil)
 		assert.Equal(t, http.StatusOK, getStatus)
 		assert.NotNil(t, getResponse["required_plugins"])
 	})
@@ -173,7 +193,9 @@ func TestUpdateGateway(t *testing.T) {
 		}
 
 		invalidGatewayID := "invalid-uuid"
-		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, invalidGatewayID), updatePayload)
+		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, invalidGatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, updatePayload)
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
@@ -183,7 +205,9 @@ func TestUpdateGateway(t *testing.T) {
 		}
 
 		nonExistentGatewayID := uuid.New().String()
-		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, nonExistentGatewayID), updatePayload)
+		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, nonExistentGatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, updatePayload)
 		assert.Equal(t, http.StatusNotFound, status)
 	})
 
@@ -210,7 +234,9 @@ func TestUpdateGateway(t *testing.T) {
 			},
 		}
 
-		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), updatePayload)
+		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, updatePayload)
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 }
