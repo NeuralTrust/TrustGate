@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/jwt"
 	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -22,10 +23,10 @@ var (
 	redisDB      *redis.Client
 	proxyCmd     *exec.Cmd
 	adminCmd     *exec.Cmd
-	AdminUrl     = getEnv("ADMIN_URL", "http://localhost:8080/api/v1")
-	ProxyUrl     = getEnv("PROXY_URL", "http://localhost:8081")
-	BaseDomain   = getEnv("BASE_DOMAIN", "example.com")
-	AdminToken   = getEnv("ADMIN_TOKEN", "<PASSWORD>")
+	AdminUrl     = getEnv("ADMIN_URL", "")
+	ProxyUrl     = getEnv("PROXY_URL", "")
+	BaseDomain   = getEnv("BASE_DOMAIN", "")
+	AdminToken   = getEnv("ADMIN_TOKEN", "")
 )
 
 const (
@@ -65,6 +66,17 @@ func setupTestEnvironment() {
 	}
 
 	GlobalConfig = config.GetConfig()
+
+	AdminUrl = getEnv("ADMIN_URL", "http://localhost:8080/api/v1")
+	ProxyUrl = getEnv("PROXY_URL", "http://localhost:8081")
+	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
+
+	jwtManager := jwt.NewJwtManager(&GlobalConfig.Server)
+	tkn, err := jwtManager.CreateToken()
+	if err != nil {
+		log.Fatalf("failed to create token: %v", err)
+	}
+	AdminToken = tkn
 
 	createTestDB(dbName)
 	redisDB = redis.NewClient(&redis.Options{
