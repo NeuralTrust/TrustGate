@@ -17,7 +17,9 @@ func TestCreateGateway(t *testing.T) {
 			"subdomain": subdomain,
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), gatewayPayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, gatewayPayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -31,7 +33,9 @@ func TestCreateGateway(t *testing.T) {
 			"subdomain": fmt.Sprintf("test-%d", time.Now().Unix()),
 		}
 
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), gatewayPayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, gatewayPayload)
 		assert.Equal(t, http.StatusInternalServerError, status)
 	})
 
@@ -40,7 +44,9 @@ func TestCreateGateway(t *testing.T) {
 			"name": "Missing Subdomain Gateway",
 		}
 
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), gatewayPayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, gatewayPayload)
 		assert.Equal(t, http.StatusInternalServerError, status)
 	})
 
@@ -65,7 +71,9 @@ func TestCreateGateway(t *testing.T) {
 			},
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), gatewayPayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, gatewayPayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -97,7 +105,9 @@ func TestCreateGateway(t *testing.T) {
 			},
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), gatewayPayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, gatewayPayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -137,7 +147,9 @@ func TestCreateGateway(t *testing.T) {
 			},
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), gatewayPayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, gatewayPayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -175,7 +187,9 @@ func TestCreateGateway(t *testing.T) {
 			},
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), gatewayPayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, gatewayPayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields

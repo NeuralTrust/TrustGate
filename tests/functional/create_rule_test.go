@@ -45,7 +45,9 @@ func TestCreateRule(t *testing.T) {
 			"methods":    []string{"GET"},
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), rulePayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -67,7 +69,9 @@ func TestCreateRule(t *testing.T) {
 			},
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), rulePayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -87,7 +91,9 @@ func TestCreateRule(t *testing.T) {
 			"preserve_host": true,
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), rulePayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -106,7 +112,9 @@ func TestCreateRule(t *testing.T) {
 			"retry_attempts": 3,
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), rulePayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -144,7 +152,9 @@ func TestCreateRule(t *testing.T) {
 			},
 		}
 
-		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), rulePayload)
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, http.StatusCreated, status)
 
 		// Verify response fields
@@ -160,7 +170,9 @@ func TestCreateRule(t *testing.T) {
 			"methods":    []string{"GET"},
 		}
 
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), rulePayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
@@ -170,7 +182,9 @@ func TestCreateRule(t *testing.T) {
 			"methods": []string{"GET"},
 		}
 
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), rulePayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
@@ -180,7 +194,9 @@ func TestCreateRule(t *testing.T) {
 			"service_id": serviceID,
 		}
 
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), rulePayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
@@ -192,7 +208,9 @@ func TestCreateRule(t *testing.T) {
 		}
 
 		nonExistentGatewayID := uuid.New().String()
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, nonExistentGatewayID), rulePayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, nonExistentGatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, http.StatusCreated, status)
 	})
 
@@ -203,7 +221,9 @@ func TestCreateRule(t *testing.T) {
 			"methods":    []string{"GET"},
 		}
 
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), rulePayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, http.StatusCreated, status)
 	})
 
@@ -214,7 +234,9 @@ func TestCreateRule(t *testing.T) {
 			"methods":    []string{"INVALID"},
 		}
 
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), rulePayload)
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 }

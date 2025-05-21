@@ -33,7 +33,9 @@ func TestRequiredPlugins_Failed(t *testing.T) {
 	}
 
 	t.Run("it should fail when missing required plugin", func(t *testing.T) {
-		status, _ := sendRequest(t, "POST", fmt.Sprintf("%s/gateways", AdminUrl), gatewayPayload)
+		status, _ := sendRequest(t, "POST", fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, gatewayPayload)
 		assert.Equal(t, 400, status)
 	})
 }
@@ -122,7 +124,9 @@ func TestRequiredPlugins_Success(t *testing.T) {
 	}
 
 	t.Run("it should fail when missing required plugin", func(t *testing.T) {
-		status, _ := sendRequest(t, "POST", fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), rulePayload)
+		status, _ := sendRequest(t, "POST", fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
 		assert.Equal(t, 201, status)
 	})
 
