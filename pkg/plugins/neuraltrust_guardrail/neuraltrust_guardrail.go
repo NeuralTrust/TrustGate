@@ -122,7 +122,7 @@ func (p *NeuralTrustGuardrailPlugin) ValidateConfig(config types.PluginConfig) e
 		}
 	}
 	if cfg.JailbreakParamBag == nil {
-		return fmt.Errorf("at least one of [jailbreak, moderation] must be enabled")
+		return fmt.Errorf("at least one of [jailbreak] must be enabled")
 	}
 
 	return nil
