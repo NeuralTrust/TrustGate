@@ -92,6 +92,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("invalid plugin configuration: %v", err)})
 			}
 		}
+		dbGateway.RequiredPlugins = req.RequiredPlugins
 	}
 
 	var securityConfig *domain.SecurityConfigJSON
