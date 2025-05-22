@@ -222,7 +222,7 @@ func TestNeuralTrustModerationPlugin_KeyReg(t *testing.T) {
 			http.StatusForbidden,
 		},
 		{
-			"Direct Text with Keyword",
+			"Direct Text with Keyword ",
 			"My secret is 12345",
 			http.StatusForbidden,
 		},
