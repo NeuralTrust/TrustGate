@@ -24,6 +24,7 @@ func NewListServicesHandler(logger *logrus.Logger, repo *database.Repository) Ha
 // Handle @Summary Retrieve all Services
 // @Description Returns a list of all services for a gateway
 // @Tags Services
+// @Param Authorization header string true "Authorization token"
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
 // @Success 200 {array} service.Service "List of services"

@@ -22,6 +22,7 @@ func NewListAPIKeysHandler(logger *logrus.Logger, repo *database.Repository) Han
 // Handle @Summary Retrieve all API Keys
 // @Description Returns a list of all API keys for a gateway
 // @Tags API Keys
+// @Param Authorization header string true "Authorization token"
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
 // @Success 200 {array} apikey.APIKey "List of API Keys"

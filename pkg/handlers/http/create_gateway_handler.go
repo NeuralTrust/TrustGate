@@ -45,6 +45,7 @@ func NewCreateGatewayHandler(
 // @Tags         Gateways
 // @Accept       json
 // @Produce      json
+// @Param        Authorization header string true "Authorization token"
 // @Param        gateway body request.CreateGatewayRequest true "Gateway data"
 // @Success      201 {object} gateway.Gateway "Gateway created successfully"
 // @Failure      400 {object} map[string]interface{} "Invalid request data"

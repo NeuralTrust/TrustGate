@@ -39,6 +39,7 @@ func NewCreateRuleHandler(
 // @Tags Rules
 // @Accept json
 // @Produce json
+// @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param rule body types.CreateRuleRequest true "Rule request body"
 // @Success 201 {object} forwarding_rule.ForwardingRule "Rule created successfully"

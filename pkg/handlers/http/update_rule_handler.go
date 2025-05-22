@@ -51,6 +51,7 @@ func NewUpdateRuleHandler(
 // @Tags Rules
 // @Accept json
 // @Produce json
+// @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param rule_id path string true "Rule ID"
 // @Param rule body types.UpdateRuleRequest true "Updated rule data"

@@ -28,6 +28,15 @@ const docTemplate = `{
                 "tags": [
                     "Gateways"
                 ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "List of gateways",
@@ -59,6 +68,13 @@ const docTemplate = `{
                     "Gateways"
                 ],
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "description": "Gateway data",
                         "name": "gateway",
@@ -98,6 +114,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -132,6 +155,13 @@ const docTemplate = `{
                     "Gateways"
                 ],
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Gateway ID",
@@ -170,6 +200,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -200,6 +237,13 @@ const docTemplate = `{
                     "API Keys"
                 ],
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Gateway ID",
@@ -239,6 +283,13 @@ const docTemplate = `{
                     "API Keys"
                 ],
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Gateway ID",
@@ -292,6 +343,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -327,6 +385,13 @@ const docTemplate = `{
                     "API Keys"
                 ],
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Gateway ID",
@@ -368,6 +433,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -402,6 +474,13 @@ const docTemplate = `{
                     "Rules"
                 ],
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Gateway ID",
@@ -458,6 +537,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -508,6 +594,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -547,6 +640,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -584,6 +684,13 @@ const docTemplate = `{
                     "Services"
                 ],
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Gateway ID",
@@ -637,6 +744,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -678,6 +792,13 @@ const docTemplate = `{
                     "Services"
                 ],
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Gateway ID",
@@ -733,6 +854,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -772,6 +900,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -802,6 +937,13 @@ const docTemplate = `{
                     "Upstreams"
                 ],
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Gateway ID",
@@ -841,6 +983,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -875,6 +1024,13 @@ const docTemplate = `{
                     "Upstreams"
                 ],
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Gateway ID",
@@ -914,6 +1070,13 @@ const docTemplate = `{
                     "Upstreams"
                 ],
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Gateway ID",

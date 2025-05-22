@@ -906,6 +906,12 @@ paths:
   /api/v1/gateways:
     get:
       description: Retrieves a list of all gateways in the system
+      parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       produces:
       - application/json
       responses:
@@ -927,6 +933,11 @@ paths:
       - application/json
       description: Creates a new gateway in the system
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway data
         in: body
         name: gateway
@@ -951,6 +962,11 @@ paths:
     delete:
       description: Removes a gateway from the system
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -969,6 +985,11 @@ paths:
     get:
       description: Returns details of a specific gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -993,6 +1014,11 @@ paths:
       - application/json
       description: Updates an existing gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1020,6 +1046,11 @@ paths:
     get:
       description: Returns a list of all API keys for a gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1046,6 +1077,11 @@ paths:
       - application/json
       description: Generates a new API key for the specified gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1080,6 +1116,11 @@ paths:
     delete:
       description: Removes an API key from a gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1103,6 +1144,11 @@ paths:
     get:
       description: Returns details of a specific API key
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1131,6 +1177,11 @@ paths:
     get:
       description: Returns a list of all rules for a gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1155,6 +1206,11 @@ paths:
       - application/json
       description: Adds a new rule under a gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1189,6 +1245,11 @@ paths:
     delete:
       description: Removes a rule from a gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1214,6 +1275,11 @@ paths:
       - application/json
       description: Updates an existing rule
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1251,6 +1317,11 @@ paths:
     get:
       description: Returns a list of all services for a gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1277,6 +1348,11 @@ paths:
       - application/json
       description: Adds a new service under a gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1311,6 +1387,11 @@ paths:
     delete:
       description: Removes a service from a gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1334,6 +1415,11 @@ paths:
     get:
       description: Returns details of a specific service
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1363,6 +1449,11 @@ paths:
       - application/json
       description: Updates an existing service
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1402,6 +1493,11 @@ paths:
     get:
       description: Returns a list of all upstreams for a gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1423,6 +1519,11 @@ paths:
       - application/json
       description: Adds a new upstream under a gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1447,6 +1548,11 @@ paths:
     delete:
       description: Removes an upstream from a gateway
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1465,6 +1571,11 @@ paths:
     get:
       description: Returns details of a specific upstream
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id
@@ -1489,6 +1600,11 @@ paths:
       - application/json
       description: Updates an existing upstream
       parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
       - description: Gateway ID
         in: path
         name: gateway_id

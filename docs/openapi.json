@@ -16,6 +16,17 @@
                 "tags": [
                     "Gateways"
                 ],
+                "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "List of gateways",
@@ -47,6 +58,17 @@
                 "description": "Creates a new gateway in the system",
                 "tags": [
                     "Gateways"
+                ],
+                "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
                 ],
                 "requestBody": {
                     "content": {
@@ -92,6 +114,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -131,6 +162,15 @@
                     "Gateways"
                 ],
                 "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     {
                         "description": "Gateway ID",
                         "name": "gateway_id",
@@ -176,6 +216,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -210,6 +259,15 @@
                     "API Keys"
                 ],
                 "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     {
                         "description": "Gateway ID",
                         "name": "gateway_id",
@@ -253,6 +311,15 @@
                     "API Keys"
                 ],
                 "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     {
                         "description": "Gateway ID",
                         "name": "gateway_id",
@@ -318,6 +385,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -367,6 +443,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -411,6 +496,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -450,6 +544,15 @@
                     "Rules"
                 ],
                 "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     {
                         "description": "Gateway ID",
                         "name": "gateway_id",
@@ -515,6 +618,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -579,6 +691,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -623,6 +744,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -665,6 +795,15 @@
                     "Services"
                 ],
                 "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     {
                         "description": "Gateway ID",
                         "name": "gateway_id",
@@ -730,6 +869,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -778,6 +926,15 @@
                     "Services"
                 ],
                 "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     {
                         "description": "Gateway ID",
                         "name": "gateway_id",
@@ -850,6 +1007,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -894,6 +1060,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -925,6 +1100,15 @@
                     "Upstreams"
                 ],
                 "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     {
                         "description": "Gateway ID",
                         "name": "gateway_id",
@@ -968,6 +1152,15 @@
                 ],
                 "parameters": [
                     {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
                         "description": "Gateway ID",
                         "name": "gateway_id",
                         "in": "path",
@@ -1005,6 +1198,15 @@
                     "Upstreams"
                 ],
                 "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     {
                         "description": "Gateway ID",
                         "name": "gateway_id",
@@ -1054,6 +1256,15 @@
                     "Upstreams"
                 ],
                 "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     {
                         "description": "Gateway ID",
                         "name": "gateway_id",

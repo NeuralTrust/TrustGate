@@ -21,6 +21,7 @@ type createServiceHandler struct {
 // @Tags Services
 // @Accept json
 // @Produce json
+// @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param service body types.ServiceRequest true "Service request body"
 // @Success 201 {object} service.Service "Service created successfully"

@@ -46,6 +46,7 @@ func NewUpdateGatewayHandler(
 // Handle @Summary Update a Gateway
 // @Description Updates an existing gateway
 // @Tags Gateways
+// @Param Authorization header string true "Authorization token"
 // @Accept json
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"

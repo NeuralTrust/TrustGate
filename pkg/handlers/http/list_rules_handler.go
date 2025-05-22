@@ -45,6 +45,7 @@ func NewListRulesHandler(
 // Handle @Summary Retrieve all Rules
 // @Description Returns a list of all rules for a gateway
 // @Tags Rules
+// @Param Authorization header string true "Authorization token"
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
 // @Success 200 {object} response.ListRulesOutput "List of rules"

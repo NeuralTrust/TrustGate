@@ -38,6 +38,7 @@ func NewDeleteRuleHandler(
 // Handle @Summary Delete a Rule
 // @Description Removes a rule from a gateway
 // @Tags Rules
+// @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param rule_id path string true "Rule ID"
 // @Success 204 "Rule deleted successfully"

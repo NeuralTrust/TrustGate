@@ -35,6 +35,7 @@ func NewListGatewayHandler(
 // Handle @Summary      List all Gateways
 // @Description  Retrieves a list of all gateways in the system
 // @Tags         Gateways
+// @Param        Authorization header string true "Authorization token"
 // @Produce      json
 // @Success      200 {array} gateway.Gateway "List of gateways"
 // @Failure      500 {object} map[string]interface{} "Internal server error"

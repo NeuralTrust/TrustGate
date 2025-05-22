@@ -37,6 +37,7 @@ func NewGetUpstreamHandler(
 // Handle @Summary Retrieve an Upstream by ID
 // @Description Returns details of a specific upstream
 // @Tags Upstreams
+// @Param Authorization header string true "Authorization token"
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
 // @Param upstream_id path string true "Upstream ID"

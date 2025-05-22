@@ -33,6 +33,7 @@ func NewDeleteServiceHandler(
 // Handle @Summary Delete a Service
 // @Description Removes a service from a gateway
 // @Tags Services
+// @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param service_id path string true "Service ID"
 // @Success 204 "Service deleted successfully"
