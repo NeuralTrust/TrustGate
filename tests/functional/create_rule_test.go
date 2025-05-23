@@ -41,6 +41,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should create a rule with minimal configuration", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test",
+			"name":       "rulename",
 			"service_id": serviceID,
 			"methods":    []string{"GET"},
 		}
@@ -61,6 +62,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should create a rule with headers", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-headers",
+			"name":       "rulename",
 			"service_id": serviceID,
 			"methods":    []string{"GET", "POST"},
 			"headers": map[string]interface{}{
@@ -85,6 +87,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should create a rule with strip_path and preserve_host", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":          "/test-options",
+			"name":          "rulename",
 			"service_id":    serviceID,
 			"methods":       []string{"GET"},
 			"strip_path":    true,
@@ -107,6 +110,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should create a rule with retry_attempts", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":           "/test-retry",
+			"name":           "rulename",
 			"service_id":     serviceID,
 			"methods":        []string{"GET"},
 			"retry_attempts": 3,
@@ -127,6 +131,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should create a rule with plugin chain", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-plugins",
+			"name":       "rulename",
 			"service_id": serviceID,
 			"methods":    []string{"GET"},
 			"plugin_chain": []map[string]interface{}{
@@ -167,6 +172,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should fail when path is missing", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"service_id": serviceID,
+			"name":       "rulename",
 			"methods":    []string{"GET"},
 		}
 
@@ -179,6 +185,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should fail when service_id is missing", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":    "/test-missing-service",
+			"name":    "rulename",
 			"methods": []string{"GET"},
 		}
 
@@ -203,6 +210,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should fail with non-existent gateway ID", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-nonexistent-gateway",
+			"name":       "rulename",
 			"service_id": serviceID,
 			"methods":    []string{"GET"},
 		}
@@ -217,6 +225,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should fail with non-existent service ID", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-nonexistent-service",
+			"name":       "rulename",
 			"service_id": uuid.New().String(),
 			"methods":    []string{"GET"},
 		}
@@ -230,6 +239,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should fail with invalid HTTP method", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-invalid-method",
+			"name":       "rulename",
 			"service_id": serviceID,
 			"methods":    []string{"INVALID"},
 		}

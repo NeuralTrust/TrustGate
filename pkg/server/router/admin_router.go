@@ -42,13 +42,13 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 	}))
 
 	router.Get("/version", handlerTransport.GetVersionHandler.Handle)
+	router.Get("/plugins", handlerTransport.ListPluginsHandler.Handle)
+
 	v1 := router.Group("/api/v1")
 	{
 		if r.middlewareTransport.GetMiddlewares() != nil {
 			v1.Use(r.middlewareTransport.GetMiddlewares()...)
 		}
-		// Plugins endpoint
-		v1.Get("/plugins", handlerTransport.ListPluginsHandler.Handle)
 
 		// Gateway endpoints
 		gateways := v1.Group("/gateways")
