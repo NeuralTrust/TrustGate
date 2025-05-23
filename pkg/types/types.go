@@ -11,6 +11,7 @@ type CreateAPIKeyRequest struct {
 
 type CreateRuleRequest struct {
 	Path          string            `json:"path" binding:"required"`
+	Name          string            `json:"name" binding:"required"`
 	ServiceID     string            `json:"service_id" binding:"required"`
 	Methods       []string          `json:"methods"`
 	Headers       map[string]string `json:"headers"`
@@ -23,6 +24,7 @@ type CreateRuleRequest struct {
 
 type UpdateRuleRequest struct {
 	Path          string            `json:"path"`
+	Name          string            `json:"name"`
 	ServiceID     string            `json:"service_id"`
 	Methods       []string          `json:"methods"`
 	Headers       map[string]string `json:"headers"`

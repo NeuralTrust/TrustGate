@@ -23,6 +23,7 @@ type GatewayOutput struct {
 
 type ForwardingRuleOutput struct {
 	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
 	Upstream    *UpstreamOutput        `json:"upstream"`
 	ServiceID   string                 `json:"service_id"`
 	Path        string                 `json:"path"`

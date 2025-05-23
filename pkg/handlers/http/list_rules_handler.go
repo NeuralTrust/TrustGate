@@ -86,6 +86,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 		}
 		rules[i] = types.ForwardingRule{
 			ID:            rule.ID.String(),
+			Name:          rule.Name,
 			GatewayID:     rule.GatewayID.String(),
 			Path:          rule.Path,
 			ServiceID:     rule.ServiceID.String(),
@@ -119,6 +120,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 		}
 		rulesOutput[i] = response.ForwardingRuleOutput{
 			ID:          rule.ID.String(),
+			Name:        rule.Name,
 			Upstream:    upstreamOutput,
 			ServiceID:   rule.ServiceID.String(),
 			Path:        rule.Path,

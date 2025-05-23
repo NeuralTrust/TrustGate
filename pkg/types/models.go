@@ -70,6 +70,7 @@ type ClientTLSCert struct {
 // ForwardingRule represents a rule for forwarding requests
 type ForwardingRule struct {
 	ID            string            `json:"id"`
+	Name          string            `json:"name"`
 	GatewayID     string            `json:"gateway_id"`
 	Path          string            `json:"path"`
 	ServiceID     string            `json:"service_id"`

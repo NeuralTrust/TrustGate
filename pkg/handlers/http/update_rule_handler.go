@@ -110,6 +110,9 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 	found := false
 	for i, r := range rules {
 		if r.ID == ruleID {
+			if req.Name != "" {
+				rules[i].Name = req.Name
+			}
 			if req.Path != "" {
 				rules[i].Path = req.Path
 			}
@@ -205,6 +208,10 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 	forwardingRule.Methods = req.Methods
 	forwardingRule.Headers = req.Headers
 
+	if req.Name != "" {
+		forwardingRule.Name = req.Name
+	}
+
 	if req.StripPath != nil {
 		forwardingRule.StripPath = *req.StripPath
 	}
@@ -291,6 +298,5 @@ func (s *updateRuleHandler) validate(rule *types.UpdateRuleRequest) error {
 			return fmt.Errorf("trust lens team id is required")
 		}
 	}
-
 	return nil
 }

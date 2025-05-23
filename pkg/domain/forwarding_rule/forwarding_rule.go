@@ -10,7 +10,8 @@ import (
 )
 
 type ForwardingRule struct {
-	ID            uuid.UUID              `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	ID            uuid.UUID `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Name          string
 	GatewayID     uuid.UUID              `gorm:"type:uuid;not null"`
 	ServiceID     uuid.UUID              `gorm:"type:uuid;not null"`
 	Path          string                 `gorm:"not null"`

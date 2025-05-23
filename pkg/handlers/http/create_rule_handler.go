@@ -116,6 +116,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	// Create the database model
 	dbRule := &forwarding_rule.ForwardingRule{
 		ID:            id,
+		Name:          req.Name,
 		GatewayID:     gatewayUUID,
 		Path:          req.Path,
 		ServiceID:     serviceUUID,
@@ -186,6 +187,7 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 
 	return types.ForwardingRule{
 		ID:            rule.ID.String(),
+		Name:          rule.Name,
 		GatewayID:     rule.GatewayID.String(),
 		Path:          rule.Path,
 		ServiceID:     rule.ServiceID.String(),
@@ -239,6 +241,10 @@ func (s *createRuleHandler) validate(rule *types.CreateRuleRequest) error {
 		if rule.TrustLens.TeamID == "" {
 			return fmt.Errorf("trust lens team id is required")
 		}
+	}
+
+	if rule.Name == "" {
+		return fmt.Errorf("name is required")
 	}
 
 	return nil
