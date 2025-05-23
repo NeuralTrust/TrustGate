@@ -30,6 +30,7 @@ func NewListUpstreamHandler(logger *logrus.Logger, repo *database.Repository, ca
 // Handle @Summary Retrieve all Upstreams
 // @Description Returns a list of all upstreams for a gateway
 // @Tags Upstreams
+// @Param Authorization header string true "Authorization token"
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
 // @Success 200 {array} upstream.Upstream "List of upstreams"

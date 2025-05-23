@@ -31,6 +31,7 @@ func NewUpdateServiceHandler(logger *logrus.Logger, repo *database.Repository, p
 // @Tags Services
 // @Accept json
 // @Produce json
+// @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param service_id path string true "Service ID"
 // @Param service body types.ServiceRequest true "Updated service data"

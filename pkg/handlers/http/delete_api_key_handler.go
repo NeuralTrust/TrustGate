@@ -38,6 +38,7 @@ func NewDeleteAPIKeyHandler(
 // Handle @Summary Delete an API Key
 // @Description Removes an API key from a gateway
 // @Tags API Keys
+// @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param key_id path string true "API Key ID"
 // @Success 204 "API Key deleted successfully"

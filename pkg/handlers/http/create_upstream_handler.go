@@ -46,6 +46,7 @@ func NewCreateUpstreamHandler(
 // @Tags Upstreams
 // @Accept json
 // @Produce json
+// @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param upstream body request.UpstreamRequest true "Upstream data"
 // @Success 201 {object} upstream.Upstream "Upstream created successfully"

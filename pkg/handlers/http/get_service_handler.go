@@ -27,6 +27,7 @@ func NewGetServiceHandler(logger *logrus.Logger, repo service.Repository, cache 
 // Handle @Summary Retrieve a Service by ID
 // @Description Returns details of a specific service
 // @Tags Services
+// @Param Authorization header string true "Authorization token"
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
 // @Param service_id path string true "Service ID"

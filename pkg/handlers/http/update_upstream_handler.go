@@ -51,6 +51,7 @@ func NewUpdateUpstreamHandler(
 // @Tags Upstreams
 // @Accept json
 // @Produce json
+// @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param upstream_id path string true "Upstream ID"
 // @Param upstream body request.UpstreamRequest true "Updated upstream data"

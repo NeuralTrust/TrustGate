@@ -428,7 +428,7 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 	if maxTokens <= 0 {
 		maxTokens = 1000
 	}
-
+	start := time.Now()
 	response, err := client.Ask(ctx, &providers.Config{
 		Credentials: providers.Credentials{
 			HeaderKey:   cfg.Credentials.HeaderName,
@@ -440,11 +440,13 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		SystemPrompt: SystemPrompt,
 		Instructions: cfg.Instructions,
 	}, string(inputBody))
+	duration := time.Since(start).Seconds()
 	if err != nil {
 		p.logger.WithError(err).Error("failed to call llm provider")
 		p.sendError(firewallErrors, err)
 		return
 	}
+	p.logger.WithField("duration", duration).Info("LLM provider responded successfully")
 
 	if response == nil {
 		err := errors.New("llm provider returned nil response")

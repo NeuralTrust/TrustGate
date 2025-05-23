@@ -34,6 +34,7 @@ func NewGetGatewayHandler(
 // Handle @Summary Retrieve a Gateway by ID
 // @Description Returns details of a specific gateway
 // @Tags Gateways
+// @Param Authorization header string true "Authorization token"
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
 // @Success      200 {object} gateway.Gateway "Gateway"
