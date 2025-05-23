@@ -134,7 +134,7 @@ func (s *embeddingService) Generate(
 			"post_norm":        postNorm,
 			"post_norm_sample": rawEmbedding[:min(5, len(rawEmbedding))],
 			"is_unit_vector":   math.Abs(postNorm-1.0) < 1e-6,
-		}).Debug("Post-normalization vector stats")
+		}).Debug("post-normalization vector stats")
 	} else {
 		s.logger.Warn("Zero norm encountered during embedding normalization")
 	}
