@@ -84,7 +84,6 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
-
 	deliveryChan := make(chan kafka.Event)
 	err = p.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &p.cfg.Topic, Partition: kafka.PartitionAny},

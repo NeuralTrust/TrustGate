@@ -65,6 +65,7 @@ type PluginDataEvent struct {
 	Error        bool        `json:"error"`
 	ErrorMessage string      `json:"error_message,omitempty"`
 	Extras       interface{} `json:"extras,omitempty"`
+	StatusCode   int         `json:"status_code,omitempty"`
 }
 
 func NewTraceEvent() *Event {

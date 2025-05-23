@@ -173,8 +173,7 @@ func (p *ToxicityNeuralTrust) Execute(
 	}
 
 	evt := &ToxicityData{
-		Blocked: true,
-		Scores:  &Scores{},
+		Scores: &Scores{},
 	}
 
 	if p.config.ToxicityParamBag != nil {
@@ -239,7 +238,6 @@ func (p *ToxicityNeuralTrust) Execute(
 		}
 	}
 
-	evt.Blocked = false
 	evtCtx.SetExtras(evt)
 
 	return &types.PluginResponse{

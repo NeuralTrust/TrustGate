@@ -182,8 +182,7 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 	}
 
 	evt := &NeuralTrustGuardrailData{
-		Blocked: true,
-		Scores:  &GuardrailScores{},
+		Scores: &GuardrailScores{},
 	}
 
 	if p.config.JailbreakParamBag != nil {
@@ -227,7 +226,6 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 	case <-done:
 	}
 
-	evt.Blocked = false
 	evtCtx.SetExtras(evt)
 
 	return &types.PluginResponse{

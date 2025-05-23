@@ -1,7 +1,6 @@
 package neuraltrust_moderation
 
 type NeuralTrustModerationData struct {
-	Blocked             bool                 `json:"blocked"`
 	EmbeddingModeration *EmbeddingModeration `json:"embedding_moderation,omitempty"`
 	KeyRegModeration    *KeyRegModeration    `json:"keyreg_moderation,omitempty"`
 	LLMModeration       *LLMModeration       `json:"llm_moderation,omitempty"`
