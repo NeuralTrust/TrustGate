@@ -101,6 +101,7 @@ func TestRequiredPlugins_Success(t *testing.T) {
 
 	rulePayload := map[string]interface{}{
 		"path":       "/post",
+		"name":       "rule name",
 		"service_id": serviceID,
 		"methods":    []string{"POST"},
 		"strip_path": false,
