@@ -197,7 +197,6 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	}
 
 	evt := &NeuralTrustModerationData{
-		Blocked: true,
 		EmbeddingModeration: &EmbeddingModeration{
 			Scores: &EmbeddingScores{
 				Scores: make(map[string]float64),
@@ -569,7 +568,6 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 	}
 
 	if foundWord, keyword, found := p.findSimilarKeyword(content, threshold); found {
-		evt.Blocked = true
 		evt.KeyRegModeration.SimilarityThreshold = threshold
 		evt.KeyRegModeration.Reason = KeyRegReason{
 			Type:    "keyword",
@@ -591,7 +589,6 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 	for _, pattern := range p.regexRules {
 		matches := pattern.FindStringSubmatch(content)
 		if len(matches) > 0 {
-			evt.Blocked = true
 			evt.KeyRegModeration.SimilarityThreshold = threshold
 			evt.KeyRegModeration.Reason = KeyRegReason{
 				Type:    "regex",

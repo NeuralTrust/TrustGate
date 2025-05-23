@@ -39,6 +39,12 @@ func (e *EventContext) SetError(err error) {
 	e.data.ErrorMessage = err.Error()
 }
 
+func (e *EventContext) SetStatusCode(code int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.data.StatusCode = code
+}
+
 func (e *EventContext) Publish() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
