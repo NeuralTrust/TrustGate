@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -113,6 +114,7 @@ func CreateService(t *testing.T, gatewayID string, servicePayload map[string]int
 }
 
 func CreateRules(t *testing.T, gatewayID string, rulesPayload map[string]interface{}) {
+	rulesPayload["name"] = uuid.New().String()
 	status, rulesResp := sendRequest(
 		t,
 		http.MethodPost,
