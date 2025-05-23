@@ -41,6 +41,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should create a rule with minimal configuration", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test",
+			"name":       "rulename",
 			"service_id": serviceID,
 			"methods":    []string{"GET"},
 		}
