@@ -21,6 +21,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	domainEmbedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	domainSession "github.com/NeuralTrust/TrustGate/pkg/domain/session"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	wsHandlers "github.com/NeuralTrust/TrustGate/pkg/handlers/websocket"
@@ -56,8 +57,10 @@ type Container struct {
 	FingerPrintMiddleware middleware.Middleware
 	SecurityMiddleware    middleware.Middleware
 	WebSocketMiddleware   middleware.Middleware
+	SessionMiddleware     middleware.Middleware
 	ApiKeyRepository      domainApikey.Repository
 	EmbeddingRepository   domainEmbedding.EmbeddingRepository
+	SessionRepository     domainSession.Repository
 	FingerprintTracker    fingerprint.Tracker
 	PluginChainValidator  plugin.ValidatePluginChain
 	MetricsWorker         metrics.Worker
@@ -252,6 +255,9 @@ func NewContainer(
 		ListPluginsHandler: handlers.NewListPluginsHandler(logger),
 	}
 
+	// Initialize session repository
+	sessionRepository := repository.NewSessionRepository(cacheInstance)
+
 	container := &Container{
 		Cache:                 cacheInstance,
 		RedisListener:         redisListener,
@@ -265,8 +271,10 @@ func NewContainer(
 		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),
 		SecurityMiddleware:    middleware.NewSecurityMiddleware(logger),
 		WebSocketMiddleware:   middleware.NewWebsocketMiddleware(cfg, logger),
+		SessionMiddleware:     middleware.NewSessionMiddleware(logger, sessionRepository),
 		ApiKeyRepository:      apiKeyRepository,
 		EmbeddingRepository:   embeddingRepository,
+		SessionRepository:     sessionRepository,
 		PluginManager:         pluginManager,
 		BedrockClient:         bedrockClient,
 		FingerprintTracker:    fingerprintTracker,

@@ -28,8 +28,17 @@ type CreateGatewayRequest struct {
 	Telemetry       *TelemetryRequest                 `json:"telemetry"`
 	SecurityConfig  *SecurityConfigRequest            `json:"security_config"`
 	TlS             map[string]ClientTLSConfigRequest `json:"client_tls"`
+	SessionConfig   *SessionConfigRequest             `json:"session_config"`
 	CreatedAt       time.Time                         `json:"created_at"`
 	UpdatedAt       time.Time                         `json:"updated_at"`
+}
+
+type SessionConfigRequest struct {
+	Enabled       bool   `json:"enabled"`
+	HeaderName    string `json:"header_name"`
+	BodyParamName string `json:"body_param_name"`
+	Mapping       string `json:"mapping_field"`
+	TTL           int    `json:"ttl"`
 }
 
 type TelemetryRequest struct {

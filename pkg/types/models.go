@@ -17,6 +17,7 @@ type Gateway struct {
 	Telemetry       *Telemetry                 `json:"telemetry"`
 	SecurityConfig  *SecurityConfig            `json:"security_config"`
 	TlS             map[string]ClientTLSConfig `json:"tls"`
+	SessionConfig   *SessionConfig             `json:"session_config,omitempty"`
 	CreatedAt       string                     `json:"created_at"`
 	UpdatedAt       string                     `json:"updated_at"`
 }
@@ -65,6 +66,15 @@ type ClientTLSConfig struct {
 type ClientTLSCert struct {
 	Certificate string `json:"certificate"`
 	PrivateKey  string `json:"private_key"`
+}
+
+type SessionConfig struct {
+	Enabled        bool   `json:"enabled"`
+	HeaderName     string `json:"header_name"`
+	BodyParamName  string `json:"body_param_name"`
+	QueryParamName string `json:"query_param_name"`
+	Mapping        string `json:"mapping"`
+	TTL            int    `json:"ttl"`
 }
 
 // ForwardingRule represents a rule for forwarding requests

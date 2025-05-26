@@ -7,6 +7,7 @@ import (
 	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
+	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -135,6 +136,17 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 			EnablePluginTraces:  req.Telemetry.EnablePluginTraces,
 			EnableRequestTraces: req.Telemetry.EnableRequestTraces,
 		}
+	}
+
+	if req.SessionConfig != nil {
+		if dbGateway.SessionConfig == nil {
+			dbGateway.SessionConfig = &domainGateway.SessionConfig{}
+		}
+		dbGateway.SessionConfig.Enabled = req.SessionConfig.Enabled
+		dbGateway.SessionConfig.HeaderName = req.SessionConfig.HeaderName
+		dbGateway.SessionConfig.BodyParamName = req.SessionConfig.BodyParamName
+		dbGateway.SessionConfig.Mapping = req.SessionConfig.Mapping
+		dbGateway.SessionConfig.TTL = req.SessionConfig.TTL
 	}
 
 	if err := h.repo.UpdateGateway(c.Context(), dbGateway); err != nil {

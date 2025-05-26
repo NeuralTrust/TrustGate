@@ -82,6 +82,7 @@ func main() {
 		container.FingerPrintMiddleware,
 		container.SecurityMiddleware,
 		container.WebSocketMiddleware,
+		container.SessionMiddleware,
 	)
 
 	//routers
