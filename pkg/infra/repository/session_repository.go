@@ -32,7 +32,7 @@ func (r *SessionRepository) SaveSession(ctx context.Context, session *session.Se
 		return fmt.Errorf("failed to marshal session: %w", err)
 	}
 
-	ttl := session.ExpiresAt.Sub(time.Now())
+	ttl := time.Until(session.ExpiresAt)
 	if ttl <= 0 {
 		ttl = time.Hour
 	}

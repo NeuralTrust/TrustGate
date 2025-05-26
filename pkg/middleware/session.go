@@ -14,10 +14,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const (
-	SessionContextKey = "session_id"
-)
-
 type sessionMiddleware struct {
 	logger     *logrus.Logger
 	repository session.Repository
@@ -60,8 +56,8 @@ func (m *sessionMiddleware) Middleware() fiber.Handler {
 			return ctx.Next()
 		}
 
-		ctx.Locals(SessionContextKey, sessionID)
-		c := context.WithValue(ctx.Context(), SessionContextKey, sessionID)
+		ctx.Locals(common.SessionContextKey, sessionID)
+		c := context.WithValue(ctx.Context(), common.SessionContextKey, sessionID)
 		ctx.SetUserContext(c)
 
 		content := m.extractContent(ctx, gatewayData.Gateway.SessionConfig.Mapping)
