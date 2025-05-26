@@ -59,4 +59,5 @@ config.*.yaml
 __debug_bin
 
 # Air live reload
-tmp/ 
+tmp/
+.junie
