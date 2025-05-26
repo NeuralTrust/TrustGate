@@ -12,6 +12,8 @@ import (
 	"gorm.io/gorm"
 )
 
+var ErrUpstreamIsBeingUsed = fmt.Errorf("upstream is being used by a gateway")
+
 type EmbeddingConfig struct {
 	Provider    string                 `json:"provider"`
 	Model       string                 `json:"model"`

@@ -109,6 +109,15 @@ func (r *forwardedRuleRepository) GetRule(
 	return &rule, nil
 }
 
+func (r *forwardedRuleRepository) GetRuleByID(ctx context.Context, id uuid.UUID) (*forwarding_rule.ForwardingRule, error) {
+	var rule forwarding_rule.ForwardingRule
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&rule).Error
+	if err != nil {
+		return nil, err
+	}
+	return &rule, nil
+}
+
 func (r *forwardedRuleRepository) UpdateRulesCache(
 	ctx context.Context,
 	gatewayID uuid.UUID,

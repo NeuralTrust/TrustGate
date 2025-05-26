@@ -7,7 +7,6 @@ import (
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
@@ -19,15 +18,15 @@ import (
 
 type createUpstreamHandler struct {
 	logger                      *logrus.Logger
-	repo                        *database.Repository
 	cache                       *cache.Cache
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
+	repo                        upstream.Repository
 	cfg                         *config.Config
 }
 
 func NewCreateUpstreamHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo upstream.Repository,
 	cache *cache.Cache,
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator,
 	cfg *config.Config,

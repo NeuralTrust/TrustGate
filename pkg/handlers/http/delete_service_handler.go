@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -14,13 +14,13 @@ import (
 
 type deleteServiceHandler struct {
 	logger    *logrus.Logger
-	repo      *database.Repository
+	repo      service.Repository
 	publisher infraCache.EventPublisher
 }
 
 func NewDeleteServiceHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo service.Repository,
 	publisher infraCache.EventPublisher,
 ) Handler {
 	return &deleteServiceHandler{
@@ -43,8 +43,8 @@ func (s *deleteServiceHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	serviceID := c.Params("service_id")
 
-	if err := s.repo.DeleteService(c.Context(), serviceID); err != nil {
-		if errors.Is(err, database.ErrServiceIsBeingUsed) {
+	if err := s.repo.Delete(c.Context(), serviceID); err != nil {
+		if errors.Is(err, service.ErrServiceIsBeingUsed) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		s.logger.WithError(err).Error("Failed to delete service")

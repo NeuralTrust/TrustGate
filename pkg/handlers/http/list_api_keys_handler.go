@@ -1,21 +1,24 @@
 package http
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
 type listAPIKeysHandler struct {
-	logger *logrus.Logger
-	repo   *database.Repository
+	logger      *logrus.Logger
+	gatewayRepo gateway.Repository
+	apiKeyRepo  apikey.Repository
 }
 
-func NewListAPIKeysHandler(logger *logrus.Logger, repo *database.Repository) Handler {
+func NewListAPIKeysHandler(logger *logrus.Logger, gatewayRepo gateway.Repository, apiKeyRepo apikey.Repository) Handler {
 	return &listAPIKeysHandler{
-		logger: logger,
-		repo:   repo,
+		logger:      logger,
+		gatewayRepo: gatewayRepo,
+		apiKeyRepo:  apiKeyRepo,
 	}
 }
 
@@ -36,12 +39,12 @@ func (s *listAPIKeysHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Verify gateway exists
-	if _, err := s.repo.GetGateway(c.Context(), gatewayUUID); err != nil {
+	if _, err := s.gatewayRepo.Get(c.Context(), gatewayUUID); err != nil {
 		s.logger.WithError(err).Error("failed to get gateway")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 	}
 
-	apiKeys, err := s.repo.ListAPIKeys(c.Context(), gatewayUUID)
+	apiKeys, err := s.apiKeyRepo.List(c.Context(), gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to list API keys")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list API keys"})

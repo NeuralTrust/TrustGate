@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
@@ -14,16 +13,16 @@ import (
 )
 
 type createAPIKeyHandler struct {
-	logger *logrus.Logger
-	repo   *database.Repository
-	cache  *cache.Cache
+	logger     *logrus.Logger
+	cache      *cache.Cache
+	apiKeyRepo domain.Repository
 }
 
-func NewCreateAPIKeyHandler(logger *logrus.Logger, repo *database.Repository, cache *cache.Cache) Handler {
+func NewCreateAPIKeyHandler(logger *logrus.Logger, cache *cache.Cache, apiKeyRepo domain.Repository) Handler {
 	return &createAPIKeyHandler{
-		logger: logger,
-		repo:   repo,
-		cache:  cache,
+		logger:     logger,
+		cache:      cache,
+		apiKeyRepo: apiKeyRepo,
 	}
 }
 
@@ -70,7 +69,7 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		apiKey.ExpiresAt = *req.ExpiresAt
 	}
 
-	if err := s.repo.CreateAPIKey(c.Context(), apiKey); err != nil {
+	if err := s.apiKeyRepo.Create(c.Context(), apiKey); err != nil {
 		s.logger.WithError(err).Error("Failed to create API key")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create API key"})
 	}

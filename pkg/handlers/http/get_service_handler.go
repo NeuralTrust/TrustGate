@@ -48,7 +48,7 @@ func (s *getServiceHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// If not in cache, get from database
-	entity, err := s.repo.GetService(c.Context(), serviceID)
+	entity, err := s.repo.Get(c.Context(), serviceID)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "service not found"})
 	}

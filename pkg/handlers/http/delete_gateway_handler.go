@@ -3,7 +3,7 @@ package http
 import (
 	"net/http"
 
-	"github.com/NeuralTrust/TrustGate/pkg/database"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -14,13 +14,13 @@ import (
 
 type deleteGatewayHandler struct {
 	logger    *logrus.Logger
-	repo      *database.Repository
+	repo      domain.Repository
 	publisher infraCache.EventPublisher
 }
 
 func NewDeleteGatewayHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo domain.Repository,
 	publisher infraCache.EventPublisher,
 ) Handler {
 	return &deleteGatewayHandler{
@@ -49,7 +49,7 @@ func (s *deleteGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
 	}
 
-	if err := s.repo.DeleteGateway(parsedId); err != nil {
+	if err := s.repo.Delete(parsedId); err != nil {
 		s.logger.WithError(err).Error("Failed to delete gateway")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

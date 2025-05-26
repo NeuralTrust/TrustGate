@@ -58,7 +58,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway uuid"})
 	}
 
-	gw, err := s.gatewayRepo.GetGateway(c.Context(), gatewayUUID)
+	gw, err := s.gatewayRepo.Get(c.Context(), gatewayUUID)
 
 	if err != nil {
 		if errors.As(err, &domain.ErrEntityNotFound) {
@@ -103,7 +103,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
 		}
 
-		srv, err := s.serviceRepo.GetService(c.Context(), rule.ServiceID.String())
+		srv, err := s.serviceRepo.Get(c.Context(), rule.ServiceID.String())
 		if err != nil {
 			s.logger.WithError(err).Error("failed to get service from database")
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get service"})

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -15,13 +15,13 @@ import (
 // deleteUpstreamHandler struct
 type deleteUpstreamHandler struct {
 	logger    *logrus.Logger
-	repo      *database.Repository
+	repo      upstream.Repository
 	publisher infraCache.EventPublisher
 }
 
 func NewDeleteUpstreamHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo upstream.Repository,
 	publisher infraCache.EventPublisher,
 ) Handler {
 	return &deleteUpstreamHandler{
@@ -44,7 +44,7 @@ func (s *deleteUpstreamHandler) Handle(c *fiber.Ctx) error {
 	upstreamID := c.Params("upstream_id")
 
 	if err := s.repo.DeleteUpstream(c.Context(), upstreamID); err != nil {
-		if errors.Is(err, database.ErrUpstreamIsBeingUsed) {
+		if errors.Is(err, upstream.ErrUpstreamIsBeingUsed) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		s.logger.WithError(err).Error("Failed to delete upstream")

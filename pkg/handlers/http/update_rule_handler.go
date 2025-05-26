@@ -10,9 +10,9 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domainTypes "github.com/NeuralTrust/TrustGate/pkg/domain"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -24,7 +24,7 @@ import (
 
 type updateRuleHandler struct {
 	logger                *logrus.Logger
-	repo                  *database.Repository
+	repo                  forwarding_rule.Repository
 	cache                 *cache.Cache
 	validatePlugin        *plugin.ValidatePlugin
 	invalidationPublisher infraCache.EventPublisher
@@ -32,7 +32,7 @@ type updateRuleHandler struct {
 
 func NewUpdateRuleHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo forwarding_rule.Repository,
 	cache *cache.Cache,
 	validatePlugin *plugin.ValidatePlugin,
 	invalidationPublisher infraCache.EventPublisher,
@@ -237,7 +237,7 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 	forwardingRule.PluginChain = req.PluginChain
 	forwardingRule.UpdatedAt = time.Now()
 
-	if err := s.repo.UpdateRule(ctx, forwardingRule); err != nil {
+	if err := s.repo.Update(ctx, forwardingRule); err != nil {
 		s.logger.WithError(err).Error("failed to update rule")
 		return fmt.Errorf("failed to update rule: %w", err)
 	}

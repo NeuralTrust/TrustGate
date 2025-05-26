@@ -5,7 +5,6 @@ import (
 	"strconv"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
@@ -14,14 +13,14 @@ import (
 
 type listGatewayHandler struct {
 	logger             *logrus.Logger
-	repo               *database.Repository
+	repo               domain.Repository
 	updateGatewayCache gateway.UpdateGatewayCache
 	transformer        *gateway.OutputTransformer
 }
 
 func NewListGatewayHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo domain.Repository,
 	updateGatewayCache gateway.UpdateGatewayCache,
 ) Handler {
 	return &listGatewayHandler{
@@ -55,7 +54,7 @@ func (h *listGatewayHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	dbGateways, err := h.repo.ListGateways(c.Context(), offset, limit)
+	dbGateways, err := h.repo.List(c.Context(), offset, limit)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to list gateways")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list gateways"})

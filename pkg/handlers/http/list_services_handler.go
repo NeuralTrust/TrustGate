@@ -3,7 +3,7 @@ package http
 import (
 	"strconv"
 
-	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -11,10 +11,10 @@ import (
 
 type listServicesHandler struct {
 	logger *logrus.Logger
-	repo   *database.Repository
+	repo   service.Repository
 }
 
-func NewListServicesHandler(logger *logrus.Logger, repo *database.Repository) Handler {
+func NewListServicesHandler(logger *logrus.Logger, repo service.Repository) Handler {
 	return &listServicesHandler{
 		logger: logger,
 		repo:   repo,
@@ -50,8 +50,7 @@ func (s *listServicesHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	// Fetch services from repository
-	services, err := s.repo.ListServices(c.Context(), gatewayUUID, offset, limit)
+	services, err := s.repo.List(c.Context(), gatewayUUID, offset, limit)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to list services")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})

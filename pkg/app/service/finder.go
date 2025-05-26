@@ -51,7 +51,7 @@ func (f *finder) Find(ctx context.Context, gatewayID, serviceID string) (*domain
 		f.logger.WithError(err).Warn("distributed cache read service failure")
 	}
 
-	service, err := f.repo.GetService(ctx, serviceID)
+	service, err := f.repo.Get(ctx, serviceID)
 	if err != nil {
 		f.logger.WithError(err).Error("failed to fetch service from repository")
 		return nil, err

@@ -53,7 +53,7 @@ func (v *validatePluginChain) Validate(ctx context.Context, gatewayID uuid.UUID,
 			}
 			requiredFound := false
 			for _, stage := range currentPlugin.Stages() {
-				entity, err := v.repo.GetGateway(ctx, gatewayID)
+				entity, err := v.repo.Get(ctx, gatewayID)
 				if err != nil {
 					return err
 				}

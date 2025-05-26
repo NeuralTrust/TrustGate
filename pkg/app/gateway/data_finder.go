@@ -8,7 +8,6 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -22,7 +21,7 @@ type DataFinder interface {
 }
 
 type dataFinder struct {
-	repo              *database.Repository
+	repo              gateway.Repository
 	ruleRepository    forwarding_rule.Repository
 	cache             *cache.Cache
 	memoryCache       *common.TTLMap
@@ -31,7 +30,7 @@ type dataFinder struct {
 }
 
 func NewDataFinder(
-	repository *database.Repository,
+	repository gateway.Repository,
 	ruleRepository forwarding_rule.Repository,
 	c *cache.Cache,
 	logger *logrus.Logger,
@@ -118,7 +117,7 @@ func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gatew
 }
 
 func (f *dataFinder) getGatewayDataFromDB(ctx context.Context, gatewayID uuid.UUID) (*types.GatewayData, error) {
-	entity, err := f.repo.GetGateway(ctx, gatewayID)
+	entity, err := f.repo.Get(ctx, gatewayID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get gateway from database: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
 	"github.com/valyala/fasthttp"
@@ -18,7 +19,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	domainEmbedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	domainSession "github.com/NeuralTrust/TrustGate/pkg/domain/session"
@@ -49,7 +49,6 @@ type Container struct {
 	HandlerTransport      handlers.HandlerTransport
 	WSHandlerTransport    wsHandlers.HandlerTransport
 	RedisListener         infraCache.EventListener
-	Repository            *database.Repository
 	AuthMiddleware        middleware.Middleware
 	AdminAuthMiddleware   middleware.Middleware
 	MetricsMiddleware     middleware.Middleware
@@ -129,7 +128,6 @@ func NewContainer(
 	)
 
 	// repository
-	repo := database.NewRepository(db.DB, logger, cacheInstance)
 	upstreamRepository := repository.NewUpstreamRepository(db.DB)
 	serviceRepository := repository.NewServiceRepository(db.DB)
 	apiKeyRepository := repository.NewApiKeyRepository(db.DB)
@@ -143,7 +141,7 @@ func NewContainer(
 	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
-	gatewayDataFinder := gateway.NewDataFinder(repo, ruleRepository, cacheInstance, logger)
+	gatewayDataFinder := gateway.NewDataFinder(gatewayRepository, ruleRepository, cacheInstance, logger)
 	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager, gatewayRepository)
 
 	// telemetry
@@ -164,7 +162,7 @@ func NewContainer(
 	deleteServiceSubscriber := subscriber.NewDeleteServiceCacheEventSubscriber(logger, cacheInstance)
 	deleteUpstreamSubscriber := subscriber.NewDeleteUpstreamCacheEventSubscriber(logger, cacheInstance)
 	deleteApiKeySubscriber := subscriber.NewDeleteApiKeyCacheEventSubscriber(logger, cacheInstance)
-	updateGatewaySubscriber := subscriber.NewUpdateGatewayCacheEventSubscriber(logger, updateGatewayCache, cacheInstance, repo)
+	updateGatewaySubscriber := subscriber.NewUpdateGatewayCacheEventSubscriber(logger, updateGatewayCache, cacheInstance, gatewayRepository)
 	updateUpstreamSubscriber := subscriber.NewUpdateUpstreamCacheEventSubscriber(logger, cacheInstance, upstreamRepository)
 	updateServiceSubscriber := subscriber.NewUpdateServiceCacheEventSubscriber(logger, cacheInstance, serviceRepository)
 
@@ -201,7 +199,6 @@ func NewContainer(
 		// Proxy
 		ForwardedHandler: handlers.NewForwardedHandler(
 			logger,
-			repo,
 			cacheInstance,
 			upstreamFinder,
 			serviceFinder,
@@ -218,24 +215,24 @@ func NewContainer(
 			pluginChainValidator,
 			telemetryValidator,
 		),
-		ListGatewayHandler:   handlers.NewListGatewayHandler(logger, repo, updateGatewayCache),
-		GetGatewayHandler:    handlers.NewGetGatewayHandler(logger, repo, getGatewayCache, updateGatewayCache),
-		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, repo, pluginManager, redisPublisher, telemetryValidator),
-		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(logger, repo, redisPublisher),
+		ListGatewayHandler:   handlers.NewListGatewayHandler(logger, gatewayRepository, updateGatewayCache),
+		GetGatewayHandler:    handlers.NewGetGatewayHandler(logger, gatewayRepository, getGatewayCache, updateGatewayCache),
+		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, gatewayRepository, pluginManager, redisPublisher, telemetryValidator),
+		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(logger, gatewayRepository, redisPublisher),
 		// Upstream
-		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, repo, cacheInstance, descriptionEmbeddingCreator, cfg),
-		ListUpstreamHandler:   handlers.NewListUpstreamHandler(logger, repo, cacheInstance),
-		GetUpstreamHandler:    handlers.NewGetUpstreamHandler(logger, repo, cacheInstance, upstreamFinder),
-		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(logger, repo, redisPublisher, cacheInstance, descriptionEmbeddingCreator, cfg),
-		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(logger, repo, redisPublisher),
+		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, upstreamRepository, cacheInstance, descriptionEmbeddingCreator, cfg),
+		ListUpstreamHandler:   handlers.NewListUpstreamHandler(logger, upstreamRepository, cacheInstance),
+		GetUpstreamHandler:    handlers.NewGetUpstreamHandler(logger, upstreamRepository, cacheInstance, upstreamFinder),
+		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(logger, upstreamRepository, redisPublisher, cacheInstance, descriptionEmbeddingCreator, cfg),
+		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(logger, upstreamRepository, redisPublisher),
 		// Service
-		CreateServiceHandler: handlers.NewCreateServiceHandler(logger, repo, cacheInstance),
-		ListServicesHandler:  handlers.NewListServicesHandler(logger, repo),
+		CreateServiceHandler: handlers.NewCreateServiceHandler(logger, serviceRepository, cacheInstance),
+		ListServicesHandler:  handlers.NewListServicesHandler(logger, serviceRepository),
 		GetServiceHandler:    handlers.NewGetServiceHandler(logger, serviceRepository, cacheInstance),
-		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, repo, redisPublisher),
-		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, repo, redisPublisher),
+		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, serviceRepository, redisPublisher),
+		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, serviceRepository, redisPublisher),
 		// Rule
-		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, repo, pluginChainValidator),
+		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, ruleRepository, pluginChainValidator),
 		ListRulesHandler: handlers.NewListRulesHandler(
 			logger,
 			ruleRepository,
@@ -243,13 +240,13 @@ func NewContainer(
 			serviceRepository,
 			cacheInstance,
 		),
-		UpdateRuleHandler: handlers.NewUpdateRuleHandler(logger, repo, cacheInstance, validatePlugin, redisPublisher),
-		DeleteRuleHandler: handlers.NewDeleteRuleHandler(logger, repo, cacheInstance, redisPublisher),
+		UpdateRuleHandler: handlers.NewUpdateRuleHandler(logger, ruleRepository, cacheInstance, validatePlugin, redisPublisher),
+		DeleteRuleHandler: handlers.NewDeleteRuleHandler(logger, ruleRepository, cacheInstance, redisPublisher),
 		// APIKey
-		CreateAPIKeyHandler: handlers.NewCreateAPIKeyHandler(logger, repo, cacheInstance),
-		ListAPIKeysHandler:  handlers.NewListAPIKeysHandler(logger, repo),
+		CreateAPIKeyHandler: handlers.NewCreateAPIKeyHandler(logger, cacheInstance, apiKeyRepository),
+		ListAPIKeysHandler:  handlers.NewListAPIKeysHandler(logger, gatewayRepository, apiKeyRepository),
 		GetAPIKeyHandler:    handlers.NewGetAPIKeyHandler(logger, cacheInstance, apiKeyRepository),
-		DeleteAPIKeyHandler: handlers.NewDeleteAPIKeyHandler(logger, repo, apiKeyRepository, redisPublisher),
+		DeleteAPIKeyHandler: handlers.NewDeleteAPIKeyHandler(logger, apiKeyRepository, redisPublisher),
 		// Version
 		GetVersionHandler:  handlers.NewGetVersionHandler(logger),
 		ListPluginsHandler: handlers.NewListPluginsHandler(logger),
@@ -263,7 +260,6 @@ func NewContainer(
 		RedisListener:         redisListener,
 		HandlerTransport:      handlerTransport,
 		WSHandlerTransport:    wsHandlerTransport,
-		Repository:            repo,
 		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, gatewayDataFinder),
 		AdminAuthMiddleware:   middleware.NewAdminAuthMiddleware(logger, jwtManager),
 		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, metricsWorker),

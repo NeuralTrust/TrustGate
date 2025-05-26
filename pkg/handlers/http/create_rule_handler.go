@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -18,13 +17,13 @@ import (
 
 type createRuleHandler struct {
 	logger               *logrus.Logger
-	repo                 *database.Repository
+	repo                 forwarding_rule.Repository
 	pluginChainValidator plugin.ValidatePluginChain
 }
 
 func NewCreateRuleHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo forwarding_rule.Repository,
 	pluginChainValidator plugin.ValidatePluginChain,
 ) Handler {
 	return &createRuleHandler{
@@ -142,7 +141,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Store in database
-	if err := s.repo.CreateRule(c.Context(), dbRule); err != nil {
+	if err := s.repo.Create(c.Context(), dbRule); err != nil {
 		s.logger.WithError(err).Error("Failed to create rule")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create rule"})
 	}

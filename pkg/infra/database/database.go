@@ -48,7 +48,6 @@ func NewDB(cfg *Config, models []interface{}) (*DB, error) {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Auto-migrate the schema
 	if err := gormDB.AutoMigrate(models...); err != nil {
 		return nil, fmt.Errorf("failed to auto-migrate schema: %w", err)
 	}

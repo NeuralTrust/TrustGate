@@ -16,6 +16,8 @@ const (
 	TypeUpstream = "upstream"
 )
 
+var ErrServiceIsBeingUsed = fmt.Errorf("service is being used by a forwarding rule")
+
 type Service struct {
 	ID          uuid.UUID       `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	GatewayID   uuid.UUID       `json:"gateway_id" gorm:"type:uuid;not null"`

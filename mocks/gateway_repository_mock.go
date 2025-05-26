@@ -24,12 +24,58 @@ func (_m *Repository) EXPECT() *Repository_Expecter {
 	return &Repository_Expecter{mock: &_m.Mock}
 }
 
+// DeleteGateway provides a mock function with given fields: id
+func (_m *Repository) Delete(id uuid.UUID) error {
+	ret := _m.Called(id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Delete")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(uuid.UUID) error); ok {
+		r0 = rf(id)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_DeleteGateway_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Delete'
+type Repository_DeleteGateway_Call struct {
+	*mock.Call
+}
+
+// DeleteGateway is a helper method to define mock.On call
+//   - id uuid.UUID
+func (_e *Repository_Expecter) DeleteGateway(id interface{}) *Repository_DeleteGateway_Call {
+	return &Repository_DeleteGateway_Call{Call: _e.mock.On("Delete", id)}
+}
+
+func (_c *Repository_DeleteGateway_Call) Run(run func(id uuid.UUID)) *Repository_DeleteGateway_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(uuid.UUID))
+	})
+	return _c
+}
+
+func (_c *Repository_DeleteGateway_Call) Return(_a0 error) *Repository_DeleteGateway_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_DeleteGateway_Call) RunAndReturn(run func(uuid.UUID) error) *Repository_DeleteGateway_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetGateway provides a mock function with given fields: ctx, id
-func (_m *Repository) GetGateway(ctx context.Context, id uuid.UUID) (*gateway.Gateway, error) {
+func (_m *Repository) Get(ctx context.Context, id uuid.UUID) (*gateway.Gateway, error) {
 	ret := _m.Called(ctx, id)
 
 	if len(ret) == 0 {
-		panic("no return value specified for GetGateway")
+		panic("no return value specified for Get")
 	}
 
 	var r0 *gateway.Gateway
@@ -54,7 +100,7 @@ func (_m *Repository) GetGateway(ctx context.Context, id uuid.UUID) (*gateway.Ga
 	return r0, r1
 }
 
-// Repository_GetGateway_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetGateway'
+// Repository_GetGateway_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Get'
 type Repository_GetGateway_Call struct {
 	*mock.Call
 }
@@ -63,7 +109,7 @@ type Repository_GetGateway_Call struct {
 //   - ctx context.Context
 //   - id uuid.UUID
 func (_e *Repository_Expecter) GetGateway(ctx interface{}, id interface{}) *Repository_GetGateway_Call {
-	return &Repository_GetGateway_Call{Call: _e.mock.On("GetGateway", ctx, id)}
+	return &Repository_GetGateway_Call{Call: _e.mock.On("Get", ctx, id)}
 }
 
 func (_c *Repository_GetGateway_Call) Run(run func(ctx context.Context, id uuid.UUID)) *Repository_GetGateway_Call {
@@ -79,6 +125,181 @@ func (_c *Repository_GetGateway_Call) Return(_a0 *gateway.Gateway, _a1 error) *R
 }
 
 func (_c *Repository_GetGateway_Call) RunAndReturn(run func(context.Context, uuid.UUID) (*gateway.Gateway, error)) *Repository_GetGateway_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetGatewayBySubdomain provides a mock function with given fields: ctx, subdomain
+func (_m *Repository) GetGatewayBySubdomain(ctx context.Context, subdomain string) (*gateway.Gateway, error) {
+	ret := _m.Called(ctx, subdomain)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetGatewayBySubdomain")
+	}
+
+	var r0 *gateway.Gateway
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (*gateway.Gateway, error)); ok {
+		return rf(ctx, subdomain)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) *gateway.Gateway); ok {
+		r0 = rf(ctx, subdomain)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*gateway.Gateway)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, subdomain)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_GetGatewayBySubdomain_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetGatewayBySubdomain'
+type Repository_GetGatewayBySubdomain_Call struct {
+	*mock.Call
+}
+
+// GetGatewayBySubdomain is a helper method to define mock.On call
+//   - ctx context.Context
+//   - subdomain string
+func (_e *Repository_Expecter) GetGatewayBySubdomain(ctx interface{}, subdomain interface{}) *Repository_GetGatewayBySubdomain_Call {
+	return &Repository_GetGatewayBySubdomain_Call{Call: _e.mock.On("GetGatewayBySubdomain", ctx, subdomain)}
+}
+
+func (_c *Repository_GetGatewayBySubdomain_Call) Run(run func(ctx context.Context, subdomain string)) *Repository_GetGatewayBySubdomain_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_GetGatewayBySubdomain_Call) Return(_a0 *gateway.Gateway, _a1 error) *Repository_GetGatewayBySubdomain_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_GetGatewayBySubdomain_Call) RunAndReturn(run func(context.Context, string) (*gateway.Gateway, error)) *Repository_GetGatewayBySubdomain_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// IsSubdomainAvailable provides a mock function with given fields: subdomain
+func (_m *Repository) IsSubdomainAvailable(subdomain string) (bool, error) {
+	ret := _m.Called(subdomain)
+
+	if len(ret) == 0 {
+		panic("no return value specified for IsSubdomainAvailable")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) (bool, error)); ok {
+		return rf(subdomain)
+	}
+	if rf, ok := ret.Get(0).(func(string) bool); ok {
+		r0 = rf(subdomain)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(subdomain)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_IsSubdomainAvailable_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'IsSubdomainAvailable'
+type Repository_IsSubdomainAvailable_Call struct {
+	*mock.Call
+}
+
+// IsSubdomainAvailable is a helper method to define mock.On call
+//   - subdomain string
+func (_e *Repository_Expecter) IsSubdomainAvailable(subdomain interface{}) *Repository_IsSubdomainAvailable_Call {
+	return &Repository_IsSubdomainAvailable_Call{Call: _e.mock.On("IsSubdomainAvailable", subdomain)}
+}
+
+func (_c *Repository_IsSubdomainAvailable_Call) Run(run func(subdomain string)) *Repository_IsSubdomainAvailable_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_IsSubdomainAvailable_Call) Return(_a0 bool, _a1 error) *Repository_IsSubdomainAvailable_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_IsSubdomainAvailable_Call) RunAndReturn(run func(string) (bool, error)) *Repository_IsSubdomainAvailable_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ListGateways provides a mock function with given fields: ctx, offset, limit
+func (_m *Repository) List(ctx context.Context, offset int, limit int) ([]gateway.Gateway, error) {
+	ret := _m.Called(ctx, offset, limit)
+
+	if len(ret) == 0 {
+		panic("no return value specified for List")
+	}
+
+	var r0 []gateway.Gateway
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, int, int) ([]gateway.Gateway, error)); ok {
+		return rf(ctx, offset, limit)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, int, int) []gateway.Gateway); ok {
+		r0 = rf(ctx, offset, limit)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]gateway.Gateway)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, int, int) error); ok {
+		r1 = rf(ctx, offset, limit)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_ListGateways_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'List'
+type Repository_ListGateways_Call struct {
+	*mock.Call
+}
+
+// ListGateways is a helper method to define mock.On call
+//   - ctx context.Context
+//   - offset int
+//   - limit int
+func (_e *Repository_Expecter) ListGateways(ctx interface{}, offset interface{}, limit interface{}) *Repository_ListGateways_Call {
+	return &Repository_ListGateways_Call{Call: _e.mock.On("List", ctx, offset, limit)}
+}
+
+func (_c *Repository_ListGateways_Call) Run(run func(ctx context.Context, offset int, limit int)) *Repository_ListGateways_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(int), args[2].(int))
+	})
+	return _c
+}
+
+func (_c *Repository_ListGateways_Call) Return(_a0 []gateway.Gateway, _a1 error) *Repository_ListGateways_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_ListGateways_Call) RunAndReturn(run func(context.Context, int, int) ([]gateway.Gateway, error)) *Repository_ListGateways_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -126,6 +347,110 @@ func (_c *Repository_Save_Call) Return(_a0 error) *Repository_Save_Call {
 }
 
 func (_c *Repository_Save_Call) RunAndReturn(run func(context.Context, *gateway.Gateway) error) *Repository_Save_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SubdomainExists provides a mock function with given fields: ctx, subdomain
+func (_m *Repository) SubdomainExists(ctx context.Context, subdomain string) (bool, error) {
+	ret := _m.Called(ctx, subdomain)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SubdomainExists")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (bool, error)); ok {
+		return rf(ctx, subdomain)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) bool); ok {
+		r0 = rf(ctx, subdomain)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, subdomain)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_SubdomainExists_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SubdomainExists'
+type Repository_SubdomainExists_Call struct {
+	*mock.Call
+}
+
+// SubdomainExists is a helper method to define mock.On call
+//   - ctx context.Context
+//   - subdomain string
+func (_e *Repository_Expecter) SubdomainExists(ctx interface{}, subdomain interface{}) *Repository_SubdomainExists_Call {
+	return &Repository_SubdomainExists_Call{Call: _e.mock.On("SubdomainExists", ctx, subdomain)}
+}
+
+func (_c *Repository_SubdomainExists_Call) Run(run func(ctx context.Context, subdomain string)) *Repository_SubdomainExists_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_SubdomainExists_Call) Return(_a0 bool, _a1 error) *Repository_SubdomainExists_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_SubdomainExists_Call) RunAndReturn(run func(context.Context, string) (bool, error)) *Repository_SubdomainExists_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// UpdateGateway provides a mock function with given fields: ctx, _a1
+func (_m *Repository) Update(ctx context.Context, _a1 *gateway.Gateway) error {
+	ret := _m.Called(ctx, _a1)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Update")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *gateway.Gateway) error); ok {
+		r0 = rf(ctx, _a1)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_UpdateGateway_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Update'
+type Repository_UpdateGateway_Call struct {
+	*mock.Call
+}
+
+// UpdateGateway is a helper method to define mock.On call
+//   - ctx context.Context
+//   - _a1 *gateway.Gateway
+func (_e *Repository_Expecter) UpdateGateway(ctx interface{}, _a1 interface{}) *Repository_UpdateGateway_Call {
+	return &Repository_UpdateGateway_Call{Call: _e.mock.On("Update", ctx, _a1)}
+}
+
+func (_c *Repository_UpdateGateway_Call) Run(run func(ctx context.Context, _a1 *gateway.Gateway)) *Repository_UpdateGateway_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*gateway.Gateway))
+	})
+	return _c
+}
+
+func (_c *Repository_UpdateGateway_Call) Return(_a0 error) *Repository_UpdateGateway_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_UpdateGateway_Call) RunAndReturn(run func(context.Context, *gateway.Gateway) error) *Repository_UpdateGateway_Call {
 	_c.Call.Return(run)
 	return _c
 }
