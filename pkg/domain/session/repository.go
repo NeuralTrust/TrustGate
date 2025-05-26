@@ -7,8 +7,8 @@ import (
 )
 
 type Repository interface {
-	SaveSession(ctx context.Context, session *Session) error
-	GetSessionsByID(ctx context.Context, sessionID string, gatewayID uuid.UUID) ([]*Session, error)
-	GetAllSessions(ctx context.Context, gatewayID uuid.UUID) ([]*Session, error)
-	DeleteSession(ctx context.Context, sessionID string, gatewayID uuid.UUID) error
+	Save(ctx context.Context, session *Session) error
+	GetByID(ctx context.Context, sessionID string, gatewayID uuid.UUID) ([]*Session, error)
+	GetAll(ctx context.Context, gatewayID uuid.UUID) ([]*Session, error)
+	Delete(ctx context.Context, sessionID string, gatewayID uuid.UUID) error
 }

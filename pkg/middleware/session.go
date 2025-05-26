@@ -65,7 +65,7 @@ func (m *sessionMiddleware) Middleware() fiber.Handler {
 		ttl := time.Duration(gatewayData.Gateway.SessionConfig.TTL) * time.Second
 		sess := session.NewSession(sessionID, gatewayID, content, ttl)
 
-		if err := m.repository.SaveSession(ctx.Context(), sess); err != nil {
+		if err := m.repository.Save(ctx.Context(), sess); err != nil {
 			m.logger.WithError(err).Error("failed to save session")
 		}
 

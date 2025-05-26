@@ -24,7 +24,7 @@ func NewSessionRepository(cache common.Cache) session.Repository {
 		cache: cache,
 	}
 }
-func (r *SessionRepository) SaveSession(ctx context.Context, session *session.Session) error {
+func (r *SessionRepository) Save(ctx context.Context, session *session.Session) error {
 	sessionKey := fmt.Sprintf(SessionKeyPattern, session.GatewayID.String(), session.ID)
 
 	sessionJSON, err := json.Marshal(session)
@@ -40,7 +40,7 @@ func (r *SessionRepository) SaveSession(ctx context.Context, session *session.Se
 	return r.cache.Set(ctx, sessionKey, string(sessionJSON), ttl)
 }
 
-func (r *SessionRepository) GetSessionsByID(ctx context.Context, sessionID string, gatewayID uuid.UUID) ([]*session.Session, error) {
+func (r *SessionRepository) GetByID(ctx context.Context, sessionID string, gatewayID uuid.UUID) ([]*session.Session, error) {
 	sessionKeyPattern := fmt.Sprintf(SessionKeyPattern, gatewayID.String(), sessionID)
 
 	var cursor uint64
@@ -75,7 +75,7 @@ func (r *SessionRepository) GetSessionsByID(ctx context.Context, sessionID strin
 	return sessions, nil
 }
 
-func (r *SessionRepository) GetAllSessions(ctx context.Context, gatewayID uuid.UUID) ([]*session.Session, error) {
+func (r *SessionRepository) GetAll(ctx context.Context, gatewayID uuid.UUID) ([]*session.Session, error) {
 	sessionKeyPattern := fmt.Sprintf(SessionKeyPattern, gatewayID.String(), "*")
 
 	var cursor uint64
@@ -110,7 +110,7 @@ func (r *SessionRepository) GetAllSessions(ctx context.Context, gatewayID uuid.U
 	return sessions, nil
 }
 
-func (r *SessionRepository) DeleteSession(ctx context.Context, sessionID string, gatewayID uuid.UUID) error {
+func (r *SessionRepository) Delete(ctx context.Context, sessionID string, gatewayID uuid.UUID) error {
 	sessionKey := fmt.Sprintf(SessionKeyPattern, gatewayID.String(), sessionID)
 	return r.cache.Delete(ctx, sessionKey)
 }
