@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -112,7 +113,6 @@ func main() {
 		Cache:   container.Cache,
 		Routers: []router.ServerRouter{proxyRouter},
 	}
-
 	if getServerType() == "proxy" {
 		err = container.RedisIndexCreator.CreateIndexes(ctx, common.NeuralTrustGuardRailIndexName)
 		if err != nil {

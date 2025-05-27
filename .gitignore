@@ -61,3 +61,5 @@ __debug_bin
 # Air live reload
 tmp/
 .junie
+
+guides.md
