@@ -25,6 +25,9 @@ func NewSessionRepository(cache common.Cache) session.Repository {
 	}
 }
 func (r *SessionRepository) Save(ctx context.Context, session *session.Session) error {
+	if session == nil {
+		return fmt.Errorf("session is nil")
+	}
 	sessionKey := fmt.Sprintf(SessionKeyPattern, session.GatewayID.String(), session.ID)
 
 	sessionJSON, err := json.Marshal(session)

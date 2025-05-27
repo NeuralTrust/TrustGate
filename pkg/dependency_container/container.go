@@ -133,6 +133,7 @@ func NewContainer(
 	apiKeyRepository := repository.NewApiKeyRepository(db.DB)
 	gatewayRepository := repository.NewGatewayRepository(db.DB)
 	ruleRepository := repository.NewForwardedRuleRepository(db.DB, logger, cacheInstance)
+	sessionRepository := repository.NewSessionRepository(cacheInstance)
 
 	// service
 	upstreamFinder := appUpstream.NewFinder(upstreamRepository, cacheInstance, logger)
@@ -251,9 +252,6 @@ func NewContainer(
 		GetVersionHandler:  handlers.NewGetVersionHandler(logger),
 		ListPluginsHandler: handlers.NewListPluginsHandler(logger),
 	}
-
-	// Initialize session repository
-	sessionRepository := repository.NewSessionRepository(cacheInstance)
 
 	container := &Container{
 		Cache:                 cacheInstance,

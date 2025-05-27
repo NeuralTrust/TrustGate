@@ -24,7 +24,3 @@ func NewSession(id string, gatewayID uuid.UUID, content string, ttl time.Duratio
 		ExpiresAt: now.Add(ttl),
 	}
 }
-
-func (s *Session) IsValid() bool {
-	return time.Now().Before(s.ExpiresAt)
-}

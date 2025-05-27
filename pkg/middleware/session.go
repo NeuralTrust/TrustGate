@@ -1,10 +1,12 @@
 package middleware
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/session"
@@ -13,6 +15,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
+
+var jsonBufferPool = &sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
+var sessionPool = sync.Pool{
+	New: func() interface{} {
+		return &session.Session{}
+	},
+}
+
+func unsafeByteToString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}
 
 type sessionMiddleware struct {
 	logger     *logrus.Logger
@@ -51,60 +69,83 @@ func (m *sessionMiddleware) Middleware() fiber.Handler {
 			return ctx.Next()
 		}
 
-		sessionID := m.getSessionID(ctx, gatewayData.Gateway.SessionConfig)
+		// Parse body only once and store the result
+		var bodyMap map[string]any
+		body := ctx.Body()
+		bodyParsed := false
+
+		sessionID := m.getSessionID(ctx, gatewayData.Gateway.SessionConfig, &bodyMap, &bodyParsed, body)
 		if sessionID == "" {
 			return ctx.Next()
 		}
 
+		// Use only Fiber context for consistency
 		ctx.Locals(common.SessionContextKey, sessionID)
-		c := context.WithValue(ctx.Context(), common.SessionContextKey, sessionID)
-		ctx.SetUserContext(c)
 
-		content := m.extractContent(ctx, gatewayData.Gateway.SessionConfig.Mapping)
+		content := m.extractContent(ctx, gatewayData.Gateway.SessionConfig.Mapping, &bodyMap, &bodyParsed, body)
 
 		ttl := time.Duration(gatewayData.Gateway.SessionConfig.TTL) * time.Second
-		sess := session.NewSession(sessionID, gatewayID, content, ttl)
+
+		// Get session from pool
+		sess := sessionPool.Get().(*session.Session)
+		sess.ID = sessionID
+		sess.GatewayID = gatewayID
+		sess.Content = content
+		sess.CreatedAt = time.Now()
+		sess.ExpiresAt = sess.CreatedAt.Add(ttl)
 
 		if err := m.repository.Save(ctx.Context(), sess); err != nil {
 			m.logger.WithError(err).Error("failed to save session")
 		}
-
+		sessionPool.Put(sess)
 		return ctx.Next()
 	}
 }
 
-func (m *sessionMiddleware) getSessionID(ctx *fiber.Ctx, config *types.SessionConfig) string {
+func (m *sessionMiddleware) getSessionID(ctx *fiber.Ctx, config *types.SessionConfig, bodyMap *map[string]any, bodyParsed *bool, body []byte) string {
 	if sessionID := ctx.Get(config.HeaderName); sessionID != "" {
 		return sessionID
 	}
-	var body map[string]any
-	if err := ctx.BodyParser(&body); err != nil {
-		return ""
+
+	if !*bodyParsed {
+		if err := json.Unmarshal(body, bodyMap); err != nil {
+			return ""
+		}
+		*bodyParsed = true
 	}
-	if id, ok := body[config.BodyParamName].(string); ok {
+
+	if id, ok := (*bodyMap)[config.BodyParamName].(string); ok {
 		return id
 	}
 	return ""
 }
 
-func (m *sessionMiddleware) extractContent(ctx *fiber.Ctx, mapping string) string {
+func (m *sessionMiddleware) extractContent(ctx *fiber.Ctx, mapping string, bodyMap *map[string]any, bodyParsed *bool, body []byte) string {
 	if mapping == "" {
-		return string(ctx.Body())
+		return unsafeByteToString(body) // Use unsafe conversion for zero-copy
 	}
 
-	var body map[string]interface{}
-	if err := json.Unmarshal(ctx.Body(), &body); err != nil {
-		m.logger.WithError(err).Debug("failed to parse request body")
-		return string(ctx.Body())
+	// Use the already parsed body if available
+	if !*bodyParsed {
+		if err := json.Unmarshal(body, bodyMap); err != nil {
+			m.logger.WithError(err).Debug("failed to parse request body")
+			return unsafeByteToString(body)
+		}
+		*bodyParsed = true
 	}
 
-	if value, ok := body[mapping]; ok {
+	if value, ok := (*bodyMap)[mapping]; ok {
 		switch v := value.(type) {
 		case string:
 			return v
 		default:
-			if jsonBytes, err := json.Marshal(v); err == nil {
-				return string(jsonBytes)
+			// Reuse a buffer from sync.Pool for JSON marshaling
+			buf := jsonBufferPool.Get().(*bytes.Buffer)
+			buf.Reset()
+			defer jsonBufferPool.Put(buf)
+
+			if err := json.NewEncoder(buf).Encode(v); err == nil {
+				return buf.String()[:buf.Len()-1] // Remove trailing newline
 			}
 			return fmt.Sprintf("%v", v)
 		}
