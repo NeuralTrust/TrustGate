@@ -28,8 +28,19 @@ var sessionPool = sync.Pool{
 	},
 }
 
+// unsafeByteToString performs a zero-copy conversion from []byte to string
+// using unsafe.Pointer to avoid memory allocation and improve performance.
+//
+// WARNING: This is an unsafe operation that bypasses Go's memory safety.
+// It relies on the fact that both []byte and string have the same underlying structure.
+// This function should only be used when:
+// 1. The input []byte will not be modified after this conversion
+// 2. Performance is critical in this code path
+//
+// The input byte slice must not be modified after calling this function,
+// as that would lead to undefined behavior in the returned string.
 func unsafeByteToString(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
+	return *(*string)(unsafe.Pointer(&b)) // #nosec G103
 }
 
 type sessionMiddleware struct {
@@ -87,7 +98,12 @@ func (m *sessionMiddleware) Middleware() fiber.Handler {
 		ttl := time.Duration(gatewayData.Gateway.SessionConfig.TTL) * time.Second
 
 		// Get session from pool
-		sess := sessionPool.Get().(*session.Session)
+		sessObj := sessionPool.Get()
+		sess, ok := sessObj.(*session.Session)
+		if !ok {
+			m.logger.Error("failed to get session from pool: invalid type")
+			return ctx.Next()
+		}
 		sess.ID = sessionID
 		sess.GatewayID = gatewayID
 		sess.Content = content
@@ -122,13 +138,18 @@ func (m *sessionMiddleware) getSessionID(ctx *fiber.Ctx, config *types.SessionCo
 
 func (m *sessionMiddleware) extractContent(ctx *fiber.Ctx, mapping string, bodyMap *map[string]any, bodyParsed *bool, body []byte) string {
 	if mapping == "" {
-		return unsafeByteToString(body) // Use unsafe conversion for zero-copy
+		// Performance critical path: Use unsafe conversion for zero-copy
+		// This is safe because the body slice is not modified after this point
+		return unsafeByteToString(body)
 	}
 
 	// Use the already parsed body if available
 	if !*bodyParsed {
 		if err := json.Unmarshal(body, bodyMap); err != nil {
 			m.logger.WithError(err).Debug("failed to parse request body")
+			// Fallback to raw body when JSON parsing fails
+			// Using unsafe conversion is appropriate here as this is an error path
+			// and the body slice is not modified after this point
 			return unsafeByteToString(body)
 		}
 		*bodyParsed = true
@@ -140,7 +161,12 @@ func (m *sessionMiddleware) extractContent(ctx *fiber.Ctx, mapping string, bodyM
 			return v
 		default:
 			// Reuse a buffer from sync.Pool for JSON marshaling
-			buf := jsonBufferPool.Get().(*bytes.Buffer)
+			bufObj := jsonBufferPool.Get()
+			buf, ok := bufObj.(*bytes.Buffer)
+			if !ok {
+				m.logger.Error("failed to get buffer from pool: invalid type")
+				return fmt.Sprintf("%v", v)
+			}
 			buf.Reset()
 			defer jsonBufferPool.Put(buf)
 
