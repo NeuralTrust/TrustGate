@@ -81,7 +81,6 @@ func (r *redisEventListener) Listen(ctx context.Context, channels ...channel.Cha
 			expectedType := method.Type().In(1)
 			eventValue := reflect.ValueOf(concreteEvent)
 			if !eventValue.Type().AssignableTo(expectedType) {
-				r.logger.Debugf("skipping subscriber: expected event type %v, got %v", expectedType, eventValue.Type())
 				continue
 			}
 
