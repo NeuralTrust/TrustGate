@@ -6,7 +6,6 @@ import (
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
@@ -21,7 +20,7 @@ import (
 
 type updateUpstreamHandler struct {
 	logger                      *logrus.Logger
-	repo                        *database.Repository
+	repo                        upstream.Repository
 	publisher                   infraCache.EventPublisher
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
 	cache                       *cache.Cache
@@ -30,7 +29,7 @@ type updateUpstreamHandler struct {
 
 func NewUpdateUpstreamHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo upstream.Repository,
 	publisher infraCache.EventPublisher,
 	cache *cache.Cache,
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator,

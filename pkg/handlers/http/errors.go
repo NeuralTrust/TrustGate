@@ -1,3 +1,5 @@
 package http
 
-var ErrInvalidJsonPayload = "Invalid JSON payload"
+var (
+	ErrInvalidJsonPayload = "Invalid JSON payload"
+)

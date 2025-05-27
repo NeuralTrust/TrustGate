@@ -17,4 +17,5 @@ const (
 	WsRequestContextContextKey contextKey = "__req_context"
 	StreamResponseContextKey   contextKey = "__stream_response"
 	StreamModeContextKey       contextKey = "__stream_mode"
+	SessionContextKey          contextKey = "session_id"
 )

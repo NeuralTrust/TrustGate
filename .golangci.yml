@@ -21,7 +21,7 @@ linters-settings:
   errcheck:
     check-type-assertions: true
     check-blank: true
-    ignore: fmt:.*,write,close
+    exclude-functions: fmt:.*,write,close
 
 issues:
   exclude-rules:

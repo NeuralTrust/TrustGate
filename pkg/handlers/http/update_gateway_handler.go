@@ -5,8 +5,8 @@ import (
 	"time"
 
 	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
+	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -21,7 +21,7 @@ import (
 
 type updateGatewayHandler struct {
 	logger                      *logrus.Logger
-	repo                        *database.Repository
+	repo                        domainGateway.Repository
 	pluginManager               plugins.Manager
 	publisher                   infraCache.EventPublisher
 	telemetryProvidersValidator appTelemetry.ExportersValidator
@@ -29,7 +29,7 @@ type updateGatewayHandler struct {
 
 func NewUpdateGatewayHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo domainGateway.Repository,
 	pluginManager plugins.Manager,
 	publisher infraCache.EventPublisher,
 	telemetryProvidersValidator appTelemetry.ExportersValidator,
@@ -61,7 +61,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
 	}
 
-	dbGateway, err := h.repo.GetGateway(c.Context(), gatewayUUID)
+	dbGateway, err := h.repo.Get(c.Context(), gatewayUUID)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to get gateway")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
@@ -137,7 +137,18 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	if err := h.repo.UpdateGateway(c.Context(), dbGateway); err != nil {
+	if req.SessionConfig != nil {
+		if dbGateway.SessionConfig == nil {
+			dbGateway.SessionConfig = &domainGateway.SessionConfig{}
+		}
+		dbGateway.SessionConfig.Enabled = req.SessionConfig.Enabled
+		dbGateway.SessionConfig.HeaderName = req.SessionConfig.HeaderName
+		dbGateway.SessionConfig.BodyParamName = req.SessionConfig.BodyParamName
+		dbGateway.SessionConfig.Mapping = req.SessionConfig.Mapping
+		dbGateway.SessionConfig.TTL = req.SessionConfig.TTL
+	}
+
+	if err := h.repo.Update(c.Context(), dbGateway); err != nil {
 		h.logger.WithError(err).Error("Failed to update gateway")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update gateway"})
 	}

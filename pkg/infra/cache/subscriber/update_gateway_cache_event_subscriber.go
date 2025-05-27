@@ -7,7 +7,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
+	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/google/uuid"
@@ -18,7 +18,7 @@ type UpdateGatewayCacheEventSubscriber struct {
 	logger       *logrus.Logger
 	cacheService gateway.UpdateGatewayCache
 	cache        *cache.Cache
-	repo         *database.Repository
+	repo         domainGateway.Repository
 	memoryCache  *common.TTLMap
 }
 
@@ -26,7 +26,7 @@ func NewUpdateGatewayCacheEventSubscriber(
 	logger *logrus.Logger,
 	cacheService gateway.UpdateGatewayCache,
 	c *cache.Cache,
-	repo *database.Repository,
+	repo domainGateway.Repository,
 ) infraCache.EventSubscriber[event.UpdateGatewayCacheEvent] {
 	return &UpdateGatewayCacheEventSubscriber{
 		logger:       logger,
@@ -45,7 +45,7 @@ func (s UpdateGatewayCacheEventSubscriber) OnEvent(ctx context.Context, evt even
 	if err != nil {
 		return fmt.Errorf("failed to parse gateway ID: %v", err)
 	}
-	entity, err := s.repo.GetGateway(ctx, gatewayUUID)
+	entity, err := s.repo.Get(ctx, gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Warn("failed to fetch gateway from database")
 	}

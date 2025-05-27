@@ -62,6 +62,17 @@ func (ot OutputTransformer) convertGatewayToTypes(g *gateway.Gateway) *types.Gat
 		}
 	}
 
+	var sessionConfig *types.SessionConfig
+	if g.SessionConfig != nil {
+		sessionConfig = &types.SessionConfig{
+			Enabled:       g.SessionConfig.Enabled,
+			HeaderName:    g.SessionConfig.HeaderName,
+			BodyParamName: g.SessionConfig.BodyParamName,
+			Mapping:       g.SessionConfig.Mapping,
+			TTL:           g.SessionConfig.TTL,
+		}
+	}
+
 	result := &types.Gateway{
 		ID:              g.ID.String(),
 		Name:            g.Name,
@@ -71,6 +82,7 @@ func (ot OutputTransformer) convertGatewayToTypes(g *gateway.Gateway) *types.Gat
 		SecurityConfig:  securityConfig,
 		Telemetry:       telemetry,
 		TlS:             ot.transformClientTLSConfigToType(g.ClientTLSConfig),
+		SessionConfig:   sessionConfig,
 	}
 
 	result.CreatedAt = g.CreatedAt.Format(time.RFC3339)

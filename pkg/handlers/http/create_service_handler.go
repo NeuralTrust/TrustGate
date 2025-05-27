@@ -2,7 +2,6 @@ package http
 
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
@@ -12,7 +11,7 @@ import (
 
 type createServiceHandler struct {
 	logger *logrus.Logger
-	repo   *database.Repository
+	repo   service.Repository
 	cache  *cache.Cache
 }
 
@@ -28,7 +27,7 @@ type createServiceHandler struct {
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
 // @Router /api/v1/gateways/{gateway_id}/services [post]
-func NewCreateServiceHandler(logger *logrus.Logger, repo *database.Repository, cache *cache.Cache) Handler {
+func NewCreateServiceHandler(logger *logrus.Logger, repo service.Repository, cache *cache.Cache) Handler {
 	return &createServiceHandler{
 		logger: logger,
 		repo:   repo,
@@ -78,7 +77,7 @@ func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 		UpdatedAt:   req.UpdatedAt,
 	}
 
-	if err := s.repo.CreateService(c.Context(), &entity); err != nil {
+	if err := s.repo.Create(c.Context(), &entity); err != nil {
 		s.logger.WithError(err).Error("Failed to create service")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

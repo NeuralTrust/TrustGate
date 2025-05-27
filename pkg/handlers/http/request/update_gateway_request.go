@@ -11,6 +11,7 @@ type UpdateGatewayRequest struct {
 	Telemetry       *TelemetryRequest                 `json:"telemetry"`
 	TlS             map[string]ClientTLSConfigRequest `json:"client_tls"`
 	SecurityConfig  *SecurityConfigRequest            `json:"security_config"`
+	SessionConfig   *SessionConfigRequest             `json:"session_config"`
 }
 
 func (r *UpdateGatewayRequest) Validate() error {

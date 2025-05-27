@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -15,11 +14,11 @@ import (
 
 type listUpstreamHandler struct {
 	logger *logrus.Logger
-	repo   *database.Repository
+	repo   upstream.Repository
 	cache  *cache.Cache
 }
 
-func NewListUpstreamHandler(logger *logrus.Logger, repo *database.Repository, cache *cache.Cache) Handler {
+func NewListUpstreamHandler(logger *logrus.Logger, repo upstream.Repository, cache *cache.Cache) Handler {
 	return &listUpstreamHandler{
 		logger: logger,
 		repo:   repo,

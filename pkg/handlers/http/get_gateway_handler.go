@@ -2,7 +2,7 @@ package http
 
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -10,7 +10,7 @@ import (
 
 type getGatewayHandler struct {
 	logger             *logrus.Logger
-	repo               *database.Repository
+	repo               domain.Repository
 	transformer        *gateway.OutputTransformer
 	getGatewayCache    gateway.GetGatewayCache
 	updateGatewayCache gateway.UpdateGatewayCache
@@ -18,7 +18,7 @@ type getGatewayHandler struct {
 
 func NewGetGatewayHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo domain.Repository,
 	getGatewayCache gateway.GetGatewayCache,
 	updateGatewayCache gateway.UpdateGatewayCache,
 ) Handler {
@@ -71,7 +71,7 @@ func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id format"})
 	}
 
-	dbGateway, err := s.repo.GetGateway(c.Context(), gatewayUUID)
+	dbGateway, err := s.repo.Get(c.Context(), gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to get gateway")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})

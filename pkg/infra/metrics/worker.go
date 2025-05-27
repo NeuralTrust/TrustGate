@@ -2,13 +2,16 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
+	domainTelemetry "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -36,6 +39,7 @@ type worker struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	closed           atomic.Bool
+	exporterCache    sync.Map
 }
 
 func NewWorker(
@@ -56,6 +60,20 @@ func NewWorker(
 func (m *worker) Shutdown() {
 	m.closed.Store(true)
 	m.logger.Info("shutting down metrics workers")
+
+	// Clean up cached exporters
+	m.exporterCache.Range(func(key, value interface{}) bool {
+		exporters, ok := value.([]domainTelemetry.Exporter)
+		if ok {
+			for _, exporter := range exporters {
+				exporter.Close()
+			}
+		}
+		m.exporterCache.Delete(key)
+		m.logger.Info("metric exporters cleaned up")
+		return true
+	})
+
 	m.cancel()
 	close(m.taskChan)
 	m.logger.Info("metrics workers stopped")
@@ -86,17 +104,34 @@ func (m *worker) registryMetricsToExporters(
 	startTime,
 	endTime time.Time,
 ) {
-	exp, err := m.providersBuilder.Build(exporters)
-	if err != nil {
-		fmt.Println("failed to build telemetry providers")
-		m.logger.WithError(err).Error("failed to build telemetry providers")
-		return
+
+	cacheKey := m.createExportersCacheKey(exporters)
+
+	var exp []domainTelemetry.Exporter
+	var err error
+
+	if cachedExp, found := m.exporterCache.Load(cacheKey); found {
+		var ok bool
+		exp, ok = cachedExp.([]domainTelemetry.Exporter)
+		if !ok {
+			m.logger.Error("cached exporter is not of expected type")
+			return
+		}
+	} else {
+		exp, err = m.providersBuilder.Build(exporters)
+		if err != nil {
+			fmt.Println("failed to build telemetry providers")
+			m.logger.WithError(err).Error("failed to build telemetry providers")
+			return
+		}
+		m.exporterCache.Store(cacheKey, exp)
 	}
 
 	events := collector.Flush()
 	var failedExporters []string
 	for _, exporter := range exp {
-		defer exporter.Close()
+		// Don't close the exporters here as they're cached and reused
+		// We'll handle cleanup separately
 		for _, metricsEvent := range events {
 			err = exporter.Handle(context.Background(), m.feedEvent(metricsEvent, req, resp, startTime, endTime))
 			if err != nil {
@@ -205,6 +240,18 @@ func (m *worker) feedEvent(
 	evt.ResponseHeaders = resp.Headers
 	evt.EndTimestamp = endTime.UnixMilli()
 	return evt
+}
+
+func (m *worker) createExportersCacheKey(exporters []types.Exporter) string {
+	data, err := json.Marshal(exporters)
+	if err != nil {
+		var key string
+		for _, exp := range exporters {
+			key += exp.Name + ":"
+		}
+		return key
+	}
+	return string(data)
 }
 
 func (m *worker) getStatusClass(status string) string {

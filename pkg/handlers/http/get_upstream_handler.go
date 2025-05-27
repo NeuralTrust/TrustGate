@@ -6,7 +6,6 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -15,14 +14,14 @@ import (
 
 type getUpstreamHandler struct {
 	logger         *logrus.Logger
-	repo           *database.Repository
+	repo           domain.Repository
 	cache          *cache.Cache
 	upstreamFinder upstream.Finder
 }
 
 func NewGetUpstreamHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo domain.Repository,
 	cache *cache.Cache,
 	upstreamFinder upstream.Finder,
 ) Handler {

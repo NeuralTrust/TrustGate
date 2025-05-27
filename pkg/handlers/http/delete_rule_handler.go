@@ -5,10 +5,11 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -16,14 +17,14 @@ import (
 
 type deleteRuleHandler struct {
 	logger    *logrus.Logger
-	repo      *database.Repository
+	repo      forwarding_rule.Repository
 	cache     *cache.Cache
 	publisher infraCache.EventPublisher
 }
 
 func NewDeleteRuleHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
+	repo forwarding_rule.Repository,
 	cache *cache.Cache,
 	publisher infraCache.EventPublisher,
 ) Handler {
@@ -55,9 +56,9 @@ func (s *deleteRuleHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_id"})
 	}
-	err = s.repo.DeleteRule(c.Context(), ruleUUID, gatewayUUID)
+	err = s.repo.Delete(c.Context(), ruleUUID, gatewayUUID)
 	if err != nil {
-		if errors.Is(err, database.ErrRuleNotFound) {
+		if errors.Is(err, repository.ErrRuleNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(
 				fiber.Map{
 					"error": fmt.Sprintf("rule not found with id %s and gateway %s", ruleID, gatewayID),

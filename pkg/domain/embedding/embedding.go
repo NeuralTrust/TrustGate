@@ -14,6 +14,12 @@ type Embedding struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type Config struct {
+	Provider    string                 `json:"provider"`
+	Model       string                 `json:"model"`
+	Credentials domain.CredentialsJSON `json:"credentials,omitempty" gorm:"type:jsonb"`
+}
+
 func (e *Embedding) ToBlob() ([]byte, error) {
 	float32Embedding := make([]float32, len(e.Value))
 	for i, v := range e.Value {
@@ -26,10 +32,4 @@ func (e *Embedding) ToBlob() ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-type Config struct {
-	Provider    string                 `json:"provider"`
-	Model       string                 `json:"model"`
-	Credentials domain.CredentialsJSON `json:"credentials,omitempty" gorm:"type:jsonb"`
 }

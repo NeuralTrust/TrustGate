@@ -112,6 +112,17 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	var sessionConfig *domainGateway.SessionConfig
+	if req.SessionConfig != nil {
+		sessionConfig = &domainGateway.SessionConfig{
+			Enabled:       req.SessionConfig.Enabled,
+			HeaderName:    req.SessionConfig.HeaderName,
+			BodyParamName: req.SessionConfig.BodyParamName,
+			Mapping:       req.SessionConfig.Mapping,
+			TTL:           req.SessionConfig.TTL,
+		}
+	}
+
 	entity := domainGateway.Gateway{
 		ID:              id,
 		Name:            req.Name,
@@ -121,6 +132,7 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		Telemetry:       telemetryObj,
 		ClientTLSConfig: h.mapClientTLSConfig(req.TlS),
 		SecurityConfig:  securityConfig,
+		SessionConfig:   sessionConfig,
 		CreatedAt:       req.CreatedAt,
 		UpdatedAt:       req.UpdatedAt,
 	}

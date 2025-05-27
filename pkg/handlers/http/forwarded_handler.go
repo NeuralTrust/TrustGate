@@ -21,7 +21,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -47,7 +46,6 @@ var responseBodyPool = sync.Pool{
 
 type forwardedHandler struct {
 	logger              *logrus.Logger
-	repo                *database.Repository
 	cache               *cache.Cache
 	gatewayCache        *common.TTLMap
 	upstreamFinder      upstream.Finder
@@ -63,7 +61,6 @@ type forwardedHandler struct {
 
 func NewForwardedHandler(
 	logger *logrus.Logger,
-	repo *database.Repository,
 	c *cache.Cache,
 	upstreamFinder upstream.Finder,
 	serviceFinder service.Finder,
@@ -87,7 +84,6 @@ func NewForwardedHandler(
 
 	return &forwardedHandler{
 		logger:              logger,
-		repo:                repo,
 		cache:               c,
 		gatewayCache:        c.GetTTLMap(cache.GatewayTTLName),
 		upstreamFinder:      upstreamFinder,

@@ -64,7 +64,7 @@ func TestValidate_MissingRequiredPlugin(t *testing.T) {
 	pluginManagerMock.On("GetChains", mock.Anything, mock.Anything).Return([][]types.PluginConfig{}).Once()
 
 	gatewayRepositoryMock := new(mocks.Repository)
-	gatewayRepositoryMock.On("GetGateway", mock.Anything, mock.Anything).Return(
+	gatewayRepositoryMock.On("Get", mock.Anything, mock.Anything).Return(
 		&gateway.Gateway{
 			ID:              uuid.New(),
 			RequiredPlugins: []types.PluginConfig{},
@@ -100,7 +100,7 @@ func TestValidate_SuccessPluginInGateway(t *testing.T) {
 	pluginManagerMock.On("GetPlugin", mock.Anything).Return(pluginMock).Once()
 
 	gatewayRepositoryMock := new(mocks.Repository)
-	gatewayRepositoryMock.On("GetGateway", mock.Anything, mock.Anything).Return(
+	gatewayRepositoryMock.On("Get", mock.Anything, mock.Anything).Return(
 		&gateway.Gateway{
 			ID: uuid.New(),
 			RequiredPlugins: []types.PluginConfig{
@@ -146,7 +146,7 @@ func TestValidate_FailedPluginInChain_NotSameStage(t *testing.T) {
 	pluginManagerMock.On("GetPlugin", mock.Anything).Return(pluginMock).Once()
 
 	gatewayRepositoryMock := new(mocks.Repository)
-	gatewayRepositoryMock.On("GetGateway", mock.Anything, mock.Anything).Return(
+	gatewayRepositoryMock.On("Get", mock.Anything, mock.Anything).Return(
 		&gateway.Gateway{
 			ID: uuid.New(),
 			RequiredPlugins: []types.PluginConfig{

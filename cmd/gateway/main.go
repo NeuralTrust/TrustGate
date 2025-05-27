@@ -16,10 +16,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/dependency_container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	infraLogger "github.com/NeuralTrust/TrustGate/pkg/infra/logger"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
@@ -82,6 +82,7 @@ func main() {
 		container.FingerPrintMiddleware,
 		container.SecurityMiddleware,
 		container.WebSocketMiddleware,
+		container.SessionMiddleware,
 	)
 
 	//routers
@@ -111,7 +112,6 @@ func main() {
 		Cache:   container.Cache,
 		Routers: []router.ServerRouter{proxyRouter},
 	}
-
 	if getServerType() == "proxy" {
 		err = container.RedisIndexCreator.CreateIndexes(ctx, common.NeuralTrustGuardRailIndexName)
 		if err != nil {

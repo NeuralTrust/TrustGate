@@ -1,7 +1,6 @@
 package http
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/database"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
@@ -14,11 +13,11 @@ import (
 
 type updateServiceHandler struct {
 	logger    *logrus.Logger
-	repo      *database.Repository
+	repo      service.Repository
 	publisher infraCache.EventPublisher
 }
 
-func NewUpdateServiceHandler(logger *logrus.Logger, repo *database.Repository, publisher infraCache.EventPublisher) Handler {
+func NewUpdateServiceHandler(logger *logrus.Logger, repo service.Repository, publisher infraCache.EventPublisher) Handler {
 	return &updateServiceHandler{
 		logger:    logger,
 		repo:      repo,
@@ -78,7 +77,7 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 		UpdatedAt:   req.UpdatedAt,
 	}
 
-	if err := s.repo.UpdateService(c.Context(), &entity); err != nil {
+	if err := s.repo.Update(c.Context(), &entity); err != nil {
 		s.logger.WithError(err).Error("failed to update service")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

@@ -37,7 +37,7 @@ func (s UpdateServiceCacheEventSubscriber) OnEvent(ctx context.Context, evt even
 		"gatewayID": evt.GatewayID,
 	}).Debug("updating upstream cache")
 
-	entity, err := s.repository.GetService(ctx, evt.ServiceID)
+	entity, err := s.repository.Get(ctx, evt.ServiceID)
 	if err != nil {
 		s.logger.WithError(err).Warn("failed to fetch service from database")
 	}
