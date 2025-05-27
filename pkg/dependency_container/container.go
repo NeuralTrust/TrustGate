@@ -233,7 +233,7 @@ func NewContainer(
 		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, serviceRepository, redisPublisher),
 		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, serviceRepository, redisPublisher),
 		// Rule
-		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, ruleRepository, pluginChainValidator),
+		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, ruleRepository, pluginChainValidator, redisPublisher),
 		ListRulesHandler: handlers.NewListRulesHandler(
 			logger,
 			ruleRepository,

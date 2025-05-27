@@ -9,6 +9,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -19,17 +22,20 @@ type createRuleHandler struct {
 	logger               *logrus.Logger
 	repo                 forwarding_rule.Repository
 	pluginChainValidator plugin.ValidatePluginChain
+	publisher            infraCache.EventPublisher
 }
 
 func NewCreateRuleHandler(
 	logger *logrus.Logger,
 	repo forwarding_rule.Repository,
 	pluginChainValidator plugin.ValidatePluginChain,
+	publisher infraCache.EventPublisher,
 ) Handler {
 	return &createRuleHandler{
 		logger:               logger,
 		repo:                 repo,
 		pluginChainValidator: pluginChainValidator,
+		publisher:            publisher,
 	}
 }
 
@@ -151,6 +157,15 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to get rule response")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process rule"})
+	}
+
+	// Invalidate cache after deletion
+	if err := s.publisher.Publish(
+		c.Context(),
+		channel.GatewayEventsChannel,
+		event.DeleteGatewayCacheEvent{GatewayID: gatewayID},
+	); err != nil {
+		s.logger.WithError(err).Error("failed to publish cache invalidation")
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(response)
