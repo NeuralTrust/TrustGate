@@ -33,7 +33,7 @@ func NewForwardedRuleRepository(db *gorm.DB, logger *logrus.Logger, cache *cache
 }
 
 func (r *forwardedRuleRepository) Create(ctx context.Context, rule *forwarding_rule.ForwardingRule) error {
-	tx := r.db.Begin()
+	tx := r.db.WithContext(ctx).Begin()
 	if tx.Error != nil {
 		return tx.Error
 	}
@@ -48,10 +48,6 @@ func (r *forwardedRuleRepository) Create(ctx context.Context, rule *forwarding_r
 	}
 	if err := tx.Commit().Error; err != nil {
 		return err
-	}
-
-	if err := r.UpdateRulesCache(ctx, rule.GatewayID, rules); err != nil {
-		r.logger.WithError(err).Error("Failed to update rules cache after creation")
 	}
 	return nil
 }
