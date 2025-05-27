@@ -111,7 +111,12 @@ func (m *worker) registryMetricsToExporters(
 	var err error
 
 	if cachedExp, found := m.exporterCache.Load(cacheKey); found {
-		exp = cachedExp.([]domainTelemetry.Exporter)
+		var ok bool
+		exp, ok = cachedExp.([]domainTelemetry.Exporter)
+		if !ok {
+			m.logger.Error("cached exporter is not of expected type")
+			return
+		}
 	} else {
 		exp, err = m.providersBuilder.Build(exporters)
 		if err != nil {

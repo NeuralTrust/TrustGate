@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
