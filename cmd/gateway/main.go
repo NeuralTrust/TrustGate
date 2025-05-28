@@ -115,7 +115,7 @@ func main() {
 	if getServerType() == "proxy" {
 		err = container.RedisIndexCreator.CreateIndexes(ctx, common.NeuralTrustGuardRailIndexName)
 		if err != nil {
-			logger.Fatalf("Failed to create redis indexes: %v", err)
+			logger.WithError(err).Error("failed to create redis indexes")
 		}
 		go func() {
 			fmt.Println("starting listening redis events...")
