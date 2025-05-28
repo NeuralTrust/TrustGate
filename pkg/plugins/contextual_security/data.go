@@ -2,6 +2,7 @@ package contextual_security
 
 type ContextualSecurityData struct {
 	FingerprintID         string             `json:"fingerprint_id"`
+	Fingerprint           interface{}        `json:"fingerprint"`
 	Action                string             `json:"action"` // e.g. "block", "allow", etc.
 	MaliciousCount        int                `json:"malicious_count"`
 	SimilarMaliciousCount int                `json:"similar_malicious_count"`

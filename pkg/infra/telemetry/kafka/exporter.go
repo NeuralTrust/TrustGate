@@ -92,7 +92,6 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to produce message: %w", err)
 	}
-	fmt.Println("produced message (kafka)")
 	e := <-deliveryChan
 	m, ok := e.(*kafka.Message)
 	if !ok {
