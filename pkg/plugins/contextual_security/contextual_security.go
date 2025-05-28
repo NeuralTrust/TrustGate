@@ -134,6 +134,18 @@ func (p *ContextualSecurityPlugin) Execute(
 	}
 
 	if isBlocked {
+		evtCtx.SetExtras(
+			ContextualSecurityData{
+				FingerprintID: fpID,
+				Fingerprint:   dto,
+				Action:        string(cfg.RateLimitMode),
+				Thresholds: SecurityThresholds{
+					MaxFailures:      cfg.MaxFailures,
+					SimilarMalicious: cfg.SimilarMaliciousThreshold,
+					SimilarBlocked:   cfg.SimilarBlockedThreshold,
+				},
+			},
+		)
 		return nil, &types.PluginError{
 			StatusCode: http.StatusForbidden,
 			Message:    "blocked request due fraudulent activity",
@@ -172,6 +184,7 @@ func (p *ContextualSecurityPlugin) Execute(
 	evtCtx.SetExtras(
 		ContextualSecurityData{
 			FingerprintID:         fpID,
+			Fingerprint:           dto,
 			Action:                string(cfg.RateLimitMode),
 			MaliciousCount:        maliciousCount,
 			SimilarMaliciousCount: similarMaliciousCount,
