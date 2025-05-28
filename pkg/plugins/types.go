@@ -14,6 +14,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Integrates with AWS Bedrock Guardrails to filter content based on guardrail policies",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "content_security",
+		Label:         "Prompt Guard",
 	},
 	{
 		UUID:          GeneratePluginUUID("code_sanitation"),
@@ -21,6 +22,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Detects and sanitizes potentially malicious code in requests",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "application_security",
+		Label:         "Code Injection Protection",
 	},
 	{
 		UUID:          GeneratePluginUUID("contextual_security"),
@@ -28,6 +30,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Analyzes request context for security threats",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "content_security",
+		Label:         "Contextual Security",
 	},
 	{
 		UUID:          GeneratePluginUUID("cors"),
@@ -35,6 +38,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Handles Cross-Origin Resource Sharing (CORS) requests",
 		AllowedStages: []types.Stage{types.PreRequest, types.PostResponse},
 		Category:      "application_security",
+		Label:         "CORS",
 	},
 	{
 		UUID:          GeneratePluginUUID("data_masking"),
@@ -42,6 +46,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Masks sensitive data in requests and responses",
 		AllowedStages: []types.Stage{types.PreRequest, types.PostResponse},
 		Category:      "data_masking",
+		Label:         "Data Masking",
 	},
 	{
 		UUID:          GeneratePluginUUID("external_api"),
@@ -49,6 +54,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Integrates with external APIs for additional processing",
 		AllowedStages: []types.Stage{types.PreRequest, types.PostResponse},
 		Category:      "content_security",
+		Label:         "Prompt Moderation",
 	},
 	{
 		UUID:          GeneratePluginUUID("injection_protection"),
@@ -56,6 +62,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Protects against various injection attacks",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "content_security",
+		Label:         "Code Injection Protection",
 	},
 	{
 		UUID:          GeneratePluginUUID("neuraltrust_guardrail"),
@@ -63,6 +70,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Applies NeuralTrust's guardrails to filter content",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "content_security",
+		Label:         "Prompt Guard",
 	},
 	{
 		UUID:          GeneratePluginUUID("neuraltrust_moderation"),
@@ -70,6 +78,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Applies NeuralTrust's moderation to filter content",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "content_security",
+		Label:         "Prompt Moderation",
 	},
 	{
 		UUID:          GeneratePluginUUID("toxicity_neuraltrust"),
@@ -77,6 +86,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Applies NeuralTrust's toxicity to filter content",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "content_security",
+		Label:         "Toxicity Protection",
 	},
 	{
 		UUID:          GeneratePluginUUID("rate_limiter"),
@@ -84,6 +94,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Limits request rates to prevent abuse",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "request_validation",
+		Label:         "Rate Limiter",
 	},
 	{
 		UUID:          GeneratePluginUUID("request_size_limiter"),
@@ -91,6 +102,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Limits the size of incoming requests",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "request_validation",
+		Label:         "Request Size Limiter",
 	},
 	{
 		UUID:          GeneratePluginUUID("token_rate_limiter"),
@@ -98,6 +110,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Limits token usage rates",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "request_validation",
+		Label:         "Token Rate Limiter",
 	},
 	{
 		UUID:          GeneratePluginUUID("toxicity_azure"),
@@ -105,6 +118,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Detects toxic content using Azure services",
 		AllowedStages: []types.Stage{types.PreRequest, types.PostResponse},
 		Category:      "content_security",
+		Label:         "Toxicity Protection",
 	},
 	{
 		UUID:          GeneratePluginUUID("toxicity_openai"),
@@ -112,6 +126,7 @@ var PluginList = []PluginDefinition{
 		Description:   "Detects toxic content using OpenAI services",
 		AllowedStages: []types.Stage{types.PreRequest, types.PostResponse},
 		Category:      "content_security",
+		Label:         "Toxicity Protection",
 	},
 }
 
@@ -124,6 +139,7 @@ func GeneratePluginUUID(pluginID string) string {
 type PluginDefinition struct {
 	UUID          string        `json:"id"`
 	Name          string        `json:"name"`
+	Label         string        `json:"label"`
 	Description   string        `json:"description"`
 	AllowedStages []types.Stage `json:"allowed_stages"`
 	Category      string        `json:"category"`
