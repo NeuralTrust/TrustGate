@@ -95,6 +95,7 @@ type CacheConfig struct {
 	Port     int
 	Password string
 	DB       int
+	TLS      bool
 }
 
 // Get retrieves a value from cache

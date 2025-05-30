@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -44,10 +45,16 @@ const (
 )
 
 func NewCache(config common.CacheConfig, db *gorm.DB) (*Cache, error) {
-	client := redis.NewClient(&redis.Options{
+	options := &redis.Options{
 		Addr:     fmt.Sprintf("%s:%d", config.Host, config.Port),
 		Password: config.Password,
-	})
+	}
+	if config.TLS {
+		options.TLSConfig = &tls.Config{
+			InsecureSkipVerify: true, // #nosec G402
+		}
+	}
+	client := redis.NewClient(options)
 
 	return &Cache{
 		client:     client,

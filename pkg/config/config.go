@@ -52,6 +52,7 @@ type RedisConfig struct {
 	Port     int    `mapstructure:"port"`
 	Password string `mapstructure:"password"`
 	DB       int    `mapstructure:"db"`
+	TLS      bool   `mapstructure:"tls"`
 }
 
 type PluginsConfig struct {

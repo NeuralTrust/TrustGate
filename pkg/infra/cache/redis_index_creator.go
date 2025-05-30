@@ -2,7 +2,6 @@ package cache
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -30,39 +29,6 @@ func NewRedisIndexCreator(redis *redis.Client, logger *logrus.Logger) RedisIndex
 }
 
 func (c *redisIndexCreator) CreateIndexes(ctx context.Context, keys ...string) error {
-
-	moduleListCmd := c.redis.Do(ctx, "MODULE", "LIST")
-	if moduleListCmd.Err() != nil {
-		c.logger.WithError(moduleListCmd.Err()).Warn("failed to list Redis modules")
-		return moduleListCmd.Err()
-	}
-
-	modules, ok := moduleListCmd.Val().([]interface{})
-	if !ok {
-		c.logger.Warn("failed to parse Redis modules list")
-		return fmt.Errorf("failed to parse Redis modules list")
-	}
-
-	redisSearchAvailable := false
-	for _, module := range modules {
-		info, ok := module.([]interface{})
-		if !ok || len(info) < 2 {
-			continue
-		}
-
-		name, ok := info[1].(string)
-		if ok && (name == "search" || name == "redisearch") {
-			redisSearchAvailable = true
-			break
-		}
-	}
-
-	if !redisSearchAvailable {
-		c.logger.Warn("redisSearch module is not available")
-		return fmt.Errorf("RedisSearch module not found")
-	}
-
-	c.logger.Info("redisSearch module found, creating indexes...")
 
 	for _, key := range keys {
 		dropArgs := []interface{}{"FT.DROPINDEX", key, "DD"}

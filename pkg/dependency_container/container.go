@@ -94,6 +94,7 @@ func NewContainer(
 		Port:     cfg.Redis.Port,
 		Password: cfg.Redis.Password,
 		DB:       cfg.Redis.DB,
+		TLS:      cfg.Redis.TLS,
 	}
 	cacheInstance, err := cache.NewCache(cacheConfig, db.DB)
 	if err != nil {
