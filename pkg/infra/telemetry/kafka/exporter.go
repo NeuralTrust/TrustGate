@@ -10,6 +10,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/gofiber/fiber/v2/log"
 	"github.com/mitchellh/mapstructure"
 )
 
@@ -84,6 +85,7 @@ func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
+	log.Debug(string(data))
 	deliveryChan := make(chan kafka.Event)
 	err = p.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &p.cfg.Topic, Partition: kafka.PartitionAny},
