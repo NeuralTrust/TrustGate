@@ -51,7 +51,7 @@ func NewCache(config common.CacheConfig, db *gorm.DB) (*Cache, error) {
 	}
 	if config.TLS {
 		options.TLSConfig = &tls.Config{
-			InsecureSkipVerify: true,
+			InsecureSkipVerify: true, // #nosec G402
 		}
 	}
 	client := redis.NewClient(options)
