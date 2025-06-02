@@ -54,12 +54,13 @@ type HealthCheckRequest struct {
 }
 
 type WebhookConfigRequest struct {
-	ReturnErrorDetails bool   `json:"return_error_details"`
-	PingPeriod         string `json:"ping_period"`
-	PongWait           string `json:"pong_wait"`
-	HandshakeTimeout   string `json:"handshake_timeout"`
-	ReadBufferSize     int    `json:"read_buffer_size"`
-	WriteBufferSize    int    `json:"write_buffer_size"`
+	EnableDirectCommunication bool   `json:"enable_direct_communication"`
+	ReturnErrorDetails        bool   `json:"return_error_details"`
+	PingPeriod                string `json:"ping_period"`
+	PongWait                  string `json:"pong_wait"`
+	HandshakeTimeout          string `json:"handshake_timeout"`
+	ReadBufferSize            int    `json:"read_buffer_size"`
+	WriteBufferSize           int    `json:"write_buffer_size"`
 }
 
 func (r *WebhookConfigRequest) Validate() error {

@@ -153,7 +153,7 @@ func (s *createUpstreamHandler) createUpstreamEntity(
 	var websocket *upstream.WebsocketConfig
 	if req.WebhookConfig != nil {
 		websocket = &upstream.WebsocketConfig{
-			EnableDirectCommunication: true,
+			EnableDirectCommunication: req.WebhookConfig.EnableDirectCommunication,
 			ReturnErrorDetails:        req.WebhookConfig.ReturnErrorDetails,
 			PingPeriod:                req.WebhookConfig.PingPeriod,
 			PongWait:                  req.WebhookConfig.PongWait,

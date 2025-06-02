@@ -837,15 +837,22 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 			return
 		}
 
-		wsMessage := &infraWebsocket.Message{
-			Body:       string(message),
-			OriginPath: reqCtx.Path,
+		// wsMessage := &infraWebsocket.Message{
+		// 	Body:       string(message),
+		// 	OriginPath: reqCtx.Path,
+		// }
+		var wsMessage infraWebsocket.Message
+		if err := json.Unmarshal(message, &wsMessage); err != nil {
+			h.logger.WithError(err).Error("failed to unmarshal message")
+			continue
 		}
 
 		clientID := fmt.Sprintf("%p", clientConn)
 		h.clientLastMessageMutex.RLock()
-		h.clientLastMessage[clientID] = wsMessage
+		h.clientLastMessage[clientID] = &wsMessage
 		h.clientLastMessageMutex.RUnlock()
+
+		reqCtx.Body = message
 
 		if _, err := h.pluginManager.ExecuteStage(
 			context.Background(),
