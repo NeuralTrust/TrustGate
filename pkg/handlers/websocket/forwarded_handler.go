@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -30,24 +29,27 @@ import (
 )
 
 type forwardedWebsocketHandler struct {
-	config                 *config.Config
-	logger                 *logrus.Logger
-	upstreamFinder         upstream.Finder
-	serviceFinder          service.Finder
-	lbFactory              loadbalancer.Factory
-	cache                  *cache.Cache
-	connections            map[string]*gorilla.Conn
-	connectionMutex        sync.RWMutex
-	clientChannels         map[string]map[string]chan *infraWebsocket.ResponseMessage
-	clientChannelMutex     sync.RWMutex
-	clientConnections      map[string]*websocket.Conn
-	clientConnMutex        sync.RWMutex
-	clientIDMap            map[string]*gorilla.Conn
-	clientIDMutex          sync.RWMutex
-	clientLastMessage      map[string]*infraWebsocket.Message
-	clientLastMessageMutex sync.RWMutex
-	loadBalancers          sync.Map
-	pluginManager          plugins.Manager
+	config                *config.Config
+	logger                *logrus.Logger
+	upstreamFinder        upstream.Finder
+	serviceFinder         service.Finder
+	lbFactory             loadbalancer.Factory
+	cache                 *cache.Cache
+	connections           map[string]*gorilla.Conn
+	connectionMutex       sync.RWMutex
+	clientChannels        map[string]map[string]chan *infraWebsocket.ResponseMessage
+	clientChannelMutex    sync.RWMutex
+	clientConnections     map[string]*websocket.Conn
+	clientConnMutex       sync.RWMutex
+	clientIDMap           map[string]*gorilla.Conn
+	clientIDMutex         sync.RWMutex
+	clientSessionIDs      map[string]string
+	clientSessionIDsMutex sync.RWMutex
+	loadBalancers         sync.Map
+	pluginManager         plugins.Manager
+	// connWriteMutexes is used to synchronize writes to individual websocket connections
+	connWriteMutexes      map[*websocket.Conn]*sync.Mutex
+	connWriteMutexesMutex sync.RWMutex
 }
 
 func NewWebsocketHandler(
@@ -70,8 +72,9 @@ func NewWebsocketHandler(
 		clientChannels:    make(map[string]map[string]chan *infraWebsocket.ResponseMessage),
 		clientConnections: make(map[string]*websocket.Conn),
 		clientIDMap:       make(map[string]*gorilla.Conn),
-		clientLastMessage: make(map[string]*infraWebsocket.Message),
+		clientSessionIDs:  make(map[string]string),
 		pluginManager:     pluginManager,
+		connWriteMutexes:  make(map[*websocket.Conn]*sync.Mutex),
 	}
 }
 
@@ -432,6 +435,20 @@ func (h *forwardedWebsocketHandler) handleMultiplexing(
 	done := make(chan struct{})
 	defer close(done)
 
+	// Extract session ID from headers
+	var sessionID string
+	if sessionIDHeaders, ok := reqCtx.Headers["Session-Id"]; ok && len(sessionIDHeaders) > 0 {
+		sessionID = sessionIDHeaders[0]
+		h.logger.WithField("sessionID", sessionID).Debug("Found session ID in headers")
+	}
+
+	// Store session ID if present
+	if sessionID != "" {
+		h.clientSessionIDsMutex.Lock()
+		h.clientSessionIDs[clientID] = sessionID
+		h.clientSessionIDsMutex.Unlock()
+	}
+
 	h.clientConnMutex.Lock()
 	h.clientConnections[clientID] = clientConn
 	h.clientConnMutex.Unlock()
@@ -449,15 +466,25 @@ func (h *forwardedWebsocketHandler) handleMultiplexing(
 
 	// Clean up resources when this function exits
 	defer func() {
-		// Remove client from clientConnections map
+		// Remove client from clientConnections map and clean up its mutex
 		h.clientConnMutex.Lock()
-		delete(h.clientConnections, clientID)
+		clientConn, exists := h.clientConnections[clientID]
+		if exists {
+			// Clean up the connection mutex before removing the connection
+			h.cleanupConnection(clientConn)
+			delete(h.clientConnections, clientID)
+		}
 		h.clientConnMutex.Unlock()
 
 		// Remove client from clientIDMap
 		h.clientIDMutex.Lock()
 		delete(h.clientIDMap, clientID)
 		h.clientIDMutex.Unlock()
+
+		// Remove client from clientSessionIDs map
+		h.clientSessionIDsMutex.Lock()
+		delete(h.clientSessionIDs, clientID)
+		h.clientSessionIDsMutex.Unlock()
 
 		// Remove client channel from clientChannels map
 		h.clientChannelMutex.Lock()
@@ -502,7 +529,7 @@ func (h *forwardedWebsocketHandler) handleMultiplexing(
 			h.clientIDMap[clientID] = targetConn
 			h.clientIDMutex.Unlock()
 
-			go h.readFromTarget(reqCtx, gatewayData, targetConn, targetKey, collector, target, lb, clientID)
+			go h.readFromTarget(reqCtx, gatewayData, targetConn, targetKey, collector, target, lb)
 		}
 	}
 
@@ -517,7 +544,7 @@ func (h *forwardedWebsocketHandler) handleMultiplexing(
 				return nil
 			}
 			if message.Session != nil {
-				if err := h.emitToSession(message, clientID); err != nil {
+				if err := h.emitToSession(message); err != nil {
 					h.logger.WithError(err).Error("error in emitToSession")
 					return err
 				}
@@ -527,7 +554,7 @@ func (h *forwardedWebsocketHandler) handleMultiplexing(
 					return err
 				}
 			} else {
-				if err := h.emitToBroadCast(message); err != nil {
+				if err := h.emitToBroadCast(message, targetKey); err != nil {
 					h.logger.WithError(err).Error("error in emitToBroadCast")
 					return err
 				}
@@ -540,59 +567,107 @@ func (h *forwardedWebsocketHandler) emitByUrl(message *infraWebsocket.ResponseMe
 	h.clientConnMutex.RLock()
 	defer h.clientConnMutex.RUnlock()
 
-	h.clientLastMessageMutex.RLock()
-	defer h.clientLastMessageMutex.RUnlock()
-
-	for clientID, clientConn := range h.clientConnections {
-		lastMessage, ok := h.clientLastMessage[clientID]
-		if !ok || lastMessage.OriginPath == "" {
-			continue
-		}
-
-		parsedOrigin, err := url.Parse(lastMessage.OriginPath)
-		if err != nil {
-			h.logger.WithError(err).WithField("originPath", lastMessage.OriginPath).Warn("failed to parse origin path")
-			continue
-		}
-
-		originPath := strings.TrimSuffix(parsedOrigin.Path, "/")
-		targetPath := strings.TrimSuffix(message.URL, "/")
-
-		if originPath == targetPath {
-			if err := clientConn.WriteMessage(websocket.TextMessage, message.Response); err != nil {
-				h.logger.WithError(err).Error("error writing message to client")
-				return err
-			}
-		}
+	targetPath := strings.TrimSuffix(message.URL, "/")
+	if targetPath == "" {
+		return fmt.Errorf("message has no URL")
 	}
 
-	return nil
-}
-
-func (h *forwardedWebsocketHandler) emitToBroadCast(message *infraWebsocket.ResponseMessage) error {
-	h.clientConnMutex.RLock()
-	defer h.clientConnMutex.RUnlock()
-	for _, clientConn := range h.clientConnections {
-		if err := clientConn.WriteMessage(websocket.TextMessage, message.Response); err != nil {
+	for clientID, clientConn := range h.clientConnections {
+		session, ok := h.clientSessionIDs[clientID]
+		if session != "" && ok {
+			continue
+		}
+		if err := h.writeMessageSafe(clientConn, websocket.TextMessage, message.Response); err != nil {
 			h.logger.WithError(err).Error("error writing message to client")
 			return err
 		}
 	}
+
 	return nil
 }
 
-func (h *forwardedWebsocketHandler) emitToSession(message *infraWebsocket.ResponseMessage, clientID string) error {
-	h.clientIDMutex.RLock()
-	defer h.clientIDMutex.RUnlock()
-	clientConn, ok := h.clientConnections[clientID]
-	if !ok {
-		return fmt.Errorf("client not found")
+func (h *forwardedWebsocketHandler) emitToBroadCast(message *infraWebsocket.ResponseMessage, targetKey string) error {
+	h.clientChannelMutex.RLock()
+	defer h.clientChannelMutex.RUnlock()
+
+	// Get all clients for this target
+	clientChannels, exists := h.clientChannels[targetKey]
+	if !exists {
+		return fmt.Errorf("no clients found for target %s", targetKey)
 	}
-	if err := clientConn.WriteMessage(websocket.TextMessage, message.Response); err != nil {
-		h.logger.WithError(err).Error("error writing message to client")
-		return err
+
+	h.clientConnMutex.RLock()
+	defer h.clientConnMutex.RUnlock()
+
+	// Send the message to all clients connected to this target
+	for clientID := range clientChannels {
+		clientConn, ok := h.clientConnections[clientID]
+		if !ok {
+			continue
+		}
+
+		if err := h.writeMessageSafe(clientConn, websocket.TextMessage, message.Response); err != nil {
+			h.logger.WithError(err).Error("error writing message to client")
+			return err
+		}
 	}
+
 	return nil
+}
+
+func (h *forwardedWebsocketHandler) emitToSession(message *infraWebsocket.ResponseMessage) error {
+	h.clientConnMutex.RLock()
+	defer h.clientConnMutex.RUnlock()
+
+	h.clientSessionIDsMutex.RLock()
+	defer h.clientSessionIDsMutex.RUnlock()
+
+	var sessionUUID string
+	if message.Session != nil && message.Session.UUID != "" {
+		sessionUUID = message.Session.UUID
+	} else {
+		return fmt.Errorf("message has no session UUID")
+	}
+
+	for cID, clientConn := range h.clientConnections {
+		if headerSessionID, ok := h.clientSessionIDs[cID]; ok && headerSessionID == sessionUUID {
+			if err := h.writeMessageSafe(clientConn, websocket.TextMessage, message.Response); err != nil {
+				h.logger.WithError(err).Error("error writing message to client")
+				return err
+			}
+			continue
+		}
+	}
+
+	return nil
+}
+
+func (h *forwardedWebsocketHandler) writeMessageSafe(conn *websocket.Conn, messageType int, data []byte) error {
+	h.connWriteMutexesMutex.RLock()
+	mutex, exists := h.connWriteMutexes[conn]
+	h.connWriteMutexesMutex.RUnlock()
+
+	if !exists {
+		h.connWriteMutexesMutex.Lock()
+		mutex, exists = h.connWriteMutexes[conn]
+		if !exists {
+			mutex = &sync.Mutex{}
+			h.connWriteMutexes[conn] = mutex
+		}
+		h.connWriteMutexesMutex.Unlock()
+	}
+
+	mutex.Lock()
+	err := conn.WriteMessage(messageType, data)
+	mutex.Unlock()
+
+	return err
+}
+
+func (h *forwardedWebsocketHandler) cleanupConnection(conn *websocket.Conn) {
+	h.connWriteMutexesMutex.Lock()
+	delete(h.connWriteMutexes, conn)
+	h.connWriteMutexesMutex.Unlock()
 }
 
 func (h *forwardedWebsocketHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upstream) (*loadbalancer.LoadBalancer, error) {
@@ -663,7 +738,6 @@ func (h *forwardedWebsocketHandler) readFromTarget(
 	metricsCollector *metrics.Collector,
 	target *types.UpstreamTarget,
 	lb *loadbalancer.LoadBalancer,
-	clientID string,
 ) {
 	defer func() {
 		h.connectionMutex.Lock()
@@ -699,18 +773,6 @@ func (h *forwardedWebsocketHandler) readFromTarget(
 		}
 	}()
 
-	h.clientChannelMutex.RLock()
-	clients := make(map[string]chan *infraWebsocket.ResponseMessage, len(h.clientChannels[targetKey]))
-	for clientID, ch := range h.clientChannels[targetKey] {
-		clients[clientID] = ch
-	}
-	h.clientChannelMutex.RUnlock()
-
-	if len(clients) == 0 {
-		h.logger.Error("no clients found for target")
-		return
-	}
-
 	for {
 		_, message, err := targetConn.ReadMessage()
 		if err != nil {
@@ -718,6 +780,19 @@ func (h *forwardedWebsocketHandler) readFromTarget(
 			h.logger.WithError(err).Error("error reading message from target")
 			break
 		}
+
+		h.clientChannelMutex.RLock()
+		clients := make(map[string]chan *infraWebsocket.ResponseMessage, len(h.clientChannels[targetKey]))
+		for clientID, ch := range h.clientChannels[targetKey] {
+			clients[clientID] = ch
+		}
+		h.clientChannelMutex.RUnlock()
+
+		if len(clients) == 0 {
+			h.logger.Error("no clients found for target")
+			return
+		}
+
 		lb.ReportSuccess(target)
 
 		respCtx := &types.ResponseContext{
@@ -729,20 +804,6 @@ func (h *forwardedWebsocketHandler) readFromTarget(
 			StatusCode: http.StatusOK,
 		}
 
-		h.clientLastMessageMutex.RLock()
-		reqMessage, ok := h.clientLastMessage[clientID]
-		if !ok {
-			h.logger.WithError(err).Error("error reading last client message")
-			break
-		}
-		h.clientLastMessageMutex.RUnlock()
-
-		respMessage := &infraWebsocket.ResponseMessage{
-			Session:    reqMessage.Session,
-			URL:        reqMessage.URL,
-			OriginPath: reqMessage.OriginPath,
-		}
-		// Execute PostResponse plugins
 		if _, err := h.pluginManager.ExecuteStage(
 			context.Background(),
 			types.PostResponse,
@@ -753,19 +814,30 @@ func (h *forwardedWebsocketHandler) readFromTarget(
 		); err != nil {
 			var pluginErr *types.PluginError
 			if errors.As(err, &pluginErr) {
-				// Handle plugin error
 				errorPayload := fiber.Map{
 					"error":       pluginErr.Message,
 					"retry_after": respCtx.Metadata["retry_after"],
 				}
 				if data, err := json.Marshal(errorPayload); err == nil {
-					// Send error to all clients
-					respMessage.Response = data
 					for clientID, clientChan := range clients {
+						var sess *infraWebsocket.Session
+						h.clientSessionIDsMutex.RLock()
+						if sessionID, ok := h.clientSessionIDs[clientID]; ok {
+							sess = &infraWebsocket.Session{UUID: sessionID}
+						}
+						h.clientSessionIDsMutex.RUnlock()
+
+						respMessage := &infraWebsocket.ResponseMessage{
+							Session:    sess,
+							Response:   data,
+							URL:        reqCtx.Path,
+							OriginPath: reqCtx.Path,
+						}
+
 						select {
 						case clientChan <- respMessage:
 						default:
-							h.logger.WithField("clientID", clientID).Warn("client channel full, dropping error message")
+							h.logger.WithField("clientID", clientID).Warn("client channel full, dropping plugin error message")
 						}
 					}
 				} else {
@@ -775,13 +847,24 @@ func (h *forwardedWebsocketHandler) readFromTarget(
 			}
 
 			if respCtx.StopProcessing {
-				respMessage.Response = respCtx.Body
 				for clientID, clientChan := range clients {
+					var sess *infraWebsocket.Session
+					h.clientSessionIDsMutex.RLock()
+					if sessionID, ok := h.clientSessionIDs[clientID]; ok {
+						sess = &infraWebsocket.Session{UUID: sessionID}
+					}
+					h.clientSessionIDsMutex.RUnlock()
+
+					respMessage := &infraWebsocket.ResponseMessage{
+						Session:    sess,
+						Response:   respCtx.Body,
+						URL:        reqCtx.Path,
+						OriginPath: reqCtx.Path,
+					}
+
 					select {
 					case clientChan <- respMessage:
-						// Message sent successfully
 					default:
-						// Channel is full, log warning
 						h.logger.WithField("clientID", clientID).Warn("client channel full, dropping stop processing message")
 					}
 				}
@@ -791,12 +874,25 @@ func (h *forwardedWebsocketHandler) readFromTarget(
 			if !h.config.Plugins.IgnoreErrors {
 				errPayload := fiber.Map{"error": "plugin execution failed"}
 				if data, err := json.Marshal(errPayload); err == nil {
-					respMessage.Response = data
 					for clientID, clientChan := range clients {
+						var sess *infraWebsocket.Session
+						h.clientSessionIDsMutex.RLock()
+						if sessionID, ok := h.clientSessionIDs[clientID]; ok {
+							sess = &infraWebsocket.Session{UUID: sessionID}
+						}
+						h.clientSessionIDsMutex.RUnlock()
+
+						respMessage := &infraWebsocket.ResponseMessage{
+							Session:    sess,
+							Response:   data,
+							URL:        reqCtx.Path,
+							OriginPath: reqCtx.Path,
+						}
+
 						select {
 						case clientChan <- respMessage:
 						default:
-							h.logger.WithField("clientID", clientID).Warn("client channel full, dropping plugin error message")
+							h.logger.WithField("clientID", clientID).Warn("client channel full, dropping plugin error fallback message")
 						}
 					}
 				}
@@ -804,13 +900,67 @@ func (h *forwardedWebsocketHandler) readFromTarget(
 			}
 		}
 
-		respMessage.Response = respCtx.Body
+		// Normal response
+		// Try to parse the response body as JSON to check for session ID
+		var messageData map[string]interface{}
+		var messageSessionID string
 
-		for clientID, clientChan := range clients {
-			select {
-			case clientChan <- respMessage:
-			default:
-				h.logger.WithField("clientID", clientID).Warn("client channel full, dropping response message")
+		if err := json.Unmarshal(respCtx.Body, &messageData); err == nil {
+			// Check if the message contains a session field with a uuid
+			if sessionData, ok := messageData["session"].(map[string]interface{}); ok {
+				if uuid, ok := sessionData["uuid"].(string); ok && uuid != "" {
+					messageSessionID = uuid
+				}
+			}
+		}
+
+		// If the message contains a session ID, only send to clients with matching session IDs
+		if messageSessionID != "" {
+			h.logger.WithField("sessionID", messageSessionID).Debug("Found session ID in response body, sending only to matching clients")
+
+			for clientID, clientChan := range clients {
+				h.clientSessionIDsMutex.RLock()
+				clientSessionID, hasSession := h.clientSessionIDs[clientID]
+				h.clientSessionIDsMutex.RUnlock()
+
+				// Only send to clients with matching session IDs
+				if hasSession && clientSessionID == messageSessionID {
+					respMessage := &infraWebsocket.ResponseMessage{
+						Session:    &infraWebsocket.Session{UUID: messageSessionID},
+						Response:   respCtx.Body,
+						URL:        reqCtx.Path,
+						OriginPath: reqCtx.Path,
+					}
+
+					select {
+					case clientChan <- respMessage:
+					default:
+						h.logger.WithField("clientID", clientID).Warn("client channel full, dropping response message")
+					}
+				}
+			}
+		} else {
+			// No session ID in the message, send to all clients as before
+			for clientID, clientChan := range clients {
+				var sess *infraWebsocket.Session
+				h.clientSessionIDsMutex.RLock()
+				if sessionID, ok := h.clientSessionIDs[clientID]; ok {
+					sess = &infraWebsocket.Session{UUID: sessionID}
+				}
+				h.clientSessionIDsMutex.RUnlock()
+
+				respMessage := &infraWebsocket.ResponseMessage{
+					Session:    sess,
+					Response:   respCtx.Body,
+					URL:        reqCtx.Path,
+					OriginPath: reqCtx.Path,
+				}
+
+				select {
+				case clientChan <- respMessage:
+				default:
+					h.logger.WithField("clientID", clientID).Warn("client channel full, dropping response message")
+				}
 			}
 		}
 	}
@@ -837,20 +987,26 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 			return
 		}
 
-		// wsMessage := &infraWebsocket.Message{
-		// 	Body:       string(message),
-		// 	OriginPath: reqCtx.Path,
-		// }
 		var wsMessage infraWebsocket.Message
 		if err := json.Unmarshal(message, &wsMessage); err != nil {
 			h.logger.WithError(err).Error("failed to unmarshal message")
 			continue
 		}
 
+		wsMessage.OriginPath = reqCtx.Path
+
 		clientID := fmt.Sprintf("%p", clientConn)
-		h.clientLastMessageMutex.RLock()
-		h.clientLastMessage[clientID] = &wsMessage
-		h.clientLastMessageMutex.RUnlock()
+
+		h.clientSessionIDsMutex.RLock()
+		sessionID, hasSessionID := h.clientSessionIDs[clientID]
+		h.clientSessionIDsMutex.RUnlock()
+
+		if hasSessionID && sessionID != "" {
+			if wsMessage.Session == nil {
+				wsMessage.Session = &infraWebsocket.Session{}
+			}
+			wsMessage.Session.UUID = sessionID
+		}
 
 		reqCtx.Body = message
 
