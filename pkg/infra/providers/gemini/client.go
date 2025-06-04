@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -11,22 +12,13 @@ import (
 )
 
 type client struct {
-	genaiClient *genai.Client
+	clientPool *sync.Map
 }
 
-func NewGeminiClient(apiKey string) (providers.Client, error) {
-	ctx := context.Background()
-	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
-	})
-	if err != nil {
-		return nil, err
-	}
-
+func NewGeminiClient() providers.Client {
 	return &client{
-		genaiClient: genaiClient,
-	}, nil
+		clientPool: &sync.Map{},
+	}
 }
 
 func (c *client) Ask(
@@ -34,12 +26,17 @@ func (c *client) Ask(
 	config *providers.Config,
 	prompt string,
 ) (*providers.CompletionResponse, error) {
-	if config.Credentials.HeaderValue == "" {
+	if config.Credentials.ApiKey == "" {
 		return nil, fmt.Errorf("API key is required")
 	}
 
 	if config.Model == "" {
 		config.Model = "gemini-pro"
+	}
+
+	genaiClient, err := c.getOrCreateClient(ctx, config.Credentials.ApiKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
 	}
 
 	var parts []*genai.Part
@@ -53,17 +50,21 @@ func (c *client) Ask(
 			Text: providers.FormatInstructions(config.Instructions),
 		})
 	}
-
-	result, err := c.genaiClient.Models.GenerateContent(
-		ctx,
-		config.Model,
-		genai.Text(prompt),
-		&genai.GenerateContentConfig{
+	var contentConfig *genai.GenerateContentConfig
+	if len(parts) > 0 {
+		contentConfig = &genai.GenerateContentConfig{
 			SystemInstruction: &genai.Content{
 				Parts: parts,
 				Role:  "system",
 			},
-		},
+		}
+	}
+
+	result, err := genaiClient.Models.GenerateContent(
+		ctx,
+		config.Model,
+		genai.Text(prompt),
+		contentConfig,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate content: %w", err)
@@ -98,4 +99,19 @@ func (c *client) Ask(
 	}
 
 	return completionResp, nil
+}
+
+func (c *client) getOrCreateClient(ctx context.Context, apiKey string) (*genai.Client, error) {
+	if clientVal, ok := c.clientPool.Load(apiKey); ok {
+		return clientVal.(*genai.Client), nil
+	}
+	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  apiKey,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		return nil, err
+	}
+	c.clientPool.Store(apiKey, genaiClient)
+	return genaiClient, nil
 }

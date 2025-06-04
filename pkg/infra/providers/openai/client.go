@@ -1,67 +1,22 @@
 package openai
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"sync"
 
-	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
-	"github.com/valyala/fasthttp"
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 )
-
-const (
-	completionsEndpoint = "https://api.openai.com/v1/chat/completions"
-)
-
-type completionRequest struct {
-	Model       string     `json:"model"`
-	Messages    []messages `json:"messages"`
-	MaxTokens   int        `json:"max_tokens,omitempty"`
-	Temperature float64    `json:"temperature,omitempty"`
-}
-
-type messages struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
 
 type client struct {
-	httpClient httpx.Client
+	clientPool *sync.Map
 }
 
-type Response struct {
-	ID      string   `json:"id"`
-	Model   string   `json:"model"`
-	Choices []Choice `json:"choices"`
-	Usage   Usage    `json:"usage"`
-}
-
-type Choice struct {
-	Index   int `json:"index"`
-	Message struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	} `json:"message"`
-	FinishReason string `json:"finish_reason"`
-	Logprobs     struct {
-		TokenLogprobs map[string]float64 `json:"token_logprobs"`
-	} `json:"logprobs"`
-	LogitScores struct{}
-}
-
-type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}
-
-func NewOpenaiClient(httpClient *fasthttp.Client) providers.Client {
+func NewOpenaiClient() providers.Client {
 	return &client{
-		httpClient: httpx.NewFastHTTPClient(httpClient),
+		clientPool: &sync.Map{},
 	}
 }
 
@@ -70,88 +25,68 @@ func (c *client) Ask(
 	config *providers.Config,
 	prompt string,
 ) (*providers.CompletionResponse, error) {
-	if config.Credentials.HeaderValue == "" {
+	if config.Credentials.ApiKey == "" {
 		return nil, fmt.Errorf("API key is required")
 	}
-
 	if config.Model == "" {
 		return nil, fmt.Errorf("model is required")
 	}
 
-	var msgs []messages
+	openaiClient := c.getOrCreateClient(config.Credentials.ApiKey)
+
+	var messages []openai.ChatCompletionMessageParamUnion
 
 	if config.SystemPrompt != "" {
-		msgs = append(msgs, messages{
-			Role:    "system",
-			Content: config.SystemPrompt,
-		})
+		messages = append(messages, openai.SystemMessage(config.SystemPrompt))
 	}
+
 	if len(config.Instructions) > 0 {
-		msgs = append(msgs, messages{
-			Role:    "developer",
-			Content: providers.FormatInstructions(config.Instructions),
-		})
+		messages = append(messages, openai.UserMessage(providers.FormatInstructions(config.Instructions)))
 	}
 
 	if prompt != "" {
-		msgs = append(msgs, messages{
-			Role:    "user",
-			Content: prompt,
-		})
+		messages = append(messages, openai.UserMessage(prompt))
 	}
 
-	req := completionRequest{
-		Model:       config.Model,
-		Messages:    msgs,
-		MaxTokens:   config.MaxTokens,
-		Temperature: config.Temperature,
+	params := openai.ChatCompletionNewParams{
+		Model:    config.Model,
+		Messages: messages,
 	}
 
-	jsonData, err := json.Marshal(req)
+	if config.MaxTokens > 0 {
+		params.MaxTokens = openai.Int(int64(config.MaxTokens))
+	}
+
+	if config.Temperature > 0 {
+		params.Temperature = openai.Float(config.Temperature)
+	}
+
+	resp, err := openaiClient.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("OpenAI request failed: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", completionsEndpoint, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set(config.Credentials.HeaderKey, "Bearer "+config.Credentials.HeaderValue)
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OpenAI API returned error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var completionResp Response
-	if err := json.Unmarshal(body, &completionResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if len(completionResp.Choices) == 0 {
+	if len(resp.Choices) == 0 {
 		return nil, fmt.Errorf("no completions returned")
 	}
 
 	return &providers.CompletionResponse{
-		ID:       completionResp.ID,
-		Model:    completionResp.Model,
-		Response: completionResp.Choices[0].Message.Content,
+		ID:       resp.ID,
+		Model:    resp.Model,
+		Response: resp.Choices[0].Message.Content,
 		Usage: providers.Usage{
-			PromptTokens:     completionResp.Usage.PromptTokens,
-			CompletionTokens: completionResp.Usage.CompletionTokens,
-			TotalTokens:      completionResp.Usage.TotalTokens,
+			PromptTokens:     int(resp.Usage.PromptTokens),
+			CompletionTokens: int(resp.Usage.CompletionTokens),
+			TotalTokens:      int(resp.Usage.TotalTokens),
 		},
 	}, nil
+}
+
+func (c *client) getOrCreateClient(apiKey string) openai.Client {
+	if clientVal, ok := c.clientPool.Load(apiKey); ok {
+		return clientVal.(openai.Client)
+	}
+	newClient := openai.NewClient(option.WithAPIKey(apiKey))
+	c.clientPool.Store(apiKey, newClient)
+	return newClient
 }

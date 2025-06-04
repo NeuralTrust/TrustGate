@@ -14,8 +14,7 @@ type Config struct {
 }
 
 type Credentials struct {
-	HeaderKey   string `json:"header_key"`
-	HeaderValue string `json:"header_value"`
+	ApiKey string `json:"api_key"`
 }
 
 //go:generate mockery --name=Client --dir=. --output=./mocks --filename=client_mock.go --case=underscore --with-expecter

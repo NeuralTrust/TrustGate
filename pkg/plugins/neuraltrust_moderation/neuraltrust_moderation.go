@@ -112,6 +112,9 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config types.PluginConfig) 
 	}
 
 	if cfg.EmbeddingParamBag != nil && cfg.EmbeddingParamBag.Enabled {
+		if cfg.EmbeddingParamBag.EmbeddingsConfig.Provider != providersFactory.ProviderOpenAI {
+			return fmt.Errorf("embedding provider must be '%s'", providersFactory.ProviderOpenAI)
+		}
 		if cfg.EmbeddingParamBag.Threshold == 0 {
 			return fmt.Errorf("moderation threshold is required")
 		}
@@ -121,7 +124,7 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config types.PluginConfig) 
 		if cfg.EmbeddingParamBag.DenyTopicAction != "block" {
 			return fmt.Errorf("deny topic action must be block")
 		}
-		err := p.validateCredentials(cfg.EmbeddingParamBag.EmbeddingsConfig.Credentials)
+		err := p.validateEmbeddingCredentials(cfg.EmbeddingParamBag.EmbeddingsConfig.Credentials)
 		if err != nil {
 			return err
 		}
@@ -143,10 +146,12 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config types.PluginConfig) 
 
 	if cfg.LLMParamBag != nil {
 		if cfg.LLMParamBag.Provider != providersFactory.ProviderOpenAI &&
+			cfg.LLMParamBag.Provider != providersFactory.ProviderAnthropic &&
 			cfg.LLMParamBag.Provider != providersFactory.ProviderGemini {
-			return fmt.Errorf("LLM provider must be either '%s' or '%s'",
+			return fmt.Errorf("LLM provider must be either '%s' or '%s' or '%s'",
 				providersFactory.ProviderOpenAI,
 				providersFactory.ProviderGemini,
+				providersFactory.ProviderAnthropic,
 			)
 		}
 		if cfg.LLMParamBag.Model == "" {
@@ -162,7 +167,14 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config types.PluginConfig) 
 }
 
 func (p *NeuralTrustModerationPlugin) validateCredentials(credentials Credentials) error {
-	if credentials.HeaderName == "" || credentials.HeaderValue == "" {
+	if credentials.ApiKey == "" {
+		return fmt.Errorf("apikey must be specified")
+	}
+	return nil
+}
+
+func (p *NeuralTrustModerationPlugin) validateEmbeddingCredentials(credentials EmbeddingCredentials) error {
+	if credentials.HeaderValue == "" || credentials.HeaderName == "" {
 		return fmt.Errorf("credentials must be specified")
 	}
 	return nil
@@ -430,8 +442,7 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 	start := time.Now()
 	response, err := client.Ask(ctx, &providers.Config{
 		Credentials: providers.Credentials{
-			HeaderKey:   cfg.Credentials.HeaderName,
-			HeaderValue: cfg.Credentials.HeaderValue,
+			ApiKey: cfg.Credentials.ApiKey,
 		},
 		Model:        cfg.Model,
 		MaxTokens:    maxTokens,
