@@ -197,8 +197,15 @@ func (m *worker) enqueueTask(task func(), gatewayID string) {
 
 func (m *worker) cloneEvent(evt metric_events.Event) metric_events.Event {
 	var out metric_events.Event
-	b, _ := json.Marshal(evt)
-	_ = json.Unmarshal(b, &out)
+	b, err := json.Marshal(evt)
+	if err != nil {
+		m.logger.WithError(err).Warn("Failed to marshal event for cloning")
+		return evt
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		m.logger.WithError(err).Warn("Failed to unmarshal event for cloning")
+		return evt
+	}
 	return out
 }
 
