@@ -346,8 +346,8 @@ func (p *NeuralTrustModerationPlugin) createEmbeddings(
 		},
 	}
 	wg := &sync.WaitGroup{}
+	wg.Add(len(cfg.DenySamples))
 	for _, sample := range cfg.DenySamples {
-		wg.Add(1)
 		go p.generateSampleEmbedding(
 			wg,
 			ctx,
