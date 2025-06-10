@@ -14,7 +14,7 @@ import (
 type geminiStreamRequest struct {
 	Model       string        `json:"model"`
 	Messages    []interface{} `json:"messages"`
-	MaxTokens   int           `json:"max_tokens"`
+	MaxTokens   int32         `json:"max_tokens"`
 	Temperature float64       `json:"temperature"`
 	System      string        `json:"system"`
 }
@@ -153,11 +153,7 @@ func (c *client) parseRequest(reqBody []byte, config *providers.Config) (geminiS
 		if contentConfig == nil {
 			contentConfig = &genai.GenerateContentConfig{}
 		}
-		maxTokens := req.MaxTokens
-		if maxTokens > 2147483647 { // Max value of int32
-			maxTokens = 2147483647
-		}
-		contentConfig.MaxOutputTokens = int32(maxTokens) //nolint
+		contentConfig.MaxOutputTokens = req.MaxTokens
 	}
 
 	if req.Temperature > 0 {
