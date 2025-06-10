@@ -82,6 +82,115 @@ func (_c *Client_Ask_Call) RunAndReturn(run func(context.Context, *providers.Con
 	return _c
 }
 
+// Completions provides a mock function with given fields: ctx, config, reqBody
+func (_m *Client) Completions(ctx context.Context, config *providers.Config, reqBody []byte) ([]byte, error) {
+	ret := _m.Called(ctx, config, reqBody)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Completions")
+	}
+
+	var r0 []byte
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *providers.Config, []byte) ([]byte, error)); ok {
+		return rf(ctx, config, reqBody)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *providers.Config, []byte) []byte); ok {
+		r0 = rf(ctx, config, reqBody)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]byte)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *providers.Config, []byte) error); ok {
+		r1 = rf(ctx, config, reqBody)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Client_Completions_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Completions'
+type Client_Completions_Call struct {
+	*mock.Call
+}
+
+// Completions is a helper method to define mock.On call
+//   - ctx context.Context
+//   - config *providers.Config
+//   - reqBody []byte
+func (_e *Client_Expecter) Completions(ctx interface{}, config interface{}, reqBody interface{}) *Client_Completions_Call {
+	return &Client_Completions_Call{Call: _e.mock.On("Completions", ctx, config, reqBody)}
+}
+
+func (_c *Client_Completions_Call) Run(run func(ctx context.Context, config *providers.Config, reqBody []byte)) *Client_Completions_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*providers.Config), args[2].([]byte))
+	})
+	return _c
+}
+
+func (_c *Client_Completions_Call) Return(_a0 []byte, _a1 error) *Client_Completions_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Client_Completions_Call) RunAndReturn(run func(context.Context, *providers.Config, []byte) ([]byte, error)) *Client_Completions_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// CompletionsStream provides a mock function with given fields: ctx, config, streamChan, reqBody
+func (_m *Client) CompletionsStream(ctx context.Context, config *providers.Config, streamChan chan []byte, reqBody []byte) error {
+	ret := _m.Called(ctx, config, streamChan, reqBody)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CompletionsStream")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *providers.Config, chan []byte, []byte) error); ok {
+		r0 = rf(ctx, config, streamChan, reqBody)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Client_CompletionsStream_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CompletionsStream'
+type Client_CompletionsStream_Call struct {
+	*mock.Call
+}
+
+// CompletionsStream is a helper method to define mock.On call
+//   - ctx context.Context
+//   - config *providers.Config
+//   - streamChan chan []byte
+//   - reqBody []byte
+func (_e *Client_Expecter) CompletionsStream(ctx interface{}, config interface{}, streamChan interface{}, reqBody interface{}) *Client_CompletionsStream_Call {
+	return &Client_CompletionsStream_Call{Call: _e.mock.On("CompletionsStream", ctx, config, streamChan, reqBody)}
+}
+
+func (_c *Client_CompletionsStream_Call) Run(run func(ctx context.Context, config *providers.Config, streamChan chan []byte, reqBody []byte)) *Client_CompletionsStream_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*providers.Config), args[2].(chan []byte), args[3].([]byte))
+	})
+	return _c
+}
+
+func (_c *Client_CompletionsStream_Call) Return(_a0 error) *Client_CompletionsStream_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Client_CompletionsStream_Call) RunAndReturn(run func(context.Context, *providers.Config, chan []byte, []byte) error) *Client_CompletionsStream_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewClient creates a new instance of Client. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewClient(t interface {

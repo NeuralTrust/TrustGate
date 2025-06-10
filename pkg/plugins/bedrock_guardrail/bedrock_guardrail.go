@@ -27,9 +27,13 @@ type Config struct {
 }
 
 type Credentials struct {
-	AWSAccessKey string `mapstructure:"aws_access_key"`
-	AWSSecretKey string `mapstructure:"aws_secret_key"`
-	AWSRegion    string `mapstructure:"aws_region"`
+	AWSAccessKey    string `mapstructure:"aws_access_key"`
+	AWSSecretKey    string `mapstructure:"aws_secret_key"`
+	AWSRegion       string `mapstructure:"aws_region"`
+	AWSSessionToken string `mapstructure:"aws_session_token"`
+	UseRole         bool   `mapstructure:"use_role"`
+	RoleARN         string `mapstructure:"role_arn"`
+	SessionName     string `mapstructure:"session_name"`
 }
 type Actions struct {
 	Message string `mapstructure:"message"`
@@ -60,14 +64,22 @@ func (p *BedrockGuardrailPlugin) ValidateConfig(config plugintypes.PluginConfig)
 	if conf.GuardrailID == "" {
 		return fmt.Errorf("aws GuardrailID must be specified")
 	}
-	if conf.Credentials.AWSAccessKey == "" {
-		return fmt.Errorf("aws Access key must be specified")
-	}
-	if conf.Credentials.AWSSecretKey == "" {
-		return fmt.Errorf("aws Secret key must be specified")
-	}
-	if conf.Credentials.AWSRegion == "" {
-		return fmt.Errorf("aws Region must be specified")
+
+	// Check if using role-based authentication
+	if conf.Credentials.UseRole {
+		if conf.Credentials.RoleARN == "" {
+			return fmt.Errorf("aws Role ARN must be specified when using role-based authentication")
+		}
+	} else {
+		if conf.Credentials.AWSAccessKey == "" {
+			return fmt.Errorf("aws Access key must be specified when not using role-based authentication")
+		}
+		if conf.Credentials.AWSSecretKey == "" {
+			return fmt.Errorf("aws Secret key must be specified when not using role-based authentication")
+		}
+		if conf.Credentials.AWSRegion == "" {
+			return fmt.Errorf("aws Region must be specified when not using role-based authentication")
+		}
 	}
 
 	return nil
@@ -84,10 +96,6 @@ func (p *BedrockGuardrailPlugin) RequiredPlugins() []string {
 
 func (p *BedrockGuardrailPlugin) Stages() []plugintypes.Stage {
 	return []plugintypes.Stage{plugintypes.PreRequest}
-}
-
-func (p *BedrockGuardrailPlugin) SetUp(config plugintypes.PluginConfig) error {
-	return nil
 }
 
 func (p *BedrockGuardrailPlugin) AllowedStages() []plugintypes.Stage {
@@ -113,12 +121,11 @@ func (p *BedrockGuardrailPlugin) Execute(
 		p.logger.Error("GuardrailID is required")
 		return nil, fmt.Errorf("guardrail_id is required")
 	}
-	// If version is not specified, use default version
+
 	if conf.Version == "" {
-		conf.Version = "1" // Default version if not specified
+		conf.Version = "1"
 	}
 
-	// Get content to check
 	content := string(req.Body)
 	if content == "" {
 		p.logger.Warn("empty content received for bedrock guardrail check")
@@ -128,7 +135,6 @@ func (p *BedrockGuardrailPlugin) Execute(
 		}, nil
 	}
 
-	// Log the content being sent to Bedrock
 	p.logger.WithFields(logrus.Fields{
 		"content":        content,
 		"content_length": len(content),
@@ -136,7 +142,6 @@ func (p *BedrockGuardrailPlugin) Execute(
 		"version":        conf.Version,
 	}).Info("Content being sent to Bedrock API")
 
-	// Prepare request for ApplyGuardrail
 	contentBlock := types.GuardrailContentBlockMemberText{
 		Value: types.GuardrailTextBlock{
 			Text: aws.String(content),
@@ -161,6 +166,10 @@ func (p *BedrockGuardrailPlugin) Execute(
 		conf.Credentials.AWSAccessKey,
 		conf.Credentials.AWSSecretKey,
 		conf.Credentials.AWSRegion,
+		conf.Credentials.AWSSessionToken,
+		conf.Credentials.UseRole,
+		conf.Credentials.RoleARN,
+		conf.Credentials.SessionName,
 	)
 	if err != nil {
 		p.logger.WithError(err).Error("Failed to create Bedrock client")

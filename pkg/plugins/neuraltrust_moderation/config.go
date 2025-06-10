@@ -17,14 +17,18 @@ type EmbeddingParamBag struct {
 }
 
 type EmbeddingsConfig struct {
-	Provider    string      `mapstructure:"provider"`
-	Model       string      `mapstructure:"model"`
-	Credentials Credentials `mapstructure:"credentials,omitempty"`
+	Provider    string               `mapstructure:"provider"`
+	Model       string               `mapstructure:"model"`
+	Credentials EmbeddingCredentials `mapstructure:"credentials,omitempty"`
 }
 
 type Credentials struct {
-	HeaderName  string `mapstructure:"header_name,omitempty"`
+	ApiKey string `mapstructure:"api_key,omitempty"`
+}
+
+type EmbeddingCredentials struct {
 	HeaderValue string `mapstructure:"header_value,omitempty"`
+	HeaderName  string `mapstructure:"header_name,omitempty"`
 }
 
 type KeyRegParamBag struct {

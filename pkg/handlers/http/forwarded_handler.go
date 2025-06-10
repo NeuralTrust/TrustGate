@@ -10,8 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,13 +25,14 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
-	"github.com/valyala/bytebufferpool"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fastjson"
 )
@@ -50,13 +49,13 @@ type forwardedHandler struct {
 	gatewayCache        *common.TTLMap
 	upstreamFinder      upstream.Finder
 	serviceFinder       service.Finder
-	providers           map[string]config.ProviderConfig
 	pluginManager       plugins.Manager
 	loadBalancers       sync.Map
 	client              *fasthttp.Client
 	loadBalancerFactory loadbalancer.Factory
 	cfg                 *config.Config
 	tlsClientCache      *infraCache.TLSClientCache
+	providerLocator     factory.ProviderLocator
 }
 
 func NewForwardedHandler(
@@ -64,10 +63,10 @@ func NewForwardedHandler(
 	c *cache.Cache,
 	upstreamFinder upstream.Finder,
 	serviceFinder service.Finder,
-	providers map[string]config.ProviderConfig,
 	pluginManager plugins.Manager,
 	loadBalancerFactory loadbalancer.Factory,
 	cfg *config.Config,
+	providerLocator factory.ProviderLocator,
 ) Handler {
 
 	client := &fasthttp.Client{
@@ -88,12 +87,12 @@ func NewForwardedHandler(
 		gatewayCache:        c.GetTTLMap(cache.GatewayTTLName),
 		upstreamFinder:      upstreamFinder,
 		serviceFinder:       serviceFinder,
-		providers:           providers,
 		pluginManager:       pluginManager,
 		client:              client,
 		loadBalancerFactory: loadBalancerFactory,
 		cfg:                 cfg,
 		tlsClientCache:      infraCache.NewTLSClientCache(),
+		providerLocator:     providerLocator,
 	}
 }
 
@@ -632,6 +631,49 @@ func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upst
 	return lb, nil
 }
 
+func (h *forwardedHandler) handlerProviderResponse(
+	req *types.RequestContext,
+	target *types.UpstreamTarget,
+) (*types.ResponseContext, error) {
+	providerClient, err := h.providerLocator.Get(target.Provider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get streaming provider client: %w", err)
+	}
+
+	responseBody, err := providerClient.Completions(
+		req.C.Context(),
+		&providers.Config{
+			AllowedModels: target.Models,
+			DefaultModel:  target.DefaultModel,
+			Credentials: providers.Credentials{
+				ApiKey: target.Credentials.ApiKey,
+				AwsBedrock: &providers.AwsBedrock{
+					Region:       target.Credentials.AWSRegion,
+					SecretKey:    target.Credentials.AWSSecretAccessKey,
+					AccessKey:    target.Credentials.AWSAccessKeyID,
+					SessionToken: target.Credentials.AWSSessionToken,
+					UseRole:      target.Credentials.AWSUseRole,
+					RoleARN:      target.Credentials.AWSRole,
+				},
+			},
+		},
+		req.Body,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get completions: %w", err)
+	}
+
+	req.C.Set("X-Selected-Provider", target.Provider)
+	req.C.Set("Content-Type", "application/json")
+
+	return &types.ResponseContext{
+		StatusCode: http.StatusOK,
+		Headers:    map[string][]string{"X-Selected-Provider": {target.Provider}},
+		Body:       responseBody,
+	}, nil
+
+}
+
 func (h *forwardedHandler) doForwardRequest(
 	tlsConfig map[string]types.ClientTLSConfig,
 	req *types.RequestContext,
@@ -639,6 +681,13 @@ func (h *forwardedHandler) doForwardRequest(
 	target *types.UpstreamTarget,
 	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
+
+	if target.Provider != "" {
+		if target.Stream {
+			return h.handleStreamingResponseByProvider(req, target, streamResponse)
+		}
+		return h.handlerProviderResponse(req, target)
+	}
 
 	client := h.client
 	tls, ok := tlsConfig[target.Host]
@@ -650,10 +699,11 @@ func (h *forwardedHandler) doForwardRequest(
 		client = h.tlsClientCache.GetOrCreate(target.ID, conf)
 	}
 
-	targetURL, err := h.buildTargetURL(target)
-	if err != nil {
-		return nil, err
+	if target.Stream {
+		return h.handleStreamingRequest(req, target, streamResponse)
 	}
+
+	targetURL := h.buildUpstreamTargetUrl(target)
 
 	if rule.StripPath {
 		targetURL = strings.TrimSuffix(targetURL, "/") + strings.TrimPrefix(req.Path, rule.Path)
@@ -668,20 +718,8 @@ func (h *forwardedHandler) doForwardRequest(
 	fastHttpReq.SetRequestURI(targetURL)
 	fastHttpReq.Header.SetMethod(req.Method)
 
-	if target.Stream {
-		return h.handleStreamingRequest(req, target, streamResponse)
-	}
-
 	if len(req.Body) > 0 {
-		if target.Provider != "" {
-			transformedBody, err := h.transformRequestBodyToProvider(req.Body, target)
-			if err != nil {
-				return nil, fmt.Errorf("failed to transform request body: %w", err)
-			}
-			fastHttpReq.SetBody(transformedBody)
-		} else {
-			fastHttpReq.SetBodyRaw(req.Body)
-		}
+		fastHttpReq.SetBodyRaw(req.Body)
 	}
 
 	for k, vals := range req.Headers {
@@ -699,7 +737,7 @@ func (h *forwardedHandler) doForwardRequest(
 
 	h.applyAuthentication(fastHttpReq, &target.Credentials, req.Body)
 
-	err = client.DoTimeout(fastHttpReq, fastHttpResp, 30*time.Second)
+	err := client.DoTimeout(fastHttpReq, fastHttpResp, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("request failed to %s", targetURL)
 	}
@@ -770,20 +808,7 @@ func (h *forwardedHandler) handleStreamingRequest(
 	target *types.UpstreamTarget,
 	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
-	var providerConfig *config.ProviderConfig
-	if target.Provider != "" {
-		pConf, ok := h.providers[target.Provider]
-		if !ok {
-			return nil, fmt.Errorf("unsupported provider: %s", target.Provider)
-		}
-		providerConfig = &pConf
-		transformedBody, err := h.transformRequestBodyToProvider(req.Body, target)
-		if err != nil {
-			return nil, fmt.Errorf("failed to transform streaming request: %w", err)
-		}
-		req.Body = transformedBody
-	}
-	return h.handleStreamingResponse(req, target, providerConfig, streamResponse)
+	return h.handleStreamingResponse(req, target, streamResponse)
 }
 
 func (h *forwardedHandler) buildUpstreamTargetUrl(target *types.UpstreamTarget) string {
@@ -796,36 +821,91 @@ func (h *forwardedHandler) buildUpstreamTargetUrl(target *types.UpstreamTarget) 
 	return sb.String()
 }
 
-func (h *forwardedHandler) buildTargetURL(target *types.UpstreamTarget) (string, error) {
-	if target.Provider == "" {
-		return h.buildUpstreamTargetUrl(target), nil
+func (h *forwardedHandler) handleStreamingResponseByProvider(
+	req *types.RequestContext,
+	target *types.UpstreamTarget,
+	streamResponse chan []byte,
+) (*types.ResponseContext, error) {
+
+	providerClient, err := h.providerLocator.Get(target.Provider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get streaming provider client: %w", err)
 	}
-	providerConfig, ok := h.providers[target.Provider]
-	if !ok {
-		return "", fmt.Errorf("unsupported provider: %s", target.Provider)
+
+	streamChan := make(chan []byte)
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer close(streamChan)
+		err := providerClient.CompletionsStream(
+			req.C.Context(),
+			&providers.Config{
+				AllowedModels: target.Models,
+				DefaultModel:  target.DefaultModel,
+				Credentials: providers.Credentials{
+					ApiKey: target.Credentials.ApiKey,
+					AwsBedrock: &providers.AwsBedrock{
+						Region:       target.Credentials.AWSRegion,
+						SecretKey:    target.Credentials.AWSSecretAccessKey,
+						AccessKey:    target.Credentials.AWSAccessKeyID,
+						SessionToken: target.Credentials.AWSSessionToken,
+						UseRole:      target.Credentials.AWSUseRole,
+						RoleARN:      target.Credentials.AWSRole,
+					},
+				},
+			},
+			streamChan,
+			req.Body,
+		)
+		if err != nil {
+			h.logger.WithError(err).Error("failed to stream request")
+			errChan <- err
+			return
+		}
+		close(errChan)
+	}()
+
+	select {
+	case err := <-errChan:
+		if err != nil {
+			return nil, fmt.Errorf("failed to stream request: %w", err)
+		}
+	case <-time.After(2 * time.Second):
+		break
 	}
-	endpointConfig, ok := providerConfig.Endpoints[target.Path]
-	if !ok {
-		return "", fmt.Errorf("unsupported endpoint path: %s", target.Path)
-	}
-	return fmt.Sprintf("%s%s", providerConfig.BaseURL, endpointConfig.Path), nil
+
+	req.C.Set("Content-Type", "text/event-stream")
+	req.C.Set("Cache-Control", "no-cache")
+	req.C.Set("Connection", "keep-alive")
+	req.C.Set("X-Accel-Buffering", "no")
+	req.C.Set("X-Selected-Provider", target.Provider)
+
+	req.C.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		defer close(streamResponse)
+		for msg := range streamChan {
+			if len(msg) > 0 {
+				streamResponse <- msg
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", msg)
+				_ = w.Flush()
+			}
+		}
+	})
+
+	return &types.ResponseContext{
+		StatusCode: http.StatusOK,
+		Streaming:  true,
+		Metadata:   req.Metadata,
+		Target:     target,
+	}, nil
 }
 
 func (h *forwardedHandler) handleStreamingResponse(
 	req *types.RequestContext,
 	target *types.UpstreamTarget,
-	providerConfig *config.ProviderConfig,
 	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
 
 	upstreamURL := h.buildUpstreamTargetUrl(target)
-	if providerConfig != nil {
-		if endpointConfig, ok := providerConfig.Endpoints[target.Path]; ok {
-			upstreamURL = fmt.Sprintf("%s%s", providerConfig.BaseURL, endpointConfig.Path)
-		} else {
-			return nil, fmt.Errorf("unsupported endpoint path: %s", target.Path)
-		}
-	}
 
 	httpReq, err := http.NewRequestWithContext(req.Context, req.Method, upstreamURL, bytes.NewReader(req.Body))
 	if err != nil {
@@ -867,9 +947,7 @@ func (h *forwardedHandler) handleStreamingResponse(
 	for k, v := range resp.Header {
 		responseHeaders[k] = v
 	}
-	if target.Provider != "" {
-		req.C.Set("X-Selected-Provider", target.Provider)
-	}
+
 	if rateLimitHeaders, ok := req.Metadata["rate_limit_headers"].(map[string][]string); ok {
 		for k, v := range rateLimitHeaders {
 			responseHeaders[k] = v
@@ -938,114 +1016,6 @@ func (h *forwardedHandler) getQueryParams(c *fiber.Ctx) url.Values {
 		queryParams.Set(string(k), string(v))
 	})
 	return queryParams
-}
-
-func (h *forwardedHandler) transformRequestBodyToProvider(body []byte, target *types.UpstreamTarget) ([]byte, error) {
-	if len(body) == 0 {
-		return body, nil
-	}
-
-	var parser fastjson.Parser
-	parsedBody, err := parser.ParseBytes(body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse request body: %w", err)
-	}
-
-	targetEndpointConfig, ok := h.providers[target.Provider].Endpoints[target.Path]
-	if !ok || targetEndpointConfig.Schema == nil {
-		return nil, fmt.Errorf("missing schema for target provider %s endpoint %s", target.Provider, target.Path)
-	}
-
-	obj := parsedBody.GetObject()
-	modelName := obj.Get("model")
-	if modelName != nil && modelName.Type() == fastjson.TypeString {
-		if !slices.Contains(target.Models, string(modelName.GetStringBytes())) {
-			obj.Set("model", fastjson.MustParse(fmt.Sprintf(`"%s"`, target.DefaultModel)))
-		}
-	} else {
-		obj.Set("model", fastjson.MustParse(fmt.Sprintf(`"%s"`, target.DefaultModel)))
-	}
-
-	var objMap map[string]interface{}
-	if err := json.Unmarshal(parsedBody.MarshalTo(nil), &objMap); err != nil {
-		return nil, fmt.Errorf("failed to convert JSON object: %w", err)
-	}
-
-	transformed, err := h.mapBetweenSchemas(objMap, targetEndpointConfig.Schema)
-	if err != nil {
-		return nil, fmt.Errorf("failed to transform request for provider %s endpoint %s: %w", target.Provider, target.Path, err)
-	}
-
-	if stream := obj.Get("stream"); stream != nil && stream.Type() == fastjson.TypeTrue {
-		transformed["stream"] = true
-	}
-
-	buffer := bytebufferpool.Get()
-	defer bytebufferpool.Put(buffer)
-	jsonData, err := json.Marshal(transformed)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal transformed body: %w", err)
-	}
-	buffer.B = append(buffer.B[:0], jsonData...)
-	return buffer.B, nil
-}
-
-func (h *forwardedHandler) mapBetweenSchemas(data map[string]interface{}, targetSchema *config.ProviderSchema) (map[string]interface{}, error) {
-	if targetSchema == nil {
-		return nil, fmt.Errorf("missing target schema configuration")
-	}
-	result := make(map[string]interface{}, len(targetSchema.RequestFormat))
-	for targetKey, targetField := range targetSchema.RequestFormat {
-		if value, err := h.extractValueByPath(data, targetField.Path); err == nil {
-			result[targetKey] = value
-		} else if targetField.Default != nil {
-			result[targetKey] = targetField.Default
-		} else if targetField.Required {
-			return nil, fmt.Errorf("missing required field %s: %w", targetKey, err)
-		}
-	}
-	return result, nil
-}
-
-func (h *forwardedHandler) extractValueByPath(data map[string]interface{}, path string) (interface{}, error) {
-	if path == "" {
-		return nil, fmt.Errorf("empty path")
-	}
-
-	segments := strings.FieldsFunc(path, func(r rune) bool {
-		return r == '.' || r == '[' || r == ']'
-	})
-
-	var current interface{} = data
-	for _, segment := range segments {
-		if idx, err := strconv.Atoi(segment); err == nil {
-			if arr, ok := current.([]interface{}); ok && idx >= 0 && idx < len(arr) {
-				current = arr[idx]
-				continue
-			}
-			return nil, fmt.Errorf("array index out of bounds or not an array: %s", segment)
-		}
-
-		if segment == "last" {
-			if arr, ok := current.([]interface{}); ok && len(arr) > 0 {
-				current = arr[len(arr)-1]
-				continue
-			}
-			return nil, fmt.Errorf("expected array for 'last' access")
-		}
-
-		if currentMap, ok := current.(map[string]interface{}); ok {
-			if val, exists := currentMap[segment]; exists {
-				current = val
-				continue
-			}
-			return nil, fmt.Errorf("key not found: %s", segment)
-		}
-
-		return nil, fmt.Errorf("unexpected type at segment: %s", segment)
-	}
-
-	return current, nil
 }
 
 func (h *forwardedHandler) createResponse(resp *fasthttp.Response, body []byte) *types.ResponseContext {

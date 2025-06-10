@@ -122,6 +122,7 @@ type EmbeddingConfig struct {
 	Model       string      `json:"model"`
 	Credentials Credentials `json:"credentials,omitempty"`
 }
+
 type UpstreamTarget struct {
 	ID           string            `json:"id"`
 	Weight       int               `json:"weight"`
@@ -141,6 +142,8 @@ type UpstreamTarget struct {
 }
 
 type Credentials struct {
+	// Api Key
+	ApiKey string `json:"api_key,omitempty"`
 	// Header-based auth
 	HeaderName  string `json:"header_name,omitempty"`
 	HeaderValue string `json:"header_value,omitempty"`
@@ -163,6 +166,10 @@ type Credentials struct {
 	// AWS auth
 	AWSAccessKeyID     string `json:"aws_access_key_id,omitempty"`
 	AWSSecretAccessKey string `json:"aws_secret_access_key,omitempty"`
+	AWSRegion          string `json:"aws_region,omitempty"`
+	AWSSessionToken    string `json:"aws_session_token,omitempty"`
+	AWSRole            string `json:"aws_role,omitempty"`
+	AWSUseRole         bool   `json:"aws_use_role,omitempty"`
 
 	// General settings
 	AllowOverride bool `json:"allow_override,omitempty"`

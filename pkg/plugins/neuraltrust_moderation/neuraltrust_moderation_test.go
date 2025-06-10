@@ -168,8 +168,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 					"provider": "openai",
 					"model":    "gpt-4",
 					"credentials": map[string]interface{}{
-						"header_name":  "Authorization",
-						"header_value": "Bearer test-token",
+						"api_key": "key",
 					},
 					"instructions": []string{"Be safe"},
 				},
@@ -185,8 +184,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 					"provider": "gemini",
 					"model":    "gemini-pro",
 					"credentials": map[string]interface{}{
-						"header_name":  "Authorization",
-						"header_value": "Bearer test-token",
+						"api_key": "key",
 					},
 					"instructions": []string{"Be safe"},
 				},

@@ -98,9 +98,9 @@ func (_c *Client_ApplyGuardrail_Call) RunAndReturn(run func(context.Context, *be
 	return _c
 }
 
-// BuildClient provides a mock function with given fields: ctx, accessKey, secretKey, region
-func (_m *Client) BuildClient(ctx context.Context, accessKey string, secretKey string, region string) (bedrock.Client, error) {
-	ret := _m.Called(ctx, accessKey, secretKey, region)
+// BuildClient provides a mock function with given fields: ctx, accessKey, secretKey, sessionToken, region, useRole, roleARN, sessionName
+func (_m *Client) BuildClient(ctx context.Context, accessKey string, secretKey string, sessionToken string, region string, useRole bool, roleARN string, sessionName string) (bedrock.Client, error) {
+	ret := _m.Called(ctx, accessKey, secretKey, sessionToken, region, useRole, roleARN, sessionName)
 
 	if len(ret) == 0 {
 		panic("no return value specified for BuildClient")
@@ -108,19 +108,19 @@ func (_m *Client) BuildClient(ctx context.Context, accessKey string, secretKey s
 
 	var r0 bedrock.Client
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) (bedrock.Client, error)); ok {
-		return rf(ctx, accessKey, secretKey, region)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, bool, string, string) (bedrock.Client, error)); ok {
+		return rf(ctx, accessKey, secretKey, sessionToken, region, useRole, roleARN, sessionName)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) bedrock.Client); ok {
-		r0 = rf(ctx, accessKey, secretKey, region)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string, string, bool, string, string) bedrock.Client); ok {
+		r0 = rf(ctx, accessKey, secretKey, sessionToken, region, useRole, roleARN, sessionName)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(bedrock.Client)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, string, string) error); ok {
-		r1 = rf(ctx, accessKey, secretKey, region)
+	if rf, ok := ret.Get(1).(func(context.Context, string, string, string, string, bool, string, string) error); ok {
+		r1 = rf(ctx, accessKey, secretKey, sessionToken, region, useRole, roleARN, sessionName)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -137,14 +137,18 @@ type Client_BuildClient_Call struct {
 //   - ctx context.Context
 //   - accessKey string
 //   - secretKey string
+//   - sessionToken string
 //   - region string
-func (_e *Client_Expecter) BuildClient(ctx interface{}, accessKey interface{}, secretKey interface{}, region interface{}) *Client_BuildClient_Call {
-	return &Client_BuildClient_Call{Call: _e.mock.On("BuildClient", ctx, accessKey, secretKey, region)}
+//   - useRole bool
+//   - roleARN string
+//   - sessionName string
+func (_e *Client_Expecter) BuildClient(ctx interface{}, accessKey interface{}, secretKey interface{}, sessionToken interface{}, region interface{}, useRole interface{}, roleARN interface{}, sessionName interface{}) *Client_BuildClient_Call {
+	return &Client_BuildClient_Call{Call: _e.mock.On("BuildClient", ctx, accessKey, secretKey, sessionToken, region, useRole, roleARN, sessionName)}
 }
 
-func (_c *Client_BuildClient_Call) Run(run func(ctx context.Context, accessKey string, secretKey string, region string)) *Client_BuildClient_Call {
+func (_c *Client_BuildClient_Call) Run(run func(ctx context.Context, accessKey string, secretKey string, sessionToken string, region string, useRole bool, roleARN string, sessionName string)) *Client_BuildClient_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string), args[4].(string), args[5].(bool), args[6].(string), args[7].(string))
 	})
 	return _c
 }
@@ -154,7 +158,54 @@ func (_c *Client_BuildClient_Call) Return(_a0 bedrock.Client, _a1 error) *Client
 	return _c
 }
 
-func (_c *Client_BuildClient_Call) RunAndReturn(run func(context.Context, string, string, string) (bedrock.Client, error)) *Client_BuildClient_Call {
+func (_c *Client_BuildClient_Call) RunAndReturn(run func(context.Context, string, string, string, string, bool, string, string) (bedrock.Client, error)) *Client_BuildClient_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetRuntimeClient provides a mock function with no fields
+func (_m *Client) GetRuntimeClient() *bedrockruntime.Client {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetRuntimeClient")
+	}
+
+	var r0 *bedrockruntime.Client
+	if rf, ok := ret.Get(0).(func() *bedrockruntime.Client); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*bedrockruntime.Client)
+		}
+	}
+
+	return r0
+}
+
+// Client_GetRuntimeClient_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetRuntimeClient'
+type Client_GetRuntimeClient_Call struct {
+	*mock.Call
+}
+
+// GetRuntimeClient is a helper method to define mock.On call
+func (_e *Client_Expecter) GetRuntimeClient() *Client_GetRuntimeClient_Call {
+	return &Client_GetRuntimeClient_Call{Call: _e.mock.On("GetRuntimeClient")}
+}
+
+func (_c *Client_GetRuntimeClient_Call) Run(run func()) *Client_GetRuntimeClient_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Client_GetRuntimeClient_Call) Return(_a0 *bedrockruntime.Client) *Client_GetRuntimeClient_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Client_GetRuntimeClient_Call) RunAndReturn(run func() *bedrockruntime.Client) *Client_GetRuntimeClient_Call {
 	_c.Call.Return(run)
 	return _c
 }
