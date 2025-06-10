@@ -153,7 +153,11 @@ func (c *client) parseRequest(reqBody []byte, config *providers.Config) (geminiS
 		if contentConfig == nil {
 			contentConfig = &genai.GenerateContentConfig{}
 		}
-		contentConfig.MaxOutputTokens = int32(req.MaxTokens)
+		maxTokens := req.MaxTokens
+		if maxTokens > 2147483647 { // Max value of int32
+			maxTokens = 2147483647
+		}
+		contentConfig.MaxOutputTokens = int32(maxTokens) //nolint
 	}
 
 	if req.Temperature > 0 {
@@ -245,7 +249,11 @@ func (c *client) CompletionsStream(ctx context.Context, config *providers.Config
 
 func (c *client) getOrCreateClient(ctx context.Context, apiKey string) (*genai.Client, error) {
 	if clientVal, ok := c.clientPool.Load(apiKey); ok {
-		return clientVal.(*genai.Client), nil
+		client, ok := clientVal.(*genai.Client)
+		if !ok {
+			return nil, fmt.Errorf("invalid client type in pool")
+		}
+		return client, nil
 	}
 	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,

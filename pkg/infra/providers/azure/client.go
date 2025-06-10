@@ -142,7 +142,10 @@ func (c *client) Ask(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyErr, _ := io.ReadAll(resp.Body)
+		bodyErr, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("non-200 status: %d, error reading response body: %w", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("non-200 status: %d\n%s", resp.StatusCode, string(bodyErr))
 	}
 

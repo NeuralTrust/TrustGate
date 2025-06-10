@@ -555,7 +555,11 @@ func (c *client) parseDefaultResponse(responseBody []byte) (string, error) {
 func (c *client) getOrCreateClient(ctx context.Context, credentials providers.Credentials) (*bedrockruntime.Client, error) {
 	clientKey := buildClientKey(credentials)
 	if clientVal, ok := c.clientPool.Load(clientKey); ok {
-		return clientVal.(*bedrockruntime.Client), nil
+		client, ok := clientVal.(*bedrockruntime.Client)
+		if !ok {
+			return nil, fmt.Errorf("invalid client type in pool")
+		}
+		return client, nil
 	}
 	if c.bedrockClient == nil {
 		cfg, err := buildAwsConfig(ctx, credentials)
@@ -948,7 +952,7 @@ func (c *client) processClaudeStreamResponse(chunk map[string]interface{}, typeC
 	if typeContent == "content_block_delta" {
 		delta, ok := chunk["delta"].(map[string]interface{})
 		if !ok {
-			streamChan <- []byte(fmt.Sprintf(`{"error": "delta is not a map"}`))
+			streamChan <- []byte(`{"error": "delta is not a map"}`)
 			return
 		}
 

@@ -64,7 +64,10 @@ func (c *client) BuildClient(
 		accessKey, secretKey, sessionToken, region, useRole, roleARN, sessionName)
 
 	if clientVal, ok := c.clientPool.Load(clientKey); ok {
-		cl := clientVal.(*client)
+		cl, ok := clientVal.(*client)
+		if !ok {
+			return nil, fmt.Errorf("invalid client type in pool")
+		}
 		return cl, nil
 	}
 

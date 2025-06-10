@@ -140,7 +140,11 @@ func (c *client) CompletionsStream(
 		for _, choice := range chunk.Choices {
 			if content := choice.Delta.Content; content != "" {
 				msg := map[string]string{"content": content}
-				b, _ := json.Marshal(msg)
+				b, err := json.Marshal(msg)
+				if err != nil {
+					streamChan <- []byte(fmt.Sprintf(`{"error": "failed to marshal message: %s"}`, err.Error()))
+					continue
+				}
 				streamChan <- b
 			}
 		}
@@ -195,7 +199,13 @@ func (c *client) generateParams(reqBody []byte, config *providers.Config) (opena
 
 func (c *client) getOrCreateClient(apiKey string) openai.Client {
 	if clientVal, ok := c.clientPool.Load(apiKey); ok {
-		return clientVal.(openai.Client)
+		client, ok := clientVal.(openai.Client)
+		if !ok {
+			// If type assertion fails, create a new client
+			client = openai.NewClient(option.WithAPIKey(apiKey))
+			c.clientPool.Store(apiKey, client)
+		}
+		return client
 	}
 	newClient := openai.NewClient(option.WithAPIKey(apiKey))
 	c.clientPool.Store(apiKey, newClient)

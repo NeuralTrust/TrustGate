@@ -11,11 +11,6 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
-type openaiMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
 type anthropicStreamRequest struct {
 	Model       string        `json:"model"`
 	Messages    []interface{} `json:"messages"`
@@ -160,7 +155,11 @@ func (c *client) CompletionsStream(ctx context.Context, config *providers.Config
 		if event.Type == "content_block_delta" && event.Delta.Type == "text_delta" {
 			if event.Delta.Text != "" {
 				msg := map[string]string{"content": event.Delta.Text}
-				b, _ := json.Marshal(msg)
+				b, err := json.Marshal(msg)
+				if err != nil {
+					streamChan <- []byte(fmt.Sprintf(`{"error": "failed to marshal message: %s"}`, err.Error()))
+					continue
+				}
 				streamChan <- b
 			}
 		}
@@ -238,7 +237,13 @@ func (c *client) getParams(reqBody []byte, config *providers.Config) (anthropic.
 
 func (c *client) getOrCreateClient(apiKey string) anthropic.Client {
 	if clientVal, ok := c.clientPool.Load(apiKey); ok {
-		return clientVal.(anthropic.Client)
+		client, ok := clientVal.(anthropic.Client)
+		if !ok {
+			// If type assertion fails, create a new client
+			client = anthropic.NewClient(option.WithAPIKey(apiKey))
+			c.clientPool.Store(apiKey, client)
+		}
+		return client
 	}
 	newClient := anthropic.NewClient(
 		option.WithAPIKey(apiKey),
