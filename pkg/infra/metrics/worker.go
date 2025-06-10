@@ -210,7 +210,7 @@ func (m *worker) feedEvent(
 ) metric_events.Event {
 	elapsedTime := endTime.Sub(startTime)
 	evt.StartTimestamp = startTime.UnixMilli()
-	evt.Latency = elapsedTime.Milliseconds()
+	evt.Latency = float64(elapsedTime.Microseconds()) / 1000
 	evt.IP = req.IP
 	evt.Method = req.Method
 	evt.Path = req.Path

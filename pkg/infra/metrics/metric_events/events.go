@@ -23,7 +23,7 @@ type Event struct {
 	Type           string            `json:"type"`
 	StartTimestamp int64             `json:"start_timestamp"`
 	EndTimestamp   int64             `json:"end_timestamp"`
-	Latency        int64             `json:"latency"`
+	Latency        float64           `json:"latency"`
 	IP             string            `json:"user_ip,omitempty"`
 	Params         map[string]string `json:"params,omitempty"`
 
@@ -57,7 +57,7 @@ type TargetEvent struct {
 	Protocol string            `json:"protocol,omitempty"`
 	Provider string            `json:"provider,omitempty"`
 	Headers  map[string]string `json:"headers,omitempty"`
-	Latency  int64             `json:"latency"`
+	Latency  float64           `json:"latency"`
 }
 
 type PluginDataEvent struct {

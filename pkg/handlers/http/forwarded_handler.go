@@ -342,14 +342,14 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		})
 	}
 
-	upstreamLatency := time.Since(upstreamStartTime).Milliseconds()
+	upstreamLatency := float64(time.Since(upstreamStartTime).Microseconds()) / 1000
 	// Record upstream latency if available
 	if prometheus.Config.EnableUpstreamLatency {
 		prometheus.GatewayUpstreamLatency.WithLabelValues(
 			gatewayID,
 			matchingRule.ServiceID,
 			matchingRule.ID,
-		).Observe(float64(upstreamLatency))
+		).Observe(upstreamLatency)
 	}
 
 	// Copy response to response context
