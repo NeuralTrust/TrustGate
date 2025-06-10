@@ -327,6 +327,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		return h.handleSuccessResponse(c, respCtx.StatusCode, respCtx.Body)
 	}
 	// Forward the request
+	upstreamStartTime := time.Now()
 	response, err := h.forwardRequest(
 		reqCtx,
 		matchingRule,
@@ -341,14 +342,9 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		})
 	}
 
-	if response.Streaming {
-		h.registrySuccessEvent(metricsCollector, respCtx)
-		return nil
-	}
-
+	upstreamLatency := float64(time.Since(upstreamStartTime).Microseconds()) / 1000
 	// Record upstream latency if available
 	if prometheus.Config.EnableUpstreamLatency {
-		upstreamLatency := float64(time.Since(startTime).Milliseconds())
 		prometheus.GatewayUpstreamLatency.WithLabelValues(
 			gatewayID,
 			matchingRule.ServiceID,
@@ -363,6 +359,13 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	for k, v := range response.Headers {
 		respCtx.Headers[k] = v
+	}
+	respCtx.TargetLatency = upstreamLatency
+
+	if response.Streaming {
+		respCtx.Streaming = true
+		h.registrySuccessEvent(metricsCollector, respCtx)
+		return nil
 	}
 
 	if response.StatusCode >= http.StatusBadRequest {
@@ -1072,6 +1075,7 @@ func (h *forwardedHandler) registrySuccessEvent(
 			Protocol: rsp.Target.Provider,
 			Provider: rsp.Target.Provider,
 			Headers:  rsp.Target.Headers,
+			Latency:  rsp.TargetLatency,
 		}
 	}
 	fmt.Println("emit stream response event")

@@ -103,8 +103,6 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 			m.logger.Error("failed to get matched rule from context")
 		}
 
-		endTime := time.Now()
-
 		var exporters []types.Exporter
 		if gatewayData.Gateway.Telemetry != nil {
 			exporters = gatewayData.Gateway.Telemetry.Exporters
@@ -115,11 +113,13 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 			headers[key] = values
 		}
 		statusCode := c.Response().StatusCode()
-
 		wg.Wait()
+
+		endTime := time.Now()
 		var once sync.Once
 		if streamDetected {
 			go func() {
+				startTimeStream := time.Now()
 				for line := range streamResponse {
 					if len(line) > 0 {
 						_, err := streamResponseBody.Write(line)
@@ -128,6 +128,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 						}
 					}
 				}
+				streamDuration := float64(time.Since(startTimeStream).Microseconds()) / 1000
 				once.Do(func() {
 					m.logger.Debug("stream channel closed")
 					now := time.Now()
@@ -136,14 +137,16 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 						exporters,
 						inputRequest,
 						&types.ResponseContext{
-							Context:    context.Background(),
-							GatewayID:  gatewayID,
-							Headers:    headers,
-							Metadata:   nil,
-							Body:       streamResponseBody.Bytes(),
-							StatusCode: statusCode,
-							ProcessAt:  &now,
-							Rule:       rule,
+							Context:       context.Background(),
+							GatewayID:     gatewayID,
+							Headers:       headers,
+							Metadata:      nil,
+							Body:          streamResponseBody.Bytes(),
+							StatusCode:    statusCode,
+							ProcessAt:     &now,
+							Rule:          rule,
+							TargetLatency: streamDuration,
+							Streaming:     true,
 						},
 						startTime,
 						time.Now(),

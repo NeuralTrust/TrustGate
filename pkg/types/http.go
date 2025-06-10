@@ -38,4 +38,5 @@ type ResponseContext struct {
 	ProcessAt      *time.Time
 	Target         *UpstreamTarget
 	Rule           *ForwardingRule
+	TargetLatency  float64
 }

@@ -89,7 +89,7 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 	return exporter, nil
 }
 
-func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
+func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if p.producer == nil {
 		return errors.New("kafka (trustlens) producer is not initialized")
 	}
@@ -153,7 +153,7 @@ func (p *Exporter) Close() {
 	}
 }
 
-func (p *Exporter) applyMappingTransformations(evt *metric_events.Event) (map[string]interface{}, error) {
+func (p *Exporter) applyMappingTransformations(evt metric_events.Event) (map[string]interface{}, error) {
 	extractedFields := make(map[string]interface{})
 
 	if len(p.cfg.Mapping.Input.ExtractFields) > 0 || len(p.cfg.Mapping.Input.DataProjection) > 0 {
@@ -177,7 +177,7 @@ func (p *Exporter) applyMappingTransformations(evt *metric_events.Event) (map[st
 	return extractedFields, nil
 }
 
-func (p *Exporter) applyMapping(evt *metric_events.Event, isInput bool) (map[string]interface{}, error) {
+func (p *Exporter) applyMapping(evt metric_events.Event, isInput bool) (map[string]interface{}, error) {
 	var (
 		jsonData  string
 		mapping   DataMapping
