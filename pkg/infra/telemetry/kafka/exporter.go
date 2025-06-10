@@ -77,7 +77,7 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 	return exporter, nil
 }
 
-func (p *Exporter) Handle(ctx context.Context, evt *metric_events.Event) error {
+func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if p.producer == nil {
 		return errors.New("kafka producer is not initialized")
 	}

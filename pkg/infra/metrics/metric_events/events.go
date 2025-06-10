@@ -57,6 +57,7 @@ type TargetEvent struct {
 	Protocol string            `json:"protocol,omitempty"`
 	Provider string            `json:"provider,omitempty"`
 	Headers  map[string]string `json:"headers,omitempty"`
+	Latency  int64             `json:"latency"`
 }
 
 type PluginDataEvent struct {

@@ -104,7 +104,6 @@ func (m *worker) registryMetricsToExporters(
 	startTime,
 	endTime time.Time,
 ) {
-
 	cacheKey := m.createExportersCacheKey(exporters)
 
 	var exp []domainTelemetry.Exporter
@@ -133,7 +132,8 @@ func (m *worker) registryMetricsToExporters(
 		// Don't close the exporters here as they're cached and reused
 		// We'll handle cleanup separately
 		for _, metricsEvent := range events {
-			err = exporter.Handle(context.Background(), m.feedEvent(metricsEvent, req, resp, startTime, endTime))
+			clonedEvent := m.cloneEvent(*metricsEvent)
+			err = exporter.Handle(context.Background(), m.feedEvent(clonedEvent, req, resp, startTime, endTime))
 			if err != nil {
 				m.logger.WithFields(logrus.Fields{
 					"gatewayID":   req.GatewayID,
@@ -195,12 +195,19 @@ func (m *worker) enqueueTask(task func(), gatewayID string) {
 	}
 }
 
+func (m *worker) cloneEvent(evt metric_events.Event) metric_events.Event {
+	var out metric_events.Event
+	b, _ := json.Marshal(evt)
+	_ = json.Unmarshal(b, &out)
+	return out
+}
+
 func (m *worker) feedEvent(
-	evt *metric_events.Event,
+	evt metric_events.Event,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
 	startTime, endTime time.Time,
-) *metric_events.Event {
+) metric_events.Event {
 	elapsedTime := endTime.Sub(startTime)
 	evt.StartTimestamp = startTime.UnixMilli()
 	evt.Latency = elapsedTime.Milliseconds()
@@ -239,6 +246,17 @@ func (m *worker) feedEvent(
 	evt.RequestHeaders = req.Headers
 	evt.ResponseHeaders = resp.Headers
 	evt.EndTimestamp = endTime.UnixMilli()
+
+	if resp.Streaming {
+		if evt.Upstream != nil {
+			if evt.Upstream.Target.Latency > 0 {
+				evt.Upstream.Target.Latency = evt.Upstream.Target.Latency + resp.TargetLatency
+			} else {
+				evt.Upstream.Target.Latency = resp.TargetLatency
+			}
+		}
+	}
+
 	return evt
 }
 

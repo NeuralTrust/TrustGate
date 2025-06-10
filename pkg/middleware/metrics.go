@@ -120,6 +120,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		var once sync.Once
 		if streamDetected {
 			go func() {
+				startTimeStream := time.Now()
 				for line := range streamResponse {
 					if len(line) > 0 {
 						_, err := streamResponseBody.Write(line)
@@ -128,6 +129,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 						}
 					}
 				}
+				streamDuration := time.Since(startTimeStream).Milliseconds()
 				once.Do(func() {
 					m.logger.Debug("stream channel closed")
 					now := time.Now()
@@ -136,14 +138,16 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 						exporters,
 						inputRequest,
 						&types.ResponseContext{
-							Context:    context.Background(),
-							GatewayID:  gatewayID,
-							Headers:    headers,
-							Metadata:   nil,
-							Body:       streamResponseBody.Bytes(),
-							StatusCode: statusCode,
-							ProcessAt:  &now,
-							Rule:       rule,
+							Context:       context.Background(),
+							GatewayID:     gatewayID,
+							Headers:       headers,
+							Metadata:      nil,
+							Body:          streamResponseBody.Bytes(),
+							StatusCode:    statusCode,
+							ProcessAt:     &now,
+							Rule:          rule,
+							TargetLatency: streamDuration,
+							Streaming:     true,
 						},
 						startTime,
 						time.Now(),
