@@ -22,7 +22,6 @@ type Config struct {
 	Metrics   MetricsConfig   `mapstructure:"metrics"`
 	Database  DatabaseConfig  `mapstructure:"database"`
 	Redis     RedisConfig     `mapstructure:"redis"`
-	Providers ProvidersConfig `mapstructure:"providers"`
 	Plugins   PluginsConfig   `mapstructure:"plugins"`
 	WebSocket WebSocketConfig `mapstructure:"websocket"`
 	TLS       TLSConfig       `mapstructure:"tls"`
@@ -83,21 +82,12 @@ type TLSKeyPair struct {
 }
 
 var globalConfig Config
-var providerConfig ProvidersConfig
 
 func Load(configPath string) error {
 	if err := loadConfigFile(configPath, "config", &globalConfig); err != nil {
 		return fmt.Errorf("⚠️ Warning: Could not load main config file: %v", err)
 	}
-
 	setDefaultValues()
-
-	if err := loadConfigFile(configPath, "providers", &providerConfig); err != nil {
-		return fmt.Errorf("⚠️ Warning: Could not load providers config file: %v", err)
-	}
-
-	globalConfig.Providers = providerConfig
-
 	return nil
 }
 

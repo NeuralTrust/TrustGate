@@ -26,25 +26,23 @@ func TestProviderLoadBalancer(t *testing.T) {
 		"algorithm": "round-robin",
 		"targets": []map[string]interface{}{
 			{
-				"path":          "/v1/chat/completions",
 				"provider":      "openai",
 				"weight":        50,
 				"priority":      1,
-				"stream":        true,
+				"stream":        false,
 				"default_model": "gpt-4o-mini",
 				"models":        []string{"gpt-3.5-turbo", "gpt-4", "gpt-4o-mini"},
-				"credentials":   map[string]string{"header_name": "Authorization", "header_value": fmt.Sprintf("Bearer %s", os.Getenv("OPENAI_API_KEY"))},
+				"credentials":   map[string]string{"api_key": os.Getenv("OPENAI_API_KEY")},
 			},
 			{
-				"path":          "/v1/messages",
 				"provider":      "anthropic",
 				"weight":        50,
 				"priority":      1,
-				"stream":        true,
+				"stream":        false,
 				"default_model": "claude-3-5-sonnet-20241022",
 				"models":        []string{"claude-3-5-sonnet-20241022"},
 				"headers":       map[string]string{"anthropic-version": "2023-06-01"},
-				"credentials":   map[string]string{"header_name": "x-api-key", "header_value": os.Getenv("ANTHROPIC_API_KEY")},
+				"credentials":   map[string]string{"api_key": os.Getenv("ANTHROPIC_API_KEY")},
 			},
 		},
 		"health_checks": map[string]interface{}{
@@ -85,7 +83,6 @@ func TestProviderLoadBalancer(t *testing.T) {
 			"model":      "gpt-4o-mini",
 			"messages":   []map[string]string{{"role": "user", "content": "Hello"}},
 			"max_tokens": 1024,
-			"stream":     true,
 		})
 		assert.NoError(t, err, "Failed to marshal request body")
 

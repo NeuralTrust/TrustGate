@@ -46,7 +46,7 @@ func TestExecute_ContentBlockedByPolicy(t *testing.T) {
 	logger := logrus.New()
 	client := new(mocks.Client)
 	plugin := bedrock_guardrail.NewBedrockGuardrailPlugin(logger, client)
-	client.On("BuildClient", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(client, nil)
+	client.On("BuildClient", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(client, nil)
 	client.On("ApplyGuardrail", mock.Anything, mock.Anything).Return(&bedrockruntime.ApplyGuardrailOutput{
 		Assessments: []types.GuardrailAssessment{
 			{
@@ -62,9 +62,10 @@ func TestExecute_ContentBlockedByPolicy(t *testing.T) {
 	conf := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"credentials": map[string]interface{}{
-				"aws_access_key": "$AWS_ACCESS_KEY",
-				"aws_secret_key": "$AWS_SECRET_KEY",
-				"aws_region":     "$AWS_REGION",
+				"aws_access_key":    "$AWS_ACCESS_KEY",
+				"aws_secret_key":    "$AWS_SECRET_KEY",
+				"aws_session_token": "$AWS_SESSION_TOKEN",
+				"aws_region":        "$AWS_REGION",
 			},
 			"guardrail_id": "test-guardrail",
 			"version":      "1",
@@ -89,7 +90,7 @@ func TestExecute_ContentAllowed(t *testing.T) {
 		Assessments: []types.GuardrailAssessment{},
 	}, nil)
 
-	client.On("BuildClient", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(client, nil)
+	client.On("BuildClient", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(client, nil)
 
 	conf := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
@@ -112,7 +113,7 @@ func TestExecute_BedrockAPIFailure(t *testing.T) {
 	logger := logrus.New()
 	client := new(mocks.Client)
 	plugin := bedrock_guardrail.NewBedrockGuardrailPlugin(logger, client)
-	client.On("BuildClient", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(client, nil)
+	client.On("BuildClient", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(client, nil)
 	client.On("ApplyGuardrail", mock.Anything, mock.Anything).Return(nil, errors.New("API failure"))
 
 	conf := plugintypes.PluginConfig{

@@ -2,14 +2,22 @@ package gemini
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"google.golang.org/genai"
 )
+
+type geminiStreamRequest struct {
+	Model       string        `json:"model"`
+	Messages    []interface{} `json:"messages"`
+	MaxTokens   int           `json:"max_tokens"`
+	Temperature float64       `json:"temperature"`
+	System      string        `json:"system"`
+}
 
 type client struct {
 	clientPool *sync.Map
@@ -75,15 +83,8 @@ func (c *client) Ask(
 	responseText = strings.TrimSuffix(responseText, "```")
 	responseText = strings.TrimSpace(responseText)
 
-	var id string
-	if requestID := ctx.Value("requestID"); requestID != nil {
-		id = fmt.Sprintf("gemini-%v", requestID)
-	} else {
-		id = fmt.Sprintf("gemini-%d", time.Now().UnixNano())
-	}
-
 	completionResp := &providers.CompletionResponse{
-		ID:       id,
+		ID:       result.ResponseID,
 		Model:    config.Model,
 		Response: responseText,
 	}
@@ -99,6 +100,147 @@ func (c *client) Ask(
 	}
 
 	return completionResp, nil
+}
+
+func (c *client) parseRequest(reqBody []byte, config *providers.Config) (geminiStreamRequest, string, *genai.GenerateContentConfig, error) {
+	var req geminiStreamRequest
+	if err := json.Unmarshal(reqBody, &req); err != nil {
+		return req, "", nil, fmt.Errorf("invalid request body: %w", err)
+	}
+
+	if req.Model == "" {
+		req.Model = "gemini-pro"
+	}
+
+	if !providers.IsAllowedModel(req.Model, config.AllowedModels) {
+		req.Model = config.DefaultModel
+	}
+
+	var userContent string
+	for _, m := range req.Messages {
+		msgMap, ok := m.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		role, roleOk := msgMap["role"].(string)
+		content, contentOk := msgMap["content"].(string)
+
+		if !roleOk || !contentOk {
+			continue
+		}
+
+		if role == "user" {
+			userContent = content
+			break
+		}
+	}
+	var contentConfig *genai.GenerateContentConfig
+	if req.System != "" {
+		contentConfig = &genai.GenerateContentConfig{
+			SystemInstruction: &genai.Content{
+				Parts: []*genai.Part{
+					{
+						Text: req.System,
+					},
+				},
+				Role: "system",
+			},
+		}
+	}
+
+	if req.MaxTokens > 0 {
+		if contentConfig == nil {
+			contentConfig = &genai.GenerateContentConfig{}
+		}
+		contentConfig.MaxOutputTokens = int32(req.MaxTokens)
+	}
+
+	if req.Temperature > 0 {
+		if contentConfig == nil {
+			contentConfig = &genai.GenerateContentConfig{}
+		}
+		temp := float32(req.Temperature)
+		contentConfig.Temperature = &temp
+	}
+
+	return req, userContent, contentConfig, nil
+}
+
+func (c *client) Completions(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+) ([]byte, error) {
+	if config.Credentials.ApiKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+	genaiClient, err := c.getOrCreateClient(ctx, config.Credentials.ApiKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
+	}
+
+	req, userContent, contentConfig, err := c.parseRequest(reqBody, config)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := genaiClient.Models.GenerateContent(
+		ctx,
+		req.Model,
+		genai.Text(userContent),
+		contentConfig,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate content: %w", err)
+	}
+
+	if res, err := result.MarshalJSON(); err != nil {
+		return nil, fmt.Errorf("failed to marshal gemini response: %w", err)
+	} else {
+		return res, nil
+	}
+}
+
+func (c *client) CompletionsStream(ctx context.Context, config *providers.Config, streamChan chan []byte, reqBody []byte) error {
+	if config.Credentials.ApiKey == "" {
+		return fmt.Errorf("API key is required")
+	}
+	genaiClient, err := c.getOrCreateClient(ctx, config.Credentials.ApiKey)
+	if err != nil {
+		return fmt.Errorf("failed to create Gemini client: %w", err)
+	}
+
+	req, userContent, contentConfig, err := c.parseRequest(reqBody, config)
+	if err != nil {
+		return err
+	}
+
+	stream := genaiClient.Models.GenerateContentStream(ctx, req.Model, genai.Text(userContent), contentConfig)
+
+	for obj, err := range stream {
+		if err != nil {
+			return fmt.Errorf("failed to stream: %w", err)
+		}
+		if obj == nil {
+			continue
+		}
+
+		text := obj.Text()
+		if text == "" {
+			continue
+		}
+
+		msg := map[string]string{"content": text}
+		b, err := json.Marshal(msg)
+		if err != nil {
+			return fmt.Errorf("failed to marshal response: %w", err)
+		}
+
+		streamChan <- b
+	}
+
+	return nil
 }
 
 func (c *client) getOrCreateClient(ctx context.Context, apiKey string) (*genai.Client, error) {

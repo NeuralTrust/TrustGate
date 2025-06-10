@@ -27,12 +27,13 @@ type Config struct {
 }
 
 type Credentials struct {
-	AWSAccessKey string `mapstructure:"aws_access_key"`
-	AWSSecretKey string `mapstructure:"aws_secret_key"`
-	AWSRegion    string `mapstructure:"aws_region"`
-	UseRole      bool   `mapstructure:"use_role"`
-	RoleARN      string `mapstructure:"role_arn"`
-	SessionName  string `mapstructure:"session_name"`
+	AWSAccessKey    string `mapstructure:"aws_access_key"`
+	AWSSecretKey    string `mapstructure:"aws_secret_key"`
+	AWSRegion       string `mapstructure:"aws_region"`
+	AWSSessionToken string `mapstructure:"aws_session_token"`
+	UseRole         bool   `mapstructure:"use_role"`
+	RoleARN         string `mapstructure:"role_arn"`
+	SessionName     string `mapstructure:"session_name"`
 }
 type Actions struct {
 	Message string `mapstructure:"message"`
@@ -165,6 +166,7 @@ func (p *BedrockGuardrailPlugin) Execute(
 		conf.Credentials.AWSAccessKey,
 		conf.Credentials.AWSSecretKey,
 		conf.Credentials.AWSRegion,
+		conf.Credentials.AWSSessionToken,
 		conf.Credentials.UseRole,
 		conf.Credentials.RoleARN,
 		conf.Credentials.SessionName,

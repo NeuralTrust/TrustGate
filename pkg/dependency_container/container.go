@@ -104,10 +104,7 @@ func NewContainer(
 
 	redisIndexCreator := infraCache.NewRedisIndexCreator(cacheInstance.Client(), logger)
 
-	bedrockClient, err := bedrock.NewClient(logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize bedrock client: %v", err)
-	}
+	bedrockClient := bedrock.NewClient()
 
 	// embedding services
 	embeddingServiceLocator := factory.NewServiceLocator(logger, httpClient)
@@ -204,10 +201,10 @@ func NewContainer(
 			cacheInstance,
 			upstreamFinder,
 			serviceFinder,
-			cfg.Providers.Providers,
 			pluginManager,
 			lbFactory,
 			cfg,
+			providerFactory,
 		),
 		// Gateway
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(

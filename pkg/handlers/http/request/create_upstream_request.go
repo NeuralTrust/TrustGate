@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
@@ -89,10 +90,16 @@ func (r *WebhookConfigRequest) Validate() error {
 }
 
 func (r *UpstreamRequest) Validate() error {
+
 	if r.Algorithm == common.SemanticStrategyName {
 		for i, target := range r.Targets {
 			if target.Description == "" {
 				return fmt.Errorf("target %d: description is required", i)
+			}
+			if target.Provider != "" &&
+				target.Provider != factory.ProviderOpenAI &&
+				target.Provider != factory.ProviderAnthropic {
+				return fmt.Errorf("invalid target provider: %s", target.Provider)
 			}
 		}
 		if r.Embedding == nil {
