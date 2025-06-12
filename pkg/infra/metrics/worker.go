@@ -217,7 +217,7 @@ func (m *worker) feedEvent(
 ) metric_events.Event {
 	elapsedTime := endTime.Sub(startTime)
 	evt.StartTimestamp = startTime.UnixMilli()
-	evt.Latency = float64(elapsedTime.Microseconds()) / 1000
+	evt.Latency = elapsedTime.Milliseconds()
 	evt.IP = req.IP
 	evt.Method = req.Method
 	evt.Path = req.Path
@@ -257,9 +257,9 @@ func (m *worker) feedEvent(
 	if resp.Streaming {
 		if evt.Upstream != nil {
 			if evt.Upstream.Target.Latency > 0 {
-				evt.Upstream.Target.Latency = evt.Upstream.Target.Latency + resp.TargetLatency
+				evt.Upstream.Target.Latency = evt.Upstream.Target.Latency + int64(resp.TargetLatency)
 			} else {
-				evt.Upstream.Target.Latency = resp.TargetLatency
+				evt.Upstream.Target.Latency = int64(resp.TargetLatency)
 			}
 		}
 	}
