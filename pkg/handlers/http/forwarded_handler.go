@@ -1075,7 +1075,7 @@ func (h *forwardedHandler) registrySuccessEvent(
 			Protocol: rsp.Target.Provider,
 			Provider: rsp.Target.Provider,
 			Headers:  rsp.Target.Headers,
-			Latency:  rsp.TargetLatency,
+			Latency:  int64(rsp.TargetLatency),
 		}
 	}
 	fmt.Println("emit stream response event")
