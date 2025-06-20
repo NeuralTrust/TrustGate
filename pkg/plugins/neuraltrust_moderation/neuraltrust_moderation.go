@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -64,7 +65,11 @@ func NewNeuralTrustModerationPlugin(
 	providerLocator providersFactory.ProviderLocator,
 ) pluginiface.Plugin {
 	if client == nil {
-		client = &http.Client{}
+		client = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
 	}
 	return &NeuralTrustModerationPlugin{
 		client:             client,

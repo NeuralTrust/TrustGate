@@ -3,6 +3,7 @@ package neuraltrust_guardrail
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,7 +66,11 @@ func NewNeuralTrustGuardrailPlugin(
 	fingerPrintManager fingerprint.Tracker,
 ) pluginiface.Plugin {
 	if client == nil {
-		client = &http.Client{}
+		client = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
 	}
 	return &NeuralTrustGuardrailPlugin{
 		client:             client,

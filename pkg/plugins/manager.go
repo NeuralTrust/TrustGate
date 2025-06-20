@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"sort"
@@ -147,7 +148,11 @@ func (m *manager) InitializePlugins() {
 
 	if err := m.RegisterPlugin(neuraltrust_guardrail.NewNeuralTrustGuardrailPlugin(
 		m.logger,
-		&http.Client{},
+		&http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		},
 		m.fingerprintTracker,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
@@ -169,14 +174,22 @@ func (m *manager) InitializePlugins() {
 	if err := m.RegisterPlugin(toxicity_neuraltrust.NewToxicityNeuralTrust(
 		m.logger,
 		m.fingerprintTracker,
-		&http.Client{},
+		&http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		},
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register toxicity neuraltrust plugin")
 	}
 
 	if err := m.RegisterPlugin(neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		m.logger,
-		&http.Client{},
+		&http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		},
 		m.fingerprintTracker,
 		m.embeddingRepo,
 		m.serviceLocator,
