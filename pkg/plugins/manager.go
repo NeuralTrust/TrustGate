@@ -150,7 +150,7 @@ func (m *manager) InitializePlugins() {
 		m.logger,
 		&http.Client{
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint // #nosec G402
 			},
 		},
 		m.fingerprintTracker,
@@ -176,7 +176,7 @@ func (m *manager) InitializePlugins() {
 		m.fingerprintTracker,
 		&http.Client{
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint // #nosec G402
 			},
 		},
 	)); err != nil {
@@ -187,7 +187,7 @@ func (m *manager) InitializePlugins() {
 		m.logger,
 		&http.Client{
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint // #nosec G402
 			},
 		},
 		m.fingerprintTracker,
