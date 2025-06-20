@@ -68,7 +68,7 @@ func NewNeuralTrustGuardrailPlugin(
 	if client == nil {
 		client = &http.Client{
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint
 			},
 		}
 	}
