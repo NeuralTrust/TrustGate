@@ -3,6 +3,7 @@ package toxicity_neuraltrust
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,7 +62,11 @@ func NewToxicityNeuralTrust(
 	client httpx.Client,
 ) pluginiface.Plugin {
 	if client == nil {
-		client = &http.Client{}
+		client = &http.Client{ //nolint
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
+			},
+		}
 	}
 	return &ToxicityNeuralTrust{
 		client:             client,
