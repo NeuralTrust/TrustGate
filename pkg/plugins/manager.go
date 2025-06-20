@@ -148,9 +148,9 @@ func (m *manager) InitializePlugins() {
 
 	if err := m.RegisterPlugin(neuraltrust_guardrail.NewNeuralTrustGuardrailPlugin(
 		m.logger,
-		&http.Client{
+		&http.Client{ //nolint
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint // #nosec G402
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
 			},
 		},
 		m.fingerprintTracker,
@@ -174,9 +174,9 @@ func (m *manager) InitializePlugins() {
 	if err := m.RegisterPlugin(toxicity_neuraltrust.NewToxicityNeuralTrust(
 		m.logger,
 		m.fingerprintTracker,
-		&http.Client{
+		&http.Client{ //nolint
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint // #nosec G402
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
 			},
 		},
 	)); err != nil {
@@ -185,9 +185,9 @@ func (m *manager) InitializePlugins() {
 
 	if err := m.RegisterPlugin(neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		m.logger,
-		&http.Client{
+		&http.Client{ //nolint
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint // #nosec G402
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
 			},
 		},
 		m.fingerprintTracker,

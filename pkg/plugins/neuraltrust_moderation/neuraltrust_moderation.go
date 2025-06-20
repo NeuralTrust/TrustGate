@@ -65,9 +65,9 @@ func NewNeuralTrustModerationPlugin(
 	providerLocator providersFactory.ProviderLocator,
 ) pluginiface.Plugin {
 	if client == nil {
-		client = &http.Client{
+		client = &http.Client{ //nolint
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint /// #nosec G402
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
 			},
 		}
 	}
