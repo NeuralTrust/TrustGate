@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
+	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/mitchellh/mapstructure"
@@ -96,8 +98,29 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if evt.IsTypePlugin() {
 		return nil
 	}
+
+	if rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRule); ok {
+		if rule.TrustLens != nil && rule.TrustLens.Mapping != nil {
+			p.cfg.Mapping = Mapping{
+				Input: DataMapping{
+					ExtractFields:  rule.TrustLens.Mapping.Input.ExtractFields,
+					DataProjection: rule.TrustLens.Mapping.Input.DataProjection,
+				},
+				Output: DataMapping{
+					ExtractFields:  rule.TrustLens.Mapping.Output.ExtractFields,
+					DataProjection: rule.TrustLens.Mapping.Output.DataProjection,
+				},
+			}
+		}
+	}
+
+	if evt.LastStreamLine != nil {
+		if p.isValidJSON(evt.LastStreamLine) {
+			evt.Output = string(evt.LastStreamLine)
+		}
+	}
 	// Apply mapping transformations to the event and get extracted fields
-	extractedFields, err := p.applyMappingTransformations(evt)
+	extractedFields, err := p.applyMappingTransformations(&evt)
 	if err != nil {
 		return fmt.Errorf("failed to apply mapping transformations: %w", err)
 	}
@@ -153,7 +176,12 @@ func (p *Exporter) Close() {
 	}
 }
 
-func (p *Exporter) applyMappingTransformations(evt metric_events.Event) (map[string]interface{}, error) {
+func (p *Exporter) isValidJSON(data []byte) bool {
+	var js interface{}
+	return json.Unmarshal(data, &js) == nil
+}
+
+func (p *Exporter) applyMappingTransformations(evt *metric_events.Event) (map[string]interface{}, error) {
 	extractedFields := make(map[string]interface{})
 
 	if len(p.cfg.Mapping.Input.ExtractFields) > 0 || len(p.cfg.Mapping.Input.DataProjection) > 0 {
@@ -177,7 +205,7 @@ func (p *Exporter) applyMappingTransformations(evt metric_events.Event) (map[str
 	return extractedFields, nil
 }
 
-func (p *Exporter) applyMapping(evt metric_events.Event, isInput bool) (map[string]interface{}, error) {
+func (p *Exporter) applyMapping(evt *metric_events.Event, isInput bool) (map[string]interface{}, error) {
 	var (
 		jsonData  string
 		mapping   DataMapping
@@ -213,29 +241,31 @@ func (p *Exporter) applyMapping(evt metric_events.Event, isInput bool) (map[stri
 	}
 
 	if len(mapping.DataProjection) > 0 {
-		var concatenatedValues string
-		for _, sourceField := range mapping.DataProjection {
+		for targetField, sourceField := range mapping.DataProjection {
+			var concatenatedValues string
 			if value, ok := data[sourceField]; ok {
 				switch v := value.(type) {
 				case string:
-					concatenatedValues += v + " "
+					concatenatedValues = v
 				default:
 					valueJSON, err := json.Marshal(v)
 					if err == nil {
-						concatenatedValues += string(valueJSON) + " "
+						concatenatedValues = string(valueJSON)
 					}
 				}
 			}
-		}
 
-		if len(concatenatedValues) > 0 {
-			concatenatedValues = concatenatedValues[:len(concatenatedValues)-1]
-		}
-
-		if isInput {
-			evt.Input = concatenatedValues
-		} else {
-			evt.Output = concatenatedValues
+			// Set the value to the appropriate field in the event
+			switch targetField {
+			case "input":
+				evt.Input = concatenatedValues
+			case "output":
+				evt.Output = concatenatedValues
+			case "feedback_tag":
+				evt.FeedBackTag = concatenatedValues
+			case "feedback_text":
+				evt.FeedBackText = concatenatedValues
+			}
 		}
 	} else {
 		transformedJSON, err := json.Marshal(data)
@@ -243,6 +273,7 @@ func (p *Exporter) applyMapping(evt metric_events.Event, isInput bool) (map[stri
 			return extractedFields, fmt.Errorf("failed to marshal transformed %s: %w", fieldName, err)
 		}
 
+		// If no data projection is specified, use the default behavior based on isInput
 		if isInput {
 			evt.Input = string(transformedJSON)
 		} else {

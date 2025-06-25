@@ -98,8 +98,20 @@ type ForwardingRule struct {
 }
 
 type TrustLensConfig struct {
-	AppID  string `json:"app_id,omitempty"`
-	TeamID string `json:"team_id,omitempty"`
+	AppID   string            `json:"app_id,omitempty"`
+	TeamID  string            `json:"team_id,omitempty"`
+	Type    string            `json:"type,omitempty"`
+	Mapping *TrustLensMapping `json:"mapping,omitempty"`
+}
+
+type TrustLensMapping struct {
+	Input  TrustLensMappingData `json:"input"`
+	Output TrustLensMappingData `json:"output"`
+}
+
+type TrustLensMappingData struct {
+	ExtractFields  map[string]string `json:"extract_fields"`
+	DataProjection map[string]string `json:"data_projection"`
 }
 
 type HealthStatus struct {

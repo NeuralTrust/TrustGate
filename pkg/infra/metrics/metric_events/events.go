@@ -39,8 +39,13 @@ type Event struct {
 	ResponseHeaders map[string][]string `json:"response_headers,omitempty"`
 	StatusCode      int                 `json:"status_code"`
 
+	LastStreamLine []byte `json:"-"`
+
 	TeamID string `json:"team_id,omitempty"`
 	AppID  string `json:"app_id,omitempty"`
+
+	FeedBackTag  string `json:"feedback_tag,omitempty"`
+	FeedBackText string `json:"feedback_text,omitempty"`
 
 	// Plugin Params
 	Plugin *PluginDataEvent `json:"plugin,omitempty"`
