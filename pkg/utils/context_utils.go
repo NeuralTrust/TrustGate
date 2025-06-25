@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"fmt"
 	"net"
 	"strings"
 
@@ -58,24 +57,48 @@ func ParseUserAgent(uaString string, acceptLanguage string) *UserAgentInfo {
 	var device string
 	switch ua.DeviceType {
 	case uasurfer.DeviceComputer:
-		device = "Computer"
-	case uasurfer.DeviceTablet:
-		device = "Tablet"
-	case uasurfer.DevicePhone:
-		device = "Phone"
-	case uasurfer.DeviceConsole:
-		device = "Console"
-	case uasurfer.DeviceWearable:
-		device = "Wearable"
-	case uasurfer.DeviceTV:
-		device = "TV"
+		device = "desktop"
+	case uasurfer.DeviceTablet, uasurfer.DevicePhone:
+		device = "mobile"
 	default:
-		return nil
+		device = "unknown"
 	}
 
-	os := fmt.Sprintf("%s %d.%d", ua.OS.Name.String(), ua.OS.Version.Major, ua.OS.Version.Minor)
+	osName := strings.ToLower(ua.OS.Name.String())
+	var normalizedOS string
+	switch {
+	case strings.Contains(osName, "windows"):
+		normalizedOS = "windows"
+	case strings.Contains(osName, "mac") || strings.Contains(osName, "ios"):
+		if ua.OS.Platform == uasurfer.PlatformiPad || ua.OS.Platform == uasurfer.PlatformiPhone {
+			normalizedOS = "ios"
+		} else {
+			normalizedOS = "mac"
+		}
+	case strings.Contains(osName, "android"):
+		normalizedOS = "android"
+	case strings.Contains(osName, "linux"):
+		normalizedOS = "linux"
+	default:
+		normalizedOS = "unknown"
+	}
 
-	browser := fmt.Sprintf("%s %d.%d", ua.Browser.Name.String(), ua.Browser.Version.Major, ua.Browser.Version.Minor)
+	browserName := strings.ToLower(ua.Browser.Name.String())
+	var normalizedBrowser string
+	switch {
+	case strings.Contains(browserName, "chrome"):
+		normalizedBrowser = "chrome"
+	case strings.Contains(browserName, "firefox"):
+		normalizedBrowser = "firefox"
+	case strings.Contains(browserName, "safari"):
+		normalizedBrowser = "safari"
+	case strings.Contains(browserName, "edge"):
+		normalizedBrowser = "edge"
+	case strings.Contains(browserName, "opera"):
+		normalizedBrowser = "opera"
+	default:
+		normalizedBrowser = "unknown"
+	}
 
 	locale := ""
 	if len(acceptLanguage) > 0 {
@@ -92,8 +115,8 @@ func ParseUserAgent(uaString string, acceptLanguage string) *UserAgentInfo {
 
 	return &UserAgentInfo{
 		Device:  device,
-		OS:      os,
-		Browser: browser,
+		OS:      normalizedOS,
+		Browser: normalizedBrowser,
 		Locale:  locale,
 	}
 }
