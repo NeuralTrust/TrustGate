@@ -137,6 +137,7 @@ func (r *forwardedRuleRepository) UpdateRulesCache(
 			trustLensConfig = &types.TrustLensConfig{
 				AppID:  rule.TrustLens.AppID,
 				TeamID: rule.TrustLens.TeamID,
+				Type:   rule.TrustLens.Type,
 			}
 		}
 

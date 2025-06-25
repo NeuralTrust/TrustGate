@@ -120,8 +120,10 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		if streamDetected {
 			go func() {
 				startTimeStream := time.Now()
+				var lastLine []byte
 				for line := range streamResponse {
 					if len(line) > 0 {
+						lastLine = line
 						_, err := streamResponseBody.Write(line)
 						if err != nil {
 							m.logger.WithError(err).Error("error writing to stream buffer")
@@ -137,10 +139,12 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 						exporters,
 						inputRequest,
 						&types.ResponseContext{
-							Context:       context.Background(),
-							GatewayID:     gatewayID,
-							Headers:       headers,
-							Metadata:      nil,
+							Context:   context.Background(),
+							GatewayID: gatewayID,
+							Headers:   headers,
+							Metadata: map[string]interface{}{
+								"lastOutputLine": lastLine,
+							},
 							Body:          streamResponseBody.Bytes(),
 							StatusCode:    statusCode,
 							ProcessAt:     &now,

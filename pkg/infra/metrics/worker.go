@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -133,7 +134,8 @@ func (m *worker) registryMetricsToExporters(
 		// We'll handle cleanup separately
 		for _, metricsEvent := range events {
 			clonedEvent := m.cloneEvent(*metricsEvent)
-			err = exporter.Handle(context.Background(), m.feedEvent(clonedEvent, req, resp, startTime, endTime))
+			ctx := context.WithValue(context.Background(), common.MatchedRuleContextKey, resp.Rule)
+			err = exporter.Handle(ctx, m.feedEvent(clonedEvent, req, resp, startTime, endTime))
 			if err != nil {
 				m.logger.WithFields(logrus.Fields{
 					"gatewayID":   req.GatewayID,
@@ -227,6 +229,7 @@ func (m *worker) feedEvent(
 		if resp.Rule.TrustLens != nil {
 			evt.AppID = resp.Rule.TrustLens.AppID
 			evt.TeamID = resp.Rule.TrustLens.TeamID
+			evt.Task = strings.ToLower(resp.Rule.TrustLens.Type)
 		}
 	}
 
@@ -260,6 +263,11 @@ func (m *worker) feedEvent(
 				evt.Upstream.Target.Latency = evt.Upstream.Target.Latency + int64(resp.TargetLatency)
 			} else {
 				evt.Upstream.Target.Latency = int64(resp.TargetLatency)
+			}
+		}
+		if lastLine, ok := resp.Metadata["lastOutputLine"]; ok {
+			if lastLineBytes, ok := lastLine.([]byte); ok {
+				evt.LastStreamLine = lastLineBytes
 			}
 		}
 	}

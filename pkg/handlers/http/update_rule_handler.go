@@ -228,8 +228,10 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 	var trustLensConfig *domainTypes.TrustLensJSON
 	if req.TrustLens != nil {
 		trustLensConfig = &domainTypes.TrustLensJSON{
-			AppID:  req.TrustLens.AppID,
-			TeamID: req.TrustLens.TeamID,
+			AppID:   req.TrustLens.AppID,
+			TeamID:  req.TrustLens.TeamID,
+			Type:    req.TrustLens.Type,
+			Mapping: req.TrustLens.Mapping,
 		}
 		forwardingRule.TrustLens = trustLensConfig
 	}

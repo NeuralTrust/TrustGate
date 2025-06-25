@@ -114,8 +114,10 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "trust lens team id is required"})
 		}
 		trustLensConfig = &domain.TrustLensJSON{
-			AppID:  req.TrustLens.AppID,
-			TeamID: req.TrustLens.TeamID,
+			AppID:   req.TrustLens.AppID,
+			TeamID:  req.TrustLens.TeamID,
+			Type:    req.TrustLens.Type,
+			Mapping: req.TrustLens.Mapping,
 		}
 	}
 	// Create the database model
@@ -194,8 +196,10 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 	var trustLensConfig *types.TrustLensConfig
 	if rule.TrustLens != nil {
 		trustLensConfig = &types.TrustLensConfig{
-			AppID:  rule.TrustLens.AppID,
-			TeamID: rule.TrustLens.TeamID,
+			AppID:   rule.TrustLens.AppID,
+			TeamID:  rule.TrustLens.TeamID,
+			Type:    rule.TrustLens.Type,
+			Mapping: rule.TrustLens.Mapping,
 		}
 	}
 
@@ -254,6 +258,47 @@ func (s *createRuleHandler) validate(rule *types.CreateRuleRequest) error {
 		}
 		if rule.TrustLens.TeamID == "" {
 			return fmt.Errorf("trust lens team id is required")
+		}
+
+		// Validate Type field if provided
+		if rule.TrustLens.Type != "" {
+			validTypes := map[string]bool{
+				"MESSAGE":    true,
+				"TOOL":       true,
+				"AGENT":      true,
+				"RETRIEVAL":  true,
+				"GENERATION": true,
+				"ROUTER":     true,
+				"SYSTEM":     true,
+				"FEEDBACK":   true,
+			}
+
+			if !validTypes[strings.ToUpper(rule.TrustLens.Type)] {
+				return fmt.Errorf("invalid trust lens type: %s. Must be one of: MESSAGE, TOOL, AGENT, RETRIEVAL, GENERATION, ROUTER, SYSTEM, FEEDBACK", rule.TrustLens.Type)
+			}
+		}
+
+		// Validate Mapping field if provided
+		if rule.TrustLens.Mapping != nil {
+			// Define valid data projection fields
+			validDataProjectionFields := map[string]bool{
+				"input":         true,
+				"output":        true,
+				"feedback_tag":  true,
+				"feedback_text": true,
+			}
+
+			for key := range rule.TrustLens.Mapping.Input.DataProjection {
+				if !validDataProjectionFields[key] {
+					return fmt.Errorf("invalid data_projection field in input: %s. Must be one of: input, output, feedback_tag, feedback_text", key)
+				}
+			}
+
+			for key := range rule.TrustLens.Mapping.Output.DataProjection {
+				if !validDataProjectionFields[key] {
+					return fmt.Errorf("invalid data_projection field in output: %s. Must be one of: input, output, feedback_tag, feedback_text", key)
+				}
+			}
 		}
 	}
 
