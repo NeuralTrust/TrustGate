@@ -98,6 +98,14 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 
 		err := c.Next()
 
+		var sessionID string
+		sessionID, ok = ctx.Value(common.SessionContextKey).(string)
+		if !ok || sessionID == "" {
+			m.logger.Error("session ID not found in context")
+		}
+
+		inputRequest.SessionID = sessionID
+
 		rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRule)
 		if !ok || rule == nil {
 			m.logger.Error("failed to get matched rule from context")

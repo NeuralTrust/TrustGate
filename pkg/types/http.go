@@ -23,6 +23,7 @@ type RequestContext struct {
 	Stage     Stage
 	ProcessAt *time.Time
 	IP        string
+	SessionID string
 }
 
 // ResponseContext represents the context for a response

@@ -225,11 +225,17 @@ func (m *worker) feedEvent(
 	evt.Path = req.Path
 	evt.GatewayID = req.GatewayID
 
+	if req.SessionID != "" {
+		evt.SessionID = req.SessionID
+	}
+
 	if resp.Rule != nil {
 		if resp.Rule.TrustLens != nil {
 			evt.AppID = resp.Rule.TrustLens.AppID
 			evt.TeamID = resp.Rule.TrustLens.TeamID
-			evt.Task = strings.ToLower(resp.Rule.TrustLens.Type)
+			if resp.Rule.TrustLens.Type != "" {
+				evt.Task = strings.ToLower(resp.Rule.TrustLens.Type)
+			}
 		}
 	}
 
