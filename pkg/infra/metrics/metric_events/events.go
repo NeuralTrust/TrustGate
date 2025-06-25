@@ -47,6 +47,8 @@ type Event struct {
 	FeedBackTag  string `json:"feedback_tag,omitempty"`
 	FeedBackText string `json:"feedback_text,omitempty"`
 
+	SessionID string `json:"session_id,omitempty"`
+
 	// Plugin Params
 	Plugin *PluginDataEvent `json:"plugin,omitempty"`
 }

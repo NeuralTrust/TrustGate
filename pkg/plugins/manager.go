@@ -20,6 +20,7 @@ import (
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/bedrock_guardrail"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/bot_detector"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/code_sanitation"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/contextual_security"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/cors"
@@ -196,6 +197,13 @@ func (m *manager) InitializePlugins() {
 		m.providerLocator,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register toxicity neuraltrust plugin")
+	}
+
+	if err := m.RegisterPlugin(bot_detector.NewBotDetectorPlugin(
+		m.logger,
+		m.fingerprintTracker,
+	)); err != nil {
+		m.logger.WithError(err).Error("Failed to register bot detector plugin")
 	}
 }
 
