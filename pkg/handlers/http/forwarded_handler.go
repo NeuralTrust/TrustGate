@@ -70,8 +70,8 @@ func NewForwardedHandler(
 ) Handler {
 
 	client := &fasthttp.Client{
-		ReadTimeout:                   30 * time.Second,
-		WriteTimeout:                  30 * time.Second,
+		ReadTimeout:                   60 * time.Second,
+		WriteTimeout:                  60 * time.Second,
 		MaxConnsPerHost:               16384,
 		MaxIdleConnDuration:           120 * time.Second,
 		ReadBufferSize:                32768,
@@ -740,7 +740,7 @@ func (h *forwardedHandler) doForwardRequest(
 
 	h.applyAuthentication(fastHttpReq, &target.Credentials, req.Body)
 
-	err := client.DoTimeout(fastHttpReq, fastHttpResp, 30*time.Second)
+	err := client.Do(fastHttpReq, fastHttpResp)
 	if err != nil {
 		return nil, fmt.Errorf("request failed to %s", targetURL)
 	}
