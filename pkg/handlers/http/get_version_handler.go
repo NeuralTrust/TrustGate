@@ -24,7 +24,7 @@ func NewGetVersionHandler(logger *logrus.Logger) Handler {
 // @Router /api/v1/version [get]
 func (h *getVersionHandler) Handle(c *fiber.Ctx) error {
 	versionInfo := fiber.Map{
-		"version": "1.7.15",
+		"version": "1.7.16",
 		"name":    "TrustGate",
 	}
 	return c.Status(fiber.StatusOK).JSON(versionInfo)
