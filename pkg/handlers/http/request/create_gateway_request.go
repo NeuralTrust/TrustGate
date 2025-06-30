@@ -97,7 +97,7 @@ func (r *CreateGatewayRequest) Validate() error {
 		for key := range r.Telemetry.HeaderMapping {
 			if key != conversationIDKey && key != interactionIDKey && key != sessionIDKey {
 				return fmt.Errorf(
-					"invalid key in header_mapping: %s. only '%s' and '%s' and '%s'are allowed",
+					"invalid key in header_mapping: %s. only '%s' and '%s' and '%s' are allowed",
 					key,
 					conversationIDKey,
 					interactionIDKey,
