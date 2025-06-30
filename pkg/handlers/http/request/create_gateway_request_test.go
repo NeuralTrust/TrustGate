@@ -34,7 +34,31 @@ func TestCreateGatewayRequest_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "Valid HeaderMapping with both keys",
+			name: "Valid HeaderMapping with session_id",
+			request: CreateGatewayRequest{
+				Telemetry: &TelemetryRequest{
+					HeaderMapping: map[string]string{
+						"session_id": "X-SESSION-ID",
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid HeaderMapping with all three keys",
+			request: CreateGatewayRequest{
+				Telemetry: &TelemetryRequest{
+					HeaderMapping: map[string]string{
+						"conversation_id": "X-CONVERSATION-ID",
+						"interaction_id":  "X-INTERACTION-ID",
+						"session_id":      "X-SESSION-ID",
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid HeaderMapping with both conversation_id and interaction_id",
 			request: CreateGatewayRequest{
 				Telemetry: &TelemetryRequest{
 					HeaderMapping: map[string]string{
@@ -55,7 +79,7 @@ func TestCreateGatewayRequest_Validate(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "invalid key in header_mapping: unsupported_key. only 'conversation_id' and 'interaction_id' are allowed",
+			errMsg:  "invalid key in header_mapping: unsupported_key. only 'conversation_id' and 'interaction_id' and 'session_id' are allowed",
 		},
 		{
 			name: "Invalid HeaderMapping with mix of valid and invalid keys",
@@ -68,7 +92,7 @@ func TestCreateGatewayRequest_Validate(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "invalid key in header_mapping: unsupported_key. only 'conversation_id' and 'interaction_id' are allowed",
+			errMsg:  "invalid key in header_mapping: unsupported_key. only 'conversation_id' and 'interaction_id' and 'session_id' are allowed",
 		},
 		{
 			name: "Nil Telemetry",

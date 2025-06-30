@@ -11,6 +11,7 @@ import (
 const (
 	conversationIDKey = "conversation_id"
 	interactionIDKey  = "interaction_id"
+	sessionIDKey      = "session_id"
 )
 
 var allowedTLSVersions = map[string]uint16{
@@ -94,8 +95,14 @@ func (r *CreateGatewayRequest) Validate() error {
 
 	if r.Telemetry != nil && r.Telemetry.HeaderMapping != nil {
 		for key := range r.Telemetry.HeaderMapping {
-			if key != conversationIDKey && key != interactionIDKey {
-				return fmt.Errorf("invalid key in header_mapping: %s. only '%s' and '%s' are allowed", key, conversationIDKey, interactionIDKey)
+			if key != conversationIDKey && key != interactionIDKey && key != sessionIDKey {
+				return fmt.Errorf(
+					"invalid key in header_mapping: %s. only '%s' and '%s' and '%s' are allowed",
+					key,
+					conversationIDKey,
+					interactionIDKey,
+					sessionIDKey,
+				)
 			}
 		}
 	}
