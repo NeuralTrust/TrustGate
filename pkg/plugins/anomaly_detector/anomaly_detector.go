@@ -24,10 +24,10 @@ const (
 	MinRetentionPeriod = 300 // 5 minutes in seconds
 
 	// Redis keys for storing time series data
-	requestTimingKey    = "anomaly:timing:%s"     // Pattern for storing request timing data
-	requestContentKey   = "anomaly:content:%s"    // Pattern for storing request content hashes
-	requestHeadersKey   = "anomaly:headers:%s"    // Pattern for storing header analysis
-	tokenUsageKey       = "anomaly:token_usage:%s" // Pattern for tracking token usage across IPs/UAs
+	requestTimingKey  = "anomaly:timing:%s"      // Pattern for storing request timing data
+	requestContentKey = "anomaly:content:%s"     // Pattern for storing request content hashes
+	requestHeadersKey = "anomaly:headers:%s"     // Pattern for storing header analysis
+	tokenUsageKey     = "anomaly:token_usage:%s" // Pattern for tracking token usage across IPs/UAs
 )
 
 type Action string
@@ -40,28 +40,28 @@ const (
 
 // Config defines the configuration for the anomaly detector plugin
 type Config struct {
-	Threshold                float64 `mapstructure:"threshold"`
-	Action                   Action  `mapstructure:"action"`
-	RetentionPeriod          int     `mapstructure:"retention_period"`
-	TimingPatternWeight      float64 `mapstructure:"timing_pattern_weight"`
-	ContentSimilarityWeight  float64 `mapstructure:"content_similarity_weight"`
-	CleanInputWeight         float64 `mapstructure:"clean_input_weight"`
-	SuspiciousHeadersWeight  float64 `mapstructure:"suspicious_headers_weight"`
-	TokenUsageWeight         float64 `mapstructure:"token_usage_weight"`
-	MinTimeBetweenRequests   int     `mapstructure:"min_time_between_requests"` // Minimum time between requests in seconds
-	MaxRequestsToAnalyze     int     `mapstructure:"max_requests_to_analyze"`   // Maximum number of past requests to analyze
+	Threshold               float64 `mapstructure:"threshold"`
+	Action                  Action  `mapstructure:"action"`
+	RetentionPeriod         int     `mapstructure:"retention_period"`
+	TimingPatternWeight     float64 `mapstructure:"timing_pattern_weight"`
+	ContentSimilarityWeight float64 `mapstructure:"content_similarity_weight"`
+	CleanInputWeight        float64 `mapstructure:"clean_input_weight"`
+	SuspiciousHeadersWeight float64 `mapstructure:"suspicious_headers_weight"`
+	TokenUsageWeight        float64 `mapstructure:"token_usage_weight"`
+	MinTimeBetweenRequests  int     `mapstructure:"min_time_between_requests"` // Minimum time between requests in seconds
+	MaxRequestsToAnalyze    int     `mapstructure:"max_requests_to_analyze"`   // Maximum number of past requests to analyze
 }
 
 // RequestData stores information about a request for anomaly detection
 type RequestData struct {
-	Timestamp  time.Time              `json:"timestamp"`
-	ContentHash string                `json:"content_hash"`
-	Headers    map[string][]string    `json:"headers"`
-	IP         string                 `json:"ip"`
-	UserAgent  string                 `json:"user_agent"`
-	Path       string                 `json:"path"`
-	Method     string                 `json:"method"`
-	Token      string                 `json:"token,omitempty"`
+	Timestamp   time.Time           `json:"timestamp"`
+	ContentHash string              `json:"content_hash"`
+	Headers     map[string][]string `json:"headers"`
+	IP          string              `json:"ip"`
+	UserAgent   string              `json:"user_agent"`
+	Path        string              `json:"path"`
+	Method      string              `json:"method"`
+	Token       string              `json:"token,omitempty"`
 }
 
 // AnomalyDetectorPlugin implements the Plugin interface for anomaly detection
@@ -141,7 +141,7 @@ func (p *AnomalyDetectorPlugin) ValidateConfig(config types.PluginConfig) error 
 	}
 
 	// Ensure weights sum to 1.0
-	totalWeight := cfg.TimingPatternWeight + cfg.ContentSimilarityWeight + 
+	totalWeight := cfg.TimingPatternWeight + cfg.ContentSimilarityWeight +
 		cfg.CleanInputWeight + cfg.SuspiciousHeadersWeight + cfg.TokenUsageWeight
 
 	if totalWeight != 1.0 {
@@ -204,14 +204,14 @@ func (p *AnomalyDetectorPlugin) Execute(
 
 	// Store current request data
 	requestData := RequestData{
-		Timestamp:  time.Now(),
+		Timestamp:   time.Now(),
 		ContentHash: hashContent(req.Body),
-		Headers:    req.Headers,
-		IP:         fp.IP,
-		UserAgent:  fp.UserAgent,
-		Path:       req.Path,
-		Method:     req.Method,
-		Token:      fp.Token,
+		Headers:     req.Headers,
+		IP:          fp.IP,
+		UserAgent:   fp.UserAgent,
+		Path:        req.Path,
+		Method:      req.Method,
+		Token:       fp.Token,
 	}
 
 	// Store request data for future analysis
@@ -549,8 +549,8 @@ func (p *AnomalyDetectorPlugin) detectSuspiciousTokenUsage(ctx context.Context, 
 	uaCount := len(userAgents)
 
 	// Normalize to 0-1 range
-	ipScore := minFloat(float64(ipCount-1)/5.0, 1.0)  // More than 6 IPs is maximum suspiciousness
-	uaScore := minFloat(float64(uaCount-1)/5.0, 1.0)  // More than 6 UAs is maximum suspiciousness
+	ipScore := minFloat(float64(ipCount-1)/5.0, 1.0) // More than 6 IPs is maximum suspiciousness
+	uaScore := minFloat(float64(uaCount-1)/5.0, 1.0) // More than 6 UAs is maximum suspiciousness
 
 	return maxFloat(ipScore, uaScore)
 }
