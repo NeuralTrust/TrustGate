@@ -695,11 +695,25 @@ func (h *forwardedHandler) doForwardRequest(
 	client := h.client
 	tls, ok := tlsConfig[target.Host]
 	if ok {
+		if target.InsecureSSL {
+			tls.AllowInsecureConnections = target.InsecureSSL
+		}
 		conf, err := config.BuildTLSConfigFromClientConfig(tls)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build TLS config: %w", err)
 		}
 		client = h.tlsClientCache.GetOrCreate(target.ID, conf)
+	}
+
+	if target.InsecureSSL {
+		insecureTLSConfig := types.ClientTLSConfig{
+			AllowInsecureConnections: true,
+		}
+		conf, err := config.BuildTLSConfigFromClientConfig(insecureTLSConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build insecure TLS config: %w", err)
+		}
+		client = h.tlsClientCache.GetOrCreate(target.ID+"-insecure", conf)
 	}
 
 	if target.Stream {

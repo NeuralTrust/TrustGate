@@ -51,6 +51,7 @@ type Target struct {
 	Description  string                 `json:"description,omitempty"`
 	Credentials  domain.CredentialsJSON `json:"credentials,omitempty" gorm:"type:jsonb"`
 	Stream       bool                   `json:"stream,omitempty"`
+	InsecureSSL  bool                   `json:"insecure_ssl,omitempty"`
 }
 
 type ModelsJSON []string

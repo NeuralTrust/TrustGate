@@ -151,6 +151,7 @@ type UpstreamTarget struct {
 	Path         string            `json:"path"`
 	Health       *HealthStatus     `json:"health,omitempty"`
 	Stream       bool              `json:"stream"`
+	InsecureSSL  bool              `json:"insecure_ssl,omitempty"`
 }
 
 type Credentials struct {

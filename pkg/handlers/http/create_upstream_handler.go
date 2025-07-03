@@ -115,6 +115,7 @@ func (s *createUpstreamHandler) createUpstreamEntity(
 			DefaultModel: target.DefaultModel,
 			Description:  target.Description,
 			Stream:       target.Stream,
+			InsecureSSL:  target.InsecureSSL,
 			Credentials:  domain.CredentialsJSON(target.Credentials),
 		})
 	}
