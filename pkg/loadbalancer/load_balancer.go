@@ -75,6 +75,7 @@ func NewLoadBalancer(
 			Path:         t.Path,
 			Health:       healthStatus,
 			Stream:       t.Stream,
+			InsecureSSL:  t.InsecureSSL,
 		}
 	}
 	if upstream.EmbeddingConfig != nil {

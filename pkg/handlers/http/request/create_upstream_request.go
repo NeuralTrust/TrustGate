@@ -42,6 +42,7 @@ type TargetRequest struct {
 	DefaultModel string            `json:"default_model,omitempty"`
 	Description  string            `json:"description,omitempty"`
 	Stream       bool              `json:"stream"`
+	InsecureSSL  bool              `json:"insecure_ssl,omitempty"`
 	Credentials  types.Credentials `json:"credentials,omitempty"`
 }
 
