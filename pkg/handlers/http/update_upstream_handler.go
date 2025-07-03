@@ -152,7 +152,6 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		s.logger.WithError(err).Error("failed to publish update upstream event")
 	}
-
 	if err := s.descriptionEmbeddingCreator.Process(c.Context(), &entity); err != nil {
 		s.logger.WithError(err).Error("Failed to process embeddings for upstream targets")
 	}
