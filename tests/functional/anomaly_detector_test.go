@@ -90,6 +90,7 @@ func TestAnomalyDetectorPlugin(t *testing.T) {
 		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 		req.Header.Set("Referer", "https://test.com")
 		req.Header.Set("Origin", "https://test.com")
+		req.Header.Set("X-Forwarded-For", "192.168.1.1")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
@@ -114,6 +115,7 @@ func TestAnomalyDetectorPlugin(t *testing.T) {
 		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 		req.Header.Set("Referer", "https://test.com")
 		req.Header.Set("Origin", "https://test.com")
+		req.Header.Set("X-Forwarded-For", "192.168.1.1")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
@@ -140,6 +142,7 @@ func TestAnomalyDetectorPlugin(t *testing.T) {
 			req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 			req.Header.Set("Referer", "https://test.com")
 			req.Header.Set("Origin", "https://test.com")
+			req.Header.Set("X-Forwarded-For", "192.168.1.1")
 
 			client := &http.Client{}
 			resp, err := client.Do(req)
@@ -160,6 +163,7 @@ func TestAnomalyDetectorPlugin(t *testing.T) {
 		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 		req.Header.Set("Referer", "https://test.com")
 		req.Header.Set("Origin", "https://test.com")
+		req.Header.Set("X-Forwarded-For", "192.168.1.1")
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
@@ -186,6 +190,7 @@ func TestAnomalyDetectorPlugin(t *testing.T) {
 			normalReq.Header.Set("Accept-Language", "en-US,en;q=0.9")
 			normalReq.Header.Set("Referer", "https://test.com")
 			normalReq.Header.Set("Origin", "https://test.com")
+			normalReq.Header.Set("X-Forwarded-For", "192.168.1.1")
 
 			client := &http.Client{}
 			normalResp, err := client.Do(normalReq)
