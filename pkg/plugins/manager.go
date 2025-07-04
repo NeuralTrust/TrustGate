@@ -19,7 +19,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/anomaly_detector"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/bedrock_guardrail"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/bot_detector"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/code_sanitation"
@@ -205,10 +204,6 @@ func (m *manager) InitializePlugins() {
 		m.fingerprintTracker,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register bot detector plugin")
-	}
-
-	if err := m.RegisterPlugin(anomaly_detector.NewAnomalyDetectorPlugin(m.logger, m.fingerprintTracker, m.cache)); err != nil {
-		m.logger.WithError(err).Error("Failed to register anomaly detector plugin")
 	}
 
 }
