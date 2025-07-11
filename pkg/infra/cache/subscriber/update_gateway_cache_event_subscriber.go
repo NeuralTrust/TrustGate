@@ -33,7 +33,7 @@ func NewUpdateGatewayCacheEventSubscriber(
 		cacheService: cacheService,
 		cache:        c,
 		repo:         repo,
-		memoryCache:  c.GetTTLMap(cache.UpstreamTTLName),
+		memoryCache:  c.GetTTLMap(cache.GatewayTTLName),
 	}
 }
 
