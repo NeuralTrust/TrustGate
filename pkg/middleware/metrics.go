@@ -111,6 +111,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRule)
 		if !ok || rule == nil {
 			m.logger.Error("failed to get matched rule from context")
+			rule = &types.ForwardingRule{}
 		}
 
 		var exporters []types.Exporter
@@ -158,7 +159,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 							Body:          streamResponseBody.Bytes(),
 							StatusCode:    statusCode,
 							ProcessAt:     &now,
-							Rule:          rule,
+							Rule:          rule, // rule is already checked for nil above
 							TargetLatency: streamDuration,
 							Streaming:     true,
 						},

@@ -43,6 +43,7 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 
 	router.Get("/version", handlerTransport.GetVersionHandler.Handle)
 	router.Get("/plugins", handlerTransport.ListPluginsHandler.Handle)
+	router.Post("/invalidate-cache", handlerTransport.InvalidateCacheHandler.Handle)
 
 	v1 := router.Group("/api/v1")
 	{
