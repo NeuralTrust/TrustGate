@@ -22,18 +22,21 @@ func NewInvalidateCacheHandler(
 }
 
 func (h *invalidateCacheHandler) Handle(c *fiber.Ctx) error {
+	h.logger.Info("Invalidating cache")
 
+	// Get the Redis client from the cache
 	client := h.cache.Client()
 
-	if err := client.FlushAll(c.Context()).Err(); err != nil {
-		h.logger.WithError(err).Error("failed to invalidate cache")
+	// Execute FlushDB command to clear only the current database
+	if err := client.FlushDB(c.Context()).Err(); err != nil {
+		h.logger.WithError(err).Error("Failed to invalidate cache")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to invalidate cache",
+			"error": "Failed to invalidate cache",
 		})
 	}
 
-	h.logger.Info("cache invalidated successfully")
+	h.logger.Info("Cache invalidated successfully")
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "cache invalidated successfully",
+		"message": "Cache invalidated successfully",
 	})
 }

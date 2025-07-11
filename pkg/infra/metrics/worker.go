@@ -218,7 +218,7 @@ func (m *worker) feedEvent(
 	resp types.ResponseContext,
 	startTime, endTime time.Time,
 ) metric_events.Event {
-	log.Debug("feedEvent Params: ", evt, " ", req, " ", resp, " ", startTime, " ", endTime)
+	log.Debug("feedEvent Params: ", evt.Path, " ", req.Path)
 	elapsedTime := endTime.Sub(startTime)
 	evt.StartTimestamp = startTime.UnixMilli()
 	evt.Latency = elapsedTime.Milliseconds()
