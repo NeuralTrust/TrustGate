@@ -100,6 +100,7 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	}
 
 	if rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRule); ok {
+		log.Debug("TrustLens Rule", rule)
 		if rule.TrustLens != nil && rule.TrustLens.Mapping != nil {
 			p.cfg.Mapping = Mapping{
 				Input: DataMapping{
@@ -112,6 +113,8 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 				},
 			}
 		}
+	} else {
+		log.Debug("TrustLens no matched rule in context")
 	}
 
 	log.Debug("TrustLens Mapping")
