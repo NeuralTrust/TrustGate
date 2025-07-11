@@ -114,6 +114,9 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 		}
 	}
 
+	log.Debug("TrustLens Mapping")
+	log.Debug(p.cfg.Mapping)
+
 	if evt.LastStreamLine != nil {
 		if p.isValidJSON(evt.LastStreamLine) {
 			evt.Output = string(evt.LastStreamLine)
@@ -124,6 +127,8 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to apply mapping transformations: %w", err)
 	}
+	log.Debug("TrustLens ExtractedFields")
+	log.Debug(extractedFields)
 
 	// Convert event to map
 	eventMap := make(map[string]interface{})

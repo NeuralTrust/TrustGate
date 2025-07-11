@@ -6,6 +6,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
@@ -66,7 +67,15 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	id, err := uuid.NewV6()
+	gatewayId, ok := c.Locals(common.GatewayContextKey).(string)
+
+	var id uuid.UUID
+	var err error
+	if ok && gatewayId != "" {
+		id, err = uuid.Parse(gatewayId)
+	} else {
+		id, err = uuid.NewV6()
+	}
 	if err != nil {
 		h.logger.WithError(err).Error("failed to generate UUID")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
