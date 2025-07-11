@@ -55,21 +55,6 @@ func (f *dataFinder) Find(ctx context.Context, gatewayID uuid.UUID) (*types.Gate
 			return data, nil
 		}
 	}
-	// Try Redis cache
-	gatewayData, err := f.getGatewayDataFromRedis(ctx, gatewayID.String())
-	if err == nil {
-		f.logger.WithFields(logrus.Fields{
-			"gatewayID":  gatewayID,
-			"rulesCount": len(gatewayData.Rules),
-			"fromCache":  "redis",
-		}).Debug("Gateway data found in Redis cache")
-
-		// Store in memory cache
-		f.memoryCache.Set(gatewayID.String(), gatewayData)
-		return gatewayData, nil
-	}
-	f.logger.WithError(err).Debug("Failed to get gateway data from Redis")
-
 	return f.getGatewayDataFromDB(ctx, gatewayID)
 }
 
