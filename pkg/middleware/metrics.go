@@ -72,7 +72,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 
 		m.setTelemetryHeaders(c, gatewayData)
 		inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
-
+		log.Debug(inputRequest)
 		startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
 		if !ok {
 			m.logger.Error("start_time not found in context")
