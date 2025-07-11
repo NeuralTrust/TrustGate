@@ -100,10 +100,6 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	}
 
 	if rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRule); ok {
-		lens, err := json.Marshal(rule.TrustLens)
-		if err == nil {
-			log.Debug("TrustLens Rule", string(lens))
-		}
 		if rule.TrustLens != nil && rule.TrustLens.Mapping != nil {
 			p.cfg.Mapping = Mapping{
 				Input: DataMapping{
@@ -116,8 +112,6 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 				},
 			}
 		}
-	} else {
-		log.Debug("TrustLens no matched rule in context")
 	}
 
 	log.Debug("TrustLens Mapping")
@@ -133,8 +127,6 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to apply mapping transformations: %w", err)
 	}
-	log.Debug("TrustLens ExtractedFields")
-	log.Debug(extractedFields)
 
 	// Convert event to map
 	eventMap := make(map[string]interface{})

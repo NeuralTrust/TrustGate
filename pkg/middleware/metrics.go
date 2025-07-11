@@ -8,8 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofiber/fiber/v2/log"
-
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -72,7 +70,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 
 		m.setTelemetryHeaders(c, gatewayData)
 		inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
-		log.Debug(inputRequest.Path)
+
 		startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
 		if !ok {
 			m.logger.Error("start_time not found in context")
@@ -221,7 +219,6 @@ func (m *metricsMiddleware) transformToRequestContext(
 	userAgentInfo *utils.UserAgentInfo,
 ) types.RequestContext {
 	now := time.Now()
-	log.Debug(c.Path())
 	reqCtx := types.RequestContext{
 		Context:   context.Background(),
 		GatewayID: gatewayID,
