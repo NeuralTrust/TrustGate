@@ -72,7 +72,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 
 		m.setTelemetryHeaders(c, gatewayData)
 		inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
-		log.Debug(inputRequest)
+		log.Debug(inputRequest.Path)
 		startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
 		if !ok {
 			m.logger.Error("start_time not found in context")
@@ -148,7 +148,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 						metricsCollector,
 						exporters,
 						inputRequest,
-						&types.ResponseContext{
+						types.ResponseContext{
 							Context:   context.Background(),
 							GatewayID: gatewayID,
 							Headers:   headers,
@@ -170,7 +170,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 			return err
 		}
 
-		outputResponse := m.transformToResponseContext(c, gatewayID, rule)
+		outputResponse := m.transformToResponseContext(c, gatewayID, *rule)
 		m.logger.Debug("processing metrics as non stream mode")
 		m.worker.Process(
 			metricsCollector,
@@ -218,10 +218,10 @@ func (m *metricsMiddleware) transformToRequestContext(
 	c *fiber.Ctx,
 	gatewayID string,
 	userAgentInfo *utils.UserAgentInfo,
-) *types.RequestContext {
+) types.RequestContext {
 	now := time.Now()
-	log.Debug(c)
-	reqCtx := &types.RequestContext{
+	log.Debug(c.Path())
+	reqCtx := types.RequestContext{
 		Context:   context.Background(),
 		GatewayID: gatewayID,
 		Headers:   make(map[string][]string),
@@ -252,17 +252,17 @@ func (m *metricsMiddleware) transformToRequestContext(
 func (m *metricsMiddleware) transformToResponseContext(
 	c *fiber.Ctx,
 	gatewayID string,
-	rule *types.ForwardingRule,
-) *types.ResponseContext {
+	rule types.ForwardingRule,
+) types.ResponseContext {
 	now := time.Now()
-	reqCtx := &types.ResponseContext{
+	reqCtx := types.ResponseContext{
 		Context:    context.Background(),
 		GatewayID:  gatewayID,
 		Headers:    make(map[string][]string),
 		Metadata:   nil,
 		Body:       c.Response().Body(),
 		StatusCode: c.Response().StatusCode(),
-		Rule:       rule,
+		Rule:       &rule,
 		ProcessAt:  &now,
 	}
 	for key, values := range c.GetRespHeaders() {

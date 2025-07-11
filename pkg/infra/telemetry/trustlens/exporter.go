@@ -100,7 +100,10 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	}
 
 	if rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRule); ok {
-		log.Debug("TrustLens Rule", rule)
+		lens, err := json.Marshal(rule.TrustLens)
+		if err == nil {
+			log.Debug("TrustLens Rule", string(lens))
+		}
 		if rule.TrustLens != nil && rule.TrustLens.Mapping != nil {
 			p.cfg.Mapping = Mapping{
 				Input: DataMapping{
@@ -154,6 +157,7 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	}
 
 	deliveryChan := make(chan kafka.Event)
+	fmt.Println("produced message (trustlens)")
 	log.Debug(string(data))
 	err = p.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &p.cfg.Topic, Partition: kafka.PartitionAny},
@@ -162,7 +166,6 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to produce message (trustlens): %w", err)
 	}
-	fmt.Println("produced message (trustlens)")
 	e := <-deliveryChan
 	m, ok := e.(*kafka.Message)
 	if !ok {
