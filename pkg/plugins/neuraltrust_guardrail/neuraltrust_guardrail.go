@@ -285,6 +285,7 @@ func (p *NeuralTrustGuardrailPlugin) callFirewall(
 
 	resp, err := p.client.Do(req)
 	if err != nil {
+		p.logger.WithError(err).Error("failed to call firewall")
 		p.sendError(firewallErrors, err)
 		return
 	}
