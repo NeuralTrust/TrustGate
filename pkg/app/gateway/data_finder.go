@@ -11,7 +11,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
-	"github.com/gofiber/fiber/v2/log"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
@@ -53,20 +52,12 @@ func (f *dataFinder) Find(ctx context.Context, gatewayID uuid.UUID) (*types.Gate
 		if err != nil {
 			f.logger.WithError(err).Error("failed to get gateway data from cache")
 		} else {
-			d, err := json.Marshal(data)
-			if err == nil {
-				log.Debug("data from memory cache: ", string(d))
-			}
 			return data, nil
 		}
 	}
 	// Try Redis cache
 	gatewayData, err := f.getGatewayDataFromRedis(ctx, gatewayID.String())
 	if err == nil {
-		d, err := json.Marshal(gatewayData)
-		if err == nil {
-			log.Debug("data from redis: ", string(d))
-		}
 		f.logger.WithFields(logrus.Fields{
 			"gatewayID":  gatewayID,
 			"rulesCount": len(gatewayData.Rules),

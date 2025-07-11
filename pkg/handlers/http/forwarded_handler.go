@@ -32,7 +32,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/log"
 	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fastjson"
@@ -267,11 +266,6 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 			"method": reqData.Method,
 		}).Debug("no matching rule found")
 		return h.handleErrorResponse(c, fiber.StatusNotFound, fiber.Map{"error": "no matching rule found"})
-	}
-
-	d, err := json.Marshal(matchingRule)
-	if err == nil {
-		log.Debug("matched rule: ", string(d))
 	}
 
 	c.Locals(common.MatchedRuleContextKey, matchingRule)
