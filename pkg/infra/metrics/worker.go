@@ -17,6 +17,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/NeuralTrust/TrustGate/pkg/utils"
+	"github.com/gofiber/fiber/v2/log"
 	"github.com/sirupsen/logrus"
 )
 
@@ -217,6 +218,7 @@ func (m *worker) feedEvent(
 	resp *types.ResponseContext,
 	startTime, endTime time.Time,
 ) metric_events.Event {
+	log.Debug("feedEvent Params: ", evt, " ", req, " ", resp, " ", startTime, " ", endTime)
 	elapsedTime := endTime.Sub(startTime)
 	evt.StartTimestamp = startTime.UnixMilli()
 	evt.Latency = elapsedTime.Milliseconds()
