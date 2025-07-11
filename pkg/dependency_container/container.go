@@ -249,6 +249,8 @@ func NewContainer(
 		// Version
 		GetVersionHandler:  handlers.NewGetVersionHandler(logger),
 		ListPluginsHandler: handlers.NewListPluginsHandler(logger),
+		// Cache
+		InvalidateCacheHandler: handlers.NewInvalidateCacheHandler(logger, cacheInstance),
 	}
 
 	container := &Container{

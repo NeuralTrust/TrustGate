@@ -52,6 +52,9 @@ type HandlerTransportDTO struct {
 
 	// Plugins
 	ListPluginsHandler Handler
+
+	// Cache
+	InvalidateCacheHandler Handler
 }
 
 func (t *HandlerTransportDTO) GetTransport() HandlerTransport {
