@@ -24,7 +24,7 @@ func NewDeleteRulesEventSubscriber(
 	return &DeleteRulesEventSubscriber{
 		logger:      logger,
 		cache:       c,
-		memoryCache: c.GetTTLMap(cache.RulesTTLName),
+		memoryCache: c.GetTTLMap(cache.GatewayTTLName),
 	}
 }
 
@@ -33,7 +33,7 @@ func (s DeleteRulesEventSubscriber) OnEvent(ctx context.Context, evt event.Delet
 		"gatewayID": evt.GatewayID,
 	}).Debug("invalidating rules cache")
 
-	s.memoryCache.Delete(evt.RuleID)
+	s.memoryCache.Delete(evt.GatewayID)
 	rulesKey := fmt.Sprintf(cache.RulesKeyPattern, evt.GatewayID)
 
 	if err := s.cache.Delete(ctx, rulesKey); err != nil {
