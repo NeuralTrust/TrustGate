@@ -114,9 +114,6 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 		}
 	}
 
-	log.Debug("TrustLens Mapping")
-	log.Debug(p.cfg.Mapping)
-
 	if evt.LastStreamLine != nil {
 		if p.isValidJSON(evt.LastStreamLine) {
 			evt.Output = string(evt.LastStreamLine)
