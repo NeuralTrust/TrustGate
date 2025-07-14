@@ -69,9 +69,10 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		userAgentInfo := utils.ParseUserAgent(m.getUserAgent(c), m.getAcceptLanguage(c))
 
 		m.setTelemetryHeaders(c, gatewayData)
-		inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
 
+		inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
 		startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
+
 		if !ok {
 			m.logger.Error("start_time not found in context")
 			startTime = time.Now()
@@ -121,13 +122,21 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		for key, values := range c.GetRespHeaders() {
 			headers[key] = values
 		}
+
 		statusCode := c.Response().StatusCode()
+
 		wg.Wait()
 
 		endTime := time.Now()
 		var once sync.Once
 		if streamDetected {
-			go func() {
+			go func(
+				gID string,
+				inputReq types.RequestContext,
+				headers map[string][]string,
+				rule *types.ForwardingRule,
+				sCode int,
+			) {
 				startTimeStream := time.Now()
 				var lastLine []byte
 				for line := range streamResponse {
@@ -140,22 +149,23 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 					}
 				}
 				streamDuration := float64(time.Since(startTimeStream).Microseconds()) / 1000
+
 				once.Do(func() {
 					m.logger.Debug("stream channel closed")
 					now := time.Now()
 					m.worker.Process(
 						metricsCollector,
 						exporters,
-						inputRequest,
+						inputReq,
 						types.ResponseContext{
 							Context:   context.Background(),
-							GatewayID: gatewayID,
+							GatewayID: gID,
 							Headers:   headers,
 							Metadata: map[string]interface{}{
 								"lastOutputLine": lastLine,
 							},
 							Body:          streamResponseBody.Bytes(),
-							StatusCode:    statusCode,
+							StatusCode:    sCode,
 							ProcessAt:     &now,
 							Rule:          rule, // rule is already checked for nil above
 							TargetLatency: streamDuration,
@@ -165,7 +175,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 						time.Now(),
 					)
 				})
-			}()
+			}(gatewayID, inputRequest, headers, rule, statusCode)
 			return err
 		}
 
@@ -224,17 +234,20 @@ func (m *metricsMiddleware) transformToRequestContext(
 		GatewayID: gatewayID,
 		Headers:   make(map[string][]string),
 		Method:    c.Method(),
-		Path:      c.Path(),
+		Path:      string([]byte(c.Path())),
 		Query:     m.getQueryParams(c),
 		Metadata: map[string]interface{}{
 			"user_agent_info": userAgentInfo,
 		},
-		Body:      c.Request().Body(),
+		Body:      append([]byte(nil), c.Request().Body()...),
 		ProcessAt: &now,
 		IP:        utils.ExtractIP(c),
 	}
+
 	for key, values := range c.GetReqHeaders() {
-		reqCtx.Headers[key] = values
+		copyValues := make([]string, len(values))
+		copy(copyValues, values)
+		reqCtx.Headers[key] = copyValues
 	}
 
 	if conversationID, ok := c.Locals(common.ConversationIDHeader).(string); ok && conversationID != "" {
@@ -258,13 +271,15 @@ func (m *metricsMiddleware) transformToResponseContext(
 		GatewayID:  gatewayID,
 		Headers:    make(map[string][]string),
 		Metadata:   nil,
-		Body:       c.Response().Body(),
+		Body:       append([]byte(nil), c.Response().Body()...),
 		StatusCode: c.Response().StatusCode(),
 		Rule:       &rule,
 		ProcessAt:  &now,
 	}
 	for key, values := range c.GetRespHeaders() {
-		reqCtx.Headers[key] = values
+		copyValues := make([]string, len(values))
+		copy(copyValues, values)
+		reqCtx.Headers[key] = copyValues
 	}
 	return reqCtx
 }
