@@ -100,6 +100,9 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	}
 
 	if rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRule); ok {
+		if rule.TrustLens == nil {
+			return nil
+		}
 		if rule.TrustLens != nil && rule.TrustLens.Mapping != nil {
 			p.cfg.Mapping = Mapping{
 				Input: DataMapping{
@@ -228,7 +231,8 @@ func (p *Exporter) applyMapping(evt *metric_events.Event, isInput bool) (map[str
 
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonData), &data); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal %s JSON: %w", fieldName, err)
+		log.Warn("failed to unmarshal data: ", err, " ", jsonData, " ", isInput, " ", fieldName, " ")
+		return nil, nil
 	}
 
 	extractedFields := make(map[string]interface{})
