@@ -228,49 +228,6 @@ const docTemplate = `{
             }
         },
         "/api/v1/gateways/{gateway_id}/keys": {
-            "get": {
-                "description": "Returns a list of all API keys for a gateway",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "API Keys"
-                ],
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Authorization token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Gateway ID",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "List of API Keys",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/apikey.APIKey"
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "Gateway not found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            },
             "post": {
                 "description": "Generates a new API key for the specified gateway",
                 "consumes": [
@@ -332,53 +289,6 @@ const docTemplate = `{
             }
         },
         "/api/v1/gateways/{gateway_id}/keys/{key_id}": {
-            "get": {
-                "description": "Returns details of a specific API key",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "API Keys"
-                ],
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Authorization token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Gateway ID",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "API Key ID",
-                        "name": "key_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "API Key details",
-                        "schema": {
-                            "$ref": "#/definitions/apikey.APIKey"
-                        }
-                    },
-                    "404": {
-                        "description": "API Key not found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            },
             "delete": {
                 "description": "Removes an API key from a gateway",
                 "tags": [
@@ -413,6 +323,51 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "API Key not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/gateways/{gateway_id}/public-keys": {
+            "get": {
+                "description": "Returns a list of all API keys for a gateway with obfuscated key values",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API Keys"
+                ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Gateway ID",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of API Keys with obfuscated keys",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/apikey.APIKey"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Gateway not found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1191,12 +1146,28 @@ const docTemplate = `{
                     "description": "General settings",
                     "type": "boolean"
                 },
+                "api_key": {
+                    "description": "Api Key",
+                    "type": "string"
+                },
                 "aws_access_key_id": {
                     "description": "AWS auth",
                     "type": "string"
                 },
+                "aws_region": {
+                    "type": "string"
+                },
+                "aws_role": {
+                    "type": "string"
+                },
                 "aws_secret_access_key": {
                     "type": "string"
+                },
+                "aws_session_token": {
+                    "type": "string"
+                },
+                "aws_use_role": {
+                    "type": "boolean"
                 },
                 "azure_client_id": {
                     "type": "string"
@@ -1303,7 +1274,13 @@ const docTemplate = `{
                 "app_id": {
                     "type": "string"
                 },
+                "mapping": {
+                    "$ref": "#/definitions/types.TrustLensMapping"
+                },
                 "team_id": {
+                    "type": "string"
+                },
+                "type": {
                     "type": "string"
                 }
             }
@@ -1331,6 +1308,9 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "name": {
+                    "type": "string"
                 },
                 "path": {
                     "type": "string"
@@ -1388,6 +1368,9 @@ const docTemplate = `{
                 "security_config": {
                     "$ref": "#/definitions/domain.SecurityConfigJSON"
                 },
+                "session_config": {
+                    "$ref": "#/definitions/gateway.SessionConfig"
+                },
                 "status": {
                     "type": "string"
                 },
@@ -1399,6 +1382,26 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "gateway.SessionConfig": {
+            "type": "object",
+            "properties": {
+                "body_param_name": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "header_name": {
+                    "type": "string"
+                },
+                "mapping_field": {
+                    "type": "string"
+                },
+                "ttl": {
+                    "type": "integer"
                 }
             }
         },
@@ -1418,6 +1421,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "label": {
                     "type": "string"
                 },
                 "name": {
@@ -1495,6 +1501,9 @@ const docTemplate = `{
                 },
                 "security_config": {
                     "$ref": "#/definitions/request.SecurityConfigRequest"
+                },
+                "session_config": {
+                    "$ref": "#/definitions/request.SessionConfigRequest"
                 },
                 "status": {
                     "type": "string"
@@ -1615,6 +1624,26 @@ const docTemplate = `{
                 }
             }
         },
+        "request.SessionConfigRequest": {
+            "type": "object",
+            "properties": {
+                "body_param_name": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "header_name": {
+                    "type": "string"
+                },
+                "mapping_field": {
+                    "type": "string"
+                },
+                "ttl": {
+                    "type": "integer"
+                }
+            }
+        },
         "request.TargetRequest": {
             "type": "object",
             "properties": {
@@ -1638,6 +1667,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "insecure_ssl": {
+                    "type": "boolean"
                 },
                 "models": {
                     "type": "array",
@@ -1724,6 +1756,9 @@ const docTemplate = `{
                 "security_config": {
                     "$ref": "#/definitions/request.SecurityConfigRequest"
                 },
+                "session_config": {
+                    "$ref": "#/definitions/request.SessionConfigRequest"
+                },
                 "status": {
                     "type": "string"
                 },
@@ -1773,6 +1808,9 @@ const docTemplate = `{
         "request.WebhookConfigRequest": {
             "type": "object",
             "properties": {
+                "enable_direct_communication": {
+                    "type": "boolean"
+                },
                 "handshake_timeout": {
                     "type": "string"
                 },
@@ -1813,6 +1851,9 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "name": {
+                    "type": "string"
                 },
                 "path": {
                     "type": "string"
@@ -2064,6 +2105,7 @@ const docTemplate = `{
         "types.CreateRuleRequest": {
             "type": "object",
             "required": [
+                "name",
                 "path",
                 "service_id"
             ],
@@ -2079,6 +2121,9 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "name": {
+                    "type": "string"
                 },
                 "path": {
                     "type": "string"
@@ -2113,12 +2158,28 @@ const docTemplate = `{
                     "description": "General settings",
                     "type": "boolean"
                 },
+                "api_key": {
+                    "description": "Api Key",
+                    "type": "string"
+                },
                 "aws_access_key_id": {
                     "description": "AWS auth",
                     "type": "string"
                 },
+                "aws_region": {
+                    "type": "string"
+                },
+                "aws_role": {
+                    "type": "string"
+                },
                 "aws_secret_access_key": {
                     "type": "string"
+                },
+                "aws_session_token": {
+                    "type": "string"
+                },
+                "aws_use_role": {
+                    "type": "boolean"
                 },
                 "azure_client_id": {
                     "type": "string"
@@ -2283,8 +2344,42 @@ const docTemplate = `{
                 "app_id": {
                     "type": "string"
                 },
+                "mapping": {
+                    "$ref": "#/definitions/types.TrustLensMapping"
+                },
                 "team_id": {
                     "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.TrustLensMapping": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "$ref": "#/definitions/types.TrustLensMappingData"
+                },
+                "output": {
+                    "$ref": "#/definitions/types.TrustLensMappingData"
+                }
+            }
+        },
+        "types.TrustLensMappingData": {
+            "type": "object",
+            "properties": {
+                "data_projection": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "extract_fields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -2305,6 +2400,9 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "name": {
+                    "type": "string"
                 },
                 "path": {
                     "type": "string"
@@ -2388,6 +2486,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "insecure_ssl": {
+                    "type": "boolean"
                 },
                 "models": {
                     "type": "array",

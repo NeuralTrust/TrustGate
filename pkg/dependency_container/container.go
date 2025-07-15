@@ -242,10 +242,11 @@ func NewContainer(
 		UpdateRuleHandler: handlers.NewUpdateRuleHandler(logger, ruleRepository, cacheInstance, validatePlugin, redisPublisher),
 		DeleteRuleHandler: handlers.NewDeleteRuleHandler(logger, ruleRepository, cacheInstance, redisPublisher),
 		// APIKey
-		CreateAPIKeyHandler: handlers.NewCreateAPIKeyHandler(logger, cacheInstance, apiKeyRepository),
-		ListAPIKeysHandler:  handlers.NewListAPIKeysHandler(logger, gatewayRepository, apiKeyRepository),
-		GetAPIKeyHandler:    handlers.NewGetAPIKeyHandler(logger, cacheInstance, apiKeyRepository),
-		DeleteAPIKeyHandler: handlers.NewDeleteAPIKeyHandler(logger, apiKeyRepository, redisPublisher),
+		CreateAPIKeyHandler:      handlers.NewCreateAPIKeyHandler(logger, cacheInstance, apiKeyRepository),
+		ListAPIKeysHandler:       handlers.NewListAPIKeysHandler(logger, gatewayRepository, apiKeyRepository),
+		ListAPIKeysPublicHandler: handlers.NewListAPIKeysPublicHandler(logger, gatewayRepository, apiKeyRepository),
+		GetAPIKeyHandler:         handlers.NewGetAPIKeyHandler(logger, cacheInstance, apiKeyRepository),
+		DeleteAPIKeyHandler:      handlers.NewDeleteAPIKeyHandler(logger, apiKeyRepository, redisPublisher),
 		// Version
 		GetVersionHandler:  handlers.NewGetVersionHandler(logger),
 		ListPluginsHandler: handlers.NewListPluginsHandler(logger),

@@ -94,8 +94,14 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 			{
 				keys.Post("", handlerTransport.CreateAPIKeyHandler.Handle)
 				keys.Get("", handlerTransport.ListAPIKeysHandler.Handle)
-				keys.Get("/:key_id", handlerTransport.GetAPIKeyHandler.Handle)
+				// keys.Get("/:key_id", handlerTransport.GetAPIKeyHandler.Handle)
 				keys.Delete("/:key_id", handlerTransport.DeleteAPIKeyHandler.Handle)
+			}
+
+			// Public API key management (with obfuscated keys)
+			publicKeys := gateways.Group("/:gateway_id/public-keys")
+			{
+				publicKeys.Get("", handlerTransport.ListAPIKeysPublicHandler.Handle)
 			}
 		}
 	}

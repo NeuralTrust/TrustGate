@@ -66,37 +66,6 @@ func (f *dataFinder) getGatewayDataFromCache(value interface{}) (*types.GatewayD
 	return data, nil
 }
 
-func (f *dataFinder) getGatewayDataFromRedis(ctx context.Context, gatewayID string) (*types.GatewayData, error) {
-	// Get gateway from Redis
-	gatewayKey := fmt.Sprintf("gateway:%s", gatewayID)
-	gatewayJSON, err := f.cache.Get(ctx, gatewayKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get gateway from Redis: %w", err)
-	}
-
-	var entity *gateway.Gateway
-	if err := json.Unmarshal([]byte(gatewayJSON), &entity); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal gateway from Redis: %w", err)
-	}
-
-	// Get rules from Redis
-	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
-	rulesJSON, err := f.cache.Get(ctx, rulesKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get rules from Redis: %w", err)
-	}
-
-	var rules []types.ForwardingRule
-	if err := json.Unmarshal([]byte(rulesJSON), &rules); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal rules from Redis: %w", err)
-	}
-
-	return &types.GatewayData{
-		Gateway: f.convertModelToTypesGateway(entity),
-		Rules:   rules,
-	}, nil
-}
-
 func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gateway {
 	return f.outputTransformer.convertGatewayToTypes(g)
 }
