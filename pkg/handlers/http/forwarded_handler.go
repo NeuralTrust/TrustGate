@@ -702,7 +702,6 @@ func (h *forwardedHandler) handlerProviderResponse(
 }
 
 func (h *forwardedHandler) doForwardRequest(dto *forwardedRequestDTO) (*types.ResponseContext, error) {
-
 	if dto.target.Provider != "" {
 		if dto.target.Stream {
 			return h.handleStreamingResponseByProvider(dto.req, dto.target, dto.streamResponse)
@@ -710,99 +709,119 @@ func (h *forwardedHandler) doForwardRequest(dto *forwardedRequestDTO) (*types.Re
 		return h.handlerProviderResponse(dto.req, dto.target)
 	}
 
-	client := h.client
-	tls, ok := dto.tlsConfig[dto.target.Host]
-	if ok {
-		if dto.target.InsecureSSL {
-			tls.AllowInsecureConnections = dto.target.InsecureSSL
-		}
-		conf, err := config.BuildTLSConfigFromClientConfig(tls)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build TLS config: %w", err)
-		}
-		client = h.tlsClientCache.GetOrCreate(dto.target.ID, conf)
-	}
-
-	if dto.target.InsecureSSL {
-		insecureTLSConfig := types.ClientTLSConfig{
-			AllowInsecureConnections: true,
-		}
-		conf, err := config.BuildTLSConfigFromClientConfig(insecureTLSConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build insecure TLS config: %w", err)
-		}
-		client = h.tlsClientCache.GetOrCreate(dto.target.ID+"-insecure", conf)
+	client, err := h.prepareClient(dto)
+	if err != nil {
+		return nil, err
 	}
 
 	if dto.target.Stream {
 		return h.handleStreamingRequest(dto.req, dto.target, dto.streamResponse)
 	}
 
-	targetURL := h.buildUpstreamTargetUrl(dto.target)
+	targetURL := h.rewriteTargetURL(dto)
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
 
-	if dto.rule.StripPath {
-		targetURL = strings.TrimSuffix(targetURL, "/") + strings.TrimPrefix(dto.req.Path, dto.rule.Path)
+	h.buildFastHTTPRequest(req, dto, targetURL)
+
+	if err := client.Do(req, resp); err != nil {
+		return nil, fmt.Errorf("request failed to %s: %w", targetURL, err)
 	}
 
-	fastHttpReq := fasthttp.AcquireRequest()
-	defer fasthttp.ReleaseRequest(fastHttpReq)
+	return h.processUpstreamResponse(resp, dto)
+}
 
-	fastHttpResp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseResponse(fastHttpResp)
+func (h *forwardedHandler) rewriteTargetURL(dto *forwardedRequestDTO) string {
+	l := h.buildUpstreamTargetUrl(dto.target)
+	if dto.rule != nil && dto.rule.StripPath && strings.HasPrefix(dto.req.Path, dto.rule.Path) {
+		return strings.TrimSuffix(l, "/") + dto.req.Path[len(dto.rule.Path):]
+	}
+	return l
+}
 
-	fastHttpReq.SetRequestURI(targetURL)
-	fastHttpReq.Header.SetMethod(dto.req.Method)
-
+func (h *forwardedHandler) buildFastHTTPRequest(req *fasthttp.Request, dto *forwardedRequestDTO, targetURL string) {
+	req.SetRequestURI(targetURL)
+	req.Header.SetMethod(dto.req.Method)
 	if len(dto.req.Body) > 0 {
-		fastHttpReq.SetBodyRaw(dto.req.Body)
+		req.SetBodyRaw(dto.req.Body)
 	}
-
 	for k, vals := range dto.req.Headers {
-		if len(vals) == 1 {
-			fastHttpReq.Header.Set(k, vals[0])
-		} else {
-			for _, val := range vals {
-				fastHttpReq.Header.Add(k, val)
-			}
+		for _, v := range vals {
+			req.Header.Add(k, v)
 		}
 	}
 	for k, v := range dto.target.Headers {
-		fastHttpReq.Header.Set(k, v)
+		req.Header.Set(k, v)
 	}
+	h.applyAuthentication(req, &dto.target.Credentials, dto.req.Body)
+}
 
-	h.applyAuthentication(fastHttpReq, &dto.target.Credentials, dto.req.Body)
-
-	err := client.Do(fastHttpReq, fastHttpResp)
-	if err != nil {
-		return nil, fmt.Errorf("request failed to %s", targetURL)
-	}
-
+func (h *forwardedHandler) processUpstreamResponse(
+	resp *fasthttp.Response,
+	dto *forwardedRequestDTO,
+) (*types.ResponseContext, error) {
 	respBodyPtr, ok := responseBodyPool.Get().(*[]byte)
 	if !ok {
 		return nil, errors.New("failed to get response body from pool")
 	}
-	*respBodyPtr = fastHttpResp.Body()
 
-	statusCode := fastHttpResp.StatusCode()
-	if statusCode <= 0 || statusCode >= 600 {
+	body := make([]byte, len(resp.Body()))
+	copy(body, resp.Body())
+	*respBodyPtr = body
+
+	status := resp.StatusCode()
+	if status <= 0 || status >= 600 {
 		responseBodyPool.Put(respBodyPtr)
-		return nil, fmt.Errorf("invalid status code received: %d", statusCode)
+		return nil, fmt.Errorf("invalid status code received: %d", status)
 	}
-	if statusCode < 200 || statusCode >= 300 {
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
 		responseBodyPool.Put(respBodyPtr)
-		return nil, fmt.Errorf("upstream returned status code %d: %s", statusCode, string(*respBodyPtr))
+		return nil, fmt.Errorf("upstream returned status code %d: %s", status, string(*respBodyPtr))
 	}
 
 	if dto.target.Provider != "" {
-		go h.logger.WithFields(logrus.Fields{
-			"provider": dto.target.Provider,
-		}).Debug("Selected provider")
+		go h.logger.WithField("provider", dto.target.Provider).Debug("Selected provider")
 	}
 
-	response := h.createResponse(fastHttpResp, *respBodyPtr)
+	response := h.createResponse(resp, *respBodyPtr)
 	responseBodyPool.Put(respBodyPtr)
-
 	return response, nil
+}
+
+func (h *forwardedHandler) prepareClient(dto *forwardedRequestDTO) (*fasthttp.Client, error) {
+	tlsConf, hasTLS := dto.tlsConfig[dto.target.Host]
+	proxyAddr := ""
+	if dto.proxy != nil {
+		proxyAddr = fmt.Sprintf("%s:%s", dto.proxy.Host, dto.proxy.Port)
+		h.logger.Debug("using proxy " + proxyAddr)
+	}
+
+	switch {
+	case hasTLS:
+		if dto.target.InsecureSSL {
+			tlsConf.AllowInsecureConnections = true
+		}
+		conf, err := config.BuildTLSConfigFromClientConfig(tlsConf)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build TLS config: %w", err)
+		}
+		return h.tlsClientCache.GetOrCreate(dto.target.ID, conf, proxyAddr), nil
+
+	case dto.target.InsecureSSL:
+		conf, err := config.BuildTLSConfigFromClientConfig(types.ClientTLSConfig{AllowInsecureConnections: true})
+		if err != nil {
+			return nil, fmt.Errorf("failed to build insecure TLS config: %w", err)
+		}
+		return h.tlsClientCache.GetOrCreate(dto.target.ID+"-insecure", conf, proxyAddr), nil
+
+	case proxyAddr != "":
+		return h.tlsClientCache.GetOrCreate(dto.target.ID+"-proxy", nil, proxyAddr), nil
+
+	default:
+		return h.client, nil
+	}
 }
 
 func (h *forwardedHandler) applyAuthentication(req *fasthttp.Request, creds *types.Credentials, body []byte) {
