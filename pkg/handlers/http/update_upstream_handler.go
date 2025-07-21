@@ -129,6 +129,27 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	var proxy *upstream.Proxy
+	if req.ProxyConfig != nil {
+		proxy = &upstream.Proxy{
+			Host: req.ProxyConfig.Host,
+			Port: req.ProxyConfig.Port,
+		}
+	}
+
+	var websocket *upstream.WebsocketConfig
+	if req.WebhookConfig != nil {
+		websocket = &upstream.WebsocketConfig{
+			EnableDirectCommunication: req.WebhookConfig.EnableDirectCommunication,
+			ReturnErrorDetails:        req.WebhookConfig.ReturnErrorDetails,
+			PingPeriod:                req.WebhookConfig.PingPeriod,
+			PongWait:                  req.WebhookConfig.PongWait,
+			HandshakeTimeout:          req.WebhookConfig.HandshakeTimeout,
+			ReadBufferSize:            req.WebhookConfig.ReadBufferSize,
+			WriteBufferSize:           req.WebhookConfig.WriteBufferSize,
+		}
+	}
+
 	entity := upstream.Upstream{
 		ID:              id,
 		GatewayID:       gatewayUUID,
@@ -137,6 +158,8 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 		Targets:         targets,
 		EmbeddingConfig: embedding,
 		HealthChecks:    healthCheck,
+		Websocket:       websocket,
+		Proxy:           proxy,
 		Tags:            req.Tags,
 	}
 

@@ -113,6 +113,26 @@ func (t *Targets) Scan(value interface{}) error {
 	}
 }
 
+type Proxy struct {
+	Host string `json:"host"`
+	Port string `json:"port"`
+}
+
+func (p Proxy) Value() (driver.Value, error) {
+	return json.Marshal(p)
+}
+
+func (p *Proxy) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("expected []byte, got %T", value)
+	}
+	return json.Unmarshal(bytes, p)
+}
+
 type Upstream struct {
 	ID              uuid.UUID        `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	GatewayID       uuid.UUID        `json:"gateway_id" gorm:"type:uuid; not null"`
@@ -123,6 +143,7 @@ type Upstream struct {
 	HealthChecks    *HealthCheck     `json:"health_checks,omitempty" gorm:"type:jsonb"`
 	Tags            domain.TagsJSON  `json:"tags,omitempty" gorm:"type:jsonb"`
 	Websocket       *WebsocketConfig `json:"websocket_config,omitempty" gorm:"type:jsonb"`
+	Proxy           *Proxy           `json:"proxy,omitempty" gorm:"type:jsonb"`
 	CreatedAt       time.Time        `json:"created_at"`
 	UpdatedAt       time.Time        `json:"updated_at"`
 }

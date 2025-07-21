@@ -88,6 +88,9 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		if errors.As(err, &domain.ErrEntityNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
 		}
+		if err.Error() == "rule already exists" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rule already exists"})
+		}
 		s.logger.WithError(err).Error("Failed to update rule in database")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
 	}
@@ -201,6 +204,25 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 	if err != nil {
 		s.logger.WithError(err).Error("failed to parse service ID")
 		return fmt.Errorf("invalid service ID: %w", err)
+	}
+
+	rules, err := s.repo.ListRules(ctx, gatewayUUID)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to list rules")
+		return fmt.Errorf("failed to check existing rules: %w", err)
+	}
+
+	for _, rule := range rules {
+		// Skip the current rule being updated
+		if rule.ID == ruleUUID {
+			continue
+		}
+
+		// Check if another rule has the same path and service ID
+		if rule.Path == req.Path && rule.ServiceID == serviceUUID {
+			s.logger.WithField("path", req.Path).Error("rule with this path already exists for this service")
+			return fmt.Errorf("rule already exists")
+		}
 	}
 
 	forwardingRule.Path = req.Path

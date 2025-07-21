@@ -37,6 +37,15 @@ import (
 	"github.com/valyala/fastjson"
 )
 
+type forwardedRequestDTO struct {
+	tlsConfig      map[string]types.ClientTLSConfig
+	req            *types.RequestContext
+	rule           *types.ForwardingRule
+	target         *types.UpstreamTarget
+	proxy          *domainUpstream.Proxy
+	streamResponse chan []byte
+}
+
 var responseBodyPool = sync.Pool{
 	New: func() interface{} {
 		return new([]byte)
@@ -558,7 +567,16 @@ func (h *forwardedHandler) handleUpstreamRequest(
 			h.logger.Warn("stream mode channel not ready, skipping")
 		}
 
-		response, err := h.doForwardRequest(tlsConfig, req, rule, target, streamResponse)
+		response, err := h.doForwardRequest(
+			&forwardedRequestDTO{
+				req:            req,
+				rule:           rule,
+				target:         target,
+				tlsConfig:      tlsConfig,
+				streamResponse: streamResponse,
+				proxy:          upstreamModel.Proxy,
+			},
+		)
 		reqErr = err
 		if err == nil {
 			if !target.Stream {
@@ -600,7 +618,13 @@ func (h *forwardedHandler) handleEndpointRequest(
 		Credentials: serviceEntity.Credentials,
 		Stream:      serviceEntity.Stream,
 	}
-	rsp, err := h.doForwardRequest(tlsConfig, req, rule, target, streamResponse)
+	rsp, err := h.doForwardRequest(&forwardedRequestDTO{
+		req:            req,
+		rule:           rule,
+		target:         target,
+		tlsConfig:      tlsConfig,
+		streamResponse: streamResponse,
+	})
 	if err != nil {
 		h.logger.WithError(err).Error("failed to forward request")
 		select {
@@ -677,35 +701,29 @@ func (h *forwardedHandler) handlerProviderResponse(
 
 }
 
-func (h *forwardedHandler) doForwardRequest(
-	tlsConfig map[string]types.ClientTLSConfig,
-	req *types.RequestContext,
-	rule *types.ForwardingRule,
-	target *types.UpstreamTarget,
-	streamResponse chan []byte,
-) (*types.ResponseContext, error) {
+func (h *forwardedHandler) doForwardRequest(dto *forwardedRequestDTO) (*types.ResponseContext, error) {
 
-	if target.Provider != "" {
-		if target.Stream {
-			return h.handleStreamingResponseByProvider(req, target, streamResponse)
+	if dto.target.Provider != "" {
+		if dto.target.Stream {
+			return h.handleStreamingResponseByProvider(dto.req, dto.target, dto.streamResponse)
 		}
-		return h.handlerProviderResponse(req, target)
+		return h.handlerProviderResponse(dto.req, dto.target)
 	}
 
 	client := h.client
-	tls, ok := tlsConfig[target.Host]
+	tls, ok := dto.tlsConfig[dto.target.Host]
 	if ok {
-		if target.InsecureSSL {
-			tls.AllowInsecureConnections = target.InsecureSSL
+		if dto.target.InsecureSSL {
+			tls.AllowInsecureConnections = dto.target.InsecureSSL
 		}
 		conf, err := config.BuildTLSConfigFromClientConfig(tls)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build TLS config: %w", err)
 		}
-		client = h.tlsClientCache.GetOrCreate(target.ID, conf)
+		client = h.tlsClientCache.GetOrCreate(dto.target.ID, conf)
 	}
 
-	if target.InsecureSSL {
+	if dto.target.InsecureSSL {
 		insecureTLSConfig := types.ClientTLSConfig{
 			AllowInsecureConnections: true,
 		}
@@ -713,17 +731,17 @@ func (h *forwardedHandler) doForwardRequest(
 		if err != nil {
 			return nil, fmt.Errorf("failed to build insecure TLS config: %w", err)
 		}
-		client = h.tlsClientCache.GetOrCreate(target.ID+"-insecure", conf)
+		client = h.tlsClientCache.GetOrCreate(dto.target.ID+"-insecure", conf)
 	}
 
-	if target.Stream {
-		return h.handleStreamingRequest(req, target, streamResponse)
+	if dto.target.Stream {
+		return h.handleStreamingRequest(dto.req, dto.target, dto.streamResponse)
 	}
 
-	targetURL := h.buildUpstreamTargetUrl(target)
+	targetURL := h.buildUpstreamTargetUrl(dto.target)
 
-	if rule.StripPath {
-		targetURL = strings.TrimSuffix(targetURL, "/") + strings.TrimPrefix(req.Path, rule.Path)
+	if dto.rule.StripPath {
+		targetURL = strings.TrimSuffix(targetURL, "/") + strings.TrimPrefix(dto.req.Path, dto.rule.Path)
 	}
 
 	fastHttpReq := fasthttp.AcquireRequest()
@@ -733,13 +751,13 @@ func (h *forwardedHandler) doForwardRequest(
 	defer fasthttp.ReleaseResponse(fastHttpResp)
 
 	fastHttpReq.SetRequestURI(targetURL)
-	fastHttpReq.Header.SetMethod(req.Method)
+	fastHttpReq.Header.SetMethod(dto.req.Method)
 
-	if len(req.Body) > 0 {
-		fastHttpReq.SetBodyRaw(req.Body)
+	if len(dto.req.Body) > 0 {
+		fastHttpReq.SetBodyRaw(dto.req.Body)
 	}
 
-	for k, vals := range req.Headers {
+	for k, vals := range dto.req.Headers {
 		if len(vals) == 1 {
 			fastHttpReq.Header.Set(k, vals[0])
 		} else {
@@ -748,11 +766,11 @@ func (h *forwardedHandler) doForwardRequest(
 			}
 		}
 	}
-	for k, v := range target.Headers {
+	for k, v := range dto.target.Headers {
 		fastHttpReq.Header.Set(k, v)
 	}
 
-	h.applyAuthentication(fastHttpReq, &target.Credentials, req.Body)
+	h.applyAuthentication(fastHttpReq, &dto.target.Credentials, dto.req.Body)
 
 	err := client.Do(fastHttpReq, fastHttpResp)
 	if err != nil {
@@ -775,9 +793,9 @@ func (h *forwardedHandler) doForwardRequest(
 		return nil, fmt.Errorf("upstream returned status code %d: %s", statusCode, string(*respBodyPtr))
 	}
 
-	if target.Provider != "" {
+	if dto.target.Provider != "" {
 		go h.logger.WithFields(logrus.Fields{
-			"provider": target.Provider,
+			"provider": dto.target.Provider,
 		}).Debug("Selected provider")
 	}
 

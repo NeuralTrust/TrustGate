@@ -128,6 +128,22 @@ var PluginList = []PluginDefinition{
 		Category:      "content_security",
 		Label:         "Toxicity Protection",
 	},
+	{
+		UUID:          GeneratePluginUUID("bot_detector"),
+		Name:          "bot_detector",
+		Description:   "Detects and blocks automated or suspicious bot activity based on request fingerprinting and behavioral analysis",
+		AllowedStages: []types.Stage{types.PreRequest},
+		Category:      "application_security",
+		Label:         "Bot Detection",
+	},
+	{
+		UUID:          GeneratePluginUUID("anomaly_detector"),
+		Name:          "anomaly_detector",
+		Description:   "Identifies and blocks anomalous request patterns by analyzing deviations from typical user behavior and traffic baselines",
+		AllowedStages: []types.Stage{types.PreRequest},
+		Category:      "application_security",
+		Label:         "Anomaly Detection",
+	},
 }
 
 func GeneratePluginUUID(pluginID string) string {
