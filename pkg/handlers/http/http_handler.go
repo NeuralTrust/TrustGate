@@ -11,7 +11,7 @@ type HandlerTransport interface {
 }
 
 type HandlerTransportDTO struct {
-	// Proxy
+	// ProxyConfig
 	ForwardedHandler Handler
 
 	// Gateway

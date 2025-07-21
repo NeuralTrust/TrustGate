@@ -78,16 +78,16 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	if err := s.repo.CreateUpstream(c.Context(), entity); err != nil {
-		s.logger.WithError(err).Error("Failed to create upstream")
+		s.logger.WithError(err).Error("failed to create upstream")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	if err := s.cache.SaveUpstream(c.Context(), gatewayID, entity); err != nil {
-		s.logger.WithError(err).Error("Failed to cache upstream")
+		s.logger.WithError(err).Error("failed to cache upstream")
 	}
 
 	if err := s.descriptionEmbeddingCreator.Process(c.Context(), entity); err != nil {
-		s.logger.WithError(err).Error("Failed to process embeddings for upstream targets")
+		s.logger.WithError(err).Error("failed to process embeddings for upstream targets")
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(entity)
@@ -151,6 +151,14 @@ func (s *createUpstreamHandler) createUpstreamEntity(
 		}
 	}
 
+	var proxy *upstream.Proxy
+	if req.ProxyConfig != nil {
+		proxy = &upstream.Proxy{
+			Host: req.ProxyConfig.Host,
+			Port: req.ProxyConfig.Port,
+		}
+	}
+
 	var websocket *upstream.WebsocketConfig
 	if req.WebhookConfig != nil {
 		websocket = &upstream.WebsocketConfig{
@@ -173,6 +181,7 @@ func (s *createUpstreamHandler) createUpstreamEntity(
 		EmbeddingConfig: embedding,
 		HealthChecks:    healthCheck,
 		Websocket:       websocket,
+		Proxy:           proxy,
 		Tags:            req.Tags,
 		CreatedAt:       now,
 		UpdatedAt:       now,

@@ -215,4 +215,224 @@ func TestCreateUpstream(t *testing.T) {
 		}, upstreamPayload)
 		assert.Equal(t, http.StatusCreated, status)
 	})
+
+	t.Run("it should create an upstream with webhook_config", func(t *testing.T) {
+		upstreamPayload := map[string]interface{}{
+			"name":      "Webhook Config Upstream",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "webhook.example.com",
+					"port":     443,
+					"protocol": "https",
+					"weight":   1,
+				},
+			},
+			"websocket_config": map[string]interface{}{
+				"enable_direct_communication": true,
+				"return_error_details":        true,
+				"ping_period":                 "30s",
+				"pong_wait":                   "60s",
+				"handshake_timeout":           "10s",
+				"read_buffer_size":            4096,
+				"write_buffer_size":           4096,
+			},
+		}
+
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
+		assert.Equal(t, http.StatusCreated, status)
+
+		// Verify response fields
+		assert.NotEmpty(t, response["id"])
+		assert.Equal(t, "Webhook Config Upstream", response["name"])
+		assert.NotNil(t, response["websocket_config"])
+	})
+
+	t.Run("it should create an upstream with proxy_config", func(t *testing.T) {
+		upstreamPayload := map[string]interface{}{
+			"name":      "Proxy Config Upstream",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "proxy.example.com",
+					"port":     443,
+					"protocol": "https",
+					"weight":   1,
+				},
+			},
+			"proxy_config": map[string]interface{}{
+				"host": "proxy.internal",
+				"port": "8080",
+			},
+		}
+
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
+		assert.Equal(t, http.StatusCreated, status)
+
+		// Verify response fields
+		assert.NotEmpty(t, response["id"])
+		assert.Equal(t, "Proxy Config Upstream", response["name"])
+		assert.NotNil(t, response["proxy"])
+	})
+
+	t.Run("it should fail when webhook_config and proxy_config coexist", func(t *testing.T) {
+		upstreamPayload := map[string]interface{}{
+			"name":      "Coexisting Configs Upstream",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "example.com",
+					"port":     443,
+					"protocol": "https",
+					"weight":   1,
+				},
+			},
+			"websocket_config": map[string]interface{}{
+				"enable_direct_communication": true,
+				"return_error_details":        true,
+				"ping_period":                 "30s",
+				"pong_wait":                   "60s",
+				"handshake_timeout":           "10s",
+				"read_buffer_size":            4096,
+				"write_buffer_size":           4096,
+			},
+			"proxy_config": map[string]interface{}{
+				"host": "proxy.internal",
+				"port": "8080",
+			},
+		}
+
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
+		assert.Equal(t, http.StatusBadRequest, status)
+	})
+
+	t.Run("it should fail when webhook_config validation fails", func(t *testing.T) {
+		upstreamPayload := map[string]interface{}{
+			"name":      "Invalid Webhook Config Upstream",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "example.com",
+					"port":     443,
+					"protocol": "https",
+					"weight":   1,
+				},
+			},
+			"websocket_config": map[string]interface{}{
+				"enable_direct_communication": true,
+				"return_error_details":        true,
+				"ping_period":                 "invalid-duration", // Invalid duration format
+				"read_buffer_size":            -1,                 // Negative buffer size
+			},
+		}
+
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
+		assert.Equal(t, http.StatusBadRequest, status)
+	})
+
+	t.Run("it should fail when proxy_config.host is empty", func(t *testing.T) {
+		upstreamPayload := map[string]interface{}{
+			"name":      "Empty Host Proxy Config Upstream",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "example.com",
+					"port":     443,
+					"protocol": "https",
+					"weight":   1,
+				},
+			},
+			"proxy_config": map[string]interface{}{
+				"host": "",
+				"port": "8080",
+			},
+		}
+
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
+		assert.Equal(t, http.StatusBadRequest, status)
+	})
+
+	t.Run("it should fail when proxy_config.port is empty", func(t *testing.T) {
+		upstreamPayload := map[string]interface{}{
+			"name":      "Empty Port Proxy Config Upstream",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "example.com",
+					"port":     443,
+					"protocol": "https",
+					"weight":   1,
+				},
+			},
+			"proxy_config": map[string]interface{}{
+				"host": "proxy.internal",
+				"port": "",
+			},
+		}
+
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
+		assert.Equal(t, http.StatusBadRequest, status)
+	})
+
+	t.Run("it should fail when target has provider and proxy_config exists", func(t *testing.T) {
+		upstreamPayload := map[string]interface{}{
+			"name":      "Provider With Proxy Config Upstream",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "example.com",
+					"port":     443,
+					"protocol": "https",
+					"weight":   1,
+					"provider": "openai", // Target with provider specified
+				},
+			},
+			"proxy_config": map[string]interface{}{
+				"host": "proxy.internal",
+				"port": "8080",
+			},
+		}
+
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
+		assert.Equal(t, http.StatusBadRequest, status)
+	})
+
+	t.Run("it should fail when target has stream=true and proxy_config exists", func(t *testing.T) {
+		upstreamPayload := map[string]interface{}{
+			"name":      "Stream With Proxy Config Upstream",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "example.com",
+					"port":     443,
+					"protocol": "https",
+					"weight":   1,
+					"stream":   true, // Target with stream=true
+				},
+			},
+			"proxy_config": map[string]interface{}{
+				"host": "proxy.internal",
+				"port": "8080",
+			},
+		}
+
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, upstreamPayload)
+		assert.Equal(t, http.StatusBadRequest, status)
+	})
 }

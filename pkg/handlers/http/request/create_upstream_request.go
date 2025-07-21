@@ -9,6 +9,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
+type ProxyConfigRequest struct {
+	Host string `json:"host"`
+	Port string `json:"port"`
+}
+
 type UpstreamRequest struct {
 	ID            string                `json:"id"`
 	GatewayID     string                `json:"gateway_id"`
@@ -19,6 +24,7 @@ type UpstreamRequest struct {
 	HealthChecks  *HealthCheckRequest   `json:"health_checks,omitempty"`
 	Tags          []string              `json:"tags,omitempty"`
 	WebhookConfig *WebhookConfigRequest `json:"websocket_config,omitempty"`
+	ProxyConfig   *ProxyConfigRequest   `json:"proxy_config,omitempty"`
 }
 
 type EmbeddingRequest struct {
@@ -116,10 +122,32 @@ func (r *UpstreamRequest) Validate() error {
 			return fmt.Errorf("embedding credentials header_value is required when algorithm is semantic")
 		}
 	}
-
+	if r.WebhookConfig != nil && r.ProxyConfig != nil {
+		return fmt.Errorf("webhook_config and proxy_config cannot coexist, only one can be specified")
+	}
 	if r.WebhookConfig != nil {
 		if err := r.WebhookConfig.Validate(); err != nil {
 			return fmt.Errorf("webhook_config validation failed: %w", err)
+		}
+	}
+	if r.ProxyConfig != nil {
+		if r.ProxyConfig.Host == "" {
+			return fmt.Errorf("proxy_config.host cannot be empty")
+		}
+		if r.ProxyConfig.Port == "" {
+			return fmt.Errorf("proxy_config.port cannot be empty")
+		}
+
+		for i, target := range r.Targets {
+			if target.Provider != "" {
+				return fmt.Errorf("target %d: when target has provider specified, proxy_config is not allowed", i)
+			}
+		}
+
+		for i, target := range r.Targets {
+			if target.Stream {
+				return fmt.Errorf("target %d: when target has stream set to true, proxy_config is not allowed", i)
+			}
 		}
 	}
 

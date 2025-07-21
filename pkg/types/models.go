@@ -122,11 +122,17 @@ type HealthStatus struct {
 	ActiveConn int32
 }
 
+type Proxy struct {
+	Host string `json:"host"`
+	Port string `json:"port"`
+}
+
 type Upstream struct {
 	ID              string           `json:"id"`
 	Algorithm       string           `json:"algorithm"`
 	EmbeddingConfig *EmbeddingConfig `json:"embedding_config"`
 	Targets         []UpstreamTarget `json:"targets"`
+	Proxy           *Proxy           `json:"proxy,omitempty"`
 }
 
 type EmbeddingConfig struct {

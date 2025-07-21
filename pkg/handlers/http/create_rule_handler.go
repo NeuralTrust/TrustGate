@@ -148,6 +148,20 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	// Check if a rule with the same path already exists for this gateway and service
+	rules, err := s.repo.ListRules(c.Context(), gatewayUUID)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to list rules")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to check existing rules"})
+	}
+
+	for _, rule := range rules {
+		if rule.Path == req.Path && rule.ServiceID == serviceUUID {
+			s.logger.WithField("path", req.Path).Error("Rule with this path already exists for this service")
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rule already exists"})
+		}
+	}
+
 	// Store in database
 	if err := s.repo.Create(c.Context(), dbRule); err != nil {
 		s.logger.WithError(err).Error("Failed to create rule")

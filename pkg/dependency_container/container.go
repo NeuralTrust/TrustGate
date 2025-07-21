@@ -195,7 +195,7 @@ func NewContainer(
 
 	// Handler Transport
 	handlerTransport := &handlers.HandlerTransportDTO{
-		// Proxy
+		// ProxyConfig
 		ForwardedHandler: handlers.NewForwardedHandler(
 			logger,
 			cacheInstance,

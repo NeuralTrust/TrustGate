@@ -96,7 +96,7 @@ func setupTestEnvironment() {
 	adminCmd.Stderr = os.Stderr
 	adminCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	fmt.Println("✨ Starting Proxy Server:", proxyCmd.String())
+	fmt.Println("✨ Starting ProxyConfig Server:", proxyCmd.String())
 	if err := proxyCmd.Start(); err != nil {
 		log.Fatalf("Failed to start proxy: %v", err)
 	}
