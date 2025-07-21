@@ -148,7 +148,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
- // Check if a rule with the same path already exists for this gateway and service
+	// Check if a rule with the same path already exists for this gateway and service
 	rules, err := s.repo.ListRules(c.Context(), gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to list rules")

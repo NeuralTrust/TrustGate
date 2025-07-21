@@ -43,7 +43,7 @@ func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr stri
 
 	if proxyAddr != "" {
 		client.Dial = func(addr string) (net.Conn, error) {
-			hostPort := addr
+			var hostPort string
 			isTLS := false
 
 			if strings.Contains(addr, ":") {
