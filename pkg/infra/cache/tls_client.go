@@ -75,7 +75,10 @@ func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr stri
 				// Send the CONNECT request
 				connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", hostPort, hostPort)
 				if _, err := proxyConn.Write([]byte(connectReq)); err != nil {
-					proxyConn.Close()
+					closeErr := proxyConn.Close()
+					if closeErr != nil {
+						return nil, fmt.Errorf("failed to send CONNECT request: %w, close error: %v", err, closeErr)
+					}
 					return nil, fmt.Errorf("failed to send CONNECT request: %w", err)
 				}
 
@@ -83,13 +86,19 @@ func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr stri
 				br := bufio.NewReader(proxyConn)
 				resp, err := br.ReadString('\n')
 				if err != nil {
-					proxyConn.Close()
+					closeErr := proxyConn.Close()
+					if closeErr != nil {
+						return nil, fmt.Errorf("failed to read CONNECT response: %w, close error: %v", err, closeErr)
+					}
 					return nil, fmt.Errorf("failed to read CONNECT response: %w", err)
 				}
 
 				// Check if the connection was established successfully
 				if !strings.HasPrefix(resp, "HTTP/1.1 200") && !strings.HasPrefix(resp, "HTTP/1.0 200") {
-					proxyConn.Close()
+					closeErr := proxyConn.Close()
+					if closeErr != nil {
+						return nil, fmt.Errorf("proxy CONNECT failed: %s, close error: %v", resp, closeErr)
+					}
 					return nil, fmt.Errorf("proxy CONNECT failed: %s", resp)
 				}
 
@@ -97,7 +106,10 @@ func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr stri
 				for {
 					line, err := br.ReadString('\n')
 					if err != nil {
-						proxyConn.Close()
+						closeErr := proxyConn.Close()
+						if closeErr != nil {
+							return nil, fmt.Errorf("failed to read CONNECT response headers: %w, close error: %v", err, closeErr)
+						}
 						return nil, fmt.Errorf("failed to read CONNECT response headers: %w", err)
 					}
 					if line == "\r\n" || line == "\n" {
