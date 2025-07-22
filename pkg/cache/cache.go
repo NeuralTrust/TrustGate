@@ -8,19 +8,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/go-redis/redis/v8"
-	"gorm.io/gorm"
-
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 )
 
 // Cache implements the common.Cache interface
 type Cache struct {
 	client     *redis.Client
-	db         *gorm.DB
 	localCache sync.Map
 	ttlMaps    sync.Map
 	ttl        time.Duration
@@ -42,9 +39,11 @@ const (
 	PluginTTLName   = "plugin"
 	ServiceTTLName  = "service"
 	UpstreamTTLName = "upstream"
+
+	DataMaskingTTLName = "data_masking"
 )
 
-func NewCache(config common.CacheConfig, db *gorm.DB) (*Cache, error) {
+func NewCache(config common.CacheConfig) (*Cache, error) {
 	options := &redis.Options{
 		Addr:     fmt.Sprintf("%s:%d", config.Host, config.Port),
 		Password: config.Password,
@@ -58,7 +57,6 @@ func NewCache(config common.CacheConfig, db *gorm.DB) (*Cache, error) {
 
 	return &Cache{
 		client:     client,
-		db:         db,
 		localCache: sync.Map{},
 		ttlMaps:    sync.Map{},
 		ttl:        5 * time.Minute,

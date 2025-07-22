@@ -2,9 +2,15 @@ package data_masking
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
 	"regexp"
 	"testing"
+	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
@@ -85,6 +91,10 @@ func TestGenerateVariants(t *testing.T) {
 
 func createTestConfig(entities []EntityConfig, applyAll bool) Config {
 	return Config{
+		ReversibleHashing: ReversibleHashingConfig{
+			Enabled: false,
+			Secret:  "",
+		},
 		SimilarityThreshold: 0.8,
 		MaxEditDistance:     1,
 		NormalizeInput:      true,
@@ -539,9 +549,23 @@ func TestInternationalPII(t *testing.T) {
 	assert.Equal(t, 1, len(evt))
 }
 
+// createTestCache creates a test cache with a TTL map for data masking
+func createTestCache() *cache.Cache {
+	c, err := cache.NewCache(common.CacheConfig{
+		Host: "localhost",
+		Port: 6379,
+	})
+	if err != nil {
+		slog.Error(fmt.Sprintf("%v", err))
+	}
+	c.CreateTTLMap(cache.DataMaskingTTLName, 5*time.Minute)
+	return c
+}
+
 func TestExecutePlugin(t *testing.T) {
 	logger := logrus.New()
-	plugin, ok := NewDataMaskingPlugin(logger).(*DataMaskingPlugin)
+	testCache := createTestCache()
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
 	assert.True(t, ok)
 
 	config := types.PluginConfig{
@@ -640,4 +664,249 @@ func TestJSONMasking(t *testing.T) {
 	maskedSSN, ok := maskedL.(map[string]interface{})
 	assert.True(t, ok)
 	assert.Equal(t, defaultEntityMasks[SSN], maskedSSN["ssn"])
+}
+
+func TestGenerateReversibleHash(t *testing.T) {
+	// Test that the same input with the same secret produces the same hash
+	secret := "test-secret"
+	value := "sensitive-data"
+
+	hash1 := generateReversibleHash(secret, value)
+	hash2 := generateReversibleHash(secret, value)
+
+	assert.Equal(t, hash1, hash2, "Same input with same secret should produce the same hash")
+
+	// Test that different inputs produce different hashes
+	value2 := "different-data"
+	hash3 := generateReversibleHash(secret, value2)
+
+	assert.NotEqual(t, hash1, hash3, "Different inputs should produce different hashes")
+
+	// Test that same input with different secrets produces different hashes
+	secret2 := "different-secret"
+	hash4 := generateReversibleHash(secret2, value)
+
+	assert.NotEqual(t, hash1, hash4, "Same input with different secrets should produce different hashes")
+}
+
+func TestReplaceWithHashes(t *testing.T) {
+	// Create test data
+	data := map[string]interface{}{
+		"user": map[string]interface{}{
+			"email": "test@example.com",
+			"card":  "4111 1111 1111 1111",
+		},
+		"messages": []interface{}{
+			"Hello world",
+			map[string]interface{}{
+				"text": "This contains [MASKED_SSN]",
+			},
+		},
+	}
+
+	// Create masking events
+	events := []MaskingEvent{
+		{
+			Entity:        "email",
+			OriginalValue: "test@example.com",
+			MaskedWith:    "[MASKED_EMAIL]",
+			ReversibleKey: "hash1",
+		},
+		{
+			Entity:        "credit_card",
+			OriginalValue: "4111 1111 1111 1111",
+			MaskedWith:    "[MASKED_CC]",
+			ReversibleKey: "hash2",
+		},
+		{
+			Entity:        "ssn",
+			OriginalValue: "123-45-6789",
+			MaskedWith:    "[MASKED_SSN]",
+			ReversibleKey: "hash3",
+		},
+	}
+
+	// Replace masked values with hashes
+	result := replaceWithHashes(data, events)
+
+	// Verify that masked values were replaced with hashes
+	resultMap, ok := result.(map[string]interface{})
+	assert.True(t, ok)
+
+	userMap, ok := resultMap["user"].(map[string]interface{})
+	assert.True(t, ok)
+
+	assert.Equal(t, "test@example.com", userMap["email"], "Email should not be replaced (not masked yet)")
+	assert.Equal(t, "4111 1111 1111 1111", userMap["card"], "Card should not be replaced (not masked yet)")
+
+	// Test with pre-masked data
+	maskedData := map[string]interface{}{
+		"user": map[string]interface{}{
+			"email": "[MASKED_EMAIL]",
+			"card":  "[MASKED_CC]",
+		},
+		"messages": []interface{}{
+			"Hello world",
+			map[string]interface{}{
+				"text": "This contains [MASKED_SSN]",
+			},
+		},
+	}
+
+	// Replace masked values with hashes
+	maskedResult := replaceWithHashes(maskedData, events)
+
+	// Verify that masked values were replaced with hashes
+	maskedResultMap, ok := maskedResult.(map[string]interface{})
+	assert.True(t, ok)
+
+	maskedUserMap, ok := maskedResultMap["user"].(map[string]interface{})
+	assert.True(t, ok)
+
+	assert.Equal(t, "hash1", maskedUserMap["email"], "Masked email should be replaced with hash")
+	assert.Equal(t, "hash2", maskedUserMap["card"], "Masked card should be replaced with hash")
+
+	messagesArr, ok := maskedResultMap["messages"].([]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, 2, len(messagesArr))
+
+	messageMap, ok := messagesArr[1].(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, "This contains hash3", messageMap["text"], "Masked SSN should be replaced with hash")
+}
+
+func TestRestoreFromHashes(t *testing.T) {
+	// Create test data with hashes
+	data := map[string]interface{}{
+		"user": map[string]interface{}{
+			"email": "hash1",
+			"card":  "hash2",
+		},
+		"messages": []interface{}{
+			"Hello world",
+			map[string]interface{}{
+				"text": "This contains hash3",
+			},
+		},
+	}
+
+	// Create hash map
+	hashMap := hashToOriginalMap{
+		"hash1": "test@example.com",
+		"hash2": "4111 1111 1111 1111",
+		"hash3": "123-45-6789",
+	}
+
+	// Restore original values from hashes
+	result := restoreFromHashes(data, hashMap)
+
+	// Verify that hashes were restored to original values
+	resultMap, ok := result.(map[string]interface{})
+	assert.True(t, ok)
+
+	userMap, ok := resultMap["user"].(map[string]interface{})
+	assert.True(t, ok)
+
+	assert.Equal(t, "test@example.com", userMap["email"], "Hash should be restored to original email")
+	assert.Equal(t, "4111 1111 1111 1111", userMap["card"], "Hash should be restored to original card")
+
+	messagesArr, ok := resultMap["messages"].([]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, 2, len(messagesArr))
+
+	messageMap, ok := messagesArr[1].(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, "This contains 123-45-6789", messageMap["text"], "Hash should be restored to original SSN")
+}
+
+func TestReversibleHashingWorkflow(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache()
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	// Create a configuration with reversible hashing enabled
+	config := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"reversible_hashing": map[string]interface{}{
+				"enabled": true,
+				"secret":  "test-secret",
+			},
+			"predefined_entities": []map[string]interface{}{
+				{
+					"entity":    "credit_card",
+					"enabled":   true,
+					"mask_with": "[MASKED_CC]",
+				},
+				{
+					"entity":    "email",
+					"enabled":   true,
+					"mask_with": "[MASKED_EMAIL]",
+				},
+			},
+		},
+		Stage: types.PreRequest,
+	}
+
+	// Create a request with sensitive data
+	reqBody := []byte(`{
+		"user": {
+			"email": "test@example.com",
+			"card": "4111 1111 1111 1111"
+		}
+	}`)
+
+	req := &types.RequestContext{Body: reqBody}
+	resp := &types.ResponseContext{}
+
+	// Create a shared context for both Execute calls with a traceID
+	traceID := "test-trace-id"
+	ctx := context.WithValue(context.Background(), common.TraceIdKey, traceID)
+	evtCtx := metrics.NewEventContext("", "", nil)
+
+	// Execute the plugin in PreRequest stage
+	_, err := plugin.Execute(ctx, config, req, resp, evtCtx)
+	assert.NoError(t, err)
+
+	// Verify that the request body was masked and contains hashes
+	var maskedData map[string]interface{}
+	err = json.Unmarshal(req.Body, &maskedData)
+	assert.NoError(t, err)
+
+	userMap, ok := maskedData["user"].(map[string]interface{})
+	assert.True(t, ok)
+
+	// The values should now be hashes, not the original values or masked values
+	assert.NotEqual(t, "test@example.com", userMap["email"], "Email should be replaced with hash")
+	assert.NotEqual(t, "[MASKED_EMAIL]", userMap["email"], "Email should not be the masked value")
+	assert.NotEqual(t, "4111 1111 1111 1111", userMap["card"], "Card should be replaced with hash")
+	assert.NotEqual(t, "[MASKED_CC]", userMap["card"], "Card should not be the masked value")
+
+	// Now test the PostResponse stage to restore original values
+	config.Stage = types.PostResponse
+
+	// Create a response with the expected data
+	respBody := []byte(`{
+		"user": {
+			"email": "04d4c4a9449d383577a0488be9bc871181165c41b8ecb4c2a188c89d20341bd4",
+			"card": "f115802b1af752aa42602ee67ce70276443f4ba24aba08b762593b9471de43ee"
+		}
+	}`)
+	resp.Body = respBody
+
+	// Execute the plugin in PostResponse stage with the same context
+	_, err = plugin.Execute(ctx, config, req, resp, evtCtx)
+	assert.NoError(t, err)
+
+	// Verify that the response body was restored to original values
+	var restoredData map[string]interface{}
+	err = json.Unmarshal(resp.Body, &restoredData)
+	assert.NoError(t, err)
+
+	restoredUserMap, ok := restoredData["user"].(map[string]interface{})
+	assert.True(t, ok)
+
+	// The values should match the response body
+	assert.Equal(t, "test@example.com", restoredUserMap["email"], "Email should match the response body")
+	assert.Equal(t, "4111 1111 1111 1111", restoredUserMap["card"], "Card should match the response body")
 }

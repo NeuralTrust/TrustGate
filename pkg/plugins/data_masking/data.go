@@ -9,4 +9,5 @@ type MaskingEvent struct {
 	Entity        string `json:"entity"`
 	OriginalValue string `json:"original_value"`
 	MaskedWith    string `json:"masked_with"`
+	ReversibleKey string `json:"reversible_key,omitempty"`
 }

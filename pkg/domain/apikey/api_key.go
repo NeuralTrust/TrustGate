@@ -12,7 +12,7 @@ type APIKey struct {
 	Name      string     `json:"name"`
 	Active    bool       `json:"active"`
 	GatewayID uuid.UUID  `json:"gateway_id" gorm:"type:uuid;index"`
-	ExpiresAt time.Time  `json:"expires_at"`
+	ExpiresAt *time.Time `json:"expires_at"`
 	CreatedAt time.Time  `json:"created_at"`
 	DeletedAt *time.Time `json:"deleted_at" gorm:"index"`
 }
@@ -25,8 +25,10 @@ func (a APIKey) IsValid() bool {
 	if !a.Active {
 		return false
 	}
-	if time.Now().After(a.ExpiresAt) {
-		return false
+	if a.ExpiresAt != nil {
+		if time.Now().After(*a.ExpiresAt) {
+			return false
+		}
 	}
 	return true
 }

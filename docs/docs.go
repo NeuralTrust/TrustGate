@@ -1571,6 +1571,17 @@ const docTemplate = `{
                 }
             }
         },
+        "request.ProxyConfigRequest": {
+            "type": "object",
+            "properties": {
+                "host": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "string"
+                }
+            }
+        },
         "request.SecurityConfigRequest": {
             "type": "object",
             "properties": {
@@ -1787,6 +1798,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "proxy_config": {
+                    "$ref": "#/definitions/request.ProxyConfigRequest"
                 },
                 "tags": {
                     "type": "array",
@@ -2466,6 +2480,17 @@ const docTemplate = `{
                 }
             }
         },
+        "upstream.Proxy": {
+            "type": "object",
+            "properties": {
+                "host": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "string"
+                }
+            }
+        },
         "upstream.Target": {
             "type": "object",
             "properties": {
@@ -2548,6 +2573,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "proxy": {
+                    "$ref": "#/definitions/upstream.Proxy"
                 },
                 "tags": {
                     "type": "array",

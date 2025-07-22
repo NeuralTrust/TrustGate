@@ -1749,6 +1749,17 @@
                     }
                 }
             },
+            "request.ProxyConfigRequest": {
+                "type": "object",
+                "properties": {
+                    "host": {
+                        "type": "string"
+                    },
+                    "port": {
+                        "type": "string"
+                    }
+                }
+            },
             "request.SecurityConfigRequest": {
                 "type": "object",
                 "properties": {
@@ -1965,6 +1976,9 @@
                     },
                     "name": {
                         "type": "string"
+                    },
+                    "proxy_config": {
+                        "$ref": "#/components/schemas/request.ProxyConfigRequest"
                     },
                     "tags": {
                         "type": "array",
@@ -2644,6 +2658,17 @@
                     }
                 }
             },
+            "upstream.Proxy": {
+                "type": "object",
+                "properties": {
+                    "host": {
+                        "type": "string"
+                    },
+                    "port": {
+                        "type": "string"
+                    }
+                }
+            },
             "upstream.Target": {
                 "type": "object",
                 "properties": {
@@ -2726,6 +2751,9 @@
                     },
                     "name": {
                         "type": "string"
+                    },
+                    "proxy": {
+                        "$ref": "#/components/schemas/upstream.Proxy"
                     },
                     "tags": {
                         "type": "array",

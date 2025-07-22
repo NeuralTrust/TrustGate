@@ -96,7 +96,7 @@ func NewContainer(
 		DB:       cfg.Redis.DB,
 		TLS:      cfg.Redis.TLS,
 	}
-	cacheInstance, err := cache.NewCache(cacheConfig, db.DB)
+	cacheInstance, err := cache.NewCache(cacheConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize cache: %v", err)
 	}

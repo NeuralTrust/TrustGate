@@ -8,6 +8,8 @@ import (
 )
 
 func TestAPIKey_IsValid(t *testing.T) {
+	expiresAt := time.Now().Add(24 * time.Hour)
+	expiresAtInvalid := time.Now().Add(-24 * time.Hour)
 	tests := []struct {
 		name     string
 		apiKey   APIKey
@@ -17,7 +19,14 @@ func TestAPIKey_IsValid(t *testing.T) {
 			name: "it should return true when API key expiration is in the future",
 			apiKey: APIKey{
 				Active:    true,
-				ExpiresAt: time.Now().Add(24 * time.Hour),
+				ExpiresAt: &expiresAt,
+			},
+			expected: true,
+		},
+		{
+			name: "it should return true when API key with no expiration",
+			apiKey: APIKey{
+				Active: true,
 			},
 			expected: true,
 		},
@@ -25,7 +34,7 @@ func TestAPIKey_IsValid(t *testing.T) {
 			name: "it should return false when API key is expired",
 			apiKey: APIKey{
 				Active:    true,
-				ExpiresAt: time.Now().Add(-24 * time.Hour),
+				ExpiresAt: &expiresAtInvalid,
 			},
 			expected: false,
 		},
@@ -33,7 +42,7 @@ func TestAPIKey_IsValid(t *testing.T) {
 			name: "it should return false when API key is inactive",
 			apiKey: APIKey{
 				Active:    false,
-				ExpiresAt: time.Now().Add(24 * time.Hour),
+				ExpiresAt: &expiresAt,
 			},
 			expected: false,
 		},
@@ -41,7 +50,7 @@ func TestAPIKey_IsValid(t *testing.T) {
 			name: "it should return false when API key is inactive even if expiration is in the future",
 			apiKey: APIKey{
 				Active:    false,
-				ExpiresAt: time.Now().Add(24 * time.Hour),
+				ExpiresAt: &expiresAt,
 			},
 			expected: false,
 		},
