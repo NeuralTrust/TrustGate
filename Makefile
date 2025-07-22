@@ -46,3 +46,10 @@ create-kafka-topic:
 .PHONY: test-crt
 test-crt:  ; $(info $(M) Testing nginx server ...)	@
 	cd docker/nginx && curl -k https://localhost   --cert client.crt   --key client.key
+
+.PHONY: install-pre-commit
+install-pre-commit:  ; $(info $(M) Installing pre-commit hook ...)	@
+	@mkdir -p .git/hooks
+	@echo '#!/bin/sh\necho "Running pre-commit hook..."\nmake lint\nif [ $$? -ne 0 ]; then\n  echo "Linting failed!"\n  exit 1\nfi\nmake test\nif [ $$? -ne 0 ]; then\n  echo "Tests failed!"\n  exit 1\nfi\necho "Pre-commit hook passed successfully!"' > .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "Pre-commit hook installed successfully!"
