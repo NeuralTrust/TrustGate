@@ -1,6 +1,7 @@
 package http
 
 import (
+	"github.com/NeuralTrust/TrustGate/pkg/version"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -23,9 +24,6 @@ func NewGetVersionHandler(logger *logrus.Logger) Handler {
 // @Success 200 {object} map[string]interface{} "Version information"
 // @Router /api/v1/version [get]
 func (h *getVersionHandler) Handle(c *fiber.Ctx) error {
-	versionInfo := fiber.Map{
-		"version": "1.7.21",
-		"name":    "TrustGate",
-	}
+	versionInfo := version.GetInfo()
 	return c.Status(fiber.StatusOK).JSON(versionInfo)
 }
