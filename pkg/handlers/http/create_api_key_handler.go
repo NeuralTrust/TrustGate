@@ -66,7 +66,7 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	if req.ExpiresAt != nil {
-		apiKey.ExpiresAt = *req.ExpiresAt
+		apiKey.ExpiresAt = req.ExpiresAt
 	}
 
 	if err := s.apiKeyRepo.Create(c.Context(), apiKey); err != nil {

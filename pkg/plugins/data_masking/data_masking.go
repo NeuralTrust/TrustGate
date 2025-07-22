@@ -2,16 +2,21 @@ package data_masking
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
-	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
@@ -227,19 +232,32 @@ var defaultEntityMasks = map[PredefinedEntity]string{
 	Date:           "[MASKED_DATE]",
 }
 
+// hashMapKey is the key used to store the hash map in the context
+type hashMapKey struct{}
+
+// hashToOriginalMap is a map from hash to original value
+type hashToOriginalMap map[string]string
+
 type DataMaskingPlugin struct {
-	logger     *logrus.Logger
-	keywords   map[string]string         // map of keyword to mask value
-	regexRules map[string]*regexp.Regexp // map of regex pattern to mask value
+	logger      *logrus.Logger
+	memoryCache *common.TTLMap
+	keywords    map[string]string         // map of keyword to mask value
+	regexRules  map[string]*regexp.Regexp // map of regex pattern to mask value
+}
+
+type ReversibleHashingConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Secret  string `mapstructure:"secret"`
 }
 
 type Config struct {
-	Rules               []Rule         `mapstructure:"rules"`
-	SimilarityThreshold float64        `mapstructure:"similarity_threshold"`
-	PredefinedEntities  []EntityConfig `mapstructure:"predefined_entities"`
-	ApplyAll            bool           `mapstructure:"apply_all"`
-	MaxEditDistance     int            `mapstructure:"max_edit_distance"` // Maximum edit distance for fuzzy matching
-	NormalizeInput      bool           `mapstructure:"normalize_input"`   // Normalize input before matching
+	ReversibleHashing   ReversibleHashingConfig `mapstructure:"reversible_hashing"`
+	Rules               []Rule                  `mapstructure:"rules"`
+	SimilarityThreshold float64                 `mapstructure:"similarity_threshold"`
+	PredefinedEntities  []EntityConfig          `mapstructure:"predefined_entities"`
+	ApplyAll            bool                    `mapstructure:"apply_all"`
+	MaxEditDistance     int                     `mapstructure:"max_edit_distance"` // Maximum edit distance for fuzzy matching
+	NormalizeInput      bool                    `mapstructure:"normalize_input"`   // Normalize input before matching
 }
 
 type EntityConfig struct {
@@ -254,6 +272,345 @@ type Rule struct {
 	Type        string `mapstructure:"type"`         // "keyword" or "regex"
 	MaskWith    string `mapstructure:"mask_with"`    // Character or string to mask with
 	PreserveLen bool   `mapstructure:"preserve_len"` // Whether to preserve the length of masked content
+}
+
+func NewDataMaskingPlugin(logger *logrus.Logger, c *cache.Cache) pluginiface.Plugin {
+	return &DataMaskingPlugin{
+		logger:      logger,
+		memoryCache: c.GetTTLMap(cache.DataMaskingTTLName),
+		keywords:    make(map[string]string),
+		regexRules:  make(map[string]*regexp.Regexp),
+	}
+}
+
+func (p *DataMaskingPlugin) Name() string {
+	return PluginName
+}
+
+func (p *DataMaskingPlugin) RequiredPlugins() []string {
+	var requiredPlugins []string
+	return requiredPlugins
+}
+
+func (p *DataMaskingPlugin) Stages() []types.Stage {
+	return []types.Stage{}
+}
+
+func (p *DataMaskingPlugin) AllowedStages() []types.Stage {
+	return []types.Stage{types.PreRequest, types.PostResponse}
+}
+
+func (p *DataMaskingPlugin) ValidateConfig(config types.PluginConfig) error {
+	var cfg Config
+	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
+		return fmt.Errorf("failed to decode config: %v", err)
+	}
+
+	if len(cfg.Rules) == 0 && len(cfg.PredefinedEntities) == 0 && !cfg.ApplyAll {
+		return fmt.Errorf("at least one rule or predefined entity must be specified")
+	}
+
+	// Validate custom rules
+	for _, rule := range cfg.Rules {
+		if rule.Type != "keyword" && rule.Type != "regex" {
+			return fmt.Errorf("invalid rule type '%s': must be 'keyword' or 'regex'", rule.Type)
+		}
+
+		if rule.Type == "regex" {
+			if _, err := regexp.Compile(rule.Pattern); err != nil {
+				return fmt.Errorf("invalid regex pattern '%s': %v", rule.Pattern, err)
+			}
+		}
+
+		if rule.MaskWith == "" {
+			return fmt.Errorf("mask_with value must be specified for each rule")
+		}
+	}
+
+	if !cfg.ApplyAll && len(cfg.PredefinedEntities) > 0 {
+		for _, entity := range cfg.PredefinedEntities {
+			if _, exists := predefinedEntityPatterns[PredefinedEntity(entity.Entity)]; !exists {
+				return fmt.Errorf("invalid predefined entity type: %s", entity.Entity)
+			}
+		}
+	}
+
+	if cfg.ReversibleHashing.Enabled && cfg.ReversibleHashing.Secret == "" {
+		return fmt.Errorf("reversible_hashing.secret must be set when reversible_hashing is enabled")
+	}
+
+	return nil
+}
+
+func (p *DataMaskingPlugin) Execute(
+	ctx context.Context,
+	cfg types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	evtCtx *metrics.EventContext,
+) (*types.PluginResponse, error) {
+	var config Config
+	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
+		return nil, fmt.Errorf("failed to decode config: %v", err)
+	}
+
+	if config.SimilarityThreshold == 0 {
+		config.SimilarityThreshold = SimilarityThreshold
+	}
+	if config.MaxEditDistance == 0 {
+		config.MaxEditDistance = 1
+	}
+
+	if config.ReversibleHashing.Enabled {
+		traceId, ok := ctx.Value(common.TraceIdKey).(string)
+		if ok {
+			if cfg.Stage == types.PreRequest {
+				// Initialize an empty hash map for this trace ID
+				p.memoryCache.Set(traceId, make(hashToOriginalMap))
+			}
+		}
+	}
+
+	// Initialize rules
+	p.keywords = make(map[string]string)
+	p.regexRules = make(map[string]*regexp.Regexp)
+
+	if config.ApplyAll {
+		for entityType, pattern := range predefinedEntityPatterns {
+			maskValue, exists := defaultEntityMasks[entityType]
+			if !exists {
+				maskValue = "[MASKED]"
+			}
+
+			p.regexRules[pattern.String()] = pattern
+			p.keywords[pattern.String()] = maskValue
+		}
+	} else {
+		for _, entity := range config.PredefinedEntities {
+			if !entity.Enabled {
+				continue
+			}
+
+			entityType := PredefinedEntity(entity.Entity)
+			pattern, exists := predefinedEntityPatterns[entityType]
+			if !exists {
+				continue
+			}
+
+			maskValue := entity.MaskWith
+			if maskValue == "" {
+				maskValue = defaultEntityMasks[entityType]
+			}
+
+			p.regexRules[pattern.String()] = pattern
+			p.keywords[pattern.String()] = maskValue
+		}
+	}
+
+	// Add custom rules
+	for _, rule := range config.Rules {
+		maskValue := rule.MaskWith
+		if maskValue == "" {
+			maskValue = DefaultMaskChar
+		}
+
+		if rule.Type == "keyword" {
+			p.keywords[rule.Pattern] = maskValue
+		} else if rule.Type == "regex" {
+			// Try to compile the regex
+			regex, err := regexp.Compile(rule.Pattern)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", rule.Pattern, err)
+			}
+
+			// Store both the pattern string and the compiled regex
+			p.regexRules[rule.Pattern] = regex
+			p.keywords[rule.Pattern] = maskValue
+		}
+	}
+
+	var allEvents []MaskingEvent
+	hashMap := make(hashToOriginalMap)
+	secret := config.ReversibleHashing.Secret
+
+	// Check if reversible hashing is enabled
+	if config.ReversibleHashing.Enabled && cfg.Stage == types.PostResponse {
+		traceId, ok := ctx.Value(common.TraceIdKey).(string)
+		if ok {
+			// Get the hash map from the memory cache
+			if value, exists := p.memoryCache.Get(traceId); exists {
+				if hm, ok := value.(hashToOriginalMap); ok {
+					hashMap = hm
+				}
+			}
+		}
+	}
+
+	processBody := func(body []byte, isRequest bool) ([]byte, error) {
+		var jsonData interface{}
+		if err := json.Unmarshal(body, &jsonData); err == nil {
+			var maskedData interface{}
+			var events []MaskingEvent
+
+			// If this is a response in postresponse stage and reversible hashing is enabled, skip masking and just restore original values
+			if !isRequest && cfg.Stage == types.PostResponse && config.ReversibleHashing.Enabled {
+				maskedData = restoreFromHashes(jsonData, hashMap)
+			} else {
+				// Otherwise, mask the data as usual
+				maskedData, events = p.maskJSONData(jsonData, config.SimilarityThreshold, config)
+
+				// If reversible hashing is enabled and this is a request in prerequest stage, replace masked values with hashes
+				if config.ReversibleHashing.Enabled && isRequest && cfg.Stage == types.PreRequest {
+					for i := range events {
+						hash := generateReversibleHash(secret, events[i].OriginalValue)
+						events[i].ReversibleKey = hash
+						hashMap[hash] = events[i].OriginalValue
+					}
+
+					// Replace masked values with hashes in the JSON data
+					maskedData = replaceWithHashes(maskedData, events)
+
+					// Store the updated hash map in the memory cache
+					traceId, ok := ctx.Value(common.TraceIdKey).(string)
+					if ok {
+						p.memoryCache.Set(traceId, hashMap)
+					}
+				}
+			}
+
+			maskedJSON, err := json.Marshal(maskedData)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal masked JSON: %v", err)
+			}
+			allEvents = append(allEvents, events...)
+			return maskedJSON, nil
+		}
+
+		content := string(body)
+		var maskedContent string
+		var events []MaskingEvent
+
+		// If this is a response in postresponse stage and reversible hashing is enabled, skip masking and just restore original values
+		if !isRequest && cfg.Stage == types.PostResponse && config.ReversibleHashing.Enabled {
+			maskedContent = content
+			for hash, original := range hashMap {
+				maskedContent = strings.ReplaceAll(maskedContent, hash, original)
+			}
+		} else {
+			// Otherwise, mask the data as usual
+			maskedContent, events = p.maskPlainText(content, config.SimilarityThreshold, config)
+
+			// If reversible hashing is enabled and this is a request in prerequest stage, replace masked values with hashes
+			if config.ReversibleHashing.Enabled && isRequest && cfg.Stage == types.PreRequest {
+				for i := range events {
+					hash := generateReversibleHash(secret, events[i].OriginalValue)
+					events[i].ReversibleKey = hash
+					hashMap[hash] = events[i].OriginalValue
+
+					// Replace masked value with hash in the content
+					maskedContent = strings.ReplaceAll(maskedContent, events[i].MaskedWith, hash)
+				}
+
+				// Store the updated hash map in the memory cache
+				traceId, ok := ctx.Value(common.TraceIdKey).(string)
+				if ok {
+					p.memoryCache.Set(traceId, hashMap)
+				}
+			}
+		}
+
+		allEvents = append(allEvents, events...)
+		return []byte(maskedContent), nil
+	}
+
+	if req != nil && len(req.Body) > 0 {
+		maskedBody, err := processBody(req.Body, true)
+		if err != nil {
+			return nil, err
+		}
+		req.Body = maskedBody
+	}
+
+	if resp != nil && len(resp.Body) > 0 {
+		maskedBody, err := processBody(resp.Body, false)
+		if err != nil {
+			return nil, err
+		}
+		resp.Body = maskedBody
+	}
+
+	evtCtx.SetExtras(DataMaskingData{
+		Masked: len(allEvents) > 0,
+		Events: allEvents,
+	})
+
+	return &types.PluginResponse{
+		StatusCode: 200,
+		Message:    "Content masked successfully",
+	}, nil
+}
+
+func generateReversibleHash(secret, value string) string {
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(value))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func replaceWithHashes(data interface{}, events []MaskingEvent) interface{} {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		result := make(map[string]interface{}, len(v))
+		for key, value := range v {
+			result[key] = replaceWithHashes(value, events)
+		}
+		return result
+	case []interface{}:
+		result := make([]interface{}, len(v))
+		for i, value := range v {
+			result[i] = replaceWithHashes(value, events)
+		}
+		return result
+	case string:
+		// Replace masked values with hashes
+		result := v
+		for _, event := range events {
+			if event.ReversibleKey != "" && strings.Contains(result, event.MaskedWith) {
+				result = strings.ReplaceAll(result, event.MaskedWith, event.ReversibleKey)
+			}
+		}
+		return result
+	default:
+		return v
+	}
+}
+
+// restoreFromHashes restores original values from hashes in JSON data
+func restoreFromHashes(data interface{}, hashMap hashToOriginalMap) interface{} {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		result := make(map[string]interface{}, len(v))
+		for key, value := range v {
+			result[key] = restoreFromHashes(value, hashMap)
+		}
+		return result
+	case []interface{}:
+		result := make([]interface{}, len(v))
+		for i, value := range v {
+			result[i] = restoreFromHashes(value, hashMap)
+		}
+		return result
+	case string:
+		// Restore original values from hashes
+		result := v
+		for hash, original := range hashMap {
+			if strings.Contains(result, hash) {
+				result = strings.ReplaceAll(result, hash, original)
+			}
+		}
+		return result
+	default:
+		return v
+	}
 }
 
 // levenshteinDistance calculates the minimum number of single-character edits required to change one word into another
@@ -293,20 +650,6 @@ func levenshteinDistance(s1, s2 string) int {
 	return matrix[len(s1)][len(s2)]
 }
 
-// min returns the minimum of three integers
-func min(a, b, c int) int {
-	if a < b {
-		if a < c {
-			return a
-		}
-		return c
-	}
-	if b < c {
-		return b
-	}
-	return c
-}
-
 // calculateSimilarity returns a similarity score between 0 and 1
 func calculateSimilarity(s1, s2 string) float64 {
 	distance := levenshteinDistance(s1, s2)
@@ -317,15 +660,7 @@ func calculateSimilarity(s1, s2 string) float64 {
 	return 1.0 - float64(distance)/maxLen
 }
 
-// max returns the maximum of two integers
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func (p *DataMaskingPlugin) findSimilarKeyword(text string, threshold float64) (string, string, string, bool) {
+func (p *DataMaskingPlugin) findSimilarKeyword(text string, threshold float64) (string, string, bool) {
 	// First check for exact matches
 	for keyword, maskWith := range p.keywords {
 		// Skip regex patterns
@@ -334,7 +669,7 @@ func (p *DataMaskingPlugin) findSimilarKeyword(text string, threshold float64) (
 		}
 
 		if strings.Contains(text, keyword) {
-			return text, keyword, maskWith, true
+			return text, maskWith, true
 		}
 	}
 
@@ -347,77 +682,14 @@ func (p *DataMaskingPlugin) findSimilarKeyword(text string, threshold float64) (
 
 		similarity := calculateSimilarity(text, keyword)
 		if similarity >= threshold {
-			return text, keyword, maskWith, true
+			return text, maskWith, true
 		}
 	}
 
-	return "", "", "", false
+	return "", "", false
 }
 
-func NewDataMaskingPlugin(logger *logrus.Logger) pluginiface.Plugin {
-	return &DataMaskingPlugin{
-		logger:     logger,
-		keywords:   make(map[string]string),
-		regexRules: make(map[string]*regexp.Regexp),
-	}
-}
-
-func (p *DataMaskingPlugin) Name() string {
-	return PluginName
-}
-
-func (p *DataMaskingPlugin) RequiredPlugins() []string {
-	var requiredPlugins []string
-	return requiredPlugins
-}
-
-func (p *DataMaskingPlugin) Stages() []types.Stage {
-	return []types.Stage{}
-}
-
-func (p *DataMaskingPlugin) AllowedStages() []types.Stage {
-	return []types.Stage{types.PreRequest, types.PreResponse}
-}
-
-func (p *DataMaskingPlugin) ValidateConfig(config types.PluginConfig) error {
-	var cfg Config
-	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
-		return fmt.Errorf("failed to decode config: %v", err)
-	}
-
-	if len(cfg.Rules) == 0 && len(cfg.PredefinedEntities) == 0 && !cfg.ApplyAll {
-		return fmt.Errorf("at least one rule or predefined entity must be specified")
-	}
-
-	// Validate custom rules
-	for _, rule := range cfg.Rules {
-		if rule.Type != "keyword" && rule.Type != "regex" {
-			return fmt.Errorf("invalid rule type '%s': must be 'keyword' or 'regex'", rule.Type)
-		}
-
-		if rule.Type == "regex" {
-			if _, err := regexp.Compile(rule.Pattern); err != nil {
-				return fmt.Errorf("invalid regex pattern '%s': %v", rule.Pattern, err)
-			}
-		}
-
-		if rule.MaskWith == "" {
-			return fmt.Errorf("mask_with value must be specified for each rule")
-		}
-	}
-
-	if !cfg.ApplyAll && len(cfg.PredefinedEntities) > 0 {
-		for _, entity := range cfg.PredefinedEntities {
-			if _, exists := predefinedEntityPatterns[PredefinedEntity(entity.Entity)]; !exists {
-				return fmt.Errorf("invalid predefined entity type: %s", entity.Entity)
-			}
-		}
-	}
-
-	return nil
-}
-
-func (p *DataMaskingPlugin) maskContent(content string, pattern string, maskWith string, preserveLen bool) string {
+func (p *DataMaskingPlugin) maskContent(content string, maskWith string, preserveLen bool) string {
 	if preserveLen {
 		if len(maskWith) > 1 {
 			return strings.Repeat(maskWith, 1)
@@ -534,8 +806,8 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 	words := strings.Fields(maskedContent)
 	modified := false
 	for i, word := range words {
-		if origWord, keyword, maskWith, found := p.findSimilarKeyword(word, threshold); found {
-			words[i] = p.maskContent(origWord, keyword, maskWith, true)
+		if origWord, maskWith, found := p.findSimilarKeyword(word, threshold); found {
+			words[i] = p.maskContent(origWord, maskWith, true)
 			modified = true
 		}
 	}
@@ -593,130 +865,6 @@ func (p *DataMaskingPlugin) generateVariants(word string, maxDistance int) []str
 	}
 
 	return variants
-}
-
-func (p *DataMaskingPlugin) Execute(
-	ctx context.Context,
-	cfg types.PluginConfig,
-	req *types.RequestContext,
-	resp *types.ResponseContext,
-	evtCtx *metrics.EventContext,
-) (*types.PluginResponse, error) {
-	var config Config
-	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
-		return nil, fmt.Errorf("failed to decode config: %v", err)
-	}
-
-	// Set defaults if not specified
-	if config.SimilarityThreshold == 0 {
-		config.SimilarityThreshold = SimilarityThreshold
-	}
-	if config.MaxEditDistance == 0 {
-		config.MaxEditDistance = 1 // Default to allowing 1 character difference
-	}
-
-	// Initialize rules
-	p.keywords = make(map[string]string)
-	p.regexRules = make(map[string]*regexp.Regexp)
-
-	if config.ApplyAll {
-		for entityType, pattern := range predefinedEntityPatterns {
-			maskValue, exists := defaultEntityMasks[entityType]
-			if !exists {
-				maskValue = "[MASKED]"
-			}
-
-			p.regexRules[pattern.String()] = pattern
-			p.keywords[pattern.String()] = maskValue
-		}
-	} else {
-		for _, entity := range config.PredefinedEntities {
-			if !entity.Enabled {
-				continue
-			}
-
-			entityType := PredefinedEntity(entity.Entity)
-			pattern, exists := predefinedEntityPatterns[entityType]
-			if !exists {
-				continue
-			}
-
-			maskValue := entity.MaskWith
-			if maskValue == "" {
-				maskValue = defaultEntityMasks[entityType]
-			}
-
-			p.regexRules[pattern.String()] = pattern
-			p.keywords[pattern.String()] = maskValue
-		}
-	}
-
-	// Add custom rules
-	for _, rule := range config.Rules {
-		maskValue := rule.MaskWith
-		if maskValue == "" {
-			maskValue = DefaultMaskChar
-		}
-
-		if rule.Type == "keyword" {
-			p.keywords[rule.Pattern] = maskValue
-		} else if rule.Type == "regex" {
-			// Try to compile the regex
-			regex, err := regexp.Compile(rule.Pattern)
-			if err != nil {
-				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", rule.Pattern, err)
-			}
-
-			// Store both the pattern string and the compiled regex
-			p.regexRules[rule.Pattern] = regex
-			p.keywords[rule.Pattern] = maskValue
-		}
-	}
-
-	var allEvents []MaskingEvent
-
-	processBody := func(body []byte, isRequest bool) ([]byte, error) {
-		var jsonData interface{}
-		if err := json.Unmarshal(body, &jsonData); err == nil {
-			maskedData, events := p.maskJSONData(jsonData, config.SimilarityThreshold, config)
-			maskedJSON, err := json.Marshal(maskedData)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal masked JSON: %v", err)
-			}
-			allEvents = append(allEvents, events...)
-			return maskedJSON, nil
-		}
-		content := string(body)
-		maskedContent, events := p.maskPlainText(content, config.SimilarityThreshold, config)
-		allEvents = append(allEvents, events...)
-		return []byte(maskedContent), nil
-	}
-
-	if req != nil && len(req.Body) > 0 {
-		maskedBody, err := processBody(req.Body, true)
-		if err != nil {
-			return nil, err
-		}
-		req.Body = maskedBody
-	}
-
-	if resp != nil && len(resp.Body) > 0 {
-		maskedBody, err := processBody(resp.Body, false)
-		if err != nil {
-			return nil, err
-		}
-		resp.Body = maskedBody
-	}
-
-	evtCtx.SetExtras(DataMaskingData{
-		Masked: len(allEvents) > 0,
-		Events: allEvents,
-	})
-
-	return &types.PluginResponse{
-		StatusCode: 200,
-		Message:    "Content masked successfully",
-	}, nil
 }
 
 // Update the maskJSONData function to use the enhanced configuration

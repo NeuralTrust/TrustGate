@@ -310,6 +310,13 @@ definitions:
         description: Number of failures before marking as unhealthy
         type: integer
     type: object
+  request.ProxyConfigRequest:
+    properties:
+      host:
+        type: string
+      port:
+        type: string
+    type: object
   request.SecurityConfigRequest:
     properties:
       allowed_hosts:
@@ -453,6 +460,8 @@ definitions:
         type: string
       name:
         type: string
+      proxy_config:
+        $ref: '#/definitions/request.ProxyConfigRequest'
       tags:
         items:
           type: string
@@ -907,6 +916,13 @@ definitions:
         description: Number of failures before marking as unhealthy
         type: integer
     type: object
+  upstream.Proxy:
+    properties:
+      host:
+        type: string
+      port:
+        type: string
+    type: object
   upstream.Target:
     properties:
       credentials:
@@ -962,6 +978,8 @@ definitions:
         type: string
       name:
         type: string
+      proxy:
+        $ref: '#/definitions/upstream.Proxy'
       tags:
         items:
           type: string

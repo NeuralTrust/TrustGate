@@ -119,7 +119,7 @@ func (m *manager) InitializePlugins() {
 		m.logger.WithError(err).Error("Failed to register token rate limiter plugin")
 	}
 
-	if err := m.RegisterPlugin(data_masking.NewDataMaskingPlugin(m.logger)); err != nil {
+	if err := m.RegisterPlugin(data_masking.NewDataMaskingPlugin(m.logger, m.cache)); err != nil {
 		m.logger.WithError(err).Error("Failed to register data masking plugin")
 	}
 
