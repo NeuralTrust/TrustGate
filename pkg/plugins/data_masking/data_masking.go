@@ -232,9 +232,6 @@ var defaultEntityMasks = map[PredefinedEntity]string{
 	Date:           "[MASKED_DATE]",
 }
 
-// hashMapKey is the key used to store the hash map in the context
-type hashMapKey struct{}
-
 // hashToOriginalMap is a map from hash to original value
 type hashToOriginalMap map[string]string
 

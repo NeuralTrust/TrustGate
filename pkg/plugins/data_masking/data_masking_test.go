@@ -3,6 +3,8 @@ package data_masking
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"regexp"
 	"testing"
 	"time"
@@ -549,10 +551,13 @@ func TestInternationalPII(t *testing.T) {
 
 // createTestCache creates a test cache with a TTL map for data masking
 func createTestCache() *cache.Cache {
-	c, _ := cache.NewCache(common.CacheConfig{
+	c, err := cache.NewCache(common.CacheConfig{
 		Host: "localhost",
 		Port: 6379,
 	})
+	if err != nil {
+		slog.Error(fmt.Sprintf("%v", err))
+	}
 	c.CreateTTLMap(cache.DataMaskingTTLName, 5*time.Minute)
 	return c
 }
