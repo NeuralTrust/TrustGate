@@ -50,6 +50,6 @@ test-crt:  ; $(info $(M) Testing nginx server ...)	@
 .PHONY: install-pre-commit
 install-pre-commit:  ; $(info $(M) Installing pre-commit hook ...)	@
 	@mkdir -p .git/hooks
-	@echo '#!/bin/sh\necho "Running pre-commit hook..."\nmake lint\nif [ $$? -ne 0 ]; then\n  echo "Linting failed!"\n  exit 1\nfi\nmake test\nif [ $$? -ne 0 ]; then\n  echo "Tests failed!"\n  exit 1\nfi\necho "Pre-commit hook passed successfully!"' > .git/hooks/pre-commit
+	@cp scripts/pre-commit.sh .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
 	@echo "Pre-commit hook installed successfully!"
