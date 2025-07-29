@@ -132,11 +132,13 @@ func NewContainer(
 	gatewayRepository := repository.NewGatewayRepository(db.DB)
 	ruleRepository := repository.NewForwardedRuleRepository(db.DB, logger, cacheInstance)
 	sessionRepository := repository.NewSessionRepository(cacheInstance)
+	mcpUpstreamRepository := repository.NewMCPUpstreamRepository(db.DB)
 
 	// service
 	upstreamFinder := appUpstream.NewFinder(upstreamRepository, cacheInstance, logger)
 	serviceFinder := service.NewFinder(serviceRepository, cacheInstance, logger)
 	apiKeyFinder := apikey.NewFinder(apiKeyRepository, cacheInstance, logger)
+	mcpUpstreamService := service.NewMCPUpstreamService(mcpUpstreamRepository, cacheInstance, logger)
 	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
@@ -252,6 +254,8 @@ func NewContainer(
 		ListPluginsHandler: handlers.NewListPluginsHandler(logger),
 		// Cache
 		InvalidateCacheHandler: handlers.NewInvalidateCacheHandler(logger, cacheInstance),
+		// MCP
+		MCPToolsHandler: handlers.NewMCPToolsHandler(logger, cacheInstance, pluginManager, cfg, mcpUpstreamService),
 	}
 
 	container := &Container{

@@ -56,6 +56,9 @@ type HandlerTransportDTO struct {
 
 	// Cache
 	InvalidateCacheHandler Handler
+
+	// MCP
+	MCPToolsHandler Handler
 }
 
 func (t *HandlerTransportDTO) GetTransport() HandlerTransport {

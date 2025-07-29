@@ -13,10 +13,12 @@ import (
 )
 
 const (
-	HealthPath    = "/health"
-	PingPath      = "/__/ping"
-	MirrorPath    = "/__/mirror"
-	WebsocketPath = "/ws/*"
+	HealthPath       = "/health"
+	PingPath         = "/__/ping"
+	MirrorPath       = "/__/mirror"
+	WebsocketPath    = "/ws/*"
+	MCPToolsPath     = "/tools"
+	MCPToolsCallPath = "/tool_calls"
 )
 
 type proxyRouter struct {
@@ -87,6 +89,8 @@ func (r *proxyRouter) BuildRoutes(router *fiber.App) error {
 			WriteBufferSize:  1024,
 		},
 	))
+
+	router.Get(MCPToolsPath, handlerTransport.MCPToolsHandler.Handle)
 
 	router.Use(handlerTransport.ForwardedHandler.Handle)
 
