@@ -9,18 +9,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 )
 
 type TLSClientCache struct {
 	clients sync.Map
+	logger  *logrus.Logger
 }
 
-func NewTLSClientCache() *TLSClientCache {
-	return &TLSClientCache{}
+func NewTLSClientCache(logger *logrus.Logger) *TLSClientCache {
+	return &TLSClientCache{
+		logger: logger,
+	}
 }
 
-func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr string) *fasthttp.Client {
+func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr string, proxyProtocol string) *fasthttp.Client {
 
 	if cl, ok := c.clients.Load(key); ok {
 		if typedClient, ok := cl.(*fasthttp.Client); ok {
@@ -52,27 +56,37 @@ func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr stri
 					return nil, fmt.Errorf("invalid address format: %w", err)
 				}
 
-				// Default HTTPS port is 443
-				if port == "443" {
-					isTLS = true
+				if proxyProtocol != "" {
+					isTLS = proxyProtocol == "https"
+				} else {
+					isTLS = port == "443"
 				}
 
 				hostPort = net.JoinHostPort(host, port)
 			} else {
-				// If no port is specified, assume it's HTTPS (port 443)
-				hostPort = net.JoinHostPort(addr, "443")
-				isTLS = true
+				if proxyProtocol == "https" {
+					hostPort = net.JoinHostPort(addr, "443")
+					isTLS = true
+				} else {
+					hostPort = net.JoinHostPort(addr, "80")
+					isTLS = false
+				}
 			}
 
-			// Connect to the proxy
 			proxyConn, err := net.Dial("tcp", proxyAddr)
 			if err != nil {
+				c.logger.WithFields(logrus.Fields{
+					"proxy_addr": proxyAddr,
+					"error":      err.Error(),
+				}).Debug("proxy connection failed")
 				return nil, fmt.Errorf("failed to connect to proxy: %w", err)
 			}
 
-			// For HTTPS connections, we need to establish a tunnel using the CONNECT method
+			c.logger.WithFields(logrus.Fields{
+				"proxy_addr": proxyAddr,
+			}).Debug("proxy connection established successfully")
+
 			if isTLS {
-				// Send the CONNECT request
 				connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", hostPort, hostPort)
 				if _, err := proxyConn.Write([]byte(connectReq)); err != nil {
 					closeErr := proxyConn.Close()
@@ -95,12 +109,22 @@ func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr stri
 
 				// Check if the connection was established successfully
 				if !strings.HasPrefix(resp, "HTTP/1.1 200") && !strings.HasPrefix(resp, "HTTP/1.0 200") {
+					c.logger.WithFields(logrus.Fields{
+						"proxy_addr": proxyAddr,
+						"host_port":  hostPort,
+						"response":   strings.TrimSpace(resp),
+					}).Debug("proxy CONNECT request failed")
 					closeErr := proxyConn.Close()
 					if closeErr != nil {
 						return nil, fmt.Errorf("proxy CONNECT failed: %s, close error: %v", resp, closeErr)
 					}
 					return nil, fmt.Errorf("proxy CONNECT failed: %s", resp)
 				}
+
+				c.logger.WithFields(logrus.Fields{
+					"proxy_addr": proxyAddr,
+					"host_port":  hostPort,
+				}).Debug("proxy CONNECT request successful")
 
 				// Skip the rest of the headers
 				for {

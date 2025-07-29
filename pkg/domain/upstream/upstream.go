@@ -114,8 +114,9 @@ func (t *Targets) Scan(value interface{}) error {
 }
 
 type Proxy struct {
-	Host string `json:"host"`
-	Port string `json:"port"`
+	Host     string `json:"host"`
+	Port     string `json:"port"`
+	Protocol string `json:"protocol"`
 }
 
 func (p Proxy) Value() (driver.Value, error) {
