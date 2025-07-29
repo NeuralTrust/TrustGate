@@ -9,7 +9,7 @@ ARG GIT_COMMIT
 ARG BUILD_DATE
 
 # Install build dependencies (added build-base and librdkafka-dev)
-RUN apt-get update && apt-get install -y librdkafka-dev git
+RUN apt-get update && apt-get install -y librdkafka-dev git curl
 
 # Copy go mod files
 COPY go.mod go.sum ./
