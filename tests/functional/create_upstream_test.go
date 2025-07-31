@@ -263,8 +263,9 @@ func TestCreateUpstream(t *testing.T) {
 				},
 			},
 			"proxy_config": map[string]interface{}{
-				"host": "proxy.internal",
-				"port": "8080",
+				"host":     "proxy.internal",
+				"port":     "8080",
+				"protocol": "http",
 			},
 		}
 

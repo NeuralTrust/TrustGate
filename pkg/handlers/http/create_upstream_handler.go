@@ -154,8 +154,9 @@ func (s *createUpstreamHandler) createUpstreamEntity(
 	var proxy *upstream.Proxy
 	if req.ProxyConfig != nil {
 		proxy = &upstream.Proxy{
-			Host: req.ProxyConfig.Host,
-			Port: req.ProxyConfig.Port,
+			Host:     req.ProxyConfig.Host,
+			Port:     req.ProxyConfig.Port,
+			Protocol: req.ProxyConfig.Protocol,
 		}
 	}
 

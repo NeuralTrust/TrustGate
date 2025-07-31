@@ -100,7 +100,7 @@ func NewForwardedHandler(
 		client:              client,
 		loadBalancerFactory: loadBalancerFactory,
 		cfg:                 cfg,
-		tlsClientCache:      infraCache.NewTLSClientCache(),
+		tlsClientCache:      infraCache.NewTLSClientCache(logger),
 		providerLocator:     providerLocator,
 	}
 }
@@ -726,6 +726,8 @@ func (h *forwardedHandler) doForwardRequest(dto *forwardedRequestDTO) (*types.Re
 
 	h.buildFastHTTPRequest(req, dto, targetURL)
 
+	h.logger.Debug("sending request to " + targetURL)
+
 	if err := client.Do(req, resp); err != nil {
 		return nil, fmt.Errorf("request failed to %s: %w", targetURL, err)
 	}
@@ -793,9 +795,11 @@ func (h *forwardedHandler) processUpstreamResponse(
 func (h *forwardedHandler) prepareClient(dto *forwardedRequestDTO) (*fasthttp.Client, error) {
 	tlsConf, hasTLS := dto.tlsConfig[dto.target.Host]
 	proxyAddr := ""
+	proxyProtocol := ""
 	if dto.proxy != nil {
 		proxyAddr = fmt.Sprintf("%s:%s", dto.proxy.Host, dto.proxy.Port)
-		h.logger.Debug("using proxy " + proxyAddr)
+		proxyProtocol = dto.proxy.Protocol
+		h.logger.Debug("using proxy " + proxyAddr + " with protocol " + proxyProtocol)
 	}
 
 	switch {
@@ -807,17 +811,17 @@ func (h *forwardedHandler) prepareClient(dto *forwardedRequestDTO) (*fasthttp.Cl
 		if err != nil {
 			return nil, fmt.Errorf("failed to build TLS config: %w", err)
 		}
-		return h.tlsClientCache.GetOrCreate(dto.target.ID, conf, proxyAddr), nil
+		return h.tlsClientCache.GetOrCreate(dto.target.ID, conf, proxyAddr, proxyProtocol), nil
 
 	case dto.target.InsecureSSL:
 		conf, err := config.BuildTLSConfigFromClientConfig(types.ClientTLSConfig{AllowInsecureConnections: true})
 		if err != nil {
 			return nil, fmt.Errorf("failed to build insecure TLS config: %w", err)
 		}
-		return h.tlsClientCache.GetOrCreate(dto.target.ID+"-insecure", conf, proxyAddr), nil
+		return h.tlsClientCache.GetOrCreate(dto.target.ID+"-insecure", conf, proxyAddr, proxyProtocol), nil
 
 	case proxyAddr != "":
-		return h.tlsClientCache.GetOrCreate(dto.target.ID+"-proxy", nil, proxyAddr), nil
+		return h.tlsClientCache.GetOrCreate(dto.target.ID+"-proxy", nil, proxyAddr, proxyProtocol), nil
 
 	default:
 		return h.client, nil

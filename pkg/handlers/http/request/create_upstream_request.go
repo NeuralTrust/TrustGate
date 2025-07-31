@@ -10,8 +10,9 @@ import (
 )
 
 type ProxyConfigRequest struct {
-	Host string `json:"host"`
-	Port string `json:"port"`
+	Host     string `json:"host"`
+	Port     string `json:"port"`
+	Protocol string `json:"protocol"`
 }
 
 type UpstreamRequest struct {
@@ -136,6 +137,9 @@ func (r *UpstreamRequest) Validate() error {
 		}
 		if r.ProxyConfig.Port == "" {
 			return fmt.Errorf("proxy_config.port cannot be empty")
+		}
+		if r.ProxyConfig.Protocol != "" && r.ProxyConfig.Protocol != "http" && r.ProxyConfig.Protocol != "https" {
+			return fmt.Errorf("proxy_config.protocol must be either 'http' or 'https'")
 		}
 
 		for i, target := range r.Targets {
