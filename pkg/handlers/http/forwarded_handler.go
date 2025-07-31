@@ -728,7 +728,7 @@ func (h *forwardedHandler) doForwardRequest(dto *forwardedRequestDTO) (*types.Re
 
 	h.logger.Debug("sending request to " + targetURL)
 
-	if err := client.Do(req, resp); err != nil {
+	if err := client.DoRedirects(req, resp, 3); err != nil {
 		return nil, fmt.Errorf("request failed to %s: %w", targetURL, err)
 	}
 
