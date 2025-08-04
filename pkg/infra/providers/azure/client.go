@@ -15,6 +15,18 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 )
 
+type azureMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type azureStreamRequest struct {
+	Model       string         `json:"model"`
+	Messages    []azureMessage `json:"messages"`
+	MaxTokens   int            `json:"max_tokens"`
+	Temperature float64        `json:"temperature"`
+}
+
 type client struct {
 	clientPool *sync.Map
 }
@@ -225,7 +237,116 @@ func (c *client) Completions(
 	config *providers.Config,
 	reqBody []byte,
 ) ([]byte, error) {
-	return nil, nil
+	if config.Credentials.Azure == nil {
+		return nil, fmt.Errorf("azure configuration is required")
+	}
+
+	if config.Credentials.Azure.Endpoint == "" {
+		return nil, fmt.Errorf("azure endpoint is required")
+	}
+
+	// Parse request body
+	var req azureStreamRequest
+	if err := json.Unmarshal(reqBody, &req); err != nil {
+		return nil, fmt.Errorf("invalid request body: %w", err)
+	}
+
+	if req.Model == "" {
+		return nil, fmt.Errorf("model (deployment ID) is required")
+	}
+
+	// Check if model is allowed, use default if not
+	if !providers.IsAllowedModel(req.Model, config.AllowedModels) {
+		req.Model = config.DefaultModel
+	}
+
+	var token string
+	var err error
+
+	if config.Credentials.Azure.UseIdentity {
+		token, err = getAzureADToken(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get Azure AD token: %w", err)
+		}
+	} else {
+		if config.Credentials.ApiKey == "" {
+			return nil, fmt.Errorf("API key is required when not using Azure identity")
+		}
+		token = config.Credentials.ApiKey
+	}
+
+	// Filter out system messages as per requirements
+	var messages []map[string]string
+	for _, m := range req.Messages {
+		if m.Role != "system" {
+			messages = append(messages, map[string]string{
+				"role":    m.Role,
+				"content": m.Content,
+			})
+		}
+	}
+
+	apiVersion := "2024-02-15-preview"
+	if config.Credentials.Azure.ApiVersion != "" {
+		apiVersion = config.Credentials.Azure.ApiVersion
+	}
+
+	url := fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
+		config.Credentials.Azure.Endpoint,
+		req.Model,
+		apiVersion)
+
+	requestBody := map[string]interface{}{
+		"messages": messages,
+	}
+
+	if req.Temperature > 0 {
+		requestBody["temperature"] = req.Temperature
+	}
+
+	if req.MaxTokens > 0 {
+		requestBody["max_tokens"] = req.MaxTokens
+	}
+
+	bodyBytes, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if config.Credentials.Azure.UseIdentity {
+		httpReq.Header.Set("Authorization", "Bearer "+token)
+	} else {
+		httpReq.Header.Set("api-key", token)
+	}
+
+	httpClient := &http.Client{}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyErr, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("non-200 status: %d, error reading response body: %w", resp.StatusCode, readErr)
+		}
+		return nil, fmt.Errorf("non-200 status: %d\n%s", resp.StatusCode, string(bodyErr))
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return respBody, nil
 }
 
 func getAzureADToken(ctx context.Context) (string, error) {
