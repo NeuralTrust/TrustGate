@@ -174,6 +174,8 @@ type Credentials struct {
 
 	// Azure auth
 	AzureUseManagedIdentity bool   `json:"azure_use_managed_identity,omitempty"`
+	AzureEndpoint           string `json:"azure_endpoint,omitempty"`
+	AzureVersion            string `json:"azure_eversion,omitempty"`
 	AzureClientID           string `json:"azure_client_id,omitempty"`
 	AzureClientSecret       string `json:"azure_client_secret,omitempty"`
 	AzureTenantID           string `json:"azure_tenant_id,omitempty"`

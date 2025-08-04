@@ -682,6 +682,11 @@ func (h *forwardedHandler) handlerProviderResponse(
 					UseRole:      target.Credentials.AWSUseRole,
 					RoleARN:      target.Credentials.AWSRole,
 				},
+				Azure: &providers.Azure{
+					Endpoint:    target.Credentials.AzureEndpoint,
+					ApiVersion:  target.Credentials.AzureVersion,
+					UseIdentity: target.Credentials.AzureUseManagedIdentity,
+				},
 			},
 		},
 		req.Body,
