@@ -47,6 +47,10 @@ definitions:
         type: string
       azure_client_secret:
         type: string
+      azure_endpoint:
+        type: string
+      azure_eversion:
+        type: string
       azure_tenant_id:
         type: string
       azure_use_managed_identity:
@@ -316,6 +320,8 @@ definitions:
         type: string
       port:
         type: string
+      protocol:
+        type: string
     type: object
   request.SecurityConfigRequest:
     properties:
@@ -445,6 +451,18 @@ definitions:
         type: string
       telemetry:
         $ref: '#/definitions/request.TelemetryRequest'
+    type: object
+  request.UpdatePluginsRequest:
+    properties:
+      id:
+        type: string
+      plugin_chain:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      type:
+        description: '"gateway" or "rule"'
+        type: string
     type: object
   request.UpstreamRequest:
     properties:
@@ -727,6 +745,10 @@ definitions:
         type: string
       azure_client_secret:
         type: string
+      azure_endpoint:
+        type: string
+      azure_eversion:
+        type: string
       azure_tenant_id:
         type: string
       azure_use_managed_identity:
@@ -921,6 +943,8 @@ definitions:
       host:
         type: string
       port:
+        type: string
+      protocol:
         type: string
     type: object
   upstream.Target:
@@ -1729,6 +1753,39 @@ paths:
             items:
               $ref: '#/definitions/plugins.PluginDefinition'
             type: array
+      tags:
+      - Plugins
+    put:
+      consumes:
+      - application/json
+      description: Updates only the plugin chain for a given gateway or rule
+      parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Update plugins payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/request.UpdatePluginsRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Plugins updated successfully
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Entity not found
+          schema:
+            additionalProperties: true
+            type: object
       tags:
       - Plugins
   /api/v1/version:

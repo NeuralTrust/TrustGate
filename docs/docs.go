@@ -1077,6 +1077,55 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "put": {
+                "description": "Updates only the plugin chain for a given gateway or rule",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Plugins"
+                ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Update plugins payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.UpdatePluginsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Plugins updated successfully"
+                    },
+                    "400": {
+                        "description": "Invalid request data",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Entity not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
             }
         },
         "/api/v1/version": {
@@ -1173,6 +1222,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "azure_client_secret": {
+                    "type": "string"
+                },
+                "azure_endpoint": {
+                    "type": "string"
+                },
+                "azure_eversion": {
                     "type": "string"
                 },
                 "azure_tenant_id": {
@@ -1579,6 +1634,9 @@ const docTemplate = `{
                 },
                 "port": {
                     "type": "string"
+                },
+                "protocol": {
+                    "type": "string"
                 }
             }
         },
@@ -1775,6 +1833,24 @@ const docTemplate = `{
                 },
                 "telemetry": {
                     "$ref": "#/definitions/request.TelemetryRequest"
+                }
+            }
+        },
+        "request.UpdatePluginsRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "plugin_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
+                },
+                "type": {
+                    "description": "\"gateway\" or \"rule\"",
+                    "type": "string"
                 }
             }
         },
@@ -2201,6 +2277,12 @@ const docTemplate = `{
                 "azure_client_secret": {
                     "type": "string"
                 },
+                "azure_endpoint": {
+                    "type": "string"
+                },
+                "azure_eversion": {
+                    "type": "string"
+                },
                 "azure_tenant_id": {
                     "type": "string"
                 },
@@ -2487,6 +2569,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "port": {
+                    "type": "string"
+                },
+                "protocol": {
                     "type": "string"
                 }
             }
