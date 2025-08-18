@@ -250,6 +250,13 @@ func NewContainer(
 		// Version
 		GetVersionHandler:  handlers.NewGetVersionHandler(logger),
 		ListPluginsHandler: handlers.NewListPluginsHandler(logger),
+		UpdatePluginsHandler: handlers.NewUpdatePluginsHandler(
+			logger,
+			gatewayRepository,
+			ruleRepository,
+			pluginChainValidator,
+			redisPublisher,
+		),
 		// Cache
 		InvalidateCacheHandler: handlers.NewInvalidateCacheHandler(logger, cacheInstance),
 	}

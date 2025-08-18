@@ -104,6 +104,9 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 				publicKeys.Get("", handlerTransport.ListAPIKeysPublicHandler.Handle)
 			}
 		}
+
+		// Plugins endpoints
+		v1.Put("/plugins", handlerTransport.UpdatePluginsHandler.Handle)
 	}
 	return nil
 }

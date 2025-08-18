@@ -21,6 +21,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	infraLogger "github.com/NeuralTrust/TrustGate/pkg/infra/logger"
+	_ "github.com/NeuralTrust/TrustGate/pkg/infra/migrations"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
@@ -62,6 +63,11 @@ func main() {
 		logger.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
+
+	migrationsManager := database.NewMigrationsManager(db.DB)
+	if err := migrationsManager.ApplyPending(); err != nil {
+		logger.WithError(err).Error("failed to apply database migrations")
+	}
 
 	container, err := dependency_container.NewContainer(
 		cfg,

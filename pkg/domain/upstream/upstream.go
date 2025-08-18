@@ -137,7 +137,7 @@ func (p *Proxy) Scan(value interface{}) error {
 type Upstream struct {
 	ID              uuid.UUID        `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	GatewayID       uuid.UUID        `json:"gateway_id" gorm:"type:uuid; not null"`
-	Name            string           `json:"name" gorm:"uniqueIndex:idx_gateway_upstream_name"`
+	Name            string           `json:"name" gorm:"index:idx_gateway_upstream_name"`
 	Algorithm       string           `json:"algorithm" gorm:"default:'round-robin'"`
 	Targets         Targets          `json:"targets" gorm:"type:jsonb"`
 	EmbeddingConfig *EmbeddingConfig `json:"embedding_config,omitempty" gorm:"type:jsonb"`
