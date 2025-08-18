@@ -21,7 +21,7 @@ var ErrServiceIsBeingUsed = fmt.Errorf("service is being used by a forwarding ru
 type Service struct {
 	ID          uuid.UUID       `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	GatewayID   uuid.UUID       `json:"gateway_id" gorm:"type:uuid;not null"`
-	Name        string          `json:"name" gorm:"uniqueIndex:idx_gateway_service_name"`
+	Name        string          `json:"name" gorm:"index:idx_gateway_service_name"`
 	Type        string          `json:"type" gorm:"not null"` // "upstream" or "endpoint"
 	Description string          `json:"description"`
 	Tags        domain.TagsJSON `json:"tags,omitempty" gorm:"type:jsonb"`

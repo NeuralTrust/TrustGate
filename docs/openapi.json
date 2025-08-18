@@ -1256,6 +1256,61 @@
                         }
                     }
                 }
+            },
+            "put": {
+                "description": "Updates only the plugin chain for a given gateway or rule",
+                "tags": [
+                    "Plugins"
+                ],
+                "parameters": [
+                    {
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/request.UpdatePluginsRequest"
+                            }
+                        }
+                    },
+                    "description": "Update plugins payload",
+                    "required": true
+                },
+                "responses": {
+                    "204": {
+                        "description": "Plugins updated successfully"
+                    },
+                    "400": {
+                        "description": "Invalid request data",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Entity not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         "/api/v1/version": {
@@ -1351,6 +1406,12 @@
                         "type": "string"
                     },
                     "azure_client_secret": {
+                        "type": "string"
+                    },
+                    "azure_endpoint": {
+                        "type": "string"
+                    },
+                    "azure_eversion": {
                         "type": "string"
                     },
                     "azure_tenant_id": {
@@ -1757,6 +1818,9 @@
                     },
                     "port": {
                         "type": "string"
+                    },
+                    "protocol": {
+                        "type": "string"
                     }
                 }
             },
@@ -1953,6 +2017,24 @@
                     },
                     "telemetry": {
                         "$ref": "#/components/schemas/request.TelemetryRequest"
+                    }
+                }
+            },
+            "request.UpdatePluginsRequest": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "plugin_chain": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/types.PluginConfig"
+                        }
+                    },
+                    "type": {
+                        "description": "\"gateway\" or \"rule\"",
+                        "type": "string"
                     }
                 }
             },
@@ -2379,6 +2461,12 @@
                     "azure_client_secret": {
                         "type": "string"
                     },
+                    "azure_endpoint": {
+                        "type": "string"
+                    },
+                    "azure_eversion": {
+                        "type": "string"
+                    },
                     "azure_tenant_id": {
                         "type": "string"
                     },
@@ -2665,6 +2753,9 @@
                         "type": "string"
                     },
                     "port": {
+                        "type": "string"
+                    },
+                    "protocol": {
                         "type": "string"
                     }
                 }
