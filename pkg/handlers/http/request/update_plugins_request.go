@@ -7,7 +7,7 @@ import (
 )
 
 type UpdatePluginsRequest struct {
-	Type        string               `json:"type"` // "gateway" or "rule"
+	Type        string               `json:"type"`
 	ID          string               `json:"id"`
 	PluginChain []types.PluginConfig `json:"plugin_chain"`
 }
@@ -19,6 +19,5 @@ func (r *UpdatePluginsRequest) Validate() error {
 	if r.ID == "" {
 		return fmt.Errorf("id is required")
 	}
-	// plugin_chain can be empty (interpreted as clearing), so no strict check here
 	return nil
 }

@@ -61,10 +61,7 @@ func (h *updatePluginsHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Validate plugin chain if provided
 	if len(req.PluginChain) > 0 {
-		// We need the gatewayID for validation context. For gateway type, it's req.ID.
-		// For rule type, fetch the rule to obtain its GatewayID.
 		switch req.Type {
 		case "gateway":
 			gatewayUUID, err := uuid.Parse(req.ID)
@@ -102,14 +99,12 @@ func (h *updatePluginsHandler) Handle(c *fiber.Ctx) error {
 		if err != nil || entity == nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 		}
-		// Overwrite required plugins with provided chain
 		entity.RequiredPlugins = req.PluginChain
 		entity.UpdatedAt = time.Now()
 		if err := h.gatewayRepo.Update(c.Context(), entity); err != nil {
 			h.logger.WithError(err).Error("failed to update gateway plugins")
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update gateway"})
 		}
-		// Invalidate gateway cache
 		if err := h.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateGatewayCacheEvent{GatewayID: entity.ID.String()}); err != nil {
 			h.logger.WithError(err).Error("failed to publish gateway cache update event")
 		}
@@ -130,7 +125,7 @@ func (h *updatePluginsHandler) Handle(c *fiber.Ctx) error {
 			h.logger.WithError(err).Error("failed to update rule plugins")
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update rule"})
 		}
-		// Invalidate rules cache for the gateway
+
 		if err := h.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.DeleteRulesCacheEvent{
 			GatewayID: rule.GatewayID.String(),
 		}); err != nil {
