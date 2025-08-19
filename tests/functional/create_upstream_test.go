@@ -53,14 +53,12 @@ func TestCreateUpstream(t *testing.T) {
 					"port":     443,
 					"protocol": "https",
 					"weight":   2,
-					"priority": 1,
 				},
 				{
 					"host":     "api2.example.com",
 					"port":     443,
 					"protocol": "https",
 					"weight":   1,
-					"priority": 2,
 				},
 			},
 		}
