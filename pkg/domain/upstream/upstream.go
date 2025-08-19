@@ -38,7 +38,6 @@ func (e *EmbeddingConfig) Scan(value interface{}) error {
 type Target struct {
 	ID           string                 `json:"id"`
 	Weight       int                    `json:"weight,omitempty"`
-	Priority     int                    `json:"priority,omitempty"`
 	Tags         domain.TagsJSON        `json:"tags,omitempty" gorm:"type:jsonb"`
 	Headers      domain.HeadersJSON     `json:"headers,omitempty" gorm:"type:jsonb"`
 	Path         string                 `json:"path,omitempty"`

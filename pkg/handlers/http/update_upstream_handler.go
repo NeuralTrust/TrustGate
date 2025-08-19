@@ -92,7 +92,6 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 		targets = append(targets, upstream.Target{
 			ID:           target.ID,
 			Weight:       target.Weight,
-			Priority:     target.Priority,
 			Tags:         target.Tags,
 			Headers:      target.Headers,
 			Path:         target.Path,

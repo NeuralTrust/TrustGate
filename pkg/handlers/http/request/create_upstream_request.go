@@ -37,7 +37,6 @@ type EmbeddingRequest struct {
 type TargetRequest struct {
 	ID           string            `json:"id"`
 	Weight       int               `json:"weight,omitempty"`
-	Priority     int               `json:"priority,omitempty"`
 	Tags         []string          `json:"tags,omitempty"`
 	Headers      map[string]string `json:"headers,omitempty"`
 	Path         string            `json:"path,omitempty"`
