@@ -49,7 +49,6 @@ func TestNeuralTrustGuardrailPlugin_JailBreak(t *testing.T) {
 				"protocol": "http",
 				"path":     "/__/ping",
 				"weight":   100,
-				"priority": 1,
 			},
 		},
 	}

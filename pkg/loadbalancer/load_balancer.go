@@ -62,7 +62,6 @@ func NewLoadBalancer(
 		targets[i] = types.UpstreamTarget{
 			ID:           t.ID,
 			Weight:       t.Weight,
-			Priority:     t.Priority,
 			Host:         t.Host,
 			Port:         t.Port,
 			Protocol:     t.Protocol,

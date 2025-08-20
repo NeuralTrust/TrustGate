@@ -144,7 +144,6 @@ type EmbeddingConfig struct {
 type UpstreamTarget struct {
 	ID           string            `json:"id"`
 	Weight       int               `json:"weight"`
-	Priority     int               `json:"priority"`
 	Host         string            `json:"host"`
 	Port         int               `json:"port"`
 	Protocol     string            `json:"protocol"`
@@ -191,9 +190,6 @@ type Credentials struct {
 	AWSSessionToken    string `json:"aws_session_token,omitempty"`
 	AWSRole            string `json:"aws_role,omitempty"`
 	AWSUseRole         bool   `json:"aws_use_role,omitempty"`
-
-	// General settings
-	AllowOverride bool `json:"allow_override,omitempty"`
 }
 
 func (c *Credentials) Scan(value interface{}) error {
