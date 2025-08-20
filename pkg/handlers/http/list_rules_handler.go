@@ -120,18 +120,21 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			}
 		}
 		rulesOutput[i] = response.ForwardingRuleOutput{
-			ID:          rule.ID.String(),
-			Name:        rule.Name,
-			Upstream:    upstreamOutput,
-			ServiceID:   rule.ServiceID.String(),
-			Path:        rule.Path,
-			Methods:     rule.Methods,
-			Headers:     rule.Headers,
-			PluginChain: rule.PluginChain,
-			Active:      rule.Active,
-			TrustLens:   rule.TrustLens,
-			CreatedAt:   rule.CreatedAt,
-			UpdatedAt:   rule.UpdatedAt,
+			ID:            rule.ID.String(),
+			Name:          rule.Name,
+			Upstream:      upstreamOutput,
+			ServiceID:     rule.ServiceID.String(),
+			Path:          rule.Path,
+			Methods:       rule.Methods,
+			Headers:       rule.Headers,
+			StripPath:     rule.StripPath,
+			PreserveHost:  rule.PreserveHost,
+			RetryAttempts: rule.RetryAttempts,
+			PluginChain:   rule.PluginChain,
+			Active:        rule.Active,
+			TrustLens:     rule.TrustLens,
+			CreatedAt:     rule.CreatedAt,
+			UpdatedAt:     rule.UpdatedAt,
 		}
 	}
 

@@ -88,6 +88,10 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		if errors.As(err, &domain.ErrEntityNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
 		}
+		// Check for not found error from database
+		if err.Error() == "failed to get rule: record not found" {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
+		}
 		if err.Error() == "rule already exists" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rule already exists"})
 		}
@@ -118,6 +122,9 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 			}
 			if req.Path != "" {
 				rules[i].Path = req.Path
+			}
+			if req.ServiceID != "" {
+				rules[i].ServiceID = req.ServiceID
 			}
 			if len(req.Methods) > 0 {
 				rules[i].Methods = req.Methods
@@ -200,35 +207,49 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 		return domain.NewNotFoundError("rule", ruleUUID)
 	}
 
-	serviceUUID, err := uuid.Parse(req.ServiceID)
-	if err != nil {
-		s.logger.WithError(err).Error("failed to parse service ID")
-		return fmt.Errorf("invalid service ID: %w", err)
+	// Only update fields that are provided (partial updates)
+	var serviceUUID uuid.UUID
+	if req.ServiceID != "" {
+		var err error
+		serviceUUID, err = uuid.Parse(req.ServiceID)
+		if err != nil {
+			s.logger.WithError(err).Error("failed to parse service ID")
+			return fmt.Errorf("invalid service ID: %w", err)
+		}
+		forwardingRule.ServiceID = serviceUUID
 	}
 
-	rules, err := s.repo.ListRules(ctx, gatewayUUID)
-	if err != nil {
-		s.logger.WithError(err).Error("failed to list rules")
-		return fmt.Errorf("failed to check existing rules: %w", err)
-	}
-
-	for _, rule := range rules {
-		// Skip the current rule being updated
-		if rule.ID == ruleUUID {
-			continue
+	// Check for path conflicts only if both path and service_id are being updated
+	if req.Path != "" && req.ServiceID != "" {
+		rules, err := s.repo.ListRules(ctx, gatewayUUID)
+		if err != nil {
+			s.logger.WithError(err).Error("failed to list rules")
+			return fmt.Errorf("failed to check existing rules: %w", err)
 		}
 
-		// Check if another rule has the same path and service ID
-		if rule.Path == req.Path && rule.ServiceID == serviceUUID {
-			s.logger.WithField("path", req.Path).Error("rule with this path already exists for this service")
-			return fmt.Errorf("rule already exists")
+		for _, rule := range rules {
+			// Skip the current rule being updated
+			if rule.ID == ruleUUID {
+				continue
+			}
+
+			// Check if another rule has the same path and service ID
+			if rule.Path == req.Path && rule.ServiceID == serviceUUID {
+				s.logger.WithField("path", req.Path).Error("rule with this path already exists for this service")
+				return fmt.Errorf("rule already exists")
+			}
 		}
 	}
 
-	forwardingRule.Path = req.Path
-	forwardingRule.ServiceID = serviceUUID
-	forwardingRule.Methods = req.Methods
-	forwardingRule.Headers = req.Headers
+	if req.Path != "" {
+		forwardingRule.Path = req.Path
+	}
+	if len(req.Methods) > 0 {
+		forwardingRule.Methods = req.Methods
+	}
+	if req.Headers != nil {
+		forwardingRule.Headers = req.Headers
+	}
 
 	if req.Name != "" {
 		forwardingRule.Name = req.Name
@@ -258,7 +279,10 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 		forwardingRule.TrustLens = trustLensConfig
 	}
 
-	forwardingRule.PluginChain = req.PluginChain
+	// Only update plugin chain if explicitly provided
+	if req.PluginChain != nil {
+		forwardingRule.PluginChain = req.PluginChain
+	}
 	forwardingRule.UpdatedAt = time.Now()
 
 	if err := s.repo.Update(ctx, forwardingRule); err != nil {
@@ -278,31 +302,23 @@ func (s *updateRuleHandler) convertMapToDBHeaders(headers map[string]string) map
 }
 
 func (s *updateRuleHandler) validate(rule *types.UpdateRuleRequest) error {
+	// For updates, only validate fields that are provided (partial updates allowed)
 
-	if rule.Path == "" {
-		return fmt.Errorf("path is required")
-	}
-
-	if len(rule.Methods) == 0 {
-		return fmt.Errorf("at least one method is required")
-	}
-
-	if rule.ServiceID == "" {
-		return fmt.Errorf("service_id is required")
-	}
-
-	validMethods := map[string]bool{
-		"GET":     true,
-		"POST":    true,
-		"PUT":     true,
-		"DELETE":  true,
-		"PATCH":   true,
-		"HEAD":    true,
-		"OPTIONS": true,
-	}
-	for _, method := range rule.Methods {
-		if !validMethods[strings.ToUpper(method)] {
-			return fmt.Errorf("invalid HTTP method: %s", method)
+	// Validate methods only if provided
+	if len(rule.Methods) > 0 {
+		validMethods := map[string]bool{
+			"GET":     true,
+			"POST":    true,
+			"PUT":     true,
+			"DELETE":  true,
+			"PATCH":   true,
+			"HEAD":    true,
+			"OPTIONS": true,
+		}
+		for _, method := range rule.Methods {
+			if !validMethods[strings.ToUpper(method)] {
+				return fmt.Errorf("invalid HTTP method: %s", method)
+			}
 		}
 	}
 
