@@ -22,18 +22,21 @@ type GatewayOutput struct {
 }
 
 type ForwardingRuleOutput struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	Upstream    *UpstreamOutput        `json:"upstream"`
-	ServiceID   string                 `json:"service_id"`
-	Path        string                 `json:"path"`
-	Methods     domain.MethodsJSON     `json:"methods"`
-	Headers     domain.HeadersJSON     `json:"headers"`
-	PluginChain domain.PluginChainJSON `json:"plugin_chain,omitempty"`
-	Active      bool                   `json:"active"`
-	TrustLens   *domain.TrustLensJSON  `json:"trustlens"`
-	CreatedAt   time.Time              `json:"created_at"`
-	UpdatedAt   time.Time              `json:"updated_at"`
+	ID            string                 `json:"id"`
+	Name          string                 `json:"name"`
+	Upstream      *UpstreamOutput        `json:"upstream"`
+	ServiceID     string                 `json:"service_id"`
+	Path          string                 `json:"path"`
+	Methods       domain.MethodsJSON     `json:"methods"`
+	Headers       domain.HeadersJSON     `json:"headers"`
+	StripPath     bool                   `json:"strip_path"`
+	PreserveHost  bool                   `json:"preserve_host"`
+	RetryAttempts int                    `json:"retry_attempts"`
+	PluginChain   domain.PluginChainJSON `json:"plugin_chain,omitempty"`
+	Active        bool                   `json:"active"`
+	TrustLens     *domain.TrustLensJSON  `json:"trustlens"`
+	CreatedAt     time.Time              `json:"created_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
 }
 
 type UpstreamOutput struct {

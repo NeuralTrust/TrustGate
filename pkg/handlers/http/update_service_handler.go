@@ -58,6 +58,15 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
 	}
+	// First get the existing service to preserve CreatedAt
+	existingService, err := s.repo.Get(c.Context(), serviceID)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to get existing service")
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "service not found"})
+	}
+
+	// Update the entity with new values while preserving CreatedAt
+	// UpdatedAt will be handled automatically by the BeforeUpdate hook
 	entity := service.Service{
 		ID:          id,
 		GatewayID:   gatewayUUID,
@@ -73,8 +82,8 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 		Headers:     req.Headers,
 		Credentials: req.Credentials,
 		Retries:     req.Retries,
-		CreatedAt:   req.CreatedAt,
-		UpdatedAt:   req.UpdatedAt,
+		CreatedAt:   existingService.CreatedAt, // Preserve original CreatedAt
+		// UpdatedAt will be set by BeforeUpdate hook
 	}
 
 	if err := s.repo.Update(c.Context(), &entity); err != nil {

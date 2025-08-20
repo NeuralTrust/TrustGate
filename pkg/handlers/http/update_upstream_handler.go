@@ -150,22 +150,43 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	entity := upstream.Upstream{
-		ID:              id,
-		GatewayID:       gatewayUUID,
-		Name:            req.Name,
-		Algorithm:       req.Algorithm,
-		Targets:         targets,
-		EmbeddingConfig: embedding,
-		HealthChecks:    healthCheck,
-		Websocket:       websocket,
-		Proxy:           proxy,
-		Tags:            req.Tags,
+	// Fetch the existing upstream first to preserve metadata
+	existingUpstream, err := s.repo.GetUpstream(c.Context(), id)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to get existing upstream")
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "upstream not found"})
 	}
 
-	if err := s.repo.UpdateUpstream(c.Context(), &entity); err != nil {
+	// Ownership check - ensure upstream belongs to the specified gateway
+	if existingUpstream.GatewayID != gatewayUUID {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "upstream not found"})
+	}
+
+	// Update the fields with new values while preserving existing metadata
+	existingUpstream.Name = req.Name
+	existingUpstream.Algorithm = req.Algorithm
+	existingUpstream.Targets = targets
+	existingUpstream.EmbeddingConfig = embedding
+	existingUpstream.HealthChecks = healthCheck
+	existingUpstream.Websocket = websocket
+	existingUpstream.Proxy = proxy
+	existingUpstream.Tags = req.Tags
+
+	if err := s.repo.UpdateUpstream(c.Context(), existingUpstream); err != nil {
 		s.logger.WithError(err).Error("failed to update upstream")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Re-fetch the upstream from database to ensure we return what's actually persisted
+	updatedUpstream, err := s.repo.GetUpstream(c.Context(), id)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to get updated upstream")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to retrieve updated upstream"})
+	}
+
+	// Immediately update the cache to ensure consistency with GET requests
+	if err := s.cache.SaveUpstream(c.Context(), gatewayID, updatedUpstream); err != nil {
+		s.logger.WithError(err).Error("failed to update cache after upstream update")
 	}
 
 	err = s.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateUpstreamCacheEvent{
@@ -175,9 +196,9 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		s.logger.WithError(err).Error("failed to publish update upstream event")
 	}
-	if err := s.descriptionEmbeddingCreator.Process(c.Context(), &entity); err != nil {
+	if err := s.descriptionEmbeddingCreator.Process(c.Context(), updatedUpstream); err != nil {
 		s.logger.WithError(err).Error("Failed to process embeddings for upstream targets")
 	}
 
-	return c.Status(fiber.StatusOK).JSON(entity)
+	return c.Status(fiber.StatusOK).JSON(updatedUpstream)
 }
