@@ -22,8 +22,7 @@ var allowedTLSVersions = map[string]uint16{
 }
 
 type CreateGatewayRequest struct {
-	Name            string                            `json:"name"`      // @required
-	Subdomain       string                            `json:"subdomain"` // @required
+	Name            string                            `json:"name"` // @required
 	Status          string                            `json:"status"`
 	RequiredPlugins []types.PluginConfig              `json:"required_plugins"`
 	Telemetry       *TelemetryRequest                 `json:"telemetry"`

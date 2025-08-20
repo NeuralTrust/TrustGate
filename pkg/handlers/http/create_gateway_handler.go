@@ -135,7 +135,6 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 	entity := domainGateway.Gateway{
 		ID:              id,
 		Name:            req.Name,
-		Subdomain:       req.Subdomain,
 		Status:          req.Status,
 		RequiredPlugins: req.RequiredPlugins,
 		Telemetry:       telemetryObj,

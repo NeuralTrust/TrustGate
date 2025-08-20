@@ -15,7 +15,6 @@ import (
 type Gateway struct {
 	ID              uuid.UUID                  `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	Name            string                     `json:"name"`
-	Subdomain       string                     `json:"subdomain" gorm:"uniqueIndex"`
 	Status          string                     `json:"status"`
 	Telemetry       *telemetry.Telemetry       `json:"telemetry,omitempty" gorm:"type:jsonb"`
 	RequiredPlugins domain.PluginChainJSON     `json:"required_plugins,omitempty" gorm:"type:jsonb"`
@@ -83,10 +82,6 @@ func (g *Gateway) BeforeUpdate(tx *gorm.DB) error {
 func (g *Gateway) Validate() error {
 	if g.Name == "" {
 		return fmt.Errorf("name is required")
-	}
-
-	if g.Subdomain == "" {
-		return fmt.Errorf("subdomain is required")
 	}
 
 	if g.Status == "" {

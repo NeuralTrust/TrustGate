@@ -11,7 +11,6 @@ import (
 type Gateway struct {
 	ID              string                     `json:"id"`
 	Name            string                     `json:"name"`
-	Subdomain       string                     `json:"subdomain"`
 	Status          string                     `json:"status"`
 	RequiredPlugins []PluginConfig             `json:"required_plugins"`
 	Telemetry       *Telemetry                 `json:"telemetry"`

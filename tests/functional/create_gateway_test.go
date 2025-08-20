@@ -4,17 +4,14 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateGateway(t *testing.T) {
 	t.Run("it should create a gateway with minimal configuration", func(t *testing.T) {
-		subdomain := fmt.Sprintf("test-minimal-%d", time.Now().UnixNano())
 		gatewayPayload := map[string]interface{}{
-			"name":      "Minimal Gateway",
-			"subdomain": subdomain,
+			"name": "Minimal Gateway",
 		}
 
 		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
@@ -25,24 +22,10 @@ func TestCreateGateway(t *testing.T) {
 		// Verify response fields
 		assert.NotEmpty(t, response["id"])
 		assert.Equal(t, "Minimal Gateway", response["name"])
-		assert.Equal(t, subdomain, response["subdomain"])
 	})
 
 	t.Run("it should fail when name is missing", func(t *testing.T) {
-		gatewayPayload := map[string]interface{}{
-			"subdomain": fmt.Sprintf("test-%d", time.Now().Unix()),
-		}
-
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
-			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
-		}, gatewayPayload)
-		assert.Equal(t, http.StatusInternalServerError, status)
-	})
-
-	t.Run("it should fail when subdomain is missing", func(t *testing.T) {
-		gatewayPayload := map[string]interface{}{
-			"name": "Missing Subdomain Gateway",
-		}
+		gatewayPayload := map[string]interface{}{}
 
 		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
@@ -51,10 +34,8 @@ func TestCreateGateway(t *testing.T) {
 	})
 
 	t.Run("it should create a gateway with security configuration", func(t *testing.T) {
-		subdomain := fmt.Sprintf("test-security-%d", time.Now().UnixNano())
 		gatewayPayload := map[string]interface{}{
-			"name":      "Security Config Gateway",
-			"subdomain": subdomain,
+			"name": "Security Config Gateway",
 			"security_config": map[string]interface{}{
 				"allowed_hosts":              []string{"example.com"},
 				"allowed_hosts_are_regex":    false,
@@ -79,15 +60,12 @@ func TestCreateGateway(t *testing.T) {
 		// Verify response fields
 		assert.NotEmpty(t, response["id"])
 		assert.Equal(t, "Security Config Gateway", response["name"])
-		assert.Equal(t, subdomain, response["subdomain"])
 		assert.NotNil(t, response["security_config"])
 	})
 
 	t.Run("it should create a gateway with telemetry configuration", func(t *testing.T) {
-		subdomain := fmt.Sprintf("test-telemetry-%d", time.Now().UnixNano())
 		gatewayPayload := map[string]interface{}{
-			"name":      "Telemetry Gateway",
-			"subdomain": subdomain,
+			"name": "Telemetry Gateway",
 			"telemetry": map[string]interface{}{
 				"enable_plugin_traces":  true,
 				"enable_request_traces": true,
@@ -113,15 +91,12 @@ func TestCreateGateway(t *testing.T) {
 		// Verify response fields
 		assert.NotEmpty(t, response["id"])
 		assert.Equal(t, "Telemetry Gateway", response["name"])
-		assert.Equal(t, subdomain, response["subdomain"])
 		assert.NotNil(t, response["telemetry"])
 	})
 
 	t.Run("it should create a gateway with TLS configuration", func(t *testing.T) {
-		subdomain := fmt.Sprintf("test-tls-%d", time.Now().UnixNano())
 		gatewayPayload := map[string]interface{}{
-			"name":      "TLS Gateway",
-			"subdomain": subdomain,
+			"name": "TLS Gateway",
 			"client_tls": map[string]interface{}{
 				"default": map[string]interface{}{
 					"allow_insecure_connections": true,
@@ -155,15 +130,12 @@ func TestCreateGateway(t *testing.T) {
 		// Verify response fields
 		assert.NotEmpty(t, response["id"])
 		assert.Equal(t, "TLS Gateway", response["name"])
-		assert.Equal(t, subdomain, response["subdomain"])
 		assert.NotNil(t, response["client_tls"])
 	})
 
 	t.Run("it should create a gateway with required plugins", func(t *testing.T) {
-		subdomain := fmt.Sprintf("test-plugins-%d", time.Now().UnixNano())
 		gatewayPayload := map[string]interface{}{
-			"name":      "Required Plugins Gateway",
-			"subdomain": subdomain,
+			"name": "Required Plugins Gateway",
 			"required_plugins": []map[string]interface{}{
 				{
 					"name":     "rate_limiter",
@@ -195,7 +167,6 @@ func TestCreateGateway(t *testing.T) {
 		// Verify response fields
 		assert.NotEmpty(t, response["id"])
 		assert.Equal(t, "Required Plugins Gateway", response["name"])
-		assert.Equal(t, subdomain, response["subdomain"])
 		assert.NotNil(t, response["required_plugins"])
 	})
 }

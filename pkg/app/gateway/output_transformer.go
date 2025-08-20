@@ -76,7 +76,6 @@ func (ot OutputTransformer) convertGatewayToTypes(g *gateway.Gateway) *types.Gat
 	result := &types.Gateway{
 		ID:              g.ID.String(),
 		Name:            g.Name,
-		Subdomain:       g.Subdomain,
 		Status:          g.Status,
 		RequiredPlugins: g.RequiredPlugins,
 		SecurityConfig:  securityConfig,

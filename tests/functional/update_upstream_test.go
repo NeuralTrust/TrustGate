@@ -58,12 +58,11 @@ func waitForUpstreamTags(t *testing.T, gatewayID, upstreamID string, expected []
 func TestUpdateUpstreamTags(t *testing.T) {
 	// Create a gateway
 	gatewayPayload := map[string]interface{}{
-		"name":      fmt.Sprintf("test-gateway-%d", time.Now().Unix()),
-		"subdomain": fmt.Sprintf("gateway-%d", time.Now().Unix()),
+		"name": fmt.Sprintf("test-gateway-%d", time.Now().Unix()),
 	}
 	gatewayID := CreateGateway(t, gatewayPayload)
 
-	// Create an upstream with initial tags
+	// Create an upstream with initial configuration
 	initialTags := []string{"initial", "test", "upstream"}
 	upstreamPayload := map[string]interface{}{
 		"name":      fmt.Sprintf("test-upstream-%d", time.Now().Unix()),
@@ -77,12 +76,58 @@ func TestUpdateUpstreamTags(t *testing.T) {
 				"weight":   100,
 			},
 		},
+		"health_checks": map[string]interface{}{
+			"passive":   true,
+			"threshold": 3,
+			"interval":  30,
+		},
+		"websocket_config": map[string]interface{}{
+			"enable_direct_communication": true,
+			"return_error_details":        false,
+			"ping_period":                 "10s",
+			"pong_wait":                   "20s",
+			"handshake_timeout":           "5s",
+			"read_buffer_size":            4096,
+			"write_buffer_size":           4096,
+		},
+		"proxy": map[string]interface{}{
+			"host":     "proxy.example.com",
+			"port":     "8080",
+			"protocol": "http",
+		},
 	}
 
 	upstreamID := CreateUpstream(t, gatewayID, upstreamPayload)
-	t.Logf("✅ Upstream created with ID: %s and initial tags: %v", upstreamID, initialTags)
+	t.Logf("✅ Upstream created with ID: %s", upstreamID)
 
-	// Update the upstream with new tags
+	// Fetch the initial upstream to capture createdAt and other initial values
+	initialGetStatus, initialResponse := sendRequest(
+		t,
+		http.MethodGet,
+		fmt.Sprintf("%s/gateways/%s/upstreams/%s", AdminUrl, gatewayID, upstreamID),
+		map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		},
+		nil,
+	)
+
+	assert.Equal(t, http.StatusOK, initialGetStatus)
+	if initialGetStatus != http.StatusOK {
+		t.Fatalf("❌ Failed to fetch initial upstream. Status: %d", initialGetStatus)
+	}
+
+	initialCreatedAt, createdAtExists := initialResponse["created_at"]
+	assert.True(t, createdAtExists, "Initial response should contain 'created_at' field")
+
+	initialUpdatedAt, updatedAtExists := initialResponse["updated_at"]
+	assert.True(t, updatedAtExists, "Initial response should contain 'updated_at' field")
+
+	t.Logf("✅ Initial createdAt: %v, updatedAt: %v", initialCreatedAt, initialUpdatedAt)
+
+	// Wait a moment to ensure updatedAt will be different
+	time.Sleep(1 * time.Second)
+
+	// Update the upstream with new configuration
 	newTags := []string{"updated", "new", "tags", "test"}
 	updatePayload := map[string]interface{}{
 		"name":      fmt.Sprintf("updated-upstream-%d", time.Now().Unix()),
@@ -102,6 +147,26 @@ func TestUpdateUpstreamTags(t *testing.T) {
 				"weight":   30,
 			},
 		},
+		"health_checks": map[string]interface{}{
+			"passive":   false,
+			"path":      "/health",
+			"threshold": 5,
+			"interval":  60,
+		},
+		"websocket_config": map[string]interface{}{
+			"enable_direct_communication": false,
+			"return_error_details":        true,
+			"ping_period":                 "15s",
+			"pong_wait":                   "30s",
+			"handshake_timeout":           "10s",
+			"read_buffer_size":            8192,
+			"write_buffer_size":           8192,
+		},
+		"proxy": map[string]interface{}{
+			"host":     "new-proxy.example.com",
+			"port":     "9090",
+			"protocol": "https",
+		},
 	}
 
 	// Perform the update
@@ -120,48 +185,117 @@ func TestUpdateUpstreamTags(t *testing.T) {
 		t.Fatalf("❌ Failed to update upstream. Status: %d, Response: %v", updateStatus, updateResponse)
 	}
 
-	t.Logf("✅ Upstream updated. Response: %v", updateResponse)
+	t.Logf("✅ Upstream updated successfully")
 
-	// Verify the response contains the updated data
+	// Verify all fields in the update response
+	assert.Equal(t, updatePayload["name"], updateResponse["name"], "Response name should match the updated name")
+	assert.Equal(t, updatePayload["algorithm"], updateResponse["algorithm"], "Response algorithm should match the updated algorithm")
+
+	// Verify tags
 	responseTagsInterface, exists := updateResponse["tags"]
 	assert.True(t, exists, "Response should contain 'tags' field")
-	
 	if exists {
 		responseTags, ok := responseTagsInterface.([]interface{})
 		assert.True(t, ok, "Tags should be an array")
-		
 		if ok {
-			// Convert []interface{} to []string for comparison
 			var responseTagsStrings []string
 			for _, tag := range responseTags {
 				if tagStr, ok := tag.(string); ok {
 					responseTagsStrings = append(responseTagsStrings, tagStr)
 				}
 			}
-			
 			assert.ElementsMatch(t, newTags, responseTagsStrings, "Response tags should match the updated tags")
-			t.Logf("✅ Response tags verified: %v", responseTagsStrings)
 		}
 	}
 
-	// Verify the name was updated
-	responseName, exists := updateResponse["name"]
-	assert.True(t, exists, "Response should contain 'name' field")
-	if exists {
-		assert.Equal(t, updatePayload["name"], responseName, "Response name should match the updated name")
+	// Verify targets array
+	responseTargetsInterface, targetsExist := updateResponse["targets"]
+	assert.True(t, targetsExist, "Response should contain 'targets' field")
+	if targetsExist {
+		responseTargets, ok := responseTargetsInterface.([]interface{})
+		assert.True(t, ok, "Targets should be an array")
+		assert.Len(t, responseTargets, 2, "Should have 2 targets after update")
 	}
 
-	// Verify the algorithm was updated
-	responseAlgorithm, exists := updateResponse["algorithm"]
-	assert.True(t, exists, "Response should contain 'algorithm' field")
-	if exists {
-		assert.Equal(t, updatePayload["algorithm"], responseAlgorithm, "Response algorithm should match the updated algorithm")
+	// Verify health checks
+	responseHealthChecks, healthExists := updateResponse["health_checks"]
+	assert.True(t, healthExists, "Response should contain 'health_checks' field")
+	if healthExists && responseHealthChecks != nil {
+		healthMap, ok := responseHealthChecks.(map[string]interface{})
+		assert.True(t, ok, "Health checks should be a map")
+		if ok {
+			assert.Equal(t, false, healthMap["passive"], "Health check passive should be updated")
+			assert.Equal(t, "/health", healthMap["path"], "Health check path should be updated")
+			assert.Equal(t, float64(5), healthMap["threshold"], "Health check threshold should be updated")
+			assert.Equal(t, float64(60), healthMap["interval"], "Health check interval should be updated")
+		}
 	}
+
+	// Verify websocket config
+	responseWebsocket, websocketExists := updateResponse["websocket_config"]
+	assert.True(t, websocketExists, "Response should contain 'websocket_config' field")
+	if websocketExists && responseWebsocket != nil {
+		websocketMap, ok := responseWebsocket.(map[string]interface{})
+		assert.True(t, ok, "Websocket config should be a map")
+		if ok {
+			assert.Equal(t, false, websocketMap["enable_direct_communication"], "Websocket enable_direct_communication should be updated")
+			assert.Equal(t, true, websocketMap["return_error_details"], "Websocket return_error_details should be updated")
+			assert.Equal(t, "15s", websocketMap["ping_period"], "Websocket ping_period should be updated")
+			assert.Equal(t, float64(8192), websocketMap["read_buffer_size"], "Websocket read_buffer_size should be updated")
+		}
+	}
+
+	// Verify proxy config
+	responseProxy, proxyExists := updateResponse["proxy"]
+	if proxyExists && responseProxy != nil {
+		proxyMap, ok := responseProxy.(map[string]interface{})
+		assert.True(t, ok, "Proxy config should be a map")
+		if ok {
+			assert.Equal(t, "new-proxy.example.com", proxyMap["host"], "Proxy host should be updated")
+			assert.Equal(t, "9090", proxyMap["port"], "Proxy port should be updated")
+			assert.Equal(t, "https", proxyMap["protocol"], "Proxy protocol should be updated")
+		}
+	}
+
+	// CRITICAL: Verify createdAt is unchanged and updatedAt is changed
+	responseCreatedAt, responseCreatedAtExists := updateResponse["created_at"]
+	assert.True(t, responseCreatedAtExists, "Response should contain 'created_at' field")
+
+	responseUpdatedAt, responseUpdatedAtExists := updateResponse["updated_at"]
+	assert.True(t, responseUpdatedAtExists, "Response should contain 'updated_at' field")
+	assert.NotEqual(t, initialUpdatedAt, responseUpdatedAt, "updatedAt should change during update")
+
+	// Parse timestamps for more flexible comparison (handle nanosecond precision differences)
+	initialCreatedAtStr, ok := initialCreatedAt.(string)
+	if !ok {
+		initialCreatedAtStr = ""
+	}
+	responseCreatedAtStr, ok := responseCreatedAt.(string)
+	if !ok {
+		responseCreatedAtStr = ""
+	}
+
+	if initialCreatedAtStr != "" && responseCreatedAtStr != "" {
+		initialTime, err1 := time.Parse(time.RFC3339Nano, initialCreatedAtStr)
+		responseTime, err2 := time.Parse(time.RFC3339Nano, responseCreatedAtStr)
+
+		if err1 == nil && err2 == nil {
+			// Allow for small timestamp precision differences (within 1 second)
+			timeDiff := responseTime.Sub(initialTime).Abs()
+			assert.True(t, timeDiff < time.Second, "createdAt should be essentially unchanged (diff: %v)", timeDiff)
+		} else {
+			// Fallback to string comparison if parsing fails
+			assert.Equal(t, initialCreatedAt, responseCreatedAt, "createdAt should NOT change during update")
+		}
+	}
+
+	t.Logf("✅ Timestamp verification: createdAt preserved (%v), updatedAt changed (%v -> %v)",
+		initialCreatedAt, initialUpdatedAt, responseUpdatedAt)
 
 	// Use polling to wait for the cache/data to be consistent
 	waitForUpstreamTags(t, gatewayID, upstreamID, newTags, 10*time.Second)
 
-	// Final verification: fetch the upstream from the database 
+	// Final verification: fetch the upstream from the database
 	getStatus, getResponse := sendRequest(
 		t,
 		http.MethodGet,
@@ -174,22 +308,50 @@ func TestUpdateUpstreamTags(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, getStatus)
 	if getStatus != http.StatusOK {
-		t.Fatalf("❌ Failed to fetch upstream. Status: %d, Response: %v", getStatus, getResponse)
+		t.Fatalf("❌ Failed to fetch updated upstream. Status: %d, Response: %v", getStatus, getResponse)
 	}
 
-	// Final checks - by this time the waitForUpstreamTags should have ensured consistency
-	assert.Equal(t, updateResponse["name"], getResponse["name"], "Update response name should match database")
-	assert.Equal(t, updateResponse["algorithm"], getResponse["algorithm"], "Update response algorithm should match database")
-	assert.Equal(t, updateResponse["id"], getResponse["id"], "Update response ID should match database")
+	// Final comprehensive checks - verify database matches update response
+	assert.Equal(t, updateResponse["name"], getResponse["name"], "Database name should match update response")
+	assert.Equal(t, updateResponse["algorithm"], getResponse["algorithm"], "Database algorithm should match update response")
+	assert.Equal(t, updateResponse["id"], getResponse["id"], "Database ID should match update response")
+	assert.Equal(t, updateResponse["created_at"], getResponse["created_at"], "Database createdAt should match update response")
+	assert.Equal(t, updateResponse["updated_at"], getResponse["updated_at"], "Database updatedAt should match update response")
 
-	t.Logf("✅ Update upstream test completed successfully")
+	// Verify database also preserves createdAt immutability
+	dbCreatedAt, dbCreatedAtExists := getResponse["created_at"]
+	assert.True(t, dbCreatedAtExists, "Database response should contain 'created_at' field")
+
+	// Use flexible timestamp comparison for database as well
+	dbCreatedAtStr, ok := dbCreatedAt.(string)
+	if !ok {
+		dbCreatedAtStr = ""
+	}
+	if initialCreatedAtStr != "" && dbCreatedAtStr != "" {
+		initialTime, err1 := time.Parse(time.RFC3339Nano, initialCreatedAtStr)
+		dbTime, err2 := time.Parse(time.RFC3339Nano, dbCreatedAtStr)
+
+		if err1 == nil && err2 == nil {
+			// Allow for small timestamp precision differences (within 1 second)
+			timeDiff := dbTime.Sub(initialTime).Abs()
+			assert.True(t, timeDiff < time.Second, "Database createdAt should be essentially unchanged from original (diff: %v)", timeDiff)
+		} else {
+			// Fallback to string comparison if parsing fails
+			assert.Equal(t, initialCreatedAt, dbCreatedAt, "Database createdAt should be unchanged from original")
+		}
+	}
+
+	dbUpdatedAt, dbUpdatedAtExists := getResponse["updated_at"]
+	assert.True(t, dbUpdatedAtExists, "Database response should contain 'updated_at' field")
+	assert.NotEqual(t, initialUpdatedAt, dbUpdatedAt, "Database updatedAt should be different from original")
+
+	t.Logf("✅ Update upstream comprehensive test completed successfully")
 }
 
 func TestUpdateUpstreamEmptyTags(t *testing.T) {
 	// Create a gateway
 	gatewayPayload := map[string]interface{}{
-		"name":      fmt.Sprintf("test-gateway-empty-%d", time.Now().UnixNano()),
-		"subdomain": fmt.Sprintf("gateway-empty-%d", time.Now().UnixNano()),
+		"name": fmt.Sprintf("test-gateway-empty-%d", time.Now().UnixNano()),
 	}
 	gatewayID := CreateGateway(t, gatewayPayload)
 
@@ -281,8 +443,7 @@ func TestUpdateUpstreamEmptyTags(t *testing.T) {
 func TestUpdateUpstreamNullTags(t *testing.T) {
 	// Create a gateway
 	gatewayPayload := map[string]interface{}{
-		"name":      fmt.Sprintf("test-gateway-null-%d", time.Now().UnixNano()),
-		"subdomain": fmt.Sprintf("gateway-null-%d", time.Now().UnixNano()),
+		"name": fmt.Sprintf("test-gateway-null-%d", time.Now().UnixNano()),
 	}
 	gatewayID := CreateGateway(t, gatewayPayload)
 
