@@ -7,13 +7,30 @@ WORKDIR /build
 ARG VERSION
 ARG GIT_COMMIT
 ARG BUILD_DATE
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
 
-# Install build dependencies with newer librdkafka from Confluent
-RUN apt-get update && apt-get install -y wget gnupg git curl && \
-    wget -qO - https://packages.confluent.io/deb/7.4/archive.key | apt-key add - && \
-    echo "deb https://packages.confluent.io/deb/7.4 stable main" > /etc/apt/sources.list.d/confluent.list && \
-    apt-get update && \
-    apt-get install -y librdkafka-dev
+# Install build dependencies and build librdkafka from source
+RUN apt-get update && \
+    apt-get install -y \
+        git \
+        curl \
+        build-essential \
+        zlib1g-dev \
+        libssl-dev \
+        libsasl2-dev \
+        libzstd-dev \
+        pkg-config \
+        cmake && \
+    git clone --depth 1 --branch v2.3.0 https://github.com/confluentinc/librdkafka.git && \
+    cd librdkafka && \
+    ./configure --prefix=/usr && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig && \
+    cd .. && \
+    rm -rf librdkafka && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy go mod files
 COPY go.mod go.sum ./
@@ -25,10 +42,11 @@ COPY . .
 # Verify module dependencies
 RUN go mod verify
 
-# Build the application
-RUN CGO_ENABLED=1 GOOS=linux go build -tags dynamic -ldflags "-X github.com/NeuralTrust/TrustGate/pkg/version.Version=${VERSION} \
-                      -X github.com/NeuralTrust/TrustGate/pkg/version.GitCommit=${GIT_COMMIT} \
-                      -X github.com/NeuralTrust/TrustGate/pkg/version.BuildDate=${BUILD_DATE}" \
+# Build the application with dynamic linking
+RUN CGO_ENABLED=1 GOOS=linux go build -tags dynamic \
+    -ldflags "-X github.com/NeuralTrust/TrustGate/pkg/version.Version=${VERSION} \
+              -X github.com/NeuralTrust/TrustGate/pkg/version.GitCommit=${GIT_COMMIT} \
+              -X github.com/NeuralTrust/TrustGate/pkg/version.BuildDate=${BUILD_DATE}" \
     -o gateway ./cmd/gateway
 
 # Final stage
@@ -36,11 +54,29 @@ FROM debian:bullseye-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata curl wget gnupg && \
-    wget -qO - https://packages.confluent.io/deb/7.4/archive.key | apt-key add - && \
-    echo "deb https://packages.confluent.io/deb/7.4 stable main" > /etc/apt/sources.list.d/confluent.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends librdkafka1 && \
+# Install runtime dependencies and librdkafka from source
+RUN apt-get update && \
+    apt-get install -y \
+        ca-certificates \
+        tzdata \
+        curl \
+        libssl1.1 \
+        libsasl2-2 \
+        zlib1g \
+        libzstd1 \
+        build-essential \
+        git \
+        cmake && \
+    git clone --depth 1 --branch v2.3.0 https://github.com/confluentinc/librdkafka.git && \
+    cd librdkafka && \
+    ./configure --prefix=/usr && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig && \
+    cd .. && \
+    rm -rf librdkafka && \
+    apt-get remove -y build-essential git cmake && \
+    apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/gateway /app/
