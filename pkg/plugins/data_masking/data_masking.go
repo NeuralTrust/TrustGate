@@ -1,3 +1,5 @@
+package data_masking
+
 import (
 	"context"
 	"crypto/hmac"
