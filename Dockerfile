@@ -8,8 +8,12 @@ ARG VERSION
 ARG GIT_COMMIT
 ARG BUILD_DATE
 
-# Install build dependencies (added build-base and librdkafka-dev)
-RUN apt-get update && apt-get install -y librdkafka-dev git curl
+# Install build dependencies with newer librdkafka from Confluent
+RUN apt-get update && apt-get install -y wget gnupg git curl && \
+    wget -qO - https://packages.confluent.io/deb/7.4/archive.key | apt-key add - && \
+    echo "deb https://packages.confluent.io/deb/7.4 stable main" > /etc/apt/sources.list.d/confluent.list && \
+    apt-get update && \
+    apt-get install -y librdkafka-dev
 
 # Copy go mod files
 COPY go.mod go.sum ./
@@ -32,7 +36,12 @@ FROM debian:bullseye-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata curl librdkafka1 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata curl wget gnupg && \
+    wget -qO - https://packages.confluent.io/deb/7.4/archive.key | apt-key add - && \
+    echo "deb https://packages.confluent.io/deb/7.4 stable main" > /etc/apt/sources.list.d/confluent.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends librdkafka1 && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/gateway /app/
 COPY config/ /app/config/
