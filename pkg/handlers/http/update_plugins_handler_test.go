@@ -19,6 +19,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // Mock implementations
@@ -36,12 +37,20 @@ func (m *mockGatewayRepo) Get(ctx context.Context, id uuid.UUID) (*domainGateway
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*domainGateway.Gateway), args.Error(1)
+	gateway, ok := args.Get(0).(*domainGateway.Gateway)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return gateway, args.Error(1)
 }
 
 func (m *mockGatewayRepo) List(ctx context.Context, offset, limit int) ([]domainGateway.Gateway, error) {
 	args := m.Called(ctx, offset, limit)
-	return args.Get(0).([]domainGateway.Gateway), args.Error(1)
+	gateways, ok := args.Get(0).([]domainGateway.Gateway)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return gateways, args.Error(1)
 }
 
 func (m *mockGatewayRepo) Update(ctx context.Context, gateway *domainGateway.Gateway) error {
@@ -63,7 +72,11 @@ func (m *mockRuleRepo) GetRule(ctx context.Context, id uuid.UUID, gatewayID uuid
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*forwarding_rule.ForwardingRule), args.Error(1)
+	rule, ok := args.Get(0).(*forwarding_rule.ForwardingRule)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return rule, args.Error(1)
 }
 
 func (m *mockRuleRepo) GetRuleByID(ctx context.Context, id uuid.UUID) (*forwarding_rule.ForwardingRule, error) {
@@ -71,7 +84,11 @@ func (m *mockRuleRepo) GetRuleByID(ctx context.Context, id uuid.UUID) (*forwardi
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*forwarding_rule.ForwardingRule), args.Error(1)
+	rule, ok := args.Get(0).(*forwarding_rule.ForwardingRule)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return rule, args.Error(1)
 }
 
 func (m *mockRuleRepo) Create(ctx context.Context, rule *forwarding_rule.ForwardingRule) error {
@@ -81,7 +98,11 @@ func (m *mockRuleRepo) Create(ctx context.Context, rule *forwarding_rule.Forward
 
 func (m *mockRuleRepo) ListRules(ctx context.Context, gatewayID uuid.UUID) ([]forwarding_rule.ForwardingRule, error) {
 	args := m.Called(ctx, gatewayID)
-	return args.Get(0).([]forwarding_rule.ForwardingRule), args.Error(1)
+	rules, ok := args.Get(0).([]forwarding_rule.ForwardingRule)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return rules, args.Error(1)
 }
 
 func (m *mockRuleRepo) Update(ctx context.Context, rule *forwarding_rule.ForwardingRule) error {
@@ -117,7 +138,7 @@ func (m *mockEventPublisher) Publish(ctx context.Context, ch channel.Channel, ev
 	return args.Error(0)
 }
 
-func TestUpdatePluginsHandler_GranularOperations(t *testing.T) {
+func TestUpdatePluginsHandler_Operations(t *testing.T) {
 	logger := logrus.New()
 	gatewayRepo := new(mockGatewayRepo)
 	ruleRepo := new(mockRuleRepo)
@@ -165,7 +186,8 @@ func TestUpdatePluginsHandler_GranularOperations(t *testing.T) {
 			},
 		}
 
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
 		gatewayRepo.On("Get", mock.Anything, gatewayID).Return(existingGateway, nil)
 		validator.On("Validate", mock.Anything, gatewayID, mock.Anything).Return(nil)
@@ -175,7 +197,8 @@ func TestUpdatePluginsHandler_GranularOperations(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/api/v1/plugins", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, _ := app.Test(req, -1)
+		resp, err := app.Test(req, -1)
+		require.NoError(t, err)
 		assert.Equal(t, 204, resp.StatusCode)
 	})
 
@@ -215,7 +238,8 @@ func TestUpdatePluginsHandler_GranularOperations(t *testing.T) {
 			},
 		}
 
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
 		gatewayRepo.On("Get", mock.Anything, gatewayID).Return(existingGateway, nil)
 		validator.On("Validate", mock.Anything, gatewayID, mock.Anything).Return(nil)
@@ -225,7 +249,8 @@ func TestUpdatePluginsHandler_GranularOperations(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/api/v1/plugins", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, _ := app.Test(req, -1)
+		resp, err := app.Test(req, -1)
+		require.NoError(t, err)
 		assert.Equal(t, 204, resp.StatusCode)
 	})
 
@@ -260,7 +285,8 @@ func TestUpdatePluginsHandler_GranularOperations(t *testing.T) {
 			},
 		}
 
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
 		gatewayRepo.On("Get", mock.Anything, gatewayID).Return(existingGateway, nil)
 		validator.On("Validate", mock.Anything, gatewayID, mock.Anything).Return(nil)
@@ -270,7 +296,8 @@ func TestUpdatePluginsHandler_GranularOperations(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/api/v1/plugins", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, _ := app.Test(req, -1)
+		resp, err := app.Test(req, -1)
+		require.NoError(t, err)
 		assert.Equal(t, 204, resp.StatusCode)
 	})
 
@@ -330,7 +357,8 @@ func TestUpdatePluginsHandler_GranularOperations(t *testing.T) {
 			},
 		}
 
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
 		gatewayRepo.On("Get", mock.Anything, gatewayID).Return(existingGateway, nil)
 		validator.On("Validate", mock.Anything, gatewayID, mock.Anything).Return(nil)
@@ -340,41 +368,82 @@ func TestUpdatePluginsHandler_GranularOperations(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/api/v1/plugins", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, _ := app.Test(req, -1)
+		resp, err := app.Test(req, -1)
+		require.NoError(t, err)
 		assert.Equal(t, 204, resp.StatusCode)
 	})
 
-	t.Run("Backward compatibility - full replacement", func(t *testing.T) {
+	t.Run("Validation error - no updates provided", func(t *testing.T) {
 		gatewayID := uuid.New()
-		existingGateway := &domainGateway.Gateway{
-			ID:        gatewayID,
-			Name:      "test-gateway",
+
+		reqBody := request.UpdatePluginsRequest{
+			Type:    "gateway",
+			ID:      gatewayID.String(),
+			Updates: []request.PluginUpdate{}, // Empty updates
+		}
+
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest("PUT", "/api/v1/plugins", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := app.Test(req, -1)
+		require.NoError(t, err)
+		assert.Equal(t, 400, resp.StatusCode)
+	})
+
+	t.Run("Edit plugin in rule", func(t *testing.T) {
+		ruleID := uuid.New()
+		gatewayID := uuid.New()
+		existingRule := &forwarding_rule.ForwardingRule{
+			ID:        ruleID,
+			GatewayID: gatewayID,
+			Name:      "test-rule",
+			PluginChain: []types.PluginConfig{
+				{
+					Name:    "data_masking",
+					Enabled: true,
+					Stage:   types.PostResponse,
+					Settings: map[string]interface{}{
+						"patterns": []string{"ssn"},
+					},
+				},
+			},
 			UpdatedAt: time.Now(),
 		}
 
 		reqBody := request.UpdatePluginsRequest{
-			Type: "gateway",
-			ID:   gatewayID.String(),
-			PluginChain: []types.PluginConfig{
+			Type: "rule",
+			ID:   ruleID.String(),
+			Updates: []request.PluginUpdate{
 				{
-					Name:    "new_plugin_chain",
-					Enabled: true,
-					Stage:   types.PreRequest,
+					Operation: request.PluginOperationEdit,
+					Plugin: types.PluginConfig{
+						Name:    "data_masking",
+						Enabled: false, // Disable the plugin
+						Stage:   types.PostResponse,
+						Settings: map[string]interface{}{
+							"patterns": []string{"ssn", "credit_card"},
+						},
+					},
 				},
 			},
 		}
 
-		body, _ := json.Marshal(reqBody)
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
 
-		gatewayRepo.On("Get", mock.Anything, gatewayID).Return(existingGateway, nil)
+		ruleRepo.On("GetRuleByID", mock.Anything, ruleID).Return(existingRule, nil)
 		validator.On("Validate", mock.Anything, gatewayID, mock.Anything).Return(nil)
-		gatewayRepo.On("Update", mock.Anything, mock.Anything).Return(nil)
+		ruleRepo.On("Update", mock.Anything, mock.Anything).Return(nil)
 		publisher.On("Publish", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 		req := httptest.NewRequest("PUT", "/api/v1/plugins", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, _ := app.Test(req, -1)
+		resp, err := app.Test(req, -1)
+		require.NoError(t, err)
 		assert.Equal(t, 204, resp.StatusCode)
 	})
 }
