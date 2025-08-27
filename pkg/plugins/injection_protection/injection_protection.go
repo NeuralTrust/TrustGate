@@ -613,7 +613,7 @@ func (p *InjectionProtectionPlugin) checkJSONContent(
 					return err
 				}
 				if resp != nil {
-					return fmt.Errorf(resp.Message)
+					return fmt.Errorf("%s", resp.Message)
 				}
 			}
 		}
@@ -625,7 +625,7 @@ func (p *InjectionProtectionPlugin) checkJSONContent(
 					return err
 				}
 				if resp != nil {
-					return fmt.Errorf(resp.Message)
+					return fmt.Errorf("%s", resp.Message)
 				}
 			}
 		}
