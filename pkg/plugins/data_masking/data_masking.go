@@ -1,5 +1,3 @@
-package data_masking
-
 import (
 	"context"
 	"crypto/hmac"
@@ -9,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
@@ -26,7 +25,6 @@ const (
 	SimilarityThreshold = 0.8
 )
 
-// PredefinedEntity represents a pre-defined entity type to mask
 type PredefinedEntity string
 
 const (
@@ -61,22 +59,22 @@ const (
 	SpanishNSS     PredefinedEntity = "spanish_nss"
 	SpanishIBAN    PredefinedEntity = "spanish_iban"
 	SpanishPhone   PredefinedEntity = "spanish_phone"
-	FrenchNIR      PredefinedEntity = "french_nir"     // French social security number
-	ItalianCF      PredefinedEntity = "italian_cf"     // Italian fiscal code
-	GermanID       PredefinedEntity = "german_id"      // German ID card number
-	BrazilianCPF   PredefinedEntity = "brazilian_cpf"  // Brazilian individual taxpayer registry
-	BrazilianCNPJ  PredefinedEntity = "brazilian_cnpj" // Brazilian company registry
-	MexicanCURP    PredefinedEntity = "mexican_curp"   // Mexican personal ID
-	MexicanRFC     PredefinedEntity = "mexican_rfc"    // Mexican tax ID
-	USMedicareID   PredefinedEntity = "us_medicare"    // US Medicare ID
-	ISIN           PredefinedEntity = "isin"           // International Securities Identification Number
-	VehicleVIN     PredefinedEntity = "vehicle_vin"    // Vehicle identification number
-	DeviceIMEI     PredefinedEntity = "device_imei"    // Mobile device IMEI
-	DeviceMAC      PredefinedEntity = "device_mac"     // Device MAC address (alternative format)
-	ArgentineDNI   PredefinedEntity = "argentine_dni"  // Argentine national ID
-	ChileanRUT     PredefinedEntity = "chilean_rut"    // Chilean tax ID
-	ColombianCC    PredefinedEntity = "colombian_cc"   // Colombian citizen ID
-	PeruvianDNI    PredefinedEntity = "peruvian_dni"   // Peruvian national ID
+	FrenchNIR      PredefinedEntity = "french_nir"
+	ItalianCF      PredefinedEntity = "italian_cf"
+	GermanID       PredefinedEntity = "german_id"
+	BrazilianCPF   PredefinedEntity = "brazilian_cpf"
+	BrazilianCNPJ  PredefinedEntity = "brazilian_cnpj"
+	MexicanCURP    PredefinedEntity = "mexican_curp"
+	MexicanRFC     PredefinedEntity = "mexican_rfc"
+	USMedicareID   PredefinedEntity = "us_medicare"
+	ISIN           PredefinedEntity = "isin"
+	VehicleVIN     PredefinedEntity = "vehicle_vin"
+	DeviceIMEI     PredefinedEntity = "device_imei"
+	DeviceMAC      PredefinedEntity = "device_mac"
+	ArgentineDNI   PredefinedEntity = "argentine_dni"
+	ChileanRUT     PredefinedEntity = "chilean_rut"
+	ColombianCC    PredefinedEntity = "colombian_cc"
+	PeruvianDNI    PredefinedEntity = "peruvian_dni"
 	Date           PredefinedEntity = "date"
 )
 
@@ -180,7 +178,6 @@ var predefinedEntityOrder = []PredefinedEntity{
 	Date,
 }
 
-// defaultEntityMasks defines default masking for pre-defined entities
 var defaultEntityMasks = map[PredefinedEntity]string{
 	Default:        "*****",
 	CreditCard:     "[MASKED_CC]",
@@ -232,14 +229,13 @@ var defaultEntityMasks = map[PredefinedEntity]string{
 	Date:           "[MASKED_DATE]",
 }
 
-// hashToOriginalMap is a map from hash to original value
 type hashToOriginalMap map[string]string
 
 type DataMaskingPlugin struct {
 	logger      *logrus.Logger
 	memoryCache *common.TTLMap
-	keywords    map[string]string         // map of keyword to mask value
-	regexRules  map[string]*regexp.Regexp // map of regex pattern to mask value
+	keywords    map[string]string
+	regexRules  map[string]*regexp.Regexp
 }
 
 type ReversibleHashingConfig struct {
@@ -253,45 +249,45 @@ type Config struct {
 	SimilarityThreshold float64                 `mapstructure:"similarity_threshold"`
 	PredefinedEntities  []EntityConfig          `mapstructure:"predefined_entities"`
 	ApplyAll            bool                    `mapstructure:"apply_all"`
-	MaxEditDistance     int                     `mapstructure:"max_edit_distance"` // Maximum edit distance for fuzzy matching
-	NormalizeInput      bool                    `mapstructure:"normalize_input"`   // Normalize input before matching
+	MaxEditDistance     int                     `mapstructure:"max_edit_distance"`
+	NormalizeInput      bool                    `mapstructure:"normalize_input"`
 }
 
 type EntityConfig struct {
-	Entity      string `mapstructure:"entity"`       // Pre-defined entity type
-	Enabled     bool   `mapstructure:"enabled"`      // Whether to enable this entity
-	MaskWith    string `mapstructure:"mask_with"`    // Optional custom mask
-	PreserveLen bool   `mapstructure:"preserve_len"` // Whether to preserve length
+	Entity      string `mapstructure:"entity"`
+	Enabled     bool   `mapstructure:"enabled"`
+	MaskWith    string `mapstructure:"mask_with"`
+	PreserveLen bool   `mapstructure:"preserve_len"`
 }
 
 type Rule struct {
-	Pattern     string `mapstructure:"pattern"`      // Keyword or regex pattern
-	Type        string `mapstructure:"type"`         // "keyword" or "regex"
-	MaskWith    string `mapstructure:"mask_with"`    // Character or string to mask with
-	PreserveLen bool   `mapstructure:"preserve_len"` // Whether to preserve the length of masked content
+	Pattern     string `mapstructure:"pattern"`
+	Type        string `mapstructure:"type"` // "keyword" or "regex"
+	MaskWith    string `mapstructure:"mask_with"`
+	PreserveLen bool   `mapstructure:"preserve_len"`
 }
 
 func NewDataMaskingPlugin(logger *logrus.Logger, c *cache.Cache) pluginiface.Plugin {
+	var ttl *common.TTLMap
+	if c != nil {
+		ttl = c.GetTTLMap(cache.DataMaskingTTLName)
+	}
+	if ttl == nil {
+		ttl = common.NewTTLMap(10 * time.Minute)
+	}
 	return &DataMaskingPlugin{
 		logger:      logger,
-		memoryCache: c.GetTTLMap(cache.DataMaskingTTLName),
+		memoryCache: ttl,
 		keywords:    make(map[string]string),
 		regexRules:  make(map[string]*regexp.Regexp),
 	}
 }
 
-func (p *DataMaskingPlugin) Name() string {
-	return PluginName
-}
+func (p *DataMaskingPlugin) Name() string { return PluginName }
 
-func (p *DataMaskingPlugin) RequiredPlugins() []string {
-	var requiredPlugins []string
-	return requiredPlugins
-}
+func (p *DataMaskingPlugin) RequiredPlugins() []string { return nil }
 
-func (p *DataMaskingPlugin) Stages() []types.Stage {
-	return []types.Stage{}
-}
+func (p *DataMaskingPlugin) Stages() []types.Stage { return nil }
 
 func (p *DataMaskingPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest, types.PostResponse}
@@ -307,18 +303,15 @@ func (p *DataMaskingPlugin) ValidateConfig(config types.PluginConfig) error {
 		return fmt.Errorf("at least one rule or predefined entity must be specified")
 	}
 
-	// Validate custom rules
 	for _, rule := range cfg.Rules {
 		if rule.Type != "keyword" && rule.Type != "regex" {
 			return fmt.Errorf("invalid rule type '%s': must be 'keyword' or 'regex'", rule.Type)
 		}
-
 		if rule.Type == "regex" {
 			if _, err := regexp.Compile(rule.Pattern); err != nil {
 				return fmt.Errorf("invalid regex pattern '%s': %v", rule.Pattern, err)
 			}
 		}
-
 		if rule.MaskWith == "" {
 			return fmt.Errorf("mask_with value must be specified for each rule")
 		}
@@ -358,17 +351,19 @@ func (p *DataMaskingPlugin) Execute(
 		config.MaxEditDistance = 1
 	}
 
+	if p.memoryCache == nil {
+		p.memoryCache = common.NewTTLMap(10 * time.Minute)
+	}
+
 	if config.ReversibleHashing.Enabled {
 		traceId, ok := ctx.Value(common.TraceIdKey).(string)
-		if ok {
-			if cfg.Stage == types.PreRequest {
-				// Initialize an empty hash map for this trace ID
+		if ok && cfg.Stage == types.PreRequest {
+			if p.memoryCache != nil {
 				p.memoryCache.Set(traceId, make(hashToOriginalMap))
 			}
 		}
 	}
 
-	// Initialize rules
 	p.keywords = make(map[string]string)
 	p.regexRules = make(map[string]*regexp.Regexp)
 
@@ -378,7 +373,6 @@ func (p *DataMaskingPlugin) Execute(
 			if !exists {
 				maskValue = "[MASKED]"
 			}
-
 			p.regexRules[pattern.String()] = pattern
 			p.keywords[pattern.String()] = maskValue
 		}
@@ -387,40 +381,32 @@ func (p *DataMaskingPlugin) Execute(
 			if !entity.Enabled {
 				continue
 			}
-
 			entityType := PredefinedEntity(entity.Entity)
 			pattern, exists := predefinedEntityPatterns[entityType]
 			if !exists {
 				continue
 			}
-
 			maskValue := entity.MaskWith
 			if maskValue == "" {
 				maskValue = defaultEntityMasks[entityType]
 			}
-
 			p.regexRules[pattern.String()] = pattern
 			p.keywords[pattern.String()] = maskValue
 		}
 	}
 
-	// Add custom rules
 	for _, rule := range config.Rules {
 		maskValue := rule.MaskWith
 		if maskValue == "" {
 			maskValue = DefaultMaskChar
 		}
-
 		if rule.Type == "keyword" {
 			p.keywords[rule.Pattern] = maskValue
 		} else if rule.Type == "regex" {
-			// Try to compile the regex
 			regex, err := regexp.Compile(rule.Pattern)
 			if err != nil {
 				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", rule.Pattern, err)
 			}
-
-			// Store both the pattern string and the compiled regex
 			p.regexRules[rule.Pattern] = regex
 			p.keywords[rule.Pattern] = maskValue
 		}
@@ -430,11 +416,9 @@ func (p *DataMaskingPlugin) Execute(
 	hashMap := make(hashToOriginalMap)
 	secret := config.ReversibleHashing.Secret
 
-	// Check if reversible hashing is enabled
 	if config.ReversibleHashing.Enabled && cfg.Stage == types.PostResponse {
 		traceId, ok := ctx.Value(common.TraceIdKey).(string)
-		if ok {
-			// Get the hash map from the memory cache
+		if ok && p.memoryCache != nil {
 			if value, exists := p.memoryCache.Get(traceId); exists {
 				if hm, ok := value.(hashToOriginalMap); ok {
 					hashMap = hm
@@ -449,14 +433,11 @@ func (p *DataMaskingPlugin) Execute(
 			var maskedData interface{}
 			var events []MaskingEvent
 
-			// If this is a response in postresponse stage and reversible hashing is enabled, skip masking and just restore original values
 			if !isRequest && cfg.Stage == types.PostResponse && config.ReversibleHashing.Enabled {
 				maskedData = restoreFromHashes(jsonData, hashMap)
 			} else {
-				// Otherwise, mask the data as usual
 				maskedData, events = p.maskJSONData(jsonData, config.SimilarityThreshold, config)
 
-				// If reversible hashing is enabled and this is a request in prerequest stage, replace masked values with hashes
 				if config.ReversibleHashing.Enabled && isRequest && cfg.Stage == types.PreRequest {
 					for i := range events {
 						hash := generateReversibleHash(secret, events[i].OriginalValue)
@@ -464,12 +445,10 @@ func (p *DataMaskingPlugin) Execute(
 						hashMap[hash] = events[i].OriginalValue
 					}
 
-					// Replace masked values with hashes in the JSON data
 					maskedData = replaceWithHashes(maskedData, events)
 
-					// Store the updated hash map in the memory cache
 					traceId, ok := ctx.Value(common.TraceIdKey).(string)
-					if ok {
+					if ok && p.memoryCache != nil {
 						p.memoryCache.Set(traceId, hashMap)
 					}
 				}
@@ -487,30 +466,24 @@ func (p *DataMaskingPlugin) Execute(
 		var maskedContent string
 		var events []MaskingEvent
 
-		// If this is a response in postresponse stage and reversible hashing is enabled, skip masking and just restore original values
 		if !isRequest && cfg.Stage == types.PostResponse && config.ReversibleHashing.Enabled {
 			maskedContent = content
 			for hash, original := range hashMap {
 				maskedContent = strings.ReplaceAll(maskedContent, hash, original)
 			}
 		} else {
-			// Otherwise, mask the data as usual
 			maskedContent, events = p.maskPlainText(content, config.SimilarityThreshold, config)
 
-			// If reversible hashing is enabled and this is a request in prerequest stage, replace masked values with hashes
 			if config.ReversibleHashing.Enabled && isRequest && cfg.Stage == types.PreRequest {
 				for i := range events {
 					hash := generateReversibleHash(secret, events[i].OriginalValue)
 					events[i].ReversibleKey = hash
 					hashMap[hash] = events[i].OriginalValue
-
-					// Replace masked value with hash in the content
 					maskedContent = strings.ReplaceAll(maskedContent, events[i].MaskedWith, hash)
 				}
 
-				// Store the updated hash map in the memory cache
 				traceId, ok := ctx.Value(common.TraceIdKey).(string)
-				if ok {
+				if ok && p.memoryCache != nil {
 					p.memoryCache.Set(traceId, hashMap)
 				}
 			}
@@ -568,7 +541,6 @@ func replaceWithHashes(data interface{}, events []MaskingEvent) interface{} {
 		}
 		return result
 	case string:
-		// Replace masked values with hashes
 		result := v
 		for _, event := range events {
 			if event.ReversibleKey != "" && strings.Contains(result, event.MaskedWith) {
@@ -581,7 +553,6 @@ func replaceWithHashes(data interface{}, events []MaskingEvent) interface{} {
 	}
 }
 
-// restoreFromHashes restores original values from hashes in JSON data
 func restoreFromHashes(data interface{}, hashMap hashToOriginalMap) interface{} {
 	switch v := data.(type) {
 	case map[string]interface{}:
@@ -597,7 +568,6 @@ func restoreFromHashes(data interface{}, hashMap hashToOriginalMap) interface{} 
 		}
 		return result
 	case string:
-		// Restore original values from hashes
 		result := v
 		for hash, original := range hashMap {
 			if strings.Contains(result, hash) {
@@ -610,7 +580,6 @@ func restoreFromHashes(data interface{}, hashMap hashToOriginalMap) interface{} 
 	}
 }
 
-// levenshteinDistance calculates the minimum number of single-character edits required to change one word into another
 func levenshteinDistance(s1, s2 string) int {
 	s1 = strings.ToLower(s1)
 	s2 = strings.ToLower(s2)
@@ -637,7 +606,7 @@ func levenshteinDistance(s1, s2 string) int {
 			if s1[i-1] == s2[j-1] {
 				cost = 0
 			}
-			matrix[i][j] = min(
+			matrix[i][j] = min3(
 				matrix[i-1][j]+1,
 				matrix[i][j-1]+1,
 				matrix[i-1][j-1]+cost,
@@ -647,42 +616,33 @@ func levenshteinDistance(s1, s2 string) int {
 	return matrix[len(s1)][len(s2)]
 }
 
-// calculateSimilarity returns a similarity score between 0 and 1
 func calculateSimilarity(s1, s2 string) float64 {
 	distance := levenshteinDistance(s1, s2)
-	maxLen := float64(max(len(s1), len(s2)))
-	if maxLen == 0 {
+	m := float64(max2(len(s1), len(s2)))
+	if m == 0 {
 		return 1.0
 	}
-	return 1.0 - float64(distance)/maxLen
+	return 1.0 - float64(distance)/m
 }
 
 func (p *DataMaskingPlugin) findSimilarKeyword(text string, threshold float64) (string, string, bool) {
-	// First check for exact matches
 	for keyword, maskWith := range p.keywords {
-		// Skip regex patterns
 		if _, exists := p.regexRules[keyword]; exists {
 			continue
 		}
-
 		if strings.Contains(text, keyword) {
 			return text, maskWith, true
 		}
 	}
-
-	// Then check for fuzzy matches
 	for keyword, maskWith := range p.keywords {
-		// Skip regex patterns
 		if _, exists := p.regexRules[keyword]; exists {
 			continue
 		}
-
 		similarity := calculateSimilarity(text, keyword)
 		if similarity >= threshold {
 			return text, maskWith, true
 		}
 	}
-
 	return "", "", false
 }
 
@@ -697,29 +657,24 @@ func (p *DataMaskingPlugin) maskContent(content string, maskWith string, preserv
 }
 
 func normalizeText(text string) string {
-	// Convert to lowercase
 	text = strings.ToLower(text)
-
-	// Remove common separators
 	text = strings.ReplaceAll(text, "-", "")
 	text = strings.ReplaceAll(text, " ", "")
 	text = strings.ReplaceAll(text, ".", "")
 	text = strings.ReplaceAll(text, "/", "")
-
 	return text
 }
 
 func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, config Config) (string, []MaskingEvent) {
 	var events []MaskingEvent
 	maskedContent := content
-	// First apply predefined entity patterns
+
 	for _, entityType := range predefinedEntityOrder {
 		pattern, exists := predefinedEntityPatterns[entityType]
 		if !exists {
 			continue
 		}
 
-		// Check if this entity is enabled in the configuration
 		entityEnabled := false
 		for _, entity := range config.PredefinedEntities {
 			if entity.Entity == string(entityType) && entity.Enabled {
@@ -727,15 +682,15 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 				break
 			}
 		}
-
 		if !entityEnabled && !config.ApplyAll {
 			continue
 		}
+
 		maskValue := defaultEntityMasks[entityType]
 		if config.ApplyAll {
 			maskValue = defaultEntityMasks[Default]
 		}
-		// Standard regex matching
+
 		matches := pattern.FindAllString(maskedContent, -1)
 		if len(matches) > 0 {
 			for _, match := range matches {
@@ -749,9 +704,7 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 		}
 	}
 
-	// Then apply custom regex patterns
 	for pattern, regex := range p.regexRules {
-		// Skip predefined entity patterns which are already processed
 		isPredefined := false
 		for _, entityType := range predefinedEntityOrder {
 			if entityPattern, exists := predefinedEntityPatterns[entityType]; exists {
@@ -761,12 +714,10 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 				}
 			}
 		}
-
 		if isPredefined {
 			continue
 		}
 
-		// Apply custom regex pattern
 		matches := regex.FindAllString(maskedContent, -1)
 		if len(matches) > 0 {
 			maskValue := p.keywords[pattern]
@@ -781,14 +732,10 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 		}
 	}
 
-	// Apply keyword matching (exact, not fuzzy)
 	for keyword, maskValue := range p.keywords {
-		// Skip regex patterns which are already processed
 		if _, exists := p.regexRules[keyword]; exists {
 			continue
 		}
-
-		// Apply exact keyword matching
 		if strings.Contains(maskedContent, keyword) {
 			events = append(events, MaskingEvent{
 				Entity:        keyword,
@@ -799,7 +746,6 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 		}
 	}
 
-	// Apply keyword fuzzy matching
 	words := strings.Fields(maskedContent)
 	modified := false
 	for i, word := range words {
@@ -808,7 +754,6 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 			modified = true
 		}
 	}
-
 	if modified {
 		maskedContent = strings.Join(words, " ")
 	}
@@ -816,7 +761,6 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 	return maskedContent, events
 }
 
-// Add a function to generate variants of a string with edit distance <= maxDistance
 func (p *DataMaskingPlugin) generateVariants(word string, maxDistance int) []string {
 	if maxDistance <= 0 || len(word) <= 3 {
 		return []string{word}
@@ -824,15 +768,12 @@ func (p *DataMaskingPlugin) generateVariants(word string, maxDistance int) []str
 
 	variants := []string{word}
 
-	// Generate variants with one character deleted
 	for i := 0; i < len(word); i++ {
 		variant := word[:i] + word[i+1:]
 		variants = append(variants, variant)
 	}
 
-	// Generate variants with one character substituted
 	for i := 0; i < len(word); i++ {
-		// Common substitutions
 		substitutions := map[byte][]byte{
 			'0': {'o', 'O'},
 			'1': {'l', 'I'},
@@ -846,7 +787,6 @@ func (p *DataMaskingPlugin) generateVariants(word string, maxDistance int) []str
 			'a': {'@'},
 			'@': {'a'},
 		}
-
 		if subs, ok := substitutions[word[i]]; ok {
 			for _, sub := range subs {
 				variant := word[:i] + string(sub) + word[i+1:]
@@ -855,7 +795,6 @@ func (p *DataMaskingPlugin) generateVariants(word string, maxDistance int) []str
 		}
 	}
 
-	// Generate variants with one character transposed
 	for i := 0; i < len(word)-1; i++ {
 		variant := word[:i] + string(word[i+1]) + string(word[i]) + word[i+2:]
 		variants = append(variants, variant)
@@ -864,13 +803,11 @@ func (p *DataMaskingPlugin) generateVariants(word string, maxDistance int) []str
 	return variants
 }
 
-// Update the maskJSONData function to use the enhanced configuration
 func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64, config Config) (interface{}, []MaskingEvent) {
 	var allEvents []MaskingEvent
 
 	switch v := data.(type) {
 	case map[string]interface{}:
-		// Process each key-value pair in the map
 		result := make(map[string]interface{}, len(v))
 		for key, value := range v {
 			maskedValue, events := p.maskJSONData(value, threshold, config)
@@ -880,7 +817,6 @@ func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64, co
 		return result, allEvents
 
 	case []interface{}:
-		// Process each item in the array
 		result := make([]interface{}, len(v))
 		for i, value := range v {
 			maskedValue, events := p.maskJSONData(value, threshold, config)
@@ -890,12 +826,28 @@ func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64, co
 		return result, allEvents
 
 	case string:
-		// Process the string value
 		maskedValue, events := p.maskPlainText(v, threshold, config)
 		return maskedValue, events
 
 	default:
-		// Return other types (int, bool, etc.) as-is
 		return v, nil
 	}
+}
+
+func min3(a, b, c int) int {
+	m := a
+	if b < m {
+		m = b
+	}
+	if c < m {
+		m = c
+	}
+	return m
+}
+
+func max2(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
