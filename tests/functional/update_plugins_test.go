@@ -174,6 +174,9 @@ func TestUpdatePlugins(t *testing.T) {
 						"priority": 0,
 						"settings": map[string]interface{}{
 							"allowed_origins": []string{"*"},
+							"allowed_methods": []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+							"allowed_headers": []string{"Content-Type", "Authorization"},
+							"max_age":         "3600s",
 						},
 					},
 				},
