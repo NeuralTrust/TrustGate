@@ -22,7 +22,7 @@ COPY . .
 RUN go mod verify
 
 # Build the application
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags "-X github.com/NeuralTrust/TrustGate/pkg/version.Version=${VERSION} \
+RUN CGO_ENABLED=1 GOOS=linux go build -tags dynamic -ldflags "-X github.com/NeuralTrust/TrustGate/pkg/version.Version=${VERSION} \
                       -X github.com/NeuralTrust/TrustGate/pkg/version.GitCommit=${GIT_COMMIT} \
                       -X github.com/NeuralTrust/TrustGate/pkg/version.BuildDate=${BUILD_DATE}" \
     -o gateway ./cmd/gateway
@@ -32,7 +32,7 @@ FROM debian:bullseye-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata curl librdkafka1 && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/gateway /app/
 COPY config/ /app/config/
