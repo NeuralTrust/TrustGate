@@ -9,10 +9,9 @@ import (
 type PluginOperation string
 
 const (
-	PluginOperationAdd     PluginOperation = "add"
-	PluginOperationEdit    PluginOperation = "edit"
-	PluginOperationDelete  PluginOperation = "delete"
-	PluginOperationReplace PluginOperation = "replace" // For backward compatibility
+	PluginOperationAdd    PluginOperation = "add"
+	PluginOperationEdit   PluginOperation = "edit"
+	PluginOperationDelete PluginOperation = "delete"
 )
 
 type PluginUpdate struct {
@@ -28,10 +27,8 @@ type PluginUpdate struct {
 type UpdatePluginsRequest struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
-	// Deprecated: Use Updates instead for granular operations
-	PluginChain []types.PluginConfig `json:"plugin_chain,omitempty"`
-	// New field for granular updates
-	Updates []PluginUpdate `json:"updates,omitempty"`
+	// Granular updates for add/edit/delete operations
+	Updates []PluginUpdate `json:"updates"`
 }
 
 func (r *UpdatePluginsRequest) Validate() error {
@@ -42,9 +39,9 @@ func (r *UpdatePluginsRequest) Validate() error {
 		return fmt.Errorf("id is required")
 	}
 
-	// Validate that either PluginChain or Updates is provided, but not both
-	if len(r.PluginChain) > 0 && len(r.Updates) > 0 {
-		return fmt.Errorf("cannot provide both plugin_chain and updates")
+	// Updates are required
+	if len(r.Updates) == 0 {
+		return fmt.Errorf("at least one update operation is required")
 	}
 
 	// Validate individual updates
@@ -67,8 +64,6 @@ func validatePluginUpdate(update PluginUpdate) error {
 		if update.PluginName == "" && update.Plugin.Name == "" {
 			return fmt.Errorf("plugin name is required for delete operation")
 		}
-	case PluginOperationReplace:
-		// No specific validation needed for replace
 	default:
 		return fmt.Errorf("invalid operation: %s", update.Operation)
 	}
