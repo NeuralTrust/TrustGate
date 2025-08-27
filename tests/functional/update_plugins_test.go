@@ -138,7 +138,10 @@ func TestUpdatePlugins(t *testing.T) {
 		// Find our rule
 		var ourRule map[string]interface{}
 		for _, r := range rules {
-			rule := r.(map[string]interface{})
+			rule, ok := r.(map[string]interface{})
+			if !ok {
+				continue
+			}
 			if rule["id"] == ruleID {
 				ourRule = rule
 				break
