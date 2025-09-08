@@ -39,8 +39,7 @@ type Service struct {
 	Credentials types.Credentials  `json:"credentials,omitempty" gorm:"type:jsonb"`
 
 	// Common settings
-	Retries int  `json:"retries,omitempty"`
-	Stream  bool `json:"stream,omitempty"`
+	Stream bool `json:"stream,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

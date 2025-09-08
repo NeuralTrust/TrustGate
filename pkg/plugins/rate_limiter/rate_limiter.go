@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -165,14 +166,18 @@ func (p *RateLimiterPlugin) Execute(
 
 	var finalStatus limitStatus
 
-	// Check limits in specific order: per_ip -> per_user -> global
-	limitOrder := []string{"per_ip", "per_user", "global"}
+	// Check limits in specific order: per_fingerprint -> per_ip -> per_user -> global
+	// per_fingerprint: Most granular, based on unique device/browser fingerprint
+	// per_ip: Based on client IP address
+	// per_user: Based on authenticated user ID
+	// global: Applies to all requests
+	limitOrder := []string{"per_fingerprint", "per_ip", "per_user", "global"}
 
 	for _, limitType := range limitOrder {
 		if limitCfg, ok := config.Limits[limitType]; ok {
 			// Skip per_user check if user is anonymous
 			if limitType == "per_user" {
-				userKey := p.extractKey(req, limitType)
+				userKey := p.extractKey(ctx, req, limitType)
 				if userKey == "anonymous" {
 					continue
 				}
@@ -187,7 +192,7 @@ func (p *RateLimiterPlugin) Execute(
 				cfg.Level,
 				cfg.ID,
 				limitType,
-				p.extractKey(req, limitType),
+				p.extractKey(ctx, req, limitType),
 			)
 
 			now := p.timeProvider()
@@ -266,10 +271,18 @@ func (p *RateLimiterPlugin) Execute(
 	return nil, nil
 }
 
-func (p *RateLimiterPlugin) extractKey(req *types.RequestContext, limitType string) string {
+func (p *RateLimiterPlugin) extractKey(ctx context.Context, req *types.RequestContext, limitType string) string {
 	switch limitType {
 	case "global":
 		return "global"
+	case "per_fingerprint":
+		// Extract fingerprint from Go context (set by fingerprint middleware)
+		// Fingerprint combines UserID, Token, IP, and UserAgent for unique identification
+		// Requires fingerprint middleware to be active
+		if fpID, ok := ctx.Value(common.FingerprintIdContextKey).(string); ok && fpID != "" {
+			return fpID
+		}
+		return "unknown"
 	case "per_ip":
 		// Try different common IP headers in order of preference
 		ipHeaders := []string{

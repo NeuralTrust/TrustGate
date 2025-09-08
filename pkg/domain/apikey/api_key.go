@@ -14,7 +14,6 @@ type APIKey struct {
 	GatewayID uuid.UUID  `json:"gateway_id" gorm:"type:uuid;index"`
 	ExpiresAt *time.Time `json:"expires_at"`
 	CreatedAt time.Time  `json:"created_at"`
-	DeletedAt *time.Time `json:"deleted_at" gorm:"index"`
 }
 
 func (a APIKey) TableName() string {

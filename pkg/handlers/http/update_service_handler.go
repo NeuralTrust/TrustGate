@@ -81,7 +81,6 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 		Path:        req.Path,
 		Headers:     req.Headers,
 		Credentials: req.Credentials,
-		Retries:     req.Retries,
 		CreatedAt:   existingService.CreatedAt, // Preserve original CreatedAt
 		// UpdatedAt will be set by BeforeUpdate hook
 	}
