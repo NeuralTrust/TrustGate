@@ -249,4 +249,96 @@ func TestCreateRule(t *testing.T) {
 		}, rulePayload)
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
+
+	t.Run("it should fail when trying to create a duplicate rule path for the same gateway", func(t *testing.T) {
+		// First, create a rule with a specific path
+		duplicatePath := "/duplicate-test"
+		firstRulePayload := map[string]interface{}{
+			"path":       duplicatePath,
+			"name":       "first-rule",
+			"service_id": serviceID,
+			"methods":    []string{"GET"},
+		}
+
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, firstRulePayload)
+		assert.Equal(t, http.StatusCreated, status)
+		assert.NotEmpty(t, response["id"])
+
+		// Now try to create another rule with the same path for the same gateway
+		secondRulePayload := map[string]interface{}{
+			"path":       duplicatePath,
+			"name":       "second-rule",
+			"service_id": serviceID,
+			"methods":    []string{"POST"},
+		}
+
+		status, errorResponse := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, secondRulePayload)
+
+		// Should return BadRequest (400) with error message
+		assert.Equal(t, http.StatusBadRequest, status)
+		assert.NotNil(t, errorResponse["error"])
+		assert.Equal(t, "rule already exists", errorResponse["error"])
+	})
+
+	t.Run("it should allow creating rules with same path for different gateways", func(t *testing.T) {
+		// Create a second gateway
+		secondGatewayID := CreateGateway(t, map[string]interface{}{
+			"name":      "Second Rule Test Gateway",
+			"subdomain": fmt.Sprintf("rule-test-2-%d", time.Now().UnixNano()),
+		})
+
+		// Create an upstream for the second gateway
+		secondUpstreamID := CreateUpstream(t, secondGatewayID, map[string]interface{}{
+			"name":      "Second Test Upstream",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "example.com",
+					"port":     80,
+					"protocol": "http",
+					"weight":   1,
+				},
+			},
+		})
+
+		// Create a service for the second gateway
+		secondServiceID := CreateService(t, secondGatewayID, map[string]interface{}{
+			"name":        "Second Test Service",
+			"type":        "upstream",
+			"upstream_id": secondUpstreamID,
+		})
+
+		// Create a rule in the first gateway
+		sharedPath := "/shared-path"
+		firstGatewayRulePayload := map[string]interface{}{
+			"path":       sharedPath,
+			"name":       "first-gateway-rule",
+			"service_id": serviceID,
+			"methods":    []string{"GET"},
+		}
+
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, firstGatewayRulePayload)
+		assert.Equal(t, http.StatusCreated, status)
+		assert.NotEmpty(t, response["id"])
+
+		// Create a rule with the same path in the second gateway (should succeed)
+		secondGatewayRulePayload := map[string]interface{}{
+			"path":       sharedPath,
+			"name":       "second-gateway-rule",
+			"service_id": secondServiceID,
+			"methods":    []string{"POST"},
+		}
+
+		status, response = sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, secondGatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, secondGatewayRulePayload)
+		assert.Equal(t, http.StatusCreated, status)
+		assert.NotEmpty(t, response["id"])
+	})
 }

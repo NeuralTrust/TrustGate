@@ -120,7 +120,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 			Mapping: req.TrustLens.Mapping,
 		}
 	}
-	// Create the database model
+
 	dbRule := &forwarding_rule.ForwardingRule{
 		ID:            id,
 		Name:          req.Name,
@@ -156,26 +156,23 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	for _, rule := range rules {
-		if rule.Path == req.Path && rule.ServiceID == serviceUUID {
-			s.logger.WithField("path", req.Path).Error("Rule with this path already exists for this service")
+		if rule.Path == req.Path && rule.GatewayID == gatewayUUID {
+			s.logger.WithField("path", req.Path).Error("rule with this path already exists for this service")
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rule already exists"})
 		}
 	}
 
-	// Store in database
 	if err := s.repo.Create(c.Context(), dbRule); err != nil {
 		s.logger.WithError(err).Error("Failed to create rule")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create rule"})
 	}
 
-	// Use existing helper to convert to API response
 	response, err := s.getRuleResponse(dbRule)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to get rule response")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process rule"})
 	}
 
-	// Invalidate cache after deletion
 	if err := s.publisher.Publish(
 		c.Context(),
 		channel.GatewayEventsChannel,
