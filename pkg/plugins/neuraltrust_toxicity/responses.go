@@ -1,4 +1,4 @@
-package toxicity_neuraltrust
+package neuraltrust_toxicity
 
 type ToxicityResponse struct {
 	Prompt  ToxicityPrompt `json:"categories"`

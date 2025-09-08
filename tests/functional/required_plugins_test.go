@@ -47,7 +47,7 @@ func TestRequiredPlugins_Success(t *testing.T) {
 		"subdomain": subdomain,
 		"required_plugins": []map[string]interface{}{
 			{
-				"name":     "neuraltrust_guardrail",
+				"name":     "neuraltrust_jailbreak",
 				"enabled":  true,
 				"priority": 1,
 				"stage":    "pre_request",

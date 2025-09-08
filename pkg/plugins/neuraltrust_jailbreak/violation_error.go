@@ -1,4 +1,4 @@
-package neuraltrust_guardrail
+package neuraltrust_jailbreak
 
 type guardrailViolationError struct {
 	message string

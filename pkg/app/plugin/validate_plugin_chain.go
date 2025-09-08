@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
+//go:generate mockery --name=ValidatePluginChain --dir=. --output=./mocks --filename=plugin_chain_validator_mock.go --case=underscore --with-expecter
 type (
 	ValidatePluginChain interface {
 		Validate(ctx context.Context, gatewayID uuid.UUID, plugins []types.PluginConfig) error

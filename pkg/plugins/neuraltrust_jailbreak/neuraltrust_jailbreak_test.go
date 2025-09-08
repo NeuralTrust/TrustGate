@@ -1,4 +1,4 @@
-package neuraltrust_guardrail_test
+package neuraltrust_jailbreak_test
 
 import (
 	"bytes"
@@ -10,15 +10,15 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_jailbreak"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-func TestTrustGateGuardrailPlugin_ValidateConfig(t *testing.T) {
-	plugin := &neuraltrust_guardrail.NeuralTrustGuardrailPlugin{}
+func TestNeuralTrustJailbreakPlugin_ValidateConfig(t *testing.T) {
+	plugin := &neuraltrust_jailbreak.NeuralTrustJailbreakPlugin{}
 
 	validCfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -35,11 +35,11 @@ func TestTrustGateGuardrailPlugin_ValidateConfig(t *testing.T) {
 	assert.Error(t, plugin.ValidateConfig(invalidCfg))
 }
 
-func TestTrustGateGuardrailPlugin_Execute_JailbreakSafe(t *testing.T) {
+func TestNeuralTrustJailbreakPlugin_Execute_JailbreakSafe(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(mocks.Tracker)
 
-	plugin := neuraltrust_guardrail.NewNeuralTrustGuardrailPlugin(
+	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
 		logrus.New(),
 		mockClient,
 		fingerPrintTrackerMock,
@@ -51,10 +51,10 @@ func TestTrustGateGuardrailPlugin_Execute_JailbreakSafe(t *testing.T) {
 		},
 	}
 
-	jbResp := neuraltrust_guardrail.FirewallResponse{
+	jbResp := neuraltrust_jailbreak.FirewallResponse{
 		Flagged: false,
-		Scores:  neuraltrust_guardrail.FirewallScores{MaliciousPrompt: 0.1},
-		Prompt:  neuraltrust_guardrail.FirewallPrompt{MaliciousPrompt: false},
+		Scores:  neuraltrust_jailbreak.FirewallScores{MaliciousPrompt: 0.1},
+		Prompt:  neuraltrust_jailbreak.FirewallPrompt{MaliciousPrompt: false},
 	}
 	respBytes, err := json.Marshal(jbResp)
 	assert.NoError(t, err)
@@ -75,11 +75,11 @@ func TestTrustGateGuardrailPlugin_Execute_JailbreakSafe(t *testing.T) {
 	assert.Equal(t, "prompt content is safe", pluginResp.Message)
 }
 
-func TestTrustGateGuardrailPlugin_Execute_JailbreakUnsafe(t *testing.T) {
+func TestNeuralTrustJailbreakPlugin_Execute_JailbreakUnsafe(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(mocks.Tracker)
 
-	plugin := neuraltrust_guardrail.NewNeuralTrustGuardrailPlugin(
+	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
 		logrus.New(),
 		mockClient,
 		fingerPrintTrackerMock,
@@ -91,10 +91,10 @@ func TestTrustGateGuardrailPlugin_Execute_JailbreakUnsafe(t *testing.T) {
 		},
 	}
 
-	jbResp := neuraltrust_guardrail.FirewallResponse{
+	jbResp := neuraltrust_jailbreak.FirewallResponse{
 		Flagged: true,
-		Scores:  neuraltrust_guardrail.FirewallScores{MaliciousPrompt: 0.8},
-		Prompt:  neuraltrust_guardrail.FirewallPrompt{MaliciousPrompt: true},
+		Scores:  neuraltrust_jailbreak.FirewallScores{MaliciousPrompt: 0.8},
+		Prompt:  neuraltrust_jailbreak.FirewallPrompt{MaliciousPrompt: true},
 	}
 	respBytes, err := json.Marshal(jbResp)
 	assert.NoError(t, err)

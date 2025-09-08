@@ -1,4 +1,4 @@
-package toxicity_neuraltrust_test
+package neuraltrust_toxicity_test
 
 import (
 	"bytes"
@@ -13,42 +13,42 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_neuraltrust"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_toxicity"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-func TestToxicityNeuralTrust_Name(t *testing.T) {
+func TestNeuralTrustToxicity_Name(t *testing.T) {
 	mockTracker := new(mocks.Tracker)
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(logrus.New(), mockTracker, nil)
-	assert.Equal(t, "toxicity_neuraltrust", plugin.Name())
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logrus.New(), mockTracker, nil)
+	assert.Equal(t, "neuraltrust_toxicity", plugin.Name())
 }
 
-func TestToxicityNeuralTrust_RequiredPlugins(t *testing.T) {
+func TestNeuralTrustToxicity_RequiredPlugins(t *testing.T) {
 	mockTracker := new(mocks.Tracker)
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(logrus.New(), mockTracker, nil)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logrus.New(), mockTracker, nil)
 	assert.Empty(t, plugin.RequiredPlugins())
 }
 
-func TestToxicityNeuralTrust_Stages(t *testing.T) {
+func TestNeuralTrustToxicity_Stages(t *testing.T) {
 	mockTracker := new(mocks.Tracker)
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(logrus.New(), mockTracker, nil)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logrus.New(), mockTracker, nil)
 	assert.Equal(t, []types.Stage{types.PreRequest}, plugin.Stages())
 }
 
-func TestToxicityNeuralTrust_AllowedStages(t *testing.T) {
+func TestNeuralTrustToxicity_AllowedStages(t *testing.T) {
 	mockTracker := new(mocks.Tracker)
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(logrus.New(), mockTracker, nil)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logrus.New(), mockTracker, nil)
 	assert.Equal(t, []types.Stage{types.PreRequest, types.PostRequest}, plugin.AllowedStages())
 }
 
-func TestToxicityNeuralTrust_ValidateConfig(t *testing.T) {
+func TestNeuralTrustToxicity_ValidateConfig(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
 
 	t.Run("Valid Configuration", func(t *testing.T) {
 		validConfig := types.PluginConfig{
@@ -103,11 +103,11 @@ func TestToxicityNeuralTrust_ValidateConfig(t *testing.T) {
 	})
 }
 
-func TestToxicityNeuralTrust_Execute_Success(t *testing.T) {
+func TestNeuralTrustToxicity_Execute_Success(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -161,11 +161,11 @@ func TestToxicityNeuralTrust_Execute_Success(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-func TestToxicityNeuralTrust_Execute_ToxicContent(t *testing.T) {
+func TestNeuralTrustToxicity_Execute_ToxicContent(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -217,11 +217,11 @@ func TestToxicityNeuralTrust_Execute_ToxicContent(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-func TestToxicityNeuralTrust_Execute_WithMappingField(t *testing.T) {
+func TestNeuralTrustToxicity_Execute_WithMappingField(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -280,11 +280,11 @@ func TestToxicityNeuralTrust_Execute_WithMappingField(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-func TestToxicityNeuralTrust_Execute_PostRequest(t *testing.T) {
+func TestNeuralTrustToxicity_Execute_PostRequest(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -339,11 +339,11 @@ func TestToxicityNeuralTrust_Execute_PostRequest(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-func TestToxicityNeuralTrust_Execute_HTTPError(t *testing.T) {
+func TestNeuralTrustToxicity_Execute_HTTPError(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -380,11 +380,11 @@ func TestToxicityNeuralTrust_Execute_HTTPError(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-func TestToxicityNeuralTrust_Execute_InvalidResponse(t *testing.T) {
+func TestNeuralTrustToxicity_Execute_InvalidResponse(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -429,14 +429,14 @@ func TestToxicityNeuralTrust_Execute_InvalidResponse(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-func TestToxicityNeuralTrust_Execute_NotifyGuardrailViolation(t *testing.T) {
+func TestNeuralTrustToxicity_Execute_NotifyGuardrailViolation(t *testing.T) {
 	// Create mocks
 	mockClient := new(mocks.MockHTTPClient)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
 
 	// Create plugin with the fingerprint tracker
-	plugin := toxicity_neuraltrust.NewToxicityNeuralTrust(
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
 		logger,
 		mockTracker,
 		mockClient,

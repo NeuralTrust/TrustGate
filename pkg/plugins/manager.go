@@ -27,13 +27,13 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/data_masking"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/external_api"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/injection_protection"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_jailbreak"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_moderation"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_toxicity"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/request_size_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/token_rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_azure"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_neuraltrust"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_openai"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
@@ -147,7 +147,7 @@ func (m *manager) InitializePlugins() {
 		m.logger.WithError(err).Error("Failed to register code sanitation plugin")
 	}
 
-	if err := m.RegisterPlugin(neuraltrust_guardrail.NewNeuralTrustGuardrailPlugin(
+	if err := m.RegisterPlugin(neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
 		m.logger,
 		&http.Client{ //nolint
 			Transport: &http.Transport{
@@ -172,7 +172,7 @@ func (m *manager) InitializePlugins() {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
 	}
 
-	if err := m.RegisterPlugin(toxicity_neuraltrust.NewToxicityNeuralTrust(
+	if err := m.RegisterPlugin(neuraltrust_toxicity.NewNeuralTrustToxicity(
 		m.logger,
 		m.fingerprintTracker,
 		&http.Client{ //nolint

@@ -72,7 +72,6 @@ func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 		Path:        req.Path,
 		Headers:     req.Headers,
 		Credentials: req.Credentials,
-		Retries:     req.Retries,
 		CreatedAt:   req.CreatedAt,
 		UpdatedAt:   req.UpdatedAt,
 	}

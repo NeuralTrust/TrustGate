@@ -1,4 +1,4 @@
-package toxicity_neuraltrust
+package neuraltrust_toxicity
 
 import (
 	"bytes"
@@ -24,12 +24,12 @@ import (
 )
 
 const (
-	PluginName   = "toxicity_neuraltrust"
+	PluginName   = "neuraltrust_toxicity"
 	toxicityPath = "/v1/moderation"
 	toxicityType = "toxicity"
 )
 
-type ToxicityNeuralTrust struct {
+type NeuralTrustToxicity struct {
 	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
@@ -56,7 +56,7 @@ func NewGuardrailViolation(message string) error {
 	return &guardrailViolationError{message: message}
 }
 
-func NewToxicityNeuralTrust(
+func NewNeuralTrustToxicity(
 	logger *logrus.Logger,
 	fingerPrintManager fingerprint.Tracker,
 	client httpx.Client,
@@ -68,7 +68,7 @@ func NewToxicityNeuralTrust(
 			},
 		}
 	}
-	return &ToxicityNeuralTrust{
+	return &NeuralTrustToxicity{
 		client:             client,
 		fingerPrintManager: fingerPrintManager,
 		logger:             logger,
@@ -93,24 +93,24 @@ func NewToxicityNeuralTrust(
 	}
 }
 
-func (p *ToxicityNeuralTrust) Name() string {
+func (p *NeuralTrustToxicity) Name() string {
 	return PluginName
 }
 
-func (p *ToxicityNeuralTrust) RequiredPlugins() []string {
+func (p *NeuralTrustToxicity) RequiredPlugins() []string {
 	var requiredPlugins []string
 	return requiredPlugins
 }
 
-func (p *ToxicityNeuralTrust) Stages() []types.Stage {
+func (p *NeuralTrustToxicity) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-func (p *ToxicityNeuralTrust) AllowedStages() []types.Stage {
+func (p *NeuralTrustToxicity) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest, types.PostRequest}
 }
 
-func (p *ToxicityNeuralTrust) ValidateConfig(config types.PluginConfig) error {
+func (p *NeuralTrustToxicity) ValidateConfig(config types.PluginConfig) error {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
 		return fmt.Errorf("failed to decode config: %w", err)
@@ -126,7 +126,7 @@ func (p *ToxicityNeuralTrust) ValidateConfig(config types.PluginConfig) error {
 	return nil
 }
 
-func (p *ToxicityNeuralTrust) Execute(
+func (p *NeuralTrustToxicity) Execute(
 	ctx context.Context,
 	cfg types.PluginConfig,
 	req *types.RequestContext,
@@ -255,7 +255,7 @@ func (p *ToxicityNeuralTrust) Execute(
 	}, nil
 }
 
-func (p *ToxicityNeuralTrust) callToxicity(
+func (p *NeuralTrustToxicity) callToxicity(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	taggedRequest TaggedRequest,
@@ -311,14 +311,14 @@ func (p *ToxicityNeuralTrust) callToxicity(
 	}
 }
 
-func (p *ToxicityNeuralTrust) notifyGuardrailViolation(ctx context.Context) {
+func (p *NeuralTrustToxicity) notifyGuardrailViolation(ctx context.Context) {
 	fp, ok := ctx.Value(common.FingerprintIdContextKey).(string)
 	if !ok {
 		return
 	}
 	storedFp, err := p.fingerPrintManager.GetFingerprint(ctx, fp)
 	if err != nil {
-		p.logger.WithError(err).Error("failed to get fingerprint (toxicity_neuraltrust)")
+		p.logger.WithError(err).Error("failed to get fingerprint (neuraltrust_toxicity)")
 		return
 	}
 	if storedFp != nil {
@@ -337,7 +337,7 @@ func (p *ToxicityNeuralTrust) notifyGuardrailViolation(ctx context.Context) {
 	}
 }
 
-func (p *ToxicityNeuralTrust) defineRequestBody(body []byte) ([]byte, error) {
+func (p *NeuralTrustToxicity) defineRequestBody(body []byte) ([]byte, error) {
 	buf, ok := p.bufferPool.Get().(*bytes.Buffer)
 	if !ok {
 		return nil, fmt.Errorf("failed to get buffer from pool")
@@ -390,13 +390,13 @@ func (p *ToxicityNeuralTrust) defineRequestBody(body []byte) ([]byte, error) {
 	return result, nil
 }
 
-func (p *ToxicityNeuralTrust) returnDefaultBody(body []byte) ([]byte, error) {
+func (p *NeuralTrustToxicity) returnDefaultBody(body []byte) ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
 		"input": string(body),
 	})
 }
 
-func (p *ToxicityNeuralTrust) sendError(ch chan<- error, err error) {
+func (p *NeuralTrustToxicity) sendError(ch chan<- error, err error) {
 	if err == nil {
 		return
 	}

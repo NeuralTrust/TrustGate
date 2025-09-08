@@ -119,7 +119,7 @@ func main() {
 		Routers: []router.ServerRouter{proxyRouter},
 	}
 	if getServerType() == "proxy" {
-		err = container.RedisIndexCreator.CreateIndexes(ctx, common.NeuralTrustGuardRailIndexName)
+		err = container.RedisIndexCreator.CreateIndexes(ctx, common.NeuralTrustJailbreakIndexName)
 		if err != nil {
 			logger.WithError(err).Error("failed to create redis indexes")
 		}

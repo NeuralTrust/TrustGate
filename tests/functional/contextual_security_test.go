@@ -20,7 +20,7 @@ func TestContextualSecurityPlugin(t *testing.T) {
 		"subdomain": subdomain,
 		"required_plugins": []map[string]interface{}{
 			{
-				"name":     "neuraltrust_guardrail",
+				"name":     "neuraltrust_jailbreak",
 				"enabled":  true,
 				"priority": 1,
 				"stage":    "pre_request",
@@ -38,7 +38,7 @@ func TestContextualSecurityPlugin(t *testing.T) {
 				},
 			},
 			{
-				"name":     "toxicity_neuraltrust",
+				"name":     "neuraltrust_toxicity",
 				"enabled":  true,
 				"priority": 1,
 				"stage":    "pre_request",
