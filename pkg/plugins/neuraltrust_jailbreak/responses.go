@@ -1,4 +1,4 @@
-package neuraltrust_guardrail
+package neuraltrust_jailbreak
 
 type FirewallResponse struct {
 	Prompt  FirewallPrompt `json:"categories"`

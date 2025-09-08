@@ -1,4 +1,4 @@
-package toxicity_neuraltrust
+package neuraltrust_toxicity
 
 type Config struct {
 	Credentials      Credentials       `mapstructure:"credentials"`

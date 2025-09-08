@@ -16,7 +16,7 @@ import (
 func TestValidate_Success(t *testing.T) {
 
 	pluginMock := new(mocks.Plugin)
-	pluginMock.On("RequiredPlugins").Return([]string{"neuraltrust_guardrail"})
+	pluginMock.On("RequiredPlugins").Return([]string{"neuraltrust_jailbreak"})
 	pluginMock.On("Name").Return("context_security")
 	pluginMock.On("Stages").Return([]types.Stage{types.PreRequest})
 
@@ -37,7 +37,7 @@ func TestValidate_Success(t *testing.T) {
 			Settings: map[string]interface{}{},
 		},
 		{
-			Name:     "neuraltrust_guardrail",
+			Name:     "neuraltrust_jailbreak",
 			Enabled:  true,
 			Level:    types.Level("gateway"),
 			Stage:    types.PreRequest,
@@ -54,7 +54,7 @@ func TestValidate_Success(t *testing.T) {
 func TestValidate_MissingRequiredPlugin(t *testing.T) {
 
 	pluginMock := new(mocks.Plugin)
-	pluginMock.On("RequiredPlugins").Return([]string{"neuraltrust_guardrail"}).Once()
+	pluginMock.On("RequiredPlugins").Return([]string{"neuraltrust_jailbreak"}).Once()
 	pluginMock.On("Name").Return("context_security").Once()
 	pluginMock.On("Stages").Return([]types.Stage{types.PreRequest}).Once()
 
@@ -91,7 +91,7 @@ func TestValidate_MissingRequiredPlugin(t *testing.T) {
 func TestValidate_SuccessPluginInGateway(t *testing.T) {
 
 	pluginMock := new(mocks.Plugin)
-	pluginMock.On("RequiredPlugins").Return([]string{"neuraltrust_guardrail"}).Once()
+	pluginMock.On("RequiredPlugins").Return([]string{"neuraltrust_jailbreak"}).Once()
 	pluginMock.On("Name").Return("context_security").Once()
 	pluginMock.On("Stages").Return([]types.Stage{types.PreRequest}).Once()
 
@@ -105,7 +105,7 @@ func TestValidate_SuccessPluginInGateway(t *testing.T) {
 			ID: uuid.New(),
 			RequiredPlugins: []types.PluginConfig{
 				{
-					Name:     "neuraltrust_guardrail",
+					Name:     "neuraltrust_jailbreak",
 					Enabled:  true,
 					Level:    "gateway",
 					Stage:    types.PreRequest,
@@ -137,7 +137,7 @@ func TestValidate_SuccessPluginInGateway(t *testing.T) {
 func TestValidate_FailedPluginInChain_NotSameStage(t *testing.T) {
 
 	pluginMock := new(mocks.Plugin)
-	pluginMock.On("RequiredPlugins").Return([]string{"neuraltrust_guardrail"}).Once()
+	pluginMock.On("RequiredPlugins").Return([]string{"neuraltrust_jailbreak"}).Once()
 	pluginMock.On("Name").Return("context_security").Once()
 	pluginMock.On("Stages").Return([]types.Stage{types.PreRequest}).Once()
 
@@ -151,7 +151,7 @@ func TestValidate_FailedPluginInChain_NotSameStage(t *testing.T) {
 			ID: uuid.New(),
 			RequiredPlugins: []types.PluginConfig{
 				{
-					Name:     "neuraltrust_guardrail",
+					Name:     "neuraltrust_jailbreak",
 					Enabled:  true,
 					Level:    "gateway",
 					Stage:    types.PostResponse,

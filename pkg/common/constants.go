@@ -15,5 +15,5 @@ const (
 
 	SemanticStrategyName = "semantic"
 
-	NeuralTrustGuardRailIndexName = "neuraltrust_guardrail"
+	NeuralTrustJailbreakIndexName = "neuraltrust_jailbreak"
 )

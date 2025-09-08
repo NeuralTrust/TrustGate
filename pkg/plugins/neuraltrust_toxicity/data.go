@@ -1,4 +1,4 @@
-package toxicity_neuraltrust
+package neuraltrust_toxicity
 
 type ToxicityData struct {
 	ToxicityThreshold float64 `json:"toxicity_threshold"`

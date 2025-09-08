@@ -65,12 +65,12 @@ var PluginList = []PluginDefinition{
 		Label:         "Code Injection Protection",
 	},
 	{
-		UUID:          GeneratePluginUUID("neuraltrust_guardrail"),
-		Name:          "neuraltrust_guardrail",
-		Description:   "Applies NeuralTrust's guardrails to filter content",
+		UUID:          GeneratePluginUUID("neuraltrust_jailbreak"),
+		Name:          "neuraltrust_jailbreak",
+		Description:   "Applies NeuralTrust's jailbreak detection to filter content",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "content_security",
-		Label:         "Prompt Guard",
+		Label:         "Jailbreak Protection",
 	},
 	{
 		UUID:          GeneratePluginUUID("neuraltrust_moderation"),
@@ -81,8 +81,8 @@ var PluginList = []PluginDefinition{
 		Label:         "Prompt Moderation",
 	},
 	{
-		UUID:          GeneratePluginUUID("toxicity_neuraltrust"),
-		Name:          "toxicity_neuraltrust",
+		UUID:          GeneratePluginUUID("neuraltrust_toxicity"),
+		Name:          "neuraltrust_toxicity",
 		Description:   "Applies NeuralTrust's toxicity to filter content",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "content_security",

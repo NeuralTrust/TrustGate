@@ -330,7 +330,7 @@ func (p *NeuralTrustModerationPlugin) createEmbeddings(
 		return nil
 	}
 
-	total, err := p.embeddingRepo.Count(ctx, common.NeuralTrustGuardRailIndexName, gatewayID)
+	total, err := p.embeddingRepo.Count(ctx, common.NeuralTrustJailbreakIndexName, gatewayID)
 	if err != nil {
 		return fmt.Errorf("failed to count embeddings: %w", err)
 	}
@@ -382,7 +382,7 @@ func (p *NeuralTrustModerationPlugin) generateSampleEmbedding(
 
 	err = p.embeddingRepo.StoreWithHMSet(
 		ctx,
-		common.NeuralTrustGuardRailIndexName,
+		common.NeuralTrustJailbreakIndexName,
 		fmt.Sprintf(cacheKey, gatewayID, uuid.New().String()),
 		gatewayID,
 		embeddingData,
@@ -526,7 +526,7 @@ func (p *NeuralTrustModerationPlugin) callEmbeddingModeration(
 
 	query := fmt.Sprintf("@gateway_id:{%s}=>[KNN 5 @embedding $BLOB AS score]", p.hashGatewayID(gatewayID))
 
-	results, err := p.embeddingRepo.Search(ctx, common.NeuralTrustGuardRailIndexName, query, emb)
+	results, err := p.embeddingRepo.Search(ctx, common.NeuralTrustJailbreakIndexName, query, emb)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to search embeddings")
 		p.sendError(firewallErrors, err)

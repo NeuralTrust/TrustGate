@@ -1,4 +1,4 @@
-package neuraltrust_guardrail
+package neuraltrust_jailbreak
 
 import (
 	"bytes"
@@ -24,12 +24,12 @@ import (
 )
 
 const (
-	PluginName    = "neuraltrust_guardrail"
+	PluginName    = "neuraltrust_jailbreak"
 	jailbreakPath = "/v1/firewall"
 	jailbreakType = "jailbreak"
 )
 
-type NeuralTrustGuardrailPlugin struct {
+type NeuralTrustJailbreakPlugin struct {
 	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
@@ -60,7 +60,7 @@ type JailbreakParamBag struct {
 	Threshold float64 `mapstructure:"threshold"`
 }
 
-func NewNeuralTrustGuardrailPlugin(
+func NewNeuralTrustJailbreakPlugin(
 	logger *logrus.Logger,
 	client httpx.Client,
 	fingerPrintManager fingerprint.Tracker,
@@ -72,7 +72,7 @@ func NewNeuralTrustGuardrailPlugin(
 			},
 		}
 	}
-	return &NeuralTrustGuardrailPlugin{
+	return &NeuralTrustJailbreakPlugin{
 		client:             client,
 		logger:             logger,
 		fingerPrintManager: fingerPrintManager,
@@ -98,24 +98,24 @@ func NewNeuralTrustGuardrailPlugin(
 
 }
 
-func (p *NeuralTrustGuardrailPlugin) Name() string {
+func (p *NeuralTrustJailbreakPlugin) Name() string {
 	return PluginName
 }
 
-func (p *NeuralTrustGuardrailPlugin) RequiredPlugins() []string {
+func (p *NeuralTrustJailbreakPlugin) RequiredPlugins() []string {
 	var requiredPlugins []string
 	return requiredPlugins
 }
 
-func (p *NeuralTrustGuardrailPlugin) Stages() []types.Stage {
+func (p *NeuralTrustJailbreakPlugin) Stages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-func (p *NeuralTrustGuardrailPlugin) AllowedStages() []types.Stage {
+func (p *NeuralTrustJailbreakPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{types.PreRequest}
 }
 
-func (p *NeuralTrustGuardrailPlugin) ValidateConfig(config types.PluginConfig) error {
+func (p *NeuralTrustJailbreakPlugin) ValidateConfig(config types.PluginConfig) error {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
 		return fmt.Errorf("failed to decode config: %w", err)
@@ -133,7 +133,7 @@ func (p *NeuralTrustGuardrailPlugin) ValidateConfig(config types.PluginConfig) e
 	return nil
 }
 
-func (p *NeuralTrustGuardrailPlugin) Execute(
+func (p *NeuralTrustJailbreakPlugin) Execute(
 	ctx context.Context,
 	cfg types.PluginConfig,
 	req *types.RequestContext,
@@ -186,8 +186,8 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 		requests = append(requests, *tr)
 	}
 
-	evt := &NeuralTrustGuardrailData{
-		Scores: &GuardrailScores{},
+	evt := &NeuralTrustJailbreakData{
+		Scores: &JailbreakScores{},
 	}
 
 	if p.config.JailbreakParamBag != nil {
@@ -243,14 +243,14 @@ func (p *NeuralTrustGuardrailPlugin) Execute(
 	}, nil
 }
 
-func (p *NeuralTrustGuardrailPlugin) notifyGuardrailViolation(ctx context.Context) {
+func (p *NeuralTrustJailbreakPlugin) notifyGuardrailViolation(ctx context.Context) {
 	fp, ok := ctx.Value(common.FingerprintIdContextKey).(string)
 	if !ok {
 		return
 	}
 	storedFp, err := p.fingerPrintManager.GetFingerprint(ctx, fp)
 	if err != nil {
-		p.logger.WithError(err).Error("failed to get fingerprint (neuraltrust_guardrail)")
+		p.logger.WithError(err).Error("failed to get fingerprint (neuraltrust_jailbreak)")
 		return
 	}
 	if storedFp != nil {
@@ -267,12 +267,12 @@ func (p *NeuralTrustGuardrailPlugin) notifyGuardrailViolation(ctx context.Contex
 	}
 }
 
-func (p *NeuralTrustGuardrailPlugin) callFirewall(
+func (p *NeuralTrustJailbreakPlugin) callFirewall(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	taggedRequest TaggedRequest,
 	firewallErrors chan<- error,
-	evt *NeuralTrustGuardrailData,
+	evt *NeuralTrustJailbreakData,
 ) {
 	defer wg.Done()
 
@@ -329,7 +329,7 @@ func (p *NeuralTrustGuardrailPlugin) callFirewall(
 	}
 }
 
-func (p *NeuralTrustGuardrailPlugin) defineRequestBody(body []byte) ([]byte, error) {
+func (p *NeuralTrustJailbreakPlugin) defineRequestBody(body []byte) ([]byte, error) {
 	buf, ok := p.bufferPool.Get().(*bytes.Buffer)
 	if !ok {
 		return nil, fmt.Errorf("failed to get buffer from pool")
@@ -382,13 +382,13 @@ func (p *NeuralTrustGuardrailPlugin) defineRequestBody(body []byte) ([]byte, err
 	return result, nil
 }
 
-func (p *NeuralTrustGuardrailPlugin) returnDefaultBody(body []byte) ([]byte, error) {
+func (p *NeuralTrustJailbreakPlugin) returnDefaultBody(body []byte) ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
 		"input": string(body),
 	})
 }
 
-func (p *NeuralTrustGuardrailPlugin) sendError(ch chan<- error, err error) {
+func (p *NeuralTrustJailbreakPlugin) sendError(ch chan<- error, err error) {
 	if err == nil {
 		return
 	}

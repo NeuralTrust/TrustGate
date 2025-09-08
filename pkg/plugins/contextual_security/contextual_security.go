@@ -9,7 +9,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_guardrail"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_jailbreak"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
@@ -84,7 +84,7 @@ func (p *ContextualSecurityPlugin) AllowedStages() []types.Stage {
 
 func (p *ContextualSecurityPlugin) RequiredPlugins() []string {
 	return []string{
-		neuraltrust_guardrail.PluginName,
+		neuraltrust_jailbreak.PluginName,
 	}
 }
 

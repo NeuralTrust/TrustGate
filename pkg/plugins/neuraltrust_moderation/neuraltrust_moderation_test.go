@@ -249,9 +249,9 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationSafe(t *testing.T) {
 			Value:     []float64{0.1, 0.2, 0.3},
 			CreatedAt: time.Now(),
 		}, nil)
-	embeddingRepositoryMock.On("Count", mock.Anything, common.NeuralTrustGuardRailIndexName, mock.Anything).
+	embeddingRepositoryMock.On("Count", mock.Anything, common.NeuralTrustJailbreakIndexName, mock.Anything).
 		Return(0, nil)
-	embeddingRepositoryMock.On("Search", mock.Anything, common.NeuralTrustGuardRailIndexName, mock.Anything, mock.Anything).
+	embeddingRepositoryMock.On("Search", mock.Anything, common.NeuralTrustJailbreakIndexName, mock.Anything, mock.Anything).
 		Return([]embedding.SearchResult{}, nil)
 	embeddingRepositoryMock.On("StoreWithHMSet", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil)
@@ -312,9 +312,9 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationUnsafe(t *testing.T) {
 			Value:     []float64{0.1, 0.2, 0.3},
 			CreatedAt: time.Now(),
 		}, nil)
-	embeddingRepositoryMock.On("Count", mock.Anything, common.NeuralTrustGuardRailIndexName, mock.Anything).
+	embeddingRepositoryMock.On("Count", mock.Anything, common.NeuralTrustJailbreakIndexName, mock.Anything).
 		Return(0, nil)
-	embeddingRepositoryMock.On("Search", mock.Anything, common.NeuralTrustGuardRailIndexName, mock.Anything, mock.Anything).
+	embeddingRepositoryMock.On("Search", mock.Anything, common.NeuralTrustJailbreakIndexName, mock.Anything, mock.Anything).
 		Return([]embedding.SearchResult{
 			{
 				Key:   "deny-sample-1",
@@ -377,7 +377,7 @@ func TestNeuralTrustModerationPlugin_Execute_EmbeddingError(t *testing.T) {
 	embeddingLocatorMock.On("GetService", "openai").Return(embeddingCreatorMock, nil)
 	embeddingCreatorMock.On("Generate", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, assert.AnError)
-	embeddingRepositoryMock.On("Count", mock.Anything, common.NeuralTrustGuardRailIndexName, mock.Anything).
+	embeddingRepositoryMock.On("Count", mock.Anything, common.NeuralTrustJailbreakIndexName, mock.Anything).
 		Return(0, nil)
 	embeddingRepositoryMock.On("StoreWithHMSet", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil)

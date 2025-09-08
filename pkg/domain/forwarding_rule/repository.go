@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
+//go:generate mockery --name=Repository --dir=. --output=./mocks --filename=rule_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
 	GetRule(ctx context.Context, id uuid.UUID, gatewayID uuid.UUID) (*ForwardingRule, error)
 	GetRuleByID(ctx context.Context, id uuid.UUID) (*ForwardingRule, error)

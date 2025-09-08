@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-//go:generate mockery --name=Repository --dir=. --output=../../../mocks --filename=gateway_repository_mock.go --case=underscore --with-expecter
+//go:generate mockery --name=Repository --dir=. --output=./mocks --filename=gateway_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
 	Save(ctx context.Context, gateway *Gateway) error
 	Get(ctx context.Context, id uuid.UUID) (*Gateway, error)

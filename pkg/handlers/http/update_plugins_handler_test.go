@@ -2,17 +2,18 @@ package http
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	chainValidatorMocks "github.com/NeuralTrust/TrustGate/pkg/app/plugin/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	ruleMocks "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule/mocks"
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	gatewayMocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	publisherMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -22,128 +23,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Mock implementations
-type mockGatewayRepo struct {
-	mock.Mock
-}
-
-func (m *mockGatewayRepo) Save(ctx context.Context, gateway *domainGateway.Gateway) error {
-	args := m.Called(ctx, gateway)
-	return args.Error(0)
-}
-
-func (m *mockGatewayRepo) Get(ctx context.Context, id uuid.UUID) (*domainGateway.Gateway, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	gateway, ok := args.Get(0).(*domainGateway.Gateway)
-	if !ok {
-		return nil, args.Error(1)
-	}
-	return gateway, args.Error(1)
-}
-
-func (m *mockGatewayRepo) List(ctx context.Context, offset, limit int) ([]domainGateway.Gateway, error) {
-	args := m.Called(ctx, offset, limit)
-	gateways, ok := args.Get(0).([]domainGateway.Gateway)
-	if !ok {
-		return nil, args.Error(1)
-	}
-	return gateways, args.Error(1)
-}
-
-func (m *mockGatewayRepo) Update(ctx context.Context, gateway *domainGateway.Gateway) error {
-	args := m.Called(ctx, gateway)
-	return args.Error(0)
-}
-
-func (m *mockGatewayRepo) Delete(id uuid.UUID) error {
-	args := m.Called(id)
-	return args.Error(0)
-}
-
-type mockRuleRepo struct {
-	mock.Mock
-}
-
-func (m *mockRuleRepo) GetRule(ctx context.Context, id uuid.UUID, gatewayID uuid.UUID) (*forwarding_rule.ForwardingRule, error) {
-	args := m.Called(ctx, id, gatewayID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	rule, ok := args.Get(0).(*forwarding_rule.ForwardingRule)
-	if !ok {
-		return nil, args.Error(1)
-	}
-	return rule, args.Error(1)
-}
-
-func (m *mockRuleRepo) GetRuleByID(ctx context.Context, id uuid.UUID) (*forwarding_rule.ForwardingRule, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	rule, ok := args.Get(0).(*forwarding_rule.ForwardingRule)
-	if !ok {
-		return nil, args.Error(1)
-	}
-	return rule, args.Error(1)
-}
-
-func (m *mockRuleRepo) Create(ctx context.Context, rule *forwarding_rule.ForwardingRule) error {
-	args := m.Called(ctx, rule)
-	return args.Error(0)
-}
-
-func (m *mockRuleRepo) ListRules(ctx context.Context, gatewayID uuid.UUID) ([]forwarding_rule.ForwardingRule, error) {
-	args := m.Called(ctx, gatewayID)
-	rules, ok := args.Get(0).([]forwarding_rule.ForwardingRule)
-	if !ok {
-		return nil, args.Error(1)
-	}
-	return rules, args.Error(1)
-}
-
-func (m *mockRuleRepo) Update(ctx context.Context, rule *forwarding_rule.ForwardingRule) error {
-	args := m.Called(ctx, rule)
-	return args.Error(0)
-}
-
-func (m *mockRuleRepo) Delete(ctx context.Context, id, gatewayID uuid.UUID) error {
-	args := m.Called(ctx, id, gatewayID)
-	return args.Error(0)
-}
-
-func (m *mockRuleRepo) UpdateRulesCache(ctx context.Context, gatewayID uuid.UUID, rules []forwarding_rule.ForwardingRule) error {
-	args := m.Called(ctx, gatewayID, rules)
-	return args.Error(0)
-}
-
-type mockPluginChainValidator struct {
-	mock.Mock
-}
-
-func (m *mockPluginChainValidator) Validate(ctx context.Context, gatewayID uuid.UUID, plugins []types.PluginConfig) error {
-	args := m.Called(ctx, gatewayID, plugins)
-	return args.Error(0)
-}
-
-type mockEventPublisher struct {
-	mock.Mock
-}
-
-func (m *mockEventPublisher) Publish(ctx context.Context, ch channel.Channel, ev event.Event) error {
-	args := m.Called(ctx, ch, ev)
-	return args.Error(0)
-}
-
 func TestUpdatePluginsHandler_Operations(t *testing.T) {
 	logger := logrus.New()
-	gatewayRepo := new(mockGatewayRepo)
-	ruleRepo := new(mockRuleRepo)
-	validator := new(mockPluginChainValidator)
-	publisher := new(mockEventPublisher)
+	gatewayRepo := new(gatewayMocks.Repository)
+	ruleRepo := new(ruleMocks.Repository)
+	validator := new(chainValidatorMocks.ValidatePluginChain)
+	publisher := new(publisherMocks.EventPublisher)
 
 	handler := NewUpdatePluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
 
