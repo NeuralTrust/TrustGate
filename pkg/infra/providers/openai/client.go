@@ -237,7 +237,10 @@ func (c *client) handleResponsesStreamAPI(
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var preview bytes.Buffer
-		_, _ = io.CopyN(&preview, resp.Body, 64*1024)
+		_, err = io.CopyN(&preview, resp.Body, 64*1024)
+		if err != nil {
+			return err
+		}
 		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, preview.String())
 	}
 
