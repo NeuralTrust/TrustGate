@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"google.golang.org/genai"
 )
 
@@ -203,7 +204,7 @@ func (c *client) Completions(
 }
 
 func (c *client) CompletionsStream(
-	ctx context.Context,
+	reqCtx *types.RequestContext,
 	config *providers.Config,
 	reqBody []byte,
 	streamChan chan []byte,
@@ -212,7 +213,7 @@ func (c *client) CompletionsStream(
 	if config.Credentials.ApiKey == "" {
 		return fmt.Errorf("API key is required")
 	}
-	genaiClient, err := c.getOrCreateClient(ctx, config.Credentials.ApiKey)
+	genaiClient, err := c.getOrCreateClient(reqCtx.C.Context(), config.Credentials.ApiKey)
 	if err != nil {
 		return fmt.Errorf("failed to create Gemini client: %w", err)
 	}
@@ -222,13 +223,16 @@ func (c *client) CompletionsStream(
 		return err
 	}
 
-	stream := genaiClient.Models.GenerateContentStream(ctx, req.Model, genai.Text(userContent), contentConfig)
-
+	stream := genaiClient.Models.GenerateContentStream(reqCtx.C.Context(), req.Model, genai.Text(userContent), contentConfig)
+	times := 0
 	for obj, err := range stream {
 		if err != nil {
 			return fmt.Errorf("failed to stream: %w", err)
+		} else {
+			if times == 0 {
+				close(breakChan)
+			}
 		}
-		close(breakChan)
 		if obj == nil {
 			continue
 		}
@@ -245,6 +249,7 @@ func (c *client) CompletionsStream(
 		}
 
 		streamChan <- b
+		times++
 	}
 
 	return nil

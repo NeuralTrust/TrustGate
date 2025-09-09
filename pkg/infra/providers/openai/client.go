@@ -1,15 +1,20 @@
 package openai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/mitchellh/mapstructure"
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
@@ -17,9 +22,10 @@ import (
 )
 
 const (
-	CompletionsAPI = "completions"
-	ResponsesAPI   = "responses"
-	responsesURL   = "https://api.openai.com/v1/responses"
+	httpClientTimeout = 120
+	CompletionsAPI    = "completions"
+	ResponsesAPI      = "responses"
+	responsesURL      = "https://api.openai.com/v1/responses"
 )
 
 type openaiStreamRequest struct {
@@ -140,7 +146,7 @@ func (c *client) Completions(
 }
 
 func (c *client) CompletionsStream(
-	ctx context.Context,
+	req *types.RequestContext,
 	config *providers.Config,
 	reqBody []byte,
 	streamChan chan []byte,
@@ -161,16 +167,16 @@ func (c *client) CompletionsStream(
 
 	switch options.API {
 	case ResponsesAPI:
-		return c.handleResponsesStreamAPI(ctx, config, reqBody, streamChan, breakChan)
+		return c.handleResponsesStreamAPI(req, config, reqBody, streamChan, breakChan)
 	case CompletionsAPI:
 		fallthrough
 	default:
-		return c.handleCompletionsStreamAPI(ctx, config, reqBody, streamChan, breakChan)
+		return c.handleCompletionsStreamAPI(req, config, reqBody, streamChan, breakChan)
 	}
 }
 
 func (c *client) handleCompletionsStreamAPI(
-	ctx context.Context,
+	req *types.RequestContext,
 	config *providers.Config,
 	reqBody []byte,
 	streamChan chan []byte,
@@ -181,7 +187,7 @@ func (c *client) handleCompletionsStreamAPI(
 	if err != nil {
 		return err
 	}
-	respStream := openaiClient.Chat.Completions.NewStreaming(ctx, params)
+	respStream := openaiClient.Chat.Completions.NewStreaming(req.C.Context(), params)
 	defer respStream.Close()
 	if err := respStream.Err(); err != nil {
 		return err
@@ -208,7 +214,7 @@ func (c *client) handleCompletionsStreamAPI(
 }
 
 func (c *client) handleResponsesStreamAPI(
-	ctx context.Context,
+	req *types.RequestContext,
 	config *providers.Config,
 	reqBody []byte,
 	streamChan chan []byte,
@@ -216,7 +222,7 @@ func (c *client) handleResponsesStreamAPI(
 ) error {
 	httpClient := c.getOrCreateHTTPClient()
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", responsesURL, bytes.NewBuffer(reqBody))
+	httpReq, err := http.NewRequestWithContext(req.C.Context(), http.MethodPost, responsesURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request: %w", err)
 	}
@@ -227,19 +233,63 @@ func (c *client) handleResponsesStreamAPI(
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
-	close(breakChan)
 	defer resp.Body.Close()
 
-	var responseBody bytes.Buffer
-	if _, err := responseBody.ReadFrom(resp.Body); err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
-	}
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, responseBody.String())
+		var preview bytes.Buffer
+		_, _ = io.CopyN(&preview, resp.Body, 64*1024)
+		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, preview.String())
 	}
 
-	streamChan <- responseBody.Bytes()
+	for key, values := range resp.Header {
+		for _, v := range values {
+			req.C.Set(key, v)
+		}
+	}
+
+	select {
+	case <-req.C.Context().Done():
+		return req.C.Context().Err()
+	case <-time.After(0):
+	}
+	close(breakChan)
+
+	return c.streamSSE(req.C.Context(), resp.Body, streamChan)
+}
+
+func (c *client) streamSSE(ctx context.Context, r io.Reader, out chan []byte) error {
+	sc := bufio.NewScanner(r)
+	buf := make([]byte, 0, 512*1024)
+	sc.Buffer(buf, 2*1024*1024)
+
+	for sc.Scan() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		line := sc.Text()
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+
+		if data == "[DONE]" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case out <- []byte(line):
+		}
+	}
+
+	if err := sc.Err(); err != nil {
+		if errors.Is(err, io.EOF) ||
+			strings.Contains(strings.ToLower(err.Error()), "use of closed network connection") ||
+			strings.Contains(strings.ToLower(err.Error()), "connection reset by peer") {
+			return nil
+		}
+		return fmt.Errorf("sse scanner error: %w", err)
+	}
 	return nil
 }
 
@@ -358,21 +408,21 @@ func (c *client) getOrCreateHTTPClient() *http.Client {
 			return v2, nil
 		}
 		httpClient := &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: httpClientTimeout * time.Second,
 		}
 		c.httpClientPool.Store(clientKey, httpClient)
 		return httpClient, nil
 	})
 	if err != nil {
 		return &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: httpClientTimeout * time.Second,
 		}
 	}
 	if client, ok := v.(*http.Client); ok {
 		return client
 	}
 	return &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout: httpClientTimeout * time.Second,
 	}
 }
 

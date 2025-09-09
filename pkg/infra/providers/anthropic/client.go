@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	pkgTypes "github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
@@ -137,7 +138,7 @@ func (c *client) Completions(
 }
 
 func (c *client) CompletionsStream(
-	ctx context.Context,
+	reqCtx *pkgTypes.RequestContext,
 	config *providers.Config,
 	reqBody []byte,
 	streamChan chan []byte,
@@ -153,7 +154,7 @@ func (c *client) CompletionsStream(
 		return err
 	}
 
-	stream := providerClient.Messages.NewStreaming(ctx, params)
+	stream := providerClient.Messages.NewStreaming(reqCtx.C.Context(), params)
 	defer stream.Close()
 
 	if err := stream.Err(); err != nil {

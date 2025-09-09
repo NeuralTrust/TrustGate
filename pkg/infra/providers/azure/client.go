@@ -13,6 +13,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	pkgTypes "github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
 type azureMessage struct {
@@ -224,7 +225,7 @@ func (c *client) Ask(
 }
 
 func (c *client) CompletionsStream(
-	ctx context.Context,
+	reqCtx *pkgTypes.RequestContext,
 	config *providers.Config,
 	reqBody []byte,
 	streamChan chan []byte,

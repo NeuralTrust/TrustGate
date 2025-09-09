@@ -10,6 +10,7 @@ import (
 
 	bedrockClient "github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	pkgTypes "github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -129,7 +130,7 @@ func (c *client) Completions(
 }
 
 func (c *client) CompletionsStream(
-	ctx context.Context,
+	reqCtx *pkgTypes.RequestContext,
 	config *providers.Config,
 	reqBody []byte,
 	streamChan chan []byte,
@@ -142,7 +143,7 @@ func (c *client) CompletionsStream(
 		config.Model = config.DefaultModel
 	}
 
-	bedrockCl, err := c.getOrCreateClient(ctx, config.Credentials)
+	bedrockCl, err := c.getOrCreateClient(reqCtx.C.Context(), config.Credentials)
 	if err != nil {
 		return fmt.Errorf("failed to create Bedrock client: %w", err)
 	}
@@ -152,13 +153,12 @@ func (c *client) CompletionsStream(
 		return fmt.Errorf("failed to prepare request: %w", err)
 	}
 
-	resp, err := bedrockCl.InvokeModelWithResponseStream(ctx, &bedrockruntime.InvokeModelWithResponseStreamInput{
+	resp, err := bedrockCl.InvokeModelWithResponseStream(reqCtx.C.Context(), &bedrockruntime.InvokeModelWithResponseStreamInput{
 		ModelId:     aws.String(config.Model),
 		ContentType: aws.String("application/json"),
 		Body:        mappedBody,
 	})
 	if err != nil {
-		streamChan <- []byte(fmt.Sprintf(`{"error": "invoke error: %s"}`, err.Error()))
 		return err
 	}
 	close(breakChan)

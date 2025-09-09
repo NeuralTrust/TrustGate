@@ -900,10 +900,16 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 	errChan := make(chan error, 1)
 	breakChan := make(chan struct{}, 1)
 
+	req.C.Set("Content-Type", "text/event-stream")
+	req.C.Set("Cache-Control", "no-cache")
+	req.C.Set("Connection", "keep-alive")
+	req.C.Set("X-Accel-Buffering", "no")
+	req.C.Set("X-Selected-Provider", target.Provider)
+
 	go func() {
 		defer close(streamChan)
 		err := providerClient.CompletionsStream(
-			req.C.Context(),
+			req,
 			&providers.Config{
 				Options:       target.ProviderOptions,
 				AllowedModels: target.Models,
@@ -944,12 +950,6 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 	case <-time.After(30 * time.Second):
 		break
 	}
-
-	req.C.Set("Content-Type", "text/event-stream")
-	req.C.Set("Cache-Control", "no-cache")
-	req.C.Set("Connection", "keep-alive")
-	req.C.Set("X-Accel-Buffering", "no")
-	req.C.Set("X-Selected-Provider", target.Provider)
 
 	req.C.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer close(streamResponse)
@@ -1015,8 +1015,12 @@ func (h *forwardedHandler) handleStreamingResponse(
 	}
 
 	responseHeaders := make(map[string][]string)
-	for k, v := range resp.Header {
-		responseHeaders[k] = v
+
+	for key, values := range resp.Header {
+		responseHeaders[key] = values
+		for _, v := range values {
+			req.C.Set(key, v)
+		}
 	}
 
 	if rateLimitHeaders, ok := req.Metadata["rate_limit_headers"].(map[string][]string); ok {

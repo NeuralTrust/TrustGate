@@ -2,6 +2,8 @@ package providers
 
 import (
 	"context"
+
+	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
 type Config struct {
@@ -42,7 +44,7 @@ type Azure struct {
 type Client interface {
 	Ask(ctx context.Context, config *Config, prompt string) (*CompletionResponse, error)
 	CompletionsStream(
-		ctx context.Context,
+		req *types.RequestContext,
 		config *Config,
 		reqBody []byte,
 		streamChan chan []byte,
