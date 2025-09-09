@@ -475,11 +475,13 @@ func TestCreateUpstream(t *testing.T) {
 			"algorithm": "round-robin",
 			"targets": []map[string]interface{}{
 				{
-					"host":     "api.openai.com",
-					"port":     443,
-					"protocol": "https",
-					"weight":   1,
-					"provider": "openai",
+					"credentials": map[string]interface{}{
+						"api_key": "SK8765678",
+					},
+					"default_model": "gpt-4o-mini",
+					"models":        []string{"gpt-4", "gpt-4o-mini"},
+					"weight":        1,
+					"provider":      "openai",
 					"provider_options": map[string]interface{}{
 						"api": "responses",
 					},
