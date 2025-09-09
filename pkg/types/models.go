@@ -141,21 +141,22 @@ type EmbeddingConfig struct {
 }
 
 type UpstreamTarget struct {
-	ID           string            `json:"id"`
-	Weight       int               `json:"weight"`
-	Host         string            `json:"host"`
-	Port         int               `json:"port"`
-	Protocol     string            `json:"protocol"`
-	Provider     string            `json:"provider"`
-	Models       []string          `json:"models"`
-	DefaultModel string            `json:"default_model"`
-	Description  string            `json:"description"`
-	Credentials  Credentials       `json:"credentials"`
-	Headers      map[string]string `json:"headers"`
-	Path         string            `json:"path"`
-	Health       *HealthStatus     `json:"health,omitempty"`
-	Stream       bool              `json:"stream"`
-	InsecureSSL  bool              `json:"insecure_ssl,omitempty"`
+	ID              string            `json:"id"`
+	Weight          int               `json:"weight"`
+	Host            string            `json:"host"`
+	Port            int               `json:"port"`
+	Protocol        string            `json:"protocol"`
+	Provider        string            `json:"provider"`
+	ProviderOptions map[string]any    `json:"provider_options"`
+	Models          []string          `json:"models"`
+	DefaultModel    string            `json:"default_model"`
+	Description     string            `json:"description"`
+	Credentials     Credentials       `json:"credentials"`
+	Headers         map[string]string `json:"headers"`
+	Path            string            `json:"path"`
+	Health          *HealthStatus     `json:"health,omitempty"`
+	Stream          bool              `json:"stream"`
+	InsecureSSL     bool              `json:"insecure_ssl,omitempty"`
 }
 
 type Credentials struct {

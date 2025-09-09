@@ -1,14 +1,25 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
+	"github.com/mitchellh/mapstructure"
+	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/option"
+	"golang.org/x/sync/singleflight"
+)
+
+const (
+	CompletionsAPI = "completions"
+	ResponsesAPI   = "responses"
+	responsesURL   = "https://api.openai.com/v1/responses"
 )
 
 type openaiStreamRequest struct {
@@ -19,13 +30,20 @@ type openaiStreamRequest struct {
 	System      string                         `json:"system"`
 }
 
+type openaiOptions struct {
+	API string `json:"api"`
+}
+
 type client struct {
-	clientPool *sync.Map
+	clientPool     *sync.Map
+	httpClientPool *sync.Map
+	sf             singleflight.Group
 }
 
 func NewOpenaiClient() providers.Client {
 	return &client{
-		clientPool: &sync.Map{},
+		clientPool:     &sync.Map{},
+		httpClientPool: &sync.Map{},
 	}
 }
 
@@ -96,22 +114,29 @@ func (c *client) Completions(
 	config *providers.Config,
 	reqBody []byte,
 ) ([]byte, error) {
+	var options openaiOptions
+	if len(config.Options) > 0 {
+		err := mapstructure.Decode(config.Options, &options)
+		if err != nil {
+			options = openaiOptions{API: CompletionsAPI}
+		}
+	} else {
+		options = openaiOptions{API: CompletionsAPI}
+	}
+
 	if config.Credentials.ApiKey == "" {
 		return nil, fmt.Errorf("API key is required")
 	}
 	openaiClient := c.getOrCreateClient(config.Credentials.ApiKey)
-	params, err := c.generateParams(reqBody, config)
-	if err != nil {
-		return nil, err
+
+	switch options.API {
+	case CompletionsAPI:
+		return c.handleCompletionsAPI(ctx, openaiClient, reqBody, config)
+	case ResponsesAPI:
+		return c.handleResponsesAPI(ctx, reqBody, config)
+	default:
+		return nil, fmt.Errorf("unsupported API type: %s", options.API)
 	}
-	resp, err := openaiClient.Chat.Completions.New(ctx, params)
-	if err != nil {
-		return nil, fmt.Errorf("openAI request failed: %w", err)
-	}
-	if len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("no completions returned")
-	}
-	return []byte(resp.RawJSON()), nil
 }
 
 func (c *client) CompletionsStream(
@@ -197,17 +222,138 @@ func (c *client) generateParams(reqBody []byte, config *providers.Config) (opena
 	return params, nil
 }
 
-func (c *client) getOrCreateClient(apiKey string) openai.Client {
-	if clientVal, ok := c.clientPool.Load(apiKey); ok {
-		client, ok := clientVal.(openai.Client)
-		if !ok {
-			// If type assertion fails, create a new client
-			client = openai.NewClient(option.WithAPIKey(apiKey))
-			c.clientPool.Store(apiKey, client)
+func (c *client) handleCompletionsAPI(
+	ctx context.Context,
+	openaiClient *openai.Client,
+	reqBody []byte,
+	config *providers.Config,
+) ([]byte, error) {
+	params, err := c.generateParams(reqBody, config)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := openaiClient.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("openAI completions request failed: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("no completions returned")
+	}
+	return []byte(resp.RawJSON()), nil
+}
+
+func (c *client) handleResponsesAPI(
+	ctx context.Context,
+	reqBody []byte,
+	config *providers.Config,
+) ([]byte, error) {
+	httpClient := c.getOrCreateHTTPClient()
+	responseBody, err := c.callResponsesAPI(
+		ctx,
+		httpClient,
+		config.Credentials.ApiKey,
+		reqBody,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("openAI responses request failed: %w", err)
+	}
+	return responseBody, nil
+}
+
+func (c *client) getOrCreateClient(apiKey string) *openai.Client {
+	if v, ok := c.clientPool.Load(apiKey); ok {
+		if client, ok := v.(*openai.Client); ok {
+			return client
 		}
+	}
+	v, err, _ := c.sf.Do(apiKey, func() (any, error) {
+		if v2, ok := c.clientPool.Load(apiKey); ok {
+			return v2, nil
+		}
+		cli := openai.NewClient(option.WithAPIKey(apiKey))
+		c.clientPool.Store(apiKey, &cli)
+		return &cli, nil
+	})
+	if err != nil {
+		cli := openai.NewClient(option.WithAPIKey(apiKey))
+		return &cli
+	}
+	if client, ok := v.(*openai.Client); ok {
 		return client
 	}
-	newClient := openai.NewClient(option.WithAPIKey(apiKey))
-	c.clientPool.Store(apiKey, newClient)
-	return newClient
+	cli := openai.NewClient(option.WithAPIKey(apiKey))
+	return &cli
+}
+
+func (c *client) getOrCreateHTTPClient() *http.Client {
+	const clientKey = "default"
+	if v, ok := c.httpClientPool.Load(clientKey); ok {
+		if client, ok := v.(*http.Client); ok {
+			return client
+		}
+	}
+	v, err, _ := c.sf.Do(clientKey, func() (any, error) {
+		if v2, ok := c.httpClientPool.Load(clientKey); ok {
+			return v2, nil
+		}
+		httpClient := &http.Client{
+			Timeout: 60 * time.Second,
+		}
+		c.httpClientPool.Store(clientKey, httpClient)
+		return httpClient, nil
+	})
+	if err != nil {
+		// Fallback: create a new client if singleflight fails
+		return &http.Client{
+			Timeout: 60 * time.Second,
+		}
+	}
+	if client, ok := v.(*http.Client); ok {
+		return client
+	}
+	// Fallback: create a new client if type assertion fails
+	return &http.Client{
+		Timeout: 60 * time.Second,
+	}
+}
+
+func (c *client) callResponsesAPI(
+	ctx context.Context,
+	httpClient *http.Client,
+	apiKey string,
+	req []byte,
+) ([]byte, error) {
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(
+		ctx,
+		"POST",
+		responsesURL,
+		bytes.NewBuffer(reqBody),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var responseBody bytes.Buffer
+	if _, err := responseBody.ReadFrom(resp.Body); err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, responseBody.String())
+	}
+
+	return responseBody.Bytes(), nil
 }

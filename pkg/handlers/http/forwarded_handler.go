@@ -670,6 +670,7 @@ func (h *forwardedHandler) handlerProviderResponse(
 	responseBody, err := providerClient.Completions(
 		req.C.Context(),
 		&providers.Config{
+			Options:       target.ProviderOptions,
 			AllowedModels: target.Models,
 			DefaultModel:  target.DefaultModel,
 			Credentials: providers.Credentials{
