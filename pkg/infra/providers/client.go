@@ -41,7 +41,13 @@ type Azure struct {
 
 type Client interface {
 	Ask(ctx context.Context, config *Config, prompt string) (*CompletionResponse, error)
-	CompletionsStream(ctx context.Context, config *Config, streamChan chan []byte, reqBody []byte) error
+	CompletionsStream(
+		ctx context.Context,
+		config *Config,
+		reqBody []byte,
+		streamChan chan []byte,
+		breakChan chan struct{},
+	) error
 	Completions(
 		ctx context.Context,
 		config *Config,

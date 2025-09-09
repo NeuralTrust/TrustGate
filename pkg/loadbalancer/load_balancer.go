@@ -60,21 +60,22 @@ func NewLoadBalancer(
 			logger.WithError(err).Warn("Failed to marshal health status for cache")
 		}
 		targets[i] = types.UpstreamTarget{
-			ID:           t.ID,
-			Weight:       t.Weight,
-			Host:         t.Host,
-			Port:         t.Port,
-			Protocol:     t.Protocol,
-			Provider:     t.Provider,
-			Models:       t.Models,
-			DefaultModel: t.DefaultModel,
-			Description:  t.Description,
-			Credentials:  credentials,
-			Headers:      t.Headers,
-			Path:         t.Path,
-			Health:       healthStatus,
-			Stream:       t.Stream,
-			InsecureSSL:  t.InsecureSSL,
+			ID:              t.ID,
+			Weight:          t.Weight,
+			Host:            t.Host,
+			Port:            t.Port,
+			Protocol:        t.Protocol,
+			Provider:        t.Provider,
+			ProviderOptions: t.ProviderOptions,
+			Models:          t.Models,
+			DefaultModel:    t.DefaultModel,
+			Description:     t.Description,
+			Credentials:     credentials,
+			Headers:         t.Headers,
+			Path:            t.Path,
+			Health:          healthStatus,
+			Stream:          t.Stream,
+			InsecureSSL:     t.InsecureSSL,
 		}
 	}
 	if upstream.EmbeddingConfig != nil {

@@ -136,7 +136,13 @@ func (c *client) Completions(
 	return []byte(message.RawJSON()), nil
 }
 
-func (c *client) CompletionsStream(ctx context.Context, config *providers.Config, streamChan chan []byte, reqBody []byte) error {
+func (c *client) CompletionsStream(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+	streamChan chan []byte,
+	breakChan chan struct{},
+) error {
 	if config.Credentials.ApiKey == "" {
 		return fmt.Errorf("API key is required")
 	}
@@ -150,6 +156,10 @@ func (c *client) CompletionsStream(ctx context.Context, config *providers.Config
 	stream := providerClient.Messages.NewStreaming(ctx, params)
 	defer stream.Close()
 
+	if err := stream.Err(); err != nil {
+		return fmt.Errorf("streaming error: %w", err)
+	}
+	close(breakChan)
 	for stream.Next() {
 		event := stream.Current()
 		if event.Type == "content_block_delta" && event.Delta.Type == "text_delta" {
@@ -163,10 +173,6 @@ func (c *client) CompletionsStream(ctx context.Context, config *providers.Config
 				streamChan <- b
 			}
 		}
-	}
-
-	if err := stream.Err(); err != nil {
-		return fmt.Errorf("streaming error: %w", err)
 	}
 
 	return nil

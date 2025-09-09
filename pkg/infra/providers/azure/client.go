@@ -226,8 +226,10 @@ func (c *client) Ask(
 func (c *client) CompletionsStream(
 	ctx context.Context,
 	config *providers.Config,
-	streamChan chan []byte,
 	reqBody []byte,
+	streamChan chan []byte,
+	breakChan chan struct{},
+
 ) error {
 	return nil
 }

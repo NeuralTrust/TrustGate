@@ -898,12 +898,14 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 
 	streamChan := make(chan []byte)
 	errChan := make(chan error, 1)
+	breakChan := make(chan struct{}, 1)
 
 	go func() {
 		defer close(streamChan)
 		err := providerClient.CompletionsStream(
 			req.C.Context(),
 			&providers.Config{
+				Options:       target.ProviderOptions,
 				AllowedModels: target.Models,
 				DefaultModel:  target.DefaultModel,
 				Credentials: providers.Credentials{
@@ -918,8 +920,9 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 					},
 				},
 			},
-			streamChan,
 			req.Body,
+			streamChan,
+			breakChan,
 		)
 		if err != nil {
 			h.logger.WithError(err).Error("failed to stream request")
@@ -934,7 +937,11 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 		if err != nil {
 			return nil, fmt.Errorf("failed to stream request: %w", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-req.C.Context().Done():
+		return nil, fmt.Errorf("request cancelled: %w", req.C.Context().Err())
+	case <-breakChan:
+		break
+	case <-time.After(30 * time.Second):
 		break
 	}
 

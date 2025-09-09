@@ -142,21 +142,51 @@ func (c *client) Completions(
 func (c *client) CompletionsStream(
 	ctx context.Context,
 	config *providers.Config,
-	streamChan chan []byte,
 	reqBody []byte,
+	streamChan chan []byte,
+	breakChan chan struct{},
 ) error {
 	if config.Credentials.ApiKey == "" {
 		return fmt.Errorf("API key is required")
 	}
+
+	var options openaiOptions
+	if len(config.Options) > 0 {
+		if err := mapstructure.Decode(config.Options, &options); err != nil {
+			options = openaiOptions{API: CompletionsAPI}
+		}
+	} else {
+		options = openaiOptions{API: CompletionsAPI}
+	}
+
+	switch options.API {
+	case ResponsesAPI:
+		return c.handleResponsesStreamAPI(ctx, config, reqBody, streamChan, breakChan)
+	case CompletionsAPI:
+		fallthrough
+	default:
+		return c.handleCompletionsStreamAPI(ctx, config, reqBody, streamChan, breakChan)
+	}
+}
+
+func (c *client) handleCompletionsStreamAPI(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+	streamChan chan []byte,
+	breakChan chan struct{},
+) error {
 	openaiClient := c.getOrCreateClient(config.Credentials.ApiKey)
 	params, err := c.generateParams(reqBody, config)
 	if err != nil {
 		return err
 	}
-
 	respStream := openaiClient.Chat.Completions.NewStreaming(ctx, params)
 	defer respStream.Close()
-
+	if err := respStream.Err(); err != nil {
+		return err
+	}
+	close(breakChan)
 	for {
 		if !respStream.Next() {
 			break
@@ -174,11 +204,42 @@ func (c *client) CompletionsStream(
 			}
 		}
 	}
+	return nil
+}
 
-	if err := respStream.Err(); err != nil {
-		return fmt.Errorf("streaming error: %w", err)
+func (c *client) handleResponsesStreamAPI(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+	streamChan chan []byte,
+	breakChan chan struct{},
+) error {
+	httpClient := c.getOrCreateHTTPClient()
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", responsesURL, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+config.Credentials.ApiKey)
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("HTTP request failed: %w", err)
+	}
+	close(breakChan)
+	defer resp.Body.Close()
+
+	var responseBody bytes.Buffer
+	if _, err := responseBody.ReadFrom(resp.Body); err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
 	}
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, responseBody.String())
+	}
+
+	streamChan <- responseBody.Bytes()
 	return nil
 }
 
@@ -303,7 +364,6 @@ func (c *client) getOrCreateHTTPClient() *http.Client {
 		return httpClient, nil
 	})
 	if err != nil {
-		// Fallback: create a new client if singleflight fails
 		return &http.Client{
 			Timeout: 60 * time.Second,
 		}
@@ -311,7 +371,6 @@ func (c *client) getOrCreateHTTPClient() *http.Client {
 	if client, ok := v.(*http.Client); ok {
 		return client
 	}
-	// Fallback: create a new client if type assertion fails
 	return &http.Client{
 		Timeout: 60 * time.Second,
 	}
@@ -321,12 +380,8 @@ func (c *client) callResponsesAPI(
 	ctx context.Context,
 	httpClient *http.Client,
 	apiKey string,
-	req []byte,
+	reqBody []byte,
 ) ([]byte, error) {
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
 	httpReq, err := http.NewRequestWithContext(
 		ctx,
 		"POST",

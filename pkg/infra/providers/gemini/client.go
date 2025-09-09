@@ -202,7 +202,13 @@ func (c *client) Completions(
 	}
 }
 
-func (c *client) CompletionsStream(ctx context.Context, config *providers.Config, streamChan chan []byte, reqBody []byte) error {
+func (c *client) CompletionsStream(
+	ctx context.Context,
+	config *providers.Config,
+	reqBody []byte,
+	streamChan chan []byte,
+	breakChan chan struct{},
+) error {
 	if config.Credentials.ApiKey == "" {
 		return fmt.Errorf("API key is required")
 	}
@@ -222,6 +228,7 @@ func (c *client) CompletionsStream(ctx context.Context, config *providers.Config
 		if err != nil {
 			return fmt.Errorf("failed to stream: %w", err)
 		}
+		close(breakChan)
 		if obj == nil {
 			continue
 		}

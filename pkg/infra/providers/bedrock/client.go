@@ -131,8 +131,9 @@ func (c *client) Completions(
 func (c *client) CompletionsStream(
 	ctx context.Context,
 	config *providers.Config,
-	streamChan chan []byte,
 	reqBody []byte,
+	streamChan chan []byte,
+	breakChan chan struct{},
 ) error {
 	if config.DefaultModel == "" {
 		return fmt.Errorf("model is required")
@@ -160,6 +161,7 @@ func (c *client) CompletionsStream(
 		streamChan <- []byte(fmt.Sprintf(`{"error": "invoke error: %s"}`, err.Error()))
 		return err
 	}
+	close(breakChan)
 
 	for event := range resp.GetStream().Reader.Events() {
 		switch v := event.(type) {
