@@ -142,17 +142,17 @@ func (_c *Client_Completions_Call) RunAndReturn(run func(context.Context, *provi
 	return _c
 }
 
-// CompletionsStream provides a mock function with given fields: ctx, config, streamChan, reqBody
-func (_m *Client) CompletionsStream(ctx context.Context, config *providers.Config, streamChan chan []byte, reqBody []byte) error {
-	ret := _m.Called(ctx, config, streamChan, reqBody)
+// CompletionsStream provides a mock function with given fields: ctx, config, reqBody, streamChan, breakChan
+func (_m *Client) CompletionsStream(ctx context.Context, config *providers.Config, reqBody []byte, streamChan chan []byte, breakChan chan struct{}) error {
+	ret := _m.Called(ctx, config, reqBody, streamChan, breakChan)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CompletionsStream")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, *providers.Config, chan []byte, []byte) error); ok {
-		r0 = rf(ctx, config, streamChan, reqBody)
+	if rf, ok := ret.Get(0).(func(context.Context, *providers.Config, []byte, chan []byte, chan struct{}) error); ok {
+		r0 = rf(ctx, config, reqBody, streamChan, breakChan)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -168,15 +168,16 @@ type Client_CompletionsStream_Call struct {
 // CompletionsStream is a helper method to define mock.On call
 //   - ctx context.Context
 //   - config *providers.Config
-//   - streamChan chan []byte
 //   - reqBody []byte
-func (_e *Client_Expecter) CompletionsStream(ctx interface{}, config interface{}, streamChan interface{}, reqBody interface{}) *Client_CompletionsStream_Call {
-	return &Client_CompletionsStream_Call{Call: _e.mock.On("CompletionsStream", ctx, config, streamChan, reqBody)}
+//   - streamChan chan []byte
+//   - breakChan chan struct{}
+func (_e *Client_Expecter) CompletionsStream(ctx interface{}, config interface{}, reqBody interface{}, streamChan interface{}, breakChan interface{}) *Client_CompletionsStream_Call {
+	return &Client_CompletionsStream_Call{Call: _e.mock.On("CompletionsStream", ctx, config, reqBody, streamChan, breakChan)}
 }
 
-func (_c *Client_CompletionsStream_Call) Run(run func(ctx context.Context, config *providers.Config, streamChan chan []byte, reqBody []byte)) *Client_CompletionsStream_Call {
+func (_c *Client_CompletionsStream_Call) Run(run func(ctx context.Context, config *providers.Config, reqBody []byte, streamChan chan []byte, breakChan chan struct{})) *Client_CompletionsStream_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*providers.Config), args[2].(chan []byte), args[3].([]byte))
+		run(args[0].(context.Context), args[1].(*providers.Config), args[2].([]byte), args[3].(chan []byte), args[4].(chan struct{}))
 	})
 	return _c
 }
@@ -186,7 +187,7 @@ func (_c *Client_CompletionsStream_Call) Return(_a0 error) *Client_CompletionsSt
 	return _c
 }
 
-func (_c *Client_CompletionsStream_Call) RunAndReturn(run func(context.Context, *providers.Config, chan []byte, []byte) error) *Client_CompletionsStream_Call {
+func (_c *Client_CompletionsStream_Call) RunAndReturn(run func(context.Context, *providers.Config, []byte, chan []byte, chan struct{}) error) *Client_CompletionsStream_Call {
 	_c.Call.Return(run)
 	return _c
 }
