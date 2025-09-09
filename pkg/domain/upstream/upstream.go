@@ -36,21 +36,22 @@ func (e *EmbeddingConfig) Scan(value interface{}) error {
 }
 
 type Target struct {
-	ID           string                 `json:"id"`
-	Weight       int                    `json:"weight,omitempty"`
-	Tags         domain.TagsJSON        `json:"tags,omitempty" gorm:"type:jsonb"`
-	Headers      domain.HeadersJSON     `json:"headers,omitempty" gorm:"type:jsonb"`
-	Path         string                 `json:"path,omitempty"`
-	Host         string                 `json:"host,omitempty"`
-	Port         int                    `json:"port,omitempty"`
-	Protocol     string                 `json:"protocol,omitempty"`
-	Provider     string                 `json:"provider,omitempty"`
-	Models       ModelsJSON             `json:"models,omitempty" gorm:"type:jsonb"`
-	DefaultModel string                 `json:"default_model,omitempty"`
-	Description  string                 `json:"description,omitempty"`
-	Credentials  domain.CredentialsJSON `json:"credentials,omitempty" gorm:"type:jsonb"`
-	Stream       bool                   `json:"stream,omitempty"`
-	InsecureSSL  bool                   `json:"insecure_ssl,omitempty"`
+	ID              string                 `json:"id"`
+	Weight          int                    `json:"weight,omitempty"`
+	Tags            domain.TagsJSON        `json:"tags,omitempty" gorm:"type:jsonb"`
+	Headers         domain.HeadersJSON     `json:"headers,omitempty" gorm:"type:jsonb"`
+	Path            string                 `json:"path,omitempty"`
+	Host            string                 `json:"host,omitempty"`
+	Port            int                    `json:"port,omitempty"`
+	Protocol        string                 `json:"protocol,omitempty"`
+	Provider        string                 `json:"provider,omitempty"`
+	ProviderOptions map[string]any         `json:"provider_options,omitempty" gorm:"type:jsonb"`
+	Models          ModelsJSON             `json:"models,omitempty" gorm:"type:jsonb"`
+	DefaultModel    string                 `json:"default_model,omitempty"`
+	Description     string                 `json:"description,omitempty"`
+	Credentials     domain.CredentialsJSON `json:"credentials,omitempty" gorm:"type:jsonb"`
+	Stream          bool                   `json:"stream,omitempty"`
+	InsecureSSL     bool                   `json:"insecure_ssl,omitempty"`
 }
 
 type ModelsJSON []string

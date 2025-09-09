@@ -670,6 +670,7 @@ func (h *forwardedHandler) handlerProviderResponse(
 	responseBody, err := providerClient.Completions(
 		req.C.Context(),
 		&providers.Config{
+			Options:       target.ProviderOptions,
 			AllowedModels: target.Models,
 			DefaultModel:  target.DefaultModel,
 			Credentials: providers.Credentials{
@@ -897,12 +898,20 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 
 	streamChan := make(chan []byte)
 	errChan := make(chan error, 1)
+	breakChan := make(chan struct{}, 1)
+
+	req.C.Set("Content-Type", "text/event-stream")
+	req.C.Set("Cache-Control", "no-cache")
+	req.C.Set("Connection", "keep-alive")
+	req.C.Set("X-Accel-Buffering", "no")
+	req.C.Set("X-Selected-Provider", target.Provider)
 
 	go func() {
 		defer close(streamChan)
 		err := providerClient.CompletionsStream(
-			req.C.Context(),
+			req,
 			&providers.Config{
+				Options:       target.ProviderOptions,
 				AllowedModels: target.Models,
 				DefaultModel:  target.DefaultModel,
 				Credentials: providers.Credentials{
@@ -917,8 +926,9 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 					},
 				},
 			},
-			streamChan,
 			req.Body,
+			streamChan,
+			breakChan,
 		)
 		if err != nil {
 			h.logger.WithError(err).Error("failed to stream request")
@@ -933,15 +943,13 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 		if err != nil {
 			return nil, fmt.Errorf("failed to stream request: %w", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-req.C.Context().Done():
+		return nil, fmt.Errorf("request cancelled: %w", req.C.Context().Err())
+	case <-breakChan:
+		break
+	case <-time.After(30 * time.Second):
 		break
 	}
-
-	req.C.Set("Content-Type", "text/event-stream")
-	req.C.Set("Cache-Control", "no-cache")
-	req.C.Set("Connection", "keep-alive")
-	req.C.Set("X-Accel-Buffering", "no")
-	req.C.Set("X-Selected-Provider", target.Provider)
 
 	req.C.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer close(streamResponse)
@@ -1007,8 +1015,12 @@ func (h *forwardedHandler) handleStreamingResponse(
 	}
 
 	responseHeaders := make(map[string][]string)
-	for k, v := range resp.Header {
-		responseHeaders[k] = v
+
+	for key, values := range resp.Header {
+		responseHeaders[key] = values
+		for _, v := range values {
+			req.C.Set(key, v)
+		}
 	}
 
 	if rateLimitHeaders, ok := req.Metadata["rate_limit_headers"].(map[string][]string); ok {

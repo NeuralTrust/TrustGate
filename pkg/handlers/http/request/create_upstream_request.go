@@ -6,6 +6,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
@@ -35,21 +36,22 @@ type EmbeddingRequest struct {
 }
 
 type TargetRequest struct {
-	ID           string            `json:"id"`
-	Weight       int               `json:"weight,omitempty"`
-	Tags         []string          `json:"tags,omitempty"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	Path         string            `json:"path,omitempty"`
-	Host         string            `json:"host,omitempty"`
-	Port         int               `json:"port,omitempty"`
-	Protocol     string            `json:"protocol,omitempty"`
-	Provider     string            `json:"provider,omitempty"`
-	Models       []string          `json:"models,omitempty"`
-	DefaultModel string            `json:"default_model,omitempty"`
-	Description  string            `json:"description,omitempty"`
-	Stream       bool              `json:"stream"`
-	InsecureSSL  bool              `json:"insecure_ssl,omitempty"`
-	Credentials  types.Credentials `json:"credentials,omitempty"`
+	ID              string            `json:"id"`
+	Weight          int               `json:"weight,omitempty"`
+	Tags            []string          `json:"tags,omitempty"`
+	Headers         map[string]string `json:"headers,omitempty"`
+	Path            string            `json:"path,omitempty"`
+	Host            string            `json:"host,omitempty"`
+	Port            int               `json:"port,omitempty"`
+	Protocol        string            `json:"protocol,omitempty"`
+	Provider        string            `json:"provider,omitempty"`
+	ProviderOptions map[string]any    `json:"provider_options,omitempty"`
+	Models          []string          `json:"models,omitempty"`
+	DefaultModel    string            `json:"default_model,omitempty"`
+	Description     string            `json:"description,omitempty"`
+	Stream          bool              `json:"stream"`
+	InsecureSSL     bool              `json:"insecure_ssl,omitempty"`
+	Credentials     types.Credentials `json:"credentials,omitempty"`
 }
 
 type HealthCheckRequest struct {
@@ -97,15 +99,30 @@ func (r *WebhookConfigRequest) Validate() error {
 }
 
 func (r *UpstreamRequest) Validate() error {
+	for i, target := range r.Targets {
+		if target.Provider != "" {
+			if !r.isValidProvider(target.Provider) {
+				return fmt.Errorf("target %d: invalid provider: %s", i, target.Provider)
+			}
+			if target.Path != "" {
+				return fmt.Errorf("target %d: when target has provider specified, path must be empty", i)
+			}
+		}
+		if len(target.ProviderOptions) > 0 && target.Provider == "" {
+			return fmt.Errorf("target %d: provider_options can only be set when provider is specified", i)
+		}
+
+		if err := r.validateProviderOptions(i, target, len(r.Targets)); err != nil {
+			return err
+		}
+	}
 
 	if r.Algorithm == common.SemanticStrategyName {
 		for i, target := range r.Targets {
 			if target.Description == "" {
 				return fmt.Errorf("target %d: description is required", i)
 			}
-			if target.Provider != "" &&
-				target.Provider != factory.ProviderOpenAI &&
-				target.Provider != factory.ProviderAnthropic {
+			if !r.isValidProvider(target.Provider) {
 				return fmt.Errorf("invalid target provider: %s", target.Provider)
 			}
 		}
@@ -155,4 +172,50 @@ func (r *UpstreamRequest) Validate() error {
 	}
 
 	return nil
+}
+
+func (r *UpstreamRequest) validateProviderOptions(
+	targetIndex int,
+	target TargetRequest,
+	currentTargets int,
+) error {
+	if target.Provider == factory.ProviderOpenAI {
+		if len(target.ProviderOptions) > 0 {
+			if len(target.ProviderOptions) != 1 {
+				return fmt.Errorf("target %d: openai provider_options can only contain 'api' field", targetIndex)
+			}
+
+			apiValue, exists := target.ProviderOptions["api"]
+			if !exists {
+				return fmt.Errorf("target %d: openai provider_options can only contain 'api' field", targetIndex)
+			}
+
+			apiStr, ok := apiValue.(string)
+			if !ok {
+				return fmt.Errorf("target %d: openai provider_options 'api' field must be a string", targetIndex)
+			}
+
+			if apiStr != openai.CompletionsAPI && apiStr != openai.ResponsesAPI {
+				return fmt.Errorf("target %d: openai provider_options 'api' field must be 'completions' or 'responses'", targetIndex)
+			}
+
+			if apiStr == openai.ResponsesAPI && currentTargets > 1 {
+				return fmt.Errorf("cannot perform load balancing: OpenAI Responses API supports only a single target")
+			}
+		}
+	} else if target.Provider != "" {
+		if len(target.ProviderOptions) > 0 {
+			return fmt.Errorf("target %d: provider_options must be empty for non-openai providers", targetIndex)
+		}
+	}
+
+	return nil
+}
+
+func (r *UpstreamRequest) isValidProvider(provider string) bool {
+	return provider == factory.ProviderOpenAI ||
+		provider == factory.ProviderGemini ||
+		provider == factory.ProviderAnthropic ||
+		provider == factory.ProviderBedrock ||
+		provider == factory.ProviderAzure
 }

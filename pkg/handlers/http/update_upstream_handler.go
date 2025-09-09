@@ -90,21 +90,22 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 	var targets []upstream.Target
 	for _, target := range req.Targets {
 		targets = append(targets, upstream.Target{
-			ID:           target.ID,
-			Weight:       target.Weight,
-			Tags:         target.Tags,
-			Headers:      target.Headers,
-			Path:         target.Path,
-			Host:         target.Host,
-			Port:         target.Port,
-			Protocol:     target.Protocol,
-			Provider:     target.Provider,
-			Models:       target.Models,
-			DefaultModel: target.DefaultModel,
-			Description:  target.Description,
-			Stream:       target.Stream,
-			InsecureSSL:  target.InsecureSSL,
-			Credentials:  domain.CredentialsJSON(target.Credentials),
+			ID:              target.ID,
+			Weight:          target.Weight,
+			Tags:            target.Tags,
+			Headers:         target.Headers,
+			Path:            target.Path,
+			Host:            target.Host,
+			Port:            target.Port,
+			Protocol:        target.Protocol,
+			Provider:        target.Provider,
+			ProviderOptions: target.ProviderOptions,
+			Models:          target.Models,
+			DefaultModel:    target.DefaultModel,
+			Description:     target.Description,
+			Stream:          target.Stream,
+			InsecureSSL:     target.InsecureSSL,
+			Credentials:     domain.CredentialsJSON(target.Credentials),
 		})
 	}
 
