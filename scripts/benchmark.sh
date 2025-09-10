@@ -27,18 +27,18 @@ BASE_DOMAIN=${BASE_DOMAIN:-"example.com"}
 SUBDOMAIN="benchmark-'$(date +%s)'"
 CONCURRENT_USERS=50
 DURATION="30s"
-TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.396KCDWMomWrMEImsF84AmFRjBEvSvnyLh3ZA_mB_Wg"
+TOKEN=""
 
 echo -e "${BLUE}TrustGate Benchmark Tool${NC}\n"
 
 # Test 1: System endpoint (ping)
-# echo -e "${GREEN}Testing system ping endpoint...${NC}"
-# echo -e "\n${BLUE}Starting system benchmark with ${CONCURRENT_USERS} concurrent users for ${DURATION}...${NC}"
-# hey -z ${DURATION} \
-#     -c ${CONCURRENT_USERS} \
-#     -disable-keepalive \
-#     -cpus 2 \
-#     "${PROXY_URL}/__/ping"
+ echo -e "${GREEN}Testing system ping endpoint...${NC}"
+ echo -e "\n${BLUE}Starting system benchmark with ${CONCURRENT_USERS} concurrent users for ${DURATION}...${NC}"
+ hey -z ${DURATION} \
+     -c ${CONCURRENT_USERS} \
+     -disable-keepalive \
+     -cpus 2 \
+     "${PROXY_URL}/__/ping"
 
 # Create test gateway
 echo -e "${GREEN}Creating test gateway...${NC}"
@@ -46,8 +46,7 @@ GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TOKEN}" \
   -d '{
-    "name": "Benchmark Gateway",
-    "subdomain": "'$SUBDOMAIN'"
+    "name": "Benchmark Gateway"
   }')
 
 GATEWAY_ID=$(echo $GATEWAY_RESPONSE | jq -r '.id')
@@ -138,6 +137,7 @@ RULE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/rules" \
   -H "Authorization: Bearer ${TOKEN}" \
   -d '{
     "path": "/test",
+    "name": "rule1",
     "service_id": "'$SERVICE_ID'",
     "methods": ["GET"],
     "strip_path": true,
