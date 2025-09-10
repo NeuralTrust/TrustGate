@@ -66,16 +66,28 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		ctx = context.WithValue(ctx, common.StreamModeContextKey, streamMode)
 		c.SetUserContext(ctx)
 
-		userAgentInfo := utils.ParseUserAgent(m.getUserAgent(c), m.getAcceptLanguage(c))
+		var (
+			exporters []types.Exporter
+			startTime time.Time
+		)
 
-		m.setTelemetryHeaders(c, gatewayData)
+		inputRequest := types.RequestContext{}
 
-		inputRequest := m.transformToRequestContext(c, gatewayID, userAgentInfo)
-		startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
+		telemetryOn := gatewayData.Gateway != nil &&
+			gatewayData.Gateway.Telemetry != nil &&
+			(gatewayData.Gateway.Telemetry.EnablePluginTraces ||
+				gatewayData.Gateway.Telemetry.EnableRequestTraces ||
+				len(gatewayData.Gateway.Telemetry.Exporters) > 0)
 
-		if !ok {
-			m.logger.Error("start_time not found in context")
-			startTime = time.Now()
+		if telemetryOn {
+			userAgentInfo := utils.ParseUserAgent(m.getUserAgent(c), m.getAcceptLanguage(c))
+			m.setTelemetryHeaders(c, gatewayData)
+			inputRequest = m.transformToRequestContext(c, gatewayID, userAgentInfo)
+			startTime, ok = c.Locals(common.LatencyContextKey).(time.Time)
+			if !ok {
+				m.logger.Error("start_time not found in context")
+				startTime = time.Now()
+			}
 		}
 
 		// TODO metrics for websockets
@@ -102,20 +114,13 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		var sessionID string
 		sessionID, ok = ctx.Value(common.SessionContextKey).(string)
 		if !ok || sessionID == "" {
-			m.logger.Error("session ID not found in context")
+			m.logger.Debug("session ID not found in context")
 		}
-
-		inputRequest.SessionID = sessionID
 
 		rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRule)
 		if !ok || rule == nil {
 			m.logger.Error("failed to get matched rule from context")
 			rule = &types.ForwardingRule{}
-		}
-
-		var exporters []types.Exporter
-		if gatewayData.Gateway.Telemetry != nil {
-			exporters = gatewayData.Gateway.Telemetry.Exporters
 		}
 
 		headers := make(map[string][]string)
@@ -127,6 +132,11 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 
 		wg.Wait()
 
+		if telemetryOn {
+			inputRequest.SessionID = sessionID
+			exporters = gatewayData.Gateway.Telemetry.Exporters
+		}
+
 		endTime := time.Now()
 		var once sync.Once
 		if streamDetected {
@@ -136,6 +146,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 				headers map[string][]string,
 				rule *types.ForwardingRule,
 				sCode int,
+				telemetryOn bool,
 			) {
 				startTimeStream := time.Now()
 				var lastLine []byte
@@ -149,47 +160,49 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 					}
 				}
 				streamDuration := float64(time.Since(startTimeStream).Microseconds()) / 1000
-
-				once.Do(func() {
-					m.logger.Debug("stream channel closed")
-					now := time.Now()
-					m.worker.Process(
-						metricsCollector,
-						exporters,
-						inputReq,
-						types.ResponseContext{
-							Context:   context.Background(),
-							GatewayID: gID,
-							Headers:   headers,
-							Metadata: map[string]interface{}{
-								"lastOutputLine": lastLine,
+				if telemetryOn {
+					once.Do(func() {
+						m.logger.Debug("stream channel closed")
+						now := time.Now()
+						m.worker.Process(
+							metricsCollector,
+							exporters,
+							inputReq,
+							types.ResponseContext{
+								Context:   context.Background(),
+								GatewayID: gID,
+								Headers:   headers,
+								Metadata: map[string]interface{}{
+									"lastOutputLine": lastLine,
+								},
+								Body:          streamResponseBody.Bytes(),
+								StatusCode:    sCode,
+								ProcessAt:     &now,
+								Rule:          rule, // rule is already checked for nil above
+								TargetLatency: streamDuration,
+								Streaming:     true,
 							},
-							Body:          streamResponseBody.Bytes(),
-							StatusCode:    sCode,
-							ProcessAt:     &now,
-							Rule:          rule, // rule is already checked for nil above
-							TargetLatency: streamDuration,
-							Streaming:     true,
-						},
-						startTime,
-						time.Now(),
-					)
-				})
-			}(gatewayID, inputRequest, headers, rule, statusCode)
+							startTime,
+							time.Now(),
+						)
+					})
+				}
+			}(gatewayID, inputRequest, headers, rule, statusCode, telemetryOn)
 			return err
 		}
 
-		outputResponse := m.transformToResponseContext(c, gatewayID, *rule)
-		m.logger.Debug("processing metrics as non stream mode")
-		m.worker.Process(
-			metricsCollector,
-			exporters,
-			inputRequest,
-			outputResponse,
-			startTime,
-			endTime,
-		)
-
+		if telemetryOn {
+			outputResponse := m.transformToResponseContext(c, gatewayID, *rule)
+			m.logger.Debug("processing metrics as non stream mode")
+			m.worker.Process(
+				metricsCollector,
+				exporters,
+				inputRequest,
+				outputResponse,
+				startTime,
+				endTime,
+			)
+		}
 		return err
 	}
 }

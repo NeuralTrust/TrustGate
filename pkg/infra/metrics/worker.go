@@ -105,6 +105,10 @@ func (m *worker) registryMetricsToExporters(
 	startTime,
 	endTime time.Time,
 ) {
+	if len(exporters) == 0 {
+		return
+	}
+
 	cacheKey := m.createExportersCacheKey(exporters)
 
 	var exp []domainTelemetry.Exporter
