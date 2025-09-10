@@ -27,6 +27,7 @@ BASE_DOMAIN=${BASE_DOMAIN:-"example.com"}
 SUBDOMAIN="benchmark-'$(date +%s)'"
 CONCURRENT_USERS=50
 DURATION="30s"
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.396KCDWMomWrMEImsF84AmFRjBEvSvnyLh3ZA_mB_Wg"
 
 echo -e "${BLUE}TrustGate Benchmark Tool${NC}\n"
 
@@ -43,6 +44,7 @@ echo -e "${BLUE}TrustGate Benchmark Tool${NC}\n"
 echo -e "${GREEN}Creating test gateway...${NC}"
 GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
   -d '{
     "name": "Benchmark Gateway",
     "subdomain": "'$SUBDOMAIN'"
@@ -61,6 +63,7 @@ echo "Gateway created with ID: $GATEWAY_ID"
 echo -e "\n${GREEN}Creating API key...${NC}"
 API_KEY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/keys" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
   -d '{
     "name": "Benchmark Key",
     "expires_at": "2026-01-01T00:00:00Z"
@@ -79,6 +82,7 @@ echo "API Key created: $API_KEY"
 echo -e "\n${GREEN}Creating upstream...${NC}"
 UPSTREAM_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/upstreams" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
   -d '{
     "name": "ping-upstream-'$(date +%s)'",
     "algorithm": "round-robin",
@@ -110,6 +114,7 @@ echo "Upstream created with ID: $UPSTREAM_ID"
 echo -e "\n${GREEN}Creating service...${NC}"
 SERVICE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/services" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
   -d '{
     "name": "ping-service-'$(date +%s)'",
     "type": "upstream",
@@ -130,6 +135,7 @@ echo "Service created with ID: $SERVICE_ID"
 echo -e "\n${GREEN}Creating rule...${NC}"
 RULE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/rules" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
   -d '{
     "path": "/test",
     "service_id": "'$SERVICE_ID'",
