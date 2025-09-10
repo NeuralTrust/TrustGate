@@ -117,7 +117,10 @@ func (h *forwardedHandler) handleErrorResponse(c *fiber.Ctx, status int, message
 	streamMode, ok := c.Locals(common.StreamModeContextKey).(chan bool)
 	if !ok {
 		h.logger.Error("failed to get stream mode channel")
-		return fmt.Errorf("failed to get stream mode channel")
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to get stream mode channel",
+		})
+
 	}
 	select {
 	case streamMode <- false:
@@ -131,7 +134,10 @@ func (h *forwardedHandler) handleSuccessResponse(c *fiber.Ctx, status int, messa
 	streamMode, ok := c.Locals(common.StreamModeContextKey).(chan bool)
 	if !ok {
 		h.logger.Error("failed to get stream mode channel")
-		return fmt.Errorf("failed to get stream mode channel")
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to get stream mode channel",
+		})
+
 	}
 	select {
 	case streamMode <- false:
@@ -145,7 +151,10 @@ func (h *forwardedHandler) handleSuccessJSONResponse(c *fiber.Ctx, status int, m
 	streamMode, ok := c.Locals(common.StreamModeContextKey).(chan bool)
 	if !ok {
 		h.logger.Error("failed to get stream mode channel")
-		return fmt.Errorf("failed to get stream mode channel")
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to get stream mode channel",
+		})
+
 	}
 	select {
 	case streamMode <- false:
