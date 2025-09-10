@@ -54,14 +54,25 @@ func NewTTLMap(ttl time.Duration) *TTLMap {
 // Get retrieves a value from the TTLMap if it hasn't expired
 func (m *TTLMap) Get(key string) (interface{}, bool) {
 	m.Mu.RLock()
-	defer m.Mu.RUnlock()
-
 	entry, exists := m.Data[key]
-	if !exists || time.Now().After(entry.ExpiresAt) {
-		delete(m.Data, key) // Clean up expired entry
+	if !exists {
+		m.Mu.RUnlock()
 		return nil, false
 	}
-	return entry.Value, true
+	isExpired := time.Now().After(entry.ExpiresAt)
+	value := entry.Value
+	m.Mu.RUnlock()
+
+	if isExpired {
+		m.Mu.Lock()
+		if current, ok := m.Data[key]; ok && time.Now().After(current.ExpiresAt) {
+			delete(m.Data, key)
+		}
+		m.Mu.Unlock()
+		return nil, false
+	}
+
+	return value, true
 }
 
 // Set adds or updates a value in the TTLMap

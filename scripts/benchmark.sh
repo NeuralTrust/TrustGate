@@ -27,25 +27,26 @@ BASE_DOMAIN=${BASE_DOMAIN:-"example.com"}
 SUBDOMAIN="benchmark-'$(date +%s)'"
 CONCURRENT_USERS=50
 DURATION="30s"
+TOKEN=""
 
 echo -e "${BLUE}TrustGate Benchmark Tool${NC}\n"
 
 # Test 1: System endpoint (ping)
-# echo -e "${GREEN}Testing system ping endpoint...${NC}"
-# echo -e "\n${BLUE}Starting system benchmark with ${CONCURRENT_USERS} concurrent users for ${DURATION}...${NC}"
-# hey -z ${DURATION} \
-#     -c ${CONCURRENT_USERS} \
-#     -disable-keepalive \
-#     -cpus 2 \
-#     "${PROXY_URL}/__/ping"
+ echo -e "${GREEN}Testing system ping endpoint...${NC}"
+ echo -e "\n${BLUE}Starting system benchmark with ${CONCURRENT_USERS} concurrent users for ${DURATION}...${NC}"
+ hey -z ${DURATION} \
+     -c ${CONCURRENT_USERS} \
+     -disable-keepalive \
+     -cpus 2 \
+     "${PROXY_URL}/__/ping"
 
 # Create test gateway
 echo -e "${GREEN}Creating test gateway...${NC}"
 GATEWAY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
   -d '{
-    "name": "Benchmark Gateway",
-    "subdomain": "'$SUBDOMAIN'"
+    "name": "Benchmark Gateway"
   }')
 
 GATEWAY_ID=$(echo $GATEWAY_RESPONSE | jq -r '.id')
@@ -61,6 +62,7 @@ echo "Gateway created with ID: $GATEWAY_ID"
 echo -e "\n${GREEN}Creating API key...${NC}"
 API_KEY_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/keys" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
   -d '{
     "name": "Benchmark Key",
     "expires_at": "2026-01-01T00:00:00Z"
@@ -79,6 +81,7 @@ echo "API Key created: $API_KEY"
 echo -e "\n${GREEN}Creating upstream...${NC}"
 UPSTREAM_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/upstreams" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
   -d '{
     "name": "ping-upstream-'$(date +%s)'",
     "algorithm": "round-robin",
@@ -110,6 +113,7 @@ echo "Upstream created with ID: $UPSTREAM_ID"
 echo -e "\n${GREEN}Creating service...${NC}"
 SERVICE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/services" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
   -d '{
     "name": "ping-service-'$(date +%s)'",
     "type": "upstream",
@@ -130,8 +134,10 @@ echo "Service created with ID: $SERVICE_ID"
 echo -e "\n${GREEN}Creating rule...${NC}"
 RULE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/rules" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${TOKEN}" \
   -d '{
     "path": "/test",
+    "name": "rule1",
     "service_id": "'$SERVICE_ID'",
     "methods": ["GET"],
     "strip_path": true,
