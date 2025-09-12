@@ -127,6 +127,11 @@ func (h *forwardedHandler) handleErrorResponse(c *fiber.Ctx, status int, message
 		h.logger.Debug("stream mode disabled")
 	default:
 	}
+
+	if traceId, ok := c.Locals(common.TraceIdKey).(string); ok && traceId != "" {
+		c.Set("X-Trace-ID", traceId)
+	}
+
 	return c.Status(status).JSON(message)
 }
 
@@ -144,6 +149,11 @@ func (h *forwardedHandler) handleSuccessResponse(c *fiber.Ctx, status int, messa
 		h.logger.Debug("stream mode disabled")
 	default:
 	}
+
+	if traceId, ok := c.Locals(common.TraceIdKey).(string); ok && traceId != "" {
+		c.Set("X-Trace-ID", traceId)
+	}
+
 	return c.Status(status).Send(message)
 }
 
@@ -161,6 +171,11 @@ func (h *forwardedHandler) handleSuccessJSONResponse(c *fiber.Ctx, status int, m
 		h.logger.Debug("stream mode disabled")
 	default:
 	}
+
+	if traceId, ok := c.Locals(common.TraceIdKey).(string); ok && traceId != "" {
+		c.Set("X-Trace-ID", traceId)
+	}
+
 	return c.Status(status).JSON(message)
 }
 

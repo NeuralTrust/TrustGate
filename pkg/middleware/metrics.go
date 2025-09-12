@@ -56,14 +56,19 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		var streamResponseBody bytes.Buffer
 		var streamDetected bool
 
-		metricsCollector := m.getMetricsCollector(gatewayData)
+		traceId := uuid.New().String()
+		metricsCollector := m.getMetricsCollector(traceId, gatewayData)
 
+		c.Locals(common.TraceIdKey, traceId)
 		c.Locals(common.StreamResponseContextKey, streamResponse)
 		c.Locals(common.StreamModeContextKey, streamMode)
 		c.Locals(string(metrics.CollectorKey), metricsCollector)
+
 		ctx := context.WithValue(c.Context(), string(metrics.CollectorKey), metricsCollector) //nolint
 		ctx = context.WithValue(ctx, common.StreamResponseContextKey, streamResponse)
 		ctx = context.WithValue(ctx, common.StreamModeContextKey, streamMode)
+		ctx = context.WithValue(ctx, common.TraceIdKey, traceId)
+
 		c.SetUserContext(ctx)
 
 		var (
@@ -207,9 +212,12 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 	}
 }
 
-func (m *metricsMiddleware) getMetricsCollector(gatewayData *types.GatewayData) *metrics.Collector {
+func (m *metricsMiddleware) getMetricsCollector(traceId string, gatewayData *types.GatewayData) *metrics.Collector {
+	if traceId == "" {
+		traceId = uuid.New().String()
+	}
 	metricsCollector := metrics.NewCollector(
-		uuid.New().String(),
+		traceId,
 		&metrics.Config{
 			EnablePluginTraces:  false,
 			EnableRequestTraces: false,
@@ -218,7 +226,7 @@ func (m *metricsMiddleware) getMetricsCollector(gatewayData *types.GatewayData) 
 	)
 	if gatewayData.Gateway.Telemetry != nil {
 		metricsCollector = metrics.NewCollector(
-			uuid.New().String(),
+			traceId,
 			&metrics.Config{
 				EnablePluginTraces:  gatewayData.Gateway.Telemetry.EnablePluginTraces,
 				EnableRequestTraces: gatewayData.Gateway.Telemetry.EnableRequestTraces,
