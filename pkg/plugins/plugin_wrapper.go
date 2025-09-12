@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
@@ -30,7 +31,10 @@ func (w *PluginWrapper) Execute(
 ) (*types.PluginResponse, error) {
 	evtCtx := metrics.NewEventContext(cfg.Name, string(req.Stage), w.MetricsCollector)
 
+	start := time.Now()
 	pluginResp, err := w.Plugin.Execute(ctx, cfg, req, resp, evtCtx)
+	latency := time.Since(start)
+	evtCtx.SetSLatency(latency)
 	if err != nil {
 		var pluginErr *types.PluginError
 		if errors.As(err, &pluginErr) {

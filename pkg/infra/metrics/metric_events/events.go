@@ -74,6 +74,8 @@ type PluginDataEvent struct {
 	ErrorMessage string      `json:"error_message,omitempty"`
 	Extras       interface{} `json:"extras,omitempty"`
 	StatusCode   int         `json:"status_code,omitempty"`
+	Latency      int64       `json:"latency"`
+	LatencyUnit  string      `json:"latency_unit"`
 }
 
 func NewTraceEvent() *Event {

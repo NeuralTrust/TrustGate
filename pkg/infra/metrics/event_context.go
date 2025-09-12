@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"sync"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 )
@@ -43,6 +44,13 @@ func (e *EventContext) SetStatusCode(code int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.data.StatusCode = code
+}
+
+func (e *EventContext) SetSLatency(duration time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.data.Latency = duration.Microseconds()
+	e.data.LatencyUnit = "μs"
 }
 
 func (e *EventContext) Publish() {
