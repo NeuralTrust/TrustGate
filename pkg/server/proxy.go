@@ -4,17 +4,17 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/sirupsen/logrus"
 )
 
+const ProxyServerName = "proxy"
+
 type (
 	ProxyServerDI struct {
 		Config  *config.Config
-		Cache   *cache.Cache
 		Logger  *logrus.Logger
 		Routers []router.ServerRouter
 	}
@@ -35,33 +35,33 @@ func NewProxyServer(di ProxyServerDI) *ProxyServer {
 	}
 
 	s := &ProxyServer{
-		BaseServer: NewBaseServer(di.Config, di.Cache, di.Logger).WithRouters(di.Routers...),
+		BaseServer: NewBaseServer(di.Config, di.Logger).WithRouters(di.Routers...),
 	}
 	s.BaseServer.setupMetricsEndpoint()
 	return s
 }
 
 func (s *ProxyServer) Run() error {
-	addr := fmt.Sprintf(":%d", s.config.Server.ProxyPort)
-	s.logger.WithField("addr", addr).Info("Starting proxy server")
-	if s.config.TLS.Disabled {
-		return s.router.Listen(addr)
+	addr := fmt.Sprintf(":%d", s.Config.Server.ProxyPort)
+	s.Logger.WithField("addr", addr).Info("🚀 starting proxy server")
+	if s.Config.TLS.Disabled {
+		return s.Router.Listen(addr)
 	}
-	tlsConfig, err := config.BuildTLSConfig(&s.config.TLS)
+	tlsConfig, err := config.BuildTLSConfig(&s.Config.TLS)
 	if err != nil {
-		s.logger.WithError(err).Error("failed to build TLS config")
+		s.Logger.WithError(err).Error("failed to build TLS config")
 		return err
 	}
 	ln, err := tls.Listen("tcp", addr, tlsConfig)
 	if err != nil {
-		s.logger.WithError(err).Error("failed to start TLS listener")
+		s.Logger.WithError(err).Error("failed to start TLS listener")
 		return err
 	}
 
-	s.logger.Info("TLS enabled — serving HTTPS")
-	return s.router.Listener(ln)
+	s.Logger.Info("TLS enabled — serving HTTPS")
+	return s.Router.Listener(ln)
 }
 
 func (s *ProxyServer) Shutdown() error {
-	return s.router.Shutdown()
+	return s.Router.Shutdown()
 }

@@ -6,15 +6,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/sirupsen/logrus"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 )
+
+const AdminServerName = "admin"
 
 type (
 	AdminServerDI struct {
 		Routers []router.ServerRouter
 		Config  *config.Config
-		Cache   *cache.Cache
 		Logger  *logrus.Logger
 	}
 	AdminServer struct {
@@ -24,19 +24,17 @@ type (
 
 func NewAdminServer(di AdminServerDI) *AdminServer {
 	return &AdminServer{
-		BaseServer: NewBaseServer(di.Config, di.Cache, di.Logger).WithRouters(di.Routers...),
+		BaseServer: NewBaseServer(di.Config, di.Logger).WithRouters(di.Routers...),
 	}
 }
 
 func (s *AdminServer) Run() error {
-	// Set up routes
 	s.setupHealthCheck()
-	// Start the server
-	addr := fmt.Sprintf(":%d", s.config.Server.AdminPort)
-	s.logger.WithField("addr", addr).Info("Starting admin server")
-	return s.router.Listen(addr)
+	addr := fmt.Sprintf(":%d", s.Config.Server.AdminPort)
+	s.Logger.WithField("addr", addr).Info("🚀 starting admin server")
+	return s.Router.Listen(addr)
 }
 
 func (s *AdminServer) Shutdown() error {
-	return s.router.Shutdown()
+	return s.Router.Shutdown()
 }
