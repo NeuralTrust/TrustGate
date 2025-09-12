@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/gofiber/fiber/v2"
@@ -24,14 +23,13 @@ type Server interface {
 }
 
 type BaseServer struct {
-	config         *config.Config
-	cache          *cache.Cache
-	logger         *logrus.Logger
-	router         *fiber.App
+	Config         *config.Config
+	Logger         *logrus.Logger
+	Router         *fiber.App
 	metricsStarted bool
 }
 
-func NewBaseServer(config *config.Config, cache *cache.Cache, logger *logrus.Logger) *BaseServer {
+func NewBaseServer(config *config.Config, logger *logrus.Logger) *BaseServer {
 	r := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 		ReduceMemoryUsage:     true,
@@ -54,23 +52,22 @@ func NewBaseServer(config *config.Config, cache *cache.Cache, logger *logrus.Log
 	r.Server().NoDefaultContentType = true
 
 	server := &BaseServer{
-		config: config,
-		cache:  cache,
-		logger: logger,
-		router: r,
+		Config: config,
+		Logger: logger,
+		Router: r,
 	}
 	return server
 }
 
 // setupHealthCheck adds a health check endpoint to the server
 func (s *BaseServer) setupHealthCheck() {
-	s.router.Get("/health", func(ctx *fiber.Ctx) error {
+	s.Router.Get("/health", func(ctx *fiber.Ctx) error {
 		return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
 			"status": "healthy",
 			"time":   time.Now().Format(time.RFC3339),
 		})
 	})
-	s.router.Get(AdminHealthPath, func(ctx *fiber.Ctx) error {
+	s.Router.Get(AdminHealthPath, func(ctx *fiber.Ctx) error {
 		return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
 			"status": "ok",
 			"time":   time.Now().Format(time.RFC3339),
@@ -80,17 +77,17 @@ func (s *BaseServer) setupHealthCheck() {
 
 func (s *BaseServer) WithRouters(routers ...router.ServerRouter) *BaseServer {
 	for _, r := range routers {
-		err := r.BuildRoutes(s.router)
+		err := r.BuildRoutes(s.Router)
 		if err != nil {
-			s.logger.WithError(err).Error("failed to build routes")
+			s.Logger.WithError(err).Error("failed to build routes")
 		}
 	}
 	return s
 }
 
 func (s *BaseServer) setupMetricsEndpoint() {
-	if !s.config.Metrics.Enabled {
-		s.logger.Info("prometheus metrics are disabled by configuration")
+	if !s.Config.Metrics.Enabled {
+		s.Logger.Info("prometheus metrics are disabled by configuration")
 		return
 	}
 	if s.metricsStarted {
@@ -112,11 +109,11 @@ func (s *BaseServer) setupMetricsEndpoint() {
 
 	// Start metrics server on a different port
 	go func() {
-		port := s.config.Server.MetricsPort
+		port := s.Config.Server.MetricsPort
 		addr := fmt.Sprintf(":%d", port)
 		if err := metricsApp.Listen(addr); err != nil {
 			if !strings.Contains(err.Error(), "address already in use") {
-				s.logger.WithError(err).Error("Failed to start metrics server")
+				s.Logger.WithError(err).Error("Failed to start metrics server")
 			}
 		}
 	}()

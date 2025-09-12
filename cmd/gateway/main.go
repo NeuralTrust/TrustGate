@@ -103,17 +103,15 @@ func main() {
 	adminServerDI := server.AdminServerDI{
 		Config:  cfg,
 		Logger:  logger,
-		Cache:   container.Cache,
 		Routers: []router.ServerRouter{adminRouter},
 	}
 
 	proxyServerDI := server.ProxyServerDI{
 		Config:  cfg,
 		Logger:  logger,
-		Cache:   container.Cache,
 		Routers: []router.ServerRouter{proxyRouter},
 	}
-	if getServerType() == "proxy" {
+	if getServerType() == server.ProxyServerName {
 		err = container.RedisIndexCreator.CreateIndexes(ctx, common.NeuralTrustJailbreakIndexName)
 		if err != nil {
 			logger.WithError(err).Error("failed to create redis indexes")
@@ -163,7 +161,7 @@ func getServerType() string {
 	if len(os.Args) > 1 {
 		return os.Args[1]
 	}
-	return "proxy"
+	return server.ProxyServerName
 }
 
 func initializeServer(
@@ -173,7 +171,7 @@ func initializeServer(
 	serverType := getServerType()
 
 	switch serverType {
-	case "admin":
+	case server.AdminServerName:
 		return server.NewAdminServer(adminServerDi)
 	default:
 		return server.NewProxyServer(proxyServerDi)

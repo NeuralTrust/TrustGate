@@ -31,6 +31,7 @@ type ServerConfig struct {
 	AdminPort   int    `mapstructure:"admin_port"`
 	ProxyPort   int    `mapstructure:"proxy_port"`
 	MetricsPort int    `mapstructure:"metrics_port"`
+	ActionsPort int    `mapstructure:"actions_port"`
 	Type        string `mapstructure:"type"`
 	Port        int    `mapstructure:"port"`
 	Host        string `mapstructure:"host"`
