@@ -25,7 +25,7 @@ import (
 
 const (
 	PluginName    = "neuraltrust_jailbreak"
-	jailbreakPath = "/v1/firewall"
+	jailbreakPath = "/v1/jailbreak"
 	jailbreakType = "jailbreak"
 )
 
