@@ -103,10 +103,15 @@ func (c *client) Ask(
 		return nil, fmt.Errorf("no completions returned")
 	}
 
+	responseContent := resp.Choices[0].Message.Content
+	responseContent = strings.TrimPrefix(responseContent, "```json")
+	responseContent = strings.TrimSuffix(responseContent, "```")
+	responseContent = strings.TrimSpace(responseContent)
+
 	return &providers.CompletionResponse{
 		ID:       resp.ID,
 		Model:    resp.Model,
-		Response: resp.Choices[0].Message.Content,
+		Response: responseContent,
 		Usage: providers.Usage{
 			PromptTokens:     int(resp.Usage.PromptTokens),
 			CompletionTokens: int(resp.Usage.CompletionTokens),
