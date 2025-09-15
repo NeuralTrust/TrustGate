@@ -30,7 +30,7 @@ func TestNeuralTrustJailbreakPlugin_JailBreak(t *testing.T) {
 						"token":    os.Getenv("NEURAL_TRUST_FIREWALL_API_KEY"),
 						"base_url": os.Getenv("NEURAL_TRUST_FIREWALL_URL"),
 					},
-					"mapping_field": "input.text",
+					"mapping_field": "input",
 				},
 			},
 		},
@@ -82,7 +82,7 @@ func TestNeuralTrustJailbreakPlugin_JailBreak(t *testing.T) {
 	}{
 		{
 			"Safe Content",
-			"{\"input\": {\"text\": \"I like Cats\"}",
+			"{\"input\":  \"ok\"}",
 			http.StatusOK,
 		},
 		{
