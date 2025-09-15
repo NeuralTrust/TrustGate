@@ -37,9 +37,9 @@ type PluginConfig struct {
 }
 
 type PluginError struct {
-	StatusCode int
-	Message    string
-	Err        error
+	StatusCode int    `json:"code"`
+	Message    string `json:"message"`
+	Err        error  `json:"-"`
 }
 
 type PluginResponse struct {

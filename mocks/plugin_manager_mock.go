@@ -59,6 +59,68 @@ func (_c *Manager_ClearPluginChain_Call) RunAndReturn(run func(string)) *Manager
 	return _c
 }
 
+// ExecuteChain provides a mock function with given fields: ctx, chain, req, resp, collector
+func (_m *Manager) ExecuteChain(ctx context.Context, chain []types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext, collector *metrics.Collector) (*types.ResponseContext, error) {
+	ret := _m.Called(ctx, chain, req, resp, collector)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ExecuteChain")
+	}
+
+	var r0 *types.ResponseContext
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, []types.PluginConfig, *types.RequestContext, *types.ResponseContext, *metrics.Collector) (*types.ResponseContext, error)); ok {
+		return rf(ctx, chain, req, resp, collector)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, []types.PluginConfig, *types.RequestContext, *types.ResponseContext, *metrics.Collector) *types.ResponseContext); ok {
+		r0 = rf(ctx, chain, req, resp, collector)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*types.ResponseContext)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, []types.PluginConfig, *types.RequestContext, *types.ResponseContext, *metrics.Collector) error); ok {
+		r1 = rf(ctx, chain, req, resp, collector)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Manager_ExecuteChain_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ExecuteChain'
+type Manager_ExecuteChain_Call struct {
+	*mock.Call
+}
+
+// ExecuteChain is a helper method to define mock.On call
+//   - ctx context.Context
+//   - chain []types.PluginConfig
+//   - req *types.RequestContext
+//   - resp *types.ResponseContext
+//   - collector *metrics.Collector
+func (_e *Manager_Expecter) ExecuteChain(ctx interface{}, chain interface{}, req interface{}, resp interface{}, collector interface{}) *Manager_ExecuteChain_Call {
+	return &Manager_ExecuteChain_Call{Call: _e.mock.On("ExecuteChain", ctx, chain, req, resp, collector)}
+}
+
+func (_c *Manager_ExecuteChain_Call) Run(run func(ctx context.Context, chain []types.PluginConfig, req *types.RequestContext, resp *types.ResponseContext, collector *metrics.Collector)) *Manager_ExecuteChain_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].([]types.PluginConfig), args[2].(*types.RequestContext), args[3].(*types.ResponseContext), args[4].(*metrics.Collector))
+	})
+	return _c
+}
+
+func (_c *Manager_ExecuteChain_Call) Return(_a0 *types.ResponseContext, _a1 error) *Manager_ExecuteChain_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Manager_ExecuteChain_Call) RunAndReturn(run func(context.Context, []types.PluginConfig, *types.RequestContext, *types.ResponseContext, *metrics.Collector) (*types.ResponseContext, error)) *Manager_ExecuteChain_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ExecuteStage provides a mock function with given fields: ctx, stage, gatewayID, req, resp, collector
 func (_m *Manager) ExecuteStage(ctx context.Context, stage types.Stage, gatewayID string, req *types.RequestContext, resp *types.ResponseContext, collector *metrics.Collector) (*types.ResponseContext, error) {
 	ret := _m.Called(ctx, stage, gatewayID, req, resp, collector)
