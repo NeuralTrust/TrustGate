@@ -33,7 +33,7 @@ func TestContextualSecurityPlugin(t *testing.T) {
 					"jailbreak": map[string]interface{}{
 						"threshold": 0.6,
 					},
-					"mapping_field":    "input.test",
+					"mapping_field":    "input",
 					"retention_period": 600,
 				},
 			},
@@ -51,7 +51,7 @@ func TestContextualSecurityPlugin(t *testing.T) {
 					"toxicity": map[string]interface{}{
 						"threshold": 0.6,
 					},
-					"mapping_field":    "input.test",
+					"mapping_field":    "input",
 					"retention_period": 600,
 				},
 			},
