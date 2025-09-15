@@ -454,6 +454,9 @@ func (m *manager) executeParallel(
 				m.mu.Lock()
 				resp.StatusCode = result.response.StatusCode
 				resp.Body = result.response.Body
+				if resp.Headers == nil {
+					resp.Headers = map[string][]string{}
+				}
 				if result.response.Headers != nil {
 					for k, v := range result.response.Headers {
 						resp.Headers[k] = v
