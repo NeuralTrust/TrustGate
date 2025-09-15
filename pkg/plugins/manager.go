@@ -61,6 +61,13 @@ type Manager interface {
 		resp *types.ResponseContext,
 		collector *metrics.Collector,
 	) (*types.ResponseContext, error)
+	ExecuteChain(
+		ctx context.Context,
+		chain []types.PluginConfig,
+		req *types.RequestContext,
+		resp *types.ResponseContext,
+		collector *metrics.Collector,
+	) (*types.ResponseContext, error)
 }
 
 type manager struct {
@@ -296,6 +303,22 @@ func (m *manager) ExecuteStage(
 	return resp, nil
 }
 
+func (m *manager) ExecuteChain(
+	ctx context.Context,
+	chain []types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	collector *metrics.Collector,
+) (*types.ResponseContext, error) {
+	if len(chain) > 0 {
+		executedPlugins := make(map[string]bool)
+		if err := m.executeChains(ctx, m.plugins, chain, req, resp, executedPlugins, collector); err != nil {
+			return resp, err
+		}
+	}
+	return resp, nil
+}
+
 func (m *manager) executeChains(
 	ctx context.Context,
 	plugins map[string]pluginiface.Plugin,
@@ -454,6 +477,9 @@ func (m *manager) executeParallel(
 				m.mu.Lock()
 				resp.StatusCode = result.response.StatusCode
 				resp.Body = result.response.Body
+				if resp.Headers == nil {
+					resp.Headers = map[string][]string{}
+				}
 				if result.response.Headers != nil {
 					for k, v := range result.response.Headers {
 						resp.Headers[k] = v
@@ -507,6 +533,9 @@ func (m *manager) executeSequential(
 				resp.StatusCode = pluginResp.StatusCode
 				if pluginResp.Body != nil {
 					resp.Body = pluginResp.Body
+				}
+				if resp.Headers == nil {
+					resp.Headers = map[string][]string{}
 				}
 				if pluginResp.Headers != nil {
 					for k, v := range pluginResp.Headers {
