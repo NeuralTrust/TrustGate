@@ -986,6 +986,12 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 		var wsMessage infraWebsocket.Message
 		if err := json.Unmarshal(message, &wsMessage); err != nil {
 			h.logger.WithError(err).Error("failed to unmarshal message")
+
+			err = clientConn.WriteMessage(websocket.TextMessage, []byte("failed to unmarshal message"))
+			if err != nil {
+				h.logger.WithError(err).Error("failed to write message")
+				return
+			}
 			continue
 		}
 
@@ -1028,7 +1034,7 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 				} else {
 					h.logger.WithError(err).Error("failed to serialize plugin error")
 				}
-				return
+				continue
 			}
 
 			if respCtx.StopProcessing {
@@ -1036,7 +1042,7 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 				if err != nil {
 					h.logger.WithError(err).Error("failed to send stop processing message to client")
 				}
-				return
+				continue
 			}
 
 			if !h.config.Plugins.IgnoreErrors {
@@ -1047,13 +1053,18 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 						h.logger.WithError(err).Error("failed to send error message to client")
 					}
 				}
-				return
+				continue
 			}
 		}
 
 		if targetConn != nil {
 			if err := targetConn.WriteMessage(mt, reqCtx.Body); err != nil {
 				h.logger.WithError(err).Error("error writing message to target")
+				err = clientConn.Close()
+				if err != nil {
+					h.logger.WithError(err).Error("error closing target connection")
+					continue
+				}
 				return
 			}
 		}
