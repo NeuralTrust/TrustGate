@@ -164,6 +164,6 @@ func (m *authMiddleware) setRuleContext(ctx *fiber.Ctx, rule *types.ForwardingRu
 	ctx.Set(ServiceIDKey, rule.ServiceID)
 
 	ctx.Locals(string(common.MatchedRuleContextKey), rule)
-	c := context.WithValue(ctx.Context(), string(common.MatchedRuleContextKey), rule)
+	c := context.WithValue(ctx.Context(), common.MatchedRuleContextKey, rule)
 	ctx.SetUserContext(c)
 }

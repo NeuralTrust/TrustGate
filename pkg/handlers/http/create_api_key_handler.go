@@ -73,7 +73,7 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 			}
 			policyUUIDs = append(policyUUIDs, policyUUID)
 		}
-		
+
 		existingRules, err := s.ruleRepo.FindByIds(c.Context(), policyUUIDs, gatewayUUID)
 		if err != nil {
 			s.logger.WithError(err).Error("Failed to validate policies")

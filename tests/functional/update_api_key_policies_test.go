@@ -48,7 +48,8 @@ func TestUpdateAPIKeyPolicies(t *testing.T) {
 		"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 	}, rulePayload)
 	assert.Equal(t, http.StatusCreated, status)
-	ruleID, _ := ruleResp["id"].(string)
+	ruleID, ok := ruleResp["id"].(string)
+	assert.True(t, ok, "rule ID should be a string")
 	assert.NotEmpty(t, ruleID)
 
 	// Create an API key and obtain its ID via list endpoint
@@ -62,7 +63,10 @@ func TestUpdateAPIKeyPolicies(t *testing.T) {
 		for _, k := range keys {
 			if m, ok := k.(map[string]interface{}); ok {
 				if m["key"] == createdKey {
-					apiKeyID, _ = m["id"].(string)
+					apiKeyID, ok = m["id"].(string)
+					if !ok {
+						t.Fatalf("API key ID should be a string")
+					}
 					break
 				}
 			}
@@ -150,7 +154,8 @@ func TestUpdateAPIKeyPolicies(t *testing.T) {
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, otherRulePayload)
 		assert.Equal(t, http.StatusCreated, status)
-		otherRuleID, _ := otherRuleResp["id"].(string)
+		otherRuleID, ok := otherRuleResp["id"].(string)
+		assert.True(t, ok, "other rule ID should be a string")
 		assert.NotEmpty(t, otherRuleID)
 
 		// Try to set a policy from another gateway -> should fail 400
