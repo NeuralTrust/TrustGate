@@ -99,25 +99,21 @@ func (h *forwardedWebsocketHandler) Handle(c *websocket.Conn) {
 		return
 	}
 
-	metricsCollector, ok := c.Locals(string(metrics.CollectorKey)).(*metrics.Collector)
-	if !ok || metricsCollector == nil {
+	matchingRule, ok := c.Locals(string(common.MatchedRuleContextKey)).(*types.ForwardingRule)
+	if !ok {
+		h.logger.Error("failed to get matched rule from context")
 		return
-	}
-
-	var matchingRule *types.ForwardingRule
-	for _, rule := range gatewayData.Rules {
-		if !rule.Active {
-			continue
-		}
-		if reqCtx.Path == rule.Path {
-			matchingRule = &rule
-			reqCtx.RuleID = rule.ID
-			break
-		}
 	}
 
 	if matchingRule == nil {
 		h.logger.WithField("path", reqCtx.Path).Error("no matching rule found for websocket connection")
+		return
+	}
+
+	reqCtx.RuleID = matchingRule.ID
+
+	metricsCollector, ok := c.Locals(string(metrics.CollectorKey)).(*metrics.Collector)
+	if !ok || metricsCollector == nil {
 		return
 	}
 

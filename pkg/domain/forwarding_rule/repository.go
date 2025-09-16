@@ -15,4 +15,5 @@ type Repository interface {
 	Update(ctx context.Context, rule *ForwardingRule) error
 	Delete(ctx context.Context, id, gatewayID uuid.UUID) error
 	UpdateRulesCache(ctx context.Context, gatewayID uuid.UUID, rules []ForwardingRule) error
+	FindByIds(ctx context.Context, ids []uuid.UUID, gatewayID uuid.UUID) ([]ForwardingRule, error)
 }

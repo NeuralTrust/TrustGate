@@ -331,6 +331,81 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/gateways/{gateway_id}/keys/{key_id}/policies": {
+            "put": {
+                "description": "Updates the set of allowed rule IDs (policies) for an API key",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API Keys"
+                ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Gateway ID",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "API Key ID",
+                        "name": "key_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Policies update payload",
+                        "name": "update",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.updateAPIKeyPoliciesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "API Key updated successfully",
+                        "schema": {
+                            "$ref": "#/definitions/apikey.APIKey"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request data",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "API key not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/gateways/{gateway_id}/public-keys": {
             "get": {
                 "description": "Returns a list of all API keys for a gateway with obfuscated key values",
@@ -1079,7 +1154,7 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Updates only the plugin chain for a given gateway or rule",
+                "description": "Updates the plugin chain for a given gateway or rule with granular add/edit/delete operations",
                 "consumes": [
                     "application/json"
                 ],
@@ -1162,9 +1237,6 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
-                "deleted_at": {
-                    "type": "string"
-                },
                 "expires_at": {
                     "type": "string"
                 },
@@ -1179,6 +1251,12 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "policies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -1191,10 +1269,6 @@ const docTemplate = `{
         "domain.CredentialsJSON": {
             "type": "object",
             "properties": {
-                "allow_override": {
-                    "description": "General settings",
-                    "type": "boolean"
-                },
                 "api_key": {
                     "description": "Api Key",
                     "type": "string"
@@ -1429,9 +1503,6 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
-                "subdomain": {
-                    "type": "string"
-                },
                 "telemetry": {
                     "$ref": "#/definitions/telemetry.Telemetry"
                 },
@@ -1457,6 +1528,17 @@ const docTemplate = `{
                 },
                 "ttl": {
                     "type": "integer"
+                }
+            }
+        },
+        "http.updateAPIKeyPoliciesRequest": {
+            "type": "object",
+            "properties": {
+                "policies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -1563,10 +1645,6 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
-                "subdomain": {
-                    "description": "@required",
-                    "type": "string"
-                },
                 "telemetry": {
                     "$ref": "#/definitions/request.TelemetryRequest"
                 },
@@ -1623,6 +1701,38 @@ const docTemplate = `{
                 "threshold": {
                     "description": "Number of failures before marking as unhealthy",
                     "type": "integer"
+                }
+            }
+        },
+        "request.PluginOperation": {
+            "type": "string",
+            "enum": [
+                "add",
+                "edit",
+                "delete"
+            ],
+            "x-enum-varnames": [
+                "PluginOperationAdd",
+                "PluginOperationEdit",
+                "PluginOperationDelete"
+            ]
+        },
+        "request.PluginUpdate": {
+            "type": "object",
+            "properties": {
+                "old_plugin_name": {
+                    "description": "For edit operation, we can optionally specify which plugin to update by name\nif the name itself is being changed",
+                    "type": "string"
+                },
+                "operation": {
+                    "$ref": "#/definitions/request.PluginOperation"
+                },
+                "plugin": {
+                    "$ref": "#/definitions/types.PluginConfig"
+                },
+                "plugin_name": {
+                    "description": "For delete operation, we only need the plugin name",
+                    "type": "string"
                 }
             }
         },
@@ -1752,14 +1862,15 @@ const docTemplate = `{
                 "port": {
                     "type": "integer"
                 },
-                "priority": {
-                    "type": "integer"
-                },
                 "protocol": {
                     "type": "string"
                 },
                 "provider": {
                     "type": "string"
+                },
+                "provider_options": {
+                    "type": "object",
+                    "additionalProperties": {}
                 },
                 "stream": {
                     "type": "boolean"
@@ -1842,15 +1953,15 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "plugin_chain": {
+                "type": {
+                    "type": "string"
+                },
+                "updates": {
+                    "description": "Granular updates for add/edit/delete operations",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/types.PluginConfig"
+                        "$ref": "#/definitions/request.PluginUpdate"
                     }
-                },
-                "type": {
-                    "description": "\"gateway\" or \"rule\"",
-                    "type": "string"
                 }
             }
         },
@@ -1954,8 +2065,17 @@ const docTemplate = `{
                         "$ref": "#/definitions/types.PluginConfig"
                     }
                 },
+                "preserve_host": {
+                    "type": "boolean"
+                },
+                "retry_attempts": {
+                    "type": "integer"
+                },
                 "service_id": {
                     "type": "string"
+                },
+                "strip_path": {
+                    "type": "boolean"
                 },
                 "trustlens": {
                     "$ref": "#/definitions/domain.TrustLensJSON"
@@ -2062,11 +2182,8 @@ const docTemplate = `{
                 "protocol": {
                     "type": "string"
                 },
-                "retries": {
-                    "description": "Common settings",
-                    "type": "integer"
-                },
                 "stream": {
+                    "description": "Common settings",
                     "type": "boolean"
                 },
                 "tags": {
@@ -2189,6 +2306,12 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "policies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -2244,10 +2367,6 @@ const docTemplate = `{
         "types.Credentials": {
             "type": "object",
             "properties": {
-                "allow_override": {
-                    "description": "General settings",
-                    "type": "boolean"
-                },
                 "api_key": {
                     "description": "Api Key",
                     "type": "string"
@@ -2612,14 +2731,15 @@ const docTemplate = `{
                 "port": {
                     "type": "integer"
                 },
-                "priority": {
-                    "type": "integer"
-                },
                 "protocol": {
                     "type": "string"
                 },
                 "provider": {
                     "type": "string"
+                },
+                "provider_options": {
+                    "type": "object",
+                    "additionalProperties": {}
                 },
                 "stream": {
                     "type": "boolean"

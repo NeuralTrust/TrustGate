@@ -42,11 +42,12 @@ type HandlerTransportDTO struct {
 	DeleteRuleHandler Handler
 
 	// APIKey
-	CreateAPIKeyHandler      Handler
-	ListAPIKeysHandler       Handler
-	ListAPIKeysPublicHandler Handler
-	GetAPIKeyHandler         Handler
-	DeleteAPIKeyHandler      Handler
+	CreateAPIKeyHandler         Handler
+	ListAPIKeysHandler          Handler
+	ListAPIKeysPublicHandler    Handler
+	GetAPIKeyHandler            Handler
+	DeleteAPIKeyHandler         Handler
+	UpdateAPIKeyPoliciesHandler Handler
 
 	// Version
 	GetVersionHandler Handler

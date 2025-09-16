@@ -5,8 +5,6 @@ definitions:
         type: boolean
       created_at:
         type: string
-      deleted_at:
-        type: string
       expires_at:
         type: string
       gateway_id:
@@ -17,6 +15,10 @@ definitions:
         type: string
       name:
         type: string
+      policies:
+        items:
+          type: string
+        type: array
     type: object
   domain.ClientTLSConfig:
     additionalProperties:
@@ -24,9 +26,6 @@ definitions:
     type: object
   domain.CredentialsJSON:
     properties:
-      allow_override:
-        description: General settings
-        type: boolean
       api_key:
         description: Api Key
         type: string
@@ -184,8 +183,6 @@ definitions:
         $ref: '#/definitions/gateway.SessionConfig'
       status:
         type: string
-      subdomain:
-        type: string
       telemetry:
         $ref: '#/definitions/telemetry.Telemetry'
       updated_at:
@@ -203,6 +200,13 @@ definitions:
         type: string
       ttl:
         type: integer
+    type: object
+  http.updateAPIKeyPoliciesRequest:
+    properties:
+      policies:
+        items:
+          type: string
+        type: array
     type: object
   plugins.PluginDefinition:
     properties:
@@ -272,9 +276,6 @@ definitions:
         $ref: '#/definitions/request.SessionConfigRequest'
       status:
         type: string
-      subdomain:
-        description: '@required'
-        type: string
       telemetry:
         $ref: '#/definitions/request.TelemetryRequest'
       updated_at:
@@ -313,6 +314,31 @@ definitions:
       threshold:
         description: Number of failures before marking as unhealthy
         type: integer
+    type: object
+  request.PluginOperation:
+    enum:
+    - add
+    - edit
+    - delete
+    type: string
+    x-enum-varnames:
+    - PluginOperationAdd
+    - PluginOperationEdit
+    - PluginOperationDelete
+  request.PluginUpdate:
+    properties:
+      old_plugin_name:
+        description: |-
+          For edit operation, we can optionally specify which plugin to update by name
+          if the name itself is being changed
+        type: string
+      operation:
+        $ref: '#/definitions/request.PluginOperation'
+      plugin:
+        $ref: '#/definitions/types.PluginConfig'
+      plugin_name:
+        description: For delete operation, we only need the plugin name
+        type: string
     type: object
   request.ProxyConfigRequest:
     properties:
@@ -397,12 +423,13 @@ definitions:
         type: string
       port:
         type: integer
-      priority:
-        type: integer
       protocol:
         type: string
       provider:
         type: string
+      provider_options:
+        additionalProperties: {}
+        type: object
       stream:
         type: boolean
       tags:
@@ -456,13 +483,13 @@ definitions:
     properties:
       id:
         type: string
-      plugin_chain:
-        items:
-          $ref: '#/definitions/types.PluginConfig'
-        type: array
       type:
-        description: '"gateway" or "rule"'
         type: string
+      updates:
+        description: Granular updates for add/edit/delete operations
+        items:
+          $ref: '#/definitions/request.PluginUpdate'
+        type: array
     type: object
   request.UpstreamRequest:
     properties:
@@ -530,8 +557,14 @@ definitions:
         items:
           $ref: '#/definitions/types.PluginConfig'
         type: array
+      preserve_host:
+        type: boolean
+      retry_attempts:
+        type: integer
       service_id:
         type: string
+      strip_path:
+        type: boolean
       trustlens:
         $ref: '#/definitions/domain.TrustLensJSON'
       updated_at:
@@ -601,10 +634,8 @@ definitions:
         type: integer
       protocol:
         type: string
-      retries:
-        description: Common settings
-        type: integer
       stream:
+        description: Common settings
         type: boolean
       tags:
         items:
@@ -684,6 +715,10 @@ definitions:
         type: string
       name:
         type: string
+      policies:
+        items:
+          type: string
+        type: array
     required:
     - name
     type: object
@@ -722,9 +757,6 @@ definitions:
     type: object
   types.Credentials:
     properties:
-      allow_override:
-        description: General settings
-        type: boolean
       api_key:
         description: Api Key
         type: string
@@ -971,12 +1003,13 @@ definitions:
         type: string
       port:
         type: integer
-      priority:
-        type: integer
       protocol:
         type: string
       provider:
         type: string
+      provider_options:
+        additionalProperties: {}
+        type: object
       stream:
         type: boolean
       tags:
@@ -1246,6 +1279,57 @@ paths:
           description: API Key deleted successfully
         "404":
           description: API Key not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - API Keys
+  /api/v1/gateways/{gateway_id}/keys/{key_id}/policies:
+    put:
+      consumes:
+      - application/json
+      description: Updates the set of allowed rule IDs (policies) for an API key
+      parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: API Key ID
+        in: path
+        name: key_id
+        required: true
+        type: string
+      - description: Policies update payload
+        in: body
+        name: update
+        required: true
+        schema:
+          $ref: '#/definitions/http.updateAPIKeyPoliciesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: API Key updated successfully
+          schema:
+            $ref: '#/definitions/apikey.APIKey'
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: API key not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
           schema:
             additionalProperties: true
             type: object
@@ -1758,7 +1842,8 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates only the plugin chain for a given gateway or rule
+      description: Updates the plugin chain for a given gateway or rule with granular
+        add/edit/delete operations
       parameters:
       - description: Authorization token
         in: header

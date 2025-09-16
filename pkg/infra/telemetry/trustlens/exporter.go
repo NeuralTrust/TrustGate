@@ -99,7 +99,7 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 		return nil
 	}
 
-	if rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRule); ok {
+	if rule, ok := ctx.Value(string(common.MatchedRuleContextKey)).(*types.ForwardingRule); ok {
 		if rule.TrustLens == nil {
 			return nil
 		}
@@ -149,8 +149,6 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	}
 
 	deliveryChan := make(chan kafka.Event)
-	fmt.Println("produced message (trustlens)")
-	log.Debug(string(data))
 	err = p.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &p.cfg.Topic, Partition: kafka.PartitionAny},
 		Value:          data,

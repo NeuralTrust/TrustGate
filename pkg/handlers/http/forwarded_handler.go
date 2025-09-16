@@ -3,7 +3,6 @@ package http
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,7 +27,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
-	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
@@ -226,6 +224,18 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
+	if !ok {
+		h.logger.Error("failed to get gateway data in handler")
+		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "internal server error"})
+	}
+
+	matchingRule, ok := c.Locals(string(common.MatchedRuleContextKey)).(*types.ForwardingRule)
+	if !ok {
+		h.logger.Error("failed to get matched rule from context")
+		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "internal server error"})
+	}
+
 	// Create the RequestContext
 	reqCtx := &types.RequestContext{
 		C:         c,
@@ -237,6 +247,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		Query:     h.getQueryParams(c),
 		Metadata:  metadata,
 		Body:      c.Body(),
+		RuleID:    matchingRule.ID,
 	}
 
 	// Copy request headers
@@ -248,7 +259,6 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		reqCtx.Headers[common.InteractionIDHeader] = []string{interactionId}
 	}
 
-	// Create the ResponseContext
 	respCtx := &types.ResponseContext{
 		Context:   c.Context(),
 		GatewayID: gatewayID,
@@ -256,56 +266,6 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		Metadata:  make(map[string]interface{}),
 	}
 
-	// get gateway data set in plugin_chain middleware
-	gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
-	if !ok {
-		h.logger.Error("failed to get gateway data in handler")
-		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "internal server error"})
-	}
-
-	reqCtx.Metadata[string(common.GatewayDataContextKey)] = gatewayData
-
-	// Find matching rule
-	var matchingRule *types.ForwardingRule
-	for _, rule := range gatewayData.Rules {
-		if !rule.Active {
-			continue
-		}
-		// Check if method is allowed
-		methodAllowed := false
-		for _, m := range rule.Methods {
-			if m == reqData.Method {
-				methodAllowed = true
-				break
-			}
-		}
-		if !methodAllowed {
-			continue
-		}
-
-		if c.Path() == rule.Path {
-			matchingRule = &rule
-			// Store rule and service info in context for metrics
-			c.Set(middleware.RouteIDKey, rule.ID)
-			c.Set(middleware.ServiceIDKey, rule.ServiceID)
-			reqCtx.RuleID = rule.ID
-			break
-		}
-	}
-
-	if matchingRule == nil {
-		h.logger.WithFields(logrus.Fields{
-			"path":   c.Path(),
-			"method": reqData.Method,
-		}).Debug("no matching rule found")
-		return h.handleErrorResponse(c, fiber.StatusNotFound, fiber.Map{"error": "no matching rule found"})
-	}
-
-	c.Locals(common.MatchedRuleContextKey, matchingRule)
-	ctx := context.WithValue(c.Context(), common.MatchedRuleContextKey, matchingRule)
-	c.SetUserContext(ctx)
-
-	// Configure plugins for this request
 	if err := h.configureRulePlugins(gatewayID, matchingRule); err != nil {
 		h.logger.WithError(err).Error("Failed to configure plugins")
 		return h.handleErrorResponse(c, fiber.StatusNotFound, fiber.Map{"error": "failed to configure plugins"})
