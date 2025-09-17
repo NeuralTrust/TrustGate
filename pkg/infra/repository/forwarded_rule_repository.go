@@ -114,6 +114,19 @@ func (r *forwardedRuleRepository) GetRuleByID(ctx context.Context, id uuid.UUID)
 	return &rule, nil
 }
 
+func (r *forwardedRuleRepository) FindByIds(ctx context.Context, ids []uuid.UUID, gatewayID uuid.UUID) ([]forwarding_rule.ForwardingRule, error) {
+	if len(ids) == 0 {
+		return []forwarding_rule.ForwardingRule{}, nil
+	}
+
+	var rules []forwarding_rule.ForwardingRule
+	err := r.db.WithContext(ctx).Where("id IN ? AND gateway_id = ?", ids, gatewayID).Find(&rules).Error
+	if err != nil {
+		return nil, err
+	}
+	return rules, nil
+}
+
 func (r *forwardedRuleRepository) UpdateRulesCache(
 	ctx context.Context,
 	gatewayID uuid.UUID,

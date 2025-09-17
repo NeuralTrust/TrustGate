@@ -119,6 +119,66 @@ func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, uuid.UU
 	return _c
 }
 
+// FindByIds provides a mock function with given fields: ctx, ids, gatewayID
+func (_m *Repository) FindByIds(ctx context.Context, ids []uuid.UUID, gatewayID uuid.UUID) ([]forwarding_rule.ForwardingRule, error) {
+	ret := _m.Called(ctx, ids, gatewayID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindByIds")
+	}
+
+	var r0 []forwarding_rule.ForwardingRule
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, []uuid.UUID, uuid.UUID) ([]forwarding_rule.ForwardingRule, error)); ok {
+		return rf(ctx, ids, gatewayID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, []uuid.UUID, uuid.UUID) []forwarding_rule.ForwardingRule); ok {
+		r0 = rf(ctx, ids, gatewayID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]forwarding_rule.ForwardingRule)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, []uuid.UUID, uuid.UUID) error); ok {
+		r1 = rf(ctx, ids, gatewayID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_FindByIds_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindByIds'
+type Repository_FindByIds_Call struct {
+	*mock.Call
+}
+
+// FindByIds is a helper method to define mock.On call
+//   - ctx context.Context
+//   - ids []uuid.UUID
+//   - gatewayID uuid.UUID
+func (_e *Repository_Expecter) FindByIds(ctx interface{}, ids interface{}, gatewayID interface{}) *Repository_FindByIds_Call {
+	return &Repository_FindByIds_Call{Call: _e.mock.On("FindByIds", ctx, ids, gatewayID)}
+}
+
+func (_c *Repository_FindByIds_Call) Run(run func(ctx context.Context, ids []uuid.UUID, gatewayID uuid.UUID)) *Repository_FindByIds_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].([]uuid.UUID), args[2].(uuid.UUID))
+	})
+	return _c
+}
+
+func (_c *Repository_FindByIds_Call) Return(_a0 []forwarding_rule.ForwardingRule, _a1 error) *Repository_FindByIds_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_FindByIds_Call) RunAndReturn(run func(context.Context, []uuid.UUID, uuid.UUID) ([]forwarding_rule.ForwardingRule, error)) *Repository_FindByIds_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetRule provides a mock function with given fields: ctx, id, gatewayID
 func (_m *Repository) GetRule(ctx context.Context, id uuid.UUID, gatewayID uuid.UUID) (*forwarding_rule.ForwardingRule, error) {
 	ret := _m.Called(ctx, id, gatewayID)

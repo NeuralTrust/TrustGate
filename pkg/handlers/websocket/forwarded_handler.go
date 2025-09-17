@@ -99,25 +99,21 @@ func (h *forwardedWebsocketHandler) Handle(c *websocket.Conn) {
 		return
 	}
 
-	metricsCollector, ok := c.Locals(string(metrics.CollectorKey)).(*metrics.Collector)
-	if !ok || metricsCollector == nil {
+	matchingRule, ok := c.Locals(string(common.MatchedRuleContextKey)).(*types.ForwardingRule)
+	if !ok {
+		h.logger.Error("failed to get matched rule from context")
 		return
-	}
-
-	var matchingRule *types.ForwardingRule
-	for _, rule := range gatewayData.Rules {
-		if !rule.Active {
-			continue
-		}
-		if reqCtx.Path == rule.Path {
-			matchingRule = &rule
-			reqCtx.RuleID = rule.ID
-			break
-		}
 	}
 
 	if matchingRule == nil {
 		h.logger.WithField("path", reqCtx.Path).Error("no matching rule found for websocket connection")
+		return
+	}
+
+	reqCtx.RuleID = matchingRule.ID
+
+	metricsCollector, ok := c.Locals(string(metrics.CollectorKey)).(*metrics.Collector)
+	if !ok || metricsCollector == nil {
 		return
 	}
 
@@ -990,6 +986,12 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 		var wsMessage infraWebsocket.Message
 		if err := json.Unmarshal(message, &wsMessage); err != nil {
 			h.logger.WithError(err).Error("failed to unmarshal message")
+
+			err = clientConn.WriteMessage(websocket.TextMessage, []byte("failed to unmarshal message"))
+			if err != nil {
+				h.logger.WithError(err).Error("failed to write message")
+				return
+			}
 			continue
 		}
 
@@ -1032,7 +1034,7 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 				} else {
 					h.logger.WithError(err).Error("failed to serialize plugin error")
 				}
-				return
+				continue
 			}
 
 			if respCtx.StopProcessing {
@@ -1040,7 +1042,7 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 				if err != nil {
 					h.logger.WithError(err).Error("failed to send stop processing message to client")
 				}
-				return
+				continue
 			}
 
 			if !h.config.Plugins.IgnoreErrors {
@@ -1051,13 +1053,18 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 						h.logger.WithError(err).Error("failed to send error message to client")
 					}
 				}
-				return
+				continue
 			}
 		}
 
 		if targetConn != nil {
 			if err := targetConn.WriteMessage(mt, reqCtx.Body); err != nil {
 				h.logger.WithError(err).Error("error writing message to target")
+				err = clientConn.Close()
+				if err != nil {
+					h.logger.WithError(err).Error("error closing target connection")
+					continue
+				}
 				return
 			}
 		}

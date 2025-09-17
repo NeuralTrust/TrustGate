@@ -6,6 +6,8 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	dbtypes "github.com/NeuralTrust/TrustGate/pkg/infra/database/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -16,13 +18,15 @@ type createAPIKeyHandler struct {
 	logger     *logrus.Logger
 	cache      *cache.Cache
 	apiKeyRepo domain.Repository
+	ruleRepo   ruledomain.Repository
 }
 
-func NewCreateAPIKeyHandler(logger *logrus.Logger, cache *cache.Cache, apiKeyRepo domain.Repository) Handler {
+func NewCreateAPIKeyHandler(logger *logrus.Logger, cache *cache.Cache, apiKeyRepo domain.Repository, ruleRepo ruledomain.Repository) Handler {
 	return &createAPIKeyHandler{
 		logger:     logger,
 		cache:      cache,
 		apiKeyRepo: apiKeyRepo,
+		ruleRepo:   ruleRepo,
 	}
 }
 
@@ -58,11 +62,51 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
 	}
 
+	var policyUUIDs []uuid.UUID
+	if len(req.Policies) > 0 {
+		policyUUIDs = make([]uuid.UUID, 0, len(req.Policies))
+		for _, policyID := range req.Policies {
+			policyUUID, err := uuid.Parse(policyID)
+			if err != nil {
+				s.logger.WithError(err).WithField("policy_id", policyID).Error("invalid policy ID format")
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid policy ID format"})
+			}
+			policyUUIDs = append(policyUUIDs, policyUUID)
+		}
+
+		existingRules, err := s.ruleRepo.FindByIds(c.Context(), policyUUIDs, gatewayUUID)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to validate policies")
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to validate policies"})
+		}
+
+		if len(existingRules) != len(policyUUIDs) {
+			existingIDs := make(map[uuid.UUID]bool)
+			for _, rule := range existingRules {
+				existingIDs[rule.ID] = true
+			}
+
+			var missingPolicies []string
+			for _, policyUUID := range policyUUIDs {
+				if !existingIDs[policyUUID] {
+					missingPolicies = append(missingPolicies, policyUUID.String())
+				}
+			}
+
+			s.logger.WithField("missing_policies", missingPolicies).Error("some policies do not exist")
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error":            "some policies do not exist",
+				"missing_policies": missingPolicies,
+			})
+		}
+	}
+
 	apiKey := &domain.APIKey{
 		ID:        id,
 		Name:      req.Name,
 		GatewayID: gatewayUUID,
 		Key:       s.generateAPIKey(),
+		Policies:  dbtypes.UUIDArray(policyUUIDs),
 	}
 
 	if req.ExpiresAt != nil {
