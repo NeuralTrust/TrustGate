@@ -88,10 +88,4 @@ func TestCreateAPIKey(t *testing.T) {
 		}, apiKeyPayload)
 		assert.Equal(t, http.StatusCreated, status)
 	})
-
-	t.Run("it should fail with invalid JSON payload", func(t *testing.T) {
-		// This test is a bit tricky to implement with the current sendRequest function
-		// as it automatically marshals the payload to JSON. For now, we'll skip this test.
-		// In a real-world scenario, you would use a custom HTTP client to send an invalid JSON payload.
-	})
 }

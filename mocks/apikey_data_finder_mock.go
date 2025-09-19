@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	apikey "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	apikey "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 
 	context "context"
 
