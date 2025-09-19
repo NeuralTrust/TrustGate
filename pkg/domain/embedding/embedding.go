@@ -3,6 +3,7 @@ package embedding
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
@@ -21,6 +22,13 @@ type Config struct {
 }
 
 func (e *Embedding) ToBlob() ([]byte, error) {
+	if e == nil {
+		return nil, fmt.Errorf("embedding is nil")
+	}
+	if e.Value == nil {
+		return nil, fmt.Errorf("embedding value is nil")
+	}
+
 	float32Embedding := make([]float32, len(e.Value))
 	for i, v := range e.Value {
 		float32Embedding[i] = float32(v)

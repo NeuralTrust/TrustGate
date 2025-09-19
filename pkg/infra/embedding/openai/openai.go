@@ -33,7 +33,7 @@ func (s *embeddingService) Generate(
 	text, model string,
 	upstreamEmbedding *embedding.Config,
 ) (*embedding.Embedding, error) {
-	var emptyData *embedding.Embedding = nil
+	var emptyData *embedding.Embedding
 
 	if upstreamEmbedding.Credentials.HeaderValue == "" {
 		s.logger.Warn("embeddings API key not provided, using default embedding")

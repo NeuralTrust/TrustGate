@@ -378,6 +378,12 @@ func (p *NeuralTrustModerationPlugin) generateSampleEmbedding(
 	embeddingData, err := creator.Generate(ctx, sample, model, config)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to generate embedding for sample " + sample)
+		return
+	}
+
+	if embeddingData == nil {
+		p.logger.Error("embedding data is nil for sample " + sample)
+		return
 	}
 
 	err = p.embeddingRepo.StoreWithHMSet(
