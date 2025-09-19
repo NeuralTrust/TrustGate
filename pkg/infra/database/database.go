@@ -3,28 +3,15 @@ package database
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	"github.com/sirupsen/logrus"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
-func GetRegisteredModels() []interface{} {
-	return []interface{}{
-		&gateway.Gateway{},
-		&forwarding_rule.ForwardingRule{},
-		&apikey.APIKey{},
-		&service.Service{},
-		&upstream.Upstream{},
-	}
-}
-
 // DB represents the database connection
 type DB struct {
+	logger *logrus.Logger
 	*gorm.DB
 }
 
@@ -39,7 +26,7 @@ type Config struct {
 }
 
 // NewDB creates a new database connection
-func NewDB(cfg *Config, models []interface{}) (*DB, error) {
+func NewDB(logger *logrus.Logger, cfg *Config) (*DB, error) {
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode)
 
@@ -48,13 +35,16 @@ func NewDB(cfg *Config, models []interface{}) (*DB, error) {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Index mutations are handled by the migrations manager
+	db := &DB{logger: logger, DB: gormDB}
+	migrationsManager := NewMigrationsManager(db.DB)
 
-	if err := gormDB.AutoMigrate(models...); err != nil {
-		return nil, fmt.Errorf("failed to auto-migrate schema: %w", err)
+	if err := migrationsManager.ApplyPending(); err != nil {
+		logger.WithError(err).Error("failed to apply database migrations")
+	} else {
+		fmt.Println("✓ database migrations successfully applied")
 	}
 
-	return &DB{DB: gormDB}, nil
+	return db, nil
 }
 
 // Close closes the database connection

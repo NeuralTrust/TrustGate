@@ -51,6 +51,21 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 			v1.Use(r.middlewareTransport.GetMiddlewares()...)
 		}
 
+		iam := v1.Group("/iam")
+		{
+			// API key management
+			apiKeys := iam.Group("/api-keys")
+			{
+				apiKeys.Post("", handlerTransport.CreateAPIKeyHandler.Handle)
+				apiKeys.Get("", handlerTransport.GetAPIKeyHandler.Handle)
+				apiKeys.Delete("/:key_id", handlerTransport.DeleteAPIKeyHandler.Handle)
+				apiKeys.Put("/:key_id/policies", handlerTransport.UpdateAPIKeyPoliciesHandler.Handle)
+			}
+
+			// Public API key management (with obfuscated keys)
+			apiKeys.Get("/public", handlerTransport.ListAPIKeysPublicHandler.Handle)
+		}
+
 		// Gateway endpoints
 		gateways := v1.Group("/gateways")
 		{
@@ -89,21 +104,6 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 				rules.Delete("/:rule_id", handlerTransport.DeleteRuleHandler.Handle)
 			}
 
-			// API key management
-			keys := gateways.Group("/:gateway_id/keys")
-			{
-				keys.Post("", handlerTransport.CreateAPIKeyHandler.Handle)
-				keys.Get("", handlerTransport.ListAPIKeysHandler.Handle)
-				// keys.Get("/:key_id", handlerTransport.GetAPIKeyHandler.Handle)
-				keys.Delete("/:key_id", handlerTransport.DeleteAPIKeyHandler.Handle)
-				keys.Put("/:key_id/policies", handlerTransport.UpdateAPIKeyPoliciesHandler.Handle)
-			}
-
-			// Public API key management (with obfuscated keys)
-			publicKeys := gateways.Group("/:gateway_id/public-keys")
-			{
-				publicKeys.Get("", handlerTransport.ListAPIKeysPublicHandler.Handle)
-			}
 		}
 
 		// Plugins endpoints

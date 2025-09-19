@@ -1,8 +1,8 @@
 package http
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -30,20 +30,24 @@ func NewListAPIKeysPublicHandler(logger *logrus.Logger, gatewayRepo gateway.Repo
 // @Param gateway_id path string true "Gateway ID"
 // @Success 200 {array} apikey.APIKey "List of API Keys with obfuscated keys"
 // @Failure 404 {object} map[string]interface{} "Gateway not found"
-// @Router /api/v1/gateways/{gateway_id}/public-keys [get]
+// @Router /api/v1/iam/api-key/public [get]
 func (s *listAPIKeysPublicHandler) Handle(c *fiber.Ctx) error {
-	gatewayID := c.Params("gateway_id")
-	gatewayUUID, err := uuid.Parse(gatewayID)
+	subjectID := c.Query("subject_id")
+
+	if subjectID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "subject_id query parameter is required"})
+	}
+	subjectUUID, err := uuid.Parse(subjectID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid subject_id"})
 	}
 
-	if _, err := s.gatewayRepo.Get(c.Context(), gatewayUUID); err != nil {
+	if _, err := s.gatewayRepo.Get(c.Context(), subjectUUID); err != nil {
 		s.logger.WithError(err).Error("failed to get gateway")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 	}
 
-	apiKeys, err := s.apiKeyRepo.List(c.Context(), gatewayUUID)
+	apiKeys, err := s.apiKeyRepo.ListWithSubject(c.Context(), subjectUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to list API keys")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list API keys"})

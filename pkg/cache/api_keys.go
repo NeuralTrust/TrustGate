@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 
 	"github.com/go-redis/redis/v8"
 )

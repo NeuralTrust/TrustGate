@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -52,9 +52,9 @@ func (r *ApiKeyRepository) Get(ctx context.Context, id string) (*apikey.APIKey, 
 	return &entity, nil
 }
 
-func (r *ApiKeyRepository) List(ctx context.Context, gatewayID uuid.UUID) ([]apikey.APIKey, error) {
+func (r *ApiKeyRepository) ListWithSubject(ctx context.Context, subjectID uuid.UUID) ([]apikey.APIKey, error) {
 	var apiKeys []apikey.APIKey
-	err := r.db.WithContext(ctx).Where("gateway_id = ?", gatewayID).Find(&apiKeys).Error
+	err := r.db.WithContext(ctx).Where("gateway_id = ?", subjectID).Find(&apiKeys).Error
 	return apiKeys, err
 }
 
@@ -69,8 +69,8 @@ func (r *ApiKeyRepository) Update(ctx context.Context, apiKey *apikey.APIKey) er
 	return nil
 }
 
-func (r *ApiKeyRepository) Delete(ctx context.Context, id, gatewayID uuid.UUID) error {
-	result := r.db.WithContext(ctx).Where("id = ? AND gateway_id = ?", id, gatewayID).Delete(&apikey.APIKey{})
+func (r *ApiKeyRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	result := r.db.WithContext(ctx).Where("id = ?", id).Delete(&apikey.APIKey{})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -80,23 +80,18 @@ func (r *ApiKeyRepository) Delete(ctx context.Context, id, gatewayID uuid.UUID) 
 	return nil
 }
 
-func (r *ApiKeyRepository) Validate(ctx context.Context, gatewayID string, apiKey string) (bool, error) {
-	var exists int64
-	err := r.db.WithContext(ctx).Model(&apikey.APIKey{}).
-		Where("gateway_id = ? AND key = ? AND (expires_at IS NULL OR expires_at > ?)",
-			gatewayID, apiKey, time.Now()).
-		Count(&exists).Error
-
-	if err != nil {
-		return false, err
+func (r *ApiKeyRepository) DeleteWithSubject(ctx context.Context, id, subjectID uuid.UUID) error {
+	result := r.db.WithContext(ctx).Where("id = ? AND gateway_id = ?", id, subjectID).Delete(&apikey.APIKey{})
+	if result.Error != nil {
+		return result.Error
 	}
-	return exists > 0, nil
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("api key not found")
+	}
+	return nil
 }
 
 func (r *ApiKeyRepository) Create(ctx context.Context, apiKey *apikey.APIKey) error {
-	if apiKey.GatewayID == uuid.Nil {
-		return fmt.Errorf("gateway_id is required")
-	}
 	if apiKey.Name == "" {
 		return fmt.Errorf("name is required")
 	}
