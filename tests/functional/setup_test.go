@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -67,6 +69,8 @@ func setupTestEnvironment() {
 
 	GlobalConfig = config.GetConfig()
 
+	killProcessesOnPorts([]int{8080, 8081})
+
 	AdminUrl = getEnv("ADMIN_URL", "http://localhost:8080/api/v1")
 	ProxyUrl = getEnv("PROXY_URL", "http://localhost:8081")
 	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
@@ -101,14 +105,14 @@ func setupTestEnvironment() {
 		log.Fatalf("Failed to start proxy: %v", err)
 	}
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	fmt.Println("✨ Starting Admin Server:", adminCmd.String())
 	if err := adminCmd.Start(); err != nil {
 		log.Fatalf("Failed to start admin: %v", err)
 	}
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	fmt.Println("🚀 Test Environment Ready")
 }
@@ -170,4 +174,49 @@ func dropTestDB(name string) {
 		log.Printf("error removing database: %v", err)
 	}
 	fmt.Printf("🗑 Database %s removed\n", name)
+}
+
+func killProcessesOnPorts(ports []int) {
+	for _, port := range ports {
+		fmt.Printf("🔍 Checking for processes on port %d...\n", port)
+
+		cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port))
+		output, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+
+		pidLines := strings.TrimSpace(string(output))
+		if pidLines == "" {
+			continue
+		}
+
+		pids := strings.Split(pidLines, "\n")
+		for _, pidStr := range pids {
+			pidStr = strings.TrimSpace(pidStr)
+			if pidStr == "" {
+				continue
+			}
+
+			pid, err := strconv.Atoi(pidStr)
+			if err != nil {
+				log.Printf("invalid PID: %s", pidStr)
+				continue
+			}
+
+			fmt.Printf("🔪 Killing process %d on port %d\n", pid, port)
+			process, err := os.FindProcess(pid)
+			if err != nil {
+				log.Printf("failed to find process %d: %v", pid, err)
+				continue
+			}
+
+			err = process.Kill()
+			if err != nil {
+				log.Printf("failed to kill process %d: %v", pid, err)
+			} else {
+				fmt.Printf("✅ Process %d killed successfully\n", pid)
+			}
+		}
+	}
 }
