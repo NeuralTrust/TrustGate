@@ -90,9 +90,9 @@ func (c *client) Ask(
 	//	params.MaxTokens = openai.Int(int64(config.MaxTokens))
 	//}
 
-	if config.Temperature > 0 {
-		params.Temperature = openai.Float(config.Temperature)
-	}
+	//if config.Temperature > 0 {
+	//	params.Temperature = openai.Float(config.Temperature)
+	//}
 
 	resp, err := openaiClient.Chat.Completions.New(ctx, params)
 	if err != nil {
