@@ -86,9 +86,9 @@ func (c *client) Ask(
 		Messages: messages,
 	}
 
-	if config.MaxTokens > 0 {
-		params.MaxTokens = openai.Int(int64(config.MaxTokens))
-	}
+	//if config.MaxTokens > 0 {
+	//	params.MaxTokens = openai.Int(int64(config.MaxTokens))
+	//}
 
 	if config.Temperature > 0 {
 		params.Temperature = openai.Float(config.Temperature)
