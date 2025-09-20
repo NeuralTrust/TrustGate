@@ -29,11 +29,11 @@ const (
 )
 
 type openaiStreamRequest struct {
-	Model       string                         `json:"model"`
-	Messages    []openai.ChatCompletionMessage `json:"messages"`
-	MaxTokens   int                            `json:"max_tokens"`
-	Temperature float64                        `json:"temperature"`
-	System      string                         `json:"system"`
+	Model           string                         `json:"model"`
+	Messages        []openai.ChatCompletionMessage `json:"messages"`
+	MaxOutputTokens int                            `json:"max_output_tokens"`
+	Temperature     float64                        `json:"temperature"`
+	System          string                         `json:"system"`
 }
 
 type openaiOptions struct {
@@ -86,13 +86,13 @@ func (c *client) Ask(
 		Messages: messages,
 	}
 
-	//if config.MaxTokens > 0 {
-	//	params.MaxTokens = openai.Int(int64(config.MaxTokens))
-	//}
+	if config.MaxOutputTokens > 0 {
+		params.MaxTokens = openai.Int(int64(config.MaxOutputTokens))
+	}
 
-	//if config.Temperature > 0 {
-	//	params.Temperature = openai.Float(config.Temperature)
-	//}
+	if config.Temperature > 0 {
+		params.Temperature = openai.Float(config.Temperature)
+	}
 
 	resp, err := openaiClient.Chat.Completions.New(ctx, params)
 	if err != nil {
@@ -332,8 +332,8 @@ func (c *client) generateParams(reqBody []byte, config *providers.Config) (opena
 		Messages: messages,
 	}
 
-	if req.MaxTokens > 0 {
-		params.MaxTokens = openai.Int(int64(req.MaxTokens))
+	if req.MaxOutputTokens > 0 {
+		params.MaxTokens = openai.Int(int64(req.MaxOutputTokens))
 	}
 	if req.Temperature > 0 {
 		params.Temperature = openai.Float(req.Temperature)
