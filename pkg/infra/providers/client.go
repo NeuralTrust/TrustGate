@@ -7,15 +7,15 @@ import (
 )
 
 type Config struct {
-	Credentials     Credentials    `json:"credentials"`
-	AllowedModels   []string       `json:"allowed_models"`
-	DefaultModel    string         `json:"default_model"`
-	Model           string         `json:"model"`
-	MaxOutputTokens int            `json:"max_output_tokens,omitempty"`
-	Temperature     float64        `json:"temperature,omitempty"`
-	SystemPrompt    string         `json:"system_prompt,omitempty"`
-	Instructions    []string       `json:"instructions,omitempty"`
-	Options         map[string]any `json:"options,omitempty"`
+	Credentials   Credentials    `json:"credentials"`
+	AllowedModels []string       `json:"allowed_models"`
+	DefaultModel  string         `json:"default_model"`
+	Model         string         `json:"model"`
+	MaxTokens     int            `json:"max_tokens,omitempty"`
+	Temperature   float64        `json:"temperature,omitempty"`
+	SystemPrompt  string         `json:"system_prompt,omitempty"`
+	Instructions  []string       `json:"instructions,omitempty"`
+	Options       map[string]any `json:"options,omitempty"`
 }
 
 type Credentials struct {
