@@ -224,7 +224,7 @@ func NewContainer(
 		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, gatewayRepository, pluginManager, redisPublisher, telemetryValidator),
 		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(logger, gatewayRepository, redisPublisher),
 		// Upstream
-		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, upstreamRepository, cacheInstance, descriptionEmbeddingCreator, cfg),
+		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, upstreamRepository, gatewayRepository, cacheInstance, descriptionEmbeddingCreator, cfg),
 		ListUpstreamHandler:   handlers.NewListUpstreamHandler(logger, upstreamRepository, cacheInstance),
 		GetUpstreamHandler:    handlers.NewGetUpstreamHandler(logger, upstreamRepository, cacheInstance, upstreamFinder),
 		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(logger, upstreamRepository, redisPublisher, cacheInstance, descriptionEmbeddingCreator, cfg),
@@ -236,7 +236,7 @@ func NewContainer(
 		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, serviceRepository, redisPublisher),
 		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, serviceRepository, redisPublisher),
 		// Rule
-		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, ruleRepository, pluginChainValidator, redisPublisher),
+		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, ruleRepository, gatewayRepository, serviceRepository, pluginChainValidator, redisPublisher),
 		ListRulesHandler: handlers.NewListRulesHandler(
 			logger,
 			ruleRepository,

@@ -219,7 +219,7 @@ func TestCreateRule(t *testing.T) {
 		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, nonExistentGatewayID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, rulePayload)
-		assert.Equal(t, http.StatusCreated, status)
+		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
 	t.Run("it should fail with non-existent service ID", func(t *testing.T) {
@@ -233,7 +233,7 @@ func TestCreateRule(t *testing.T) {
 		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, rulePayload)
-		assert.Equal(t, http.StatusCreated, status)
+		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
 	t.Run("it should fail with invalid HTTP method", func(t *testing.T) {
