@@ -11,6 +11,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/mitchellh/mapstructure"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -26,10 +27,13 @@ type Config struct {
 type Exporter struct {
 	cfg      Config
 	producer *kafka.Producer
+	logger   *logrus.Logger
 }
 
-func NewKafkaExporter() *Exporter {
-	return &Exporter{}
+func NewKafkaExporter(logger *logrus.Logger) *Exporter {
+	return &Exporter{
+		logger: logger,
+	}
 }
 
 func (p *Exporter) Name() string {
@@ -62,12 +66,13 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 		"bootstrap.servers": fmt.Sprintf("%s:%s", conf.Host, conf.Port),
 	})
 	if err != nil {
-		fmt.Println("cannot connect with kafka: ", err, " ", conf.Host, " ", conf.Port, " ", conf.Topic, "")
+		p.logger.Debug("cannot connect with kafka: ", err, " ", conf.Host, " ", conf.Port, " ", conf.Topic, "")
 		return nil, fmt.Errorf("failed to create kafka producer: %w", err)
 	}
 	exporter := &Exporter{
 		cfg:      conf,
 		producer: producer,
+		logger:   p.logger,
 	}
 	if err := exporter.createTopicIfNotExists(conf.Topic); err != nil {
 		producer.Close()
@@ -84,6 +89,7 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
+	p.logger.Debug(string(data))
 	deliveryChan := make(chan kafka.Event)
 	err = p.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &p.cfg.Topic, Partition: kafka.PartitionAny},
@@ -114,10 +120,10 @@ func (p *Exporter) Close() {
 }
 
 func (p *Exporter) createTopicIfNotExists(topic string) error {
-	fmt.Println("attempting to create topic: " + topic)
+	p.logger.Info("attempting to create topic: " + topic)
 	adminClient, err := kafka.NewAdminClientFromProducer(p.producer)
 	if err != nil {
-		fmt.Println("cannot create kafka admin client")
+		p.logger.Error("cannot create kafka admin client")
 		return fmt.Errorf("failed to create kafka admin client: %w", err)
 	}
 	defer adminClient.Close()
@@ -139,11 +145,11 @@ func (p *Exporter) createTopicIfNotExists(topic string) error {
 
 	for _, result := range results {
 		if result.Error.Code() != kafka.ErrNoError && result.Error.Code() != kafka.ErrTopicAlreadyExists {
-			fmt.Println("create topic error: ", result.Error.Code(), result.Error.String(), " ", result.Topic, "")
+			p.logger.Error("create topic error: ", result.Error.Code(), result.Error.String(), " ", result.Topic, "")
 			return fmt.Errorf("failed to create topic %s: %w", result.Topic, result.Error)
 		}
 	}
-	fmt.Println("create topic result: ", results)
+	p.logger.Error("create topic result: ", results)
 	p.cfg.Topic = topic
 	return nil
 }
