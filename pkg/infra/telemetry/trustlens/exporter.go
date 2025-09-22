@@ -14,6 +14,7 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/mitchellh/mapstructure"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -40,10 +41,13 @@ type DataMapping struct {
 type Exporter struct {
 	cfg      Config
 	producer *kafka.Producer
+	logger   *logrus.Logger
 }
 
-func NewTrustLensExporter() *Exporter {
-	return &Exporter{}
+func NewTrustLensExporter(logger *logrus.Logger) *Exporter {
+	return &Exporter{
+		logger: logger,
+	}
 }
 
 func (p *Exporter) Name() string {
@@ -76,14 +80,15 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 		"bootstrap.servers": fmt.Sprintf("%s:%s", conf.Host, conf.Port),
 	})
 	if err != nil {
-		fmt.Println("cannot connect with kafka (trustlens): ", err, " ", conf.Host, " ", conf.Port, " ", conf.Topic, "")
+		p.logger.Error("cannot connect with kafka (trustlens): ", err, " ", conf.Host, " ", conf.Port, " ", conf.Topic, "")
 		return nil, fmt.Errorf("failed to create kafka producer: %w", err)
 	}
 	exporter := &Exporter{
 		cfg:      conf,
 		producer: producer,
+		logger:   p.logger,
 	}
-	fmt.Println("trying to create topic: ", conf.Topic, "")
+	p.logger.Error("trying to create topic: ", conf.Topic, "")
 	if err := exporter.createTopicIfNotExists(conf.Topic); err != nil {
 		producer.Close()
 		return nil, fmt.Errorf("failed to ensure topic exists: %w", err)
@@ -147,7 +152,7 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
-
+	p.logger.Debug(string(data))
 	deliveryChan := make(chan kafka.Event)
 	err = p.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &p.cfg.Topic, Partition: kafka.PartitionAny},

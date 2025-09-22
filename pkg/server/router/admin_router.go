@@ -57,13 +57,12 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 			apiKeys := iam.Group("/api-keys")
 			{
 				apiKeys.Post("", handlerTransport.CreateAPIKeyHandler.Handle)
-				apiKeys.Get("", handlerTransport.GetAPIKeyHandler.Handle)
+				apiKeys.Get("/public", handlerTransport.ListAPIKeysPublicHandler.Handle)
+				apiKeys.Get("/:key_id", handlerTransport.GetAPIKeyHandler.Handle)
 				apiKeys.Delete("/:key_id", handlerTransport.DeleteAPIKeyHandler.Handle)
 				apiKeys.Put("/:key_id/policies", handlerTransport.UpdateAPIKeyPoliciesHandler.Handle)
 			}
 
-			// Public API key management (with obfuscated keys)
-			apiKeys.Get("/public", handlerTransport.ListAPIKeysPublicHandler.Handle)
 		}
 
 		// Gateway endpoints

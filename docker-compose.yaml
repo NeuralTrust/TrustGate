@@ -1,6 +1,6 @@
 services:
   redis:
-    image: redis/redis-stack:latest
+    image: redis/redis-stack-server:latest
     restart: always
     ports:
       - "6379:6379"

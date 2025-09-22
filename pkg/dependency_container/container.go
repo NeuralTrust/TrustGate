@@ -152,8 +152,8 @@ func NewContainer(
 
 	// telemetry
 	providerLocator := infraTelemetry.NewProviderLocator(map[string]domain.Exporter{
-		kafka.ExporterName:     kafka.NewKafkaExporter(),
-		trustlens.ExporterName: trustlens.NewTrustLensExporter(),
+		kafka.ExporterName:     kafka.NewKafkaExporter(logger),
+		trustlens.ExporterName: trustlens.NewTrustLensExporter(logger),
 	})
 	telemetryBuilder := telemetry.NewTelemetryExportersBuilder(providerLocator)
 	telemetryValidator := telemetry.NewTelemetryExportersValidator(providerLocator)
