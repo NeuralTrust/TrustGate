@@ -22,6 +22,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domainEmbedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	domainSession "github.com/NeuralTrust/TrustGate/pkg/domain/session"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
@@ -68,6 +69,7 @@ type Container struct {
 	RedisIndexCreator     infraCache.RedisIndexCreator
 	JWTManager            jwt.Manager
 	RuleRepository        ruledomain.Repository
+	GatewayRepository     domainGateway.Repository
 }
 
 func NewContainer(
@@ -297,6 +299,7 @@ func NewContainer(
 		RedisIndexCreator:     redisIndexCreator,
 		JWTManager:            jwtManager,
 		RuleRepository:        ruleRepository,
+		GatewayRepository:     gatewayRepository,
 	}
 
 	return container, nil

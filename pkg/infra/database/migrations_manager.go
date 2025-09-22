@@ -115,11 +115,15 @@ func (m *MigrationsManager) ApplyPending() error {
 		if mig.Up == nil {
 			return fmt.Errorf("migration %s has no Up function", id)
 		}
-		if err := mig.Up(m.db); err != nil {
+		// Execute the migration and the version insert in a single transaction to ensure atomicity
+		err := m.db.Transaction(func(tx *gorm.DB) error {
+			if err := mig.Up(tx); err != nil {
+				return err
+			}
+			return tx.Exec("INSERT INTO public.migration_version (id, name, applied_at) VALUES (?, ?, ?)", mig.ID, mig.Name, time.Now()).Error
+		})
+		if err != nil {
 			return fmt.Errorf("apply migration %s (%s): %w", mig.ID, mig.Name, err)
-		}
-		if err := m.db.Exec("INSERT INTO public.migration_version (id, name, applied_at) VALUES (?, ?, ?)", mig.ID, mig.Name, time.Now()).Error; err != nil {
-			return fmt.Errorf("record migration %s: %w", mig.ID, err)
 		}
 	}
 	return nil
