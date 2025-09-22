@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -112,9 +113,35 @@ func setupTestEnvironment() {
 		log.Fatalf("Failed to start admin: %v", err)
 	}
 
-	time.Sleep(2 * time.Second)
+	// Wait for servers to be ready
+	waitForServerReady("http://localhost:8081/__/health", "proxy server")
+	waitForServerReady("http://localhost:8080/version", "admin server")
 
 	fmt.Println("🚀 Test Environment Ready")
+}
+
+func waitForServerReady(url, serverName string) {
+	maxRetries := 30
+	retryInterval := time.Second
+
+	for i := 0; i < maxRetries; i++ {
+		resp, err := http.Get(url)
+		if err == nil && resp.StatusCode < 500 {
+			resp.Body.Close()
+			fmt.Printf("✅ %s is ready\n", serverName)
+			return
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+
+		if i == maxRetries-1 {
+			log.Fatalf("❌ %s failed to become ready after %d seconds", serverName, maxRetries)
+		}
+
+		fmt.Printf("⏳ Waiting for %s to be ready... (attempt %d/%d)\n", serverName, i+1, maxRetries)
+		time.Sleep(retryInterval)
+	}
 }
 
 func createTestDB(name string) {
