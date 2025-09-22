@@ -292,7 +292,7 @@ func (p *DataMaskingPlugin) RequiredPlugins() []string { return nil }
 func (p *DataMaskingPlugin) Stages() []types.Stage { return nil }
 
 func (p *DataMaskingPlugin) AllowedStages() []types.Stage {
-	return []types.Stage{types.PreRequest, types.PostResponse}
+	return []types.Stage{types.PreRequest, types.PreResponse, types.PostResponse}
 }
 
 func (p *DataMaskingPlugin) ValidateConfig(config types.PluginConfig) error {
@@ -586,36 +586,51 @@ func levenshteinDistance(s1, s2 string) int {
 	s1 = strings.ToLower(s1)
 	s2 = strings.ToLower(s2)
 
-	if len(s1) == 0 {
-		return len(s2)
+	l1 := len(s1)
+	l2 := len(s2)
+
+	if l1 == 0 {
+		return l2
 	}
-	if len(s2) == 0 {
-		return len(s1)
+	if l2 == 0 {
+		return l1
 	}
 
-	matrix := make([][]int, len(s1)+1)
-	for i := range matrix {
-		matrix[i] = make([]int, len(s2)+1)
-		matrix[i][0] = i
-	}
-	for j := range matrix[0] {
-		matrix[0][j] = j
+	// Guard against potential allocation overflow (l2+1 sizing below)
+	maxInt := int(^uint(0) >> 1)
+	if l2 >= maxInt-1 {
+		return maxInt
 	}
 
-	for i := 1; i <= len(s1); i++ {
-		for j := 1; j <= len(s2); j++ {
+	// Use O(min(l1,l2)) space dynamic programming to minimize allocations
+	if l1 < l2 {
+		// Ensure s1 is the longer string
+		s1, s2 = s2, s1
+		l1, l2 = l2, l1
+	}
+
+	previous := make([]int, l2+1)
+	current := make([]int, l2+1)
+	for j := 0; j <= l2; j++ {
+		previous[j] = j
+	}
+
+	for i := 1; i <= l1; i++ {
+		current[0] = i
+		for j := 1; j <= l2; j++ {
 			cost := 1
 			if s1[i-1] == s2[j-1] {
 				cost = 0
 			}
-			matrix[i][j] = min3(
-				matrix[i-1][j]+1,
-				matrix[i][j-1]+1,
-				matrix[i-1][j-1]+cost,
-			)
+			insertion := current[j-1] + 1
+			deletion := previous[j] + 1
+			substitution := previous[j-1] + cost
+			current[j] = min3(insertion, deletion, substitution)
 		}
+		// swap previous and current
+		previous, current = current, previous
 	}
-	return matrix[len(s1)][len(s2)]
+	return previous[l2]
 }
 
 func calculateSimilarity(s1, s2 string) float64 {
@@ -670,6 +685,12 @@ func normalizeText(text string) string {
 func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, config Config) (string, []MaskingEvent) {
 	var events []MaskingEvent
 	maskedContent := content
+
+	// Safety guard to avoid excessive allocations on extremely large inputs
+	// Skips similarity-based masking when content is huge
+	if len(maskedContent) > 1<<20 { // ~1MB
+		return maskedContent, events
+	}
 
 	for _, entityType := range predefinedEntityOrder {
 		pattern, exists := predefinedEntityPatterns[entityType]
@@ -828,6 +849,15 @@ func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64, co
 		return result, allEvents
 
 	case string:
+		// If the string itself is JSON, mask within it structurally to avoid altering keys
+		var inner interface{}
+		if err := json.Unmarshal([]byte(v), &inner); err == nil {
+			maskedInner, events := p.maskJSONData(inner, threshold, config)
+			maskedJSON, mErr := json.Marshal(maskedInner)
+			if mErr == nil {
+				return string(maskedJSON), events
+			}
+		}
 		maskedValue, events := p.maskPlainText(v, threshold, config)
 		return maskedValue, events
 
