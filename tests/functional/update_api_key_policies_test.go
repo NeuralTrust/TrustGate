@@ -52,33 +52,26 @@ func TestUpdateAPIKeyPolicies(t *testing.T) {
 	assert.True(t, ok, "rule ID should be a string")
 	assert.NotEmpty(t, ruleID)
 
-	// Create an API key and obtain its ID via list endpoint
-	createdKey := CreateApiKey(t, gatewayID)
-	status, listResp := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, gatewayID), map[string]string{
-		"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
-	}, nil)
-	assert.Equal(t, http.StatusOK, status)
-	var apiKeyID string
-	if keys, ok := listResp["api_keys"].([]interface{}); ok {
-		for _, k := range keys {
-			if m, ok := k.(map[string]interface{}); ok {
-				if m["key"] == createdKey {
-					apiKeyID, ok = m["id"].(string)
-					if !ok {
-						t.Fatalf("API key ID should be a string")
-					}
-					break
-				}
-			}
-		}
+	// Create an API key using the new IAM endpoint and get its ID from the response
+	apiKeyPayload := map[string]interface{}{
+		"name":         "Test API Key",
+		"expires_at":   "2026-01-01T00:00:00Z",
+		"subject_type": "gateway",
+		"subject":      gatewayID,
 	}
+	status, apiKeyResp := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/iam/api-keys", AdminUrl), map[string]string{
+		"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+	}, apiKeyPayload)
+	assert.Equal(t, http.StatusCreated, status)
+	apiKeyID, ok := apiKeyResp["id"].(string)
+	assert.True(t, ok, "API key ID should be a string")
 	assert.NotEmpty(t, apiKeyID)
 
 	t.Run("it should set policies successfully", func(t *testing.T) {
 		payload := map[string]interface{}{
 			"policies": []string{ruleID},
 		}
-		status, resp := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s/keys/%s/policies", AdminUrl, gatewayID, apiKeyID), map[string]string{
+		status, resp := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/iam/api-keys/%s/policies", AdminUrl, apiKeyID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, payload)
 		assert.Equal(t, http.StatusOK, status)
@@ -101,7 +94,7 @@ func TestUpdateAPIKeyPolicies(t *testing.T) {
 		payload := map[string]interface{}{
 			"policies": []string{},
 		}
-		status, resp := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s/keys/%s/policies", AdminUrl, gatewayID, apiKeyID), map[string]string{
+		status, resp := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/iam/api-keys/%s/policies", AdminUrl, apiKeyID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, payload)
 		assert.Equal(t, http.StatusOK, status)
@@ -117,7 +110,7 @@ func TestUpdateAPIKeyPolicies(t *testing.T) {
 		payload := map[string]interface{}{
 			"policies": []string{"not-a-uuid"},
 		}
-		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s/keys/%s/policies", AdminUrl, gatewayID, apiKeyID), map[string]string{
+		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/iam/api-keys/%s/policies", AdminUrl, apiKeyID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, payload)
 		assert.Equal(t, http.StatusBadRequest, status)
@@ -162,7 +155,7 @@ func TestUpdateAPIKeyPolicies(t *testing.T) {
 		payload := map[string]interface{}{
 			"policies": []string{otherRuleID},
 		}
-		status, _ = sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s/keys/%s/policies", AdminUrl, gatewayID, apiKeyID), map[string]string{
+		status, _ = sendRequest(t, http.MethodPut, fmt.Sprintf("%s/iam/api-keys/%s/policies", AdminUrl, apiKeyID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, payload)
 		assert.Equal(t, http.StatusBadRequest, status)
@@ -173,7 +166,7 @@ func TestUpdateAPIKeyPolicies(t *testing.T) {
 			"policies": []string{ruleID},
 		}
 		nonExistentKeyID := "00000000-0000-0000-0000-000000000001"
-		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/gateways/%s/keys/%s/policies", AdminUrl, gatewayID, nonExistentKeyID), map[string]string{
+		status, _ := sendRequest(t, http.MethodPut, fmt.Sprintf("%s/iam/api-keys/%s/policies", AdminUrl, nonExistentKeyID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, payload)
 		assert.Equal(t, http.StatusNotFound, status)
