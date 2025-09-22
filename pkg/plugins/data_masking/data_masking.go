@@ -586,36 +586,53 @@ func levenshteinDistance(s1, s2 string) int {
 	s1 = strings.ToLower(s1)
 	s2 = strings.ToLower(s2)
 
-	if len(s1) == 0 {
-		return len(s2)
+	l1 := len(s1)
+	l2 := len(s2)
+
+	if l1 == 0 {
+		return l2
 	}
-	if len(s2) == 0 {
-		return len(s1)
+	if l2 == 0 {
+		return l1
 	}
 
-	matrix := make([][]int, len(s1)+1)
-	for i := range matrix {
-		matrix[i] = make([]int, len(s2)+1)
-		matrix[i][0] = i
-	}
-	for j := range matrix[0] {
-		matrix[0][j] = j
+	// Guard against potential allocation overflow by capping sizes safely
+	// maxInt is the maximal int value for the current platform
+	maxInt := int(^uint(0) >> 1)
+	// Ensure l2+1 and l1+1 do not overflow and remain reasonable
+	if l1 > maxInt/2 || l2 > maxInt/2 {
+		return maxInt
 	}
 
-	for i := 1; i <= len(s1); i++ {
-		for j := 1; j <= len(s2); j++ {
+	// Use O(min(l1,l2)) space dynamic programming to minimize allocations
+	if l1 < l2 {
+		// Ensure s1 is the longer string
+		s1, s2 = s2, s1
+		l1, l2 = l2, l1
+	}
+
+	previous := make([]int, l2+1)
+	current := make([]int, l2+1)
+	for j := 0; j <= l2; j++ {
+		previous[j] = j
+	}
+
+	for i := 1; i <= l1; i++ {
+		current[0] = i
+		for j := 1; j <= l2; j++ {
 			cost := 1
 			if s1[i-1] == s2[j-1] {
 				cost = 0
 			}
-			matrix[i][j] = min3(
-				matrix[i-1][j]+1,
-				matrix[i][j-1]+1,
-				matrix[i-1][j-1]+cost,
-			)
+			insertion := current[j-1] + 1
+			deletion := previous[j] + 1
+			substitution := previous[j-1] + cost
+			current[j] = min3(insertion, deletion, substitution)
 		}
+		// swap previous and current
+		previous, current = current, previous
 	}
-	return matrix[len(s1)][len(s2)]
+	return previous[l2]
 }
 
 func calculateSimilarity(s1, s2 string) float64 {
