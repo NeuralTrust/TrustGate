@@ -596,11 +596,9 @@ func levenshteinDistance(s1, s2 string) int {
 		return l1
 	}
 
-	// Guard against potential allocation overflow by capping sizes safely
-	// maxInt is the maximal int value for the current platform
+	// Guard against potential allocation overflow (l2+1 sizing below)
 	maxInt := int(^uint(0) >> 1)
-	// Ensure l2+1 and l1+1 do not overflow and remain reasonable
-	if l1 > maxInt/2 || l2 > maxInt/2 {
+	if l2 >= maxInt-1 {
 		return maxInt
 	}
 
@@ -687,6 +685,12 @@ func normalizeText(text string) string {
 func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, config Config) (string, []MaskingEvent) {
 	var events []MaskingEvent
 	maskedContent := content
+
+	// Safety guard to avoid excessive allocations on extremely large inputs
+	// Skips similarity-based masking when content is huge
+	if len(maskedContent) > 1<<20 { // ~1MB
+		return maskedContent, events
+	}
 
 	for _, entityType := range predefinedEntityOrder {
 		pattern, exists := predefinedEntityPatterns[entityType]
