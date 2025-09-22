@@ -54,13 +54,18 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 			return m.respondWithError(ctx, fiber.StatusUnauthorized, "invalid API key")
 		}
 
-		gatewayData, err := m.gatewayFinder.Find(ctx.Context(), key.GatewayID)
+		if key.Subject == nil {
+			m.logger.Debug("API key has no subject")
+			return m.respondWithError(ctx, fiber.StatusUnauthorized, "invalid API key")
+		}
+
+		gatewayData, err := m.gatewayFinder.Find(ctx.Context(), *key.Subject)
 		if err != nil {
 			m.logger.WithError(err).Error("failed to fetch gateway data.")
 			return m.respondWithError(ctx, fiber.StatusInternalServerError, "failed to fetch gateway data")
 		}
 
-		m.attachRequestContext(ctx, apiKey, key.ID.String(), key.GatewayID.String(), gatewayData)
+		m.attachRequestContext(ctx, apiKey, key.ID.String(), key.Subject.String(), gatewayData)
 
 		matchingRule := m.matchForwardingRule(ctx, gatewayData)
 		if matchingRule == nil {

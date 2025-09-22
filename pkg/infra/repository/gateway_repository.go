@@ -5,10 +5,10 @@ import (
 	"errors"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/types"

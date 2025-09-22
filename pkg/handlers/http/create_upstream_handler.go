@@ -8,6 +8,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
@@ -21,12 +22,14 @@ type createUpstreamHandler struct {
 	cache                       *cache.Cache
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
 	repo                        upstream.Repository
+	gatewayRepo                 gateway.Repository
 	cfg                         *config.Config
 }
 
 func NewCreateUpstreamHandler(
 	logger *logrus.Logger,
 	repo upstream.Repository,
+	gatewayRepo gateway.Repository,
 	cache *cache.Cache,
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator,
 	cfg *config.Config,
@@ -34,6 +37,7 @@ func NewCreateUpstreamHandler(
 	return &createUpstreamHandler{
 		logger:                      logger,
 		repo:                        repo,
+		gatewayRepo:                 gatewayRepo,
 		cache:                       cache,
 		descriptionEmbeddingCreator: descriptionEmbeddingCreator,
 		cfg:                         cfg,
@@ -67,6 +71,19 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusBadRequest).
 				JSON(fiber.Map{"error": fmt.Sprintf("embedding provider '%s' is not allowed", req.Embedding.Provider)})
 		}
+	}
+
+	// Validate gateway UUID format first
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway uuid"})
+	}
+
+	// Validate that gateway exists
+	_, err = s.gatewayRepo.Get(c.Context(), gatewayUUID)
+	if err != nil {
+		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Gateway not found")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Gateway not found"})
 	}
 
 	entity, err := s.createUpstreamEntity(req, gatewayID)

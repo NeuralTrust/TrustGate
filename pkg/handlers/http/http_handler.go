@@ -43,7 +43,6 @@ type HandlerTransportDTO struct {
 
 	// APIKey
 	CreateAPIKeyHandler         Handler
-	ListAPIKeysHandler          Handler
 	ListAPIKeysPublicHandler    Handler
 	GetAPIKeyHandler            Handler
 	DeleteAPIKeyHandler         Handler

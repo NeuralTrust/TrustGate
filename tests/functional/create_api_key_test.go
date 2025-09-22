@@ -62,7 +62,7 @@ func TestCreateAPIKey(t *testing.T) {
 		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, gatewayID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, apiKeyPayload)
-		assert.Equal(t, http.StatusInternalServerError, status)
+		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
 	t.Run("it should fail with invalid gateway ID", func(t *testing.T) {
@@ -86,12 +86,6 @@ func TestCreateAPIKey(t *testing.T) {
 		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, nonExistentGatewayID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, apiKeyPayload)
-		assert.Equal(t, http.StatusCreated, status)
-	})
-
-	t.Run("it should fail with invalid JSON payload", func(t *testing.T) {
-		// This test is a bit tricky to implement with the current sendRequest function
-		// as it automatically marshals the payload to JSON. For now, we'll skip this test.
-		// In a real-world scenario, you would use a custom HTTP client to send an invalid JSON payload.
+		assert.Equal(t, http.StatusBadRequest, status)
 	})
 }

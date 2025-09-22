@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -67,6 +70,8 @@ func setupTestEnvironment() {
 
 	GlobalConfig = config.GetConfig()
 
+	killProcessesOnPorts([]int{8080, 8081})
+
 	AdminUrl = getEnv("ADMIN_URL", "http://localhost:8080/api/v1")
 	ProxyUrl = getEnv("PROXY_URL", "http://localhost:8081")
 	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
@@ -110,7 +115,35 @@ func setupTestEnvironment() {
 
 	time.Sleep(5 * time.Second)
 
+	// Wait for servers to be ready
+	waitForServerReady("http://localhost:8081/__/health", "proxy server")
+	waitForServerReady("http://localhost:8080/version", "admin server")
+
 	fmt.Println("🚀 Test Environment Ready")
+}
+
+func waitForServerReady(url, serverName string) {
+	maxRetries := 30
+	retryInterval := time.Second
+
+	for i := 0; i < maxRetries; i++ {
+		resp, err := http.Get(url)
+		if err == nil && resp.StatusCode < 500 {
+			resp.Body.Close()
+			fmt.Printf("✅ %s is ready\n", serverName)
+			return
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+
+		if i == maxRetries-1 {
+			log.Fatalf("❌ %s failed to become ready after %d seconds", serverName, maxRetries)
+		}
+
+		fmt.Printf("⏳ Waiting for %s to be ready... (attempt %d/%d)\n", serverName, i+1, maxRetries)
+		time.Sleep(retryInterval)
+	}
 }
 
 func createTestDB(name string) {
@@ -170,4 +203,49 @@ func dropTestDB(name string) {
 		log.Printf("error removing database: %v", err)
 	}
 	fmt.Printf("🗑 Database %s removed\n", name)
+}
+
+func killProcessesOnPorts(ports []int) {
+	for _, port := range ports {
+		fmt.Printf("🔍 Checking for processes on port %d...\n", port)
+
+		cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port))
+		output, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+
+		pidLines := strings.TrimSpace(string(output))
+		if pidLines == "" {
+			continue
+		}
+
+		pids := strings.Split(pidLines, "\n")
+		for _, pidStr := range pids {
+			pidStr = strings.TrimSpace(pidStr)
+			if pidStr == "" {
+				continue
+			}
+
+			pid, err := strconv.Atoi(pidStr)
+			if err != nil {
+				log.Printf("invalid PID: %s", pidStr)
+				continue
+			}
+
+			fmt.Printf("🔪 Killing process %d on port %d\n", pid, port)
+			process, err := os.FindProcess(pid)
+			if err != nil {
+				log.Printf("failed to find process %d: %v", pid, err)
+				continue
+			}
+
+			err = process.Kill()
+			if err != nil {
+				log.Printf("failed to kill process %d: %v", pid, err)
+			} else {
+				fmt.Printf("✅ Process %d killed successfully\n", pid)
+			}
+		}
+	}
 }

@@ -5,7 +5,9 @@ import (
 	"reflect"
 	"time"
 
+	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/policy"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
 	"github.com/valyala/fasthttp"
@@ -19,8 +21,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	domainEmbedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	domainSession "github.com/NeuralTrust/TrustGate/pkg/domain/session"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
@@ -65,6 +67,7 @@ type Container struct {
 	MetricsWorker         metrics.Worker
 	RedisIndexCreator     infraCache.RedisIndexCreator
 	JWTManager            jwt.Manager
+	RuleRepository        ruledomain.Repository
 }
 
 func NewContainer(
@@ -87,7 +90,6 @@ func NewContainer(
 		DisableHeaderNamesNormalizing: true,
 		DisablePathNormalizing:        true,
 	}
-	// breaker := httpx.NewCircuitBreaker("breaker", 10*time.Second, 3)
 
 	cacheConfig := common.CacheConfig{
 		Host:     cfg.Redis.Host,
@@ -142,6 +144,9 @@ func NewContainer(
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
 	gatewayDataFinder := gateway.NewDataFinder(gatewayRepository, ruleRepository, cacheInstance, logger)
 	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager, gatewayRepository)
+
+	//policy
+	policyValidator := policy.NewApiKeyPolicyValidator(ruleRepository, logger)
 
 	// telemetry
 	providerLocator := infraTelemetry.NewProviderLocator(map[string]domain.Exporter{
@@ -219,7 +224,7 @@ func NewContainer(
 		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, gatewayRepository, pluginManager, redisPublisher, telemetryValidator),
 		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(logger, gatewayRepository, redisPublisher),
 		// Upstream
-		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, upstreamRepository, cacheInstance, descriptionEmbeddingCreator, cfg),
+		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, upstreamRepository, gatewayRepository, cacheInstance, descriptionEmbeddingCreator, cfg),
 		ListUpstreamHandler:   handlers.NewListUpstreamHandler(logger, upstreamRepository, cacheInstance),
 		GetUpstreamHandler:    handlers.NewGetUpstreamHandler(logger, upstreamRepository, cacheInstance, upstreamFinder),
 		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(logger, upstreamRepository, redisPublisher, cacheInstance, descriptionEmbeddingCreator, cfg),
@@ -231,7 +236,7 @@ func NewContainer(
 		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, serviceRepository, redisPublisher),
 		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, serviceRepository, redisPublisher),
 		// Rule
-		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, ruleRepository, pluginChainValidator, redisPublisher),
+		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, ruleRepository, gatewayRepository, serviceRepository, pluginChainValidator, redisPublisher),
 		ListRulesHandler: handlers.NewListRulesHandler(
 			logger,
 			ruleRepository,
@@ -242,12 +247,18 @@ func NewContainer(
 		UpdateRuleHandler: handlers.NewUpdateRuleHandler(logger, ruleRepository, cacheInstance, validatePlugin, redisPublisher),
 		DeleteRuleHandler: handlers.NewDeleteRuleHandler(logger, ruleRepository, cacheInstance, redisPublisher),
 		// APIKey
-		CreateAPIKeyHandler:         handlers.NewCreateAPIKeyHandler(logger, cacheInstance, apiKeyRepository, ruleRepository),
-		ListAPIKeysHandler:          handlers.NewListAPIKeysHandler(logger, gatewayRepository, apiKeyRepository),
+		CreateAPIKeyHandler: handlers.NewCreateAPIKeyHandler(
+			logger,
+			cacheInstance,
+			apiKeyRepository,
+			ruleRepository,
+			policyValidator,
+			gatewayRepository,
+		),
 		ListAPIKeysPublicHandler:    handlers.NewListAPIKeysPublicHandler(logger, gatewayRepository, apiKeyRepository),
 		GetAPIKeyHandler:            handlers.NewGetAPIKeyHandler(logger, cacheInstance, apiKeyRepository),
 		DeleteAPIKeyHandler:         handlers.NewDeleteAPIKeyHandler(logger, apiKeyRepository, redisPublisher),
-		UpdateAPIKeyPoliciesHandler: handlers.NewUpdateAPIKeyPoliciesHandler(logger, cacheInstance, apiKeyRepository, ruleRepository),
+		UpdateAPIKeyPoliciesHandler: handlers.NewUpdateAPIKeyPoliciesHandler(logger, cacheInstance, apiKeyRepository, ruleRepository, policyValidator),
 		// Version
 		GetVersionHandler:  handlers.NewGetVersionHandler(logger),
 		ListPluginsHandler: handlers.NewListPluginsHandler(logger),
@@ -285,6 +296,7 @@ func NewContainer(
 		MetricsWorker:         metricsWorker,
 		RedisIndexCreator:     redisIndexCreator,
 		JWTManager:            jwtManager,
+		RuleRepository:        ruleRepository,
 	}
 
 	return container, nil

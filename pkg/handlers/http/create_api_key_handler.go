@@ -3,30 +3,42 @@ package http
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/apikey"
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
-	dbtypes "github.com/NeuralTrust/TrustGate/pkg/infra/database/types"
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
+	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
 type createAPIKeyHandler struct {
-	logger     *logrus.Logger
-	cache      *cache.Cache
-	apiKeyRepo domain.Repository
-	ruleRepo   ruledomain.Repository
+	logger          *logrus.Logger
+	cache           *cache.Cache
+	apiKeyRepo      domain.Repository
+	ruleRepo        ruledomain.Repository
+	policyValidator domain.PolicyValidator
+	gatewayRepo     gateway.Repository
 }
 
-func NewCreateAPIKeyHandler(logger *logrus.Logger, cache *cache.Cache, apiKeyRepo domain.Repository, ruleRepo ruledomain.Repository) Handler {
+func NewCreateAPIKeyHandler(
+	logger *logrus.Logger,
+	cache *cache.Cache,
+	apiKeyRepo domain.Repository,
+	ruleRepo ruledomain.Repository,
+	policyValidator domain.PolicyValidator,
+	gatewayRepo gateway.Repository,
+) Handler {
 	return &createAPIKeyHandler{
-		logger:     logger,
-		cache:      cache,
-		apiKeyRepo: apiKeyRepo,
-		ruleRepo:   ruleRepo,
+		logger:          logger,
+		cache:           cache,
+		apiKeyRepo:      apiKeyRepo,
+		ruleRepo:        ruleRepo,
+		policyValidator: policyValidator,
+		gatewayRepo:     gatewayRepo,
 	}
 }
 
@@ -41,14 +53,40 @@ func NewCreateAPIKeyHandler(logger *logrus.Logger, cache *cache.Cache, apiKeyRep
 // @Success 201 {object} apikey.APIKey "API Key created successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
-// @Router /api/v1/gateways/{gateway_id}/keys [post]
+// @Router /api/v1/iam/api-key [post]
 func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
-	gatewayID := c.Params("gateway_id")
-	var req types.CreateAPIKeyRequest
+	var req request.CreateAPIKeyRequest
 
 	if err := c.BodyParser(&req); err != nil {
-		s.logger.WithError(err).Error("Failed to bind request")
+		s.logger.WithError(err).Error("failed to bind request")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
+	}
+
+	// Check if gateway_id is provided in the route (for gateway-scoped API keys)
+	gatewayID := c.Params("gateway_id")
+	if gatewayID != "" {
+		// For gateway-scoped requests, set the subject_id from gateway_id
+		req.SubjectID = gatewayID
+		if req.SubjectType == "" {
+			req.SubjectType = "gateway"
+		}
+
+		// Validate that gateway exists
+		gatewayUUID, err := uuid.Parse(gatewayID)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
+		}
+
+		_, err = s.gatewayRepo.Get(c.Context(), gatewayUUID)
+		if err != nil {
+			s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Gateway not found")
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Gateway not found"})
+		}
+	}
+
+	if err := req.Validate(); err != nil {
+		s.logger.WithError(err).Error("request validation failed")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	id, err := uuid.NewV6()
@@ -57,9 +95,41 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
 	}
 
-	gatewayUUID, err := uuid.Parse(gatewayID)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
+	var subjectUUID *uuid.UUID
+	if req.SubjectID != "" {
+		parsed, err := uuid.Parse(req.SubjectID)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid subject ID"})
+		}
+		subjectUUID = &parsed
+	}
+
+	var subjectType domain.SubjectType
+	if req.SubjectType == "" {
+		subjectType = domain.GatewayType
+	} else {
+		subjectType, err = domain.SubjectFromString(req.SubjectType)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+	}
+
+	if err := s.policyValidator.Validate(c.Context(), subjectType, subjectUUID, req.Policies); err != nil {
+		switch {
+		case errors.Is(err, domain.ErrInvalidPolicyIDFormat):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		case errors.Is(err, domain.ErrFailedToValidatePolicy):
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		case errors.Is(err, domain.ErrSubjectRequired):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		default:
+			var missing *domain.MissingPoliciesError
+			if errors.As(err, &missing) {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "some policies do not exist"})
+			}
+			s.logger.WithError(err).Error("Policy validation failed")
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 	}
 
 	var policyUUIDs []uuid.UUID
@@ -68,49 +138,26 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		for _, policyID := range req.Policies {
 			policyUUID, err := uuid.Parse(policyID)
 			if err != nil {
-				s.logger.WithError(err).WithField("policy_id", policyID).Error("invalid policy ID format")
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid policy ID format"})
+				s.logger.WithError(err).WithField("policy_id", policyID).Error("invalid policy UUID format")
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid policy UUID format"})
 			}
 			policyUUIDs = append(policyUUIDs, policyUUID)
 		}
-
-		existingRules, err := s.ruleRepo.FindByIds(c.Context(), policyUUIDs, gatewayUUID)
-		if err != nil {
-			s.logger.WithError(err).Error("Failed to validate policies")
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to validate policies"})
-		}
-
-		if len(existingRules) != len(policyUUIDs) {
-			existingIDs := make(map[uuid.UUID]bool)
-			for _, rule := range existingRules {
-				existingIDs[rule.ID] = true
-			}
-
-			var missingPolicies []string
-			for _, policyUUID := range policyUUIDs {
-				if !existingIDs[policyUUID] {
-					missingPolicies = append(missingPolicies, policyUUID.String())
-				}
-			}
-
-			s.logger.WithField("missing_policies", missingPolicies).Error("some policies do not exist")
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error":            "some policies do not exist",
-				"missing_policies": missingPolicies,
-			})
-		}
 	}
 
-	apiKey := &domain.APIKey{
-		ID:        id,
-		Name:      req.Name,
-		GatewayID: gatewayUUID,
-		Key:       s.generateAPIKey(),
-		Policies:  dbtypes.UUIDArray(policyUUIDs),
-	}
+	apiKey, err := domain.NewIAMApiKey(
+		id,
+		req.Name,
+		s.generateAPIKey(),
+		subjectType,
+		subjectUUID,
+		policyUUIDs,
+		req.ExpiresAt,
+	)
 
-	if req.ExpiresAt != nil {
-		apiKey.ExpiresAt = req.ExpiresAt
+	if err != nil {
+		s.logger.WithError(err).Error("failed to create IAM API key entity")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create API key"})
 	}
 
 	if err := s.apiKeyRepo.Create(c.Context(), apiKey); err != nil {
@@ -118,17 +165,31 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create API key"})
 	}
 
-	// Save to cache
 	if err := s.cache.SaveAPIKey(c.Context(), apiKey); err != nil {
 		s.logger.WithError(err).Error("Failed to cache API key")
-		// Continue execution even if caching fails
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(apiKey)
+	// Create response with gateway_id field for compatibility with tests
+	response := map[string]interface{}{
+		"id":           apiKey.ID,
+		"name":         apiKey.Name,
+		"key":          apiKey.Key,
+		"active":       apiKey.Active,
+		"subject_type": apiKey.SubjectType,
+		"policies":     apiKey.Policies,
+		"expires_at":   apiKey.ExpiresAt,
+		"created_at":   apiKey.CreatedAt,
+	}
+
+	// Add gateway_id field if subject is a gateway
+	if apiKey.SubjectType == domain.GatewayType && apiKey.Subject != nil {
+		response["gateway_id"] = apiKey.Subject.String()
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(response)
 }
 
 func (s *createAPIKeyHandler) generateAPIKey() string {
-	// Generate 32 random bytes
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
 		return uuid.NewString() // Fallback to UUID if crypto/rand fails

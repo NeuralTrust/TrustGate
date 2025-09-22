@@ -9,6 +9,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -21,6 +23,8 @@ import (
 type createRuleHandler struct {
 	logger               *logrus.Logger
 	repo                 forwarding_rule.Repository
+	gatewayRepo          gateway.Repository
+	serviceRepo          service.Repository
 	pluginChainValidator plugin.ValidatePluginChain
 	publisher            infraCache.EventPublisher
 }
@@ -28,12 +32,16 @@ type createRuleHandler struct {
 func NewCreateRuleHandler(
 	logger *logrus.Logger,
 	repo forwarding_rule.Repository,
+	gatewayRepo gateway.Repository,
+	serviceRepo service.Repository,
 	pluginChainValidator plugin.ValidatePluginChain,
 	publisher infraCache.EventPublisher,
 ) Handler {
 	return &createRuleHandler{
 		logger:               logger,
 		repo:                 repo,
+		gatewayRepo:          gatewayRepo,
+		serviceRepo:          serviceRepo,
 		pluginChainValidator: pluginChainValidator,
 		publisher:            publisher,
 	}
@@ -96,7 +104,21 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 
 	serviceUUID, err := uuid.Parse(req.ServiceID)
 	if err != nil {
-		return fmt.Errorf("failed to parse gateway ID: %v", err)
+		return fmt.Errorf("failed to parse service ID: %v", err)
+	}
+
+	// Validate that gateway exists
+	_, err = s.gatewayRepo.Get(c.Context(), gatewayUUID)
+	if err != nil {
+		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Gateway not found")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Gateway not found"})
+	}
+
+	// Validate that service exists
+	_, err = s.serviceRepo.Get(c.Context(), req.ServiceID)
+	if err != nil {
+		s.logger.WithError(err).WithField("service_id", req.ServiceID).Error("Service not found")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Service not found"})
 	}
 
 	id, err := uuid.NewV6()

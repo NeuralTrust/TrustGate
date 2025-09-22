@@ -4,12 +4,6 @@ import (
 	"time"
 )
 
-type CreateAPIKeyRequest struct {
-	Name      string     `json:"name" binding:"required"`
-	Policies  []string   `json:"policies,omitempty"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-}
-
 type CreateRuleRequest struct {
 	Path          string            `json:"path" binding:"required"`
 	Name          string            `json:"name" binding:"required"`

@@ -51,23 +51,18 @@ func main() {
 	cfg := config.GetConfig()
 
 	// Initialize database
-	db, err := database.NewDB(&database.Config{
+	db, err := database.NewDB(logger, &database.Config{
 		Host:     cfg.Database.Host,
 		Port:     cfg.Database.Port,
 		User:     cfg.Database.User,
 		Password: cfg.Database.Password,
 		DBName:   cfg.Database.DBName,
 		SSLMode:  cfg.Database.SSLMode,
-	}, database.GetRegisteredModels())
+	})
 	if err != nil {
 		logger.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
-
-	migrationsManager := database.NewMigrationsManager(db.DB)
-	if err := migrationsManager.ApplyPending(); err != nil {
-		logger.WithError(err).Error("failed to apply database migrations")
-	}
 
 	container, err := dependency_container.NewContainer(
 		cfg,
