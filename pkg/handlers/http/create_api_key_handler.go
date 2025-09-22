@@ -7,6 +7,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/gofiber/fiber/v2"
@@ -20,6 +21,7 @@ type createAPIKeyHandler struct {
 	apiKeyRepo      domain.Repository
 	ruleRepo        ruledomain.Repository
 	policyValidator domain.PolicyValidator
+	gatewayRepo     gateway.Repository
 }
 
 func NewCreateAPIKeyHandler(
@@ -28,6 +30,7 @@ func NewCreateAPIKeyHandler(
 	apiKeyRepo domain.Repository,
 	ruleRepo ruledomain.Repository,
 	policyValidator domain.PolicyValidator,
+	gatewayRepo gateway.Repository,
 ) Handler {
 	return &createAPIKeyHandler{
 		logger:          logger,
@@ -35,6 +38,7 @@ func NewCreateAPIKeyHandler(
 		apiKeyRepo:      apiKeyRepo,
 		ruleRepo:        ruleRepo,
 		policyValidator: policyValidator,
+		gatewayRepo:     gatewayRepo,
 	}
 }
 
@@ -56,6 +60,28 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		s.logger.WithError(err).Error("failed to bind request")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
+	}
+
+	// Check if gateway_id is provided in the route (for gateway-scoped API keys)
+	gatewayID := c.Params("gateway_id")
+	if gatewayID != "" {
+		// For gateway-scoped requests, set the subject_id from gateway_id
+		req.SubjectID = gatewayID
+		if req.SubjectType == "" {
+			req.SubjectType = "gateway"
+		}
+
+		// Validate that gateway exists
+		gatewayUUID, err := uuid.Parse(gatewayID)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
+		}
+
+		_, err = s.gatewayRepo.Get(c.Context(), gatewayUUID)
+		if err != nil {
+			s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Gateway not found")
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Gateway not found"})
+		}
 	}
 
 	if err := req.Validate(); err != nil {
@@ -143,7 +169,24 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("Failed to cache API key")
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(apiKey)
+	// Create response with gateway_id field for compatibility with tests
+	response := map[string]interface{}{
+		"id":           apiKey.ID,
+		"name":         apiKey.Name,
+		"key":          apiKey.Key,
+		"active":       apiKey.Active,
+		"subject_type": apiKey.SubjectType,
+		"policies":     apiKey.Policies,
+		"expires_at":   apiKey.ExpiresAt,
+		"created_at":   apiKey.CreatedAt,
+	}
+
+	// Add gateway_id field if subject is a gateway
+	if apiKey.SubjectType == domain.GatewayType && apiKey.Subject != nil {
+		response["gateway_id"] = apiKey.Subject.String()
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(response)
 }
 
 func (s *createAPIKeyHandler) generateAPIKey() string {

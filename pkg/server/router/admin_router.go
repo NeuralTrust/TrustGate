@@ -104,6 +104,12 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 				rules.Delete("/:rule_id", handlerTransport.DeleteRuleHandler.Handle)
 			}
 
+			// API Keys management (scoped to gateway)
+			keys := gateways.Group("/:gateway_id/keys")
+			{
+				keys.Post("", handlerTransport.CreateAPIKeyHandler.Handle)
+			}
+
 		}
 
 		// Plugins endpoints

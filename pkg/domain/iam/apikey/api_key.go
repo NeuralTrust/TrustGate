@@ -79,12 +79,14 @@ func (a APIKey) Validate() error {
 		return ErrInvalidName
 	}
 
-	if a.ExpiresAt.IsZero() {
-		return ErrInvalidExpiresAt
-	}
+	if a.ExpiresAt != nil {
+		if a.ExpiresAt.IsZero() {
+			return ErrInvalidExpiresAt
+		}
 
-	if a.ExpiresAt.Before(time.Now()) {
-		return ErrExpiresAtInPast
+		if a.ExpiresAt.Before(time.Now()) {
+			return ErrExpiresAtInPast
+		}
 	}
 
 	if a.SubjectType == GatewayType && a.Subject == nil {

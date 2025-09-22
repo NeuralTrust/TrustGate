@@ -253,6 +253,7 @@ func NewContainer(
 			apiKeyRepository,
 			ruleRepository,
 			policyValidator,
+			gatewayRepository,
 		),
 		ListAPIKeysPublicHandler:    handlers.NewListAPIKeysPublicHandler(logger, gatewayRepository, apiKeyRepository),
 		GetAPIKeyHandler:            handlers.NewGetAPIKeyHandler(logger, cacheInstance, apiKeyRepository),

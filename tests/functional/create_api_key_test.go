@@ -62,7 +62,7 @@ func TestCreateAPIKey(t *testing.T) {
 		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, gatewayID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, apiKeyPayload)
-		assert.Equal(t, http.StatusInternalServerError, status)
+		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
 	t.Run("it should fail with invalid gateway ID", func(t *testing.T) {
@@ -86,6 +86,6 @@ func TestCreateAPIKey(t *testing.T) {
 		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/keys", AdminUrl, nonExistentGatewayID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, apiKeyPayload)
-		assert.Equal(t, http.StatusCreated, status)
+		assert.Equal(t, http.StatusBadRequest, status)
 	})
 }
