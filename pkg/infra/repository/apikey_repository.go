@@ -54,7 +54,7 @@ func (r *ApiKeyRepository) Get(ctx context.Context, id string) (*apikey.APIKey, 
 
 func (r *ApiKeyRepository) ListWithSubject(ctx context.Context, subjectID uuid.UUID) ([]apikey.APIKey, error) {
 	var apiKeys []apikey.APIKey
-	err := r.db.WithContext(ctx).Where("gateway_id = ?", subjectID).Find(&apiKeys).Error
+	err := r.db.WithContext(ctx).Where("subject = ?", subjectID).Find(&apiKeys).Error
 	return apiKeys, err
 }
 
@@ -81,7 +81,7 @@ func (r *ApiKeyRepository) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 func (r *ApiKeyRepository) DeleteWithSubject(ctx context.Context, id, subjectID uuid.UUID) error {
-	result := r.db.WithContext(ctx).Where("id = ? AND gateway_id = ?", id, subjectID).Delete(&apikey.APIKey{})
+	result := r.db.WithContext(ctx).Where("id = ? AND subject = ?", id, subjectID).Delete(&apikey.APIKey{})
 	if result.Error != nil {
 		return result.Error
 	}

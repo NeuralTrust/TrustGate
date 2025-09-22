@@ -62,3 +62,12 @@ func (rc *Collector) Flush() []*metric_events.Event {
 	rc.events = nil
 	return out
 }
+
+func (rc *Collector) GetEvents() []*metric_events.Event {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+
+	out := make([]*metric_events.Event, len(rc.events))
+	copy(out, rc.events)
+	return out
+}
