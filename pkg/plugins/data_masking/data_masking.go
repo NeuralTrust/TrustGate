@@ -292,7 +292,7 @@ func (p *DataMaskingPlugin) RequiredPlugins() []string { return nil }
 func (p *DataMaskingPlugin) Stages() []types.Stage { return nil }
 
 func (p *DataMaskingPlugin) AllowedStages() []types.Stage {
-	return []types.Stage{types.PreRequest, types.PostResponse}
+	return []types.Stage{types.PreRequest, types.PreResponse, types.PostResponse}
 }
 
 func (p *DataMaskingPlugin) ValidateConfig(config types.PluginConfig) error {
@@ -828,6 +828,15 @@ func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64, co
 		return result, allEvents
 
 	case string:
+		// If the string itself is JSON, mask within it structurally to avoid altering keys
+		var inner interface{}
+		if err := json.Unmarshal([]byte(v), &inner); err == nil {
+			maskedInner, events := p.maskJSONData(inner, threshold, config)
+			maskedJSON, mErr := json.Marshal(maskedInner)
+			if mErr == nil {
+				return string(maskedJSON), events
+			}
+		}
 		maskedValue, events := p.maskPlainText(v, threshold, config)
 		return maskedValue, events
 
