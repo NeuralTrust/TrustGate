@@ -137,6 +137,14 @@ var PluginList = []PluginDefinition{
 		Label:         "Bot Detection",
 	},
 	{
+		UUID:          GeneratePluginUUID("ip_whitelist"),
+		Name:          "ip_whitelist",
+		Description:   "Allows requests only from whitelisted IPs or CIDRs using fingerprint context",
+		AllowedStages: []types.Stage{types.PreRequest},
+		Category:      "application_security",
+		Label:         "IP Whitelist",
+	},
+	{
 		UUID:          GeneratePluginUUID("anomaly_detector"),
 		Name:          "anomaly_detector",
 		Description:   "Identifies and blocks anomalous request patterns by analyzing deviations from typical user behavior and traffic baselines",
