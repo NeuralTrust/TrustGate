@@ -526,4 +526,128 @@ func TestCreateUpstream(t *testing.T) {
 		assert.NotEmpty(t, response["error"])
 		assert.Equal(t, "cannot perform load balancing: OpenAI Responses API supports only a single target", response["error"])
 	})
+
+	t.Run("target oauth2 client_credentials minimal", func(t *testing.T) {
+		payload := map[string]interface{}{
+			"name":      "OAuth2 CC",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "api.example.com",
+					"port":     443,
+					"protocol": "https",
+					"auth": map[string]interface{}{
+						"type": "oauth2",
+						"oauth": map[string]interface{}{
+							"token_url":  "https://auth.example.com/oauth/token",
+							"grant_type": "client_credentials",
+							"client_id":  "client-id",
+							"scopes":     []string{"read", "write"},
+						},
+					},
+				},
+			},
+		}
+		status, resp := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{"Authorization": fmt.Sprintf("Bearer %s", AdminToken)}, payload)
+		assert.Equal(t, http.StatusCreated, status)
+		assert.NotEmpty(t, resp["id"])
+	})
+
+	t.Run("target oauth2 client_credentials missing client_id when not basic auth -> 400", func(t *testing.T) {
+		payload := map[string]interface{}{
+			"name":      "OAuth2 CC Missing",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "api.example.com",
+					"port":     443,
+					"protocol": "https",
+					"auth": map[string]interface{}{
+						"type": "oauth2",
+						"oauth": map[string]interface{}{
+							"token_url":      "https://auth.example.com/oauth/token",
+							"grant_type":     "client_credentials",
+							"use_basic_auth": false,
+						},
+					},
+				},
+			},
+		}
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{"Authorization": fmt.Sprintf("Bearer %s", AdminToken)}, payload)
+		assert.Equal(t, http.StatusBadRequest, status)
+	})
+
+	t.Run("target oauth2 authorization_code requires code and redirect_uri", func(t *testing.T) {
+		payload := map[string]interface{}{
+			"name":      "OAuth2 AC Missing",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "api.example.com",
+					"port":     443,
+					"protocol": "https",
+					"auth": map[string]interface{}{
+						"type": "oauth2",
+						"oauth": map[string]interface{}{
+							"token_url":  "https://auth.example.com/oauth/token",
+							"grant_type": "authorization_code",
+						},
+					},
+				},
+			},
+		}
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{"Authorization": fmt.Sprintf("Bearer %s", AdminToken)}, payload)
+		assert.Equal(t, http.StatusBadRequest, status)
+	})
+
+	t.Run("target oauth2 password requires username and password", func(t *testing.T) {
+		payload := map[string]interface{}{
+			"name":      "OAuth2 Password Missing",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "api.example.com",
+					"port":     443,
+					"protocol": "https",
+					"auth": map[string]interface{}{
+						"type": "oauth2",
+						"oauth": map[string]interface{}{
+							"token_url":  "https://auth.example.com/oauth/token",
+							"grant_type": "password",
+							"username":   "",
+							"password":   "",
+						},
+					},
+				},
+			},
+		}
+		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{"Authorization": fmt.Sprintf("Bearer %s", AdminToken)}, payload)
+		assert.Equal(t, http.StatusBadRequest, status)
+	})
+
+	t.Run("target oauth2 authorization_code valid payload", func(t *testing.T) {
+		payload := map[string]interface{}{
+			"name":      "OAuth2 AC Valid",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "api.example.com",
+					"port":     443,
+					"protocol": "https",
+					"auth": map[string]interface{}{
+						"type": "oauth2",
+						"oauth": map[string]interface{}{
+							"token_url":    "https://auth.example.com/oauth/token",
+							"grant_type":   "authorization_code",
+							"code":         "abc",
+							"redirect_uri": "https://app/callback",
+						},
+					},
+				},
+			},
+		}
+		status, resp := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{"Authorization": fmt.Sprintf("Bearer %s", AdminToken)}, payload)
+		assert.Equal(t, http.StatusCreated, status)
+		assert.NotEmpty(t, resp["id"])
+	})
 }

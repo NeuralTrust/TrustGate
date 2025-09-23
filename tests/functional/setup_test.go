@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/jwt"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"

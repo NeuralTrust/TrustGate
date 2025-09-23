@@ -14,6 +14,49 @@ import (
 
 var ErrUpstreamIsBeingUsed = fmt.Errorf("upstream is being used by a gateway")
 
+type Upstream struct {
+	ID              uuid.UUID        `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	GatewayID       uuid.UUID        `json:"gateway_id" gorm:"type:uuid; not null"`
+	Name            string           `json:"name" gorm:"index:idx_gateway_upstream_name"`
+	Algorithm       string           `json:"algorithm" gorm:"default:'round-robin'"`
+	Targets         Targets          `json:"targets" gorm:"type:jsonb"`
+	EmbeddingConfig *EmbeddingConfig `json:"embedding_config,omitempty" gorm:"type:jsonb"`
+	HealthChecks    *HealthCheck     `json:"health_checks,omitempty" gorm:"type:jsonb"`
+	Tags            domain.TagsJSON  `json:"tags,omitempty" gorm:"type:jsonb"`
+	Websocket       *WebsocketConfig `json:"websocket_config,omitempty" gorm:"type:jsonb"`
+	Proxy           *Proxy           `json:"proxy,omitempty" gorm:"type:jsonb"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
+}
+
+type AuthType string
+
+const (
+	AuthTypeOAuth2 AuthType = "oauth2"
+)
+
+type TargetOAuthConfig struct {
+	TokenURL     string            `json:"token_url"`
+	GrantType    string            `json:"grant_type"`
+	ClientID     string            `json:"client_id,omitempty"`
+	ClientSecret string            `json:"client_secret,omitempty"`
+	UseBasicAuth bool              `json:"use_basic_auth,omitempty"`
+	Scopes       []string          `json:"scopes,omitempty"`
+	Audience     string            `json:"audience,omitempty"`
+	Code         string            `json:"code,omitempty"`
+	RedirectURI  string            `json:"redirect_uri,omitempty"`
+	CodeVerifier string            `json:"code_verifier,omitempty"`
+	RefreshToken string            `json:"refresh_token,omitempty"`
+	Username     string            `json:"username,omitempty"`
+	Password     string            `json:"password,omitempty"`
+	Extra        map[string]string `json:"extra,omitempty"`
+}
+
+type TargetAuth struct {
+	Type  AuthType           `json:"type"`
+	OAuth *TargetOAuthConfig `json:"oauth,omitempty"`
+}
+
 type EmbeddingConfig struct {
 	Provider    string                 `json:"provider"`
 	Model       string                 `json:"model"`
@@ -52,6 +95,7 @@ type Target struct {
 	Credentials     domain.CredentialsJSON `json:"credentials,omitempty" gorm:"type:jsonb"`
 	Stream          bool                   `json:"stream,omitempty"`
 	InsecureSSL     bool                   `json:"insecure_ssl,omitempty"`
+	Auth            *TargetAuth            `json:"auth,omitempty" gorm:"type:jsonb"`
 }
 
 type ModelsJSON []string
@@ -132,21 +176,6 @@ func (p *Proxy) Scan(value interface{}) error {
 		return fmt.Errorf("expected []byte, got %T", value)
 	}
 	return json.Unmarshal(bytes, p)
-}
-
-type Upstream struct {
-	ID              uuid.UUID        `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	GatewayID       uuid.UUID        `json:"gateway_id" gorm:"type:uuid; not null"`
-	Name            string           `json:"name" gorm:"index:idx_gateway_upstream_name"`
-	Algorithm       string           `json:"algorithm" gorm:"default:'round-robin'"`
-	Targets         Targets          `json:"targets" gorm:"type:jsonb"`
-	EmbeddingConfig *EmbeddingConfig `json:"embedding_config,omitempty" gorm:"type:jsonb"`
-	HealthChecks    *HealthCheck     `json:"health_checks,omitempty" gorm:"type:jsonb"`
-	Tags            domain.TagsJSON  `json:"tags,omitempty" gorm:"type:jsonb"`
-	Websocket       *WebsocketConfig `json:"websocket_config,omitempty" gorm:"type:jsonb"`
-	Proxy           *Proxy           `json:"proxy,omitempty" gorm:"type:jsonb"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
 type WebsocketConfig struct {

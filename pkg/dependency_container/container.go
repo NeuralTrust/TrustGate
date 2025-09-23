@@ -6,6 +6,7 @@ import (
 	"time"
 
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/policy"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
@@ -34,7 +35,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	infraTelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
