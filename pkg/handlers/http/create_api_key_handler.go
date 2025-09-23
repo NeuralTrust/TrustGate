@@ -8,7 +8,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
+	apikey "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -18,18 +18,18 @@ import (
 type createAPIKeyHandler struct {
 	logger          *logrus.Logger
 	cache           *cache.Cache
-	apiKeyRepo      domain.Repository
+	apiKeyRepo      apikey.Repository
 	ruleRepo        ruledomain.Repository
-	policyValidator domain.PolicyValidator
+	policyValidator apikey.PolicyValidator
 	gatewayRepo     gateway.Repository
 }
 
 func NewCreateAPIKeyHandler(
 	logger *logrus.Logger,
 	cache *cache.Cache,
-	apiKeyRepo domain.Repository,
+	apiKeyRepo apikey.Repository,
 	ruleRepo ruledomain.Repository,
-	policyValidator domain.PolicyValidator,
+	policyValidator apikey.PolicyValidator,
 	gatewayRepo gateway.Repository,
 ) Handler {
 	return &createAPIKeyHandler{
@@ -49,7 +49,7 @@ func NewCreateAPIKeyHandler(
 // @Produce json
 // @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
-// @Param api_key body types.CreateAPIKeyRequest true "API Key request body"
+// @Param api_key body request.CreateAPIKeyRequest true "API Key request body"
 // @Success 201 {object} apikey.APIKey "API Key created successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
@@ -104,11 +104,11 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		subjectUUID = &parsed
 	}
 
-	var subjectType domain.SubjectType
+	var subjectType apikey.SubjectType
 	if req.SubjectType == "" {
-		subjectType = domain.GatewayType
+		subjectType = apikey.GatewayType
 	} else {
-		subjectType, err = domain.SubjectFromString(req.SubjectType)
+		subjectType, err = apikey.SubjectFromString(req.SubjectType)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
@@ -116,14 +116,14 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 
 	if err := s.policyValidator.Validate(c.Context(), subjectType, subjectUUID, req.Policies); err != nil {
 		switch {
-		case errors.Is(err, domain.ErrInvalidPolicyIDFormat):
+		case errors.Is(err, apikey.ErrInvalidPolicyIDFormat):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-		case errors.Is(err, domain.ErrFailedToValidatePolicy):
+		case errors.Is(err, apikey.ErrFailedToValidatePolicy):
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-		case errors.Is(err, domain.ErrSubjectRequired):
+		case errors.Is(err, apikey.ErrSubjectRequired):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		default:
-			var missing *domain.MissingPoliciesError
+			var missing *apikey.MissingPoliciesError
 			if errors.As(err, &missing) {
 				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "some policies do not exist"})
 			}
@@ -145,7 +145,7 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	apiKey, err := domain.NewIAMApiKey(
+	apiKey, err := apikey.NewIAMApiKey(
 		id,
 		req.Name,
 		s.generateAPIKey(),
@@ -182,7 +182,7 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Add gateway_id field if subject is a gateway
-	if apiKey.SubjectType == domain.GatewayType && apiKey.Subject != nil {
+	if apiKey.SubjectType == apikey.GatewayType && apiKey.Subject != nil {
 		response["gateway_id"] = apiKey.Subject.String()
 	}
 
