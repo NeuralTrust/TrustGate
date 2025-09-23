@@ -72,7 +72,7 @@ func (m *pluginMiddleware) convertGatewayPlugins(gateway *types.Gateway) []types
 		}
 
 		pluginConfig := cfg
-		pluginConfig.Level = types.GatewayLevel
+		// Level removed
 
 		if len(plugin.Stages()) > 0 || cfg.Stage != "" {
 			chains = append(chains, pluginConfig)

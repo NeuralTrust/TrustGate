@@ -137,12 +137,36 @@ var PluginList = []PluginDefinition{
 		Label:         "Bot Detection",
 	},
 	{
+		UUID:          GeneratePluginUUID("ip_whitelist"),
+		Name:          "ip_whitelist",
+		Description:   "Allows requests only from whitelisted IPs or CIDRs using fingerprint context",
+		AllowedStages: []types.Stage{types.PreRequest},
+		Category:      "application_security",
+		Label:         "IP Whitelist",
+	},
+	{
 		UUID:          GeneratePluginUUID("anomaly_detector"),
 		Name:          "anomaly_detector",
 		Description:   "Identifies and blocks anomalous request patterns by analyzing deviations from typical user behavior and traffic baselines",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "application_security",
 		Label:         "Anomaly Detection",
+	},
+	{
+		UUID:          GeneratePluginUUID("language_validator"),
+		Name:          "language_validator",
+		Description:   "Validates the language of incoming requests and blocks those not matching the configured allowed languages",
+		AllowedStages: []types.Stage{types.PreRequest},
+		Category:      "application_security",
+		Label:         "Language Validator",
+	},
+	{
+		UUID:          GeneratePluginUUID("semantic_cache"),
+		Name:          "semantic_cache",
+		Description:   "Caches and retrieves responses using semantic similarity search, reducing latency and repeated processing for similar requests",
+		AllowedStages: []types.Stage{types.PreRequest},
+		Category:      "performance_optimization",
+		Label:         "Semantic Cache",
 	},
 }
 

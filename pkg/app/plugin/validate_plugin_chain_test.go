@@ -28,18 +28,18 @@ func TestValidate_Success(t *testing.T) {
 
 	pluginsConfig := []types.PluginConfig{
 		{
-			Name:     "context_security",
-			Enabled:  true,
-			Level:    types.Level("gateway"),
+			Name:    "context_security",
+			Enabled: true,
+			// Level removed
 			Stage:    types.PreRequest,
 			Priority: 1,
 			Parallel: false,
 			Settings: map[string]interface{}{},
 		},
 		{
-			Name:     "neuraltrust_jailbreak",
-			Enabled:  true,
-			Level:    types.Level("gateway"),
+			Name:    "neuraltrust_jailbreak",
+			Enabled: true,
+			// Level removed
 			Stage:    types.PreRequest,
 			Priority: 1,
 			Parallel: false,
@@ -73,9 +73,9 @@ func TestValidate_MissingRequiredPlugin(t *testing.T) {
 	)
 	pluginsConfig := []types.PluginConfig{
 		{
-			Name:     "context_security",
-			Enabled:  true,
-			Level:    types.Level("gateway"),
+			Name:    "context_security",
+			Enabled: true,
+			// Level removed
 			Stage:    types.PreRequest,
 			Priority: 1,
 			Parallel: false,
@@ -107,7 +107,6 @@ func TestValidate_SuccessPluginInGateway(t *testing.T) {
 				{
 					Name:     "neuraltrust_jailbreak",
 					Enabled:  true,
-					Level:    "gateway",
 					Stage:    types.PreRequest,
 					Priority: 1,
 					Parallel: false,
@@ -120,9 +119,9 @@ func TestValidate_SuccessPluginInGateway(t *testing.T) {
 
 	pluginsConfig := []types.PluginConfig{
 		{
-			Name:     "context_security",
-			Enabled:  true,
-			Level:    types.Level("gateway"),
+			Name:    "context_security",
+			Enabled: true,
+			// Level removed
 			Stage:    types.PreRequest,
 			Priority: 1,
 			Parallel: false,
@@ -153,7 +152,6 @@ func TestValidate_FailedPluginInChain_NotSameStage(t *testing.T) {
 				{
 					Name:     "neuraltrust_jailbreak",
 					Enabled:  true,
-					Level:    "gateway",
 					Stage:    types.PostResponse,
 					Priority: 1,
 					Parallel: false,
@@ -168,7 +166,6 @@ func TestValidate_FailedPluginInChain_NotSameStage(t *testing.T) {
 		{
 			Name:     "context_security",
 			Enabled:  true,
-			Level:    types.Level("gateway"),
 			Stage:    types.PreRequest,
 			Priority: 1,
 			Parallel: false,

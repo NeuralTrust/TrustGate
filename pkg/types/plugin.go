@@ -16,20 +16,11 @@ const (
 	PostResponse Stage = "post_response"
 )
 
-// Level represents at which level the plugin is configured
-type Level string
-
-const (
-	GatewayLevel Level = "gateway"
-	RuleLevel    Level = "rule"
-)
-
 // PluginConfig represents the configuration for a plugin
 type PluginConfig struct {
 	ID       string                 `json:"id"` // ID of the gateway or rule this plugin belongs to
 	Name     string                 `json:"name"`
 	Enabled  bool                   `json:"enabled"`
-	Level    Level                  `json:"level"`
 	Stage    Stage                  `json:"stage"`
 	Priority int                    `json:"priority"`
 	Parallel bool                   `json:"parallel"` // Whether this plugin can run in parallel

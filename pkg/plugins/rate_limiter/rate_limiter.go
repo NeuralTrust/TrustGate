@@ -188,8 +188,7 @@ func (p *RateLimiterPlugin) Execute(
 				return nil, fmt.Errorf("invalid window duration for %s: %w", limitType, err)
 			}
 
-			key := fmt.Sprintf("ratelimit:%s:%s:%s:%s",
-				cfg.Level,
+			key := fmt.Sprintf("ratelimit:%s:%s:%s",
 				cfg.ID,
 				limitType,
 				p.extractKey(ctx, req, limitType),

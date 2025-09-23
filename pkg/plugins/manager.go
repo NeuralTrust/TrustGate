@@ -27,6 +27,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/data_masking"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/external_api"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/injection_protection"
+	"github.com/NeuralTrust/TrustGate/pkg/plugins/ip_whitelist"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_jailbreak"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_moderation"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_toxicity"
@@ -116,6 +117,10 @@ func (m *manager) InitializePlugins() {
 
 	if err := m.RegisterPlugin(rate_limiter.NewRateLimiterPlugin(m.cache.Client(), nil)); err != nil {
 		m.logger.WithError(err).Error("Failed to register rate limiter plugin")
+	}
+
+	if err := m.RegisterPlugin(ip_whitelist.NewIPWhitelistPlugin(m.logger)); err != nil {
+		m.logger.WithError(err).Error("Failed to register ip whitelist plugin")
 	}
 
 	if err := m.RegisterPlugin(external_api.NewExternalApiPlugin(&http.Client{})); err != nil {

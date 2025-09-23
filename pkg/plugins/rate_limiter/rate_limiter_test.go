@@ -64,7 +64,7 @@ func TestRateLimiterPlugin_ValidateConfig(t *testing.T) {
 
 func TestRateLimiterPlugin_Execute_LimitExceeded(t *testing.T) {
 	redisMock, mock := redismock.NewClientMock()
-	testKey := "ratelimit:global:testID:per_ip:127.0.0.1"
+	testKey := "ratelimit:testID:per_ip:127.0.0.1"
 	testWindow := time.Minute
 	currentTime := time.Now().Unix()
 	windowStart := currentTime - int64(testWindow.Seconds())
@@ -75,7 +75,6 @@ func TestRateLimiterPlugin_Execute_LimitExceeded(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		ID:    "testID",
-		Level: "global",
 		Stage: types.PreRequest,
 		Settings: map[string]interface{}{
 			"limits": map[string]interface{}{
@@ -110,7 +109,7 @@ func TestRateLimiterPlugin_Execute_NoLimitExceeded(t *testing.T) {
 	redisMock, mock := redismock.NewClientMock()
 	mock.MatchExpectationsInOrder(false)
 
-	testKey := "ratelimit:global:testID:per_ip:127.0.0.1"
+	testKey := "ratelimit:testID:per_ip:127.0.0.1"
 	testWindow := time.Minute
 	fixedTime := time.Unix(1740730536, 0)
 	windowStart := fixedTime.Add(-testWindow).Unix()
@@ -140,7 +139,6 @@ func TestRateLimiterPlugin_Execute_NoLimitExceeded(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		ID:    "testID",
-		Level: "global",
 		Stage: types.PreRequest,
 		Settings: map[string]interface{}{
 			"limits": map[string]interface{}{
@@ -166,7 +164,7 @@ func TestRateLimiterPlugin_Execute_NoLimitExceeded(t *testing.T) {
 
 func TestRateLimiterPlugin_Execute_PerUser_NoLimitExceeded(t *testing.T) {
 	redisMock, mock := redismock.NewClientMock()
-	testKey := "ratelimit:global:testID:per_user:user123"
+	testKey := "ratelimit:testID:per_user:user123"
 	testWindow := time.Minute
 	fixedTime := time.Unix(1740730536, 0)
 	windowStart := fixedTime.Add(-testWindow).Unix()
@@ -187,7 +185,6 @@ func TestRateLimiterPlugin_Execute_PerUser_NoLimitExceeded(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		ID:    "testID",
-		Level: "global",
 		Stage: types.PreRequest,
 		Settings: map[string]interface{}{
 			"limits": map[string]interface{}{
@@ -213,7 +210,7 @@ func TestRateLimiterPlugin_Execute_PerUser_NoLimitExceeded(t *testing.T) {
 
 func TestRateLimiterPlugin_Execute_PerFingerprint_LimitExceeded(t *testing.T) {
 	redisMock, mock := redismock.NewClientMock()
-	testKey := "ratelimit:global:testID:per_fingerprint:test-fingerprint-id"
+	testKey := "ratelimit:testID:per_fingerprint:test-fingerprint-id"
 	testWindow := time.Minute
 	currentTime := time.Now().Unix()
 	windowStart := currentTime - int64(testWindow.Seconds())
@@ -224,7 +221,6 @@ func TestRateLimiterPlugin_Execute_PerFingerprint_LimitExceeded(t *testing.T) {
 
 	cfg := types.PluginConfig{
 		ID:    "testID",
-		Level: "global",
 		Stage: types.PreRequest,
 		Settings: map[string]interface{}{
 			"limits": map[string]interface{}{
@@ -262,7 +258,7 @@ func TestRateLimiterPlugin_Execute_PerFingerprint_NoLimitExceeded(t *testing.T) 
 	redisMock, mock := redismock.NewClientMock()
 	mock.MatchExpectationsInOrder(false)
 
-	testKey := "ratelimit:global:testID:per_fingerprint:test-fingerprint-id"
+	testKey := "ratelimit:testID:per_fingerprint:test-fingerprint-id"
 	testWindow := time.Minute
 	fixedTime := time.Unix(1740730536, 0)
 	windowStart := fixedTime.Add(-testWindow).Unix()
@@ -292,7 +288,6 @@ func TestRateLimiterPlugin_Execute_PerFingerprint_NoLimitExceeded(t *testing.T) 
 
 	cfg := types.PluginConfig{
 		ID:    "testID",
-		Level: "global",
 		Stage: types.PreRequest,
 		Settings: map[string]interface{}{
 			"limits": map[string]interface{}{
@@ -322,7 +317,7 @@ func TestRateLimiterPlugin_Execute_PerFingerprint_NoFingerprintInContext(t *test
 	redisMock, mock := redismock.NewClientMock()
 	mock.MatchExpectationsInOrder(false)
 
-	testKey := "ratelimit:global:testID:per_fingerprint:unknown"
+	testKey := "ratelimit:testID:per_fingerprint:unknown"
 	testWindow := time.Minute
 	fixedTime := time.Unix(1740730536, 0)
 	windowStart := fixedTime.Add(-testWindow).Unix()
@@ -352,7 +347,6 @@ func TestRateLimiterPlugin_Execute_PerFingerprint_NoFingerprintInContext(t *test
 
 	cfg := types.PluginConfig{
 		ID:    "testID",
-		Level: "global",
 		Stage: types.PreRequest,
 		Settings: map[string]interface{}{
 			"limits": map[string]interface{}{
@@ -383,7 +377,7 @@ func TestRateLimiterPlugin_Execute_MultipleLimits_PerFingerprintFirst(t *testing
 	mock.MatchExpectationsInOrder(false)
 
 	// per_fingerprint limit exceeded
-	testKey := "ratelimit:global:testID:per_fingerprint:test-fingerprint-id"
+	testKey := "ratelimit:testID:per_fingerprint:test-fingerprint-id"
 	testWindow := time.Minute
 	currentTime := time.Now().Unix()
 	windowStart := currentTime - int64(testWindow.Seconds())
@@ -394,7 +388,6 @@ func TestRateLimiterPlugin_Execute_MultipleLimits_PerFingerprintFirst(t *testing
 
 	cfg := types.PluginConfig{
 		ID:    "testID",
-		Level: "global",
 		Stage: types.PreRequest,
 		Settings: map[string]interface{}{
 			"limits": map[string]interface{}{
