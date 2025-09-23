@@ -227,230 +227,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/gateways/{gateway_id}/keys": {
-            "post": {
-                "description": "Generates a new API key for the specified gateway",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "API Keys"
-                ],
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Authorization token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Gateway ID",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "API Key request body",
-                        "name": "api_key",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.CreateAPIKeyRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "API Key created successfully",
-                        "schema": {
-                            "$ref": "#/definitions/apikey.APIKey"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request data",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/gateways/{gateway_id}/keys/{key_id}": {
-            "delete": {
-                "description": "Removes an API key from a gateway",
-                "tags": [
-                    "API Keys"
-                ],
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Authorization token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Gateway ID",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "API Key ID",
-                        "name": "key_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "API Key deleted successfully"
-                    },
-                    "404": {
-                        "description": "API Key not found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/gateways/{gateway_id}/keys/{key_id}/policies": {
-            "put": {
-                "description": "Updates the set of allowed rule IDs (policies) for an API key",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "API Keys"
-                ],
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Authorization token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Gateway ID",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "API Key ID",
-                        "name": "key_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Policies update payload",
-                        "name": "update",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/http.updateAPIKeyPoliciesRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "API Key updated successfully",
-                        "schema": {
-                            "$ref": "#/definitions/apikey.APIKey"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request data",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "API key not found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/gateways/{gateway_id}/public-keys": {
-            "get": {
-                "description": "Returns a list of all API keys for a gateway with obfuscated key values",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "API Keys"
-                ],
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Authorization token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Gateway ID",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "List of API Keys with obfuscated keys",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/apikey.APIKey"
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "Gateway not found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
         "/api/v1/gateways/{gateway_id}/rules": {
             "get": {
                 "description": "Returns a list of all rules for a gateway",
@@ -1129,6 +905,238 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/iam/api-key": {
+            "post": {
+                "description": "Generates a new API key for the specified gateway",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API Keys"
+                ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Gateway ID",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "API Key request body",
+                        "name": "api_key",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.CreateAPIKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "API Key created successfully",
+                        "schema": {
+                            "$ref": "#/definitions/apikey.APIKey"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request data",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/iam/api-key/public": {
+            "get": {
+                "description": "Returns a list of all API keys for a gateway with obfuscated key values",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API Keys"
+                ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Gateway ID",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of API Keys with obfuscated keys",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/apikey.APIKey"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Gateway not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/iam/api-key/{key_id}": {
+            "delete": {
+                "description": "Removes an API key. If the key is scoped to a gateway (GatewayType), provide ?subject_id=\u003cgateway_uuid\u003e.",
+                "tags": [
+                    "API Keys"
+                ],
+                "summary": "Delete an API Key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "API Key ID",
+                        "name": "key_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/iam/api-key/{key_id}/policies": {
+            "put": {
+                "description": "Updates the set of allowed rule IDs (policies) for an API key",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API Keys"
+                ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Gateway ID",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "API Key ID",
+                        "name": "key_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Policies update payload",
+                        "name": "update",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.updateAPIKeyPoliciesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "API Key updated successfully",
+                        "schema": {
+                            "$ref": "#/definitions/apikey.APIKey"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request data",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "API key not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/plugins": {
             "get": {
                 "description": "Returns the list of available plugins",
@@ -1240,9 +1248,6 @@ const docTemplate = `{
                 "expires_at": {
                     "type": "string"
                 },
-                "gateway_id": {
-                    "type": "string"
-                },
                 "id": {
                     "type": "string"
                 },
@@ -1257,8 +1262,25 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "subject": {
+                    "type": "string"
+                },
+                "subject_type": {
+                    "$ref": "#/definitions/apikey.SubjectType"
                 }
             }
+        },
+        "apikey.SubjectType": {
+            "type": "string",
+            "enum": [
+                "policy",
+                "gateway"
+            ],
+            "x-enum-varnames": [
+                "PolicyType",
+                "GatewayType"
+            ]
         },
         "domain.ClientTLSConfig": {
             "type": "object",
@@ -1568,6 +1590,15 @@ const docTemplate = `{
                 }
             }
         },
+        "request.AuthType": {
+            "type": "string",
+            "enum": [
+                "oauth2"
+            ],
+            "x-enum-varnames": [
+                "AuthTypeOAuth2"
+            ]
+        },
         "request.ClientTLSCertRequest": {
             "type": "object",
             "properties": {
@@ -1610,6 +1641,32 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "min_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.CreateAPIKeyRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "policies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "subject": {
+                    "type": "string"
+                },
+                "subject_type": {
                     "type": "string"
                 }
             }
@@ -1823,9 +1880,23 @@ const docTemplate = `{
                 }
             }
         },
+        "request.TargetAuthRequest": {
+            "type": "object",
+            "properties": {
+                "oauth": {
+                    "$ref": "#/definitions/request.UpstreamOAuthRequest"
+                },
+                "type": {
+                    "$ref": "#/definitions/request.AuthType"
+                }
+            }
+        },
         "request.TargetRequest": {
             "type": "object",
             "properties": {
+                "auth": {
+                    "$ref": "#/definitions/request.TargetAuthRequest"
+                },
                 "credentials": {
                     "$ref": "#/definitions/types.Credentials"
                 },
@@ -1965,11 +2036,78 @@ const docTemplate = `{
                 }
             }
         },
+        "request.UpstreamAuthRequest": {
+            "type": "object",
+            "properties": {
+                "oauth": {
+                    "$ref": "#/definitions/request.UpstreamOAuthRequest"
+                },
+                "type": {
+                    "$ref": "#/definitions/request.AuthType"
+                }
+            }
+        },
+        "request.UpstreamOAuthRequest": {
+            "type": "object",
+            "properties": {
+                "audience": {
+                    "type": "string"
+                },
+                "client_id": {
+                    "type": "string"
+                },
+                "client_secret": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "code_verifier": {
+                    "type": "string"
+                },
+                "extra": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "grant_type": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "redirect_uri": {
+                    "type": "string"
+                },
+                "refresh_token": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token_url": {
+                    "type": "string"
+                },
+                "use_basic_auth": {
+                    "type": "boolean"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "request.UpstreamRequest": {
             "type": "object",
             "properties": {
                 "algorithm": {
                     "type": "string"
+                },
+                "auth": {
+                    "$ref": "#/definitions/request.UpstreamAuthRequest"
                 },
                 "embedding": {
                     "$ref": "#/definitions/request.EmbeddingRequest"
@@ -2292,26 +2430,6 @@ const docTemplate = `{
                 },
                 "min_version": {
                     "type": "string"
-                }
-            }
-        },
-        "types.CreateAPIKeyRequest": {
-            "type": "object",
-            "required": [
-                "name"
-            ],
-            "properties": {
-                "expires_at": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "policies": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 }
             }
         },
@@ -2645,6 +2763,15 @@ const docTemplate = `{
                 }
             }
         },
+        "upstream.AuthType": {
+            "type": "string",
+            "enum": [
+                "oauth2"
+            ],
+            "x-enum-varnames": [
+                "AuthTypeOAuth2"
+            ]
+        },
         "upstream.EmbeddingConfig": {
             "type": "object",
             "properties": {
@@ -2698,6 +2825,9 @@ const docTemplate = `{
         "upstream.Target": {
             "type": "object",
             "properties": {
+                "auth": {
+                    "$ref": "#/definitions/upstream.TargetAuth"
+                },
                 "credentials": {
                     "$ref": "#/definitions/domain.CredentialsJSON"
                 },
@@ -2752,6 +2882,70 @@ const docTemplate = `{
                 },
                 "weight": {
                     "type": "integer"
+                }
+            }
+        },
+        "upstream.TargetAuth": {
+            "type": "object",
+            "properties": {
+                "oauth": {
+                    "$ref": "#/definitions/upstream.TargetOAuthConfig"
+                },
+                "type": {
+                    "$ref": "#/definitions/upstream.AuthType"
+                }
+            }
+        },
+        "upstream.TargetOAuthConfig": {
+            "type": "object",
+            "properties": {
+                "audience": {
+                    "type": "string"
+                },
+                "client_id": {
+                    "type": "string"
+                },
+                "client_secret": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "code_verifier": {
+                    "type": "string"
+                },
+                "extra": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "grant_type": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "redirect_uri": {
+                    "type": "string"
+                },
+                "refresh_token": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token_url": {
+                    "type": "string"
+                },
+                "use_basic_auth": {
+                    "type": "boolean"
+                },
+                "username": {
+                    "type": "string"
                 }
             }
         },

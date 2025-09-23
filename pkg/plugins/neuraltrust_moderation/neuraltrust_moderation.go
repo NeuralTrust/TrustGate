@@ -25,6 +25,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
+	"github.com/NeuralTrust/TrustGate/pkg/pluginutils"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
 	"github.com/mitchellh/mapstructure"
@@ -203,7 +204,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	p.config = conf
 
 	inputBody := req.Body
-	inputBody, err := p.defineRequestBody(inputBody)
+	inputBody, err := pluginutils.DefineRequestBody(inputBody, p.config.MappingField)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
@@ -627,99 +628,72 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 	return false
 }
 
-func (p *NeuralTrustModerationPlugin) defineRequestBody(body []byte) ([]byte, error) {
-	buf, ok := p.bufferPool.Get().(*bytes.Buffer)
-	if !ok {
-		return nil, fmt.Errorf("failed to get buffer from pool")
-	}
-	buf.Reset()
-	defer p.bufferPool.Put(buf)
-
-	var requestBody map[string]interface{}
-	if err := json.Unmarshal(body, &requestBody); err != nil {
-		return p.returnDefaultBody(body)
-	}
-
-	if p.config.MappingField == "" {
-		return p.returnDefaultBody(body)
-	}
-
-	path := strings.Split(p.config.MappingField, ".")
-	current := any(requestBody)
-
-	for _, key := range path {
-		m, ok := current.(map[string]interface{})
-		if !ok {
-			return p.returnDefaultBody(body)
-		}
-		child, exists := m[key]
-		if !exists {
-			return p.returnDefaultBody(body)
-		}
-		current = child
-	}
-
-	var inputString string
-	switch v := current.(type) {
-	case string:
-		inputString = v
-	default:
-		if err := json.NewEncoder(buf).Encode(v); err != nil {
-			return nil, fmt.Errorf("failed to stringify extracted value: %w", err)
-		}
-		inputString = buf.String()
-	}
-
-	result, err := json.Marshal(map[string]interface{}{
-		"input": inputString,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal wrapped input: %w", err)
-	}
-
-	return result, nil
-}
-
-func (p *NeuralTrustModerationPlugin) returnDefaultBody(body []byte) ([]byte, error) {
-	return json.Marshal(map[string]interface{}{
-		"input": string(body),
-	})
-}
+// local helpers removed in favor of pluginutils.DefineRequestBody
 
 func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
 	s1 = strings.ToLower(s1)
 	s2 = strings.ToLower(s2)
 
-	if len(s1) == 0 {
-		return len(s2)
+	m := len(s1)
+	n := len(s2)
+	if m == 0 {
+		return n
 	}
-	if len(s2) == 0 {
-		return len(s1)
-	}
-
-	matrix := make([][]int, len(s1)+1)
-	for i := range matrix {
-		matrix[i] = make([]int, len(s2)+1)
-		matrix[i][0] = i
-	}
-	for j := range matrix[0] {
-		matrix[0][j] = j
+	if n == 0 {
+		return m
 	}
 
-	for i := 1; i <= len(s1); i++ {
-		for j := 1; j <= len(s2); j++ {
+	// For extremely large inputs, avoid excessive allocations and potential overflows.
+	// Words for moderation should be reasonably small; if not, treat as maximally distant.
+	const maxWordLen = 4096
+	if m > maxWordLen || n > maxWordLen {
+		if m > n {
+			return m
+		}
+		return n
+	}
+
+	// Ensure n <= m to minimize memory usage (only O(n) memory).
+	if n > m {
+		s1, s2 = s2, s1
+		m, n = n, m
+	}
+
+	prev := make([]int, n+1)
+	curr := make([]int, n+1)
+	for j := 0; j <= n; j++ {
+		prev[j] = j
+	}
+
+	for i := 1; i <= m; i++ {
+		curr[0] = i
+		c1 := s1[i-1]
+		for j := 1; j <= n; j++ {
 			cost := 1
-			if s1[i-1] == s2[j-1] {
+			if c1 == s2[j-1] {
 				cost = 0
 			}
-			matrix[i][j] = min(
-				matrix[i-1][j]+1,
-				matrix[i][j-1]+1,
-				matrix[i-1][j-1]+cost,
-			)
+			// min of: deletion (prev[j]+1), insertion (curr[j-1]+1), substitution (prev[j-1]+cost)
+			deletion := prev[j] + 1
+			insertion := curr[j-1] + 1
+			subst := prev[j-1] + cost
+			if deletion < insertion {
+				if deletion < subst {
+					curr[j] = deletion
+				} else {
+					curr[j] = subst
+				}
+			} else {
+				if insertion < subst {
+					curr[j] = insertion
+				} else {
+					curr[j] = subst
+				}
+			}
 		}
+		prev, curr = curr, prev
 	}
-	return matrix[len(s1)][len(s2)]
+	return prev[n]
 }
 
 func (p *NeuralTrustModerationPlugin) calculateSimilarity(s1, s2 string) float64 {

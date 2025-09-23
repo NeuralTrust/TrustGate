@@ -7,8 +7,6 @@ definitions:
         type: string
       expires_at:
         type: string
-      gateway_id:
-        type: string
       id:
         type: string
       key:
@@ -19,7 +17,19 @@ definitions:
         items:
           type: string
         type: array
+      subject:
+        type: string
+      subject_type:
+        $ref: '#/definitions/apikey.SubjectType'
     type: object
+  apikey.SubjectType:
+    enum:
+    - policy
+    - gateway
+    type: string
+    x-enum-varnames:
+    - PolicyType
+    - GatewayType
   domain.ClientTLSConfig:
     additionalProperties:
       $ref: '#/definitions/types.ClientTLSConfig'
@@ -225,6 +235,12 @@ definitions:
       name:
         type: string
     type: object
+  request.AuthType:
+    enum:
+    - oauth2
+    type: string
+    x-enum-varnames:
+    - AuthTypeOAuth2
   request.ClientTLSCertRequest:
     properties:
       certificate:
@@ -254,6 +270,23 @@ definitions:
         type: string
       min_version:
         type: string
+    type: object
+  request.CreateAPIKeyRequest:
+    properties:
+      expires_at:
+        type: string
+      name:
+        type: string
+      policies:
+        items:
+          type: string
+        type: array
+      subject:
+        type: string
+      subject_type:
+        type: string
+    required:
+    - name
     type: object
   request.CreateGatewayRequest:
     properties:
@@ -397,8 +430,17 @@ definitions:
       ttl:
         type: integer
     type: object
+  request.TargetAuthRequest:
+    properties:
+      oauth:
+        $ref: '#/definitions/request.UpstreamOAuthRequest'
+      type:
+        $ref: '#/definitions/request.AuthType'
+    type: object
   request.TargetRequest:
     properties:
+      auth:
+        $ref: '#/definitions/request.TargetAuthRequest'
       credentials:
         $ref: '#/definitions/types.Credentials'
       default_model:
@@ -491,10 +533,54 @@ definitions:
           $ref: '#/definitions/request.PluginUpdate'
         type: array
     type: object
+  request.UpstreamAuthRequest:
+    properties:
+      oauth:
+        $ref: '#/definitions/request.UpstreamOAuthRequest'
+      type:
+        $ref: '#/definitions/request.AuthType'
+    type: object
+  request.UpstreamOAuthRequest:
+    properties:
+      audience:
+        type: string
+      client_id:
+        type: string
+      client_secret:
+        type: string
+      code:
+        type: string
+      code_verifier:
+        type: string
+      extra:
+        additionalProperties:
+          type: string
+        type: object
+      grant_type:
+        type: string
+      password:
+        type: string
+      redirect_uri:
+        type: string
+      refresh_token:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token_url:
+        type: string
+      use_basic_auth:
+        type: boolean
+      username:
+        type: string
+    type: object
   request.UpstreamRequest:
     properties:
       algorithm:
         type: string
+      auth:
+        $ref: '#/definitions/request.UpstreamAuthRequest'
       embedding:
         $ref: '#/definitions/request.EmbeddingRequest'
       gateway_id:
@@ -708,19 +794,6 @@ definitions:
         type: string
       min_version:
         type: string
-    type: object
-  types.CreateAPIKeyRequest:
-    properties:
-      expires_at:
-        type: string
-      name:
-        type: string
-      policies:
-        items:
-          type: string
-        type: array
-    required:
-    - name
     type: object
   types.CreateRuleRequest:
     properties:
@@ -946,6 +1019,12 @@ definitions:
       trust_lens:
         $ref: '#/definitions/types.TrustLensConfig'
     type: object
+  upstream.AuthType:
+    enum:
+    - oauth2
+    type: string
+    x-enum-varnames:
+    - AuthTypeOAuth2
   upstream.EmbeddingConfig:
     properties:
       credentials:
@@ -981,6 +1060,8 @@ definitions:
     type: object
   upstream.Target:
     properties:
+      auth:
+        $ref: '#/definitions/upstream.TargetAuth'
       credentials:
         $ref: '#/definitions/domain.CredentialsJSON'
       default_model:
@@ -1018,6 +1099,48 @@ definitions:
         type: array
       weight:
         type: integer
+    type: object
+  upstream.TargetAuth:
+    properties:
+      oauth:
+        $ref: '#/definitions/upstream.TargetOAuthConfig'
+      type:
+        $ref: '#/definitions/upstream.AuthType'
+    type: object
+  upstream.TargetOAuthConfig:
+    properties:
+      audience:
+        type: string
+      client_id:
+        type: string
+      client_secret:
+        type: string
+      code:
+        type: string
+      code_verifier:
+        type: string
+      extra:
+        additionalProperties:
+          type: string
+        type: object
+      grant_type:
+        type: string
+      password:
+        type: string
+      redirect_uri:
+        type: string
+      refresh_token:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token_url:
+        type: string
+      use_basic_auth:
+        type: boolean
+      username:
+        type: string
     type: object
   upstream.Upstream:
     properties:
@@ -1214,158 +1337,6 @@ paths:
             type: object
       tags:
       - Gateways
-  /api/v1/gateways/{gateway_id}/keys:
-    post:
-      consumes:
-      - application/json
-      description: Generates a new API key for the specified gateway
-      parameters:
-      - description: Authorization token
-        in: header
-        name: Authorization
-        required: true
-        type: string
-      - description: Gateway ID
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: API Key request body
-        in: body
-        name: api_key
-        required: true
-        schema:
-          $ref: '#/definitions/types.CreateAPIKeyRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: API Key created successfully
-          schema:
-            $ref: '#/definitions/apikey.APIKey'
-        "400":
-          description: Invalid request data
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Internal server error
-          schema:
-            additionalProperties: true
-            type: object
-      tags:
-      - API Keys
-  /api/v1/gateways/{gateway_id}/keys/{key_id}:
-    delete:
-      description: Removes an API key from a gateway
-      parameters:
-      - description: Authorization token
-        in: header
-        name: Authorization
-        required: true
-        type: string
-      - description: Gateway ID
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: API Key ID
-        in: path
-        name: key_id
-        required: true
-        type: string
-      responses:
-        "204":
-          description: API Key deleted successfully
-        "404":
-          description: API Key not found
-          schema:
-            additionalProperties: true
-            type: object
-      tags:
-      - API Keys
-  /api/v1/gateways/{gateway_id}/keys/{key_id}/policies:
-    put:
-      consumes:
-      - application/json
-      description: Updates the set of allowed rule IDs (policies) for an API key
-      parameters:
-      - description: Authorization token
-        in: header
-        name: Authorization
-        required: true
-        type: string
-      - description: Gateway ID
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      - description: API Key ID
-        in: path
-        name: key_id
-        required: true
-        type: string
-      - description: Policies update payload
-        in: body
-        name: update
-        required: true
-        schema:
-          $ref: '#/definitions/http.updateAPIKeyPoliciesRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: API Key updated successfully
-          schema:
-            $ref: '#/definitions/apikey.APIKey'
-        "400":
-          description: Invalid request data
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: API key not found
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Internal server error
-          schema:
-            additionalProperties: true
-            type: object
-      tags:
-      - API Keys
-  /api/v1/gateways/{gateway_id}/public-keys:
-    get:
-      description: Returns a list of all API keys for a gateway with obfuscated key
-        values
-      parameters:
-      - description: Authorization token
-        in: header
-        name: Authorization
-        required: true
-        type: string
-      - description: Gateway ID
-        in: path
-        name: gateway_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: List of API Keys with obfuscated keys
-          schema:
-            items:
-              $ref: '#/definitions/apikey.APIKey'
-            type: array
-        "404":
-          description: Gateway not found
-          schema:
-            additionalProperties: true
-            type: object
-      tags:
-      - API Keys
   /api/v1/gateways/{gateway_id}/rules:
     get:
       description: Returns a list of all rules for a gateway
@@ -1823,6 +1794,165 @@ paths:
             $ref: '#/definitions/upstream.Upstream'
       tags:
       - Upstreams
+  /api/v1/iam/api-key:
+    post:
+      consumes:
+      - application/json
+      description: Generates a new API key for the specified gateway
+      parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: API Key request body
+        in: body
+        name: api_key
+        required: true
+        schema:
+          $ref: '#/definitions/request.CreateAPIKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: API Key created successfully
+          schema:
+            $ref: '#/definitions/apikey.APIKey'
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - API Keys
+  /api/v1/iam/api-key/{key_id}:
+    delete:
+      description: Removes an API key. If the key is scoped to a gateway (GatewayType),
+        provide ?subject_id=<gateway_uuid>.
+      parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: API Key ID
+        in: path
+        name: key_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Delete an API Key
+      tags:
+      - API Keys
+  /api/v1/iam/api-key/{key_id}/policies:
+    put:
+      consumes:
+      - application/json
+      description: Updates the set of allowed rule IDs (policies) for an API key
+      parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: API Key ID
+        in: path
+        name: key_id
+        required: true
+        type: string
+      - description: Policies update payload
+        in: body
+        name: update
+        required: true
+        schema:
+          $ref: '#/definitions/http.updateAPIKeyPoliciesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: API Key updated successfully
+          schema:
+            $ref: '#/definitions/apikey.APIKey'
+        "400":
+          description: Invalid request data
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: API key not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - API Keys
+  /api/v1/iam/api-key/public:
+    get:
+      description: Returns a list of all API keys for a gateway with obfuscated key
+        values
+      parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Gateway ID
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of API Keys with obfuscated keys
+          schema:
+            items:
+              $ref: '#/definitions/apikey.APIKey'
+            type: array
+        "404":
+          description: Gateway not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - API Keys
   /api/v1/plugins:
     get:
       consumes:

@@ -233,7 +233,7 @@ func TestNeuralTrustToxicity_Execute_WithMappingField(t *testing.T) {
 				"threshold": 0.7,
 				"enabled":   true,
 			},
-			"mapping_field": "messages.0.content",
+			"mapping_field": "messages[-1].content",
 		},
 	}
 
@@ -274,6 +274,60 @@ func TestNeuralTrustToxicity_Execute_WithMappingField(t *testing.T) {
 		metrics.NewEventContext("", "", nil),
 	)
 
+	assert.NoError(t, err)
+	assert.NotNil(t, pluginResponse)
+	assert.Equal(t, http.StatusOK, pluginResponse.StatusCode)
+	mockClient.AssertExpectations(t)
+}
+
+func TestNeuralTrustToxicity_Execute_WithMappingField_IndexOutOfRange_FallsBack(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	mockTracker := new(mocks.Tracker)
+	logger := logrus.New()
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"credentials": map[string]interface{}{
+				"base_url": "https://api.neuraltrust.ai",
+				"token":    "test-token",
+			},
+			"toxicity": map[string]interface{}{
+				"threshold": 0.7,
+				"enabled":   true,
+			},
+			"mapping_field": "messages[2].content",
+		},
+	}
+
+	req := &types.RequestContext{
+		Body: []byte(`{
+            "messages": [
+                {"role": "user", "content": "hello world"}
+            ]
+        }`),
+		Stage: types.PreRequest,
+	}
+	resp := &types.ResponseContext{}
+
+	serverResponse := map[string]interface{}{
+		"scores": map[string]interface{}{
+			"toxic_prompt": 0.2,
+		},
+	}
+	serverResponseBytes, err := json.Marshal(serverResponse)
+	assert.NoError(t, err)
+	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
+	httpResponse := &http.Response{StatusCode: http.StatusOK, Body: mockResp}
+	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
+
+	pluginResponse, err := plugin.Execute(
+		context.Background(),
+		cfg,
+		req,
+		resp,
+		metrics.NewEventContext("", "", nil),
+	)
 	assert.NoError(t, err)
 	assert.NotNil(t, pluginResponse)
 	assert.Equal(t, http.StatusOK, pluginResponse.StatusCode)

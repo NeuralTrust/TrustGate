@@ -366,6 +366,61 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationUnsafe(t *testing.T) {
 	assert.Nil(t, pluginResp)
 }
 
+func TestNeuralTrustModerationPlugin_Execute_WithMappingFieldArray(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(mocks.Tracker)
+	embeddingRepositoryMock := new(mocks.EmbeddingRepository)
+	embeddingLocatorMock := new(mocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
+
+	creatorMock := new(mocks.Creator)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		embeddingRepositoryMock,
+		embeddingLocatorMock,
+		providerLocatorMock,
+	)
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"embedding_moderation": map[string]interface{}{
+				"threshold":         0.7,
+				"enabled":           true,
+				"deny_topic_action": "block",
+				"deny_samples":      []string{"bad"},
+				"embedding_config": map[string]interface{}{
+					"provider": "openai",
+					"model":    "text-embedding-ada-002",
+					"credentials": map[string]interface{}{
+						"header_name":  "Authorization",
+						"header_value": "Bearer test-token",
+					},
+				},
+			},
+			"mapping_field": "messages[-1].content",
+		},
+	}
+
+	// Mock embedding flow minimal to return safe
+	embeddingLocatorMock.On("GetService", "openai").Return(creatorMock, nil)
+	creatorMock.On("Generate", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(&embedding.Embedding{EntityID: "test", Value: []float64{0.1}, CreatedAt: time.Now()}, nil)
+	embeddingRepositoryMock.On("Count", mock.Anything, common.NeuralTrustJailbreakIndexName, mock.Anything).Return(0, nil)
+	embeddingRepositoryMock.On("Search", mock.Anything, common.NeuralTrustJailbreakIndexName, mock.Anything, mock.Anything).Return([]embedding.SearchResult{}, nil)
+	embeddingRepositoryMock.On("StoreWithHMSet", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	req := &types.RequestContext{Body: []byte(`{"messages":[{"content":"hello"},{"content":"world"}]}`)}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+	assert.NoError(t, err)
+	assert.NotNil(t, pluginResp)
+	assert.Equal(t, 200, pluginResp.StatusCode)
+}
+
 func TestNeuralTrustModerationPlugin_Execute_EmbeddingError(t *testing.T) {
 	mockClient := new(mocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(mocks.Tracker)
