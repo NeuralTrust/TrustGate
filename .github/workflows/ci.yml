@@ -29,6 +29,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      oauth:
+        image: wiremock/wiremock:2.35.0
+        ports:
+          - 9090:8080
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8080/__admin/ || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
 
     steps:
       - uses: actions/checkout@v3
@@ -52,6 +61,27 @@ jobs:
           skip-cache: true  # Skip using cache for linter
           args: --timeout=5m  # Increase timeout to 5 minutes
           only-new-issues: true  # Only report new issues
+
+      - name: Configure Dummy OAuth server (WireMock)
+        run: |
+          echo "Waiting for WireMock to be ready..."
+          for i in {1..60}; do
+            curl -sf http://localhost:9090/__admin/ && break || sleep 1
+          done
+          echo "Stubbing /oauth/token endpoint"
+          curl -sf -X POST http://localhost:9090/__admin/mappings \
+            -H 'Content-Type: application/json' \
+            -d '{
+                  "request": {
+                    "method": "POST",
+                    "urlPath": "/oauth/token"
+                  },
+                  "response": {
+                    "status": 200,
+                    "headers": { "Content-Type": "application/json" },
+                    "jsonBody": { "access_token": "ci-dummy-token", "expires_in": 3600 }
+                  }
+                }'
 
       - name: Copy environment file
         run: cp .env.example .env && cp .env.example .env.functional

@@ -13,6 +13,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
 	"github.com/valyala/fasthttp"
 
+	"net/http"
+
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
@@ -29,6 +31,7 @@ import (
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	wsHandlers "github.com/NeuralTrust/TrustGate/pkg/handlers/websocket"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -116,6 +119,10 @@ func NewContainer(
 	descriptionEmbeddingCreator := appUpstream.NewDescriptionEmbeddingCreator(embeddingServiceLocator, embeddingRepository, logger)
 
 	providerFactory := providersFactory.NewProviderLocator(httpClient)
+
+	// OAuth token client with optimized net/http client
+	stdHTTPClient := &http.Client{Timeout: 10 * time.Second}
+	oauthTokenClient := oauth.NewTokenClient(stdHTTPClient)
 
 	fingerprintTracker := fingerprint.NewFingerPrintTracker(cacheInstance)
 	pluginManager := plugins.NewManager(
@@ -212,6 +219,7 @@ func NewContainer(
 			lbFactory,
 			cfg,
 			providerFactory,
+			oauthTokenClient,
 		),
 		// Gateway
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(

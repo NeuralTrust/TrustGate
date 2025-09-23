@@ -57,6 +57,17 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
 
+  oauth:
+    image: wiremock/wiremock:2.35.0
+    ports:
+      - "9090:8080"
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -qO- http://localhost:8080/__admin/ || exit 1" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+
 volumes:
   kafka_data:
   redis-insight:

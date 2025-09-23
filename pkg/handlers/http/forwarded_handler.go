@@ -20,6 +20,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
@@ -63,6 +64,7 @@ type forwardedHandler struct {
 	cfg                 *config.Config
 	tlsClientCache      *infraCache.TLSClientCache
 	providerLocator     factory.ProviderLocator
+	tokenClient         oauth.TokenClient
 }
 
 func NewForwardedHandler(
@@ -74,6 +76,7 @@ func NewForwardedHandler(
 	loadBalancerFactory loadbalancer.Factory,
 	cfg *config.Config,
 	providerLocator factory.ProviderLocator,
+	tokenClient oauth.TokenClient,
 ) Handler {
 
 	client := &fasthttp.Client{
@@ -100,6 +103,7 @@ func NewForwardedHandler(
 		cfg:                 cfg,
 		tlsClientCache:      infraCache.NewTLSClientCache(logger),
 		providerLocator:     providerLocator,
+		tokenClient:         tokenClient,
 	}
 }
 
@@ -545,6 +549,11 @@ func (h *forwardedHandler) handleUpstreamRequest(
 			"target_id": target.ID,
 		}).Debug("Attempting request")
 
+		if err := h.applyTargetOAuth(req, target, upstreamModel); err != nil {
+			h.logger.WithError(err).Error("failed to obtain oauth token for target")
+			return nil, fmt.Errorf("failed to obtain oauth token: %w", err)
+		}
+
 		select {
 		case streamMode <- target.Stream:
 		default:
@@ -574,11 +583,56 @@ func (h *forwardedHandler) handleUpstreamRequest(
 	}
 	select {
 	case <-streamResponse:
-		// Already closed, do nothing
 	default:
 		close(streamResponse)
 	}
 	return nil, fmt.Errorf("%v", reqErr)
+}
+
+func (h *forwardedHandler) applyTargetOAuth(req *types.RequestContext, target *types.UpstreamTarget, upstreamModel *domainUpstream.Upstream) error {
+	if upstreamModel == nil || target == nil {
+		return nil
+	}
+	var domainTarget *domainUpstream.Target
+	for i := range upstreamModel.Targets {
+		if upstreamModel.Targets[i].ID == target.ID {
+			domainTarget = &upstreamModel.Targets[i]
+			break
+		}
+	}
+	if domainTarget == nil || domainTarget.Auth == nil || domainTarget.Auth.Type != domainUpstream.AuthTypeOAuth2 || domainTarget.Auth.OAuth == nil {
+		return nil
+	}
+	cfg := domainTarget.Auth.OAuth
+	dto := oauth.TokenRequestDTO{
+		TokenURL:     cfg.TokenURL,
+		GrantType:    oauth.GrantType(cfg.GrantType),
+		ClientID:     cfg.ClientID,
+		ClientSecret: cfg.ClientSecret,
+		UseBasicAuth: cfg.UseBasicAuth,
+		Scopes:       cfg.Scopes,
+		Audience:     cfg.Audience,
+		Code:         cfg.Code,
+		RedirectURI:  cfg.RedirectURI,
+		CodeVerifier: cfg.CodeVerifier,
+		RefreshToken: cfg.RefreshToken,
+		Username:     cfg.Username,
+		Password:     cfg.Password,
+		Extra:        cfg.Extra,
+	}
+	accessToken, _, err := h.tokenClient.GetToken(req.Context, dto)
+	if err != nil {
+		return err
+	}
+	if req.Headers == nil {
+		req.Headers = make(map[string][]string)
+	}
+	req.Headers["Authorization"] = []string{"Bearer " + accessToken}
+	if target.Headers == nil {
+		target.Headers = make(map[string]string)
+	}
+	target.Headers["Authorization"] = "Bearer " + accessToken
+	return nil
 }
 
 func (h *forwardedHandler) handleEndpointRequest(
