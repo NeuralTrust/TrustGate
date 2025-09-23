@@ -543,7 +543,7 @@ func (h *forwardedHandler) handleUpstreamRequest(
 			}
 			continue
 		}
-		go h.logger.WithFields(logrus.Fields{
+		h.logger.WithFields(logrus.Fields{
 			"attempt":   attempt + 1,
 			"provider":  target.Provider,
 			"target_id": target.ID,
@@ -794,6 +794,9 @@ func (h *forwardedHandler) buildFastHTTPRequest(req *fasthttp.Request, dto *forw
 		req.SetBodyRaw(dto.req.Body)
 	}
 	for k, vals := range dto.req.Headers {
+		if strings.EqualFold(k, "Host") {
+			continue
+		}
 		for _, v := range vals {
 			req.Header.Add(k, v)
 		}
@@ -821,10 +824,6 @@ func (h *forwardedHandler) processUpstreamResponse(
 	if status <= 0 || status >= 600 {
 		responseBodyPool.Put(respBodyPtr)
 		return nil, fmt.Errorf("invalid status code received: %d", status)
-	}
-	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		responseBodyPool.Put(respBodyPtr)
-		return nil, fmt.Errorf("upstream returned status code %d: %s", status, string(*respBodyPtr))
 	}
 
 	if dto.target.Provider != "" {
@@ -1161,7 +1160,7 @@ func (h *forwardedHandler) registryFailedEvent(
 				Path:     rsp.Target.Path,
 				Host:     rsp.Target.Host,
 				Port:     rsp.Target.Port,
-				Protocol: rsp.Target.Provider,
+				Protocol: rsp.Target.Protocol,
 				Provider: rsp.Target.Provider,
 				Headers:  rsp.Target.Headers,
 			}
@@ -1182,12 +1181,11 @@ func (h *forwardedHandler) registrySuccessEvent(
 			Path:     rsp.Target.Path,
 			Host:     rsp.Target.Host,
 			Port:     rsp.Target.Port,
-			Protocol: rsp.Target.Provider,
+			Protocol: rsp.Target.Protocol,
 			Provider: rsp.Target.Provider,
 			Headers:  rsp.Target.Headers,
 			Latency:  int64(rsp.TargetLatency),
 		}
 	}
-	fmt.Println("emit stream response event")
 	collector.Emit(evt)
 }
