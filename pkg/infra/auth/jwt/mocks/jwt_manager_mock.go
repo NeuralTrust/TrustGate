@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	jwt "github.com/NeuralTrust/TrustGate/pkg/infra/jwt"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	mock "github.com/stretchr/testify/mock"
 )
 

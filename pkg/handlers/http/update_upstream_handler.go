@@ -9,6 +9,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -69,6 +70,29 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
+	// Defensive per-target auth validation mirroring DTO rules
+	for i, t := range req.Targets {
+		if t.Auth != nil {
+			if t.Auth.Type != request.AuthTypeOAuth2 || t.Auth.OAuth == nil {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: auth.type must be 'oauth2' and oauth config required", i)})
+			}
+			switch t.Auth.OAuth.GrantType {
+			case string(oauth.GrantTypeClientCredentials):
+				if !t.Auth.OAuth.UseBasicAuth && t.Auth.OAuth.ClientID == "" {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: auth.oauth.client_id is required for client_credentials when use_basic_auth is false", i)})
+				}
+			case string(oauth.GrantTypeAuthorizationCode):
+				if t.Auth.OAuth.Code == "" || t.Auth.OAuth.RedirectURI == "" {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: authorization_code requires code and redirect_uri", i)})
+				}
+			case string(oauth.GrantTypePassword):
+				if t.Auth.OAuth.Username == "" || t.Auth.OAuth.Password == "" {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: password grant requires username and password", i)})
+				}
+			}
+		}
+	}
+
 	if req.Embedding != nil && req.Embedding.Provider != "" {
 		if req.Embedding.Provider != factory.OpenAIProvider {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("embedding provider '%s' is not allowed", req.Embedding.Provider)})
@@ -89,7 +113,7 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 
 	var targets []upstream.Target
 	for _, target := range req.Targets {
-		targets = append(targets, upstream.Target{
+		t := upstream.Target{
 			ID:              target.ID,
 			Weight:          target.Weight,
 			Tags:            target.Tags,
@@ -106,7 +130,29 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 			Stream:          target.Stream,
 			InsecureSSL:     target.InsecureSSL,
 			Credentials:     domain.CredentialsJSON(target.Credentials),
-		})
+		}
+		if target.Auth != nil && target.Auth.Type == request.AuthTypeOAuth2 && target.Auth.OAuth != nil {
+			t.Auth = &upstream.TargetAuth{
+				Type: upstream.AuthTypeOAuth2,
+				OAuth: &upstream.TargetOAuthConfig{
+					TokenURL:     target.Auth.OAuth.TokenURL,
+					GrantType:    target.Auth.OAuth.GrantType,
+					ClientID:     target.Auth.OAuth.ClientID,
+					ClientSecret: target.Auth.OAuth.ClientSecret,
+					UseBasicAuth: target.Auth.OAuth.UseBasicAuth,
+					Scopes:       target.Auth.OAuth.Scopes,
+					Audience:     target.Auth.OAuth.Audience,
+					Code:         target.Auth.OAuth.Code,
+					RedirectURI:  target.Auth.OAuth.RedirectURI,
+					CodeVerifier: target.Auth.OAuth.CodeVerifier,
+					RefreshToken: target.Auth.OAuth.RefreshToken,
+					Username:     target.Auth.OAuth.Username,
+					Password:     target.Auth.OAuth.Password,
+					Extra:        target.Auth.OAuth.Extra,
+				},
+			}
+		}
+		targets = append(targets, t)
 	}
 
 	var healthCheck *upstream.HealthCheck
@@ -203,3 +249,5 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 
 	return c.Status(fiber.StatusOK).JSON(updatedUpstream)
 }
+
+// upstream-level Auth removed; per-target auth is supported instead

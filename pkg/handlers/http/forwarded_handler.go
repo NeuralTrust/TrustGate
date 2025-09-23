@@ -20,6 +20,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
@@ -63,6 +64,7 @@ type forwardedHandler struct {
 	cfg                 *config.Config
 	tlsClientCache      *infraCache.TLSClientCache
 	providerLocator     factory.ProviderLocator
+	tokenClient         oauth.TokenClient
 }
 
 func NewForwardedHandler(
@@ -74,6 +76,7 @@ func NewForwardedHandler(
 	loadBalancerFactory loadbalancer.Factory,
 	cfg *config.Config,
 	providerLocator factory.ProviderLocator,
+	tokenClient oauth.TokenClient,
 ) Handler {
 
 	client := &fasthttp.Client{
@@ -100,6 +103,7 @@ func NewForwardedHandler(
 		cfg:                 cfg,
 		tlsClientCache:      infraCache.NewTLSClientCache(logger),
 		providerLocator:     providerLocator,
+		tokenClient:         tokenClient,
 	}
 }
 
@@ -539,11 +543,16 @@ func (h *forwardedHandler) handleUpstreamRequest(
 			}
 			continue
 		}
-		go h.logger.WithFields(logrus.Fields{
+		h.logger.WithFields(logrus.Fields{
 			"attempt":   attempt + 1,
 			"provider":  target.Provider,
 			"target_id": target.ID,
 		}).Debug("Attempting request")
+
+		if err := h.applyTargetOAuth(req, target, upstreamModel); err != nil {
+			h.logger.WithError(err).Error("failed to obtain oauth token for target")
+			return nil, fmt.Errorf("failed to obtain oauth token: %w", err)
+		}
 
 		select {
 		case streamMode <- target.Stream:
@@ -574,11 +583,56 @@ func (h *forwardedHandler) handleUpstreamRequest(
 	}
 	select {
 	case <-streamResponse:
-		// Already closed, do nothing
 	default:
 		close(streamResponse)
 	}
 	return nil, fmt.Errorf("%v", reqErr)
+}
+
+func (h *forwardedHandler) applyTargetOAuth(req *types.RequestContext, target *types.UpstreamTarget, upstreamModel *domainUpstream.Upstream) error {
+	if upstreamModel == nil || target == nil {
+		return nil
+	}
+	var domainTarget *domainUpstream.Target
+	for i := range upstreamModel.Targets {
+		if upstreamModel.Targets[i].ID == target.ID {
+			domainTarget = &upstreamModel.Targets[i]
+			break
+		}
+	}
+	if domainTarget == nil || domainTarget.Auth == nil || domainTarget.Auth.Type != domainUpstream.AuthTypeOAuth2 || domainTarget.Auth.OAuth == nil {
+		return nil
+	}
+	cfg := domainTarget.Auth.OAuth
+	dto := oauth.TokenRequestDTO{
+		TokenURL:     cfg.TokenURL,
+		GrantType:    oauth.GrantType(cfg.GrantType),
+		ClientID:     cfg.ClientID,
+		ClientSecret: cfg.ClientSecret,
+		UseBasicAuth: cfg.UseBasicAuth,
+		Scopes:       cfg.Scopes,
+		Audience:     cfg.Audience,
+		Code:         cfg.Code,
+		RedirectURI:  cfg.RedirectURI,
+		CodeVerifier: cfg.CodeVerifier,
+		RefreshToken: cfg.RefreshToken,
+		Username:     cfg.Username,
+		Password:     cfg.Password,
+		Extra:        cfg.Extra,
+	}
+	accessToken, _, err := h.tokenClient.GetToken(req.Context, dto)
+	if err != nil {
+		return err
+	}
+	if req.Headers == nil {
+		req.Headers = make(map[string][]string)
+	}
+	req.Headers["Authorization"] = []string{"Bearer " + accessToken}
+	if target.Headers == nil {
+		target.Headers = make(map[string]string)
+	}
+	target.Headers["Authorization"] = "Bearer " + accessToken
+	return nil
 }
 
 func (h *forwardedHandler) handleEndpointRequest(
@@ -740,6 +794,9 @@ func (h *forwardedHandler) buildFastHTTPRequest(req *fasthttp.Request, dto *forw
 		req.SetBodyRaw(dto.req.Body)
 	}
 	for k, vals := range dto.req.Headers {
+		if strings.EqualFold(k, "Host") {
+			continue
+		}
 		for _, v := range vals {
 			req.Header.Add(k, v)
 		}
@@ -767,10 +824,6 @@ func (h *forwardedHandler) processUpstreamResponse(
 	if status <= 0 || status >= 600 {
 		responseBodyPool.Put(respBodyPtr)
 		return nil, fmt.Errorf("invalid status code received: %d", status)
-	}
-	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		responseBodyPool.Put(respBodyPtr)
-		return nil, fmt.Errorf("upstream returned status code %d: %s", status, string(*respBodyPtr))
 	}
 
 	if dto.target.Provider != "" {
@@ -1107,7 +1160,7 @@ func (h *forwardedHandler) registryFailedEvent(
 				Path:     rsp.Target.Path,
 				Host:     rsp.Target.Host,
 				Port:     rsp.Target.Port,
-				Protocol: rsp.Target.Provider,
+				Protocol: rsp.Target.Protocol,
 				Provider: rsp.Target.Provider,
 				Headers:  rsp.Target.Headers,
 			}
@@ -1128,12 +1181,11 @@ func (h *forwardedHandler) registrySuccessEvent(
 			Path:     rsp.Target.Path,
 			Host:     rsp.Target.Host,
 			Port:     rsp.Target.Port,
-			Protocol: rsp.Target.Provider,
+			Protocol: rsp.Target.Protocol,
 			Provider: rsp.Target.Provider,
 			Headers:  rsp.Target.Headers,
 			Latency:  int64(rsp.TargetLatency),
 		}
 	}
-	fmt.Println("emit stream response event")
 	collector.Emit(evt)
 }

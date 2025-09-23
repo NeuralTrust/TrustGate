@@ -3,7 +3,7 @@ package middleware
 import (
 	"strings"
 
-	"github.com/NeuralTrust/TrustGate/pkg/infra/jwt"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )

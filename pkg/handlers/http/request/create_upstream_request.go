@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -27,6 +28,35 @@ type UpstreamRequest struct {
 	Tags          []string              `json:"tags,omitempty"`
 	WebhookConfig *WebhookConfigRequest `json:"websocket_config,omitempty"`
 	ProxyConfig   *ProxyConfigRequest   `json:"proxy_config,omitempty"`
+	Auth          *UpstreamAuthRequest  `json:"auth,omitempty"`
+}
+
+type AuthType string
+
+const (
+	AuthTypeOAuth2 AuthType = "oauth2"
+)
+
+type UpstreamOAuthRequest struct {
+	TokenURL     string            `json:"token_url"`
+	GrantType    string            `json:"grant_type"`
+	ClientID     string            `json:"client_id,omitempty"`
+	ClientSecret string            `json:"client_secret,omitempty"`
+	UseBasicAuth bool              `json:"use_basic_auth,omitempty"`
+	Scopes       []string          `json:"scopes,omitempty"`
+	Audience     string            `json:"audience,omitempty"`
+	Code         string            `json:"code,omitempty"`
+	RedirectURI  string            `json:"redirect_uri,omitempty"`
+	CodeVerifier string            `json:"code_verifier,omitempty"`
+	RefreshToken string            `json:"refresh_token,omitempty"`
+	Username     string            `json:"username,omitempty"`
+	Password     string            `json:"password,omitempty"`
+	Extra        map[string]string `json:"extra,omitempty"`
+}
+
+type UpstreamAuthRequest struct {
+	Type  AuthType              `json:"type"`
+	OAuth *UpstreamOAuthRequest `json:"oauth,omitempty"`
 }
 
 type EmbeddingRequest struct {
@@ -36,22 +66,28 @@ type EmbeddingRequest struct {
 }
 
 type TargetRequest struct {
-	ID              string            `json:"id"`
-	Weight          int               `json:"weight,omitempty"`
-	Tags            []string          `json:"tags,omitempty"`
-	Headers         map[string]string `json:"headers,omitempty"`
-	Path            string            `json:"path,omitempty"`
-	Host            string            `json:"host,omitempty"`
-	Port            int               `json:"port,omitempty"`
-	Protocol        string            `json:"protocol,omitempty"`
-	Provider        string            `json:"provider,omitempty"`
-	ProviderOptions map[string]any    `json:"provider_options,omitempty"`
-	Models          []string          `json:"models,omitempty"`
-	DefaultModel    string            `json:"default_model,omitempty"`
-	Description     string            `json:"description,omitempty"`
-	Stream          bool              `json:"stream"`
-	InsecureSSL     bool              `json:"insecure_ssl,omitempty"`
-	Credentials     types.Credentials `json:"credentials,omitempty"`
+	ID              string             `json:"id"`
+	Weight          int                `json:"weight,omitempty"`
+	Tags            []string           `json:"tags,omitempty"`
+	Headers         map[string]string  `json:"headers,omitempty"`
+	Path            string             `json:"path,omitempty"`
+	Host            string             `json:"host,omitempty"`
+	Port            int                `json:"port,omitempty"`
+	Protocol        string             `json:"protocol,omitempty"`
+	Provider        string             `json:"provider,omitempty"`
+	ProviderOptions map[string]any     `json:"provider_options,omitempty"`
+	Models          []string           `json:"models,omitempty"`
+	DefaultModel    string             `json:"default_model,omitempty"`
+	Description     string             `json:"description,omitempty"`
+	Stream          bool               `json:"stream"`
+	InsecureSSL     bool               `json:"insecure_ssl,omitempty"`
+	Credentials     types.Credentials  `json:"credentials,omitempty"`
+	Auth            *TargetAuthRequest `json:"auth,omitempty"`
+}
+
+type TargetAuthRequest struct {
+	Type  AuthType              `json:"type"`
+	OAuth *UpstreamOAuthRequest `json:"oauth,omitempty"`
 }
 
 type HealthCheckRequest struct {
@@ -106,6 +142,41 @@ func (r *UpstreamRequest) Validate() error {
 			}
 			if target.Path != "" {
 				return fmt.Errorf("target %d: when target has provider specified, path must be empty", i)
+			}
+
+			// Validate per-target auth when present
+			if target.Auth != nil {
+				if target.Auth.Type != AuthTypeOAuth2 {
+					return fmt.Errorf("target %d: auth.type must be 'oauth2'", i)
+				}
+				if target.Auth.OAuth == nil {
+					return fmt.Errorf("target %d: auth.oauth is required when auth.type is 'oauth2'", i)
+				}
+				if target.Auth.OAuth.TokenURL == "" {
+					return fmt.Errorf("target %d: auth.oauth.token_url is required", i)
+				}
+				if target.Auth.OAuth.GrantType == "" {
+					return fmt.Errorf("target %d: auth.oauth.grant_type is required", i)
+				}
+				switch target.Auth.OAuth.GrantType {
+				case string(oauth.GrantTypeClientCredentials):
+					if !target.Auth.OAuth.UseBasicAuth && target.Auth.OAuth.ClientID == "" {
+						return fmt.Errorf("target %d: auth.oauth.client_id is required for client_credentials when use_basic_auth is false", i)
+					}
+				case string(oauth.GrantTypeAuthorizationCode):
+					if target.Auth.OAuth.Code == "" {
+						return fmt.Errorf("target %d: auth.oauth.code is required for authorization_code", i)
+					}
+					if target.Auth.OAuth.RedirectURI == "" {
+						return fmt.Errorf("target %d: auth.oauth.redirect_uri is required for authorization_code", i)
+					}
+				case string(oauth.GrantTypePassword):
+					if target.Auth.OAuth.Username == "" || target.Auth.OAuth.Password == "" {
+						return fmt.Errorf("target %d: auth.oauth.username and auth.oauth.password are required for password grant", i)
+					}
+				default:
+					return fmt.Errorf("target %d: unsupported auth.oauth.grant_type: %s", i, target.Auth.OAuth.GrantType)
+				}
 			}
 		}
 		if len(target.ProviderOptions) > 0 && target.Provider == "" {
@@ -170,6 +241,8 @@ func (r *UpstreamRequest) Validate() error {
 			}
 		}
 	}
+
+	// Upstream-level Auth removed: auth is handled per-target
 
 	return nil
 }
