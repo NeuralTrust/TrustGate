@@ -25,6 +25,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
+	"github.com/NeuralTrust/TrustGate/pkg/pluginutils"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
 	"github.com/mitchellh/mapstructure"
@@ -203,7 +204,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	p.config = conf
 
 	inputBody := req.Body
-	inputBody, err := p.defineRequestBody(inputBody)
+	inputBody, err := pluginutils.DefineRequestBody(inputBody, p.config.MappingField)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
@@ -627,64 +628,7 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 	return false
 }
 
-func (p *NeuralTrustModerationPlugin) defineRequestBody(body []byte) ([]byte, error) {
-	buf, ok := p.bufferPool.Get().(*bytes.Buffer)
-	if !ok {
-		return nil, fmt.Errorf("failed to get buffer from pool")
-	}
-	buf.Reset()
-	defer p.bufferPool.Put(buf)
-
-	var requestBody map[string]interface{}
-	if err := json.Unmarshal(body, &requestBody); err != nil {
-		return p.returnDefaultBody(body)
-	}
-
-	if p.config.MappingField == "" {
-		return p.returnDefaultBody(body)
-	}
-
-	path := strings.Split(p.config.MappingField, ".")
-	current := any(requestBody)
-
-	for _, key := range path {
-		m, ok := current.(map[string]interface{})
-		if !ok {
-			return p.returnDefaultBody(body)
-		}
-		child, exists := m[key]
-		if !exists {
-			return p.returnDefaultBody(body)
-		}
-		current = child
-	}
-
-	var inputString string
-	switch v := current.(type) {
-	case string:
-		inputString = v
-	default:
-		if err := json.NewEncoder(buf).Encode(v); err != nil {
-			return nil, fmt.Errorf("failed to stringify extracted value: %w", err)
-		}
-		inputString = buf.String()
-	}
-
-	result, err := json.Marshal(map[string]interface{}{
-		"input": inputString,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal wrapped input: %w", err)
-	}
-
-	return result, nil
-}
-
-func (p *NeuralTrustModerationPlugin) returnDefaultBody(body []byte) ([]byte, error) {
-	return json.Marshal(map[string]interface{}{
-		"input": string(body),
-	})
-}
+// local helpers removed in favor of pluginutils.DefineRequestBody
 
 func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
 	s1 = strings.ToLower(s1)

@@ -114,3 +114,39 @@ func TestNeuralTrustJailbreakPlugin_Execute_JailbreakUnsafe(t *testing.T) {
 
 	assert.Nil(t, pluginResp)
 }
+
+func TestNeuralTrustJailbreakPlugin_Execute_WithMappingFieldArray(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(mocks.Tracker)
+
+	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+	)
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"jailbreak":     map[string]interface{}{"threshold": 0.9},
+			"mapping_field": "messages[-1].content",
+		},
+	}
+
+	jbResp := neuraltrust_jailbreak.FirewallResponse{
+		Flagged: false,
+		Scores:  neuraltrust_jailbreak.FirewallScores{MaliciousPrompt: 0.1},
+		Prompt:  neuraltrust_jailbreak.FirewallPrompt{MaliciousPrompt: false},
+	}
+	respBytes, err := json.Marshal(jbResp)
+	assert.NoError(t, err)
+	mockResp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(respBytes))}
+	mockClient.On("Do", mock.Anything).Return(mockResp, nil).Once()
+
+	req := &types.RequestContext{Body: []byte(`{"messages":[{"content":"hello"},{"content":"world"}]}`)}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+	assert.NoError(t, err)
+	assert.NotNil(t, pluginResp)
+	assert.Equal(t, 200, pluginResp.StatusCode)
+}
