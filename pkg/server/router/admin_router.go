@@ -113,6 +113,8 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 
 		// Plugins endpoints
 		v1.Put("/plugins", handlerTransport.UpdatePluginsHandler.Handle)
+		v1.Delete("/plugins", handlerTransport.DeletePluginsHandler.Handle)
+		v1.Post("/plugins", handlerTransport.AddPluginsHandler.Handle)
 	}
 	return nil
 }

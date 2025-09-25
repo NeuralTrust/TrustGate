@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"time"
 
 	appPlugin "github.com/NeuralTrust/TrustGate/pkg/app/plugin"
@@ -40,8 +41,8 @@ func NewUpdatePluginsHandler(
 	}
 }
 
-// Handle @Summary Update plugins for a Gateway or Rule
-// @Description Updates the plugin chain for a given gateway or rule with granular add/edit/delete operations
+// Handle @Summary Update plugins in a Gateway or Rule
+// @Description Replaces plugins matched by ID within the chain, preserving the original id and name.
 // @Tags Plugins
 // @Accept json
 // @Produce json
@@ -49,7 +50,7 @@ func NewUpdatePluginsHandler(
 // @Param payload body request.UpdatePluginsRequest true "Update plugins payload"
 // @Success 204 "Plugins updated successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
-// @Failure 404 {object} map[string]interface{} "Entity not found"
+// @Failure 404 {object} map[string]interface{} "Entity or plugin not found"
 // @Router /api/v1/plugins [put]
 func (h *updatePluginsHandler) Handle(c *fiber.Ctx) error {
 	var req request.UpdatePluginsRequest
@@ -62,162 +63,224 @@ func (h *updatePluginsHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Handle granular updates based on type
 	switch req.Type {
 	case "gateway":
-		return h.handleGatewayUpdates(c, &req)
+		return h.handleGatewayUpdate(c, &req)
 	case "rule":
-		return h.handleRuleUpdates(c, &req)
+		return h.handleRuleUpdate(c, &req)
 	default:
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid type"})
 	}
 }
 
-func (h *updatePluginsHandler) handleGatewayUpdates(c *fiber.Ctx, req *request.UpdatePluginsRequest) error {
-	gatewayUUID, err := uuid.Parse(req.ID)
+func (h *updatePluginsHandler) handleGatewayUpdate(c *fiber.Ctx, req *request.UpdatePluginsRequest) error {
+	gID, err := uuid.Parse(req.ID)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
 	}
 
-	entity, err := h.gatewayRepo.Get(c.Context(), gatewayUUID)
+	entity, err := h.gatewayRepo.Get(c.Context(), gID)
 	if err != nil || entity == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 	}
 
-	// Apply updates to the plugin chain
-	updatedPlugins, err := h.applyPluginUpdates(entity.RequiredPlugins, req.Updates)
-	if err != nil {
-		h.logger.WithError(err).Error("failed to apply plugin updates")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	updated := make([]types.PluginConfig, len(entity.RequiredPlugins))
+	copy(updated, entity.RequiredPlugins)
+
+	for i, existing := range entity.RequiredPlugins {
+		_ = i
+		// Look for a payload plugin with same ID
+		incoming, found := findIncomingByID(req.Plugins, existing.ID)
+		if !found {
+			continue
+		}
+
+		newCfg, err := buildPluginConfigFromMap(incoming, &existing)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("invalid plugin payload for id %s: %v", existing.ID, err)})
+		}
+
+		updated[i] = newCfg
 	}
 
-	// Validate the updated plugin chain
-	if err := h.pluginChainValidator.Validate(c.Context(), gatewayUUID, updatedPlugins); err != nil {
+	// Ensure all provided plugin IDs were matched
+	for _, p := range req.Plugins {
+		id := stringFromMap(p, "id")
+		if !containsPluginID(entity.RequiredPlugins, id) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "plugin not found"})
+		}
+	}
+
+	if err := h.pluginChainValidator.Validate(c.Context(), gID, updated); err != nil {
 		h.logger.WithError(err).Error("failed to validate updated plugin chain")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Update the gateway
-	entity.RequiredPlugins = updatedPlugins
+	entity.RequiredPlugins = updated
 	entity.UpdatedAt = time.Now()
 	if err := h.gatewayRepo.Update(c.Context(), entity); err != nil {
 		h.logger.WithError(err).Error("failed to update gateway plugins")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update gateway"})
 	}
 
-	// Publish cache update event
-	if err := h.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateGatewayCacheEvent{GatewayID: entity.ID.String()}); err != nil {
+	if err := h.publisher.Publish(
+		c.Context(),
+		channel.GatewayEventsChannel,
+		event.UpdateGatewayCacheEvent{GatewayID: entity.ID.String()},
+	); err != nil {
 		h.logger.WithError(err).Error("failed to publish gateway cache update event")
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-func (h *updatePluginsHandler) handleRuleUpdates(c *fiber.Ctx, req *request.UpdatePluginsRequest) error {
-	ruleUUID, err := uuid.Parse(req.ID)
+func (h *updatePluginsHandler) handleRuleUpdate(c *fiber.Ctx, req *request.UpdatePluginsRequest) error {
+	rID, err := uuid.Parse(req.ID)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule ID"})
 	}
 
-	rule, err := h.ruleRepo.GetRuleByID(c.Context(), ruleUUID)
+	rule, err := h.ruleRepo.GetRuleByID(c.Context(), rID)
 	if err != nil || rule == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
 	}
 
-	// Apply updates to the plugin chain
-	updatedPlugins, err := h.applyPluginUpdates(rule.PluginChain, req.Updates)
-	if err != nil {
-		h.logger.WithError(err).Error("failed to apply plugin updates")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	updated := make([]types.PluginConfig, len(rule.PluginChain))
+	copy(updated, rule.PluginChain)
+
+	for i, existing := range rule.PluginChain {
+		incoming, found := findIncomingByID(req.Plugins, existing.ID)
+		if !found {
+			continue
+		}
+		newCfg, err := buildPluginConfigFromMap(incoming, &existing)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("invalid plugin payload for id %s: %v", existing.ID, err)})
+		}
+		updated[i] = newCfg
 	}
 
-	// Validate the updated plugin chain
-	if err := h.pluginChainValidator.Validate(c.Context(), rule.GatewayID, updatedPlugins); err != nil {
+	for _, p := range req.Plugins {
+		id := stringFromMap(p, "id")
+		if !containsPluginID(rule.PluginChain, id) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "plugin not found"})
+		}
+	}
+
+	if err := h.pluginChainValidator.Validate(c.Context(), rule.GatewayID, updated); err != nil {
 		h.logger.WithError(err).Error("failed to validate updated plugin chain")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Update the rule
-	rule.PluginChain = updatedPlugins
+	rule.PluginChain = updated
 	rule.UpdatedAt = time.Now()
 	if err := h.ruleRepo.Update(c.Context(), rule); err != nil {
 		h.logger.WithError(err).Error("failed to update rule plugins")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update rule"})
 	}
 
-	// Publish cache invalidation event
-	if err := h.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.DeleteRulesCacheEvent{
-		GatewayID: rule.GatewayID.String(),
-	}); err != nil {
+	// Refresh rules cache synchronously to avoid stale reads after update
+	if _, err := h.ruleRepo.ListRules(c.Context(), rule.GatewayID); err != nil {
+		h.logger.WithError(err).Warn("failed to refresh rules cache after plugin update")
+	}
+
+	if err := h.publisher.Publish(
+		c.Context(),
+		channel.GatewayEventsChannel,
+		event.DeleteRulesCacheEvent{GatewayID: rule.GatewayID.String()},
+	); err != nil {
 		h.logger.WithError(err).Error("failed to publish rules cache invalidation event")
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-// applyPluginUpdates applies a series of plugin updates to an existing plugin chain
-func (h *updatePluginsHandler) applyPluginUpdates(currentPlugins []types.PluginConfig, updates []request.PluginUpdate) ([]types.PluginConfig, error) {
-	// Create a copy of the current plugins to avoid modifying the original
-	result := make([]types.PluginConfig, len(currentPlugins))
-	copy(result, currentPlugins)
-
-	for _, update := range updates {
-		switch update.Operation {
-		case request.PluginOperationAdd:
-			// Check if plugin with the same name already exists
-			for _, p := range result {
-				if p.Name == update.Plugin.Name {
-					return nil, fiber.NewError(fiber.StatusBadRequest, "plugin '"+update.Plugin.Name+"' already exists")
-				}
-			}
-			result = append(result, update.Plugin)
-
-		case request.PluginOperationEdit:
-			found := false
-			targetName := update.OldPluginName
-			if targetName == "" {
-				targetName = update.Plugin.Name
-			}
-
-			for i, p := range result {
-				if p.Name == targetName {
-					// Preserve the ID if not provided in the update
-					if update.Plugin.ID == "" {
-						update.Plugin.ID = p.ID
-					}
-					result[i] = update.Plugin
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, fiber.NewError(fiber.StatusNotFound, "plugin '"+targetName+"' not found")
-			}
-
-		case request.PluginOperationDelete:
-			targetName := update.PluginName
-			if targetName == "" {
-				targetName = update.Plugin.Name
-			}
-
-			newResult := make([]types.PluginConfig, 0, len(result))
-			found := false
-			for _, p := range result {
-				if p.Name != targetName {
-					newResult = append(newResult, p)
-				} else {
-					found = true
-				}
-			}
-			if !found {
-				return nil, fiber.NewError(fiber.StatusNotFound, "plugin '"+targetName+"' not found")
-			}
-			result = newResult
-
-		default:
-			return nil, fiber.NewError(fiber.StatusBadRequest, "invalid operation: "+string(update.Operation))
+func findIncomingByID(list []map[string]any, id string) (map[string]any, bool) {
+	for _, m := range list {
+		if stringFromMap(m, "id") == id {
+			return m, true
 		}
 	}
+	return nil, false
+}
 
-	return result, nil
+func containsPluginID(list []types.PluginConfig, id string) bool {
+	for _, p := range list {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func stringFromMap(m map[string]any, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok2 := v.(string); ok2 {
+			return s
+		}
+	}
+	return ""
+}
+
+func boolFromMap(m map[string]any, key string, def bool) bool {
+	v, ok := m[key]
+	if !ok {
+		return def
+	}
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return def
+}
+
+func intFromMap(m map[string]any, key string, def int) int {
+	v, ok := m[key]
+	if !ok {
+		return def
+	}
+	switch t := v.(type) {
+	case int:
+		return t
+	case int32:
+		return int(t)
+	case int64:
+		return int(t)
+	case float64:
+		return int(t)
+	default:
+		return def
+	}
+}
+
+func stageFromMap(m map[string]any, key string, def types.Stage) types.Stage {
+	s := stringFromMap(m, key)
+	if s == "" {
+		return def
+	}
+	return types.Stage(s)
+}
+
+func settingsFromMap(m map[string]any, key string, def map[string]any) map[string]any {
+	v, ok := m[key]
+	if !ok {
+		return def
+	}
+	if mm, ok := v.(map[string]any); ok {
+		return mm
+	}
+	return def
+}
+
+// buildPluginConfigFromMap builds a new PluginConfig using incoming fields but preserving
+// ID and Name from the existing plugin.
+func buildPluginConfigFromMap(in map[string]any, existing *types.PluginConfig) (types.PluginConfig, error) {
+	cfg := types.PluginConfig{}
+	cfg.ID = existing.ID
+	cfg.Name = existing.Name
+	cfg.Enabled = boolFromMap(in, "enabled", existing.Enabled)
+	cfg.Stage = stageFromMap(in, "stage", existing.Stage)
+	cfg.Priority = intFromMap(in, "priority", existing.Priority)
+	cfg.Parallel = boolFromMap(in, "parallel", existing.Parallel)
+	cfg.Settings = settingsFromMap(in, "settings", existing.Settings)
+	return cfg, nil
 }
