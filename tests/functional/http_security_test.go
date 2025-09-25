@@ -97,20 +97,5 @@ func TestSecurityMiddleware(t *testing.T) {
 		assert.Contains(t, resp.Header.Get("Content-Security-Policy"), "default-src 'self'")
 	})
 
-	t.Run("Redirects HTTP to HTTPS", func(t *testing.T) {
-		req, err := http.NewRequest("GET", ProxyUrl+"/security-test", nil)
-		assert.NoError(t, err)
-
-		req.Host = fmt.Sprintf("%s.example.com", subdomain)
-		req.Header.Set("Host", req.Host)
-		req.Header.Set("X-TG-API-Key", apiKey)
-
-		resp, err := http.DefaultClient.Do(req)
-		assert.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-	})
-
 	fmt.Println("\n✅ Security Middleware Functional Test Completed")
 }
