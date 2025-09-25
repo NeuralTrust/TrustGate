@@ -157,6 +157,10 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 				}
 				rules[i].PluginChain = pluginChain
 			}
+			// Update TrustLens in cache if provided
+			if req.TrustLens != nil {
+				rules[i].TrustLens = req.TrustLens
+			}
 			found = true
 			break
 		}
