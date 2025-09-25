@@ -72,30 +72,15 @@ func (r *ForwardingRule) BeforeCreate(tx *gorm.DB) error {
 	if r.PluginChain != nil {
 		for i := range r.PluginChain {
 			if r.PluginChain[i].ID == "" { // Only generate if ID is not already set
-				r.PluginChain[i].ID = fmt.Sprintf("%s-%s-%d", r.GatewayID, r.PluginChain[i].Name, i)
+				r.PluginChain[i].ID = uuid.New().String()
 			}
 		}
 	}
-
-	// Validate the rule
 	return r.Validate()
 }
 
-// BeforeUpdate is called before updating a forwarding rule in the database
 func (r *ForwardingRule) BeforeUpdate(tx *gorm.DB) error {
-	// Update timestamp
 	r.UpdatedAt = time.Now()
-
-	// Generate unique IDs for any new plugins in the chain
-	if r.PluginChain != nil {
-		for i := range r.PluginChain {
-			if r.PluginChain[i].ID == "" { // Only generate if ID is not already set
-				r.PluginChain[i].ID = fmt.Sprintf("%s-%s-%d", r.GatewayID, r.PluginChain[i].Name, i)
-			}
-		}
-	}
-
-	// Validate the rule
 	return r.Validate()
 }
 

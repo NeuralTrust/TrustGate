@@ -54,6 +54,8 @@ type HandlerTransportDTO struct {
 	// Plugins
 	ListPluginsHandler   Handler
 	UpdatePluginsHandler Handler
+	DeletePluginsHandler Handler
+	AddPluginsHandler    Handler
 
 	// Cache
 	InvalidateCacheHandler Handler

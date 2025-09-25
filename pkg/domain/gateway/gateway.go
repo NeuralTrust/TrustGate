@@ -49,33 +49,21 @@ func (g *Gateway) BeforeCreate(tx *gorm.DB) error {
 	if g.ID == uuid.Nil {
 		g.ID = uuid.New()
 	}
-
 	now := time.Now()
 	g.CreatedAt = now
 	g.UpdatedAt = now
-
 	if g.RequiredPlugins != nil {
 		for i := range g.RequiredPlugins {
 			if g.RequiredPlugins[i].ID == "" {
-				g.RequiredPlugins[i].ID = fmt.Sprintf("%s-gateway-%s-%d", g.ID, g.RequiredPlugins[i].Name, i)
+				g.RequiredPlugins[i].ID = uuid.New().String()
 			}
 		}
 	}
-
 	return g.Validate()
 }
 
 func (g *Gateway) BeforeUpdate(tx *gorm.DB) error {
 	g.UpdatedAt = time.Now()
-
-	if g.RequiredPlugins != nil {
-		for i := range g.RequiredPlugins {
-			if g.RequiredPlugins[i].ID == "" {
-				g.RequiredPlugins[i].ID = fmt.Sprintf("%s-gateway-%s-%d", g.ID, g.RequiredPlugins[i].Name, i)
-			}
-		}
-	}
-
 	return g.Validate()
 }
 

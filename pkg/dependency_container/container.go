@@ -279,6 +279,20 @@ func NewContainer(
 			pluginChainValidator,
 			redisPublisher,
 		),
+		DeletePluginsHandler: handlers.NewDeletePluginsHandler(
+			logger,
+			gatewayRepository,
+			ruleRepository,
+			pluginChainValidator,
+			redisPublisher,
+		),
+		AddPluginsHandler: handlers.NewAddPluginsHandler(
+			logger,
+			gatewayRepository,
+			ruleRepository,
+			pluginChainValidator,
+			redisPublisher,
+		),
 		// Cache
 		InvalidateCacheHandler: handlers.NewInvalidateCacheHandler(logger, cacheInstance),
 	}
