@@ -28,7 +28,7 @@ type UpdateRuleRequest struct {
 	RetryAttempts *int              `json:"retry_attempts"`
 	Active        *bool             `json:"active"`
 	PluginChain   []PluginConfig    `json:"plugin_chain"`
-	TrustLens     *TrustLensConfig  `json:"trust_lens,omitempty"`
+	TrustLens     *TrustLensConfig  `json:"trustlens,omitempty"`
 }
 
 type ServiceRequest struct {
