@@ -42,11 +42,19 @@ var PluginList = []PluginDefinition{
 	},
 	{
 		UUID:          GeneratePluginUUID("data_masking"),
-		Name:          "data_masking",
+		Name:          "prompt_data_masking",
 		Description:   "Masks sensitive data in requests and responses",
 		AllowedStages: []types.Stage{types.PreRequest, types.PostResponse},
 		Category:      "data_loss_prevention",
-		Label:         "Data Masking",
+		Label:         "Prompt Data Masking",
+	},
+	{
+		UUID:          GeneratePluginUUID("data_masking"),
+		Name:          "response_data_masking",
+		Description:   "Masks sensitive data in requests and responses",
+		AllowedStages: []types.Stage{types.PreRequest, types.PostResponse},
+		Category:      "data_loss_prevention",
+		Label:         "Response Data Masking",
 	},
 	{
 		UUID:          GeneratePluginUUID("injection_protection"),
@@ -66,11 +74,19 @@ var PluginList = []PluginDefinition{
 	},
 	{
 		UUID:          GeneratePluginUUID("neuraltrust_moderation"),
-		Name:          "neuraltrust_moderation",
+		Name:          "prompt_moderation",
 		Description:   "Applies NeuralTrust's moderation to filter content",
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "content_security",
-		Label:         "Content Moderation",
+		Label:         "Prompt Moderation",
+	},
+	{
+		UUID:          GeneratePluginUUID("neuraltrust_moderation"),
+		Name:          "response_moderation",
+		Description:   "Applies NeuralTrust's moderation to filter content",
+		AllowedStages: []types.Stage{types.PreRequest},
+		Category:      "content_security",
+		Label:         "Response Moderation",
 	},
 	{
 		UUID:          GeneratePluginUUID("neuraltrust_toxicity"),
