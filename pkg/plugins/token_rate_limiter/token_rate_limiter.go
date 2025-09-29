@@ -63,10 +63,38 @@ func (p *TokenRateLimiterPlugin) RequiredPlugins() []string {
 }
 
 func (p *TokenRateLimiterPlugin) ValidateConfig(config types.PluginConfig) error {
-	return fmt.Errorf("method not implemented")
+	if config.Settings == nil {
+		return fmt.Errorf("token_rate_limiter requires settings")
+	}
+
+	var cfg Config
+	b, err := json.Marshal(config.Settings)
+	if err != nil {
+		return fmt.Errorf("invalid settings format: %w", err)
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return fmt.Errorf("invalid settings: %w", err)
+	}
+
+	if cfg.TokensPerRequest <= 0 {
+		return fmt.Errorf("tokens_per_request must be > 0")
+	}
+	if cfg.BucketSize <= 0 {
+		return fmt.Errorf("bucket_size must be > 0")
+	}
+	if cfg.RequestsPerMinute <= 0 {
+		return fmt.Errorf("requests_per_minute must be > 0")
+	}
+	if cfg.TokensPerMinute < 0 {
+		return fmt.Errorf("tokens_per_minute must be >= 0")
+	}
+	if cfg.BucketSize < cfg.TokensPerRequest {
+		return fmt.Errorf("bucket_size must be >= tokens_per_request")
+	}
+
+	return nil
 }
 
-// Stages returns the fixed stages where this plugin must run
 func (p *TokenRateLimiterPlugin) Stages() []types.Stage {
 	return []types.Stage{
 		types.PreRequest,
@@ -74,7 +102,6 @@ func (p *TokenRateLimiterPlugin) Stages() []types.Stage {
 	}
 }
 
-// AllowedStages returns all stages where this plugin is allowed to run
 func (p *TokenRateLimiterPlugin) AllowedStages() []types.Stage {
 	return []types.Stage{
 		types.PreRequest,
@@ -82,24 +109,17 @@ func (p *TokenRateLimiterPlugin) AllowedStages() []types.Stage {
 	}
 }
 
-// Add token estimation function
 func (p *TokenRateLimiterPlugin) estimateTokensForRequest(req *types.RequestContext) int {
 	tokens := 0
-
-	// Estimate from body length if present
 	if len(req.Body) > 0 {
-		// Rough estimate: 1 token per 4 characters
 		tokens += len(req.Body) / 4
 	}
-
-	// Estimate from path and query
 	tokens += len(req.Path) / 4
 	tokens += len(req.Query.Encode()) / 4
 
 	return tokens
 }
 
-// Execute implements the token bucket rate limiting algorithm
 func (p *TokenRateLimiterPlugin) Execute(
 	ctx context.Context,
 	cfg types.PluginConfig,
@@ -139,16 +159,9 @@ func (p *TokenRateLimiterPlugin) Execute(
 		return nil, fmt.Errorf("failed to parse token rate limiter config: %w", err)
 	}
 
-	// Estimate tokens needed
-	estimatedTokens := p.estimateTokensForRequest(req)
-
-	// Check if estimated tokens exceed per-request limit
-	if estimatedTokens > config.TokensPerRequest {
-		return nil, &types.PluginError{
-			StatusCode: 429,
-			Message:    fmt.Sprintf("Request would consume %d tokens, exceeding limit of %d tokens per request", estimatedTokens, config.TokensPerRequest),
-		}
-	}
+	// Estimate tokens needed. We do not reject based on this heuristic; actual enforcement
+	// happens via bucket/request limits and post-response token consumption.
+	_ = p.estimateTokensForRequest(req)
 
 	// Get API key from context
 	apiKey, ok := req.Metadata["api_key"].(string)
