@@ -92,5 +92,5 @@ func (s *Service) Validate() error {
 }
 
 func (s *Service) TableName() string {
-	return "public.services"
+	return "services"
 }

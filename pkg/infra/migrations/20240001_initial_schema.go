@@ -30,7 +30,7 @@ END $$;`).Error; err != nil {
 
 			// Gateways
 			if err := db.Exec(`
-CREATE TABLE IF NOT EXISTS public.gateways (
+CREATE TABLE IF NOT EXISTS gateways (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name            TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'active',
@@ -47,9 +47,9 @@ CREATE TABLE IF NOT EXISTS public.gateways (
 
 			// Upstreams
 			if err := db.Exec(`
-CREATE TABLE IF NOT EXISTS public.upstreams (
+CREATE TABLE IF NOT EXISTS upstreams (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    gateway_id       UUID NOT NULL REFERENCES public.gateways(id) ON DELETE CASCADE,
+    gateway_id       UUID NOT NULL REFERENCES gateways(id) ON DELETE CASCADE,
     name             TEXT NOT NULL,
     algorithm        TEXT NOT NULL DEFAULT 'round-robin',
     targets          JSONB,
@@ -63,20 +63,20 @@ CREATE TABLE IF NOT EXISTS public.upstreams (
 );`).Error; err != nil {
 				return err
 			}
-			if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_gateway_upstream_name ON public.upstreams (name, gateway_id);`).Error; err != nil {
+			if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_gateway_upstream_name ON upstreams (name, gateway_id);`).Error; err != nil {
 				return err
 			}
 
 			// Services
 			if err := db.Exec(`
-CREATE TABLE IF NOT EXISTS public.services (
+CREATE TABLE IF NOT EXISTS services (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    gateway_id   UUID NOT NULL REFERENCES public.gateways(id) ON DELETE CASCADE,
+    gateway_id   UUID NOT NULL REFERENCES gateways(id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
     type         TEXT NOT NULL,
     description  TEXT,
     tags         JSONB,
-    upstream_id  UUID NULL REFERENCES public.upstreams(id) ON DELETE SET NULL,
+    upstream_id  UUID NULL REFERENCES upstreams(id) ON DELETE SET NULL,
     host         TEXT,
     port         INTEGER,
     protocol     TEXT,
@@ -89,13 +89,13 @@ CREATE TABLE IF NOT EXISTS public.services (
 );`).Error; err != nil {
 				return err
 			}
-			if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_gateway_service_name ON public.services (name, gateway_id);`).Error; err != nil {
+			if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_gateway_service_name ON services (name, gateway_id);`).Error; err != nil {
 				return err
 			}
 
 			// API Keys (IAM)
 			if err := db.Exec(`
-CREATE TABLE IF NOT EXISTS public.api_keys (
+CREATE TABLE IF NOT EXISTS api_keys (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     key          TEXT NOT NULL,
     name         TEXT,
@@ -108,17 +108,17 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
 );`).Error; err != nil {
 				return err
 			}
-			if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_key ON public.api_keys (key);`).Error; err != nil {
+			if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys (key);`).Error; err != nil {
 				return err
 			}
 
 			// Forwarding Rules
 			if err := db.Exec(`
-CREATE TABLE IF NOT EXISTS public.forwarding_rules (
+CREATE TABLE IF NOT EXISTS forwarding_rules (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name           TEXT,
-    gateway_id     UUID NOT NULL REFERENCES public.gateways(id) ON DELETE CASCADE,
-    service_id     UUID NOT NULL REFERENCES public.services(id) ON DELETE CASCADE,
+    gateway_id     UUID NOT NULL REFERENCES gateways(id) ON DELETE CASCADE,
+    service_id     UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     path           TEXT NOT NULL,
     methods        JSONB,
     headers        JSONB,
@@ -139,19 +139,19 @@ CREATE TABLE IF NOT EXISTS public.forwarding_rules (
 		},
 		Down: func(db *gorm.DB) error {
 			// Drop in dependency order
-			if err := db.Exec(`DROP TABLE IF EXISTS public.forwarding_rules;`).Error; err != nil {
+			if err := db.Exec(`DROP TABLE IF EXISTS forwarding_rules;`).Error; err != nil {
 				return err
 			}
-			if err := db.Exec(`DROP TABLE IF EXISTS public.services;`).Error; err != nil {
+			if err := db.Exec(`DROP TABLE IF EXISTS services;`).Error; err != nil {
 				return err
 			}
-			if err := db.Exec(`DROP TABLE IF EXISTS public.upstreams;`).Error; err != nil {
+			if err := db.Exec(`DROP TABLE IF EXISTS upstreams;`).Error; err != nil {
 				return err
 			}
-			if err := db.Exec(`DROP TABLE IF EXISTS public.api_keys;`).Error; err != nil {
+			if err := db.Exec(`DROP TABLE IF EXISTS api_keys;`).Error; err != nil {
 				return err
 			}
-			if err := db.Exec(`DROP TABLE IF EXISTS public.gateways;`).Error; err != nil {
+			if err := db.Exec(`DROP TABLE IF EXISTS gateways;`).Error; err != nil {
 				return err
 			}
 			if err := db.Exec(`
