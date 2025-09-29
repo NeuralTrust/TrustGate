@@ -109,5 +109,5 @@ func (a APIKey) IsValid() bool {
 }
 
 func (a APIKey) TableName() string {
-	return "public.api_keys"
+	return "api_keys"
 }

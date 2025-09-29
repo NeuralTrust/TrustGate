@@ -100,5 +100,5 @@ func (g *Gateway) Validate() error {
 }
 
 func (g *Gateway) TableName() string {
-	return "public.gateways"
+	return "gateways"
 }

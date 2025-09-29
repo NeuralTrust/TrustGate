@@ -74,7 +74,7 @@ func NewMigrationsManager(db *gorm.DB) *MigrationsManager {
 
 func (m *MigrationsManager) ensureMigrationsTable() error {
 	const createTableSQL = `
-CREATE TABLE IF NOT EXISTS public.migration_version (
+CREATE TABLE IF NOT EXISTS migration_version (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS public.migration_version (
 func (m *MigrationsManager) getAppliedMigrations() (map[string]struct{}, error) {
 	type row struct{ ID string }
 	var rows []row
-	if err := m.db.Raw("SELECT id FROM public.migration_version").Scan(&rows).Error; err != nil {
+	if err := m.db.Raw("SELECT id FROM migration_version").Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	applied := make(map[string]struct{}, len(rows))
@@ -120,7 +120,7 @@ func (m *MigrationsManager) ApplyPending() error {
 			if err := mig.Up(tx); err != nil {
 				return err
 			}
-			return tx.Exec("INSERT INTO public.migration_version (id, name, applied_at) VALUES (?, ?, ?)", mig.ID, mig.Name, time.Now()).Error
+			return tx.Exec("INSERT INTO migration_version (id, name, applied_at) VALUES (?, ?, ?)", mig.ID, mig.Name, time.Now()).Error
 		})
 		if err != nil {
 			return fmt.Errorf("apply migration %s (%s): %w", mig.ID, mig.Name, err)
