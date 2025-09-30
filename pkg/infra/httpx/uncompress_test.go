@@ -5,7 +5,6 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"compress/zlib"
-	"io"
 	"testing"
 
 	"github.com/andybalholm/brotli"
@@ -19,43 +18,69 @@ func makeRespWithCE(enc string) *fasthttp.Response {
 	return resp
 }
 
-func gzipCompress(data []byte) []byte {
+func gzipCompress(t *testing.T, data []byte) []byte {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
-	_, _ = gz.Write(data)
-	_ = gz.Close()
+	if _, err := gz.Write(data); err != nil {
+		t.Fatalf("gzip write error: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close error: %v", err)
+	}
 	return buf.Bytes()
 }
 
-func brCompress(data []byte) []byte {
+func brCompress(t *testing.T, data []byte) []byte {
 	var buf bytes.Buffer
 	br := brotli.NewWriter(&buf)
-	_, _ = br.Write(data)
-	_ = br.Close()
+	if _, err := br.Write(data); err != nil {
+		t.Fatalf("brotli write error: %v", err)
+	}
+	if err := br.Close(); err != nil {
+		t.Fatalf("brotli close error: %v", err)
+	}
 	return buf.Bytes()
 }
 
-func zstdCompress(data []byte) []byte {
+func zstdCompress(t *testing.T, data []byte) []byte {
 	var buf bytes.Buffer
-	zw, _ := zstd.NewWriter(&buf)
-	_, _ = zw.Write(data)
-	_ = zw.Close()
+	zw, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatalf("zstd writer error: %v", err)
+	}
+	if _, err := zw.Write(data); err != nil {
+		t.Fatalf("zstd write error: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zstd close error: %v", err)
+	}
 	return buf.Bytes()
 }
 
-func zlibDeflateCompress(data []byte) []byte {
+func zlibDeflateCompress(t *testing.T, data []byte) []byte {
 	var buf bytes.Buffer
 	zw := zlib.NewWriter(&buf)
-	_, _ = zw.Write(data)
-	_ = zw.Close()
+	if _, err := zw.Write(data); err != nil {
+		t.Fatalf("zlib write error: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zlib close error: %v", err)
+	}
 	return buf.Bytes()
 }
 
-func rawDeflateCompress(data []byte) []byte {
+func rawDeflateCompress(t *testing.T, data []byte) []byte {
 	var buf bytes.Buffer
-	dw, _ := flate.NewWriter(&buf, flate.DefaultCompression)
-	_, _ = dw.Write(data)
-	_ = dw.Close()
+	dw, err := flate.NewWriter(&buf, flate.DefaultCompression)
+	if err != nil {
+		t.Fatalf("flate writer error: %v", err)
+	}
+	if _, err := dw.Write(data); err != nil {
+		t.Fatalf("flate write error: %v", err)
+	}
+	if err := dw.Close(); err != nil {
+		t.Fatalf("flate close error: %v", err)
+	}
 	return buf.Bytes()
 }
 
@@ -76,7 +101,7 @@ func TestDecodeChain_NoEncoding(t *testing.T) {
 
 func TestDecodeChain_Gzip(t *testing.T) {
 	plain := []byte("gzip payload")
-	comp := gzipCompress(plain)
+	comp := gzipCompress(t, plain)
 	resp := makeRespWithCE("gzip")
 	decoded, changed, err := DecodeChain(resp, comp)
 	if err != nil {
@@ -92,7 +117,7 @@ func TestDecodeChain_Gzip(t *testing.T) {
 
 func TestDecodeChain_Brotli(t *testing.T) {
 	plain := []byte("brotli payload")
-	comp := brCompress(plain)
+	comp := brCompress(t, plain)
 	resp := makeRespWithCE("br")
 	decoded, changed, err := DecodeChain(resp, comp)
 	if err != nil {
@@ -105,7 +130,7 @@ func TestDecodeChain_Brotli(t *testing.T) {
 
 func TestDecodeChain_Zstd(t *testing.T) {
 	plain := []byte("zstd payload")
-	comp := zstdCompress(plain)
+	comp := zstdCompress(t, plain)
 	resp := makeRespWithCE("zstd")
 	decoded, changed, err := DecodeChain(resp, comp)
 	if err != nil {
@@ -118,7 +143,7 @@ func TestDecodeChain_Zstd(t *testing.T) {
 
 func TestDecodeChain_Deflate_ZlibWrapped(t *testing.T) {
 	plain := []byte("deflate zlib wrapped")
-	comp := zlibDeflateCompress(plain)
+	comp := zlibDeflateCompress(t, plain)
 	resp := makeRespWithCE("deflate")
 	decoded, changed, err := DecodeChain(resp, comp)
 	if err != nil {
@@ -131,7 +156,7 @@ func TestDecodeChain_Deflate_ZlibWrapped(t *testing.T) {
 
 func TestDecodeChain_Deflate_Raw(t *testing.T) {
 	plain := []byte("deflate raw payload")
-	comp := rawDeflateCompress(plain)
+	comp := rawDeflateCompress(t, plain)
 	resp := makeRespWithCE("deflate")
 	decoded, changed, err := DecodeChain(resp, comp)
 	if err != nil {
@@ -169,8 +194,8 @@ func TestDecodeChain_UnknownEncoding_ReturnsError(t *testing.T) {
 func TestDecodeChain_Chained_GzipThenBr(t *testing.T) {
 	plain := []byte("chain payload")
 	// Apply gzip then br (server would set Content-Encoding: gzip, br)
-	gz := gzipCompress(plain)
-	br := brCompress(gz)
+	gz := gzipCompress(t, plain)
+	br := brCompress(t, gz)
 	resp := makeRespWithCE("gzip, br")
 	decoded, changed, err := DecodeChain(resp, br)
 	if err != nil {
@@ -183,7 +208,7 @@ func TestDecodeChain_Chained_GzipThenBr(t *testing.T) {
 
 func TestDecodeChain_CaseAndWhitespace(t *testing.T) {
 	plain := []byte("gzip case payload")
-	comp := gzipCompress(plain)
+	comp := gzipCompress(t, plain)
 	resp := makeRespWithCE("  GZip  ")
 	decoded, changed, err := DecodeChain(resp, comp)
 	if err != nil {
@@ -195,14 +220,4 @@ func TestDecodeChain_CaseAndWhitespace(t *testing.T) {
 }
 
 // Ensure helpers work as expected (sanity check)
-func TestHelpers_CompressRoundTrip(t *testing.T) {
-	plain := []byte("roundtrip")
-	if out, _ := io.ReadAll(mustGzipReader(gzipCompress(plain))); !bytes.Equal(out, plain) {
-		t.Fatalf("gzip roundtrip failed")
-	}
-}
-
-func mustGzipReader(b []byte) io.Reader {
-	gr, _ := gzip.NewReader(bytes.NewReader(b))
-	return gr
-}
+// Note: helpers are validated implicitly by decode tests above.
