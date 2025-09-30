@@ -22,6 +22,7 @@ import (
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	infrahttpx "github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
@@ -804,6 +805,10 @@ func (h *forwardedHandler) buildFastHTTPRequest(req *fasthttp.Request, dto *forw
 	for k, v := range dto.target.Headers {
 		req.Header.Set(k, v)
 	}
+	if len(req.Header.Peek("Accept-Encoding")) == 0 {
+		// Offer modern encodings; order by preference
+		req.Header.Set("Accept-Encoding", "zstd, br, gzip, deflate")
+	}
 	h.applyAuthentication(req, &dto.target.Credentials, dto.req.Body)
 }
 
@@ -818,6 +823,16 @@ func (h *forwardedHandler) processUpstreamResponse(
 
 	body := make([]byte, len(resp.Body()))
 	copy(body, resp.Body())
+
+	if decoded, changed, err := infrahttpx.DecodeChain(resp, body); err != nil {
+		responseBodyPool.Put(respBodyPtr)
+		return nil, fmt.Errorf("failed to decode compressed response: %w", err)
+	} else if changed {
+		body = decoded
+		// Remove compression-related headers since body is now decoded
+		resp.Header.Del("Content-Encoding")
+		resp.Header.Del("Content-Length")
+	}
 	*respBodyPtr = body
 
 	status := resp.StatusCode()
