@@ -3,6 +3,7 @@ package http
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/andybalholm/brotli"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
@@ -804,6 +806,9 @@ func (h *forwardedHandler) buildFastHTTPRequest(req *fasthttp.Request, dto *forw
 	for k, v := range dto.target.Headers {
 		req.Header.Set(k, v)
 	}
+	if len(req.Header.Peek("Accept-Encoding")) == 0 {
+		req.Header.Set("Accept-Encoding", "br, gzip")
+	}
 	h.applyAuthentication(req, &dto.target.Credentials, dto.req.Body)
 }
 
@@ -818,6 +823,17 @@ func (h *forwardedHandler) processUpstreamResponse(
 
 	body := make([]byte, len(resp.Body()))
 	copy(body, resp.Body())
+
+	// Attempt to decode compressed bodies (brotli/gzip)
+	if decoded, changed, err := decodeIfCompressed(resp, body); err != nil {
+		responseBodyPool.Put(respBodyPtr)
+		return nil, fmt.Errorf("failed to decode compressed response: %w", err)
+	} else if changed {
+		body = decoded
+		// Remove compression-related headers since body is now decoded
+		resp.Header.Del("Content-Encoding")
+		resp.Header.Del("Content-Length")
+	}
 	*respBodyPtr = body
 
 	status := resp.StatusCode()
@@ -833,6 +849,34 @@ func (h *forwardedHandler) processUpstreamResponse(
 	response := h.createResponse(resp, *respBodyPtr)
 	responseBodyPool.Put(respBodyPtr)
 	return response, nil
+}
+
+// decodeIfCompressed attempts to decode brotli or gzip encoded response bodies.
+// Returns the decoded body, whether a change occurred, and any error encountered.
+func decodeIfCompressed(resp *fasthttp.Response, raw []byte) ([]byte, bool, error) {
+	enc := strings.ToLower(string(resp.Header.Peek("Content-Encoding")))
+	switch enc {
+	case "br":
+		r := brotli.NewReader(bytes.NewReader(raw))
+		out, err := io.ReadAll(r)
+		if err != nil {
+			return nil, false, err
+		}
+		return out, true, nil
+	case "gzip":
+		gz, err := gzip.NewReader(bytes.NewReader(raw))
+		if err != nil {
+			return nil, false, err
+		}
+		defer gz.Close()
+		out, err := io.ReadAll(gz)
+		if err != nil {
+			return nil, false, err
+		}
+		return out, true, nil
+	default:
+		return raw, false, nil
+	}
 }
 
 func (h *forwardedHandler) prepareClient(dto *forwardedRequestDTO) (*fasthttp.Client, error) {
