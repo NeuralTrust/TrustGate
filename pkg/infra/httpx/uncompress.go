@@ -41,9 +41,12 @@ func DecodeChain(resp *fasthttp.Response, body []byte) ([]byte, bool, error) {
 				return nil, false, err
 			}
 			out, err := io.ReadAll(gr)
-			gr.Close()
+			cerr := gr.Close()
 			if err != nil {
 				return nil, false, err
+			}
+			if cerr != nil {
+				return nil, false, cerr
 			}
 			body = out
 			changed = true
@@ -64,9 +67,12 @@ func DecodeChain(resp *fasthttp.Response, body []byte) ([]byte, bool, error) {
 			zr, err := zlib.NewReader(bytes.NewReader(body))
 			if err == nil {
 				out, err2 := io.ReadAll(zr)
-				zr.Close()
+				cerr := zr.Close()
 				if err2 != nil {
 					return nil, false, err2
+				}
+				if cerr != nil {
+					return nil, false, cerr
 				}
 				body = out
 				changed = true
@@ -75,9 +81,12 @@ func DecodeChain(resp *fasthttp.Response, body []byte) ([]byte, bool, error) {
 			// Fallback to raw DEFLATE
 			fr := flate.NewReader(bytes.NewReader(body))
 			out, err2 := io.ReadAll(fr)
-			fr.Close()
+			cerr := fr.Close()
 			if err2 != nil {
 				return nil, false, err2
+			}
+			if cerr != nil {
+				return nil, false, cerr
 			}
 			body = out
 			changed = true
