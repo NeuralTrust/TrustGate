@@ -17,6 +17,33 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// helpers to build rules for new per-execution maps
+func buildAllRegexAndKeywords() (map[string]*regexp.Regexp, map[string]string) {
+	rr := make(map[string]*regexp.Regexp, len(predefinedEntityPatterns))
+	kw := make(map[string]string, len(predefinedEntityPatterns))
+	for entity, pattern := range predefinedEntityPatterns {
+		rr[pattern.String()] = pattern
+		if mask, ok := defaultEntityMasks[entity]; ok {
+			kw[pattern.String()] = mask
+		}
+	}
+	return rr, kw
+}
+
+func buildRegexAndKeywordsForEntities(entities []PredefinedEntity) (map[string]*regexp.Regexp, map[string]string) {
+	rr := make(map[string]*regexp.Regexp)
+	kw := make(map[string]string)
+	for _, entity := range entities {
+		if pattern, ok := predefinedEntityPatterns[entity]; ok {
+			rr[pattern.String()] = pattern
+			if mask, ok2 := defaultEntityMasks[entity]; ok2 {
+				kw[pattern.String()] = mask
+			}
+		}
+	}
+	return rr, kw
+}
+
 func TestLevenshteinDistance(t *testing.T) {
 	tests := []struct {
 		input1 string
@@ -105,11 +132,7 @@ func createTestConfig(entities []EntityConfig, applyAll bool) Config {
 
 func TestMasking_PhoneNumber(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{PhoneNumber})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -121,7 +144,7 @@ func TestMasking_PhoneNumber(t *testing.T) {
 	}, false)
 	// Use a phone number format that won't match the Swift BIC pattern
 	example := "+1 (555) 123-4567" // Changed from "+1234567890"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: +" + defaultEntityMasks[PhoneNumber]
 
 	assert.Equal(t, expected, masked, "Phone number masking failed")
@@ -130,11 +153,7 @@ func TestMasking_PhoneNumber(t *testing.T) {
 
 func TestMasking_Date(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{Date})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -146,7 +165,7 @@ func TestMasking_Date(t *testing.T) {
 	}, false)
 
 	example := "07/24/2001" // Changed from "+1234567890"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[Date]
 
 	assert.Equal(t, expected, masked, "Date masking failed")
@@ -155,11 +174,7 @@ func TestMasking_Date(t *testing.T) {
 
 func TestMasking_SSN(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{SSN})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -170,7 +185,7 @@ func TestMasking_SSN(t *testing.T) {
 		},
 	}, false)
 	example := "123-45-6789"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[SSN]
 
 	assert.Equal(t, expected, masked, "SSN masking failed")
@@ -179,11 +194,7 @@ func TestMasking_SSN(t *testing.T) {
 
 func TestMasking_IPAddress(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{IPAddress})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -194,7 +205,7 @@ func TestMasking_IPAddress(t *testing.T) {
 		},
 	}, false)
 	example := "192.168.1.1"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[IPAddress]
 
 	assert.Equal(t, expected, masked, "IP address masking failed")
@@ -203,11 +214,7 @@ func TestMasking_IPAddress(t *testing.T) {
 
 func TestMasking_Password(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{Password})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -218,7 +225,7 @@ func TestMasking_Password(t *testing.T) {
 		},
 	}, false)
 	example := "password=SuperSecret123"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[Password]
 
 	assert.Equal(t, expected, masked, "Password masking failed")
@@ -227,11 +234,7 @@ func TestMasking_Password(t *testing.T) {
 
 func TestMasking_APIKey(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{APIKey})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -242,7 +245,7 @@ func TestMasking_APIKey(t *testing.T) {
 		},
 	}, false)
 	example := "api_key=abcd1234efgh5678"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[APIKey]
 
 	assert.Equal(t, expected, masked, "API key masking failed")
@@ -251,11 +254,7 @@ func TestMasking_APIKey(t *testing.T) {
 
 func TestMasking_AccessToken(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{AccessToken})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -266,7 +265,7 @@ func TestMasking_AccessToken(t *testing.T) {
 		},
 	}, false)
 	example := "access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[AccessToken]
 
 	assert.Equal(t, expected, masked, "Access token masking failed")
@@ -275,11 +274,7 @@ func TestMasking_AccessToken(t *testing.T) {
 
 func TestMasking_IBAN(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{IBAN})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -290,7 +285,7 @@ func TestMasking_IBAN(t *testing.T) {
 		},
 	}, false)
 	example := "GB29NWBK60161331926819"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[IBAN]
 
 	assert.Equal(t, expected, masked, "IBAN masking failed")
@@ -299,11 +294,7 @@ func TestMasking_IBAN(t *testing.T) {
 
 func TestMasking_CryptoWallet(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{CryptoWallet})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -314,7 +305,7 @@ func TestMasking_CryptoWallet(t *testing.T) {
 		},
 	}, false)
 	example := "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf0a6x"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[CryptoWallet]
 
 	assert.Equal(t, expected, masked, "Crypto wallet masking failed")
@@ -323,11 +314,7 @@ func TestMasking_CryptoWallet(t *testing.T) {
 
 func TestMasking_TaxID(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{TaxID})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -338,7 +325,7 @@ func TestMasking_TaxID(t *testing.T) {
 		},
 	}, false)
 	example := "12-3456789"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[TaxID]
 
 	assert.Equal(t, expected, masked, "Tax ID masking failed")
@@ -347,11 +334,7 @@ func TestMasking_TaxID(t *testing.T) {
 
 func TestMasking_Swift(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{SwiftBIC})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -362,7 +345,7 @@ func TestMasking_Swift(t *testing.T) {
 		},
 	}, false)
 	example := "DEUTDEFF500"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[SwiftBIC]
 
 	assert.Equal(t, expected, masked, "Tax ID masking failed")
@@ -371,11 +354,7 @@ func TestMasking_Swift(t *testing.T) {
 
 func TestMasking_CreditCard(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{CreditCard})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -386,7 +365,7 @@ func TestMasking_CreditCard(t *testing.T) {
 		},
 	}, false)
 	example := "4111 1111 1111 1111"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[CreditCard]
 
 	assert.Equal(t, expected, masked, "Credit card masking failed")
@@ -395,11 +374,7 @@ func TestMasking_CreditCard(t *testing.T) {
 
 func TestMasking_Email(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{Email})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -410,7 +385,7 @@ func TestMasking_Email(t *testing.T) {
 		},
 	}, false)
 	example := "test@example.com"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
 	expected := "Sensitive data: " + defaultEntityMasks[Email]
 
 	assert.Equal(t, expected, masked, "Email masking failed")
@@ -419,23 +394,19 @@ func TestMasking_Email(t *testing.T) {
 
 func TestKeywordMasking(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.keywords = map[string]string{
-		"secret": "[MASKED]",
-	}
+	keywords := map[string]string{"secret": "[MASKED]"}
+	regexRules := map[string]*regexp.Regexp{}
 
 	config := createTestConfig([]EntityConfig{}, false)
-	masked, evt := plugin.maskPlainText("This is a secret", 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("This is a secret", 0.8, config, keywords, regexRules)
 	assert.Equal(t, "This is a [MASKED]", masked)
 	assert.Equal(t, 1, len(evt))
 }
 
 func TestFuzzyMatching(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	plugin.keywords = map[string]string{
-		"secret": "[MASKED_SECRET]",
-	}
+	regexRules := map[string]*regexp.Regexp{}
+	keywords := map[string]string{"secret": "[MASKED_SECRET]"}
 
 	// Test with fuzzy matching enabled
 	config := Config{
@@ -459,25 +430,23 @@ func TestFuzzyMatching(t *testing.T) {
 	}
 
 	// Test similar keyword
-	masked, _ := plugin.maskPlainText("This is a sekret", 0.7, config)
+	masked, _ := plugin.maskPlainTextWithRules("This is a sekret", 0.7, config, keywords, regexRules)
 	assert.Equal(t, "This is a [MASKED_SECRET]", masked, "Fuzzy keyword matching failed")
 
 	// Test credit card with character substitution (O instead of 0)
-	masked, _ = plugin.maskPlainText("My card: 4111 1111 1111 1111", 0.8, config)
+	// For regex-based masks, supply patterns and default masks
+	allRR, allKW := buildAllRegexAndKeywords()
+	masked, _ = plugin.maskPlainTextWithRules("My card: 4111 1111 1111 1111", 0.8, config, allKW, allRR)
 	assert.Contains(t, masked, defaultEntityMasks[CreditCard], "Fuzzy regex matching with substitution failed")
 
 	// Test with character deletion
-	masked, _ = plugin.maskPlainText("My SSN is 123-45-6785", 0.8, config)
+	masked, _ = plugin.maskPlainTextWithRules("My SSN is 123-45-6785", 0.8, config, allKW, allRR)
 	assert.Contains(t, masked, defaultEntityMasks[SSN], "Fuzzy regex matching with deletion failed")
 }
 
 func TestNormalizedInput(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	allRR, allKW := buildAllRegexAndKeywords()
 
 	// Test with normalization enabled
 	config := Config{
@@ -489,25 +458,21 @@ func TestNormalizedInput(t *testing.T) {
 
 	// Test credit card with spaces and dashes removed
 	example := "4111-1111-1111-1111"
-	masked, evt := plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, allKW, allRR)
 	expected := "Sensitive data: " + defaultEntityMasks[Default]
 	assert.Equal(t, expected, masked, "Normalized credit card masking failed")
 	assert.Equal(t, 1, len(evt))
 
 	// Test phone number with different format
 	example = "(123) 456-7890"
-	masked, evt = plugin.maskPlainText("Sensitive data: "+example, 0.8, config)
+	masked, evt = plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, allKW, allRR)
 	assert.Contains(t, masked, defaultEntityMasks[Default], "Normalized phone number masking failed")
 	assert.Equal(t, 1, len(evt))
 }
 
 func TestInternationalPII(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{SpanishDNI, MexicanCURP, BrazilianCPF})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -532,19 +497,19 @@ func TestInternationalPII(t *testing.T) {
 
 	// Test Spanish DNI
 	example := "12345678Z"
-	masked, evt := plugin.maskPlainText("Spanish ID: "+example, 0.8, config)
+	masked, evt := plugin.maskPlainTextWithRules("Spanish ID: "+example, 0.8, config, keywords, regexRules)
 	assert.Contains(t, masked, defaultEntityMasks[SpanishDNI], "Spanish DNI masking failed")
 	assert.Equal(t, 1, len(evt))
 
 	// Test Mexican CURP
 	example = "BADD110313HCMLNS09"
-	masked, evt = plugin.maskPlainText("Mexican ID: "+example, 0.8, config)
+	masked, evt = plugin.maskPlainTextWithRules("Mexican ID: "+example, 0.8, config, keywords, regexRules)
 	assert.Contains(t, masked, defaultEntityMasks[MexicanCURP], "Mexican CURP masking failed")
 	assert.Equal(t, 1, len(evt))
 
 	// Test Brazilian CPF
 	example = "123.456.789-09"
-	masked, evt = plugin.maskPlainText("Brazilian CPF: "+example, 0.8, config)
+	masked, evt = plugin.maskPlainTextWithRules("Brazilian CPF: "+example, 0.8, config, keywords, regexRules)
 	assert.Contains(t, masked, defaultEntityMasks[BrazilianCPF], "Brazilian CPF masking failed")
 	assert.Equal(t, 1, len(evt))
 }
@@ -604,11 +569,8 @@ func TestValidateConfig(t *testing.T) {
 
 func TestJSONMasking(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	plugin.regexRules = make(map[string]*regexp.Regexp)
-
-	for entity, pattern := range predefinedEntityPatterns {
-		plugin.regexRules[string(entity)] = pattern
-	}
+	// for JSON masking use all patterns and masks
+	allRR, allKW := buildAllRegexAndKeywords()
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -645,7 +607,7 @@ func TestJSONMasking(t *testing.T) {
 		},
 	}
 
-	maskedJSON, evt := plugin.maskJSONData(jsonData, 0.8, config)
+	maskedJSON, evt := plugin.maskJSONDataWithRules(jsonData, 0.8, config, allKW, allRR)
 
 	assert.Equal(t, 3, len(evt))
 	// Check that email was masked

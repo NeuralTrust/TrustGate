@@ -236,8 +236,6 @@ type hashToOriginalMap map[string]string
 type DataMaskingPlugin struct {
 	logger      *logrus.Logger
 	memoryCache *common.TTLMap
-	keywords    map[string]string
-	regexRules  map[string]*regexp.Regexp
 }
 
 type ReversibleHashingConfig struct {
@@ -280,8 +278,6 @@ func NewDataMaskingPlugin(logger *logrus.Logger, c *cache.Cache) pluginiface.Plu
 	return &DataMaskingPlugin{
 		logger:      logger,
 		memoryCache: ttl,
-		keywords:    make(map[string]string),
-		regexRules:  make(map[string]*regexp.Regexp),
 	}
 }
 
@@ -366,8 +362,9 @@ func (p *DataMaskingPlugin) Execute(
 		}
 	}
 
-	p.keywords = make(map[string]string)
-	p.regexRules = make(map[string]*regexp.Regexp)
+	// Build per-execution rule maps to avoid shared mutable state across goroutines
+	keywords := make(map[string]string)
+	regexRules := make(map[string]*regexp.Regexp)
 
 	if config.ApplyAll {
 		for entityType, pattern := range predefinedEntityPatterns {
@@ -375,8 +372,8 @@ func (p *DataMaskingPlugin) Execute(
 			if !exists {
 				maskValue = "[MASKED]"
 			}
-			p.regexRules[pattern.String()] = pattern
-			p.keywords[pattern.String()] = maskValue
+			regexRules[pattern.String()] = pattern
+			keywords[pattern.String()] = maskValue
 		}
 	} else {
 		for _, entity := range config.PredefinedEntities {
@@ -392,8 +389,8 @@ func (p *DataMaskingPlugin) Execute(
 			if maskValue == "" {
 				maskValue = defaultEntityMasks[entityType]
 			}
-			p.regexRules[pattern.String()] = pattern
-			p.keywords[pattern.String()] = maskValue
+			regexRules[pattern.String()] = pattern
+			keywords[pattern.String()] = maskValue
 		}
 	}
 
@@ -403,14 +400,14 @@ func (p *DataMaskingPlugin) Execute(
 			maskValue = DefaultMaskChar
 		}
 		if rule.Type == "keyword" {
-			p.keywords[rule.Pattern] = maskValue
+			keywords[rule.Pattern] = maskValue
 		} else if rule.Type == "regex" {
 			regex, err := regexp.Compile(rule.Pattern)
 			if err != nil {
 				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", rule.Pattern, err)
 			}
-			p.regexRules[rule.Pattern] = regex
-			p.keywords[rule.Pattern] = maskValue
+			regexRules[rule.Pattern] = regex
+			keywords[rule.Pattern] = maskValue
 		}
 	}
 
@@ -438,7 +435,7 @@ func (p *DataMaskingPlugin) Execute(
 			if !isRequest && cfg.Stage == types.PostResponse && config.ReversibleHashing.Enabled {
 				maskedData = restoreFromHashes(jsonData, hashMap)
 			} else {
-				maskedData, events = p.maskJSONData(jsonData, config.SimilarityThreshold, config)
+				maskedData, events = p.maskJSONDataWithRules(jsonData, config.SimilarityThreshold, config, keywords, regexRules)
 
 				if config.ReversibleHashing.Enabled && isRequest && cfg.Stage == types.PreRequest {
 					for i := range events {
@@ -474,7 +471,7 @@ func (p *DataMaskingPlugin) Execute(
 				maskedContent = strings.ReplaceAll(maskedContent, hash, original)
 			}
 		} else {
-			maskedContent, events = p.maskPlainText(content, config.SimilarityThreshold, config)
+			maskedContent, events = p.maskPlainTextWithRules(content, config.SimilarityThreshold, config, keywords, regexRules)
 
 			if config.ReversibleHashing.Enabled && isRequest && cfg.Stage == types.PreRequest {
 				for i := range events {
@@ -642,17 +639,17 @@ func calculateSimilarity(s1, s2 string) float64 {
 	return 1.0 - float64(distance)/m
 }
 
-func (p *DataMaskingPlugin) findSimilarKeyword(text string, threshold float64) (string, string, bool) {
-	for keyword, maskWith := range p.keywords {
-		if _, exists := p.regexRules[keyword]; exists {
+func (p *DataMaskingPlugin) findSimilarKeyword(text string, threshold float64, keywords map[string]string, regexRules map[string]*regexp.Regexp) (string, string, bool) {
+	for keyword, maskWith := range keywords {
+		if _, exists := regexRules[keyword]; exists {
 			continue
 		}
 		if strings.Contains(text, keyword) {
 			return text, maskWith, true
 		}
 	}
-	for keyword, maskWith := range p.keywords {
-		if _, exists := p.regexRules[keyword]; exists {
+	for keyword, maskWith := range keywords {
+		if _, exists := regexRules[keyword]; exists {
 			continue
 		}
 		similarity := calculateSimilarity(text, keyword)
@@ -682,7 +679,7 @@ func normalizeText(text string) string {
 	return text
 }
 
-func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, config Config) (string, []MaskingEvent) {
+func (p *DataMaskingPlugin) maskPlainTextWithRules(content string, threshold float64, config Config, keywords map[string]string, regexRules map[string]*regexp.Regexp) (string, []MaskingEvent) {
 	var events []MaskingEvent
 	maskedContent := content
 
@@ -727,7 +724,7 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 		}
 	}
 
-	for pattern, regex := range p.regexRules {
+	for pattern, regex := range regexRules {
 		isPredefined := false
 		for _, entityType := range predefinedEntityOrder {
 			if entityPattern, exists := predefinedEntityPatterns[entityType]; exists {
@@ -743,7 +740,7 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 
 		matches := regex.FindAllString(maskedContent, -1)
 		if len(matches) > 0 {
-			maskValue := p.keywords[pattern]
+			maskValue := keywords[pattern]
 			for _, match := range matches {
 				events = append(events, MaskingEvent{
 					Entity:        pattern,
@@ -755,8 +752,8 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 		}
 	}
 
-	for keyword, maskValue := range p.keywords {
-		if _, exists := p.regexRules[keyword]; exists {
+	for keyword, maskValue := range keywords {
+		if _, exists := regexRules[keyword]; exists {
 			continue
 		}
 		if strings.Contains(maskedContent, keyword) {
@@ -772,7 +769,7 @@ func (p *DataMaskingPlugin) maskPlainText(content string, threshold float64, con
 	words := strings.Fields(maskedContent)
 	modified := false
 	for i, word := range words {
-		if origWord, maskWith, found := p.findSimilarKeyword(word, threshold); found {
+		if origWord, maskWith, found := p.findSimilarKeyword(word, threshold, keywords, regexRules); found {
 			words[i] = p.maskContent(origWord, maskWith, true)
 			modified = true
 		}
@@ -826,14 +823,14 @@ func (p *DataMaskingPlugin) generateVariants(word string, maxDistance int) []str
 	return variants
 }
 
-func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64, config Config) (interface{}, []MaskingEvent) {
+func (p *DataMaskingPlugin) maskJSONDataWithRules(data interface{}, threshold float64, config Config, keywords map[string]string, regexRules map[string]*regexp.Regexp) (interface{}, []MaskingEvent) {
 	var allEvents []MaskingEvent
 
 	switch v := data.(type) {
 	case map[string]interface{}:
 		result := make(map[string]interface{}, len(v))
 		for key, value := range v {
-			maskedValue, events := p.maskJSONData(value, threshold, config)
+			maskedValue, events := p.maskJSONDataWithRules(value, threshold, config, keywords, regexRules)
 			result[key] = maskedValue
 			allEvents = append(allEvents, events...)
 		}
@@ -842,7 +839,7 @@ func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64, co
 	case []interface{}:
 		result := make([]interface{}, len(v))
 		for i, value := range v {
-			maskedValue, events := p.maskJSONData(value, threshold, config)
+			maskedValue, events := p.maskJSONDataWithRules(value, threshold, config, keywords, regexRules)
 			result[i] = maskedValue
 			allEvents = append(allEvents, events...)
 		}
@@ -852,13 +849,13 @@ func (p *DataMaskingPlugin) maskJSONData(data interface{}, threshold float64, co
 		// If the string itself is JSON, mask within it structurally to avoid altering keys
 		var inner interface{}
 		if err := json.Unmarshal([]byte(v), &inner); err == nil {
-			maskedInner, events := p.maskJSONData(inner, threshold, config)
+			maskedInner, events := p.maskJSONDataWithRules(inner, threshold, config, keywords, regexRules)
 			maskedJSON, mErr := json.Marshal(maskedInner)
 			if mErr == nil {
 				return string(maskedJSON), events
 			}
 		}
-		maskedValue, events := p.maskPlainText(v, threshold, config)
+		maskedValue, events := p.maskPlainTextWithRules(v, threshold, config, keywords, regexRules)
 		return maskedValue, events
 
 	default:
