@@ -45,11 +45,24 @@ func NewDB(logger *logrus.Logger, cfg *Config) (*DB, error) {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Verify connectivity with a timeout (30s)
+	// Configure connection pool
 	sqlDB, err := gormDB.DB()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sql DB: %w", err)
 	}
+	// Defaults tuned for moderate concurrency; adjust as needed
+	sqlDB.SetMaxOpenConns(300)
+	sqlDB.SetMaxIdleConns(150)
+	sqlDB.SetConnMaxLifetime(5 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(60 * time.Second)
+	logger.WithFields(logrus.Fields{
+		"max_open_conns":     300,
+		"max_idle_conns":     150,
+		"conn_max_lifetime":  "5m",
+		"conn_max_idle_time": "60s",
+	}).Info("configured database connection pool")
+
+	// Verify connectivity with a timeout (30s)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := sqlDB.PingContext(ctx); err != nil {
