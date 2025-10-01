@@ -481,7 +481,9 @@ func (m *manager) executeParallel(
 			if result.response != nil {
 				m.mu.Lock()
 				resp.StatusCode = result.response.StatusCode
-				resp.Body = result.response.Body
+				if result.response.Body != nil {
+					resp.Body = result.response.Body
+				}
 				if resp.Headers == nil {
 					resp.Headers = map[string][]string{}
 				}
