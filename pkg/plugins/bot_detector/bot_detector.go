@@ -44,7 +44,6 @@ type Config struct {
 type BotDetectorPlugin struct {
 	logger             *logrus.Logger
 	fingerPrintManager fingerprint.Tracker
-	config             Config
 }
 
 func NewBotDetectorPlugin(
@@ -104,7 +103,6 @@ func (p *BotDetectorPlugin) Execute(
 		p.logger.WithError(err).Error("failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
-	p.config = conf
 
 	var decodedData []byte
 	var err error
@@ -155,14 +153,14 @@ func (p *BotDetectorPlugin) Execute(
 
 	evtCtx.SetExtras(BotDetectorData{
 		Fingerprint: fp,
-		Action:      string(p.config.Action),
+		Action:      string(conf.Action),
 		BotScore:    score,
-		Threshold:   p.config.Threshold,
+		Threshold:   conf.Threshold,
 	})
 
-	if score >= p.config.Threshold {
+	if score >= conf.Threshold {
 		resp.Headers["bot_detected"] = []string{"true"}
-		switch p.config.Action {
+		switch conf.Action {
 		case AlertOnly:
 			return &types.PluginResponse{
 				Message: "request has fraudulent activity",
@@ -176,7 +174,7 @@ func (p *BotDetectorPlugin) Execute(
 				Message: "request has fraudulent activity",
 			}, nil
 		case Block:
-			p.notifyGuardrailViolation(ctx)
+			p.notifyGuardrailViolation(ctx, conf)
 			return nil, &types.PluginError{
 				StatusCode: http.StatusForbidden,
 				Message:    "blocked request due fraudulent activity",
@@ -298,7 +296,7 @@ func (p *BotDetectorPlugin) calculateBotScore(data map[string]interface{}) float
 	return float64(suspiciousFactors) / float64(maxFactors)
 }
 
-func (p *BotDetectorPlugin) notifyGuardrailViolation(ctx context.Context) {
+func (p *BotDetectorPlugin) notifyGuardrailViolation(ctx context.Context, conf Config) {
 	fp, ok := ctx.Value(common.FingerprintIdContextKey).(string)
 	if !ok {
 		return
@@ -312,11 +310,11 @@ func (p *BotDetectorPlugin) notifyGuardrailViolation(ctx context.Context) {
 
 	if storedFp != nil {
 		ttl := fingerprint.DefaultExpiration
-		if p.config.RetentionPeriod == 0 {
-			p.config.RetentionPeriod = MinRetentionPeriod // Minimum 5 minutes
+		if conf.RetentionPeriod == 0 {
+			conf.RetentionPeriod = MinRetentionPeriod // Minimum 5 minutos
 		}
-		if p.config.RetentionPeriod > 0 {
-			ttl = time.Duration(p.config.RetentionPeriod) * time.Second
+		if conf.RetentionPeriod > 0 {
+			ttl = time.Duration(conf.RetentionPeriod) * time.Second
 		}
 
 		err = p.fingerPrintManager.IncrementMaliciousCount(ctx, fp, ttl)

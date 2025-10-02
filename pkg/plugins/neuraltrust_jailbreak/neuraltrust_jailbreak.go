@@ -33,7 +33,6 @@ type NeuralTrustJailbreakPlugin struct {
 	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
-	config             Config
 	bufferPool         sync.Pool
 	byteSlicePool      sync.Pool
 	requestPool        sync.Pool
@@ -149,7 +148,6 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		p.logger.WithError(err).Error("failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
-	p.config = conf
 
 	inputBody := req.Body
 
@@ -157,7 +155,7 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		inputBody = resp.Body
 	}
 
-	body, err := pluginutils.DefineRequestBody(inputBody, p.config.MappingField)
+	body, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
@@ -165,7 +163,7 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 
 	var requests []TaggedRequest
 
-	if p.config.JailbreakParamBag != nil {
+	if conf.JailbreakParamBag != nil {
 		tr, ok := p.requestPool.Get().(*TaggedRequest)
 		if !ok {
 			p.logger.Error("failed to get request from pool")
@@ -175,7 +173,7 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		tr.Request, err = http.NewRequestWithContext(
 			ctx,
 			http.MethodPost,
-			p.config.Credentials.BaseURL+jailbreakPath,
+			conf.Credentials.BaseURL+jailbreakPath,
 			bytes.NewReader(body),
 		)
 		if err != nil {
@@ -190,15 +188,15 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		Scores: &JailbreakScores{},
 	}
 
-	if p.config.JailbreakParamBag != nil {
-		evt.JailbreakThreshold = p.config.JailbreakParamBag.Threshold
+	if conf.JailbreakParamBag != nil {
+		evt.JailbreakThreshold = conf.JailbreakParamBag.Threshold
 	}
 
 	firewallErrors := make(chan error, len(requests))
 	var wg sync.WaitGroup
 	for _, request := range requests {
 		wg.Add(1)
-		go p.callFirewall(ctx, &wg, request, firewallErrors, evt)
+		go p.callFirewall(ctx, &wg, request, firewallErrors, evt, conf)
 	}
 
 	done := make(chan struct{})
@@ -214,7 +212,7 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 			break
 		}
 		if err != nil {
-			p.notifyGuardrailViolation(ctx)
+			p.notifyGuardrailViolation(ctx, conf)
 			cancel()
 			var guardrailViolationError *guardrailViolationError
 			if errors.As(err, &guardrailViolationError) {
@@ -243,7 +241,7 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 	}, nil
 }
 
-func (p *NeuralTrustJailbreakPlugin) notifyGuardrailViolation(ctx context.Context) {
+func (p *NeuralTrustJailbreakPlugin) notifyGuardrailViolation(ctx context.Context, conf Config) {
 	fp, ok := ctx.Value(common.FingerprintIdContextKey).(string)
 	if !ok {
 		return
@@ -255,9 +253,11 @@ func (p *NeuralTrustJailbreakPlugin) notifyGuardrailViolation(ctx context.Contex
 	}
 	if storedFp != nil {
 		ttl := fingerprint.DefaultExpiration
-		if p.config.RetentionPeriod == 0 {
-			p.config.RetentionPeriod = 60
-			ttl = time.Duration(p.config.RetentionPeriod) * time.Second
+		if conf.RetentionPeriod == 0 {
+			conf.RetentionPeriod = 60
+		}
+		if conf.RetentionPeriod > 0 {
+			ttl = time.Duration(conf.RetentionPeriod) * time.Second
 		}
 		err = p.fingerPrintManager.IncrementMaliciousCount(ctx, fp, ttl)
 		if err != nil {
@@ -273,6 +273,7 @@ func (p *NeuralTrustJailbreakPlugin) callFirewall(
 	taggedRequest TaggedRequest,
 	firewallErrors chan<- error,
 	evt *NeuralTrustJailbreakData,
+	conf Config,
 ) {
 	defer wg.Done()
 
@@ -281,7 +282,7 @@ func (p *NeuralTrustJailbreakPlugin) callFirewall(
 
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Token", p.config.Credentials.Token)
+	req.Header.Set("Token", conf.Credentials.Token)
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -313,13 +314,13 @@ func (p *NeuralTrustJailbreakPlugin) callFirewall(
 			p.sendError(firewallErrors, fmt.Errorf("invalid firewall response: %w", err))
 			return
 		}
-		if parsed.Scores.MaliciousPrompt > p.config.JailbreakParamBag.Threshold {
+		if conf.JailbreakParamBag != nil && parsed.Scores.MaliciousPrompt > conf.JailbreakParamBag.Threshold {
 			evt.Scores.Jailbreak = parsed.Scores.MaliciousPrompt
 			p.sendError(firewallErrors, NewGuardrailViolation(fmt.Sprintf(
 				"%s: score %.2f exceeded threshold %.2f",
 				taggedRequest.Type,
 				parsed.Scores.MaliciousPrompt,
-				p.config.JailbreakParamBag.Threshold,
+				conf.JailbreakParamBag.Threshold,
 			)))
 			return
 		}

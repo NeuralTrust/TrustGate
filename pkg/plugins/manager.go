@@ -108,8 +108,8 @@ func NewManager(
 			serviceLocator:     serviceLocator,
 			providerLocator:    providerFactory,
 		}
+		instance.InitializePlugins()
 	})
-	instance.InitializePlugins()
 	return instance
 }
 
@@ -562,22 +562,20 @@ func (m *manager) executeSequential(
 }
 
 func (m *manager) GetChains(entityID string, stage types.Stage) [][]types.PluginConfig {
+	m.mu.RLock()
 	chainsGroups, exists := m.configurations[entityID]
+	m.mu.RUnlock()
 	if !exists {
 		return nil
 	}
-
 	var stageChains [][]types.PluginConfig
-
 	for _, chains := range chainsGroups {
 		var filteredGroup []types.PluginConfig
-
 		for _, chain := range chains {
 			plugin, exists := m.plugins[chain.Name]
 			if !exists {
 				continue
 			}
-
 			fixedStages := plugin.Stages()
 			if len(fixedStages) > 0 {
 				for _, fixedStage := range fixedStages {
@@ -590,12 +588,10 @@ func (m *manager) GetChains(entityID string, stage types.Stage) [][]types.Plugin
 				}
 				continue
 			}
-
 			allowedStages := plugin.AllowedStages()
 			if chain.Stage == "" {
 				continue
 			}
-
 			if chain.Stage == stage {
 				for _, allowedStage := range allowedStages {
 					if allowedStage == stage {
@@ -605,12 +601,10 @@ func (m *manager) GetChains(entityID string, stage types.Stage) [][]types.Plugin
 				}
 			}
 		}
-
 		if len(filteredGroup) > 0 {
 			stageChains = append(stageChains, filteredGroup)
 		}
 	}
-
 	return stageChains
 }
 

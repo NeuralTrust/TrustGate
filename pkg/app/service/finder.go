@@ -41,14 +41,14 @@ func (f *finder) Find(ctx context.Context, gatewayID, serviceID string) (*domain
 	if service, err := f.getServiceFromMemoryCache(serviceID); err == nil {
 		return service, nil
 	} else if !errors.Is(err, ErrInvalidCacheType) {
-		f.logger.WithError(err).Warn("memory cache read service failure")
+		f.logger.WithError(err).Debug("memory cache read service failure")
 	}
 
 	if cachedService, err := f.cache.GetService(ctx, gatewayID, serviceID); err == nil && cachedService != nil {
 		f.saveServiceToMemoryCache(ctx, cachedService)
 		return cachedService, nil
 	} else if err != nil {
-		f.logger.WithError(err).Warn("distributed cache read service failure")
+		f.logger.WithError(err).Debug("distributed cache read service failure")
 	}
 
 	service, err := f.repo.Get(ctx, serviceID)

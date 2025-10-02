@@ -25,7 +25,6 @@ const (
 type ToxicityOpenAIPlugin struct {
 	client httpx.Client
 	logger *logrus.Logger
-	config Config
 }
 
 type Config struct {
@@ -139,7 +138,6 @@ func (p *ToxicityOpenAIPlugin) Execute(
 		p.logger.WithError(err).Error("Failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %w", err)
 	}
-	p.config = conf
 
 	var requestBody RequestBody
 	if err := json.Unmarshal(req.Body, &requestBody); err != nil {
@@ -178,7 +176,7 @@ func (p *ToxicityOpenAIPlugin) Execute(
 		return nil, fmt.Errorf("failed to unmarshal moderation response: %w", err)
 	}
 
-	return p.analyzeModerationResponse(moderationResp.Results, evtCtx, bodyStr)
+	return p.analyzeModerationResponse(conf, moderationResp.Results, evtCtx, bodyStr)
 }
 
 func (p *ToxicityOpenAIPlugin) extractModerationInputs(messages []Message) []ModerationInput {
@@ -207,6 +205,7 @@ func (p *ToxicityOpenAIPlugin) sendModerationRequest(ctx context.Context, key st
 }
 
 func (p *ToxicityOpenAIPlugin) analyzeModerationResponse(
+	conf Config,
 	results []ModerationResult,
 	evtCtx *metrics.EventContext,
 	body string,
@@ -218,7 +217,7 @@ func (p *ToxicityOpenAIPlugin) analyzeModerationResponse(
 	result := results[0]
 	var flaggedCategories []string
 	for category, score := range result.CategoryScores {
-		if threshold, exists := p.config.Thresholds[category]; exists && score >= threshold {
+		if threshold, exists := conf.Thresholds[category]; exists && score >= threshold {
 			flaggedCategories = append(flaggedCategories, fmt.Sprintf("%s (%.2f)", category, score))
 		}
 	}
@@ -228,7 +227,7 @@ func (p *ToxicityOpenAIPlugin) analyzeModerationResponse(
 		evtCtx.SetExtras(ToxicityOpenaiData{Flagged: true, Response: body, FlaggedCategories: flaggedCategories})
 		return nil, &types.PluginError{
 			StatusCode: http.StatusForbidden,
-			Message:    fmt.Sprintf(p.config.Actions.Message+" flagged categories: %v", flaggedCategories),
+			Message:    fmt.Sprintf(conf.Actions.Message+" flagged categories: %v", flaggedCategories),
 			Err:        fmt.Errorf("content flagged for categories: %v", flaggedCategories),
 		}
 	}
