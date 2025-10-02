@@ -33,7 +33,6 @@ type NeuralTrustToxicity struct {
 	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
-	config             Config
 	bufferPool         sync.Pool
 	byteSlicePool      sync.Pool
 	requestPool        sync.Pool
@@ -141,7 +140,6 @@ func (p *NeuralTrustToxicity) Execute(
 		p.logger.WithError(err).Error("failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
-	p.config = conf
 
 	inputBody := req.Body
 
@@ -149,14 +147,14 @@ func (p *NeuralTrustToxicity) Execute(
 		inputBody = resp.Body
 	}
 
-	body, err := pluginutils.DefineRequestBody(inputBody, p.config.MappingField)
+	body, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
 	}
 
 	var requests []TaggedRequest
-	if p.config.ToxicityParamBag != nil {
+	if conf.ToxicityParamBag != nil {
 		tr, ok := p.requestPool.Get().(*TaggedRequest)
 		if !ok {
 			p.logger.Error("failed to get request from pool")
@@ -166,7 +164,7 @@ func (p *NeuralTrustToxicity) Execute(
 		tr.Request, err = http.NewRequestWithContext(
 			ctx,
 			http.MethodPost,
-			p.config.Credentials.BaseURL+toxicityPath,
+			conf.Credentials.BaseURL+toxicityPath,
 			bytes.NewReader(body),
 		)
 		if err != nil {
@@ -181,15 +179,15 @@ func (p *NeuralTrustToxicity) Execute(
 		Scores: &Scores{},
 	}
 
-	if p.config.ToxicityParamBag != nil {
-		evt.ToxicityThreshold = p.config.ToxicityParamBag.Threshold
+	if conf.ToxicityParamBag != nil {
+		evt.ToxicityThreshold = conf.ToxicityParamBag.Threshold
 	}
 
 	firewallErrors := make(chan error, len(requests))
 	var wg sync.WaitGroup
 	for _, request := range requests {
 		wg.Add(1)
-		go p.callToxicity(ctx, &wg, request, firewallErrors, evt)
+		go p.callToxicity(ctx, conf, &wg, request, firewallErrors, evt)
 	}
 
 	done := make(chan struct{})
@@ -205,7 +203,7 @@ func (p *NeuralTrustToxicity) Execute(
 			break
 		}
 		if err != nil {
-			p.notifyGuardrailViolation(ctx)
+			p.notifyGuardrailViolation(ctx, conf)
 			cancel()
 			var guardrailViolationError *guardrailViolationError
 			if errors.As(err, &guardrailViolationError) {
@@ -224,7 +222,7 @@ func (p *NeuralTrustToxicity) Execute(
 		select {
 		case err, ok := <-firewallErrors:
 			if ok && err != nil {
-				p.notifyGuardrailViolation(ctx)
+				p.notifyGuardrailViolation(ctx, conf)
 				cancel()
 				var guardrailViolationError *guardrailViolationError
 				if errors.As(err, &guardrailViolationError) {
@@ -257,6 +255,7 @@ func (p *NeuralTrustToxicity) Execute(
 
 func (p *NeuralTrustToxicity) callToxicity(
 	ctx context.Context,
+	conf Config,
 	wg *sync.WaitGroup,
 	taggedRequest TaggedRequest,
 	firewallErrors chan<- error,
@@ -269,7 +268,7 @@ func (p *NeuralTrustToxicity) callToxicity(
 
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Token", p.config.Credentials.Token)
+	req.Header.Set("Token", conf.Credentials.Token)
 
 	resp, err := p.client.Do(req)
 	p.logger.WithError(err).Error("failed to call firewall")
@@ -299,19 +298,19 @@ func (p *NeuralTrustToxicity) callToxicity(
 		p.sendError(firewallErrors, fmt.Errorf("invalid toxicity response: %w", err))
 		return
 	}
-	if parsed.Scores.ToxicPrompt > p.config.ToxicityParamBag.Threshold {
+	if parsed.Scores.ToxicPrompt > conf.ToxicityParamBag.Threshold {
 		evt.Scores.Toxicity = parsed.Scores.ToxicPrompt
 		p.sendError(firewallErrors, NewGuardrailViolation(fmt.Sprintf(
 			"%s: score %.2f exceeded threshold %.2f",
 			taggedRequest.Type,
 			parsed.Scores.ToxicPrompt,
-			p.config.ToxicityParamBag.Threshold,
+			conf.ToxicityParamBag.Threshold,
 		)))
 		return
 	}
 }
 
-func (p *NeuralTrustToxicity) notifyGuardrailViolation(ctx context.Context) {
+func (p *NeuralTrustToxicity) notifyGuardrailViolation(ctx context.Context, conf Config) {
 	fp, ok := ctx.Value(common.FingerprintIdContextKey).(string)
 	if !ok {
 		return
@@ -323,10 +322,10 @@ func (p *NeuralTrustToxicity) notifyGuardrailViolation(ctx context.Context) {
 	}
 	if storedFp != nil {
 		var ttl time.Duration
-		if p.config.RetentionPeriod > 0 {
-			ttl = time.Duration(p.config.RetentionPeriod) * time.Second
+		if conf.RetentionPeriod > 0 {
+			ttl = time.Duration(conf.RetentionPeriod) * time.Second
 		} else {
-			p.config.RetentionPeriod = 60
+			conf.RetentionPeriod = 60
 			ttl = time.Duration(60) * time.Second
 		}
 		err = p.fingerPrintManager.IncrementMaliciousCount(ctx, fp, ttl)

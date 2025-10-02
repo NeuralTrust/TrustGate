@@ -25,7 +25,6 @@ const (
 type ToxicityAzurePlugin struct {
 	client httpx.Client
 	logger *logrus.Logger
-	config Config
 }
 
 type Config struct {
@@ -166,10 +165,10 @@ func (p *ToxicityAzurePlugin) ValidateConfig(config types.PluginConfig) error {
 }
 
 // extractText attempts to extract text content from various payload formats
-func (p *ToxicityAzurePlugin) extractText(rawBody []byte) (string, error) {
+func (p *ToxicityAzurePlugin) extractText(conf Config, rawBody []byte) (string, error) {
 	// Find text path from content types
 	var textPath string
-	for _, ct := range p.config.ContentTypes {
+	for _, ct := range conf.ContentTypes {
 		if ct.Type == "text" {
 			textPath = ct.Path
 			break
@@ -225,10 +224,10 @@ func (p *ToxicityAzurePlugin) extractText(rawBody []byte) (string, error) {
 }
 
 // extractImage attempts to extract base64 image content from the request body
-func (p *ToxicityAzurePlugin) extractImage(rawBody []byte) (string, error) {
+func (p *ToxicityAzurePlugin) extractImage(conf Config, rawBody []byte) (string, error) {
 	// Find image path from content types
 	var imagePath string
-	for _, ct := range p.config.ContentTypes {
+	for _, ct := range conf.ContentTypes {
 		if ct.Type == "image" {
 			imagePath = ct.Path
 			p.logger.WithField("image_path", imagePath).Info("Found image path in config")
@@ -277,8 +276,8 @@ func (p *ToxicityAzurePlugin) extractImage(rawBody []byte) (string, error) {
 }
 
 // getSeverityLevel returns the severity level for a specific category
-func (p *ToxicityAzurePlugin) getSeverityLevel(category string) int {
-	if level, exists := p.config.CategorySeverity[category]; exists {
+func (p *ToxicityAzurePlugin) getSeverityLevel(conf Config, category string) int {
+	if level, exists := conf.CategorySeverity[category]; exists {
 		return level
 	}
 	return 2 // Default severity level if category not configured
@@ -296,7 +295,6 @@ func (p *ToxicityAzurePlugin) Execute(
 		p.logger.WithError(err).Error("Failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
-	p.config = conf
 
 	var endpoint string
 	var extractedImageData string
@@ -308,7 +306,7 @@ func (p *ToxicityAzurePlugin) Execute(
 	for _, ct := range conf.ContentTypes {
 		// Try to extract image data first
 		if ct.Type == "image" {
-			imageData, err := p.extractImage(req.Body)
+			imageData, err := p.extractImage(conf, req.Body)
 			if err == nil {
 				isImageContent = true
 				endpoint = conf.Endpoints.Image
@@ -317,7 +315,7 @@ func (p *ToxicityAzurePlugin) Execute(
 				break
 			}
 		} else if ct.Type == "text" {
-			text, err := p.extractText(req.Body)
+			text, err := p.extractText(conf, req.Body)
 			if err == nil {
 				isTextContent = true
 				endpoint = conf.Endpoints.Text
@@ -454,7 +452,7 @@ func (p *ToxicityAzurePlugin) Execute(
 		var analysisResults []map[string]interface{}
 
 		for _, analysis := range azureResp.CategoriesAnalysis {
-			severityLevel := p.getSeverityLevel(analysis.Category)
+			severityLevel := p.getSeverityLevel(conf, analysis.Category)
 
 			p.logger.WithFields(logrus.Fields{
 				"category":      analysis.Category,
@@ -547,7 +545,7 @@ func (p *ToxicityAzurePlugin) Execute(
 	var analysisResults []map[string]interface{}
 
 	for _, analysis := range azureResp.CategoriesAnalysis {
-		severityLevel := p.getSeverityLevel(analysis.Category)
+		severityLevel := p.getSeverityLevel(conf, analysis.Category)
 
 		p.logger.WithFields(logrus.Fields{
 			"category":      analysis.Category,

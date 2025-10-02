@@ -9,6 +9,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 )
 
+var ErrProviderNonOKResponse = fmt.Errorf("embedding provider returned non-OK status")
+
 type Embedding struct {
 	EntityID  string    `json:"entity_id"`
 	Value     []float64 `json:"value"`

@@ -81,7 +81,7 @@ func (s *embeddingService) Generate(
 	if statusCode != fasthttp.StatusOK {
 		respBody := resp.Body()
 		s.logger.WithField("response", string(respBody)).Error("Non-OK response from embeddings API")
-		return emptyData, fmt.Errorf("non-OK status from embeddings API: %d", statusCode)
+		return emptyData, fmt.Errorf("%w: %d", embedding.ErrProviderNonOKResponse, statusCode)
 	}
 
 	// Define structure for the OpenAI embeddings response

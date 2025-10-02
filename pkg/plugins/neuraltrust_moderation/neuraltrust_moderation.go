@@ -49,7 +49,6 @@ type NeuralTrustModerationPlugin struct {
 	logger             *logrus.Logger
 	embeddingRepo      embedding.EmbeddingRepository
 	serviceLocator     factory.EmbeddingServiceLocator
-	config             Config
 	providerLocator    providersFactory.ProviderLocator
 	bufferPool         sync.Pool
 	byteSlicePool      sync.Pool
@@ -201,10 +200,9 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		p.logger.WithError(err).Error("failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
-	p.config = conf
 
 	inputBody := req.Body
-	inputBody, err := pluginutils.DefineRequestBody(inputBody, p.config.MappingField)
+	inputBody, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
@@ -229,10 +227,10 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	var wg sync.WaitGroup
 
 	keyRegFound := false
-	if p.config.KeyRegParamBag != nil && p.config.KeyRegParamBag.Enabled {
-		p.keywords = p.config.KeyRegParamBag.Keywords
-		p.regexRules = make([]*regexp.Regexp, len(p.config.KeyRegParamBag.Regex))
-		for i, pattern := range p.config.KeyRegParamBag.Regex {
+	if conf.KeyRegParamBag != nil && conf.KeyRegParamBag.Enabled {
+		p.keywords = conf.KeyRegParamBag.Keywords
+		p.regexRules = make([]*regexp.Regexp, len(conf.KeyRegParamBag.Regex))
+		for i, pattern := range conf.KeyRegParamBag.Regex {
 			regex, err := regexp.Compile(pattern)
 			if err != nil {
 				p.logger.WithError(err).Error("failed to compile regex pattern")
@@ -240,13 +238,13 @@ func (p *NeuralTrustModerationPlugin) Execute(
 			}
 			p.regexRules[i] = regex
 		}
-		keyRegFound = p.callKeyRegModeration(ctx, p.config.KeyRegParamBag, inputBody, firewallErrors, evt)
+		keyRegFound = p.callKeyRegModeration(ctx, conf.KeyRegParamBag, inputBody, firewallErrors, evt)
 	}
 
-	if !keyRegFound && p.config.EmbeddingParamBag != nil && p.config.EmbeddingParamBag.Enabled {
-		evt.EmbeddingModeration.Threshold = p.config.EmbeddingParamBag.Threshold
-		if len(p.config.EmbeddingParamBag.DenySamples) > 0 {
-			err := p.createEmbeddings(ctx, p.config.EmbeddingParamBag, req.GatewayID)
+	if !keyRegFound && conf.EmbeddingParamBag != nil && conf.EmbeddingParamBag.Enabled {
+		evt.EmbeddingModeration.Threshold = conf.EmbeddingParamBag.Threshold
+		if len(conf.EmbeddingParamBag.DenySamples) > 0 {
+			err := p.createEmbeddings(ctx, conf.EmbeddingParamBag, req.GatewayID)
 			if err != nil {
 				p.logger.WithError(err).Error("failed to create deny samples embeddings")
 				return nil, fmt.Errorf("failed to create deny samples embeddings: %w", err)
@@ -254,14 +252,14 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		}
 
 		wg.Add(1)
-		go p.callEmbeddingModeration(ctx, p.config.EmbeddingParamBag, &wg, inputBody, req.GatewayID, firewallErrors, evt)
+		go p.callEmbeddingModeration(ctx, conf.EmbeddingParamBag, &wg, inputBody, req.GatewayID, firewallErrors, evt)
 	}
 
-	if !keyRegFound && p.config.LLMParamBag != nil && p.config.LLMParamBag.Enabled {
+	if !keyRegFound && conf.LLMParamBag != nil && conf.LLMParamBag.Enabled {
 		wg.Add(1)
 		go p.callAIModeration(
 			ctx,
-			p.config.LLMParamBag,
+			conf.LLMParamBag,
 			&wg,
 			inputBody,
 			firewallErrors,
@@ -282,7 +280,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 			break
 		}
 		if err != nil {
-			p.notifyGuardrailViolation(ctx)
+			p.notifyGuardrailViolation(ctx, conf)
 			cancel()
 			var moderationViolationError *moderationViolationError
 			if errors.As(err, &moderationViolationError) {
@@ -406,7 +404,7 @@ func (p *NeuralTrustModerationPlugin) hashGatewayID(value string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (p *NeuralTrustModerationPlugin) notifyGuardrailViolation(ctx context.Context) {
+func (p *NeuralTrustModerationPlugin) notifyGuardrailViolation(ctx context.Context, conf Config) {
 	fp, ok := ctx.Value(common.FingerprintIdContextKey).(string)
 	if !ok {
 		return
@@ -418,9 +416,9 @@ func (p *NeuralTrustModerationPlugin) notifyGuardrailViolation(ctx context.Conte
 	}
 	if storedFp != nil {
 		ttl := fingerprint.DefaultExpiration
-		if p.config.RetentionPeriod == 0 {
-			p.config.RetentionPeriod = 60
-			ttl = time.Duration(p.config.RetentionPeriod) * time.Second
+		if conf.RetentionPeriod == 0 {
+			conf.RetentionPeriod = 60
+			ttl = time.Duration(conf.RetentionPeriod) * time.Second
 		}
 		err = p.fingerPrintManager.IncrementMaliciousCount(ctx, fp, ttl)
 		if err != nil {
@@ -526,6 +524,10 @@ func (p *NeuralTrustModerationPlugin) callEmbeddingModeration(
 	}
 	emb, err := creator.Generate(ctx, string(inputBody), cfg.EmbeddingsConfig.Model, config)
 	if err != nil {
+		if errors.Is(err, embedding.ErrProviderNonOKResponse) {
+			p.logger.WithError(err).Warn("embedding provider non-ok response; skipping moderation signal")
+			return
+		}
 		p.logger.WithError(err).Error("failed to generate body embedding")
 		p.sendError(firewallErrors, err)
 		return
