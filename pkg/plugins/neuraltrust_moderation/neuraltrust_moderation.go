@@ -52,8 +52,6 @@ type NeuralTrustModerationPlugin struct {
 	providerLocator    providersFactory.ProviderLocator
 	bufferPool         sync.Pool
 	byteSlicePool      sync.Pool
-	keywords           []string
-	regexRules         []*regexp.Regexp
 }
 
 func NewNeuralTrustModerationPlugin(
@@ -77,8 +75,6 @@ func NewNeuralTrustModerationPlugin(
 		fingerPrintManager: fingerPrintManager,
 		embeddingRepo:      embeddingRepo,
 		serviceLocator:     serviceLocator,
-		keywords:           make([]string, 0),
-		regexRules:         make([]*regexp.Regexp, 0),
 		providerLocator:    providerLocator,
 		bufferPool: sync.Pool{
 			New: func() any {
@@ -201,6 +197,12 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
 
+	firewallErrors := make(chan error, 1)
+	var wg sync.WaitGroup
+	var evtMu sync.Mutex
+	var keywords []string
+	var regexRules []*regexp.Regexp
+
 	inputBody := req.Body
 	inputBody, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
 	if err != nil {
@@ -223,22 +225,19 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		},
 	}
 
-	firewallErrors := make(chan error, 1)
-	var wg sync.WaitGroup
-
 	keyRegFound := false
 	if conf.KeyRegParamBag != nil && conf.KeyRegParamBag.Enabled {
-		p.keywords = conf.KeyRegParamBag.Keywords
-		p.regexRules = make([]*regexp.Regexp, len(conf.KeyRegParamBag.Regex))
+		keywords = conf.KeyRegParamBag.Keywords
+		regexRules = make([]*regexp.Regexp, len(conf.KeyRegParamBag.Regex))
 		for i, pattern := range conf.KeyRegParamBag.Regex {
 			regex, err := regexp.Compile(pattern)
 			if err != nil {
 				p.logger.WithError(err).Error("failed to compile regex pattern")
 				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", pattern, err)
 			}
-			p.regexRules[i] = regex
+			regexRules[i] = regex
 		}
-		keyRegFound = p.callKeyRegModeration(ctx, conf.KeyRegParamBag, inputBody, firewallErrors, evt)
+		keyRegFound = p.callKeyRegModeration(ctx, conf.KeyRegParamBag, inputBody, firewallErrors, evt, keywords, regexRules)
 	}
 
 	if !keyRegFound && conf.EmbeddingParamBag != nil && conf.EmbeddingParamBag.Enabled {
@@ -252,7 +251,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		}
 
 		wg.Add(1)
-		go p.callEmbeddingModeration(ctx, conf.EmbeddingParamBag, &wg, inputBody, req.GatewayID, firewallErrors, evt)
+		go p.callEmbeddingModeration(ctx, conf.EmbeddingParamBag, &wg, inputBody, req.GatewayID, firewallErrors, evt, &evtMu)
 	}
 
 	if !keyRegFound && conf.LLMParamBag != nil && conf.LLMParamBag.Enabled {
@@ -264,6 +263,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 			inputBody,
 			firewallErrors,
 			evt,
+			&evtMu,
 		)
 	}
 
@@ -435,6 +435,7 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 	inputBody []byte,
 	firewallErrors chan<- error,
 	evt *NeuralTrustModerationData,
+	evtMu *sync.Mutex,
 ) {
 	defer wg.Done()
 
@@ -482,12 +483,18 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		return
 	}
 
+	if evtMu != nil {
+		evtMu.Lock()
+	}
 	evt.LLMModeration = &LLMModeration{
 		Blocked:          resp.Flagged,
 		InstructionMatch: resp.InstructionMatch,
 		Model:            cfg.Model,
 		Provider:         cfg.Provider,
 		Topic:            resp.Topic,
+	}
+	if evtMu != nil {
+		evtMu.Unlock()
 	}
 
 	if resp.Flagged {
@@ -503,6 +510,7 @@ func (p *NeuralTrustModerationPlugin) callEmbeddingModeration(
 	gatewayID string,
 	firewallErrors chan<- error,
 	evt *NeuralTrustModerationData,
+	evtMu *sync.Mutex,
 ) {
 	defer wg.Done()
 	if len(inputBody) == 0 {
@@ -550,8 +558,14 @@ func (p *NeuralTrustModerationPlugin) callEmbeddingModeration(
 		scores[result.Data] = result.Score
 	}
 
+	if evtMu != nil {
+		evtMu.Lock()
+	}
 	evt.EmbeddingModeration.Scores.Scores = scores
 	evt.EmbeddingModeration.Threshold = cfg.Threshold
+	if evtMu != nil {
+		evtMu.Unlock()
+	}
 
 	for _, result := range results {
 		if result.Score >= cfg.Threshold {
@@ -581,6 +595,8 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 	inputBody []byte,
 	firewallErrors chan<- error,
 	evt *NeuralTrustModerationData,
+	keywords []string,
+	regexRules []*regexp.Regexp,
 ) bool {
 	if len(inputBody) == 0 {
 		return false
@@ -592,7 +608,7 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 		threshold = 0.8
 	}
 
-	if foundWord, keyword, found := p.findSimilarKeyword(content, threshold); found {
+	if foundWord, keyword, found := p.findSimilarKeyword(content, threshold, keywords); found {
 		evt.KeyRegModeration.SimilarityThreshold = threshold
 		evt.KeyRegModeration.Reason = KeyRegReason{
 			Type:    "keyword",
@@ -611,7 +627,7 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 		return true
 	}
 
-	for _, pattern := range p.regexRules {
+	for _, pattern := range regexRules {
 		matches := pattern.FindStringSubmatch(content)
 		if len(matches) > 0 {
 			evt.KeyRegModeration.SimilarityThreshold = threshold
@@ -707,10 +723,10 @@ func (p *NeuralTrustModerationPlugin) calculateSimilarity(s1, s2 string) float64
 	return 1.0 - float64(distance)/maxLen
 }
 
-func (p *NeuralTrustModerationPlugin) findSimilarKeyword(text string, threshold float64) (string, string, bool) {
+func (p *NeuralTrustModerationPlugin) findSimilarKeyword(text string, threshold float64, keywords []string) (string, string, bool) {
 	words := strings.Fields(text)
 	for _, word := range words {
-		for _, keyword := range p.keywords {
+		for _, keyword := range keywords {
 			similarity := p.calculateSimilarity(word, keyword)
 			if similarity >= threshold {
 				return word, keyword, true
