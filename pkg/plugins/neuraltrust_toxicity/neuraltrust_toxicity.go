@@ -25,7 +25,7 @@ import (
 
 const (
 	PluginName   = "neuraltrust_toxicity"
-	toxicityPath = "/v1/moderation"
+	toxicityPath = "/v1/toxicity"
 	toxicityType = "toxicity"
 )
 
@@ -176,7 +176,7 @@ func (p *NeuralTrustToxicity) Execute(
 	}
 
 	evt := &ToxicityData{
-		Scores: &Scores{},
+		Categories: make(map[string]float64),
 	}
 
 	if conf.ToxicityParamBag != nil {
@@ -293,18 +293,68 @@ func (p *NeuralTrustToxicity) callToxicity(
 
 	bodyBytes := buf.Bytes()
 
-	var parsed ToxicityResponse
-	if err := json.Unmarshal(bodyBytes, &parsed); err != nil {
+	// Support multiple response schemas: {"categories"}, {"category_scores"}, or {"scores"}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
 		p.sendError(firewallErrors, fmt.Errorf("invalid toxicity response: %w", err))
 		return
 	}
-	if parsed.Scores.ToxicPrompt > conf.ToxicityParamBag.Threshold {
-		evt.Scores.Toxicity = parsed.Scores.ToxicPrompt
+
+	extractScores := func(key string) (map[string]float64, bool) {
+		v, ok := raw[key]
+		if !ok || v == nil {
+			return nil, false
+		}
+		m, ok := v.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		out := make(map[string]float64, len(m))
+		for k, val := range m {
+			switch t := val.(type) {
+			case float64:
+				out[k] = t
+			case float32:
+				out[k] = float64(t)
+			case int:
+				out[k] = float64(t)
+			case int64:
+				out[k] = float64(t)
+			default:
+				// ignore non-numeric entries
+			}
+		}
+		return out, true
+	}
+
+	categories, ok := extractScores("categories")
+	if !ok || len(categories) == 0 {
+		if cats, ok2 := extractScores("category_scores"); ok2 && len(cats) > 0 {
+			categories = cats
+		} else if cats2, ok3 := extractScores("scores"); ok3 && len(cats2) > 0 {
+			categories = cats2
+		}
+	}
+
+	if len(categories) == 0 {
+		p.sendError(firewallErrors, fmt.Errorf("invalid toxicity response: missing categories"))
+		return
+	}
+
+	threshold := conf.ToxicityParamBag.Threshold
+	var maxScore float64
+	for _, score := range categories {
+		if score > maxScore {
+			maxScore = score
+		}
+	}
+	if maxScore > threshold {
+		evt.Categories = categories
 		p.sendError(firewallErrors, NewGuardrailViolation(fmt.Sprintf(
 			"%s: score %.2f exceeded threshold %.2f",
 			taggedRequest.Type,
-			parsed.Scores.ToxicPrompt,
-			conf.ToxicityParamBag.Threshold,
+			maxScore,
+			threshold,
 		)))
 		return
 	}

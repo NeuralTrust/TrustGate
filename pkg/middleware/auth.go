@@ -54,12 +54,12 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 			return m.respondWithError(ctx, fiber.StatusUnauthorized, "invalid API key")
 		}
 
-		if key.Subject == nil {
+		if key.Subject == uuid.Nil {
 			m.logger.Debug("API key has no subject")
 			return m.respondWithError(ctx, fiber.StatusUnauthorized, "invalid API key")
 		}
 
-		gatewayData, err := m.gatewayFinder.Find(ctx.Context(), *key.Subject)
+		gatewayData, err := m.gatewayFinder.Find(ctx.Context(), key.Subject)
 		if err != nil {
 			m.logger.WithError(err).Error("failed to fetch gateway data.")
 			return m.respondWithError(ctx, fiber.StatusInternalServerError, "failed to fetch gateway data")

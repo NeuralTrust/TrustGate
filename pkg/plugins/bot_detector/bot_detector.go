@@ -159,25 +159,30 @@ func (p *BotDetectorPlugin) Execute(
 	})
 
 	if score >= conf.Threshold {
-		resp.Headers["bot_detected"] = []string{"true"}
 		switch conf.Action {
 		case AlertOnly:
 			return &types.PluginResponse{
 				Message: "request has fraudulent activity",
+				Headers: map[string][]string{
+					"bot_detected": {"true"},
+				},
 			}, nil
 		case Throttle:
-			if req.Metadata == nil {
-				req.Metadata = make(map[string]interface{})
-			}
 			time.Sleep(5 * time.Second)
 			return &types.PluginResponse{
 				Message: "request has fraudulent activity",
+				Headers: map[string][]string{
+					"bot_detected": {"true"},
+				},
 			}, nil
 		case Block:
 			p.notifyGuardrailViolation(ctx, conf)
 			return nil, &types.PluginError{
 				StatusCode: http.StatusForbidden,
 				Message:    "blocked request due fraudulent activity",
+				Headers: map[string][]string{
+					"bot_detected": {"true"},
+				},
 			}
 		}
 	}

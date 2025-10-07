@@ -199,7 +199,7 @@ func TestBotDetectorPlugin_CalculateBotScore(t *testing.T) {
 		require.NotNil(t, result)
 
 		// Check that the bot was detected
-		botDetected, ok := resp.Headers["bot_detected"]
+		botDetected, ok := result.Headers["bot_detected"]
 		assert.True(t, ok)
 		assert.Equal(t, []string{"true"}, botDetected)
 	})
@@ -274,7 +274,7 @@ func TestBotDetectorPlugin_CalculateBotScore(t *testing.T) {
 		require.NotNil(t, result)
 
 		// Check that the bot was not detected
-		_, ok := resp.Headers["bot_detected"]
+		_, ok := result.Headers["bot_detected"]
 		assert.False(t, ok)
 	})
 }
@@ -360,7 +360,7 @@ func TestBotDetectorPlugin_Execute_NoHeader(t *testing.T) {
 		assert.NotNil(t, result)
 
 		// Check that the bot was detected (since we included bot indicators in the data)
-		botDetected, ok := resp.Headers["bot_detected"]
+		botDetected, ok := result.Headers["bot_detected"]
 		assert.True(t, ok)
 		assert.Equal(t, []string{"true"}, botDetected)
 	})
@@ -468,7 +468,7 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
 		assert.Equal(t, "request has fraudulent activity", result.Message)
-		assert.Equal(t, []string{"true"}, resp.Headers["bot_detected"])
+		assert.Equal(t, []string{"true"}, result.Headers["bot_detected"])
 	})
 
 	t.Run("Throttle Action", func(t *testing.T) {
@@ -500,7 +500,7 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
 		assert.Equal(t, "request has fraudulent activity", result.Message)
-		assert.Equal(t, []string{"true"}, resp.Headers["bot_detected"])
+		assert.Equal(t, []string{"true"}, result.Headers["bot_detected"])
 		assert.GreaterOrEqual(t, duration.Seconds(), 1.0) // Should have throttled for at least 1 second
 	})
 
@@ -547,7 +547,7 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, http.StatusForbidden, pluginErr.StatusCode)
 		assert.Equal(t, "blocked request due fraudulent activity", pluginErr.Message)
-		assert.Equal(t, []string{"true"}, resp.Headers["bot_detected"])
+		assert.Equal(t, []string{"true"}, pluginErr.Headers["bot_detected"])
 
 		// Verify that the fingerprint was incremented
 		fpTracker.AssertCalled(t, "GetFingerprint", mock.Anything, "test-fingerprint-id")

@@ -31,11 +31,13 @@ type Client interface {
 type client struct {
 	client     *bedrockruntime.Client
 	clientPool *sync.Map
+	muPool     *sync.Map
 }
 
 func NewClient() Client {
 	return &client{
 		clientPool: &sync.Map{},
+		muPool:     &sync.Map{},
 	}
 }
 
@@ -62,6 +64,23 @@ func (c *client) BuildClient(
 ) (Client, error) {
 	clientKey := fmt.Sprintf("%s:%s:%s:%s:%v:%s:%s",
 		accessKey, secretKey, sessionToken, region, useRole, roleARN, sessionName)
+
+	if clientVal, ok := c.clientPool.Load(clientKey); ok {
+		cl, ok := clientVal.(*client)
+		if !ok {
+			return nil, fmt.Errorf("invalid client type in pool")
+		}
+		return cl, nil
+	}
+
+	muIface, _ := c.muPool.LoadOrStore(clientKey, &sync.Mutex{})
+	mu, ok := muIface.(*sync.Mutex)
+	if !ok {
+		return nil, fmt.Errorf("invalid mutex type in pool")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	defer c.muPool.Delete(clientKey)
 
 	if clientVal, ok := c.clientPool.Load(clientKey); ok {
 		cl, ok := clientVal.(*client)

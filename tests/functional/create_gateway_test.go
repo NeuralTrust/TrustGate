@@ -169,4 +169,36 @@ func TestCreateGateway(t *testing.T) {
 		assert.Equal(t, "Required Plugins Gateway", response["name"])
 		assert.NotNil(t, response["required_plugins"])
 	})
+
+	t.Run("it should fail when telemetry exporters have duplicate provider names", func(t *testing.T) {
+		gatewayPayload := map[string]interface{}{
+			"name": "Duplicate Telemetry Providers",
+			"telemetry": map[string]interface{}{
+				"exporters": []map[string]interface{}{
+					{
+						"name": "kafka",
+						"settings": map[string]interface{}{
+							"brokers": []string{"localhost:9092"},
+							"topic":   "telemetry",
+						},
+					},
+					{
+						"name": "kafka",
+						"settings": map[string]interface{}{
+							"brokers": []string{"localhost:9092"},
+							"topic":   "telemetry2",
+						},
+					},
+				},
+			},
+		}
+
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways", AdminUrl), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, gatewayPayload)
+		assert.Equal(t, http.StatusBadRequest, status)
+		if errMsg, ok := response["error"].(string); ok {
+			assert.Contains(t, errMsg, "duplicate telemetry exporter provider")
+		}
+	})
 }

@@ -107,6 +107,16 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 		for _, config := range req.Telemetry.Exporters {
 			exporters = append(exporters, types.Exporter(config))
 		}
+
+		// Disallow duplicate exporters with the same provider name
+		seenProviders := make(map[string]struct{}, len(exporters))
+		for _, e := range exporters {
+			if _, exists := seenProviders[e.Name]; exists {
+				h.logger.WithField("provider", e.Name).Error("duplicate telemetry exporter provider")
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "duplicate telemetry exporter provider: " + e.Name})
+			}
+			seenProviders[e.Name] = struct{}{}
+		}
 		err = h.telemetryProvidersValidator.Validate(exporters)
 		if err != nil {
 			h.logger.WithError(err).Error("failed to validate telemetry providers")

@@ -43,7 +43,7 @@ func TestApiKeyValidator_Validate_EmptyPolicies(t *testing.T) {
 	policies := []string{}
 
 	// Act
-	err := validator.Validate(ctx, apikey.GatewayType, &subject, policies)
+	err := validator.Validate(ctx, apikey.GatewayType, subject, policies)
 
 	// Assert
 	assert.NoError(t, err)
@@ -61,30 +61,11 @@ func TestApiKeyValidator_Validate_InvalidUUIDFormat(t *testing.T) {
 	policies := []string{"invalid-uuid", "another-invalid-uuid"}
 
 	// Act
-	err := validator.Validate(ctx, apikey.GatewayType, &subject, policies)
+	err := validator.Validate(ctx, apikey.GatewayType, subject, policies)
 
 	// Assert
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid policy ID format")
-	mockRepo.AssertNotCalled(t, "FindByIds")
-}
-
-func TestApiKeyValidator_Validate_NilSubject(t *testing.T) {
-	// Arrange
-	mockRepo := mocks.NewRepository(t)
-	logger := logrus.New()
-	validator := NewApiKeyPolicyValidator(mockRepo, logger)
-
-	ctx := context.Background()
-	policyID := uuid.New()
-	policies := []string{policyID.String()}
-
-	// Act
-	err := validator.Validate(ctx, apikey.GatewayType, nil, policies)
-
-	// Assert
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "subject is required")
 	mockRepo.AssertNotCalled(t, "FindByIds")
 }
 
@@ -103,7 +84,7 @@ func TestApiKeyValidator_Validate_RepositoryError(t *testing.T) {
 	mockRepo.EXPECT().FindByIds(ctx, []uuid.UUID{policyID}, subject).Return(nil, repositoryError)
 
 	// Act
-	err := validator.Validate(ctx, apikey.GatewayType, &subject, policies)
+	err := validator.Validate(ctx, apikey.GatewayType, subject, policies)
 
 	// Assert
 	assert.Error(t, err)
@@ -135,7 +116,7 @@ func TestApiKeyValidator_Validate_SomePoliciesDoNotExist(t *testing.T) {
 	}), subject).Return(existingRules, nil)
 
 	// Act
-	err := validator.Validate(ctx, apikey.GatewayType, &subject, policies)
+	err := validator.Validate(ctx, apikey.GatewayType, subject, policies)
 
 	// Assert
 	assert.Error(t, err)
@@ -169,7 +150,7 @@ func TestApiKeyValidator_Validate_AllPoliciesExist(t *testing.T) {
 	}), subject).Return(existingRules, nil)
 
 	// Act
-	err := validator.Validate(ctx, apikey.GatewayType, &subject, policies)
+	err := validator.Validate(ctx, apikey.GatewayType, subject, policies)
 
 	// Assert
 	assert.NoError(t, err)
@@ -194,7 +175,7 @@ func TestApiKeyValidator_Validate_SinglePolicyExists(t *testing.T) {
 	mockRepo.EXPECT().FindByIds(ctx, []uuid.UUID{policyID}, subject).Return(existingRules, nil)
 
 	// Act
-	err := validator.Validate(ctx, apikey.GatewayType, &subject, policies)
+	err := validator.Validate(ctx, apikey.GatewayType, subject, policies)
 
 	// Assert
 	assert.NoError(t, err)
@@ -222,7 +203,7 @@ func TestApiKeyValidator_Validate_MultipleMissingPolicies(t *testing.T) {
 	}), subject).Return(existingRules, nil)
 
 	// Act
-	err := validator.Validate(ctx, apikey.GatewayType, &subject, policies)
+	err := validator.Validate(ctx, apikey.GatewayType, subject, policies)
 
 	// Assert
 	assert.Error(t, err)
@@ -245,7 +226,7 @@ func TestApiKeyValidator_Validate_MixedValidAndInvalidUUIDs(t *testing.T) {
 	policies := []string{validUUID.String(), "invalid-uuid"}
 
 	// Act
-	err := validator.Validate(ctx, apikey.GatewayType, &subject, policies)
+	err := validator.Validate(ctx, apikey.GatewayType, subject, policies)
 
 	// Assert
 	assert.Error(t, err)

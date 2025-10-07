@@ -28,7 +28,7 @@ func NewApiKeyPolicyValidator(
 func (s *apiKeyValidator) Validate(
 	ctx context.Context,
 	subjectType apikey.SubjectType,
-	subject *uuid.UUID,
+	subject uuid.UUID,
 	policies []string,
 ) error {
 	if len(policies) == 0 {
@@ -47,11 +47,11 @@ func (s *apiKeyValidator) Validate(
 		policyUUIDs = append(policyUUIDs, policyUUID)
 	}
 
-	if subject == nil {
+	if subject == uuid.Nil {
 		return apikey.ErrSubjectRequired
 	}
 
-	existingRules, err := s.ruleRepository.FindByIds(ctx, policyUUIDs, *subject)
+	existingRules, err := s.ruleRepository.FindByIds(ctx, policyUUIDs, subject)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to validate policies")
 		return apikey.ErrFailedToValidatePolicy
