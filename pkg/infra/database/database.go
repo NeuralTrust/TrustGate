@@ -33,6 +33,7 @@ func NewDB(logger *logrus.Logger, cfg *Config) (*DB, error) {
 		"host":    cfg.Host,
 		"port":    cfg.Port,
 		"db":      cfg.DBName,
+		"user":    cfg.User,
 		"sslmode": cfg.SSLMode,
 		"timeout": "30s",
 	}).Info("connecting to database")
