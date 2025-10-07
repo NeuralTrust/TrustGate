@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -452,12 +453,12 @@ func (m *manager) executeParallel(
 
 		// Collect results
 		var results []pluginResult
-		var errors []error
+		var errs []error
 
 		// Wait for all results or context cancellation
 		for result := range resultChan {
 			if result.err != nil {
-				errors = append(errors, result.err)
+				errs = append(errs, result.err)
 			}
 			if result.response != nil {
 				results = append(results, result)
@@ -476,7 +477,7 @@ func (m *manager) executeParallel(
 			return results[i].config.Priority < results[j].config.Priority
 		})
 
-		// Apply all successful responses
+		// Apply all plugin responses (success) and collect errors to apply headers
 		for _, result := range results {
 			if result.response != nil {
 				m.mu.Lock()
@@ -501,9 +502,30 @@ func (m *manager) executeParallel(
 			}
 		}
 
-		// If any plugin returned an error, return the first one
-		if len(errors) > 0 {
-			return errors[0]
+		if len(errs) > 0 {
+			// If there were errors, attempt to extract headers/metadata from PluginError when available
+			var pe *types.PluginError
+			if errors.As(errs[0], &pe) {
+				m.mu.Lock()
+				if pe.Headers != nil {
+					if resp.Headers == nil {
+						resp.Headers = map[string][]string{}
+					}
+					for k, v := range pe.Headers {
+						resp.Headers[k] = v
+					}
+				}
+				if pe.Metadata != nil {
+					if resp.Metadata == nil {
+						resp.Metadata = map[string]interface{}{}
+					}
+					for k, v := range pe.Metadata {
+						resp.Metadata[k] = v
+					}
+				}
+				m.mu.Unlock()
+			}
+			return errs[0]
 		}
 	}
 

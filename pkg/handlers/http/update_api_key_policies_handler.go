@@ -80,20 +80,20 @@ func (h *updateAPIKeyPoliciesHandler) Handle(c *fiber.Ctx) error {
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid subject ID"})
 		}
-		if entity.Subject != nil && *entity.Subject != subjectID {
+		if entity.Subject != subjectID {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "api key does not belong to subject"})
 		}
 	}
 
 	// For policy validation, use the entity's subject or the provided subjectID
-	var validationSubjectID *uuid.UUID
+	var validationSubjectID uuid.UUID
 	if subjectIDParam != "" {
 		parsed, err := uuid.Parse(subjectIDParam)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid subject ID format"})
 		}
-		validationSubjectID = &parsed
-	} else if entity.Subject != nil {
+		validationSubjectID = parsed
+	} else {
 		validationSubjectID = entity.Subject
 	}
 

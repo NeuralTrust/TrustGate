@@ -1,7 +1,6 @@
 package functional_test
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
 	"testing"
@@ -194,62 +193,5 @@ func TestGatewayFlowPolicies(t *testing.T) {
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, payload)
 		assert.Equal(t, http.StatusBadRequest, status)
-	})
-
-	t.Run("policy subject type without policies allows proxy", func(t *testing.T) {
-		gatewayID := CreateGateway(t, map[string]interface{}{
-			"name":      "Gateway Flow 4",
-			"subdomain": fmt.Sprintf("gw-flow-4-%d", time.Now().UnixNano()),
-		})
-		upstreamID := CreateUpstream(t, gatewayID, map[string]interface{}{
-			"name":      "Flow Upstream",
-			"algorithm": "round-robin",
-			"targets": []map[string]interface{}{
-				{
-					"host":     "localhost",
-					"port":     8081,
-					"protocol": "http",
-					"path":     "/__/ping",
-					"weight":   100,
-					"priority": 1,
-				},
-			},
-		})
-		serviceID := CreateService(t, gatewayID, map[string]interface{}{
-			"name":        "Flow Service",
-			"type":        "upstream",
-			"upstream_id": upstreamID,
-		})
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
-			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
-		}, map[string]interface{}{
-			"path":       "/flow-4",
-			"name":       "flow-4",
-			"service_id": serviceID,
-			"methods":    []string{"GET"},
-		})
-		assert.Equal(t, http.StatusCreated, status)
-
-		payload := map[string]interface{}{
-			"name":         "Benchmark Key",
-			"expires_at":   "2026-01-01T00:00:00Z",
-			"subject_type": "policy",
-			"subject":      gatewayID,
-		}
-		status, ak := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/iam/api-keys", AdminUrl), map[string]string{
-			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
-		}, payload)
-		assert.Equal(t, http.StatusCreated, status)
-		apiKey, ok := ak["key"].(string)
-		assert.True(t, ok, "API key should be a string")
-		assert.NotEmpty(t, apiKey)
-
-		req, err := http.NewRequest(http.MethodGet, ProxyUrl+"/flow-4", bytes.NewReader(nil))
-		assert.NoError(t, err)
-		req.Header.Set("X-TG-API-Key", apiKey)
-		resp, err := http.DefaultClient.Do(req)
-		assert.NoError(t, err)
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		_ = resp.Body.Close()
 	})
 }

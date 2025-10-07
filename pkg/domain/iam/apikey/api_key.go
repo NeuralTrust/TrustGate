@@ -11,14 +11,14 @@ import (
 type SubjectType string
 
 const (
-	PolicyType  SubjectType = "policy"
+	EngineType  SubjectType = "engine"
 	GatewayType SubjectType = "gateway"
 )
 
 func SubjectFromString(value string) (SubjectType, error) {
 	switch value {
-	case string(PolicyType):
-		return PolicyType, nil
+	case string(EngineType):
+		return EngineType, nil
 	case string(GatewayType):
 		return GatewayType, nil
 	default:
@@ -31,7 +31,7 @@ var (
 	ErrInvalidExpiresAt   = errors.New("iam api key expires_at cannot be zero")
 	ErrExpiresAtInPast    = errors.New("iam api key expires_at cannot be in the past")
 	ErrSubjectRequired    = errors.New("iam api key subject is required")
-	ErrInvalidSubjectType = errors.New("invalid subject type: must be 'policy' or 'gateway'")
+	ErrInvalidSubjectType = errors.New("invalid subject type: must be 'engine' or 'gateway'")
 )
 
 type APIKey struct {
@@ -40,7 +40,7 @@ type APIKey struct {
 	Name        string          `json:"name"`
 	Active      bool            `json:"active"`
 	SubjectType SubjectType     `json:"subject_type" gorm:"not null"`
-	Subject     *uuid.UUID      `json:"subject,omitempty" gorm:"type:uuid;index"`
+	Subject     uuid.UUID       `json:"subject" gorm:"type:uuid;index;not null"`
 	Policies    types.UUIDArray `json:"policies,omitempty" gorm:"type:uuid[]"`
 	ExpiresAt   *time.Time      `json:"expires_at"`
 	CreatedAt   time.Time       `json:"created_at"`
@@ -51,7 +51,7 @@ func NewIAMApiKey(
 	name string,
 	key string,
 	subjectType SubjectType,
-	subject *uuid.UUID,
+	subject uuid.UUID,
 	policies types.UUIDArray,
 	expiresAt *time.Time,
 
@@ -83,13 +83,12 @@ func (a APIKey) Validate() error {
 		if a.ExpiresAt.IsZero() {
 			return ErrInvalidExpiresAt
 		}
-
 		if a.ExpiresAt.Before(time.Now()) {
 			return ErrExpiresAtInPast
 		}
 	}
 
-	if a.SubjectType == GatewayType && a.Subject == nil {
+	if a.Subject == uuid.Nil {
 		return ErrSubjectRequired
 	}
 

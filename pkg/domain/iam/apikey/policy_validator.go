@@ -10,7 +10,7 @@ type PolicyValidator interface {
 	Validate(
 		ctx context.Context,
 		subjectType SubjectType,
-		subject *uuid.UUID,
+		subject uuid.UUID,
 		policies []string,
 	) error
 }

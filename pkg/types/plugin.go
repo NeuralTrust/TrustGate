@@ -31,6 +31,8 @@ type PluginError struct {
 	StatusCode int    `json:"code"`
 	Message    string `json:"message"`
 	Err        error  `json:"-"`
+	Headers    map[string][]string
+	Metadata   map[string]interface{}
 }
 
 type PluginResponse struct {

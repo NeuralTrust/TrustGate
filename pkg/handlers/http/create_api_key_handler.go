@@ -95,13 +95,13 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
 	}
 
-	var subjectUUID *uuid.UUID
+	var subjectUUID uuid.UUID
 	if req.SubjectID != "" {
 		parsed, err := uuid.Parse(req.SubjectID)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid subject ID"})
 		}
-		subjectUUID = &parsed
+		subjectUUID = parsed
 	}
 
 	var subjectType apikey.SubjectType
@@ -182,7 +182,7 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Add gateway_id field if subject is a gateway
-	if apiKey.SubjectType == apikey.GatewayType && apiKey.Subject != nil {
+	if apiKey.SubjectType == apikey.GatewayType {
 		response["gateway_id"] = apiKey.Subject.String()
 	}
 

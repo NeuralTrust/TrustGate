@@ -291,6 +291,14 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 					c.Set(k, v)
 				}
 			}
+			// Also copy headers from the pluginErr if present
+			if pluginErr.Headers != nil {
+				for k, values := range pluginErr.Headers {
+					for _, v := range values {
+						c.Set(k, v)
+					}
+				}
+			}
 			h.registryFailedEvent(
 				metricsCollector,
 				pluginErr.StatusCode,

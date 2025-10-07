@@ -6,7 +6,10 @@ import (
 	"time"
 )
 
-const gateway = "gateway"
+const (
+	gateway = "gateway"
+	engine  = "engine"
+)
 
 type CreateAPIKeyRequest struct {
 	Name        string     `json:"name" binding:"required"`
@@ -21,13 +24,16 @@ func (r *CreateAPIKeyRequest) Validate() error {
 		return fmt.Errorf("name is required")
 	}
 
-	// Set default value for SubjectType if empty
-	if strings.TrimSpace(r.SubjectType) == "" {
-		r.SubjectType = gateway
+	// Normalize and set default value for SubjectType if empty
+	st := strings.ToLower(strings.TrimSpace(r.SubjectType))
+	if st == "" {
+		st = gateway
 	}
+	r.SubjectType = st
 
-	if r.SubjectType == gateway && strings.TrimSpace(r.SubjectID) == "" {
-		return fmt.Errorf("subject_id cannot be empty when subject_type is 'gateway'")
+	// Require SubjectID for both gateway and engine subject types
+	if (st == gateway || st == engine) && strings.TrimSpace(r.SubjectID) == "" {
+		return fmt.Errorf("subject_id cannot be empty when subject_type is '%s'", st)
 	}
 
 	if r.ExpiresAt != nil && r.ExpiresAt.Before(time.Now()) {
