@@ -39,6 +39,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/toxicity_openai"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -374,164 +375,6 @@ func (m *manager) executeChains(
 	return nil
 }
 
-func (m *manager) executeParallel(
-	ctx context.Context,
-	plugins map[string]pluginiface.Plugin,
-	configs []types.PluginConfig,
-	req *types.RequestContext,
-	resp *types.ResponseContext,
-	metricsCollector *metrics.Collector,
-) error {
-	// Group plugins by priority
-	priorityGroups := make(map[int][]types.PluginConfig)
-	for _, cfg := range configs {
-		if !cfg.Enabled {
-			continue
-		}
-		priorityGroups[cfg.Priority] = append(priorityGroups[cfg.Priority], cfg)
-	}
-
-	// Get sorted priorities
-	priorities := make([]int, 0, len(priorityGroups))
-	for p := range priorityGroups {
-		priorities = append(priorities, p)
-	}
-	sort.Ints(priorities)
-
-	// Execute plugins by priority groups
-	for _, priority := range priorities {
-		group := priorityGroups[priority]
-
-		// Create channels for results and errors
-		type pluginResult struct {
-			pluginName string
-			config     types.PluginConfig
-			response   *types.PluginResponse
-			err        error
-			traceEvent *metric_events.Event
-			startTime  time.Time
-			endTime    time.Time
-		}
-		resultChan := make(chan pluginResult, len(group))
-
-		// Launch all plugins in the group simultaneously
-		var wg sync.WaitGroup
-		for i := range group {
-			cfg := group[i]
-
-			wg.Add(1)
-			go func(cfg types.PluginConfig) {
-				defer wg.Done()
-				evt := metric_events.NewPluginEvent()
-				evt.Plugin = &metric_events.PluginDataEvent{
-					PluginName: cfg.Name,
-					Stage:      string(req.Stage),
-				}
-				if plugin, exists := plugins[cfg.Name]; exists {
-					wrappedPlugin := NewPluginWrapper(plugin, metricsCollector)
-					pluginStartTime := time.Now()
-					pluginResp, err := wrappedPlugin.Execute(ctx, cfg, req, resp)
-					pluginEndTime := time.Now()
-					resultChan <- pluginResult{
-						pluginName: cfg.Name,
-						config:     cfg,
-						response:   pluginResp,
-						err:        err,
-						traceEvent: evt,
-						startTime:  pluginStartTime,
-						endTime:    pluginEndTime,
-					}
-				}
-			}(cfg)
-		}
-
-		// Start a goroutine to close resultChan when all plugins finish
-		go func() {
-			wg.Wait()
-			close(resultChan)
-		}()
-
-		// Collect results
-		var results []pluginResult
-		var errs []error
-
-		// Wait for all results or context cancellation
-		for result := range resultChan {
-			if result.err != nil {
-				errs = append(errs, result.err)
-			}
-			if result.response != nil {
-				results = append(results, result)
-			}
-
-			select {
-			case <-ctx.Done():
-				m.logger.Errorf("Context cancelled while processing results: %v", ctx.Err())
-				return ctx.Err()
-			default:
-			}
-		}
-
-		// Sort results by plugin priority
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].config.Priority < results[j].config.Priority
-		})
-
-		// Apply all plugin responses (success) and collect errors to apply headers
-		for _, result := range results {
-			if result.response != nil {
-				m.mu.Lock()
-				resp.StatusCode = result.response.StatusCode
-				if result.response.Body != nil {
-					resp.Body = result.response.Body
-				}
-				if resp.Headers == nil {
-					resp.Headers = map[string][]string{}
-				}
-				if result.response.Headers != nil {
-					for k, v := range result.response.Headers {
-						resp.Headers[k] = v
-					}
-				}
-				if result.response.Metadata != nil {
-					for k, v := range result.response.Metadata {
-						resp.Metadata[k] = v
-					}
-				}
-				m.mu.Unlock()
-			}
-		}
-
-		if len(errs) > 0 {
-			// If there were errors, attempt to extract headers/metadata from PluginError when available
-			var pe *types.PluginError
-			if errors.As(errs[0], &pe) {
-				m.mu.Lock()
-				if pe.Headers != nil {
-					if resp.Headers == nil {
-						resp.Headers = map[string][]string{}
-					}
-					for k, v := range pe.Headers {
-						resp.Headers[k] = v
-					}
-				}
-				if pe.Metadata != nil {
-					if resp.Metadata == nil {
-						resp.Metadata = map[string]interface{}{}
-					}
-					for k, v := range pe.Metadata {
-						resp.Metadata[k] = v
-					}
-				}
-				m.mu.Unlock()
-			}
-			return errs[0]
-		}
-	}
-
-	return nil
-}
-
 func (m *manager) executeSequential(
 	ctx context.Context,
 	plugins map[string]pluginiface.Plugin,
@@ -581,6 +424,178 @@ func (m *manager) executeSequential(
 		}
 	}
 	return nil
+}
+
+func (m *manager) executeParallel(
+	ctx context.Context,
+	plugins map[string]pluginiface.Plugin,
+	configs []types.PluginConfig,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	metricsCollector *metrics.Collector,
+) error {
+
+	priorityGroups := make(map[int][]types.PluginConfig)
+	for _, cfg := range configs {
+		if !cfg.Enabled {
+			continue
+		}
+		priorityGroups[cfg.Priority] = append(priorityGroups[cfg.Priority], cfg)
+	}
+	priorities := make([]int, 0, len(priorityGroups))
+	for p := range priorityGroups {
+		priorities = append(priorities, p)
+	}
+	sort.Ints(priorities)
+
+	for _, priority := range priorities {
+		group := priorityGroups[priority]
+
+		type pluginResult struct {
+			cfg       types.PluginConfig
+			resp      *types.PluginResponse
+			startTime time.Time
+			endTime   time.Time
+		}
+
+		results := make([]pluginResult, 0, len(group))
+		var resultsMu sync.Mutex
+
+		g, gctx := errgroup.WithContext(ctx)
+
+		for i := range group {
+			cfg := group[i]
+			g.Go(func() error {
+				evt := metric_events.NewPluginEvent()
+				evt.Plugin = &metric_events.PluginDataEvent{
+					PluginName: cfg.Name,
+					Stage:      string(req.Stage),
+				}
+
+				plugin, ok := plugins[cfg.Name]
+				if !ok {
+					pe := &types.PluginError{
+						Err:        errors.New("plugin not found: " + cfg.Name),
+						StatusCode: 500,
+					}
+					m.applyPluginErrorToResponse(pe, resp)
+					return pe
+				}
+
+				wrapped := NewPluginWrapper(plugin, metricsCollector)
+				start := time.Now()
+				pluginResp, err := wrapped.Execute(gctx, cfg, req, resp)
+				end := time.Now()
+
+				select {
+				case <-gctx.Done():
+					// We don't return nil: we need to propagate the canceled context so the group finishes,
+					// but we also don't want to overwrite the first error with a late context.Canceled.
+					// We return gctx.Err() to exit quickly.
+					return gctx.Err()
+				default:
+				}
+
+				if err != nil {
+					// First error: set StatusCode + Headers in resp and automatically cancel the rest (errgroup)
+					// If it's a *types.PluginError, extract metadata
+					var pe *types.PluginError
+					if errors.As(err, &pe) {
+						m.applyPluginErrorToResponse(pe, resp)
+						return pe
+					}
+					pe = &types.PluginError{
+						Err:        err,
+						StatusCode: 500,
+					}
+					m.applyPluginErrorToResponse(pe, resp)
+					return pe
+				}
+
+				// Success: store the result to apply later (only if there were NO errors in the group)
+				if pluginResp != nil {
+					resultsMu.Lock()
+					results = append(results, pluginResult{
+						cfg:       cfg,
+						resp:      pluginResp,
+						startTime: start,
+						endTime:   end,
+					})
+					resultsMu.Unlock()
+				}
+				return nil
+			})
+		}
+
+		// Group wait: if it returns an error, it was the first one and we've already set resp (headers/status)
+		if err := g.Wait(); err != nil {
+			return err
+		}
+
+		// If there were no errors, apply all successful results
+		// Deterministic order by plugin name (or any field from cfg you prefer)
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].cfg.Name < results[j].cfg.Name
+		})
+
+		for _, r := range results {
+			if r.resp == nil {
+				continue
+			}
+			m.mu.Lock()
+			if r.resp.StatusCode > 0 {
+				resp.StatusCode = r.resp.StatusCode
+			}
+			if r.resp.Body != nil {
+				resp.Body = r.resp.Body
+			}
+			if r.resp.Headers != nil {
+				if resp.Headers == nil {
+					resp.Headers = make(map[string][]string, len(r.resp.Headers))
+				}
+				for k, v := range r.resp.Headers {
+					resp.Headers[k] = v
+				}
+			}
+			if r.resp.Metadata != nil {
+				if resp.Metadata == nil {
+					resp.Metadata = make(map[string]interface{}, len(r.resp.Metadata))
+				}
+				for k, v := range r.resp.Metadata {
+					resp.Metadata[k] = v
+				}
+			}
+			m.mu.Unlock()
+		}
+	}
+
+	return nil
+}
+
+func (m *manager) applyPluginErrorToResponse(pe *types.PluginError, resp *types.ResponseContext) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if pe.StatusCode > 0 {
+		resp.StatusCode = pe.StatusCode
+	} else {
+		resp.StatusCode = 500
+	}
+	if pe.Headers != nil {
+		if resp.Headers == nil {
+			resp.Headers = make(map[string][]string, len(pe.Headers))
+		}
+		for k, v := range pe.Headers {
+			resp.Headers[k] = v
+		}
+	}
+	if pe.Metadata != nil {
+		if resp.Metadata == nil {
+			resp.Metadata = make(map[string]interface{}, len(pe.Metadata))
+		}
+		for k, v := range pe.Metadata {
+			resp.Metadata[k] = v
+		}
+	}
 }
 
 func (m *manager) GetChains(entityID string, stage types.Stage) [][]types.PluginConfig {

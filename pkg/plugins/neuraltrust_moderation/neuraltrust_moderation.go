@@ -467,13 +467,15 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		p.sendError(firewallErrors, err)
 		return
 	}
-	p.logger.WithField("duration", duration).Info("LLM provider responded successfully")
 
 	if response == nil {
 		err := errors.New("llm provider returned nil response")
-		p.logger.WithError(err).Error("nil response from provider")
+		p.logger.WithError(err).Error("nil response from LLM provider")
 		p.sendError(firewallErrors, err)
 		return
+	} else {
+		p.logger.WithFields(logrus.Fields{"duration": duration, "response_body": response.Response}).
+			Info("LLM provider responded successfully")
 	}
 
 	var resp LLMResponse
