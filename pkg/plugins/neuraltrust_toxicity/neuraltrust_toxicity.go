@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
+	"github.com/NeuralTrust/TrustGate/pkg/pluginutils"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
@@ -149,7 +149,7 @@ func (p *NeuralTrustToxicity) Execute(
 		inputBody = resp.Body
 	}
 
-	body, err := p.defineRequestBody(inputBody)
+	body, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
@@ -272,8 +272,8 @@ func (p *NeuralTrustToxicity) callToxicity(
 	req.Header.Set("Token", p.config.Credentials.Token)
 
 	resp, err := p.client.Do(req)
-	p.logger.WithError(err).Error("failed to call firewall")
 	if err != nil {
+		p.logger.WithError(err).Error("failed to call firewall")
 		p.sendError(firewallErrors, err)
 		return
 	}
@@ -335,65 +335,6 @@ func (p *NeuralTrustToxicity) notifyGuardrailViolation(ctx context.Context) {
 			return
 		}
 	}
-}
-
-func (p *NeuralTrustToxicity) defineRequestBody(body []byte) ([]byte, error) {
-	buf, ok := p.bufferPool.Get().(*bytes.Buffer)
-	if !ok {
-		return nil, fmt.Errorf("failed to get buffer from pool")
-	}
-	buf.Reset()
-	defer p.bufferPool.Put(buf)
-
-	var requestBody map[string]interface{}
-	if err := json.Unmarshal(body, &requestBody); err != nil {
-		return p.returnDefaultBody(body)
-	}
-
-	if p.config.MappingField == "" {
-		return p.returnDefaultBody(body)
-	}
-
-	path := strings.Split(p.config.MappingField, ".")
-	current := any(requestBody)
-
-	for _, key := range path {
-		m, ok := current.(map[string]interface{})
-		if !ok {
-			return p.returnDefaultBody(body)
-		}
-		child, exists := m[key]
-		if !exists {
-			return p.returnDefaultBody(body)
-		}
-		current = child
-	}
-
-	var inputString string
-	switch v := current.(type) {
-	case string:
-		inputString = v
-	default:
-		if err := json.NewEncoder(buf).Encode(v); err != nil {
-			return nil, fmt.Errorf("failed to stringify extracted value: %w", err)
-		}
-		inputString = buf.String()
-	}
-
-	result, err := json.Marshal(map[string]interface{}{
-		"input": inputString,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal wrapped input: %w", err)
-	}
-
-	return result, nil
-}
-
-func (p *NeuralTrustToxicity) returnDefaultBody(body []byte) ([]byte, error) {
-	return json.Marshal(map[string]interface{}{
-		"input": string(body),
-	})
 }
 
 func (p *NeuralTrustToxicity) sendError(ch chan<- error, err error) {
