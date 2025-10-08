@@ -457,7 +457,7 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		},
 		Model:        cfg.Model,
 		MaxTokens:    maxTokens,
-		Temperature:  0.5,
+		Temperature:  0.0,
 		SystemPrompt: SystemPrompt,
 		Instructions: cfg.Instructions,
 	}, string(inputBody))

@@ -60,8 +60,16 @@ func (c *client) Ask(
 		})
 	}
 	var contentConfig *genai.GenerateContentConfig
+	temperature := float32(0.0)
+	if config.Temperature > 0 {
+		temperature = float32(config.Temperature)
+	}
+
 	if len(parts) > 0 {
+		topP := float32(1.0)
 		contentConfig = &genai.GenerateContentConfig{
+			Temperature: &temperature,
+			TopP:        &topP,
 			SystemInstruction: &genai.Content{
 				Parts: parts,
 				Role:  "system",

@@ -82,8 +82,10 @@ func (c *client) Ask(
 	}
 
 	params := openai.ChatCompletionNewParams{
-		Model:    config.Model,
-		Messages: messages,
+		Model:       config.Model,
+		Messages:    messages,
+		TopP:        openai.Float(1.0),
+		Temperature: openai.Float(0.0),
 	}
 
 	if config.MaxTokens > 0 {
