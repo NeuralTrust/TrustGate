@@ -79,7 +79,7 @@ jobs:
                 }'
 
       - name: Copy environment file
-        run: cp .env.example .env && cp .env.example .env.functional
+        run: cp .env.example .env && cp .env.functional.example .env.functional
 
       - name: Set up environment variables
         run: |
