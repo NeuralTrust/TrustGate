@@ -286,7 +286,7 @@ func (p *NeuralTrustJailbreakPlugin) callFirewall(
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		p.logger.WithError(err).Error("failed to call firewall")
+		p.logger.WithError(err).Error("failed to call jailbreak firewall")
 		p.sendError(firewallErrors, err)
 		return
 	}

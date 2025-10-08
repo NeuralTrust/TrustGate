@@ -457,7 +457,7 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		},
 		Model:        cfg.Model,
 		MaxTokens:    maxTokens,
-		Temperature:  0.5,
+		Temperature:  0.0,
 		SystemPrompt: SystemPrompt,
 		Instructions: cfg.Instructions,
 	}, string(inputBody))
@@ -467,13 +467,15 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		p.sendError(firewallErrors, err)
 		return
 	}
-	p.logger.WithField("duration", duration).Info("LLM provider responded successfully")
 
 	if response == nil {
-		err := errors.New("llm provider returned nil response")
-		p.logger.WithError(err).Error("nil response from provider")
+		err := errors.New("LLM provider returned nil response")
+		p.logger.WithError(err).Error("nil response from LLM provider")
 		p.sendError(firewallErrors, err)
 		return
+	} else {
+		p.logger.WithFields(logrus.Fields{"duration": duration, "response_body": response.Response}).
+			Info("LLM provider responded successfully")
 	}
 
 	var resp LLMResponse
