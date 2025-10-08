@@ -469,7 +469,7 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 	}
 
 	if response == nil {
-		err := errors.New("llm provider returned nil response")
+		err := errors.New("LLM provider returned nil response")
 		p.logger.WithError(err).Error("nil response from LLM provider")
 		p.sendError(firewallErrors, err)
 		return
