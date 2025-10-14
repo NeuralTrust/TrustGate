@@ -25,7 +25,7 @@ import (
 
 const (
 	PluginName   = "neuraltrust_toxicity"
-	toxicityPath = "/v1/moderation"
+	toxicityPath = "/v1/toxicity"
 	toxicityType = "toxicity"
 )
 
@@ -33,7 +33,6 @@ type NeuralTrustToxicity struct {
 	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
-	config             Config
 	bufferPool         sync.Pool
 	byteSlicePool      sync.Pool
 	requestPool        sync.Pool
@@ -141,7 +140,6 @@ func (p *NeuralTrustToxicity) Execute(
 		p.logger.WithError(err).Error("failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
-	p.config = conf
 
 	inputBody := req.Body
 
@@ -156,7 +154,7 @@ func (p *NeuralTrustToxicity) Execute(
 	}
 
 	var requests []TaggedRequest
-	if p.config.ToxicityParamBag != nil {
+	if conf.ToxicityParamBag != nil {
 		tr, ok := p.requestPool.Get().(*TaggedRequest)
 		if !ok {
 			p.logger.Error("failed to get request from pool")
@@ -166,7 +164,7 @@ func (p *NeuralTrustToxicity) Execute(
 		tr.Request, err = http.NewRequestWithContext(
 			ctx,
 			http.MethodPost,
-			p.config.Credentials.BaseURL+toxicityPath,
+			conf.Credentials.BaseURL+toxicityPath,
 			bytes.NewReader(body),
 		)
 		if err != nil {
@@ -178,18 +176,18 @@ func (p *NeuralTrustToxicity) Execute(
 	}
 
 	evt := &ToxicityData{
-		Scores: &Scores{},
+		Categories: make(map[string]float64),
 	}
 
-	if p.config.ToxicityParamBag != nil {
-		evt.ToxicityThreshold = p.config.ToxicityParamBag.Threshold
+	if conf.ToxicityParamBag != nil {
+		evt.ToxicityThreshold = conf.ToxicityParamBag.Threshold
 	}
 
 	firewallErrors := make(chan error, len(requests))
 	var wg sync.WaitGroup
 	for _, request := range requests {
 		wg.Add(1)
-		go p.callToxicity(ctx, &wg, request, firewallErrors, evt)
+		go p.callToxicity(ctx, conf, &wg, request, firewallErrors, evt)
 	}
 
 	done := make(chan struct{})
@@ -205,7 +203,7 @@ func (p *NeuralTrustToxicity) Execute(
 			break
 		}
 		if err != nil {
-			p.notifyGuardrailViolation(ctx)
+			p.notifyGuardrailViolation(ctx, conf)
 			cancel()
 			var guardrailViolationError *guardrailViolationError
 			if errors.As(err, &guardrailViolationError) {
@@ -224,7 +222,7 @@ func (p *NeuralTrustToxicity) Execute(
 		select {
 		case err, ok := <-firewallErrors:
 			if ok && err != nil {
-				p.notifyGuardrailViolation(ctx)
+				p.notifyGuardrailViolation(ctx, conf)
 				cancel()
 				var guardrailViolationError *guardrailViolationError
 				if errors.As(err, &guardrailViolationError) {
@@ -257,6 +255,7 @@ func (p *NeuralTrustToxicity) Execute(
 
 func (p *NeuralTrustToxicity) callToxicity(
 	ctx context.Context,
+	conf Config,
 	wg *sync.WaitGroup,
 	taggedRequest TaggedRequest,
 	firewallErrors chan<- error,
@@ -269,11 +268,11 @@ func (p *NeuralTrustToxicity) callToxicity(
 
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Token", p.config.Credentials.Token)
+	req.Header.Set("Token", conf.Credentials.Token)
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		p.logger.WithError(err).Error("failed to call firewall")
+		p.logger.WithError(err).Error("failed to call toxicity firewall")
 		p.sendError(firewallErrors, err)
 		return
 	}
@@ -294,24 +293,74 @@ func (p *NeuralTrustToxicity) callToxicity(
 
 	bodyBytes := buf.Bytes()
 
-	var parsed ToxicityResponse
-	if err := json.Unmarshal(bodyBytes, &parsed); err != nil {
+	// Support multiple response schemas: {"categories"}, {"category_scores"}, or {"scores"}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
 		p.sendError(firewallErrors, fmt.Errorf("invalid toxicity response: %w", err))
 		return
 	}
-	if parsed.Scores.ToxicPrompt > p.config.ToxicityParamBag.Threshold {
-		evt.Scores.Toxicity = parsed.Scores.ToxicPrompt
+
+	extractScores := func(key string) (map[string]float64, bool) {
+		v, ok := raw[key]
+		if !ok || v == nil {
+			return nil, false
+		}
+		m, ok := v.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		out := make(map[string]float64, len(m))
+		for k, val := range m {
+			switch t := val.(type) {
+			case float64:
+				out[k] = t
+			case float32:
+				out[k] = float64(t)
+			case int:
+				out[k] = float64(t)
+			case int64:
+				out[k] = float64(t)
+			default:
+				// ignore non-numeric entries
+			}
+		}
+		return out, true
+	}
+
+	categories, ok := extractScores("categories")
+	if !ok || len(categories) == 0 {
+		if cats, ok2 := extractScores("category_scores"); ok2 && len(cats) > 0 {
+			categories = cats
+		} else if cats2, ok3 := extractScores("scores"); ok3 && len(cats2) > 0 {
+			categories = cats2
+		}
+	}
+
+	if len(categories) == 0 {
+		p.sendError(firewallErrors, fmt.Errorf("invalid toxicity response: missing categories"))
+		return
+	}
+
+	threshold := conf.ToxicityParamBag.Threshold
+	var maxScore float64
+	for _, score := range categories {
+		if score > maxScore {
+			maxScore = score
+		}
+	}
+	if maxScore > threshold {
+		evt.Categories = categories
 		p.sendError(firewallErrors, NewGuardrailViolation(fmt.Sprintf(
 			"%s: score %.2f exceeded threshold %.2f",
 			taggedRequest.Type,
-			parsed.Scores.ToxicPrompt,
-			p.config.ToxicityParamBag.Threshold,
+			maxScore,
+			threshold,
 		)))
 		return
 	}
 }
 
-func (p *NeuralTrustToxicity) notifyGuardrailViolation(ctx context.Context) {
+func (p *NeuralTrustToxicity) notifyGuardrailViolation(ctx context.Context, conf Config) {
 	fp, ok := ctx.Value(common.FingerprintIdContextKey).(string)
 	if !ok {
 		return
@@ -323,10 +372,10 @@ func (p *NeuralTrustToxicity) notifyGuardrailViolation(ctx context.Context) {
 	}
 	if storedFp != nil {
 		var ttl time.Duration
-		if p.config.RetentionPeriod > 0 {
-			ttl = time.Duration(p.config.RetentionPeriod) * time.Second
+		if conf.RetentionPeriod > 0 {
+			ttl = time.Duration(conf.RetentionPeriod) * time.Second
 		} else {
-			p.config.RetentionPeriod = 60
+			conf.RetentionPeriod = 60
 			ttl = time.Duration(60) * time.Second
 		}
 		err = p.fingerPrintManager.IncrementMaliciousCount(ctx, fp, ttl)
@@ -336,6 +385,8 @@ func (p *NeuralTrustToxicity) notifyGuardrailViolation(ctx context.Context) {
 		}
 	}
 }
+
+// local helpers removed in favor of pluginutils.DefineRequestBody
 
 func (p *NeuralTrustToxicity) sendError(ch chan<- error, err error) {
 	if err == nil {
