@@ -15,7 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const trustgateAuthHeader = "X-TG-API-Key"
+// moved to common.TrustgateAuthHeader
 
 type authMiddleware struct {
 	logger        *logrus.Logger
@@ -94,7 +94,7 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 }
 
 func (m *authMiddleware) getAPIKeyHeader(ctx *fiber.Ctx) string {
-	return ctx.Get(trustgateAuthHeader)
+	return ctx.Get(common.TrustgateAuthHeader)
 }
 
 func (m *authMiddleware) respondWithError(ctx *fiber.Ctx, status int, message string) error {

@@ -3,6 +3,7 @@ package middleware
 import (
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -61,7 +62,7 @@ func (m *corsGlobalMiddleware) Middleware() fiber.Handler {
 			}
 
 			if c.Method() == fiber.MethodOptions {
-				if c.Get("X-TG-API-Key") == "" {
+				if c.Get(common.TrustgateAuthHeader) == "" {
 					reqMethod := c.Get("Access-Control-Request-Method")
 					if reqMethod != "" {
 						c.Set("Access-Control-Allow-Methods", strings.Join(m.allowMethods, ", "))

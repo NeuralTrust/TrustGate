@@ -697,6 +697,16 @@ func (h *forwardedWebsocketHandler) connectToTarget(
 		target.Port,
 		target.Path)
 
+	// Ensure internal auth header is not propagated to upstream
+	if reqCtx.Headers != nil {
+		for k := range reqCtx.Headers {
+			if strings.EqualFold(k, common.TrustgateAuthHeader) {
+				delete(reqCtx.Headers, k)
+				break
+			}
+		}
+	}
+
 	conn, resp, err := gorilla.DefaultDialer.Dial(targetURL, reqCtx.Headers)
 	if err != nil {
 		if resp != nil {
