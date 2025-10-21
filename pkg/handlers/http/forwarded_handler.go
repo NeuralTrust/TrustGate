@@ -255,8 +255,10 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		RuleID:    matchingRule.ID,
 	}
 
-	// Copy request headers
 	for key, values := range c.GetReqHeaders() {
+		if strings.EqualFold(key, common.TrustgateAuthHeader) {
+			continue
+		}
 		reqCtx.Headers[key] = values
 	}
 

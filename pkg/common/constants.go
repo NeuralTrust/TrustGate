@@ -12,6 +12,7 @@ const (
 
 	ConversationIDHeader = "X-Conversation-Id"
 	InteractionIDHeader  = "X-Interaction-Id"
+	TrustgateAuthHeader  = "X-TG-API-Key"
 
 	SemanticStrategyName = "semantic"
 
