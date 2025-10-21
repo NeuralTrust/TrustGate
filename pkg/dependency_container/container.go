@@ -56,6 +56,7 @@ type Container struct {
 	WSHandlerTransport    wsHandlers.HandlerTransport
 	RedisListener         infraCache.EventListener
 	AuthMiddleware        middleware.Middleware
+	CORSGlobalMiddleware  middleware.Middleware
 	AdminAuthMiddleware   middleware.Middleware
 	MetricsMiddleware     middleware.Middleware
 	PluginMiddleware      middleware.Middleware
@@ -298,10 +299,17 @@ func NewContainer(
 	}
 
 	container := &Container{
-		Cache:                 cacheInstance,
-		RedisListener:         redisListener,
-		HandlerTransport:      handlerTransport,
-		WSHandlerTransport:    wsHandlerTransport,
+		Cache:              cacheInstance,
+		RedisListener:      redisListener,
+		HandlerTransport:   handlerTransport,
+		WSHandlerTransport: wsHandlerTransport,
+		CORSGlobalMiddleware: middleware.NewCORSGlobalMiddleware(
+			[]string{"*"},
+			[]string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+			false,
+			[]string{"Content-Length", "X-Response-Time"},
+			"12h",
+		),
 		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, gatewayDataFinder),
 		AdminAuthMiddleware:   middleware.NewAdminAuthMiddleware(logger, jwtManager),
 		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, metricsWorker),

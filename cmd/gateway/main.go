@@ -77,6 +77,7 @@ func main() {
 	}
 
 	proxyTransport := middleware.NewTransport(
+		container.CORSGlobalMiddleware, // debe ir primero
 		container.AuthMiddleware,
 		container.MetricsMiddleware,
 		container.PluginMiddleware,
