@@ -27,18 +27,18 @@ BASE_DOMAIN=${BASE_DOMAIN:-"example.com"}
 SUBDOMAIN="benchmark-'$(date +%s)'"
 CONCURRENT_USERS=50
 DURATION="30s"
-TOKEN=""
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.396KCDWMomWrMEImsF84AmFRjBEvSvnyLh3ZA_mB_Wg"
 
 echo -e "${BLUE}TrustGate Benchmark Tool${NC}\n"
 
 # Test 1: System endpoint (ping)
-# echo -e "${GREEN}Testing system ping endpoint...${NC}"
-# echo -e "\n${BLUE}Starting system benchmark with ${CONCURRENT_USERS} concurrent users for ${DURATION}...${NC}"
-# hey -z ${DURATION} \
-#     -c ${CONCURRENT_USERS} \
-#     -disable-keepalive \
-#     -cpus 2 \
-#     "${PROXY_URL}/__/ping"
+#echo -e "${GREEN}Testing system ping endpoint...${NC}"
+#echo -e "\n${BLUE}Starting system benchmark with ${CONCURRENT_USERS} concurrent users for ${DURATION}...${NC}"
+#hey -z ${DURATION} \
+#    -c ${CONCURRENT_USERS} \
+#    -disable-keepalive \
+#    -cpus 2 \
+#    "${PROXY_URL}/__/ping"
 
 # Create test gateway
 echo -e "${GREEN}Creating test gateway...${NC}"
@@ -147,6 +147,7 @@ RULE_RESPONSE=$(curl -s -X POST "$ADMIN_URL/gateways/$GATEWAY_ID/rules" \
 # Wait for configuration to propagate
 sleep 2
 
+echo ${API_KEY}
 # Test 2: Forwarded ping endpoint
 echo -e "${GREEN}Testing forwarded ping endpoint...${NC}"
 echo -e "\n${BLUE}Starting forwarded benchmark with ${CONCURRENT_USERS} concurrent users for ${DURATION}...${NC}"
@@ -155,6 +156,4 @@ hey -z ${DURATION} \
     -disable-keepalive \
     -cpus 2 \
     -H "X-TG-API-Key: ${API_KEY}" \
-    -H "Host: ${SUBDOMAIN}.example.com" \
-    -host "${SUBDOMAIN}.example.com" \
     "${PROXY_URL}/test"

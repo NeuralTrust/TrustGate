@@ -18,13 +18,14 @@ type MetricsConfig struct {
 }
 
 type Config struct {
-	Server    ServerConfig    `mapstructure:"server"`
-	Metrics   MetricsConfig   `mapstructure:"metrics"`
-	Database  DatabaseConfig  `mapstructure:"database"`
-	Redis     RedisConfig     `mapstructure:"redis"`
-	Plugins   PluginsConfig   `mapstructure:"plugins"`
-	WebSocket WebSocketConfig `mapstructure:"websocket"`
-	TLS       TLSConfig       `mapstructure:"tls"`
+	Server        ServerConfig        `mapstructure:"server"`
+	Metrics       MetricsConfig       `mapstructure:"metrics"`
+	Database      DatabaseConfig      `mapstructure:"database"`
+	Redis         RedisConfig         `mapstructure:"redis"`
+	Plugins       PluginsConfig       `mapstructure:"plugins"`
+	WebSocket     WebSocketConfig     `mapstructure:"websocket"`
+	TLS           TLSConfig           `mapstructure:"tls"`
+	OpenTelemetry OpenTelemetryConfig `mapstructure:"opentelemetry"`
 }
 
 type ServerConfig struct {
@@ -80,6 +81,16 @@ type TLSConfig struct {
 type TLSKeyPair struct {
 	PublicKey  string `mapstructure:"public_key"`
 	PrivateKey string `mapstructure:"private_key"`
+}
+
+type OpenTelemetryConfig struct {
+	Enabled         bool    `mapstructure:"enabled"`
+	ServiceName     string  `mapstructure:"service_name"`
+	ServiceVersion  string  `mapstructure:"service_version"`
+	Environment     string  `mapstructure:"environment"`
+	TracesEndpoint  string  `mapstructure:"traces_endpoint"`
+	MetricsEndpoint string  `mapstructure:"metrics_endpoint"`
+	SamplingRatio   float64 `mapstructure:"sampling_ratio"`
 }
 
 var globalConfig Config

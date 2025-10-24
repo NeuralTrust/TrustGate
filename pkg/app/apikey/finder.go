@@ -41,7 +41,7 @@ func (f *finder) Find(ctx context.Context, key string) (*domain.APIKey, error) {
 	if entity, err := f.getFromMemoryCache(key); err == nil {
 		return entity, nil
 	} else if !errors.Is(err, ErrInvalidCacheType) {
-		f.logger.WithError(err).Warn("memory cache read apikey failure")
+		f.logger.WithError(err).Debug("memory cache read apikey failure")
 	}
 
 	if cachedService, err := f.cache.GetApiKey(ctx, key); err == nil && cachedService != nil {
