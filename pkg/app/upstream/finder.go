@@ -37,7 +37,7 @@ func (f *finder) Find(ctx context.Context, gatewayID, upstreamID uuid.UUID) (*do
 	if upstream, err := f.getUpstreamFromMemoryCache(upstreamID.String()); err == nil {
 		return upstream, nil
 	} else if !errors.Is(err, ErrInvalidCacheType) {
-		f.logger.WithError(err).Warn("memory cache read upstream failure")
+		f.logger.WithError(err).Debug("memory cache read upstream failure")
 	}
 	if cachedUpstream, err := f.cache.GetUpstream(ctx, gatewayID.String(), upstreamID.String()); err == nil && cachedUpstream != nil {
 		f.saveUpstreamToMemoryCache(ctx, cachedUpstream)

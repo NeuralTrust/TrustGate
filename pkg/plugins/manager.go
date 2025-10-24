@@ -599,9 +599,9 @@ func (m *manager) applyPluginErrorToResponse(pe *types.PluginError, resp *types.
 }
 
 func (m *manager) GetChains(entityID string, stage types.Stage) [][]types.PluginConfig {
-	m.mu.RLock()
+
 	chainsGroups, exists := m.configurations[entityID]
-	m.mu.RUnlock()
+
 	if !exists {
 		return nil
 	}
