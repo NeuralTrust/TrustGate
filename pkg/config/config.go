@@ -91,6 +91,7 @@ type OpenTelemetryConfig struct {
 	TracesEndpoint  string  `mapstructure:"traces_endpoint"`
 	MetricsEndpoint string  `mapstructure:"metrics_endpoint"`
 	SamplingRatio   float64 `mapstructure:"sampling_ratio"`
+	Insecure        bool    `mapstructure:"insecure"`
 }
 
 var globalConfig Config
