@@ -25,7 +25,7 @@ import (
 
 const (
 	PluginName   = "neuraltrust_toxicity"
-	toxicityPath = "/v1/toxicity2"
+	toxicityPath = "/v1/toxicity"
 	toxicityType = "toxicity"
 )
 
