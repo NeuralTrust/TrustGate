@@ -271,7 +271,7 @@ func (p *NeuralTrustToxicity) callToxicity(
 	req.Header.Set("Token", conf.Credentials.Token)
 
 	resp, err := p.client.Do(req)
-	if err != nil {
+	if err != nil || resp.StatusCode != http.StatusOK {
 		p.logger.WithError(err).Error("failed to call toxicity firewall")
 		p.sendError(firewallErrors, err)
 		return
