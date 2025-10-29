@@ -1,17 +1,16 @@
 package neuraltrust_toxicity_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
-	"net/http"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
+	firewallmocks "github.com/NeuralTrust/TrustGate/pkg/infra/firewall/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins/neuraltrust_toxicity"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -45,10 +44,9 @@ func TestNeuralTrustToxicity_AllowedStages(t *testing.T) {
 }
 
 func TestNeuralTrustToxicity_ValidateConfig(t *testing.T) {
-	mockClient := new(mocks.MockHTTPClient)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, nil)
 
 	t.Run("Valid Configuration", func(t *testing.T) {
 		validConfig := types.PluginConfig{
@@ -104,10 +102,14 @@ func TestNeuralTrustToxicity_ValidateConfig(t *testing.T) {
 }
 
 func TestNeuralTrustToxicity_Execute_Success(t *testing.T) {
-	mockClient := new(mocks.MockHTTPClient)
+	mockFirewallClient := new(firewallmocks.Client)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
+		logger,
+		mockTracker,
+		mockFirewallClient,
+	)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -129,22 +131,13 @@ func TestNeuralTrustToxicity_Execute_Success(t *testing.T) {
 	resp := &types.ResponseContext{}
 
 	// Mock response with toxicity score below threshold
-	serverResponse := map[string]interface{}{
-		"scores": map[string]interface{}{
+	toxicityResp := []firewall.ToxicityResponse{{
+		Scores: map[string]float64{
 			"toxic_prompt": 0.2, // Below threshold
 		},
-	}
+	}}
 
-	serverResponseBytes, err := json.Marshal(serverResponse)
-	assert.NoError(t, err)
-	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
-
-	httpResponse := &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       mockResp,
-	}
-
-	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
+	mockFirewallClient.On("DetectToxicity", mock.Anything, mock.Anything, mock.Anything).Return(toxicityResp, nil).Once()
 
 	pluginResponse, err := plugin.Execute(
 		context.Background(),
@@ -156,16 +149,20 @@ func TestNeuralTrustToxicity_Execute_Success(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotNil(t, pluginResponse)
-	assert.Equal(t, http.StatusOK, pluginResponse.StatusCode)
+	assert.Equal(t, 200, pluginResponse.StatusCode)
 	assert.Equal(t, "prompt content is safe", pluginResponse.Message)
-	mockClient.AssertExpectations(t)
+	mockFirewallClient.AssertExpectations(t)
 }
 
 func TestNeuralTrustToxicity_Execute_ToxicContent(t *testing.T) {
-	mockClient := new(mocks.MockHTTPClient)
+	mockFirewallClient := new(firewallmocks.Client)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
+		logger,
+		mockTracker,
+		mockFirewallClient,
+	)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -186,22 +183,14 @@ func TestNeuralTrustToxicity_Execute_ToxicContent(t *testing.T) {
 	}
 	resp := &types.ResponseContext{}
 
-	serverResponse := map[string]interface{}{
-		"category_scores": map[string]interface{}{
-			"toxic_prompt": 0.8,
+	// Mock response with toxicity score above threshold
+	toxicityResp := []firewall.ToxicityResponse{{
+		CategoryScores: map[string]float64{
+			"toxic_prompt": 0.8, // Above threshold
 		},
-	}
+	}}
 
-	serverResponseBytes, err := json.Marshal(serverResponse)
-	assert.NoError(t, err)
-	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
-
-	httpResponse := &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       mockResp,
-	}
-
-	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
+	mockFirewallClient.On("DetectToxicity", mock.Anything, mock.Anything, mock.Anything).Return(toxicityResp, nil).Once()
 
 	pluginResponse, err := plugin.Execute(
 		context.Background(),
@@ -214,14 +203,18 @@ func TestNeuralTrustToxicity_Execute_ToxicContent(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, pluginResponse)
 	assert.Contains(t, err.Error(), "score 0.80 exceeded threshold 0.70")
-	mockClient.AssertExpectations(t)
+	mockFirewallClient.AssertExpectations(t)
 }
 
 func TestNeuralTrustToxicity_Execute_WithMappingField(t *testing.T) {
-	mockClient := new(mocks.MockHTTPClient)
+	mockFirewallClient := new(firewallmocks.Client)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
+		logger,
+		mockTracker,
+		mockFirewallClient,
+	)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -249,22 +242,13 @@ func TestNeuralTrustToxicity_Execute_WithMappingField(t *testing.T) {
 	resp := &types.ResponseContext{}
 
 	// Mock response with toxicity score below threshold
-	serverResponse := map[string]interface{}{
-		"scores": map[string]interface{}{
+	toxicityResp := []firewall.ToxicityResponse{{
+		Scores: map[string]float64{
 			"toxic_prompt": 0.2, // Below threshold
 		},
-	}
+	}}
 
-	serverResponseBytes, err := json.Marshal(serverResponse)
-	assert.NoError(t, err)
-	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
-
-	httpResponse := &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       mockResp,
-	}
-
-	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
+	mockFirewallClient.On("DetectToxicity", mock.Anything, mock.Anything, mock.Anything).Return(toxicityResp, nil).Once()
 
 	pluginResponse, err := plugin.Execute(
 		context.Background(),
@@ -276,69 +260,19 @@ func TestNeuralTrustToxicity_Execute_WithMappingField(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotNil(t, pluginResponse)
-	assert.Equal(t, http.StatusOK, pluginResponse.StatusCode)
-	mockClient.AssertExpectations(t)
-}
-
-func TestNeuralTrustToxicity_Execute_WithMappingField_IndexOutOfRange_FallsBack(t *testing.T) {
-	mockClient := new(mocks.MockHTTPClient)
-	mockTracker := new(mocks.Tracker)
-	logger := logrus.New()
-	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
-
-	cfg := types.PluginConfig{
-		Settings: map[string]interface{}{
-			"credentials": map[string]interface{}{
-				"base_url": "https://api.neuraltrust.ai",
-				"token":    "test-token",
-			},
-			"toxicity": map[string]interface{}{
-				"threshold": 0.7,
-				"enabled":   true,
-			},
-			"mapping_field": "messages[2].content",
-		},
-	}
-
-	req := &types.RequestContext{
-		Body: []byte(`{
-            "messages": [
-                {"role": "user", "content": "hello world"}
-            ]
-        }`),
-		Stage: types.PreRequest,
-	}
-	resp := &types.ResponseContext{}
-
-	serverResponse := map[string]interface{}{
-		"scores": map[string]interface{}{
-			"toxic_prompt": 0.2,
-		},
-	}
-	serverResponseBytes, err := json.Marshal(serverResponse)
-	assert.NoError(t, err)
-	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
-	httpResponse := &http.Response{StatusCode: http.StatusOK, Body: mockResp}
-	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
-
-	pluginResponse, err := plugin.Execute(
-		context.Background(),
-		cfg,
-		req,
-		resp,
-		metrics.NewEventContext("", "", nil),
-	)
-	assert.NoError(t, err)
-	assert.NotNil(t, pluginResponse)
-	assert.Equal(t, http.StatusOK, pluginResponse.StatusCode)
-	mockClient.AssertExpectations(t)
+	assert.Equal(t, 200, pluginResponse.StatusCode)
+	mockFirewallClient.AssertExpectations(t)
 }
 
 func TestNeuralTrustToxicity_Execute_PostRequest(t *testing.T) {
-	mockClient := new(mocks.MockHTTPClient)
+	mockFirewallClient := new(firewallmocks.Client)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
+		logger,
+		mockTracker,
+		mockFirewallClient,
+	)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -362,22 +296,13 @@ func TestNeuralTrustToxicity_Execute_PostRequest(t *testing.T) {
 	}
 
 	// Mock response with toxicity score below threshold
-	serverResponse := map[string]interface{}{
-		"scores": map[string]interface{}{
+	toxicityResp := []firewall.ToxicityResponse{{
+		Scores: map[string]float64{
 			"toxic_prompt": 0.2, // Below threshold
 		},
-	}
+	}}
 
-	serverResponseBytes, err := json.Marshal(serverResponse)
-	assert.NoError(t, err)
-	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
-
-	httpResponse := &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       mockResp,
-	}
-
-	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
+	mockFirewallClient.On("DetectToxicity", mock.Anything, mock.Anything, mock.Anything).Return(toxicityResp, nil).Once()
 
 	pluginResponse, err := plugin.Execute(
 		context.Background(),
@@ -389,15 +314,19 @@ func TestNeuralTrustToxicity_Execute_PostRequest(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotNil(t, pluginResponse)
-	assert.Equal(t, http.StatusOK, pluginResponse.StatusCode)
-	mockClient.AssertExpectations(t)
+	assert.Equal(t, 200, pluginResponse.StatusCode)
+	mockFirewallClient.AssertExpectations(t)
 }
 
-func TestNeuralTrustToxicity_Execute_HTTPError(t *testing.T) {
-	mockClient := new(mocks.MockHTTPClient)
+func TestNeuralTrustToxicity_Execute_FirewallError(t *testing.T) {
+	mockFirewallClient := new(firewallmocks.Client)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
+		logger,
+		mockTracker,
+		mockFirewallClient,
+	)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -418,8 +347,8 @@ func TestNeuralTrustToxicity_Execute_HTTPError(t *testing.T) {
 	}
 	resp := &types.ResponseContext{}
 
-	// Mock HTTP error
-	mockClient.On("Do", mock.Anything).Return(nil, assert.AnError).Once()
+	// Mock firewall error
+	mockFirewallClient.On("DetectToxicity", mock.Anything, mock.Anything, mock.Anything).Return(nil, assert.AnError).Once()
 
 	pluginResponse, err := plugin.Execute(
 		context.Background(),
@@ -431,14 +360,18 @@ func TestNeuralTrustToxicity_Execute_HTTPError(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Nil(t, pluginResponse)
-	mockClient.AssertExpectations(t)
+	mockFirewallClient.AssertExpectations(t)
 }
 
-func TestNeuralTrustToxicity_Execute_InvalidResponse(t *testing.T) {
-	mockClient := new(mocks.MockHTTPClient)
+func TestNeuralTrustToxicity_Execute_FirewallServiceUnavailable(t *testing.T) {
+	mockFirewallClient := new(firewallmocks.Client)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
-	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(logger, mockTracker, mockClient)
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
+		logger,
+		mockTracker,
+		mockFirewallClient,
+	)
 
 	cfg := types.PluginConfig{
 		Settings: map[string]interface{}{
@@ -459,15 +392,9 @@ func TestNeuralTrustToxicity_Execute_InvalidResponse(t *testing.T) {
 	}
 	resp := &types.ResponseContext{}
 
-	// Invalid JSON response
-	mockResp := io.NopCloser(bytes.NewReader([]byte(`invalid json`)))
-
-	httpResponse := &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       mockResp,
-	}
-
-	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
+	// Mock firewall service unavailable error (ErrFailedFirewallCall)
+	firewallError := fmt.Errorf("%w: status %d", firewall.ErrFailedFirewallCall, 503)
+	mockFirewallClient.On("DetectToxicity", mock.Anything, mock.Anything, mock.Anything).Return(nil, firewallError).Once()
 
 	pluginResponse, err := plugin.Execute(
 		context.Background(),
@@ -479,13 +406,72 @@ func TestNeuralTrustToxicity_Execute_InvalidResponse(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Nil(t, pluginResponse)
-	assert.Contains(t, err.Error(), "invalid toxicity response")
-	mockClient.AssertExpectations(t)
+
+	// Verify it's a PluginError with StatusServiceUnavailable
+	pluginErr, ok := err.(*types.PluginError)
+	assert.True(t, ok)
+	assert.Equal(t, 503, pluginErr.StatusCode)
+	assert.Contains(t, pluginErr.Message, "Firewall service temporarily unavailable")
+
+	mockFirewallClient.AssertExpectations(t)
+}
+
+func TestNeuralTrustToxicity_Execute_FirewallServiceError(t *testing.T) {
+	mockFirewallClient := new(firewallmocks.Client)
+	mockTracker := new(mocks.Tracker)
+	logger := logrus.New()
+	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
+		logger,
+		mockTracker,
+		mockFirewallClient,
+	)
+
+	cfg := types.PluginConfig{
+		Settings: map[string]interface{}{
+			"credentials": map[string]interface{}{
+				"base_url": "https://api.neuraltrust.ai",
+				"token":    "test-token",
+			},
+			"toxicity": map[string]interface{}{
+				"threshold": 0.7,
+				"enabled":   true,
+			},
+		},
+	}
+
+	req := &types.RequestContext{
+		Body:  []byte(`{"text": "hello world"}`),
+		Stage: types.PreRequest,
+	}
+	resp := &types.ResponseContext{}
+
+	// Mock other firewall error (not ErrFailedFirewallCall)
+	otherError := fmt.Errorf("circuit breaker open")
+	mockFirewallClient.On("DetectToxicity", mock.Anything, mock.Anything, mock.Anything).Return(nil, otherError).Once()
+
+	pluginResponse, err := plugin.Execute(
+		context.Background(),
+		cfg,
+		req,
+		resp,
+		metrics.NewEventContext("", "", nil),
+	)
+
+	assert.Error(t, err)
+	assert.Nil(t, pluginResponse)
+
+	// Verify it's a PluginError with StatusInternalServerError
+	pluginErr, ok := err.(*types.PluginError)
+	assert.True(t, ok)
+	assert.Equal(t, 500, pluginErr.StatusCode)
+	assert.Contains(t, pluginErr.Message, "Firewall service error")
+
+	mockFirewallClient.AssertExpectations(t)
 }
 
 func TestNeuralTrustToxicity_Execute_NotifyGuardrailViolation(t *testing.T) {
 	// Create mocks
-	mockClient := new(mocks.MockHTTPClient)
+	mockFirewallClient := new(firewallmocks.Client)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
 
@@ -493,7 +479,7 @@ func TestNeuralTrustToxicity_Execute_NotifyGuardrailViolation(t *testing.T) {
 	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
 		logger,
 		mockTracker,
-		mockClient,
+		mockFirewallClient,
 	)
 
 	// Create configuration
@@ -531,23 +517,14 @@ func TestNeuralTrustToxicity_Execute_NotifyGuardrailViolation(t *testing.T) {
 	ctx := context.WithValue(context.Background(), common.FingerprintIdContextKey, fpID)
 
 	// Set up mock responses
-	serverResponse := map[string]interface{}{
-		"category_scores": map[string]interface{}{
+	toxicityResp := []firewall.ToxicityResponse{{
+		CategoryScores: map[string]float64{
 			"toxic_prompt": 0.8, // Above threshold
 		},
-	}
-
-	serverResponseBytes, err := json.Marshal(serverResponse)
-	assert.NoError(t, err)
-	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
-
-	httpResponse := &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       mockResp,
-	}
+	}}
 
 	// Set up expectations
-	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
+	mockFirewallClient.On("DetectToxicity", mock.Anything, mock.Anything, mock.Anything).Return(toxicityResp, nil).Once()
 	mockTracker.On("GetFingerprint", mock.Anything, fpID).Return(fp, nil).Once()
 	mockTracker.On("IncrementMaliciousCount", mock.Anything, fpID, time.Duration(60)*time.Second).Return(nil).Once()
 
@@ -566,6 +543,6 @@ func TestNeuralTrustToxicity_Execute_NotifyGuardrailViolation(t *testing.T) {
 	assert.Contains(t, err.Error(), "score 0.80 exceeded threshold 0.70")
 
 	// Verify that the mock expectations were met
-	mockClient.AssertExpectations(t)
+	mockFirewallClient.AssertExpectations(t)
 	mockTracker.AssertExpectations(t)
 }

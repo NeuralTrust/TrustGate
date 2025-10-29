@@ -600,7 +600,11 @@ func (h *forwardedHandler) handleUpstreamRequest(
 	return nil, fmt.Errorf("%v", reqErr)
 }
 
-func (h *forwardedHandler) applyTargetOAuth(req *types.RequestContext, target *types.UpstreamTarget, upstreamModel *domainUpstream.Upstream) error {
+func (h *forwardedHandler) applyTargetOAuth(
+	req *types.RequestContext,
+	target *types.UpstreamTarget,
+	upstreamModel *domainUpstream.Upstream,
+) error {
 	if upstreamModel == nil || target == nil {
 		return nil
 	}

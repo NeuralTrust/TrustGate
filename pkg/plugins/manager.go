@@ -16,6 +16,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
@@ -85,6 +86,7 @@ type manager struct {
 	plugins            map[string]pluginiface.Plugin
 	configurations     map[string][][]types.PluginConfig
 	providerLocator    providersFactory.ProviderLocator
+	firewallClient     firewall.Client
 }
 
 func NewManager(
@@ -96,6 +98,7 @@ func NewManager(
 	embeddingRepo embedding.EmbeddingRepository,
 	serviceLocator factory.EmbeddingServiceLocator,
 	providerFactory providersFactory.ProviderLocator,
+	firewallClient firewall.Client,
 ) Manager {
 	once.Do(func() {
 		instance = &manager{
@@ -109,6 +112,7 @@ func NewManager(
 			embeddingRepo:      embeddingRepo,
 			serviceLocator:     serviceLocator,
 			providerLocator:    providerFactory,
+			firewallClient:     firewallClient,
 		}
 		instance.InitializePlugins()
 	})
@@ -163,11 +167,7 @@ func (m *manager) InitializePlugins() {
 
 	if err := m.RegisterPlugin(neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
 		m.logger,
-		&http.Client{ //nolint
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
-			},
-		},
+		m.firewallClient,
 		m.fingerprintTracker,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
@@ -189,11 +189,7 @@ func (m *manager) InitializePlugins() {
 	if err := m.RegisterPlugin(neuraltrust_toxicity.NewNeuralTrustToxicity(
 		m.logger,
 		m.fingerprintTracker,
-		&http.Client{ //nolint
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
-			},
-		},
+		m.firewallClient,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register toxicity neuraltrust plugin")
 	}

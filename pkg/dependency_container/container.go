@@ -2,18 +2,19 @@ package dependency_container
 
 import (
 	"fmt"
+	"net/http"
 	"reflect"
 	"time"
 
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/policy"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
 	"github.com/valyala/fasthttp"
-
-	"net/http"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -74,6 +75,7 @@ type Container struct {
 	JWTManager            jwt.Manager
 	RuleRepository        ruledomain.Repository
 	GatewayRepository     domainGateway.Repository
+	FirewallClient        firewall.Client
 }
 
 func NewContainer(
@@ -121,11 +123,19 @@ func NewContainer(
 
 	providerFactory := providersFactory.NewProviderLocator(httpClient)
 
-	// OAuth token client with optimized net/http client
 	stdHTTPClient := &http.Client{Timeout: 10 * time.Second}
 	oauthTokenClient := oauth.NewTokenClient(stdHTTPClient)
 
 	fingerprintTracker := fingerprint.NewFingerPrintTracker(cacheInstance)
+
+	circuitBreaker := httpx.NewCircuitBreaker("neuraltrust-firewall", 30*time.Second, 3)
+
+	firewallClient := firewall.NewNeuralTrustFirewallClient(
+		&http.Client{Timeout: 10 * time.Second},
+		logger,
+		circuitBreaker,
+	)
+
 	pluginManager := plugins.NewManager(
 		cfg,
 		cacheInstance,
@@ -135,6 +145,7 @@ func NewContainer(
 		embeddingRepository,
 		embeddingServiceLocator,
 		providerFactory,
+		firewallClient,
 	)
 
 	// repository
@@ -330,6 +341,7 @@ func NewContainer(
 		JWTManager:            jwtManager,
 		RuleRepository:        ruleRepository,
 		GatewayRepository:     gatewayRepository,
+		FirewallClient:        firewallClient,
 	}
 
 	return container, nil

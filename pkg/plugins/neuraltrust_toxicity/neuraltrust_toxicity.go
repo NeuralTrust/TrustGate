@@ -1,20 +1,15 @@
 package neuraltrust_toxicity
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginutils"
@@ -24,23 +19,13 @@ import (
 )
 
 const (
-	PluginName   = "neuraltrust_toxicity"
-	toxicityPath = "/v1/toxicity"
-	toxicityType = "toxicity"
+	PluginName = "neuraltrust_toxicity"
 )
 
 type NeuralTrustToxicity struct {
-	client             httpx.Client
+	firewallClient     firewall.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
-	bufferPool         sync.Pool
-	byteSlicePool      sync.Pool
-	requestPool        sync.Pool
-}
-
-type TaggedRequest struct {
-	Request *http.Request
-	Type    string
 }
 
 type guardrailViolationError struct {
@@ -58,37 +43,12 @@ func NewGuardrailViolation(message string) error {
 func NewNeuralTrustToxicity(
 	logger *logrus.Logger,
 	fingerPrintManager fingerprint.Tracker,
-	client httpx.Client,
+	firewallClient firewall.Client,
 ) pluginiface.Plugin {
-	if client == nil {
-		client = &http.Client{ //nolint
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
-			},
-		}
-	}
 	return &NeuralTrustToxicity{
-		client:             client,
-		fingerPrintManager: fingerPrintManager,
+		firewallClient:     firewallClient,
 		logger:             logger,
-		bufferPool: sync.Pool{
-			New: func() any {
-				return new(bytes.Buffer)
-			},
-		},
-		byteSlicePool: sync.Pool{
-			New: func() any {
-				return make([]byte, 0, 1024)
-			},
-		},
-		requestPool: sync.Pool{
-			New: func() any {
-				return &TaggedRequest{
-					Request: &http.Request{},
-					Type:    "",
-				}
-			},
-		},
+		fingerPrintManager: fingerPrintManager,
 	}
 }
 
@@ -153,28 +113,6 @@ func (p *NeuralTrustToxicity) Execute(
 		return nil, fmt.Errorf("failed to define request body: %w", err)
 	}
 
-	var requests []TaggedRequest
-	if conf.ToxicityParamBag != nil {
-		tr, ok := p.requestPool.Get().(*TaggedRequest)
-		if !ok {
-			p.logger.Error("failed to get request from pool")
-			return nil, fmt.Errorf("failed to get request from pool")
-		}
-		tr.Type = toxicityType
-		tr.Request, err = http.NewRequestWithContext(
-			ctx,
-			http.MethodPost,
-			conf.Credentials.BaseURL+toxicityPath,
-			bytes.NewReader(body),
-		)
-		if err != nil {
-			p.logger.WithError(err).Error("failed to create toxicity request")
-			p.requestPool.Put(tr)
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-		requests = append(requests, *tr)
-	}
-
 	evt := &ToxicityData{
 		Categories: make(map[string]float64),
 	}
@@ -183,61 +121,67 @@ func (p *NeuralTrustToxicity) Execute(
 		evt.ToxicityThreshold = conf.ToxicityParamBag.Threshold
 	}
 
-	firewallErrors := make(chan error, len(requests))
-	var wg sync.WaitGroup
-	for _, request := range requests {
-		wg.Add(1)
-		go p.callToxicity(ctx, conf, &wg, request, firewallErrors, evt)
-	}
-
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-		close(firewallErrors)
-	}()
-
-	select {
-	case err, ok := <-firewallErrors:
-		if !ok {
-			break
+	if conf.ToxicityParamBag != nil {
+		credentials := firewall.Credentials{
+			BaseURL: conf.Credentials.BaseURL,
+			Token:   conf.Credentials.Token,
 		}
+
+		var content firewall.Content
+		content.AddInput(body)
+
+		responses, err := p.firewallClient.DetectToxicity(ctx, content, credentials)
 		if err != nil {
-			p.notifyGuardrailViolation(ctx, conf)
-			cancel()
-			var guardrailViolationError *guardrailViolationError
-			if errors.As(err, &guardrailViolationError) {
-				evtCtx.SetError(guardrailViolationError)
-				evtCtx.SetExtras(evt)
+			if errors.Is(err, firewall.ErrFailedFirewallCall) {
 				return nil, &types.PluginError{
-					StatusCode: http.StatusForbidden,
-					Message:    err.Error(),
+					StatusCode: http.StatusServiceUnavailable,
+					Message:    "Firewall service temporarily unavailable",
 					Err:        err,
 				}
 			}
-			return nil, err
-		}
-	case <-done:
-		// Check if there are any errors in the channel before proceeding
-		select {
-		case err, ok := <-firewallErrors:
-			if ok && err != nil {
-				p.notifyGuardrailViolation(ctx, conf)
-				cancel()
-				var guardrailViolationError *guardrailViolationError
-				if errors.As(err, &guardrailViolationError) {
-					evtCtx.SetError(guardrailViolationError)
-					evtCtx.SetExtras(evt)
-					return nil, &types.PluginError{
-						StatusCode: http.StatusForbidden,
-						Message:    err.Error(),
-						Err:        err,
-					}
-				}
-				return nil, err
+			return nil, &types.PluginError{
+				StatusCode: http.StatusInternalServerError,
+				Message:    "Firewall service error",
+				Err:        err,
 			}
-		default:
-			// No errors in the channel
+		}
+
+		response := responses[0]
+		var categories map[string]float64
+		if len(response.Categories) > 0 {
+			categories = response.Categories
+		} else if len(response.CategoryScores) > 0 {
+			categories = response.CategoryScores
+		} else if len(response.Scores) > 0 {
+			categories = response.Scores
+		}
+
+		if len(categories) == 0 {
+			return nil, fmt.Errorf("invalid toxicity response: missing categories")
+		}
+
+		var maxScore float64
+		for _, score := range categories {
+			if score > maxScore {
+				maxScore = score
+			}
+		}
+
+		if maxScore > conf.ToxicityParamBag.Threshold {
+			evt.Categories = categories
+			err := NewGuardrailViolation(fmt.Sprintf(
+				"toxicity: score %.2f exceeded threshold %.2f",
+				maxScore,
+				conf.ToxicityParamBag.Threshold,
+			))
+			p.notifyGuardrailViolation(ctx, conf)
+			evtCtx.SetError(err)
+			evtCtx.SetExtras(evt)
+			return nil, &types.PluginError{
+				StatusCode: http.StatusForbidden,
+				Message:    err.Error(),
+				Err:        err,
+			}
 		}
 	}
 
@@ -251,113 +195,6 @@ func (p *NeuralTrustToxicity) Execute(
 		},
 		Body: nil,
 	}, nil
-}
-
-func (p *NeuralTrustToxicity) callToxicity(
-	ctx context.Context,
-	conf Config,
-	wg *sync.WaitGroup,
-	taggedRequest TaggedRequest,
-	firewallErrors chan<- error,
-	evt *ToxicityData,
-) {
-	defer wg.Done()
-
-	req := taggedRequest.Request
-	defer p.requestPool.Put(&taggedRequest)
-
-	req = req.WithContext(ctx)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Token", conf.Credentials.Token)
-
-	resp, err := p.client.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		p.logger.WithError(err).Error("failed to call toxicity firewall")
-		p.sendError(firewallErrors, err)
-		return
-	}
-	defer resp.Body.Close()
-
-	buf, ok := p.bufferPool.Get().(*bytes.Buffer)
-	if !ok {
-		p.logger.Error("failed to get buffer from pool")
-		return
-	}
-	buf.Reset()
-	defer p.bufferPool.Put(buf)
-
-	if _, err := io.Copy(buf, resp.Body); err != nil {
-		p.sendError(firewallErrors, fmt.Errorf("%s response read error: %w", taggedRequest.Type, err))
-		return
-	}
-
-	bodyBytes := buf.Bytes()
-
-	// Support multiple response schemas: {"categories"}, {"category_scores"}, or {"scores"}
-	var raw map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
-		p.sendError(firewallErrors, fmt.Errorf("invalid toxicity response: %w", err))
-		return
-	}
-
-	extractScores := func(key string) (map[string]float64, bool) {
-		v, ok := raw[key]
-		if !ok || v == nil {
-			return nil, false
-		}
-		m, ok := v.(map[string]interface{})
-		if !ok {
-			return nil, false
-		}
-		out := make(map[string]float64, len(m))
-		for k, val := range m {
-			switch t := val.(type) {
-			case float64:
-				out[k] = t
-			case float32:
-				out[k] = float64(t)
-			case int:
-				out[k] = float64(t)
-			case int64:
-				out[k] = float64(t)
-			default:
-				// ignore non-numeric entries
-			}
-		}
-		return out, true
-	}
-
-	categories, ok := extractScores("categories")
-	if !ok || len(categories) == 0 {
-		if cats, ok2 := extractScores("category_scores"); ok2 && len(cats) > 0 {
-			categories = cats
-		} else if cats2, ok3 := extractScores("scores"); ok3 && len(cats2) > 0 {
-			categories = cats2
-		}
-	}
-
-	if len(categories) == 0 {
-		p.sendError(firewallErrors, fmt.Errorf("invalid toxicity response: missing categories"))
-		return
-	}
-
-	threshold := conf.ToxicityParamBag.Threshold
-	var maxScore float64
-	for _, score := range categories {
-		if score > maxScore {
-			maxScore = score
-		}
-	}
-	if maxScore > threshold {
-		evt.Categories = categories
-		p.sendError(firewallErrors, NewGuardrailViolation(fmt.Sprintf(
-			"%s: score %.2f exceeded threshold %.2f",
-			taggedRequest.Type,
-			maxScore,
-			threshold,
-		)))
-		return
-	}
 }
 
 func (p *NeuralTrustToxicity) notifyGuardrailViolation(ctx context.Context, conf Config) {
@@ -383,17 +220,5 @@ func (p *NeuralTrustToxicity) notifyGuardrailViolation(ctx context.Context, conf
 			p.logger.WithError(err).Error("failed to increment malicious count")
 			return
 		}
-	}
-}
-
-// local helpers removed in favor of pluginutils.DefineRequestBody
-
-func (p *NeuralTrustToxicity) sendError(ch chan<- error, err error) {
-	if err == nil {
-		return
-	}
-	select {
-	case ch <- err:
-	default:
 	}
 }
