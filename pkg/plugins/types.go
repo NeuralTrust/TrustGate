@@ -160,14 +160,14 @@ var PluginList = []PluginDefinition{
 		Category:      "behavior_threat_detection",
 		Label:         "Anomaly Detection",
 	},
-	// {
-	// 	UUID:          GeneratePluginUUID("language_validator"),
-	// 	Name:          "language_validator",
-	// 	Description:   "Validates the language of incoming requests and blocks those not matching the configured allowed languages",
-	// 	AllowedStages: []types.Stage{types.PreRequest},
-	// 	Category:      "application_security",
-	// 	Label:         "Language Validator",
-	// },
+	{
+		UUID:          GeneratePluginUUID("language_validator"),
+		Name:          "language_validator",
+		Description:   "Validates the language of incoming requests and blocks those not matching the configured allowed languages",
+		AllowedStages: []types.Stage{types.PreRequest},
+		Category:      "application_security",
+		Label:         "Language Validator",
+	},
 	{
 		UUID:          GeneratePluginUUID("semantic_cache"),
 		Name:          "semantic_cache",
@@ -175,6 +175,22 @@ var PluginList = []PluginDefinition{
 		AllowedStages: []types.Stage{types.PreRequest},
 		Category:      "performance_optimization",
 		Label:         "Semantic Cache",
+	},
+	{
+		UUID:          GeneratePluginUUID("tool_budget_limiter"),
+		Name:          "tool_budget_limiter",
+		Description:   "Monitors and restricts the cumulative token or cost usage of tools per request, user, or session, blocking executions that exceed the configured budget limits.",
+		AllowedStages: []types.Stage{types.PreRequest},
+		Category:      "agent_security",
+		Label:         "Tool Budget Limiter",
+	},
+	{
+		UUID:          GeneratePluginUUID("tool_guard"),
+		Name:          "tool_guard",
+		Description:   "Provides security controls for tool invocations by validating permissions, enforcing access policies, and blocking unauthorized or potentially harmful tool executions before they occur.",
+		AllowedStages: []types.Stage{types.PreRequest},
+		Category:      "agent_security",
+		Label:         "Tool Guard",
 	},
 }
 
