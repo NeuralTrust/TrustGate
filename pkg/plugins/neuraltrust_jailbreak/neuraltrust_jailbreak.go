@@ -1,20 +1,15 @@
 package neuraltrust_jailbreak
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/pluginutils"
@@ -24,23 +19,13 @@ import (
 )
 
 const (
-	PluginName    = "neuraltrust_jailbreak"
-	jailbreakPath = "/v1/jailbreak"
-	jailbreakType = "jailbreak"
+	PluginName = "neuraltrust_jailbreak"
 )
 
 type NeuralTrustJailbreakPlugin struct {
-	client             httpx.Client
+	firewallClient     firewall.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
-	bufferPool         sync.Pool
-	byteSlicePool      sync.Pool
-	requestPool        sync.Pool
-}
-
-type TaggedRequest struct {
-	Request *http.Request
-	Type    string
 }
 
 type Config struct {
@@ -61,40 +46,14 @@ type JailbreakParamBag struct {
 
 func NewNeuralTrustJailbreakPlugin(
 	logger *logrus.Logger,
-	client httpx.Client,
+	firewallClient firewall.Client,
 	fingerPrintManager fingerprint.Tracker,
 ) pluginiface.Plugin {
-	if client == nil {
-		client = &http.Client{ //nolint
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
-			},
-		}
-	}
 	return &NeuralTrustJailbreakPlugin{
-		client:             client,
+		firewallClient:     firewallClient,
 		logger:             logger,
 		fingerPrintManager: fingerPrintManager,
-		bufferPool: sync.Pool{
-			New: func() any {
-				return new(bytes.Buffer)
-			},
-		},
-		byteSlicePool: sync.Pool{
-			New: func() any {
-				return make([]byte, 4096)
-			},
-		},
-		requestPool: sync.Pool{
-			New: func() any {
-				return &TaggedRequest{
-					Request: &http.Request{},
-					Type:    "",
-				}
-			},
-		},
 	}
-
 }
 
 func (p *NeuralTrustJailbreakPlugin) Name() string {
@@ -155,33 +114,10 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		inputBody = resp.Body
 	}
 
-	body, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
+	mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
-	}
-
-	var requests []TaggedRequest
-
-	if conf.JailbreakParamBag != nil {
-		tr, ok := p.requestPool.Get().(*TaggedRequest)
-		if !ok {
-			p.logger.Error("failed to get request from pool")
-			return nil, fmt.Errorf("failed to get request from pool")
-		}
-		tr.Type = jailbreakType
-		tr.Request, err = http.NewRequestWithContext(
-			ctx,
-			http.MethodPost,
-			conf.Credentials.BaseURL+jailbreakPath,
-			bytes.NewReader(body),
-		)
-		if err != nil {
-			p.logger.WithError(err).Error("failed to create jailbreak request")
-			p.requestPool.Put(tr)
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-		requests = append(requests, *tr)
 	}
 
 	evt := &NeuralTrustJailbreakData{
@@ -192,41 +128,50 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		evt.JailbreakThreshold = conf.JailbreakParamBag.Threshold
 	}
 
-	firewallErrors := make(chan error, len(requests))
-	var wg sync.WaitGroup
-	for _, request := range requests {
-		wg.Add(1)
-		go p.callFirewall(ctx, &wg, request, firewallErrors, evt, conf)
-	}
-
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-		close(firewallErrors)
-	}()
-
-	select {
-	case err, ok := <-firewallErrors:
-		if !ok {
-			break
+	if conf.JailbreakParamBag != nil {
+		credentials := firewall.Credentials{
+			BaseURL: conf.Credentials.BaseURL,
+			Token:   conf.Credentials.Token,
 		}
+
+		content := firewall.Content{
+			Input: []string{mappingContent.Input},
+		}
+
+		responses, err := p.firewallClient.DetectJailbreak(ctx, content, credentials)
 		if err != nil {
-			p.notifyGuardrailViolation(ctx, conf)
-			cancel()
-			var guardrailViolationError *guardrailViolationError
-			if errors.As(err, &guardrailViolationError) {
-				evtCtx.SetError(guardrailViolationError)
-				evtCtx.SetExtras(evt)
+			if errors.Is(err, firewall.ErrFailedFirewallCall) {
 				return nil, &types.PluginError{
-					StatusCode: http.StatusForbidden,
-					Message:    err.Error(),
+					StatusCode: http.StatusServiceUnavailable,
+					Message:    "firewall service temporarily unavailable",
 					Err:        err,
 				}
 			}
-			return nil, err
+			return nil, &types.PluginError{
+				StatusCode: http.StatusInternalServerError,
+				Message:    "firewall service error",
+				Err:        err,
+			}
 		}
-	case <-done:
+
+		// Check response for jailbreak violations
+		response := responses[0]
+		if response.Scores.MaliciousPrompt > conf.JailbreakParamBag.Threshold {
+			evt.Scores.Jailbreak = response.Scores.MaliciousPrompt
+			err := NewGuardrailViolation(fmt.Sprintf(
+				"jailbreak: score %.2f exceeded threshold %.2f",
+				response.Scores.MaliciousPrompt,
+				conf.JailbreakParamBag.Threshold,
+			))
+			p.notifyGuardrailViolation(ctx, conf)
+			evtCtx.SetError(err)
+			evtCtx.SetExtras(evt)
+			return nil, &types.PluginError{
+				StatusCode: http.StatusForbidden,
+				Message:    err.Error(),
+				Err:        err,
+			}
+		}
 	}
 
 	evtCtx.SetExtras(evt)
@@ -264,80 +209,5 @@ func (p *NeuralTrustJailbreakPlugin) notifyGuardrailViolation(ctx context.Contex
 			p.logger.WithError(err).Error("failed to increment malicious count")
 			return
 		}
-	}
-}
-
-func (p *NeuralTrustJailbreakPlugin) callFirewall(
-	ctx context.Context,
-	wg *sync.WaitGroup,
-	taggedRequest TaggedRequest,
-	firewallErrors chan<- error,
-	evt *NeuralTrustJailbreakData,
-	conf Config,
-) {
-	defer wg.Done()
-
-	req := taggedRequest.Request
-	defer p.requestPool.Put(&taggedRequest)
-
-	req = req.WithContext(ctx)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Token", conf.Credentials.Token)
-
-	resp, err := p.client.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		p.logger.WithError(err).Error("failed to call jailbreak firewall")
-		p.sendError(firewallErrors, err)
-		return
-	}
-	defer resp.Body.Close()
-
-	buf, ok := p.bufferPool.Get().(*bytes.Buffer)
-	if !ok {
-		p.logger.Error("failed to get buffer from pool")
-		return
-	}
-	buf.Reset()
-	defer p.bufferPool.Put(buf)
-
-	if _, err := io.Copy(buf, resp.Body); err != nil {
-		p.sendError(firewallErrors, fmt.Errorf("%s response read error: %w", taggedRequest.Type, err))
-		return
-	}
-
-	bodyBytes := buf.Bytes()
-
-	switch taggedRequest.Type {
-	case jailbreakType:
-		var parsed FirewallResponse
-		if err := json.Unmarshal(bodyBytes, &parsed); err != nil {
-			p.sendError(firewallErrors, fmt.Errorf("invalid firewall response: %w", err))
-			return
-		}
-		if conf.JailbreakParamBag != nil && parsed.Scores.MaliciousPrompt > conf.JailbreakParamBag.Threshold {
-			evt.Scores.Jailbreak = parsed.Scores.MaliciousPrompt
-			p.sendError(firewallErrors, NewGuardrailViolation(fmt.Sprintf(
-				"%s: score %.2f exceeded threshold %.2f",
-				taggedRequest.Type,
-				parsed.Scores.MaliciousPrompt,
-				conf.JailbreakParamBag.Threshold,
-			)))
-			return
-		}
-	default:
-		p.sendError(firewallErrors, fmt.Errorf("unknown response type: %s", taggedRequest.Type))
-		return
-	}
-}
-
-// local helpers removed in favor of pluginutils.DefineRequestBody
-
-func (p *NeuralTrustJailbreakPlugin) sendError(ch chan<- error, err error) {
-	if err == nil {
-		return
-	}
-	select {
-	case ch <- err:
-	default:
 	}
 }

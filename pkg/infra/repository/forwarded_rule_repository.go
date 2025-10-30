@@ -21,10 +21,10 @@ var (
 type forwardedRuleRepository struct {
 	db     *gorm.DB
 	logger *logrus.Logger
-	cache  *cache.Cache
+	cache  cache.Cache
 }
 
-func NewForwardedRuleRepository(db *gorm.DB, logger *logrus.Logger, cache *cache.Cache) forwarding_rule.Repository {
+func NewForwardedRuleRepository(db *gorm.DB, logger *logrus.Logger, cache cache.Cache) forwarding_rule.Repository {
 	return &forwardedRuleRepository{
 		db:     db,
 		logger: logger,

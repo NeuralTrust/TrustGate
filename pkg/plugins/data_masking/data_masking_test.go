@@ -515,8 +515,8 @@ func TestInternationalPII(t *testing.T) {
 }
 
 // createTestCache creates a test cache with a TTL map for data masking
-func createTestCache() *cache.Cache {
-	c, err := cache.NewCache(common.CacheConfig{
+func createTestCache() cache.Cache {
+	c, err := cache.NewCache(cache.Config{
 		Host: "localhost",
 		Port: 6379,
 	})

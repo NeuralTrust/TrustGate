@@ -12,7 +12,7 @@ import (
 	"github.com/go-redis/redis/v8"
 )
 
-func (c *Cache) GetAPIKeys(gatewayID string) ([]apikey.APIKey, error) {
+func (c *cache) GetAPIKeys(gatewayID string) ([]apikey.APIKey, error) {
 	key := fmt.Sprintf("apikeys:%s", gatewayID)
 	data, err := c.Client().Get(context.Background(), key).Result()
 	if err != nil {
@@ -30,7 +30,7 @@ func (c *Cache) GetAPIKeys(gatewayID string) ([]apikey.APIKey, error) {
 	return keys, nil
 }
 
-func (c *Cache) ValidateAPIKey(gatewayID, apiKey string) bool {
+func (c *cache) ValidateAPIKey(gatewayID, apiKey string) bool {
 	key, err := c.GetAPIKey(gatewayID, apiKey)
 	if err != nil {
 		return false
@@ -44,7 +44,7 @@ func (c *Cache) ValidateAPIKey(gatewayID, apiKey string) bool {
 	return key.Active && (key.ExpiresAt.IsZero() || key.ExpiresAt.After(now))
 }
 
-func (c *Cache) GetAPIKey(gatewayID, apiKey string) (*apikey.APIKey, error) {
+func (c *cache) GetAPIKey(gatewayID, apiKey string) (*apikey.APIKey, error) {
 	// Get all API keys for the gateway
 	keys, err := c.GetAPIKeys(gatewayID)
 	if err != nil {
@@ -61,7 +61,7 @@ func (c *Cache) GetAPIKey(gatewayID, apiKey string) (*apikey.APIKey, error) {
 	return nil, nil
 }
 
-func (c *Cache) SaveAPIKey(ctx context.Context, key *apikey.APIKey) error {
+func (c *cache) SaveAPIKey(ctx context.Context, key *apikey.APIKey) error {
 	data, err := json.Marshal(key)
 	if err != nil {
 		return err

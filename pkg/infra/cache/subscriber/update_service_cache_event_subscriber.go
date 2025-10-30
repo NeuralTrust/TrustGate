@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -13,14 +12,14 @@ import (
 
 type UpdateServiceCacheEventSubscriber struct {
 	logger      *logrus.Logger
-	cache       *cache.Cache
+	cache       cache.Cache
 	repository  service.Repository
-	memoryCache *common.TTLMap
+	memoryCache *cache.TTLMap
 }
 
 func NewUpdateServiceCacheEventSubscriber(
 	logger *logrus.Logger,
-	c *cache.Cache,
+	c cache.Cache,
 	repository service.Repository,
 ) infraCache.EventSubscriber[event.UpdateServiceCacheEvent] {
 	return &UpdateServiceCacheEventSubscriber{

@@ -10,10 +10,10 @@ import (
 )
 
 type redisEventPublisher struct {
-	cache *cache.Cache
+	cache cache.Cache
 }
 
-func NewRedisEventPublisher(cache *cache.Cache) EventPublisher {
+func NewRedisEventPublisher(cache cache.Cache) EventPublisher {
 	return &redisEventPublisher{
 		cache: cache,
 	}

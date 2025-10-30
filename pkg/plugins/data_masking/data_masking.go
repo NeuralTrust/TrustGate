@@ -235,7 +235,7 @@ type hashToOriginalMap map[string]string
 
 type DataMaskingPlugin struct {
 	logger      *logrus.Logger
-	memoryCache *common.TTLMap
+	memoryCache *cache.TTLMap
 }
 
 type ReversibleHashingConfig struct {
@@ -267,13 +267,13 @@ type Rule struct {
 	PreserveLen bool   `mapstructure:"preserve_len"`
 }
 
-func NewDataMaskingPlugin(logger *logrus.Logger, c *cache.Cache) pluginiface.Plugin {
-	var ttl *common.TTLMap
+func NewDataMaskingPlugin(logger *logrus.Logger, c cache.Cache) pluginiface.Plugin {
+	var ttl *cache.TTLMap
 	if c != nil {
 		ttl = c.GetTTLMap(cache.DataMaskingTTLName)
 	}
 	if ttl == nil {
-		ttl = common.NewTTLMap(10 * time.Minute)
+		ttl = cache.NewTTLMap(10 * time.Minute)
 	}
 	return &DataMaskingPlugin{
 		logger:      logger,
@@ -350,7 +350,7 @@ func (p *DataMaskingPlugin) Execute(
 	}
 
 	if p.memoryCache == nil {
-		p.memoryCache = common.NewTTLMap(10 * time.Minute)
+		p.memoryCache = cache.NewTTLMap(10 * time.Minute)
 	}
 
 	if config.ReversibleHashing.Enabled {

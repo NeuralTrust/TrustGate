@@ -11,6 +11,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
+	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -54,7 +55,7 @@ func NewCreateRuleHandler(
 // @Produce json
 // @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
-// @Param rule body types.CreateRuleRequest true "Rule request body"
+// @Param rule body request.CreateRuleRequest true "Rule request body"
 // @Success 201 {object} forwarding_rule.ForwardingRule "Rule created successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
@@ -62,7 +63,7 @@ func NewCreateRuleHandler(
 func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 
-	var req types.CreateRuleRequest
+	var req req.CreateRuleRequest
 
 	if err := c.BodyParser(&req); err != nil {
 		s.logger.WithError(err).Error("Failed to bind request")
@@ -143,6 +144,11 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	var pluginChainDB domain.PluginChainJSON
+	if req.PluginChain != nil {
+		pluginChainDB = append(pluginChainDB, req.PluginChain...)
+	}
+
 	dbRule := &forwarding_rule.ForwardingRule{
 		ID:            id,
 		Name:          req.Name,
@@ -154,7 +160,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		StripPath:     stripPath,
 		PreserveHost:  preserveHost,
 		RetryAttempts: retryAttempts,
-		PluginChain:   req.PluginChain,
+		PluginChain:   pluginChainDB,
 		Active:        true,
 		Public:        false,
 		TrustLens:     trustLensConfig,
@@ -228,11 +234,12 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 
 	var trustLensConfig *types.TrustLensConfig
 	if rule.TrustLens != nil {
+		tl := types.TrustLensConfig(*rule.TrustLens)
 		trustLensConfig = &types.TrustLensConfig{
-			AppID:   rule.TrustLens.AppID,
-			TeamID:  rule.TrustLens.TeamID,
-			Type:    rule.TrustLens.Type,
-			Mapping: rule.TrustLens.Mapping,
+			AppID:   tl.AppID,
+			TeamID:  tl.TeamID,
+			Type:    tl.Type,
+			Mapping: tl.Mapping,
 		}
 	}
 
@@ -256,7 +263,7 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 	}, nil
 }
 
-func (s *createRuleHandler) validate(rule *types.CreateRuleRequest) error {
+func (s *createRuleHandler) validate(rule *req.CreateRuleRequest) error {
 
 	if rule.Path == "" {
 		return fmt.Errorf("path is required")

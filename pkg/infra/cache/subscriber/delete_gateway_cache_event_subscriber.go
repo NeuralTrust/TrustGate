@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/sirupsen/logrus"
@@ -12,13 +11,13 @@ import (
 
 type DeleteGatewayCacheEventSubscriber struct {
 	logger      *logrus.Logger
-	cache       *cache.Cache
-	memoryCache *common.TTLMap
+	cache       cache.Cache
+	memoryCache *cache.TTLMap
 }
 
 func NewDeleteGatewayCacheEventSubscriber(
 	logger *logrus.Logger,
-	c *cache.Cache,
+	c cache.Cache,
 ) infraCache.EventSubscriber[event.DeleteGatewayCacheEvent] {
 	return &DeleteGatewayCacheEventSubscriber{
 		logger:      logger,

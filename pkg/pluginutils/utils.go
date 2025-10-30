@@ -9,11 +9,15 @@ import (
 	"strings"
 )
 
-func DefineRequestBody(body []byte, mappingField string) ([]byte, error) {
-	wrapDefault := func(b []byte) ([]byte, error) {
-		return json.Marshal(map[string]interface{}{
-			"input": string(b),
-		})
+type MappingContent struct {
+	Input string `json:"input"`
+}
+
+func DefineRequestBody(body []byte, mappingField string) (*MappingContent, error) {
+	wrapDefault := func(b []byte) (*MappingContent, error) {
+		return &MappingContent{
+			Input: string(b),
+		}, nil
 	}
 
 	var root map[string]interface{}
@@ -80,11 +84,7 @@ func DefineRequestBody(body []byte, mappingField string) ([]byte, error) {
 		input = buf.String()
 	}
 
-	res, err := json.Marshal(map[string]interface{}{
-		"input": input,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal wrapped input: %w", err)
-	}
-	return res, nil
+	return &MappingContent{
+		Input: input,
+	}, nil
 }

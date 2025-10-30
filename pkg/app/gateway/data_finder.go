@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -23,8 +22,8 @@ type DataFinder interface {
 type dataFinder struct {
 	repo              gateway.Repository
 	ruleRepository    forwarding_rule.Repository
-	cache             *cache.Cache
-	memoryCache       *common.TTLMap
+	cache             cache.Cache
+	memoryCache       *cache.TTLMap
 	logger            *logrus.Logger
 	outputTransformer *OutputTransformer
 }
@@ -32,7 +31,7 @@ type dataFinder struct {
 func NewDataFinder(
 	repository gateway.Repository,
 	ruleRepository forwarding_rule.Repository,
-	c *cache.Cache,
+	c cache.Cache,
 	logger *logrus.Logger,
 ) DataFinder {
 	return &dataFinder{

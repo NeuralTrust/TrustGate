@@ -54,8 +54,8 @@ var responseBodyPool = sync.Pool{
 
 type forwardedHandler struct {
 	logger              *logrus.Logger
-	cache               *cache.Cache
-	gatewayCache        *common.TTLMap
+	cache               cache.Cache
+	gatewayCache        *cache.TTLMap
 	upstreamFinder      upstream.Finder
 	serviceFinder       service.Finder
 	pluginManager       plugins.Manager
@@ -70,7 +70,7 @@ type forwardedHandler struct {
 
 func NewForwardedHandler(
 	logger *logrus.Logger,
-	c *cache.Cache,
+	c cache.Cache,
 	upstreamFinder upstream.Finder,
 	serviceFinder service.Finder,
 	pluginManager plugins.Manager,
@@ -600,7 +600,11 @@ func (h *forwardedHandler) handleUpstreamRequest(
 	return nil, fmt.Errorf("%v", reqErr)
 }
 
-func (h *forwardedHandler) applyTargetOAuth(req *types.RequestContext, target *types.UpstreamTarget, upstreamModel *domainUpstream.Upstream) error {
+func (h *forwardedHandler) applyTargetOAuth(
+	req *types.RequestContext,
+	target *types.UpstreamTarget,
+	upstreamModel *domainUpstream.Upstream,
+) error {
 	if upstreamModel == nil || target == nil {
 		return nil
 	}

@@ -15,10 +15,10 @@ type GetGatewayCache interface {
 }
 
 type getGatewayCache struct {
-	cache *cache.Cache
+	cache cache.Cache
 }
 
-func NewGetGatewayCache(cache *cache.Cache) GetGatewayCache {
+func NewGetGatewayCache(cache cache.Cache) GetGatewayCache {
 	return &getGatewayCache{
 		cache: cache,
 	}

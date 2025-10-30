@@ -42,7 +42,7 @@ tls:
   ca_cert: ${TLS_CA_CERT}
   keys:
     public_key: ${TLS_KEYS_PUBLIC_KEY}
-    private_key: ${TLS_KEYS_PRIVATE_KEY
+    private_key: ${TLS_KEYS_PRIVATE_KEY}
   cipher_suites:
     - 4865
     - 4866

@@ -2,18 +2,19 @@ package dependency_container
 
 import (
 	"fmt"
+	"net/http"
 	"reflect"
 	"time"
 
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/policy"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
 	"github.com/valyala/fasthttp"
-
-	"net/http"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -22,7 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
+
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domainEmbedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -49,7 +50,7 @@ import (
 )
 
 type Container struct {
-	Cache                 *cache.Cache
+	Cache                 cache.Cache
 	BedrockClient         bedrock.Client
 	PluginManager         plugins.Manager
 	HandlerTransport      handlers.HandlerTransport
@@ -74,6 +75,7 @@ type Container struct {
 	JWTManager            jwt.Manager
 	RuleRepository        ruledomain.Repository
 	GatewayRepository     domainGateway.Repository
+	FirewallClient        firewall.Client
 }
 
 func NewContainer(
@@ -81,7 +83,7 @@ func NewContainer(
 	logger *logrus.Logger,
 	db *database.DB,
 	eventsRegistry map[string]reflect.Type,
-	initializeMemoryCache func(cacheInstance *cache.Cache),
+	initializeMemoryCache func(cacheInstance cache.Cache),
 	initializeLoadBalancerFactory loadbalancer.FactoryInitializer,
 ) (*Container, error) {
 
@@ -97,7 +99,7 @@ func NewContainer(
 		DisablePathNormalizing:        true,
 	}
 
-	cacheConfig := common.CacheConfig{
+	cacheConfig := cache.Config{
 		Host:     cfg.Redis.Host,
 		Port:     cfg.Redis.Port,
 		Password: cfg.Redis.Password,
@@ -121,11 +123,19 @@ func NewContainer(
 
 	providerFactory := providersFactory.NewProviderLocator(httpClient)
 
-	// OAuth token client with optimized net/http client
 	stdHTTPClient := &http.Client{Timeout: 10 * time.Second}
 	oauthTokenClient := oauth.NewTokenClient(stdHTTPClient)
 
 	fingerprintTracker := fingerprint.NewFingerPrintTracker(cacheInstance)
+
+	circuitBreaker := httpx.NewCircuitBreaker("neuraltrust-firewall", 30*time.Second, 3)
+
+	firewallClient := firewall.NewNeuralTrustFirewallClient(
+		&http.Client{Timeout: 10 * time.Second},
+		logger,
+		circuitBreaker,
+	)
+
 	pluginManager := plugins.NewManager(
 		cfg,
 		cacheInstance,
@@ -135,6 +145,7 @@ func NewContainer(
 		embeddingRepository,
 		embeddingServiceLocator,
 		providerFactory,
+		firewallClient,
 	)
 
 	// repository
@@ -330,6 +341,7 @@ func NewContainer(
 		JWTManager:            jwtManager,
 		RuleRepository:        ruleRepository,
 		GatewayRepository:     gatewayRepository,
+		FirewallClient:        firewallClient,
 	}
 
 	return container, nil

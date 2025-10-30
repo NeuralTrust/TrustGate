@@ -8,20 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/go-redis/redis/v8"
 )
-
-// Cache implements the common.Cache interface
-type Cache struct {
-	client     *redis.Client
-	localCache sync.Map
-	ttlMaps    sync.Map
-	ttl        time.Duration
-}
 
 const (
 	GatewayKeyPattern   = "gateway:%s"
@@ -31,7 +22,6 @@ const (
 	ServicesKeyPattern  = "gateway:%s:services"
 	ServiceKeyPattern   = "gateway:%s:service:%s"
 	ApiKeyPattern       = "apikey:%s"
-	PluginKeyPattern    = "plugin:%s"
 
 	GatewayTTLName  = "gateway"
 	ApiKeyTTLName   = "api_key"
@@ -43,7 +33,41 @@ const (
 	DataMaskingTTLName = "data_masking"
 )
 
-func NewCache(config common.CacheConfig) (*Cache, error) {
+//go:generate mockery --name=Cache --dir=. --output=./mocks --filename=cache_mock.go --case=underscore --with-expecter
+type Cache interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key string, value string, expiration time.Duration) error
+	Delete(ctx context.Context, key string) error
+	Client() *redis.Client
+	CreateTTLMap(name string, ttl time.Duration) *TTLMap
+	GetTTLMap(name string) *TTLMap
+
+	GetApiKey(ctx context.Context, key string) (*apikey.APIKey, error)
+	SaveAPIKey(ctx context.Context, key *apikey.APIKey) error
+	GetService(ctx context.Context, gatewayID, serviceID string) (*service.Service, error)
+	SaveService(ctx context.Context, gatewayID string, service *service.Service) error
+	GetUpstream(ctx context.Context, gatewayID, upstreamID string) (*upstream.Upstream, error)
+	SaveUpstream(ctx context.Context, gatewayID string, upstream *upstream.Upstream) error
+	DeleteAllPluginsData(ctx context.Context, gatewayID string) error
+	DeleteAllByGatewayID(ctx context.Context, gatewayID string) error
+}
+
+type Config struct {
+	Host     string
+	Port     int
+	Password string
+	DB       int
+	TLS      bool
+}
+
+type cache struct {
+	client     *redis.Client
+	localCache sync.Map
+	ttlMaps    sync.Map
+	ttl        time.Duration
+}
+
+func NewCache(config Config) (Cache, error) {
 	options := &redis.Options{
 		Addr:     fmt.Sprintf("%s:%d", config.Host, config.Port),
 		Password: config.Password,
@@ -55,7 +79,7 @@ func NewCache(config common.CacheConfig) (*Cache, error) {
 	}
 	client := redis.NewClient(options)
 
-	return &Cache{
+	return &cache{
 		client:     client,
 		localCache: sync.Map{},
 		ttlMaps:    sync.Map{},
@@ -63,7 +87,7 @@ func NewCache(config common.CacheConfig) (*Cache, error) {
 	}, nil
 }
 
-func (c *Cache) Get(ctx context.Context, key string) (string, error) {
+func (c *cache) Get(ctx context.Context, key string) (string, error) {
 	if value, ok := c.localCache.Load(key); ok {
 		str, err := safeStringCast(value)
 		if err != nil {
@@ -74,7 +98,7 @@ func (c *Cache) Get(ctx context.Context, key string) (string, error) {
 	return c.client.Get(ctx, key).Result()
 }
 
-func (c *Cache) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
+func (c *cache) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := c.client.Set(ctx, key, value, expiration).Err(); err != nil {
@@ -84,7 +108,7 @@ func (c *Cache) Set(ctx context.Context, key string, value string, expiration ti
 	return nil
 }
 
-func (c *Cache) Delete(ctx context.Context, key string) error {
+func (c *cache) Delete(ctx context.Context, key string) error {
 	if err := c.client.Del(ctx, key).Err(); err != nil {
 		return err
 	}
@@ -92,7 +116,7 @@ func (c *Cache) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (c *Cache) DeleteAllPluginsData(ctx context.Context, gatewayID string) error {
+func (c *cache) DeleteAllPluginsData(ctx context.Context, gatewayID string) error {
 	pattern := fmt.Sprintf("*plugin:%s*", gatewayID)
 	var cursor uint64
 	for {
@@ -116,7 +140,7 @@ func (c *Cache) DeleteAllPluginsData(ctx context.Context, gatewayID string) erro
 	return nil
 }
 
-func (c *Cache) DeleteAllByGatewayID(ctx context.Context, gatewayID string) error {
+func (c *cache) DeleteAllByGatewayID(ctx context.Context, gatewayID string) error {
 	pattern := fmt.Sprintf("*%s*", gatewayID)
 	var cursor uint64
 	for {
@@ -140,17 +164,17 @@ func (c *Cache) DeleteAllByGatewayID(ctx context.Context, gatewayID string) erro
 	return nil
 }
 
-func (c *Cache) Client() *redis.Client {
+func (c *cache) Client() *redis.Client {
 	return c.client
 }
 
-func (c *Cache) CreateTTLMap(name string, ttl time.Duration) *common.TTLMap {
-	ttlMap := common.NewTTLMap(ttl)
+func (c *cache) CreateTTLMap(name string, ttl time.Duration) *TTLMap {
+	ttlMap := NewTTLMap(ttl)
 	c.ttlMaps.Store(name, ttlMap)
 	return ttlMap
 }
 
-func (c *Cache) GetTTLMap(name string) *common.TTLMap {
+func (c *cache) GetTTLMap(name string) *TTLMap {
 	if value, ok := c.ttlMaps.Load(name); ok {
 		ttlMap, err := safeTTLMapCast(value)
 		if err != nil {
@@ -161,7 +185,7 @@ func (c *Cache) GetTTLMap(name string) *common.TTLMap {
 	return nil
 }
 
-func (c *Cache) SaveUpstream(ctx context.Context, gatewayID string, upstream *upstream.Upstream) error {
+func (c *cache) SaveUpstream(ctx context.Context, gatewayID string, upstream *upstream.Upstream) error {
 	// Cache individual upstream
 	upstreamKey := fmt.Sprintf(UpstreamKeyPattern, gatewayID, upstream.ID)
 	upstreamJSON, err := json.Marshal(upstream)
@@ -176,7 +200,7 @@ func (c *Cache) SaveUpstream(ctx context.Context, gatewayID string, upstream *up
 	return c.Delete(ctx, upstreamsKey)
 }
 
-func (c *Cache) GetUpstream(ctx context.Context, gatewayID, upstreamID string) (*upstream.Upstream, error) {
+func (c *cache) GetUpstream(ctx context.Context, gatewayID, upstreamID string) (*upstream.Upstream, error) {
 	upstreamKey := fmt.Sprintf(UpstreamKeyPattern, gatewayID, upstreamID)
 	res, err := c.Get(ctx, upstreamKey)
 	if err != nil {
@@ -189,7 +213,7 @@ func (c *Cache) GetUpstream(ctx context.Context, gatewayID, upstreamID string) (
 	return upstream, nil
 }
 
-func (c *Cache) GetService(ctx context.Context, gatewayID, serviceID string) (*service.Service, error) {
+func (c *cache) GetService(ctx context.Context, gatewayID, serviceID string) (*service.Service, error) {
 	key := fmt.Sprintf(ServiceKeyPattern, gatewayID, serviceID)
 	res, err := c.Get(ctx, key)
 	if err != nil {
@@ -202,7 +226,7 @@ func (c *Cache) GetService(ctx context.Context, gatewayID, serviceID string) (*s
 	return entity, nil
 }
 
-func (c *Cache) GetApiKey(ctx context.Context, key string) (*apikey.APIKey, error) {
+func (c *cache) GetApiKey(ctx context.Context, key string) (*apikey.APIKey, error) {
 	apikeyPattern := fmt.Sprintf(ApiKeyPattern, key)
 	res, err := c.Get(ctx, apikeyPattern)
 	if err != nil {
@@ -215,7 +239,7 @@ func (c *Cache) GetApiKey(ctx context.Context, key string) (*apikey.APIKey, erro
 	return apiKey, nil
 }
 
-func (c *Cache) SaveService(ctx context.Context, gatewayID string, service *service.Service) error {
+func (c *cache) SaveService(ctx context.Context, gatewayID string, service *service.Service) error {
 	// Cache individual service
 	serviceKey := fmt.Sprintf(ServiceKeyPattern, gatewayID, service.ID)
 	serviceJSON, err := json.Marshal(service)
@@ -239,8 +263,8 @@ func safeStringCast(value interface{}) (string, error) {
 	return str, nil
 }
 
-func safeTTLMapCast(value interface{}) (*common.TTLMap, error) {
-	ttlMap, ok := value.(*common.TTLMap)
+func safeTTLMapCast(value interface{}) (*TTLMap, error) {
+	ttlMap, ok := value.(*TTLMap)
 	if !ok {
 		return nil, fmt.Errorf("invalid type assertion to TTLMap")
 	}

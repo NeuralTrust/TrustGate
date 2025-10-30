@@ -24,7 +24,7 @@ type updateUpstreamHandler struct {
 	repo                        upstream.Repository
 	publisher                   infraCache.EventPublisher
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
-	cache                       *cache.Cache
+	cache                       cache.Cache
 	cfg                         *config.Config
 }
 
@@ -32,7 +32,7 @@ func NewUpdateUpstreamHandler(
 	logger *logrus.Logger,
 	repo upstream.Repository,
 	publisher infraCache.EventPublisher,
-	cache *cache.Cache,
+	cache cache.Cache,
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator,
 	cfg *config.Config,
 ) Handler {

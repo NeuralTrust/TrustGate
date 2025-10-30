@@ -23,7 +23,7 @@ type listRulesHandler struct {
 	ruleRepo    forwarding_rule.Repository
 	gatewayRepo gateway.Repository
 	serviceRepo service.Repository
-	cache       *cache.Cache
+	cache       cache.Cache
 }
 
 func NewListRulesHandler(
@@ -31,7 +31,7 @@ func NewListRulesHandler(
 	ruleRepo forwarding_rule.Repository,
 	gatewayRepo gateway.Repository,
 	serviceRepo service.Repository,
-	cache *cache.Cache,
+	cache cache.Cache,
 ) Handler {
 	return &listRulesHandler{
 		logger:      logger,

@@ -14,14 +14,14 @@ import (
 
 type redisEventListener struct {
 	logger      *logrus.Logger
-	cache       *cache.Cache
+	cache       cache.Cache
 	subscribers map[reflect.Type]interface{}
 	registry    map[string]reflect.Type
 }
 
 func NewRedisEventListener(
 	logger *logrus.Logger,
-	cache *cache.Cache,
+	cache cache.Cache,
 	registry map[string]reflect.Type,
 ) EventListener {
 	return &redisEventListener{

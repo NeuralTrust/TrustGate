@@ -13,10 +13,10 @@ import (
 type getServiceHandler struct {
 	logger *logrus.Logger
 	repo   service.Repository
-	cache  *cache.Cache
+	cache  cache.Cache
 }
 
-func NewGetServiceHandler(logger *logrus.Logger, repo service.Repository, cache *cache.Cache) Handler {
+func NewGetServiceHandler(logger *logrus.Logger, repo service.Repository, cache cache.Cache) Handler {
 	return &getServiceHandler{
 		logger: logger,
 		repo:   repo,

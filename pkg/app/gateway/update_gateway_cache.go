@@ -16,10 +16,10 @@ type UpdateGatewayCache interface {
 
 type updateGatewayCache struct {
 	transformer *OutputTransformer
-	cache       *cache.Cache
+	cache       cache.Cache
 }
 
-func NewUpdateGatewayCache(cache *cache.Cache) UpdateGatewayCache {
+func NewUpdateGatewayCache(cache cache.Cache) UpdateGatewayCache {
 	return &updateGatewayCache{
 		transformer: NewOutputTransformer(),
 		cache:       cache,

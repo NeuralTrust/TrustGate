@@ -15,10 +15,10 @@ import (
 type listUpstreamHandler struct {
 	logger *logrus.Logger
 	repo   upstream.Repository
-	cache  *cache.Cache
+	cache  cache.Cache
 }
 
-func NewListUpstreamHandler(logger *logrus.Logger, repo upstream.Repository, cache *cache.Cache) Handler {
+func NewListUpstreamHandler(logger *logrus.Logger, repo upstream.Repository, cache cache.Cache) Handler {
 	return &listUpstreamHandler{
 		logger: logger,
 		repo:   repo,
