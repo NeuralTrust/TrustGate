@@ -56,7 +56,7 @@ func (c *client) Ask(
 		))
 	}
 
-	model := anthropic.ModelClaude3OpusLatest
+	model := anthropic.ModelClaudeHaiku4_5
 	if config.Model != "" {
 		model = anthropic.Model(config.Model)
 	}
@@ -185,7 +185,7 @@ func (c *client) getParams(reqBody []byte, config *providers.Config) (anthropic.
 		return anthropic.MessageNewParams{}, fmt.Errorf("invalid request body: %w", err)
 	}
 
-	model := anthropic.ModelClaude3OpusLatest
+	model := anthropic.ModelClaudeHaiku4_5
 
 	if req.Model != "" {
 		model = anthropic.Model(req.Model)

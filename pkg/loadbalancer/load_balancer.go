@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -173,9 +172,13 @@ func (lb *LoadBalancer) isTargetHealthy(req *types.RequestContext, targetID stri
 	key := fmt.Sprintf("lb:health:%s:%s", lb.upstreamID, targetID)
 	val, err := lb.cache.Get(req.Context, key)
 	if err != nil {
-		return false, err
+		return true, nil
 	}
-	return strings.Contains(val, `"Healthy":true`), nil
+	var status types.HealthStatus
+	if err := json.Unmarshal([]byte(val), &status); err != nil {
+		return true, nil
+	}
+	return status.Healthy, nil
 }
 
 func (lb *LoadBalancer) ReportFailure(target *types.UpstreamTarget, err error) {
