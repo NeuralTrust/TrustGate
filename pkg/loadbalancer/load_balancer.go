@@ -17,7 +17,7 @@ import (
 type LoadBalancer struct {
 	strategy     Strategy
 	logger       *logrus.Logger
-	cache        *cache.Cache
+	cache        cache.Cache
 	upstreamID   string
 	upstream     *upstream.Upstream
 	targetStatus map[string]*TargetStatus
@@ -36,7 +36,7 @@ func NewLoadBalancer(
 	factory Factory,
 	upstream *upstream.Upstream,
 	logger *logrus.Logger,
-	cache *cache.Cache,
+	cache cache.Cache,
 ) (*LoadBalancer, error) {
 	targets := make([]types.UpstreamTarget, len(upstream.Targets))
 	ctx := context.Background()

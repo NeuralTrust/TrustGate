@@ -204,15 +204,19 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	var regexRules []*regexp.Regexp
 
 	inputBody := req.Body
-	inputBody, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
+
+	if req.Stage == types.PostRequest {
+		inputBody = resp.Body
+	}
+
+	mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
 	}
 
-	if req.Stage == types.PostRequest {
-		inputBody = resp.Body
-	}
+	// Convert to []byte once and reuse
+	inputBytes := []byte(mappingContent.Input)
 
 	evt := &NeuralTrustModerationData{
 		EmbeddingModeration: &EmbeddingModeration{
@@ -237,7 +241,15 @@ func (p *NeuralTrustModerationPlugin) Execute(
 			}
 			regexRules[i] = regex
 		}
-		keyRegFound = p.callKeyRegModeration(ctx, conf.KeyRegParamBag, inputBody, firewallErrors, evt, keywords, regexRules)
+		keyRegFound = p.callKeyRegModeration(
+			ctx,
+			conf.KeyRegParamBag,
+			inputBytes,
+			firewallErrors,
+			evt,
+			keywords,
+			regexRules,
+		)
 	}
 
 	if !keyRegFound && conf.EmbeddingParamBag != nil && conf.EmbeddingParamBag.Enabled {
@@ -251,7 +263,16 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		}
 
 		wg.Add(1)
-		go p.callEmbeddingModeration(ctx, conf.EmbeddingParamBag, &wg, inputBody, req.GatewayID, firewallErrors, evt, &evtMu)
+		go p.callEmbeddingModeration(
+			ctx,
+			conf.EmbeddingParamBag,
+			&wg,
+			inputBytes,
+			req.GatewayID,
+			firewallErrors,
+			evt,
+			&evtMu,
+		)
 	}
 
 	if !keyRegFound && conf.LLMParamBag != nil && conf.LLMParamBag.Enabled {
@@ -260,7 +281,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 			ctx,
 			conf.LLMParamBag,
 			&wg,
-			inputBody,
+			inputBytes,
 			firewallErrors,
 			evt,
 			&evtMu,

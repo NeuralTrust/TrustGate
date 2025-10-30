@@ -8,7 +8,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	apikey "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -17,7 +17,7 @@ import (
 
 type createAPIKeyHandler struct {
 	logger          *logrus.Logger
-	cache           *cache.Cache
+	cache           cache.Cache
 	apiKeyRepo      apikey.Repository
 	ruleRepo        ruledomain.Repository
 	policyValidator apikey.PolicyValidator
@@ -26,7 +26,7 @@ type createAPIKeyHandler struct {
 
 func NewCreateAPIKeyHandler(
 	logger *logrus.Logger,
-	cache *cache.Cache,
+	cache cache.Cache,
 	apiKeyRepo apikey.Repository,
 	ruleRepo ruledomain.Repository,
 	policyValidator apikey.PolicyValidator,

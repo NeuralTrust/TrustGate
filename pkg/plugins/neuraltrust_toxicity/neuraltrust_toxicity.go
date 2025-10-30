@@ -107,7 +107,7 @@ func (p *NeuralTrustToxicity) Execute(
 		inputBody = resp.Body
 	}
 
-	body, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
+	mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
@@ -127,8 +127,9 @@ func (p *NeuralTrustToxicity) Execute(
 			Token:   conf.Credentials.Token,
 		}
 
-		var content firewall.Content
-		content.AddInput(body)
+		content := firewall.Content{
+			Input: []string{mappingContent.Input},
+		}
 
 		responses, err := p.firewallClient.DetectToxicity(ctx, content, credentials)
 		if err != nil {

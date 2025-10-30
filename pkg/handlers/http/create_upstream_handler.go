@@ -19,7 +19,7 @@ import (
 
 type createUpstreamHandler struct {
 	logger                      *logrus.Logger
-	cache                       *cache.Cache
+	cache                       cache.Cache
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
 	repo                        upstream.Repository
 	gatewayRepo                 gateway.Repository
@@ -30,7 +30,7 @@ func NewCreateUpstreamHandler(
 	logger *logrus.Logger,
 	repo upstream.Repository,
 	gatewayRepo gateway.Repository,
-	cache *cache.Cache,
+	cache cache.Cache,
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator,
 	cfg *config.Config,
 ) Handler {

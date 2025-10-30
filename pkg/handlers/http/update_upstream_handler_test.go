@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream/mocks"
@@ -23,9 +22,9 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-func buildCacheFromConfig(cfg *config.Config) *cache.Cache {
+func buildCacheFromConfig(cfg *config.Config) cache.Cache {
 	rc := cfg.Redis
-	c, err := cache.NewCache(common.CacheConfig{
+	c, err := cache.NewCache(cache.Config{
 		Host:     rc.Host,
 		Port:     rc.Port,
 		Password: rc.Password,

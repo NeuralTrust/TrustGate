@@ -8,12 +8,12 @@ import (
 
 type invalidateCacheHandler struct {
 	logger *logrus.Logger
-	cache  *cache.Cache
+	cache  cache.Cache
 }
 
 func NewInvalidateCacheHandler(
 	logger *logrus.Logger,
-	cache *cache.Cache,
+	cache cache.Cache,
 ) Handler {
 	return &invalidateCacheHandler{
 		logger: logger,

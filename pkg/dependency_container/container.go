@@ -23,7 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
+
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domainEmbedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -50,7 +50,7 @@ import (
 )
 
 type Container struct {
-	Cache                 *cache.Cache
+	Cache                 cache.Cache
 	BedrockClient         bedrock.Client
 	PluginManager         plugins.Manager
 	HandlerTransport      handlers.HandlerTransport
@@ -83,7 +83,7 @@ func NewContainer(
 	logger *logrus.Logger,
 	db *database.DB,
 	eventsRegistry map[string]reflect.Type,
-	initializeMemoryCache func(cacheInstance *cache.Cache),
+	initializeMemoryCache func(cacheInstance cache.Cache),
 	initializeLoadBalancerFactory loadbalancer.FactoryInitializer,
 ) (*Container, error) {
 
@@ -99,7 +99,7 @@ func NewContainer(
 		DisablePathNormalizing:        true,
 	}
 
-	cacheConfig := common.CacheConfig{
+	cacheConfig := cache.Config{
 		Host:     cfg.Redis.Host,
 		Port:     cfg.Redis.Port,
 		Password: cfg.Redis.Password,

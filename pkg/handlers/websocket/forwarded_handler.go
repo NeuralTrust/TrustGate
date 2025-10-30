@@ -34,7 +34,7 @@ type forwardedWebsocketHandler struct {
 	upstreamFinder        upstream.Finder
 	serviceFinder         service.Finder
 	lbFactory             loadbalancer.Factory
-	cache                 *cache.Cache
+	cache                 cache.Cache
 	connections           map[string]*gorilla.Conn
 	connectionMutex       sync.RWMutex
 	clientChannels        map[string]map[string]chan *infraWebsocket.ResponseMessage
@@ -58,7 +58,7 @@ func NewWebsocketHandler(
 	upstreamFinder upstream.Finder,
 	serviceFinder service.Finder,
 	lbFactory loadbalancer.Factory,
-	cache *cache.Cache,
+	cache cache.Cache,
 	pluginManager plugins.Manager,
 ) Handler {
 	return &forwardedWebsocketHandler{

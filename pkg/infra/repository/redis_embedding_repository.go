@@ -19,10 +19,10 @@ const (
 )
 
 type redisEmbeddingRepository struct {
-	cache *cache.Cache
+	cache cache.Cache
 }
 
-func NewRedisEmbeddingRepository(cache *cache.Cache) embedding.EmbeddingRepository {
+func NewRedisEmbeddingRepository(cache cache.Cache) embedding.EmbeddingRepository {
 	return &redisEmbeddingRepository{
 		cache: cache,
 	}

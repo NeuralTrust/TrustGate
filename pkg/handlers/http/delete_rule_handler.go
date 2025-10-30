@@ -18,14 +18,14 @@ import (
 type deleteRuleHandler struct {
 	logger    *logrus.Logger
 	repo      forwarding_rule.Repository
-	cache     *cache.Cache
+	cache     cache.Cache
 	publisher infraCache.EventPublisher
 }
 
 func NewDeleteRuleHandler(
 	logger *logrus.Logger,
 	repo forwarding_rule.Repository,
-	cache *cache.Cache,
+	cache cache.Cache,
 	publisher infraCache.EventPublisher,
 ) Handler {
 	return &deleteRuleHandler{

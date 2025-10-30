@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/sirupsen/logrus"
@@ -13,13 +12,13 @@ import (
 
 type DeleteServiceCacheEventSubscriber struct {
 	logger      *logrus.Logger
-	cache       *cache.Cache
-	memoryCache *common.TTLMap
+	cache       cache.Cache
+	memoryCache *cache.TTLMap
 }
 
 func NewDeleteServiceCacheEventSubscriber(
 	logger *logrus.Logger,
-	c *cache.Cache,
+	c cache.Cache,
 ) infraCache.EventSubscriber[event.DeleteServiceCacheEvent] {
 	return &DeleteServiceCacheEventSubscriber{
 		logger:      logger,

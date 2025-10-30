@@ -13,6 +13,7 @@ import (
 	domainTypes "github.com/NeuralTrust/TrustGate/pkg/domain"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -25,7 +26,7 @@ import (
 type updateRuleHandler struct {
 	logger                *logrus.Logger
 	repo                  forwarding_rule.Repository
-	cache                 *cache.Cache
+	cache                 cache.Cache
 	validatePlugin        *plugin.ValidatePlugin
 	invalidationPublisher infraCache.EventPublisher
 }
@@ -33,7 +34,7 @@ type updateRuleHandler struct {
 func NewUpdateRuleHandler(
 	logger *logrus.Logger,
 	repo forwarding_rule.Repository,
-	cache *cache.Cache,
+	cache cache.Cache,
 	validatePlugin *plugin.ValidatePlugin,
 	invalidationPublisher infraCache.EventPublisher,
 ) Handler {
@@ -54,7 +55,7 @@ func NewUpdateRuleHandler(
 // @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param rule_id path string true "Rule ID"
-// @Param rule body types.UpdateRuleRequest true "Updated rule data"
+// @Param rule body request.UpdateRuleRequest true "Updated rule data"
 // @Success 204 "Rule updated successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 404 {object} map[string]interface{} "Rule not found"
@@ -63,7 +64,7 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	ruleID := c.Params("rule_id")
 
-	var req types.UpdateRuleRequest
+	var req req.UpdateRuleRequest
 	if err := c.BodyParser(&req); err != nil {
 		s.logger.WithError(err).Error("Failed to bind request")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
@@ -199,7 +200,7 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 func (s *updateRuleHandler) updateForwardingRuleDB(
 	ctx context.Context,
 	ruleUUID, gatewayUUID uuid.UUID,
-	req types.UpdateRuleRequest,
+	req req.UpdateRuleRequest,
 ) error {
 	forwardingRule, err := s.repo.GetRule(ctx, ruleUUID, gatewayUUID)
 	if err != nil {
@@ -285,7 +286,9 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 
 	// Only update plugin chain if explicitly provided
 	if req.PluginChain != nil {
-		forwardingRule.PluginChain = req.PluginChain
+		var pc domainTypes.PluginChainJSON
+		pc = append(pc, req.PluginChain...)
+		forwardingRule.PluginChain = pc
 	}
 	forwardingRule.UpdatedAt = time.Now()
 
@@ -305,7 +308,7 @@ func (s *updateRuleHandler) convertMapToDBHeaders(headers map[string]string) map
 	return result
 }
 
-func (s *updateRuleHandler) validate(rule *types.UpdateRuleRequest) error {
+func (s *updateRuleHandler) validate(rule *req.UpdateRuleRequest) error {
 	// For updates, only validate fields that are provided (partial updates allowed)
 
 	// Validate methods only if provided

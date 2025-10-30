@@ -77,7 +77,7 @@ type Manager interface {
 type manager struct {
 	mu                 sync.RWMutex
 	config             *config.Config
-	cache              *cache.Cache
+	cache              cache.Cache
 	logger             *logrus.Logger
 	bedrockClient      bedrock.Client
 	fingerprintTracker fingerprint.Tracker
@@ -91,7 +91,7 @@ type manager struct {
 
 func NewManager(
 	config *config.Config,
-	cache *cache.Cache,
+	cache cache.Cache,
 	logger *logrus.Logger,
 	bedrockClient bedrock.Client,
 	fingerprintTracker fingerprint.Tracker,

@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/sirupsen/logrus"
 )
@@ -19,14 +18,14 @@ type Finder interface {
 
 type finder struct {
 	repo        domain.Repository
-	cache       *cache.Cache
-	memoryCache *common.TTLMap
+	cache       cache.Cache
+	memoryCache *cache.TTLMap
 	logger      *logrus.Logger
 }
 
 func NewFinder(
 	repository domain.Repository,
-	c *cache.Cache,
+	c cache.Cache,
 	logger *logrus.Logger,
 ) Finder {
 	return &finder{

@@ -15,14 +15,14 @@ import (
 type getUpstreamHandler struct {
 	logger         *logrus.Logger
 	repo           domain.Repository
-	cache          *cache.Cache
+	cache          cache.Cache
 	upstreamFinder upstream.Finder
 }
 
 func NewGetUpstreamHandler(
 	logger *logrus.Logger,
 	repo domain.Repository,
-	cache *cache.Cache,
+	cache cache.Cache,
 	upstreamFinder upstream.Finder,
 ) Handler {
 	return &getUpstreamHandler{

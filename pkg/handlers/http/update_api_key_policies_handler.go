@@ -17,7 +17,7 @@ type updateAPIKeyPoliciesRequest struct {
 
 type updateAPIKeyPoliciesHandler struct {
 	logger          *logrus.Logger
-	cache           *cache.Cache
+	cache           cache.Cache
 	apiKeyRepo      domain.Repository
 	ruleRepo        ruledomain.Repository
 	policyValidator domain.PolicyValidator
@@ -25,7 +25,7 @@ type updateAPIKeyPoliciesHandler struct {
 
 func NewUpdateAPIKeyPoliciesHandler(
 	logger *logrus.Logger,
-	cache *cache.Cache,
+	cache cache.Cache,
 	apiKeyRepo domain.Repository,
 	ruleRepo ruledomain.Repository,
 	policyValidator domain.PolicyValidator,

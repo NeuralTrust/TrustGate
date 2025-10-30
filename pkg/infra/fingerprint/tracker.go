@@ -70,10 +70,10 @@ type Tracker interface {
 }
 
 type tracker struct {
-	redis *cache.Cache
+	redis cache.Cache
 }
 
-func NewFingerPrintTracker(redis *cache.Cache) Tracker {
+func NewFingerPrintTracker(redis cache.Cache) Tracker {
 	return &tracker{
 		redis: redis,
 	}

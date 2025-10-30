@@ -13,11 +13,11 @@ import (
 
 type getAPIKeyHandler struct {
 	logger *logrus.Logger
-	cache  *cache.Cache
+	cache  cache.Cache
 	repo   apikey.Repository
 }
 
-func NewGetAPIKeyHandler(logger *logrus.Logger, cache *cache.Cache, repo apikey.Repository) Handler {
+func NewGetAPIKeyHandler(logger *logrus.Logger, cache cache.Cache, repo apikey.Repository) Handler {
 	return &getAPIKeyHandler{
 		logger: logger,
 		cache:  cache,

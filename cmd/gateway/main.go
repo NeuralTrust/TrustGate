@@ -145,9 +145,9 @@ func main() {
 	fmt.Println("server gracefully stopped")
 }
 
-func initializeMemoryCache() func(cacheInstance *cache.Cache) {
+func initializeMemoryCache() func(cacheInstance cache.Cache) {
 	// memoryCache
-	return func(cacheInstance *cache.Cache) {
+	return func(cacheInstance cache.Cache) {
 		_ = cacheInstance.CreateTTLMap(cache.GatewayTTLName, common.GatewayCacheTTL)
 		_ = cacheInstance.CreateTTLMap(cache.RulesTTLName, common.RulesCacheTTL)
 		_ = cacheInstance.CreateTTLMap(cache.PluginTTLName, common.PluginCacheTTL)

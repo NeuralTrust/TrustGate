@@ -77,8 +77,9 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 			Token:   "test-token",
 		}
 		requestBody := []byte(`{"text": "test prompt"}`)
-		content := firewall.Content{}
-		content.AddInput(requestBody)
+		content := firewall.Content{
+			Input: []string{string(requestBody)},
+		}
 
 		// Execute
 		result, err := client.DetectJailbreak(context.Background(), content, credentials)
@@ -102,8 +103,9 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 			Token:   "test-token",
 		}
 		requestBody := []byte(`{"text": "test prompt"}`)
-		content := firewall.Content{}
-		content.AddInput(requestBody)
+		content := firewall.Content{
+			Input: []string{string(requestBody)},
+		}
 
 		result, err := client.DetectJailbreak(context.Background(), content, credentials)
 
@@ -129,8 +131,9 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 			Token:   "test-token",
 		}
 		requestBody := []byte(`{"text": "test prompt"}`)
-		content := firewall.Content{}
-		content.AddInput(requestBody)
+		content := firewall.Content{
+			Input: []string{string(requestBody)},
+		}
 
 		result, err := client.DetectJailbreak(context.Background(), content, credentials)
 
@@ -160,8 +163,9 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 			Token:   "test-token",
 		}
 		requestBody := []byte(`{"text": "test prompt"}`)
-		content := firewall.Content{}
-		content.AddInput(requestBody)
+		content := firewall.Content{
+			Input: []string{string(requestBody)},
+		}
 
 		result, err := client.DetectJailbreak(ctx, content, credentials)
 
@@ -203,8 +207,9 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 			Token:   "test-token",
 		}
 		requestBody := []byte(`{"text": "test content"}`)
-		content := firewall.Content{}
-		content.AddInput(requestBody)
+		content := firewall.Content{
+			Input: []string{string(requestBody)},
+		}
 
 		// Execute
 		result, err := client.DetectToxicity(context.Background(), content, credentials)
@@ -238,8 +243,9 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 			Token:   "test-token",
 		}
 		requestBody := []byte(`{"text": "test content"}`)
-		content := firewall.Content{}
-		content.AddInput(requestBody)
+		content := firewall.Content{
+			Input: []string{string(requestBody)},
+		}
 
 		result, err := client.DetectToxicity(context.Background(), content, credentials)
 
@@ -261,8 +267,9 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 			Token:   "test-token",
 		}
 		requestBody := []byte(`{"text": "test content"}`)
-		content := firewall.Content{}
-		content.AddInput(requestBody)
+		content := firewall.Content{
+			Input: []string{string(requestBody)},
+		}
 
 		result, err := client.DetectToxicity(context.Background(), content, credentials)
 
@@ -288,8 +295,9 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 			Token:   "test-token",
 		}
 		requestBody := []byte(`{"text": "test content"}`)
-		content := firewall.Content{}
-		content.AddInput(requestBody)
+		content := firewall.Content{
+			Input: []string{string(requestBody)},
+		}
 
 		result, err := client.DetectToxicity(context.Background(), content, credentials)
 
@@ -325,8 +333,9 @@ func TestNeuralTrustFirewallClient_RequestPool(t *testing.T) {
 			Token:   "test-token",
 		}
 		requestBody := []byte(`{"text": "test prompt"}`)
-		content := firewall.Content{}
-		content.AddInput(requestBody)
+		content := firewall.Content{
+			Input: []string{string(requestBody)},
+		}
 
 		// Execute multiple requests to test pool reuse
 		for i := 0; i < 3; i++ {
@@ -363,8 +372,9 @@ func TestNeuralTrustFirewallClient_BufferPool(t *testing.T) {
 			Token:   "test-token",
 		}
 		requestBody := []byte(`{"text": "test content"}`)
-		content := firewall.Content{}
-		content.AddInput(requestBody)
+		content := firewall.Content{
+			Input: []string{string(requestBody)},
+		}
 
 		// Execute multiple requests to test buffer pool reuse
 		for i := 0; i < 3; i++ {
@@ -401,8 +411,9 @@ func TestNeuralTrustFirewallClient_ConcurrentRequests(t *testing.T) {
 			Token:   "test-token",
 		}
 		requestBody := []byte(`{"text": "test prompt"}`)
-		content := firewall.Content{}
-		content.AddInput(requestBody)
+		content := firewall.Content{
+			Input: []string{string(requestBody)},
+		}
 
 		// Execute concurrent requests
 		const numRequests = 10
@@ -442,8 +453,9 @@ func TestNeuralTrustFirewallClient_EmptyRequestBody(t *testing.T) {
 			Token:   "test-token",
 		}
 
-		content := firewall.Content{}
-		content.AddInput([]byte{})
+		content := firewall.Content{
+			Input: []string{""},
+		}
 		result, err := client.DetectJailbreak(context.Background(), content, credentials)
 
 		assert.NoError(t, err)
@@ -466,8 +478,9 @@ func TestNeuralTrustFirewallClient_EmptyRequestBody(t *testing.T) {
 			Token:   "test-token",
 		}
 
-		content := firewall.Content{}
-		content.AddInput([]byte{})
+		content := firewall.Content{
+			Input: []string{""},
+		}
 		result, err := client.DetectToxicity(context.Background(), content, credentials)
 
 		assert.NoError(t, err)

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/common"
+	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/session"
 	"github.com/google/uuid"
 )
@@ -16,10 +16,10 @@ const (
 )
 
 type SessionRepository struct {
-	cache common.Cache
+	cache cache.Cache
 }
 
-func NewSessionRepository(cache common.Cache) session.Repository {
+func NewSessionRepository(cache cache.Cache) session.Repository {
 	return &SessionRepository{
 		cache: cache,
 	}
