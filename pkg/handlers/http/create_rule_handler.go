@@ -63,39 +63,39 @@ func NewCreateRuleHandler(
 func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 
-	var req req.CreateRuleRequest
+	var request req.CreateRuleRequest
 
-	if err := c.BodyParser(&req); err != nil {
+	if err := c.BodyParser(&request); err != nil {
 		s.logger.WithError(err).Error("Failed to bind request")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
 	// Validate the rule request
-	if err := s.validate(&req); err != nil {
+	if err := s.validate(&request); err != nil {
 		s.logger.WithError(err).Error("Failed to validate rule")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	// Convert headers to map[string]string format
 	headers := make(map[string]string)
-	for k, v := range req.Headers {
+	for k, v := range request.Headers {
 		headers[k] = v
 	}
 
 	// Set default values for optional fields
 	stripPath := false
-	if req.StripPath != nil {
-		stripPath = *req.StripPath
+	if request.StripPath != nil {
+		stripPath = *request.StripPath
 	}
 
 	preserveHost := false
-	if req.PreserveHost != nil {
-		preserveHost = *req.PreserveHost
+	if request.PreserveHost != nil {
+		preserveHost = *request.PreserveHost
 	}
 
 	retryAttempts := 0
-	if req.RetryAttempts != nil {
-		retryAttempts = *req.RetryAttempts
+	if request.RetryAttempts != nil {
+		retryAttempts = *request.RetryAttempts
 	}
 
 	gatewayUUID, err := uuid.Parse(gatewayID)
@@ -103,7 +103,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		return fmt.Errorf("failed to parse gateway ID: %v", err)
 	}
 
-	serviceUUID, err := uuid.Parse(req.ServiceID)
+	serviceUUID, err := uuid.Parse(request.ServiceID)
 	if err != nil {
 		return fmt.Errorf("failed to parse service ID: %v", err)
 	}
@@ -116,9 +116,9 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Validate that service exists
-	_, err = s.serviceRepo.Get(c.Context(), req.ServiceID)
+	_, err = s.serviceRepo.Get(c.Context(), request.ServiceID)
 	if err != nil {
-		s.logger.WithError(err).WithField("service_id", req.ServiceID).Error("Service not found")
+		s.logger.WithError(err).WithField("service_id", request.ServiceID).Error("Service not found")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Service not found"})
 	}
 
@@ -129,34 +129,34 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	var trustLensConfig *domain.TrustLensJSON
-	if req.TrustLens != nil {
-		if req.TrustLens.AppID == "" {
+	if request.TrustLens != nil {
+		if request.TrustLens.AppID == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "trust lens app id is required"})
 		}
-		if req.TrustLens.TeamID == "" {
+		if request.TrustLens.TeamID == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "trust lens team id is required"})
 		}
 		trustLensConfig = &domain.TrustLensJSON{
-			AppID:   req.TrustLens.AppID,
-			TeamID:  req.TrustLens.TeamID,
-			Type:    req.TrustLens.Type,
-			Mapping: req.TrustLens.Mapping,
+			AppID:   request.TrustLens.AppID,
+			TeamID:  request.TrustLens.TeamID,
+			Type:    request.TrustLens.Type,
+			Mapping: request.TrustLens.Mapping,
 		}
 	}
 
 	var pluginChainDB domain.PluginChainJSON
-	if req.PluginChain != nil {
-		pluginChainDB = append(pluginChainDB, req.PluginChain...)
+	if request.PluginChain != nil {
+		pluginChainDB = append(pluginChainDB, request.PluginChain...)
 	}
 
 	dbRule := &forwarding_rule.ForwardingRule{
 		ID:            id,
-		Name:          req.Name,
+		Name:          request.Name,
 		GatewayID:     gatewayUUID,
-		Path:          req.Path,
+		Path:          request.Path,
 		ServiceID:     serviceUUID,
-		Methods:       req.Methods,
-		Headers:       domain.HeadersJSON(req.Headers),
+		Methods:       request.Methods,
+		Headers:       domain.HeadersJSON(request.Headers),
 		StripPath:     stripPath,
 		PreserveHost:  preserveHost,
 		RetryAttempts: retryAttempts,
@@ -168,15 +168,14 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		UpdatedAt:     time.Now(),
 	}
 
-	if len(req.PluginChain) > 0 {
-		err = s.pluginChainValidator.Validate(c.Context(), gatewayUUID, req.PluginChain)
+	if len(request.PluginChain) > 0 {
+		err = s.pluginChainValidator.Validate(c.Context(), gatewayUUID, request.PluginChain)
 		if err != nil {
 			s.logger.WithError(err).Error("failed to validate plugin chain")
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 	}
 
-	// Check if a rule with the same path already exists for this gateway and service
 	rules, err := s.repo.ListRules(c.Context(), gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to list rules")
@@ -184,8 +183,8 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	for _, rule := range rules {
-		if rule.Path == req.Path && rule.GatewayID == gatewayUUID {
-			s.logger.WithField("path", req.Path).Error("rule with this path already exists for this service")
+		if rule.Path == request.Path && rule.GatewayID == gatewayUUID {
+			s.logger.WithField("path", request.Path).Error("rule with this path already exists for this service")
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rule already exists"})
 		}
 	}

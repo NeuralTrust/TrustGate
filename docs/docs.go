@@ -300,7 +300,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.CreateRuleRequest"
+                            "$ref": "#/definitions/request.CreateRuleRequest"
                         }
                     }
                 ],
@@ -368,7 +368,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.UpdateRuleRequest"
+                            "$ref": "#/definitions/request.UpdateRuleRequest"
                         }
                     }
                 ],
@@ -510,7 +510,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.ServiceRequest"
+                            "$ref": "#/definitions/request.ServiceRequest"
                         }
                     }
                 ],
@@ -625,7 +625,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.ServiceRequest"
+                            "$ref": "#/definitions/request.ServiceRequest"
                         }
                     }
                 ],
@@ -1138,31 +1138,8 @@ const docTemplate = `{
             }
         },
         "/api/v1/plugins": {
-            "get": {
-                "description": "Returns the list of available plugins",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Plugins"
-                ],
-                "responses": {
-                    "200": {
-                        "description": "List of plugins",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/plugins.PluginDefinition"
-                            }
-                        }
-                    }
-                }
-            },
             "put": {
-                "description": "Updates the plugin chain for a given gateway or rule with granular add/edit/delete operations",
+                "description": "Replaces plugins matched by ID within the chain, preserving the original id and name.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1193,6 +1170,104 @@ const docTemplate = `{
                 "responses": {
                     "204": {
                         "description": "Plugins updated successfully"
+                    },
+                    "400": {
+                        "description": "Invalid request data",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Entity or plugin not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Adds plugins to a gateway's required plugins or a rule's plugin chain.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Plugins"
+                ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Add plugins payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AddPluginsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Plugins added successfully"
+                    },
+                    "400": {
+                        "description": "Invalid request data or duplicate plugin for stage",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Entity not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Deletes the specified plugins from a gateway's required plugins or a rule's plugin chain",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Plugins"
+                ],
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Delete plugins payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.DeletePluginsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Plugins deleted successfully"
                     },
                     "400": {
                         "description": "Invalid request data",
@@ -1274,11 +1349,11 @@ const docTemplate = `{
         "apikey.SubjectType": {
             "type": "string",
             "enum": [
-                "policy",
+                "engine",
                 "gateway"
             ],
             "x-enum-varnames": [
-                "PolicyType",
+                "EngineType",
                 "GatewayType"
             ]
         },
@@ -1564,28 +1639,19 @@ const docTemplate = `{
                 }
             }
         },
-        "plugins.PluginDefinition": {
+        "request.AddPluginsRequest": {
             "type": "object",
             "properties": {
-                "allowed_stages": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.Stage"
-                    }
-                },
-                "category": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
                 "id": {
                     "type": "string"
                 },
-                "label": {
-                    "type": "string"
+                "plugins": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
                 },
-                "name": {
+                "type": {
                     "type": "string"
                 }
             }
@@ -1710,6 +1776,72 @@ const docTemplate = `{
                 }
             }
         },
+        "request.CreateRuleRequest": {
+            "type": "object",
+            "required": [
+                "name",
+                "path",
+                "service_id"
+            ],
+            "properties": {
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "methods": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "plugin_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
+                },
+                "preserve_host": {
+                    "type": "boolean"
+                },
+                "retry_attempts": {
+                    "type": "integer"
+                },
+                "service_id": {
+                    "type": "string"
+                },
+                "strip_path": {
+                    "type": "boolean"
+                },
+                "trustlens": {
+                    "$ref": "#/definitions/types.TrustLensConfig"
+                }
+            }
+        },
+        "request.DeletePluginsRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "plugins": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "request.EmbeddingRequest": {
             "type": "object",
             "properties": {
@@ -1758,38 +1890,6 @@ const docTemplate = `{
                 "threshold": {
                     "description": "Number of failures before marking as unhealthy",
                     "type": "integer"
-                }
-            }
-        },
-        "request.PluginOperation": {
-            "type": "string",
-            "enum": [
-                "add",
-                "edit",
-                "delete"
-            ],
-            "x-enum-varnames": [
-                "PluginOperationAdd",
-                "PluginOperationEdit",
-                "PluginOperationDelete"
-            ]
-        },
-        "request.PluginUpdate": {
-            "type": "object",
-            "properties": {
-                "old_plugin_name": {
-                    "description": "For edit operation, we can optionally specify which plugin to update by name\nif the name itself is being changed",
-                    "type": "string"
-                },
-                "operation": {
-                    "$ref": "#/definitions/request.PluginOperation"
-                },
-                "plugin": {
-                    "$ref": "#/definitions/types.PluginConfig"
-                },
-                "plugin_name": {
-                    "description": "For delete operation, we only need the plugin name",
-                    "type": "string"
                 }
             }
         },
@@ -1857,6 +1957,65 @@ const docTemplate = `{
                 },
                 "sts_seconds": {
                     "type": "integer"
+                }
+            }
+        },
+        "request.ServiceRequest": {
+            "type": "object",
+            "properties": {
+                "CreatedAt": {
+                    "type": "string"
+                },
+                "UpdatedAt": {
+                    "type": "string"
+                },
+                "credentials": {
+                    "$ref": "#/definitions/types.Credentials"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "gateway_id": {
+                    "type": "string"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "host": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "protocol": {
+                    "type": "string"
+                },
+                "retries": {
+                    "type": "integer"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                },
+                "upstream_id": {
+                    "type": "string"
                 }
             }
         },
@@ -2024,15 +2183,62 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "type": {
-                    "type": "string"
-                },
-                "updates": {
-                    "description": "Granular updates for add/edit/delete operations",
+                "plugins": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/request.PluginUpdate"
+                        "type": "object",
+                        "additionalProperties": {}
                     }
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.UpdateRuleRequest": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "methods": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "plugin_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PluginConfig"
+                    }
+                },
+                "preserve_host": {
+                    "type": "boolean"
+                },
+                "retry_attempts": {
+                    "type": "integer"
+                },
+                "service_id": {
+                    "type": "string"
+                },
+                "strip_path": {
+                    "type": "boolean"
+                },
+                "trustlens": {
+                    "$ref": "#/definitions/types.TrustLensConfig"
                 }
             }
         },
@@ -2433,55 +2639,6 @@ const docTemplate = `{
                 }
             }
         },
-        "types.CreateRuleRequest": {
-            "type": "object",
-            "required": [
-                "name",
-                "path",
-                "service_id"
-            ],
-            "properties": {
-                "headers": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "methods": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "name": {
-                    "type": "string"
-                },
-                "path": {
-                    "type": "string"
-                },
-                "plugin_chain": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.PluginConfig"
-                    }
-                },
-                "preserve_host": {
-                    "type": "boolean"
-                },
-                "retry_attempts": {
-                    "type": "integer"
-                },
-                "service_id": {
-                    "type": "string"
-                },
-                "strip_path": {
-                    "type": "boolean"
-                },
-                "trustlens": {
-                    "$ref": "#/definitions/types.TrustLensConfig"
-                }
-            }
-        },
         "types.Credentials": {
             "type": "object",
             "properties": {
@@ -2554,17 +2711,6 @@ const docTemplate = `{
                 }
             }
         },
-        "types.Level": {
-            "type": "string",
-            "enum": [
-                "gateway",
-                "rule"
-            ],
-            "x-enum-varnames": [
-                "GatewayLevel",
-                "RuleLevel"
-            ]
-        },
         "types.PluginConfig": {
             "type": "object",
             "properties": {
@@ -2574,9 +2720,6 @@ const docTemplate = `{
                 "id": {
                     "description": "ID of the gateway or rule this plugin belongs to",
                     "type": "string"
-                },
-                "level": {
-                    "$ref": "#/definitions/types.Level"
                 },
                 "name": {
                     "type": "string"
@@ -2594,65 +2737,6 @@ const docTemplate = `{
                 },
                 "stage": {
                     "$ref": "#/definitions/types.Stage"
-                }
-            }
-        },
-        "types.ServiceRequest": {
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "credentials": {
-                    "$ref": "#/definitions/types.Credentials"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "gateway_id": {
-                    "type": "string"
-                },
-                "headers": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "host": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "path": {
-                    "type": "string"
-                },
-                "port": {
-                    "type": "integer"
-                },
-                "protocol": {
-                    "type": "string"
-                },
-                "retries": {
-                    "type": "integer"
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "type": {
-                    "type": "string"
-                },
-                "updatedAt": {
-                    "type": "string"
-                },
-                "upstream_id": {
-                    "type": "string"
                 }
             }
         },
@@ -2713,53 +2797,6 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
-                }
-            }
-        },
-        "types.UpdateRuleRequest": {
-            "type": "object",
-            "properties": {
-                "active": {
-                    "type": "boolean"
-                },
-                "headers": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "methods": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "name": {
-                    "type": "string"
-                },
-                "path": {
-                    "type": "string"
-                },
-                "plugin_chain": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.PluginConfig"
-                    }
-                },
-                "preserve_host": {
-                    "type": "boolean"
-                },
-                "retry_attempts": {
-                    "type": "integer"
-                },
-                "service_id": {
-                    "type": "string"
-                },
-                "strip_path": {
-                    "type": "boolean"
-                },
-                "trust_lens": {
-                    "$ref": "#/definitions/types.TrustLensConfig"
                 }
             }
         },
