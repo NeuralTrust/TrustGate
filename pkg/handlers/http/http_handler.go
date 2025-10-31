@@ -52,7 +52,6 @@ type HandlerTransportDTO struct {
 	GetVersionHandler Handler
 
 	// Plugins
-	ListPluginsHandler   Handler
 	UpdatePluginsHandler Handler
 	DeletePluginsHandler Handler
 	AddPluginsHandler    Handler

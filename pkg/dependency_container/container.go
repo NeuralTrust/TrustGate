@@ -282,8 +282,7 @@ func NewContainer(
 		DeleteAPIKeyHandler:         handlers.NewDeleteAPIKeyHandler(logger, apiKeyRepository, redisPublisher),
 		UpdateAPIKeyPoliciesHandler: handlers.NewUpdateAPIKeyPoliciesHandler(logger, cacheInstance, apiKeyRepository, ruleRepository, policyValidator),
 		// Version
-		GetVersionHandler:  handlers.NewGetVersionHandler(logger),
-		ListPluginsHandler: handlers.NewListPluginsHandler(logger),
+		GetVersionHandler: handlers.NewGetVersionHandler(logger),
 		UpdatePluginsHandler: handlers.NewUpdatePluginsHandler(
 			logger,
 			gatewayRepository,
