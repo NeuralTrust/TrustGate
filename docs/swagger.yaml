@@ -24,11 +24,11 @@ definitions:
     type: object
   apikey.SubjectType:
     enum:
-    - policy
+    - engine
     - gateway
     type: string
     x-enum-varnames:
-    - PolicyType
+    - EngineType
     - GatewayType
   domain.ClientTLSConfig:
     additionalProperties:
@@ -218,21 +218,15 @@ definitions:
           type: string
         type: array
     type: object
-  plugins.PluginDefinition:
+  request.AddPluginsRequest:
     properties:
-      allowed_stages:
-        items:
-          $ref: '#/definitions/types.Stage'
-        type: array
-      category:
-        type: string
-      description:
-        type: string
       id:
         type: string
-      label:
-        type: string
-      name:
+      plugins:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      type:
         type: string
     type: object
   request.AuthType:
@@ -314,6 +308,50 @@ definitions:
       updated_at:
         type: string
     type: object
+  request.CreateRuleRequest:
+    properties:
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      methods:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      path:
+        type: string
+      plugin_chain:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      preserve_host:
+        type: boolean
+      retry_attempts:
+        type: integer
+      service_id:
+        type: string
+      strip_path:
+        type: boolean
+      trustlens:
+        $ref: '#/definitions/types.TrustLensConfig'
+    required:
+    - name
+    - path
+    - service_id
+    type: object
+  request.DeletePluginsRequest:
+    properties:
+      id:
+        type: string
+      plugins:
+        items:
+          type: string
+        type: array
+      type:
+        type: string
+    type: object
   request.EmbeddingRequest:
     properties:
       credentials:
@@ -347,31 +385,6 @@ definitions:
       threshold:
         description: Number of failures before marking as unhealthy
         type: integer
-    type: object
-  request.PluginOperation:
-    enum:
-    - add
-    - edit
-    - delete
-    type: string
-    x-enum-varnames:
-    - PluginOperationAdd
-    - PluginOperationEdit
-    - PluginOperationDelete
-  request.PluginUpdate:
-    properties:
-      old_plugin_name:
-        description: |-
-          For edit operation, we can optionally specify which plugin to update by name
-          if the name itself is being changed
-        type: string
-      operation:
-        $ref: '#/definitions/request.PluginOperation'
-      plugin:
-        $ref: '#/definitions/types.PluginConfig'
-      plugin_name:
-        description: For delete operation, we only need the plugin name
-        type: string
     type: object
   request.ProxyConfigRequest:
     properties:
@@ -416,6 +429,45 @@ definitions:
         type: boolean
       sts_seconds:
         type: integer
+    type: object
+  request.ServiceRequest:
+    properties:
+      CreatedAt:
+        type: string
+      UpdatedAt:
+        type: string
+      credentials:
+        $ref: '#/definitions/types.Credentials'
+      description:
+        type: string
+      gateway_id:
+        type: string
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      host:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+      port:
+        type: integer
+      protocol:
+        type: string
+      retries:
+        type: integer
+      tags:
+        items:
+          type: string
+        type: array
+      type:
+        type: string
+      upstream_id:
+        type: string
     type: object
   request.SessionConfigRequest:
     properties:
@@ -525,13 +577,44 @@ definitions:
     properties:
       id:
         type: string
+      plugins:
+        items:
+          additionalProperties: {}
+          type: object
+        type: array
       type:
         type: string
-      updates:
-        description: Granular updates for add/edit/delete operations
+    type: object
+  request.UpdateRuleRequest:
+    properties:
+      active:
+        type: boolean
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      methods:
         items:
-          $ref: '#/definitions/request.PluginUpdate'
+          type: string
         type: array
+      name:
+        type: string
+      path:
+        type: string
+      plugin_chain:
+        items:
+          $ref: '#/definitions/types.PluginConfig'
+        type: array
+      preserve_host:
+        type: boolean
+      retry_attempts:
+        type: integer
+      service_id:
+        type: string
+      strip_path:
+        type: boolean
+      trustlens:
+        $ref: '#/definitions/types.TrustLensConfig'
     type: object
   request.UpstreamAuthRequest:
     properties:
@@ -795,39 +878,6 @@ definitions:
       min_version:
         type: string
     type: object
-  types.CreateRuleRequest:
-    properties:
-      headers:
-        additionalProperties:
-          type: string
-        type: object
-      methods:
-        items:
-          type: string
-        type: array
-      name:
-        type: string
-      path:
-        type: string
-      plugin_chain:
-        items:
-          $ref: '#/definitions/types.PluginConfig'
-        type: array
-      preserve_host:
-        type: boolean
-      retry_attempts:
-        type: integer
-      service_id:
-        type: string
-      strip_path:
-        type: boolean
-      trustlens:
-        $ref: '#/definitions/types.TrustLensConfig'
-    required:
-    - name
-    - path
-    - service_id
-    type: object
   types.Credentials:
     properties:
       api_key:
@@ -878,14 +928,6 @@ definitions:
       param_value:
         type: string
     type: object
-  types.Level:
-    enum:
-    - gateway
-    - rule
-    type: string
-    x-enum-varnames:
-    - GatewayLevel
-    - RuleLevel
   types.PluginConfig:
     properties:
       enabled:
@@ -893,8 +935,6 @@ definitions:
       id:
         description: ID of the gateway or rule this plugin belongs to
         type: string
-      level:
-        $ref: '#/definitions/types.Level'
       name:
         type: string
       parallel:
@@ -907,45 +947,6 @@ definitions:
         type: object
       stage:
         $ref: '#/definitions/types.Stage'
-    type: object
-  types.ServiceRequest:
-    properties:
-      createdAt:
-        type: string
-      credentials:
-        $ref: '#/definitions/types.Credentials'
-      description:
-        type: string
-      gateway_id:
-        type: string
-      headers:
-        additionalProperties:
-          type: string
-        type: object
-      host:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-      path:
-        type: string
-      port:
-        type: integer
-      protocol:
-        type: string
-      retries:
-        type: integer
-      tags:
-        items:
-          type: string
-        type: array
-      type:
-        type: string
-      updatedAt:
-        type: string
-      upstream_id:
-        type: string
     type: object
   types.Stage:
     enum:
@@ -987,37 +988,6 @@ definitions:
         additionalProperties:
           type: string
         type: object
-    type: object
-  types.UpdateRuleRequest:
-    properties:
-      active:
-        type: boolean
-      headers:
-        additionalProperties:
-          type: string
-        type: object
-      methods:
-        items:
-          type: string
-        type: array
-      name:
-        type: string
-      path:
-        type: string
-      plugin_chain:
-        items:
-          $ref: '#/definitions/types.PluginConfig'
-        type: array
-      preserve_host:
-        type: boolean
-      retry_attempts:
-        type: integer
-      service_id:
-        type: string
-      strip_path:
-        type: boolean
-      trust_lens:
-        $ref: '#/definitions/types.TrustLensConfig'
     type: object
   upstream.AuthType:
     enum:
@@ -1385,7 +1355,7 @@ paths:
         name: rule
         required: true
         schema:
-          $ref: '#/definitions/types.CreateRuleRequest'
+          $ref: '#/definitions/request.CreateRuleRequest'
       produces:
       - application/json
       responses:
@@ -1459,7 +1429,7 @@ paths:
         name: rule
         required: true
         schema:
-          $ref: '#/definitions/types.UpdateRuleRequest'
+          $ref: '#/definitions/request.UpdateRuleRequest'
       produces:
       - application/json
       responses:
@@ -1527,7 +1497,7 @@ paths:
         name: service
         required: true
         schema:
-          $ref: '#/definitions/types.ServiceRequest'
+          $ref: '#/definitions/request.ServiceRequest'
       produces:
       - application/json
       responses:
@@ -1633,7 +1603,7 @@ paths:
         name: service
         required: true
         schema:
-          $ref: '#/definitions/types.ServiceRequest'
+          $ref: '#/definitions/request.ServiceRequest'
       produces:
       - application/json
       responses:
@@ -1954,26 +1924,79 @@ paths:
       tags:
       - API Keys
   /api/v1/plugins:
-    get:
+    delete:
       consumes:
       - application/json
-      description: Returns the list of available plugins
+      description: Deletes the specified plugins from a gateway's required plugins
+        or a rule's plugin chain
+      parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Delete plugins payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/request.DeletePluginsRequest'
       produces:
       - application/json
       responses:
-        "200":
-          description: List of plugins
+        "204":
+          description: Plugins deleted successfully
+        "400":
+          description: Invalid request data
           schema:
-            items:
-              $ref: '#/definitions/plugins.PluginDefinition'
-            type: array
+            additionalProperties: true
+            type: object
+        "404":
+          description: Entity not found
+          schema:
+            additionalProperties: true
+            type: object
+      tags:
+      - Plugins
+    post:
+      consumes:
+      - application/json
+      description: Adds plugins to a gateway's required plugins or a rule's plugin
+        chain.
+      parameters:
+      - description: Authorization token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Add plugins payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/request.AddPluginsRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Plugins added successfully
+        "400":
+          description: Invalid request data or duplicate plugin for stage
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Entity not found
+          schema:
+            additionalProperties: true
+            type: object
       tags:
       - Plugins
     put:
       consumes:
       - application/json
-      description: Updates the plugin chain for a given gateway or rule with granular
-        add/edit/delete operations
+      description: Replaces plugins matched by ID within the chain, preserving the
+        original id and name.
       parameters:
       - description: Authorization token
         in: header
@@ -1997,7 +2020,7 @@ paths:
             additionalProperties: true
             type: object
         "404":
-          description: Entity not found
+          description: Entity or plugin not found
           schema:
             additionalProperties: true
             type: object
