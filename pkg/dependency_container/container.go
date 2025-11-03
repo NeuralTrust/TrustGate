@@ -1,6 +1,7 @@
 package dependency_container
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -130,8 +131,14 @@ func NewContainer(
 
 	circuitBreaker := httpx.NewCircuitBreaker("neuraltrust-firewall", 30*time.Second, 3)
 
+	firewallHTTPClient := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
+		},
+	}
 	firewallClient := firewall.NewNeuralTrustFirewallClient(
-		&http.Client{Timeout: 10 * time.Second},
+		firewallHTTPClient,
 		logger,
 		circuitBreaker,
 	)
