@@ -484,6 +484,9 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 	}, string(inputBody))
 	duration := time.Since(start).Seconds()
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		p.logger.WithError(err).Error("failed to call llm provider")
 		p.sendError(firewallErrors, err)
 		return

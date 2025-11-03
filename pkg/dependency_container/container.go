@@ -134,7 +134,12 @@ func NewContainer(
 	firewallHTTPClient := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
+			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true}, // #nosec G402
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       90 * time.Second,
+			DisableKeepAlives:     false,
+			ResponseHeaderTimeout: 10 * time.Second,
 		},
 	}
 	firewallClient := firewall.NewNeuralTrustFirewallClient(

@@ -36,6 +36,11 @@ func (w *PluginWrapper) Execute(
 	latency := time.Since(start)
 	evtCtx.SetSLatency(latency)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			evtCtx.SetStatusCode(http.StatusOK)
+			evtCtx.Publish()
+			return nil, nil
+		}
 		var pluginErr *types.PluginError
 		if errors.As(err, &pluginErr) {
 			evtCtx.SetStatusCode(pluginErr.StatusCode)
