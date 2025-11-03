@@ -23,9 +23,11 @@ func (m *panicRecoverMiddleware) Middleware() fiber.Handler {
 				}).Error("HTTP server panic recovered")
 
 				if c.Response().Header.StatusCode() == 0 {
-					_ = c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					if err := c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 						"error": "Internal server error",
-					})
+					}); err != nil {
+						m.logger.WithError(err).Error("failed to write panic recovery response")
+					}
 				}
 			}
 		}()
