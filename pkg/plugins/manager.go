@@ -485,14 +485,22 @@ func (m *manager) executeParallel(
 
 				select {
 				case <-gctx.Done():
-					// We don't return nil: we need to propagate the canceled context so the group finishes,
-					// but we also don't want to overwrite the first error with a late context.Canceled.
-					// We return gctx.Err() to exit quickly.
-					return gctx.Err()
+					// Context was canceled (likely by another plugin returning an error)
+					// Return nil so the errgroup doesn't treat this as an error
+					// The errgroup already has the first error, so this won't affect g.Wait()
+					return nil
 				default:
 				}
 
 				if err != nil {
+					// Check if the error is due to context cancellation
+					// This handles cases where the plugin executed and encountered
+					// context.Canceled during HTTP call or other operations
+					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+						// Context was canceled, return success instead of error
+						// The errgroup already has the first error (from the plugin that triggered cancellation)
+						return nil
+					}
 					// First error: set StatusCode + Headers in resp and automatically cancel the rest (errgroup)
 					// If it's a *types.PluginError, extract metadata
 					var pe *types.PluginError

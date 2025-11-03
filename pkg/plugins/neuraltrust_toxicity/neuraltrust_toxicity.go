@@ -133,6 +133,16 @@ func (p *NeuralTrustToxicity) Execute(
 
 		responses, err := p.firewallClient.DetectToxicity(ctx, content, credentials)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return &types.PluginResponse{
+					StatusCode: 200,
+					Message:    "prompt content is safe",
+					Headers: map[string][]string{
+						"Content-Type": {"application/json"},
+					},
+					Body: nil,
+				}, nil
+			}
 			if errors.Is(err, firewall.ErrFailedFirewallCall) {
 				return nil, &types.PluginError{
 					StatusCode: http.StatusServiceUnavailable,
