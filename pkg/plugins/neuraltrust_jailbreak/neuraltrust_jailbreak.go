@@ -140,7 +140,7 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 
 		responses, err := p.firewallClient.DetectJailbreak(ctx, content, credentials)
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if errors.Is(err, context.Canceled) {
 				return &types.PluginResponse{
 					StatusCode: 200,
 					Message:    "prompt content is safe",
@@ -149,6 +149,13 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 					},
 					Body: nil,
 				}, nil
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				return nil, &types.PluginError{
+					StatusCode: http.StatusGatewayTimeout,
+					Message:    "firewall request timed out",
+					Err:        err,
+				}
 			}
 			if errors.Is(err, firewall.ErrFailedFirewallCall) {
 				return nil, &types.PluginError{
