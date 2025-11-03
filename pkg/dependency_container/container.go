@@ -50,32 +50,33 @@ import (
 )
 
 type Container struct {
-	Cache                 cache.Cache
-	BedrockClient         bedrock.Client
-	PluginManager         plugins.Manager
-	HandlerTransport      handlers.HandlerTransport
-	WSHandlerTransport    wsHandlers.HandlerTransport
-	RedisListener         infraCache.EventListener
-	AuthMiddleware        middleware.Middleware
-	CORSGlobalMiddleware  middleware.Middleware
-	AdminAuthMiddleware   middleware.Middleware
-	MetricsMiddleware     middleware.Middleware
-	PluginMiddleware      middleware.Middleware
-	FingerPrintMiddleware middleware.Middleware
-	SecurityMiddleware    middleware.Middleware
-	WebSocketMiddleware   middleware.Middleware
-	SessionMiddleware     middleware.Middleware
-	ApiKeyRepository      domainApikey.Repository
-	EmbeddingRepository   domainEmbedding.EmbeddingRepository
-	SessionRepository     domainSession.Repository
-	FingerprintTracker    fingerprint.Tracker
-	PluginChainValidator  plugin.ValidatePluginChain
-	MetricsWorker         metrics.Worker
-	RedisIndexCreator     infraCache.RedisIndexCreator
-	JWTManager            jwt.Manager
-	RuleRepository        ruledomain.Repository
-	GatewayRepository     domainGateway.Repository
-	FirewallClient        firewall.Client
+	Cache                  cache.Cache
+	BedrockClient          bedrock.Client
+	PluginManager          plugins.Manager
+	HandlerTransport       handlers.HandlerTransport
+	WSHandlerTransport     wsHandlers.HandlerTransport
+	RedisListener          infraCache.EventListener
+	PanicRecoverMiddleware middleware.Middleware
+	AuthMiddleware         middleware.Middleware
+	CORSGlobalMiddleware   middleware.Middleware
+	AdminAuthMiddleware    middleware.Middleware
+	MetricsMiddleware      middleware.Middleware
+	PluginMiddleware       middleware.Middleware
+	FingerPrintMiddleware  middleware.Middleware
+	SecurityMiddleware     middleware.Middleware
+	WebSocketMiddleware    middleware.Middleware
+	SessionMiddleware      middleware.Middleware
+	ApiKeyRepository       domainApikey.Repository
+	EmbeddingRepository    domainEmbedding.EmbeddingRepository
+	SessionRepository      domainSession.Repository
+	FingerprintTracker     fingerprint.Tracker
+	PluginChainValidator   plugin.ValidatePluginChain
+	MetricsWorker          metrics.Worker
+	RedisIndexCreator      infraCache.RedisIndexCreator
+	JWTManager             jwt.Manager
+	RuleRepository         ruledomain.Repository
+	GatewayRepository      domainGateway.Repository
+	FirewallClient         firewall.Client
 }
 
 func NewContainer(
@@ -317,10 +318,11 @@ func NewContainer(
 	}
 
 	container := &Container{
-		Cache:              cacheInstance,
-		RedisListener:      redisListener,
-		HandlerTransport:   handlerTransport,
-		WSHandlerTransport: wsHandlerTransport,
+		Cache:                  cacheInstance,
+		RedisListener:          redisListener,
+		HandlerTransport:       handlerTransport,
+		WSHandlerTransport:     wsHandlerTransport,
+		PanicRecoverMiddleware: middleware.NewPanicRecoverMiddleware(logger),
 		CORSGlobalMiddleware: middleware.NewCORSGlobalMiddleware(
 			[]string{"*"},
 			[]string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},

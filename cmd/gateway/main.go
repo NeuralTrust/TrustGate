@@ -77,6 +77,7 @@ func main() {
 	}
 
 	proxyTransport := middleware.NewTransport(
+		container.PanicRecoverMiddleware,
 		container.CORSGlobalMiddleware,
 		container.AuthMiddleware,
 		container.MetricsMiddleware,
@@ -96,6 +97,7 @@ func main() {
 	)
 
 	adminTransport := middleware.NewTransport(
+		container.PanicRecoverMiddleware,
 		container.AdminAuthMiddleware,
 	)
 	adminRouter := router.NewAdminRouter(adminTransport, container.HandlerTransport)
