@@ -62,9 +62,10 @@ func (c *NeuralTrustFirewallClient) DetectJailbreak(
 		result, err = c.executeJailbreakRequest(ctx, content, credentials)
 		return err
 	})
-
 	if err != nil {
-		c.logger.WithError(err).Error("jailbreak detection failed (circuit breaker)")
+		if !errors.Is(err, context.Canceled) {
+			c.logger.WithError(err).Error("jailbreak detection failed (circuit breaker)")
+		}
 		return nil, err
 	}
 
@@ -95,7 +96,9 @@ func (c *NeuralTrustFirewallClient) executeJailbreakRequest(
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		c.logger.WithError(err).Error("failed to call jailbreak firewall")
+		if !errors.Is(err, context.Canceled) {
+			c.logger.WithError(err).Error("failed to call jailbreak firewall")
+		}
 		return nil, fmt.Errorf("failed to call jailbreak firewall: %w", err)
 	}
 	defer resp.Body.Close()
@@ -137,9 +140,10 @@ func (c *NeuralTrustFirewallClient) DetectToxicity(
 		result, err = c.executeToxicityRequest(ctx, content, credentials)
 		return err
 	})
-
 	if err != nil {
-		c.logger.WithError(err).Error("toxicity detection failed (circuit breaker)")
+		if !errors.Is(err, context.Canceled) {
+			c.logger.WithError(err).Error("toxicity detection failed (circuit breaker)")
+		}
 		return nil, err
 	}
 
@@ -170,7 +174,9 @@ func (c *NeuralTrustFirewallClient) executeToxicityRequest(
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		c.logger.WithError(err).Error("failed to call toxicity firewall")
+		if !errors.Is(err, context.Canceled) {
+			c.logger.WithError(err).Error("failed to call toxicity firewall")
+		}
 		return nil, fmt.Errorf("failed to call toxicity firewall: %w", err)
 	}
 	defer resp.Body.Close()
