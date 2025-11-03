@@ -496,13 +496,11 @@ func (m *manager) executeParallel(
 					// Check if the error is due to context cancellation
 					// This handles cases where the plugin executed and encountered
 					// context.Canceled during HTTP call or other operations
-					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					if errors.Is(err, context.Canceled) {
 						// Context was canceled, return success instead of error
 						// The errgroup already has the first error (from the plugin that triggered cancellation)
 						return nil
 					}
-					// First error: set StatusCode + Headers in resp and automatically cancel the rest (errgroup)
-					// If it's a *types.PluginError, extract metadata
 					var pe *types.PluginError
 					if errors.As(err, &pe) {
 						m.applyPluginErrorToResponse(pe, resp)
@@ -516,7 +514,6 @@ func (m *manager) executeParallel(
 					return pe
 				}
 
-				// Success: store the result to apply later (only if there were NO errors in the group)
 				if pluginResp != nil {
 					resultsMu.Lock()
 					results = append(results, pluginResult{
