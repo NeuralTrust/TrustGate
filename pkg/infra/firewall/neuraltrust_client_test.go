@@ -3,7 +3,6 @@ package firewall_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,33 +13,19 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Mock CircuitBreaker implementation for testing
-type mockCircuitBreaker struct {
-	shouldReturnError bool
-	errorToReturn     error
-}
-
-func (m *mockCircuitBreaker) Execute(fn func() error) error {
-	if m.shouldReturnError {
-		return m.errorToReturn
-	}
-	return fn()
-}
-
 func TestNewNeuralTrustFirewallClient(t *testing.T) {
 	logger := logrus.New()
-	mockCircuitBreaker := &mockCircuitBreaker{}
 
 	t.Run("With provided client", func(t *testing.T) {
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		assert.NotNil(t, client)
 		assert.IsType(t, &firewall.NeuralTrustFirewallClient{}, client)
 	})
 
 	t.Run("With nil client", func(t *testing.T) {
-		client := firewall.NewNeuralTrustFirewallClient(nil, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(nil, logger)
 
 		assert.NotNil(t, client)
 		assert.IsType(t, &firewall.NeuralTrustFirewallClient{}, client)
@@ -69,8 +54,7 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
 			BaseURL: server.URL,
@@ -90,30 +74,6 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 		assert.Equal(t, expectedResponse[0].Scores.MaliciousPrompt, result[0].Scores.MaliciousPrompt)
 	})
 
-	t.Run("Circuit breaker error", func(t *testing.T) {
-		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{
-			shouldReturnError: true,
-			errorToReturn:     fmt.Errorf("circuit breaker open"),
-		}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
-
-		credentials := firewall.Credentials{
-			BaseURL: "http://localhost:9999",
-			Token:   "test-token",
-		}
-		requestBody := []byte(`{"text": "test prompt"}`)
-		content := firewall.Content{
-			Input: []string{string(requestBody)},
-		}
-
-		result, err := client.DetectJailbreak(context.Background(), content, credentials)
-
-		assert.Error(t, err)
-		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "circuit breaker open")
-	})
-
 	t.Run("Invalid JSON response", func(t *testing.T) {
 		// Create test server that returns invalid JSON
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,8 +83,7 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
 			BaseURL: server.URL,
@@ -151,8 +110,7 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		// Create context with short timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -198,8 +156,7 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 
 		// Create client
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		// Test data
 		credentials := firewall.Credentials{
@@ -235,8 +192,7 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
 			BaseURL: server.URL,
@@ -254,30 +210,6 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 		assert.Equal(t, expectedResponse[0].CategoryScores["toxic_prompt"], result[0].CategoryScores["toxic_prompt"])
 	})
 
-	t.Run("Circuit breaker error", func(t *testing.T) {
-		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{
-			shouldReturnError: true,
-			errorToReturn:     fmt.Errorf("circuit breaker open"),
-		}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
-
-		credentials := firewall.Credentials{
-			BaseURL: "http://localhost:9999",
-			Token:   "test-token",
-		}
-		requestBody := []byte(`{"text": "test content"}`)
-		content := firewall.Content{
-			Input: []string{string(requestBody)},
-		}
-
-		result, err := client.DetectToxicity(context.Background(), content, credentials)
-
-		assert.Error(t, err)
-		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "circuit breaker open")
-	})
-
 	t.Run("Invalid JSON response", func(t *testing.T) {
 		// Create test server that returns invalid JSON
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -287,8 +219,7 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
 			BaseURL: server.URL,
@@ -325,8 +256,7 @@ func TestNeuralTrustFirewallClient_RequestPool(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
 			BaseURL: server.URL,
@@ -364,8 +294,7 @@ func TestNeuralTrustFirewallClient_BufferPool(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
 			BaseURL: server.URL,
@@ -403,8 +332,7 @@ func TestNeuralTrustFirewallClient_ConcurrentRequests(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
 			BaseURL: server.URL,
@@ -445,8 +373,7 @@ func TestNeuralTrustFirewallClient_EmptyRequestBody(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
 			BaseURL: server.URL,
@@ -470,8 +397,7 @@ func TestNeuralTrustFirewallClient_EmptyRequestBody(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		mockCircuitBreaker := &mockCircuitBreaker{}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger, mockCircuitBreaker)
+		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
 			BaseURL: server.URL,

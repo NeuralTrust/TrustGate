@@ -312,7 +312,9 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
 		}
-
+		if !h.cfg.Plugins.IgnoreErrors {
+			return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "Plugin execution failed"})
+		}
 		if respCtx.StopProcessing {
 			for k, values := range respCtx.Headers {
 				for _, v := range values {
@@ -321,19 +323,8 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 			}
 			return h.handleSuccessResponse(c, respCtx.StatusCode, respCtx.Body)
 		}
-		if !h.cfg.Plugins.IgnoreErrors {
-			return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "Plugin execution failed"})
-		}
 	}
 
-	if respCtx.StopProcessing {
-		for k, values := range respCtx.Headers {
-			for _, v := range values {
-				c.Set(k, v)
-			}
-		}
-		return h.handleSuccessResponse(c, respCtx.StatusCode, respCtx.Body)
-	}
 	// Forward the request
 	upstreamStartTime := time.Now()
 	response, err := h.forwardRequest(

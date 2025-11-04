@@ -28,7 +28,7 @@ redis:
   tls: ${REDIS_TLS}
 
 plugins:
-  ignore_errors: false
+  ignore_errors: true
 
 websocket:
   max_connections: 1000
