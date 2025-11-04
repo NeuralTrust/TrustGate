@@ -144,24 +144,12 @@ func (p *NeuralTrustToxicity) Execute(
 				}, nil
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
-				return nil, &types.PluginError{
-					StatusCode: http.StatusGatewayTimeout,
-					Message:    "firewall request timed out",
-					Err:        err,
-				}
+				return nil, fmt.Errorf("firewall request timed out %v", err)
 			}
 			if errors.Is(err, firewall.ErrFailedFirewallCall) {
-				return nil, &types.PluginError{
-					StatusCode: http.StatusServiceUnavailable,
-					Message:    "Firewall service temporarily unavailable",
-					Err:        err,
-				}
+				return nil, fmt.Errorf("firewall request failed %v", err)
 			}
-			return nil, &types.PluginError{
-				StatusCode: http.StatusInternalServerError,
-				Message:    "Firewall service error",
-				Err:        err,
-			}
+			return nil, fmt.Errorf("failed to call firewall: %w", err)
 		}
 
 		response := responses[0]

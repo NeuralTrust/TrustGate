@@ -22,25 +22,22 @@ const (
 var ErrFailedFirewallCall = errors.New("firewall service call failed")
 
 type NeuralTrustFirewallClient struct {
-	client         httpx.Client
-	logger         *logrus.Logger
-	circuitBreaker httpx.CircuitBreaker
-	bufferPool     sync.Pool
+	client     httpx.Client
+	logger     *logrus.Logger
+	bufferPool sync.Pool
 }
 
 func NewNeuralTrustFirewallClient(
 	client httpx.Client,
 	logger *logrus.Logger,
-	circuitBreaker httpx.CircuitBreaker,
 ) Client {
 	if client == nil {
 		client = &http.Client{}
 	}
 
 	return &NeuralTrustFirewallClient{
-		client:         client,
-		logger:         logger,
-		circuitBreaker: circuitBreaker,
+		client: client,
+		logger: logger,
 		bufferPool: sync.Pool{
 			New: func() any {
 				buf := make([]byte, 4096)
@@ -55,21 +52,7 @@ func (c *NeuralTrustFirewallClient) DetectJailbreak(
 	content Content,
 	credentials Credentials,
 ) ([]JailbreakResponse, error) {
-	var result []JailbreakResponse
-	var err error
-
-	err = c.circuitBreaker.Execute(func() error {
-		result, err = c.executeJailbreakRequest(ctx, content, credentials)
-		return err
-	})
-	if err != nil {
-		if !errors.Is(err, context.Canceled) {
-			c.logger.WithError(err).Error("jailbreak detection failed (circuit breaker)")
-		}
-		return nil, err
-	}
-
-	return result, nil
+	return c.executeJailbreakRequest(ctx, content, credentials)
 }
 
 func (c *NeuralTrustFirewallClient) executeJailbreakRequest(
@@ -104,7 +87,14 @@ func (c *NeuralTrustFirewallClient) executeJailbreakRequest(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.logger.WithField("status_code", resp.StatusCode).Error("jailbreak firewall returned non-200 status")
+		entry := c.logger.WithField("status_code", resp.StatusCode)
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			entry.WithError(readErr).Error("jailbreak firewall returned non-200 status (failed to read body)")
+		} else {
+			entry.WithField("response_body", string(bodyBytes)).Error("jailbreak firewall returned non-200 status")
+		}
+
 		return nil, fmt.Errorf("%w: status %d", ErrFailedFirewallCall, resp.StatusCode)
 	}
 
@@ -133,21 +123,7 @@ func (c *NeuralTrustFirewallClient) DetectToxicity(
 	content Content,
 	credentials Credentials,
 ) ([]ToxicityResponse, error) {
-	var result []ToxicityResponse
-	var err error
-
-	err = c.circuitBreaker.Execute(func() error {
-		result, err = c.executeToxicityRequest(ctx, content, credentials)
-		return err
-	})
-	if err != nil {
-		if !errors.Is(err, context.Canceled) {
-			c.logger.WithError(err).Error("toxicity detection failed (circuit breaker)")
-		}
-		return nil, err
-	}
-
-	return result, nil
+	return c.executeToxicityRequest(ctx, content, credentials)
 }
 
 func (c *NeuralTrustFirewallClient) executeToxicityRequest(
@@ -183,7 +159,14 @@ func (c *NeuralTrustFirewallClient) executeToxicityRequest(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.logger.WithField("status_code", resp.StatusCode).Error("toxicity firewall returned non-200 status")
+		entry := c.logger.WithField("status_code", resp.StatusCode)
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			entry.WithError(readErr).Error("toxicity firewall returned non-200 status (failed to read body)")
+		} else {
+			entry.WithField("response_body", string(bodyBytes)).Error("toxicity firewall returned non-200 status")
+		}
+
 		return nil, fmt.Errorf("%w: status %d", ErrFailedFirewallCall, resp.StatusCode)
 	}
 

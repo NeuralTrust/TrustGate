@@ -506,12 +506,7 @@ func (m *manager) executeParallel(
 						m.applyPluginErrorToResponse(pe, resp)
 						return pe
 					}
-					pe = &types.PluginError{
-						Err:        err,
-						StatusCode: 500,
-					}
-					m.applyPluginErrorToResponse(pe, resp)
-					return pe
+					return err
 				}
 
 				if pluginResp != nil {

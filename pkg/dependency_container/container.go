@@ -11,7 +11,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/policy"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
@@ -129,8 +128,6 @@ func NewContainer(
 
 	fingerprintTracker := fingerprint.NewFingerPrintTracker(cacheInstance)
 
-	circuitBreaker := httpx.NewCircuitBreaker("neuraltrust-firewall", 30*time.Second, 3)
-
 	firewallHTTPClient := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
@@ -145,7 +142,6 @@ func NewContainer(
 	firewallClient := firewall.NewNeuralTrustFirewallClient(
 		firewallHTTPClient,
 		logger,
-		circuitBreaker,
 	)
 
 	pluginManager := plugins.NewManager(

@@ -220,11 +220,11 @@ func TestNeuralTrustJailbreakPlugin_Execute_FirewallServiceUnavailable(t *testin
 	assert.Error(t, err)
 	assert.Nil(t, pluginResp)
 
-	// Verify it's a PluginError with StatusServiceUnavailable
-	pluginErr, ok := err.(*types.PluginError)
-	assert.True(t, ok)
-	assert.Equal(t, 503, pluginErr.StatusCode)
-	assert.Contains(t, pluginErr.Message, "firewall service temporarily unavailable")
+	// Verify it's a regular error, not a PluginError
+	_, ok := err.(*types.PluginError)
+	assert.False(t, ok, "expected regular error, not PluginError")
+	assert.Contains(t, err.Error(), "firewall request failed")
+	assert.Contains(t, err.Error(), "firewall service call failed")
 
 	mockFirewallClient.AssertExpectations(t)
 }
@@ -261,11 +261,10 @@ func TestNeuralTrustJailbreakPlugin_Execute_FirewallServiceError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, pluginResp)
 
-	// Verify it's a PluginError with StatusInternalServerError
-	pluginErr, ok := err.(*types.PluginError)
-	assert.True(t, ok)
-	assert.Equal(t, 500, pluginErr.StatusCode)
-	assert.Contains(t, pluginErr.Message, "firewall service error")
+	// Verify it's a regular error, not a PluginError
+	_, ok := err.(*types.PluginError)
+	assert.False(t, ok, "expected regular error, not PluginError")
+	assert.Contains(t, err.Error(), "failed to call firewall")
 
 	mockFirewallClient.AssertExpectations(t)
 }
