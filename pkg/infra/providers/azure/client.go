@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,13 +168,11 @@ func (c *client) Ask(
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	// Parse the response
 	var response map[string]interface{}
 	if err := json.Unmarshal(respBody, &response); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Extract the completion text
 	choices, ok := response["choices"].([]interface{})
 	if !ok || len(choices) == 0 {
 		return nil, fmt.Errorf("no completions returned")
@@ -208,7 +207,8 @@ func (c *client) Ask(
 		}
 	}
 
-	// Generate a unique ID
+	cleanedContent := cleanContent(content)
+
 	var id string
 	if requestID := ctx.Value("requestID"); requestID != nil {
 		id = fmt.Sprintf("azure-%v", requestID)
@@ -219,7 +219,7 @@ func (c *client) Ask(
 	return &providers.CompletionResponse{
 		ID:       id,
 		Model:    config.Model,
-		Response: content,
+		Response: cleanedContent,
 		Usage:    usage,
 	}, nil
 }
@@ -350,6 +350,19 @@ func (c *client) Completions(
 	}
 
 	return respBody, nil
+}
+
+func cleanContent(content string) string {
+
+	cleaned := strings.ReplaceAll(content, "```", "")
+	cleaned = strings.ReplaceAll(cleaned, "json", "")
+
+	cleaned = strings.ReplaceAll(cleaned, "\n", "")
+	cleaned = strings.ReplaceAll(cleaned, "\r", "")
+
+	cleaned = strings.TrimSpace(cleaned)
+
+	return cleaned
 }
 
 func getAzureADToken(ctx context.Context) (string, error) {

@@ -23,7 +23,14 @@ type EmbeddingsConfig struct {
 }
 
 type Credentials struct {
-	ApiKey string `mapstructure:"api_key,omitempty"`
+	ApiKey string            `mapstructure:"api_key,omitempty"`
+	Azure  *AzureCredentials `mapstructure:"azure,omitempty"`
+}
+
+type AzureCredentials struct {
+	Endpoint           string `mapstructure:"azure_endpoint,omitempty"`
+	UseManagedIdentity bool   `mapstructure:"azure_use_managed_identity,omitempty"`
+	ApiVersion         string `mapstructure:"azure_api_version,omitempty"`
 }
 
 type EmbeddingCredentials struct {

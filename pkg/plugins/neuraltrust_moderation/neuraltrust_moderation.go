@@ -148,17 +148,19 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config types.PluginConfig) 
 	if cfg.LLMParamBag != nil {
 		if cfg.LLMParamBag.Provider != providersFactory.ProviderOpenAI &&
 			cfg.LLMParamBag.Provider != providersFactory.ProviderAnthropic &&
+			cfg.LLMParamBag.Provider != providersFactory.ProviderAzure &&
 			cfg.LLMParamBag.Provider != providersFactory.ProviderGemini {
-			return fmt.Errorf("LLM provider must be either '%s' or '%s' or '%s'",
+			return fmt.Errorf("LLM provider must be either '%s' or '%s' or '%s' or '%s'",
 				providersFactory.ProviderOpenAI,
 				providersFactory.ProviderGemini,
 				providersFactory.ProviderAnthropic,
+				providersFactory.ProviderAzure,
 			)
 		}
 		if cfg.LLMParamBag.Model == "" {
 			return fmt.Errorf("LLM model cannot be empty")
 		}
-		err := p.validateCredentials(cfg.LLMParamBag.Credentials)
+		err := p.validateCredentials(cfg.LLMParamBag.Provider, cfg.LLMParamBag.Credentials)
 		if err != nil {
 			return err
 		}
@@ -167,9 +169,12 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config types.PluginConfig) 
 	return nil
 }
 
-func (p *NeuralTrustModerationPlugin) validateCredentials(credentials Credentials) error {
+func (p *NeuralTrustModerationPlugin) validateCredentials(provider string, credentials Credentials) error {
 	if credentials.ApiKey == "" {
 		return fmt.Errorf("apikey must be specified")
+	}
+	if provider == providersFactory.ProviderAzure && (credentials.Azure == nil || credentials.Azure.Endpoint == "") {
+		return fmt.Errorf("azure endpoint must be specified")
 	}
 	return nil
 }
@@ -472,10 +477,21 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		maxTokens = 1000
 	}
 	start := time.Now()
+
+	providersCreds := providers.Credentials{
+		ApiKey: cfg.Credentials.ApiKey,
+	}
+
+	if cfg.Credentials.Azure != nil {
+		providersCreds.Azure = &providers.Azure{
+			Endpoint:    cfg.Credentials.Azure.Endpoint,
+			UseIdentity: cfg.Credentials.Azure.UseManagedIdentity,
+			ApiVersion:  cfg.Credentials.Azure.ApiVersion,
+		}
+	}
+
 	response, err := client.Ask(ctx, &providers.Config{
-		Credentials: providers.Credentials{
-			ApiKey: cfg.Credentials.ApiKey,
-		},
+		Credentials:  providersCreds,
 		Model:        cfg.Model,
 		MaxTokens:    maxTokens,
 		Temperature:  0.0,
