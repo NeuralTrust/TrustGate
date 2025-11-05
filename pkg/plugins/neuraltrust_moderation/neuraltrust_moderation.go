@@ -477,11 +477,11 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		maxTokens = 1000
 	}
 	start := time.Now()
-	
+
 	providersCreds := providers.Credentials{
 		ApiKey: cfg.Credentials.ApiKey,
 	}
-	
+
 	if cfg.Credentials.Azure != nil {
 		providersCreds.Azure = &providers.Azure{
 			Endpoint:    cfg.Credentials.Azure.Endpoint,
@@ -489,13 +489,13 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 			ApiVersion:  cfg.Credentials.Azure.ApiVersion,
 		}
 	}
-	
+
 	response, err := client.Ask(ctx, &providers.Config{
-		Credentials:   providersCreds,
-		Model:         cfg.Model,
-		MaxTokens:      maxTokens,
-		Temperature:   0.0,
-		SystemPrompt:  SystemPrompt,
+		Credentials:  providersCreds,
+		Model:        cfg.Model,
+		MaxTokens:    maxTokens,
+		Temperature:  0.0,
+		SystemPrompt: SystemPrompt,
 		Instructions: cfg.Instructions,
 	}, string(inputBody))
 	duration := time.Since(start).Seconds()
