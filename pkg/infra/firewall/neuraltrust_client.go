@@ -79,9 +79,10 @@ func (c *NeuralTrustFirewallClient) executeJailbreakRequest(
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		if !errors.Is(err, context.Canceled) {
-			c.logger.WithError(err).Error("failed to call jailbreak firewall")
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, context.Canceled
 		}
+		c.logger.WithError(err).WithField("error_type", fmt.Sprintf("%T", err)).Warn("failed to call jailbreak firewall")
 		return nil, fmt.Errorf("failed to call jailbreak firewall: %w", err)
 	}
 	defer resp.Body.Close()
@@ -153,7 +154,7 @@ func (c *NeuralTrustFirewallClient) executeToxicityRequest(
 		if cause := context.Cause(ctx); cause != nil {
 			return nil, context.Canceled
 		}
-		c.logger.WithError(err).WithField("error_type", fmt.Sprintf("%T", err)).Error("failed to call toxicity firewall")
+		c.logger.WithError(err).WithField("error_type", fmt.Sprintf("%T", err)).Warn("failed to call toxicity firewall")
 		return nil, fmt.Errorf("failed to call toxicity firewall: %w", err)
 	}
 	defer resp.Body.Close()
