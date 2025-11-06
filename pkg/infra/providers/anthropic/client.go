@@ -1,9 +1,12 @@
 package anthropic
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
@@ -24,6 +27,11 @@ type anthropicStreamRequest struct {
 type client struct {
 	clientPool *sync.Map
 }
+
+const (
+	anthropicAPIEndpoint = "https://api.anthropic.com/v1/messages"
+	anthropicAPIVersion  = "2023-06-01"
+)
 
 func NewAnthropicClient() providers.Client {
 	return &client{
@@ -122,19 +130,32 @@ func (c *client) Completions(
 		return nil, fmt.Errorf("API key is required")
 	}
 
-	anthropicClient := c.getOrCreateClient(config.Credentials.ApiKey)
-
-	params, err := c.getParams(reqBody, config)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicAPIEndpoint, bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	message, err := anthropicClient.Messages.New(ctx, params)
+	httpReq.Header.Set("x-api-key", config.Credentials.ApiKey)
+	httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
+	httpReq.Header.Set("content-type", "application/json")
+
+	httpClient := &http.Client{}
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic request failed: %w", err)
 	}
+	defer resp.Body.Close()
 
-	return []byte(message.RawJSON()), nil
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("anthropic request failed: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	return body, nil
 }
 
 func (c *client) CompletionsStream(

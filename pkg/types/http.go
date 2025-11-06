@@ -10,21 +10,21 @@ import (
 
 // RequestContext represents the context for a request
 type RequestContext struct {
-	C                 *fiber.Ctx
-	Context           context.Context
-	GatewayID         string
-	RuleID            string
-	Headers           map[string][]string
-	Method            string
-	Path              string
-	Query             url.Values
-	Body              []byte
-	Metadata          map[string]interface{}
-	Stage             Stage
-	ProcessAt         *time.Time
-	IP                string
-	SessionID         string
-	IsProviderRequest bool
+	C         *fiber.Ctx
+	Context   context.Context
+	GatewayID string
+	RuleID    string
+	Headers   map[string][]string
+	Method    string
+	Path      string
+	Query     url.Values
+	Body      []byte
+	Metadata  map[string]interface{}
+	Stage     Stage
+	ProcessAt *time.Time
+	IP        string
+	SessionID string
+	Provider  string
 }
 
 // ResponseContext represents the context for a response

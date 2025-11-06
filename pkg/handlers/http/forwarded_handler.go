@@ -247,19 +247,34 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		h.logger.WithError(err).Error("failed to get upstream")
 		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "failed to get upstream"})
 	}
-	// Create the RequestContext
+
 	reqCtx := &types.RequestContext{
-		C:                 c,
-		Context:           c.Context(),
-		GatewayID:         gatewayID,
-		Headers:           make(map[string][]string),
-		Method:            reqData.Method,
-		Path:              c.Path(),
-		Query:             h.getQueryParams(c),
-		Metadata:          metadata,
-		Body:              c.Body(),
-		RuleID:            matchingRule.ID,
-		IsProviderRequest: h.isProviderRequest(upstreamModel),
+		C:         c,
+		Context:   c.Context(),
+		GatewayID: gatewayID,
+		Headers:   make(map[string][]string),
+		Method:    reqData.Method,
+		Path:      c.Path(),
+		Query:     h.getQueryParams(c),
+		Metadata:  metadata,
+		Body:      c.Body(),
+		RuleID:    matchingRule.ID,
+	}
+
+	lb, err := h.getOrCreateLoadBalancer(upstreamModel)
+	if err != nil {
+		h.logger.WithError(err).Error("failed to get load balancer")
+		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "failed to get load balancer"})
+	}
+
+	var preselectedTarget *types.UpstreamTarget
+	preselectedTarget, err = h.preselectTarget(reqCtx, lb)
+	if err != nil {
+		h.logger.WithError(err).Warn("failed to pre-select target, will select during forwardRequest")
+	}
+
+	if preselectedTarget != nil && preselectedTarget.Provider != "" {
+		reqCtx.Provider = preselectedTarget.Provider
 	}
 
 	for key, values := range c.GetReqHeaders() {
@@ -339,6 +354,8 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		matchingRule,
 		upstreamModel,
 		gatewayData.Gateway.TlS,
+		preselectedTarget,
+		lb,
 	)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to forward request")
@@ -491,6 +508,17 @@ func (h *forwardedHandler) configureRulePlugins(gatewayID string, rule *types.Fo
 	return nil
 }
 
+func (h *forwardedHandler) preselectTarget(
+	reqCtx *types.RequestContext,
+	lb *loadbalancer.LoadBalancer,
+) (*types.UpstreamTarget, error) {
+	target, err := lb.NextTarget(reqCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select target: %w", err)
+	}
+	return target, nil
+}
+
 func (h *forwardedHandler) getUpstream(
 	ctx context.Context,
 	rule *types.ForwardingRule,
@@ -509,20 +537,13 @@ func (h *forwardedHandler) getUpstream(
 	return upstreamModel, nil
 }
 
-func (h *forwardedHandler) isProviderRequest(upstreams *domainUpstream.Upstream) bool {
-	for _, model := range upstreams.Targets {
-		if model.Provider != "" {
-			return true
-		}
-	}
-	return false
-}
-
 func (h *forwardedHandler) forwardRequest(
 	req *types.RequestContext,
 	rule *types.ForwardingRule,
 	upstreamModel *domainUpstream.Upstream,
 	tlsConfig map[string]types.ClientTLSConfig,
+	preselectedTarget *types.UpstreamTarget,
+	lb *loadbalancer.LoadBalancer,
 ) (*types.ResponseContext, error) {
 
 	streamResponse, ok := req.C.Locals(common.StreamResponseContextKey).(chan []byte)
@@ -537,11 +558,6 @@ func (h *forwardedHandler) forwardRequest(
 		return nil, fmt.Errorf("failed to get stream mode channel")
 	}
 
-	lb, err := h.getOrCreateLoadBalancer(upstreamModel)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get load balancer: %w", err)
-	}
-
 	maxRetries := rule.RetryAttempts
 	if maxRetries == 0 {
 		maxRetries = 2
@@ -549,13 +565,35 @@ func (h *forwardedHandler) forwardRequest(
 
 	var reqErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		target, err := lb.NextTarget(req)
-		if err != nil {
-			if attempt == maxRetries {
-				return nil, fmt.Errorf("failed to get target after retries: %w", err)
+		var (
+			target *types.UpstreamTarget
+			err    error
+		)
+
+		if attempt == 0 && preselectedTarget != nil {
+			target = preselectedTarget
+		} else {
+			target, err = lb.NextTarget(req)
+			if err != nil {
+				if attempt == maxRetries {
+					return nil, fmt.Errorf("failed to get target after retries: %w", err)
+				}
+				reqErr = err
+				continue
 			}
-			continue
 		}
+
+		if req.Provider != target.Provider {
+			if attempt > 0 {
+				h.logger.WithFields(logrus.Fields{
+					"old_provider": req.Provider,
+					"new_provider": target.Provider,
+					"attempt":      attempt + 1,
+				}).Debug("provider changed during retry")
+			}
+			req.Provider = target.Provider
+		}
+
 		h.logger.WithFields(logrus.Fields{
 			"attempt":   attempt + 1,
 			"provider":  target.Provider,
@@ -592,8 +630,10 @@ func (h *forwardedHandler) forwardRequest(
 			lb.ReportSuccess(target)
 			return response, nil
 		}
+
 		lb.ReportFailure(target, err)
 	}
+
 	select {
 	case <-streamResponse:
 	default:
