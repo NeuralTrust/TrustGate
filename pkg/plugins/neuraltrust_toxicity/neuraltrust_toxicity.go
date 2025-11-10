@@ -71,7 +71,7 @@ func buildFirewallCredentials(creds Credentials) firewall.Credentials {
 
 	return firewall.Credentials{
 		NeuralTrustCredentials: neural,
-		OpenAICredentials:     openAI,
+		OpenAICredentials:      openAI,
 	}
 }
 

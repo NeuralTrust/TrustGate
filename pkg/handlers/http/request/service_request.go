@@ -27,4 +27,3 @@ type ServiceRequest struct {
 	CreatedAt time.Time `json:"CreatedAt"`
 	UpdatedAt time.Time `json:"UpdatedAt"`
 }
-

@@ -11,6 +11,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewOpenAIFirewallClient(t *testing.T) {
@@ -31,7 +32,8 @@ func TestOpenAIFirewallClient_DetectJailbreak(t *testing.T) {
 			},
 		}
 
-		responseJSON, _ := json.Marshal(expectedResponse)
+		responseJSON, err := json.Marshal(expectedResponse)
+		require.NoError(t, err)
 		openAIResponse := map[string]interface{}{
 			"output_text": string(responseJSON),
 		}
@@ -43,7 +45,7 @@ func TestOpenAIFirewallClient_DetectJailbreak(t *testing.T) {
 			assert.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
 
 			var requestBody map[string]interface{}
-			_ = json.NewDecoder(r.Body).Decode(&requestBody)
+			_ = json.NewDecoder(r.Body).Decode(&requestBody) //nolint:errcheck
 			assert.Equal(t, "gpt-4o-mini", requestBody["model"])
 			assert.Equal(t, float64(0), requestBody["temperature"])
 
@@ -54,7 +56,7 @@ func TestOpenAIFirewallClient_DetectJailbreak(t *testing.T) {
 
 		client := firewall.NewOpenAIFirewallClient(logrus.New())
 		// Override the endpoint for testing
-		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL)
+		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL) //nolint:errcheck
 
 		credentials := firewall.Credentials{
 			OpenAICredentials: firewall.OpenAICredentials{
@@ -80,7 +82,8 @@ func TestOpenAIFirewallClient_DetectJailbreak(t *testing.T) {
 			},
 		}
 
-		responseJSON, _ := json.Marshal(expectedResponse)
+		responseJSON, err := json.Marshal(expectedResponse)
+		require.NoError(t, err)
 		openAIResponse := map[string]interface{}{
 			"output": []map[string]interface{}{
 				{
@@ -101,7 +104,7 @@ func TestOpenAIFirewallClient_DetectJailbreak(t *testing.T) {
 		defer server.Close()
 
 		client := firewall.NewOpenAIFirewallClient(logrus.New())
-		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL)
+		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL) //nolint:errcheck
 
 		credentials := firewall.Credentials{
 			OpenAICredentials: firewall.OpenAICredentials{
@@ -166,7 +169,7 @@ func TestOpenAIFirewallClient_DetectJailbreak(t *testing.T) {
 		defer server.Close()
 
 		client := firewall.NewOpenAIFirewallClient(logrus.New())
-		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL)
+		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL) //nolint:errcheck
 
 		credentials := firewall.Credentials{
 			OpenAICredentials: firewall.OpenAICredentials{
@@ -192,7 +195,7 @@ func TestOpenAIFirewallClient_DetectJailbreak(t *testing.T) {
 		defer server.Close()
 
 		client := firewall.NewOpenAIFirewallClient(logrus.New())
-		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL)
+		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL) //nolint:errcheck
 
 		credentials := firewall.Credentials{
 			OpenAICredentials: firewall.OpenAICredentials{
@@ -223,7 +226,7 @@ func TestOpenAIFirewallClient_DetectJailbreak(t *testing.T) {
 		defer server.Close()
 
 		client := firewall.NewOpenAIFirewallClient(logrus.New())
-		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL)
+		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL) //nolint:errcheck
 
 		credentials := firewall.Credentials{
 			OpenAICredentials: firewall.OpenAICredentials{
@@ -249,7 +252,7 @@ func TestOpenAIFirewallClient_DetectJailbreak(t *testing.T) {
 		defer server.Close()
 
 		client := firewall.NewOpenAIFirewallClient(logrus.New())
-		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL)
+		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL) //nolint:errcheck
 
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
@@ -278,7 +281,8 @@ func TestOpenAIFirewallClient_DetectToxicity(t *testing.T) {
 			},
 		}
 
-		responseJSON, _ := json.Marshal(expectedResponse)
+		responseJSON, err := json.Marshal(expectedResponse)
+		require.NoError(t, err)
 		openAIResponse := map[string]interface{}{
 			"output_text": string(responseJSON),
 		}
@@ -295,7 +299,7 @@ func TestOpenAIFirewallClient_DetectToxicity(t *testing.T) {
 		defer server.Close()
 
 		client := firewall.NewOpenAIFirewallClient(logrus.New())
-		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL)
+		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL) //nolint:errcheck
 
 		credentials := firewall.Credentials{
 			OpenAICredentials: firewall.OpenAICredentials{
@@ -321,7 +325,8 @@ func TestOpenAIFirewallClient_DetectToxicity(t *testing.T) {
 			},
 		}
 
-		responseJSON, _ := json.Marshal(expectedResponse)
+		responseJSON, err := json.Marshal(expectedResponse)
+		require.NoError(t, err)
 		openAIResponse := map[string]interface{}{
 			"output": []map[string]interface{}{
 				{
@@ -342,7 +347,7 @@ func TestOpenAIFirewallClient_DetectToxicity(t *testing.T) {
 		defer server.Close()
 
 		client := firewall.NewOpenAIFirewallClient(logrus.New())
-		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL)
+		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL) //nolint:errcheck
 
 		credentials := firewall.Credentials{
 			OpenAICredentials: firewall.OpenAICredentials{
@@ -407,7 +412,7 @@ func TestOpenAIFirewallClient_DetectToxicity(t *testing.T) {
 		defer server.Close()
 
 		client := firewall.NewOpenAIFirewallClient(logrus.New())
-		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL)
+		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL) //nolint:errcheck
 
 		credentials := firewall.Credentials{
 			OpenAICredentials: firewall.OpenAICredentials{
@@ -433,7 +438,7 @@ func TestOpenAIFirewallClient_DetectToxicity(t *testing.T) {
 		defer server.Close()
 
 		client := firewall.NewOpenAIFirewallClient(logrus.New())
-		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL)
+		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL) //nolint:errcheck
 
 		credentials := firewall.Credentials{
 			OpenAICredentials: firewall.OpenAICredentials{
@@ -460,7 +465,8 @@ func TestOpenAIFirewallClient_MultipleInputs(t *testing.T) {
 			},
 		}
 
-		responseJSON, _ := json.Marshal(expectedResponse)
+		responseJSON, err := json.Marshal(expectedResponse)
+		require.NoError(t, err)
 		openAIResponse := map[string]interface{}{
 			"output_text": string(responseJSON),
 		}
@@ -468,7 +474,7 @@ func TestOpenAIFirewallClient_MultipleInputs(t *testing.T) {
 		var receivedUserContent string
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var requestBody map[string]interface{}
-			_ = json.NewDecoder(r.Body).Decode(&requestBody)
+			_ = json.NewDecoder(r.Body).Decode(&requestBody) //nolint:errcheck
 
 			if input, ok := requestBody["input"].(string); ok {
 				receivedUserContent = input
@@ -480,7 +486,7 @@ func TestOpenAIFirewallClient_MultipleInputs(t *testing.T) {
 		defer server.Close()
 
 		client := firewall.NewOpenAIFirewallClient(logrus.New())
-		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL)
+		client.(*firewall.OpenAIFirewallClient).SetEndpoint(server.URL) //nolint:errcheck
 
 		credentials := firewall.Credentials{
 			OpenAICredentials: firewall.OpenAICredentials{
