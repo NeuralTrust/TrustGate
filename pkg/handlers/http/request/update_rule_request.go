@@ -17,3 +17,4 @@ type UpdateRuleRequest struct {
 	PluginChain   []types.PluginConfig   `json:"plugin_chain"`
 	TrustLens     *types.TrustLensConfig `json:"trustlens,omitempty"`
 }
+

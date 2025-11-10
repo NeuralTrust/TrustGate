@@ -103,12 +103,16 @@ func TestNeuralTrustToxicity_ValidateConfig(t *testing.T) {
 
 func TestNeuralTrustToxicity_Execute_Success(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
+
 	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
 		logger,
 		mockTracker,
-		mockFirewallClient,
+		mockFirewallFactory,
 	)
 
 	cfg := types.PluginConfig{
@@ -152,16 +156,21 @@ func TestNeuralTrustToxicity_Execute_Success(t *testing.T) {
 	assert.Equal(t, 200, pluginResponse.StatusCode)
 	assert.Equal(t, "prompt content is safe", pluginResponse.Message)
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustToxicity_Execute_ToxicContent(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
+
 	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
 		logger,
 		mockTracker,
-		mockFirewallClient,
+		mockFirewallFactory,
 	)
 
 	cfg := types.PluginConfig{
@@ -204,16 +213,21 @@ func TestNeuralTrustToxicity_Execute_ToxicContent(t *testing.T) {
 	assert.Nil(t, pluginResponse)
 	assert.Contains(t, err.Error(), "score 0.80 exceeded threshold 0.70")
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustToxicity_Execute_WithMappingField(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
+
 	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
 		logger,
 		mockTracker,
-		mockFirewallClient,
+		mockFirewallFactory,
 	)
 
 	cfg := types.PluginConfig{
@@ -262,16 +276,21 @@ func TestNeuralTrustToxicity_Execute_WithMappingField(t *testing.T) {
 	assert.NotNil(t, pluginResponse)
 	assert.Equal(t, 200, pluginResponse.StatusCode)
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustToxicity_Execute_PostRequest(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
+
 	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
 		logger,
 		mockTracker,
-		mockFirewallClient,
+		mockFirewallFactory,
 	)
 
 	cfg := types.PluginConfig{
@@ -316,16 +335,21 @@ func TestNeuralTrustToxicity_Execute_PostRequest(t *testing.T) {
 	assert.NotNil(t, pluginResponse)
 	assert.Equal(t, 200, pluginResponse.StatusCode)
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustToxicity_Execute_FirewallError(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
+
 	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
 		logger,
 		mockTracker,
-		mockFirewallClient,
+		mockFirewallFactory,
 	)
 
 	cfg := types.PluginConfig{
@@ -361,16 +385,21 @@ func TestNeuralTrustToxicity_Execute_FirewallError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, pluginResponse)
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustToxicity_Execute_FirewallServiceUnavailable(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
+
 	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
 		logger,
 		mockTracker,
-		mockFirewallClient,
+		mockFirewallFactory,
 	)
 
 	cfg := types.PluginConfig{
@@ -414,16 +443,21 @@ func TestNeuralTrustToxicity_Execute_FirewallServiceUnavailable(t *testing.T) {
 	assert.Contains(t, err.Error(), "firewall service call failed")
 
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustToxicity_Execute_FirewallServiceError(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	mockTracker := new(mocks.Tracker)
 	logger := logrus.New()
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
+
 	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
 		logger,
 		mockTracker,
-		mockFirewallClient,
+		mockFirewallFactory,
 	)
 
 	cfg := types.PluginConfig{
@@ -466,6 +500,7 @@ func TestNeuralTrustToxicity_Execute_FirewallServiceError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to call firewall")
 
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustToxicity_Execute_NotifyGuardrailViolation(t *testing.T) {
@@ -475,10 +510,13 @@ func TestNeuralTrustToxicity_Execute_NotifyGuardrailViolation(t *testing.T) {
 	logger := logrus.New()
 
 	// Create plugin with the fingerprint tracker
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
+
 	plugin := neuraltrust_toxicity.NewNeuralTrustToxicity(
 		logger,
 		mockTracker,
-		mockFirewallClient,
+		mockFirewallFactory,
 	)
 
 	// Create configuration
@@ -543,5 +581,6 @@ func TestNeuralTrustToxicity_Execute_NotifyGuardrailViolation(t *testing.T) {
 
 	// Verify that the mock expectations were met
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 	mockTracker.AssertExpectations(t)
 }

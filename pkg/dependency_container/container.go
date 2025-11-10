@@ -76,7 +76,7 @@ type Container struct {
 	JWTManager             jwt.Manager
 	RuleRepository         ruledomain.Repository
 	GatewayRepository      domainGateway.Repository
-	FirewallClient         firewall.Client
+	FirewallFactory        firewall.ClientFactory
 }
 
 func NewContainer(
@@ -140,10 +140,12 @@ func NewContainer(
 			ResponseHeaderTimeout: 10 * time.Second,
 		},
 	}
-	firewallClient := firewall.NewNeuralTrustFirewallClient(
+	neuralTrustFirewallClient := firewall.NewNeuralTrustFirewallClient(
 		firewallHTTPClient,
 		logger,
 	)
+	openAIFirewallClient := firewall.NewOpenAIFirewallClient(logger)
+	firewallFactory := firewall.NewClientFactory(neuralTrustFirewallClient, openAIFirewallClient)
 
 	pluginManager := plugins.NewManager(
 		cfg,
@@ -154,7 +156,7 @@ func NewContainer(
 		embeddingRepository,
 		embeddingServiceLocator,
 		providerFactory,
-		firewallClient,
+		firewallFactory,
 	)
 
 	// repository
@@ -350,7 +352,7 @@ func NewContainer(
 		JWTManager:            jwtManager,
 		RuleRepository:        ruleRepository,
 		GatewayRepository:     gatewayRepository,
-		FirewallClient:        firewallClient,
+		FirewallFactory:       firewallFactory,
 	}
 
 	return container, nil

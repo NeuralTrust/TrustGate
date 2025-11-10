@@ -23,7 +23,7 @@ const (
 )
 
 type NeuralTrustToxicity struct {
-	firewallClient     firewall.Client
+	firewallFactory    firewall.ClientFactory
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
 }
@@ -43,12 +43,35 @@ func NewGuardrailViolation(message string) error {
 func NewNeuralTrustToxicity(
 	logger *logrus.Logger,
 	fingerPrintManager fingerprint.Tracker,
-	firewallClient firewall.Client,
+	firewallFactory firewall.ClientFactory,
 ) pluginiface.Plugin {
 	return &NeuralTrustToxicity{
-		firewallClient:     firewallClient,
+		firewallFactory:    firewallFactory,
 		logger:             logger,
 		fingerPrintManager: fingerPrintManager,
+	}
+}
+
+func buildFirewallCredentials(creds Credentials) firewall.Credentials {
+	var neural firewall.NeuralTrustCredentials
+	if creds.NeuralTrust != nil {
+		neural.BaseURL = creds.NeuralTrust.BaseURL
+		neural.Token = creds.NeuralTrust.Token
+	} else {
+		neural.BaseURL = creds.BaseURL
+		neural.Token = creds.Token
+	}
+
+	var openAI firewall.OpenAICredentials
+	if creds.OpenAI != nil {
+		openAI.APIKey = creds.OpenAI.APIKey
+	} else {
+		openAI.APIKey = creds.APIKey
+	}
+
+	return firewall.Credentials{
+		NeuralTrustCredentials: neural,
+		OpenAICredentials:     openAI,
 	}
 }
 
@@ -122,16 +145,18 @@ func (p *NeuralTrustToxicity) Execute(
 	}
 
 	if conf.ToxicityParamBag != nil {
-		credentials := firewall.Credentials{
-			BaseURL: conf.Credentials.BaseURL,
-			Token:   conf.Credentials.Token,
+		firewallClient, err := p.firewallFactory.Get(conf.Provider)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve firewall provider: %w", err)
 		}
+
+		credentials := buildFirewallCredentials(conf.Credentials)
 
 		content := firewall.Content{
 			Input: []string{mappingContent.Input},
 		}
 
-		responses, err := p.firewallClient.DetectToxicity(ctx, content, credentials)
+		responses, err := firewallClient.DetectToxicity(ctx, content, credentials)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return &types.PluginResponse{
