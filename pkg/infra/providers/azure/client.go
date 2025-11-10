@@ -17,16 +17,16 @@ import (
 	pkgTypes "github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
-type azureMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
 type azureStreamRequest struct {
-	Model       string         `json:"model"`
-	Messages    []azureMessage `json:"messages"`
-	MaxTokens   int            `json:"max_tokens"`
-	Temperature float64        `json:"temperature"`
+	Model        string           `json:"model"`
+	Messages     []map[string]any `json:"messages,omitempty"`
+	Input        any              `json:"input,omitempty"`
+	Instructions string           `json:"instructions,omitempty"`
+	MaxTokens    int              `json:"max_tokens,omitempty"`
+	Temperature  float64          `json:"temperature,omitempty"`
+	System       string           `json:"system,omitempty"`
+	Tools        json.RawMessage  `json:"tools,omitempty"`
+	ToolChoice   json.RawMessage  `json:"tool_choice,omitempty"`
 }
 
 type client struct {
@@ -36,6 +36,14 @@ type client struct {
 func NewAzureClient() providers.Client {
 	return &client{
 		clientPool: &sync.Map{},
+	}
+}
+
+func (c *client) applyAuthHeader(req *http.Request, useIdentity bool, token string) {
+	if useIdentity {
+		req.Header.Set("Authorization", "Bearer "+token)
+	} else {
+		req.Header.Set("api-key", token)
 	}
 }
 
@@ -141,12 +149,7 @@ func (c *client) Ask(
 
 	req.Header.Set("Content-Type", "application/json")
 
-	// Set authorization header based on authentication method
-	if config.Credentials.Azure.UseIdentity {
-		req.Header.Set("Authorization", "Bearer "+token)
-	} else {
-		req.Header.Set("api-key", token)
-	}
+	c.applyAuthHeader(req, config.Credentials.Azure.UseIdentity, token)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -278,18 +281,7 @@ func (c *client) Completions(
 		token = config.Credentials.ApiKey
 	}
 
-	// Filter out system messages as per requirements
-	var messages []map[string]string
-	for _, m := range req.Messages {
-		if m.Role != "system" {
-			messages = append(messages, map[string]string{
-				"role":    m.Role,
-				"content": m.Content,
-			})
-		}
-	}
-
-	apiVersion := "2024-02-15-preview"
+	apiVersion := "2024-05-01-preview"
 	if config.Credentials.Azure.ApiVersion != "" {
 		apiVersion = config.Credentials.Azure.ApiVersion
 	}
@@ -299,8 +291,48 @@ func (c *client) Completions(
 		req.Model,
 		apiVersion)
 
-	requestBody := map[string]interface{}{
-		"messages": messages,
+	requestBody := map[string]interface{}{}
+
+	if len(req.Messages) > 0 {
+		requestBody["messages"] = req.Messages
+	} else if req.Input != nil {
+		var messages []map[string]any
+
+		if req.Instructions != "" {
+			messages = append(messages, map[string]any{
+				"role": "system",
+				"content": []map[string]any{
+					{
+						"type": "text",
+						"text": req.Instructions,
+					},
+				},
+			})
+		} else if req.System != "" {
+			messages = append(messages, map[string]any{
+				"role": "system",
+				"content": []map[string]any{
+					{
+						"type": "text",
+						"text": req.System,
+					},
+				},
+			})
+		}
+
+		messages = append(messages, map[string]any{
+			"role": "user",
+			"content": []map[string]any{
+				{
+					"type": "text",
+					"text": req.Input,
+				},
+			},
+		})
+
+		requestBody["messages"] = messages
+	} else {
+		return nil, fmt.Errorf("messages or input must be provided")
 	}
 
 	if req.Temperature > 0 {
@@ -309,6 +341,14 @@ func (c *client) Completions(
 
 	if req.MaxTokens > 0 {
 		requestBody["max_tokens"] = req.MaxTokens
+	}
+
+	if len(req.Tools) > 0 {
+		requestBody["tools"] = req.Tools
+	}
+
+	if len(req.ToolChoice) > 0 {
+		requestBody["tool_choice"] = req.ToolChoice
 	}
 
 	bodyBytes, err := json.Marshal(requestBody)
@@ -323,11 +363,7 @@ func (c *client) Completions(
 
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	if config.Credentials.Azure.UseIdentity {
-		httpReq.Header.Set("Authorization", "Bearer "+token)
-	} else {
-		httpReq.Header.Set("api-key", token)
-	}
+	c.applyAuthHeader(httpReq, config.Credentials.Azure.UseIdentity, token)
 
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(httpReq)
