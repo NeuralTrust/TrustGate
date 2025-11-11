@@ -1,4 +1,4 @@
-package gemini
+package google
 
 import (
 	"context"
@@ -29,7 +29,7 @@ type client struct {
 	clientPool *sync.Map
 }
 
-func NewGeminiClient() providers.Client {
+func NewGoogleClient() providers.Client {
 	return &client{
 		clientPool: &sync.Map{},
 	}

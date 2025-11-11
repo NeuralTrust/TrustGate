@@ -149,10 +149,10 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config types.PluginConfig) 
 		if cfg.LLMParamBag.Provider != providersFactory.ProviderOpenAI &&
 			cfg.LLMParamBag.Provider != providersFactory.ProviderAnthropic &&
 			cfg.LLMParamBag.Provider != providersFactory.ProviderAzure &&
-			cfg.LLMParamBag.Provider != providersFactory.ProviderGemini {
+			cfg.LLMParamBag.Provider != providersFactory.ProviderGoogle {
 			return fmt.Errorf("LLM provider must be either '%s' or '%s' or '%s' or '%s'",
 				providersFactory.ProviderOpenAI,
-				providersFactory.ProviderGemini,
+				providersFactory.ProviderGoogle,
 				providersFactory.ProviderAnthropic,
 				providersFactory.ProviderAzure,
 			)

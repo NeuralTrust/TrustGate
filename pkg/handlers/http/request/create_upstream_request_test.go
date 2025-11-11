@@ -130,11 +130,11 @@ func TestUpstreamRequest_ValidateProviderOptions(t *testing.T) {
 				Targets: []TargetRequest{
 					{
 						ID:       "target1",
-						Provider: factory.ProviderGemini,
+						Provider: factory.ProviderGoogle,
 					},
 					{
 						ID:       "target2",
-						Provider: factory.ProviderGemini,
+						Provider: factory.ProviderGoogle,
 					},
 				},
 			},

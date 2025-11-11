@@ -35,20 +35,22 @@ func TestDeletePluginsHandler_GatewaySuccess(t *testing.T) {
 	app.Delete("/api/v1/plugins", handler.Handle)
 
 	gatewayID := uuid.New()
+	plugin1ID := uuid.NewString()
+	plugin2ID := uuid.NewString()
 	existingGateway := &domainGateway.Gateway{
 		ID:   gatewayID,
 		Name: "test-gateway",
 		RequiredPlugins: []types.PluginConfig{
-			{Name: "rate_limiter", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"limit": 100}},
-			{Name: "cors", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"allowed_origins": []string{"*"}}},
+			{ID: plugin1ID, Name: "rate_limiter", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"limit": 100}},
+			{ID: plugin2ID, Name: "cors", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"allowed_origins": []string{"*"}}},
 		},
 		UpdatedAt: time.Now(),
 	}
 
 	reqBody := map[string]interface{}{
-		"type":    "gateway",
-		"id":      gatewayID.String(),
-		"plugins": []string{"cors"},
+		"type":       "gateway",
+		"id":         gatewayID.String(),
+		"plugin_ids": []string{plugin2ID},
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
@@ -79,6 +81,8 @@ func TestDeletePluginsHandler_RuleSuccess(t *testing.T) {
 
 	ruleID := uuid.New()
 	gatewayID := uuid.New()
+	plugin1ID := uuid.NewString()
+	plugin2ID := uuid.NewString()
 	existingRule := &forwarding_rule.ForwardingRule{
 		ID:        ruleID,
 		GatewayID: gatewayID,
@@ -86,16 +90,16 @@ func TestDeletePluginsHandler_RuleSuccess(t *testing.T) {
 		ServiceID: uuid.New(),
 		Methods:   []string{"GET"},
 		PluginChain: []types.PluginConfig{
-			{Name: "rate_limiter", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"limit": 100}},
-			{Name: "cors", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"allowed_origins": []string{"*"}}},
+			{ID: plugin1ID, Name: "rate_limiter", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"limit": 100}},
+			{ID: plugin2ID, Name: "cors", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"allowed_origins": []string{"*"}}},
 		},
 		UpdatedAt: time.Now(),
 	}
 
 	reqBody := map[string]interface{}{
-		"type":    "rule",
-		"id":      ruleID.String(),
-		"plugins": []string{"cors"},
+		"type":       "rule",
+		"id":         ruleID.String(),
+		"plugin_ids": []string{plugin2ID},
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
@@ -125,9 +129,9 @@ func TestDeletePluginsHandler_InvalidType(t *testing.T) {
 	app.Delete("/api/v1/plugins", handler.Handle)
 
 	reqBody := map[string]interface{}{
-		"type":    "invalid",
-		"id":      uuid.New().String(),
-		"plugins": []string{"cors"},
+		"type":       "invalid",
+		"id":         uuid.New().String(),
+		"plugin_ids": []string{uuid.NewString()},
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)
@@ -152,7 +156,7 @@ func TestDeletePluginsHandler_InvalidUUID(t *testing.T) {
 	app.Delete("/api/v1/plugins", handler.Handle)
 
 	// Gateway invalid UUID
-	gwReq := map[string]interface{}{"type": "gateway", "id": "not-a-uuid", "plugins": []string{"cors"}}
+	gwReq := map[string]interface{}{"type": "gateway", "id": "not-a-uuid", "plugin_ids": []string{uuid.NewString()}}
 	gwBody, err := json.Marshal(gwReq)
 	require.NoError(t, err)
 	req := httptest.NewRequest("DELETE", "/api/v1/plugins", bytes.NewReader(gwBody))
@@ -162,7 +166,7 @@ func TestDeletePluginsHandler_InvalidUUID(t *testing.T) {
 	assert.Equal(t, 400, resp.StatusCode)
 
 	// Rule invalid UUID
-	ruleReq := map[string]interface{}{"type": "rule", "id": "not-a-uuid", "plugins": []string{"cors"}}
+	ruleReq := map[string]interface{}{"type": "rule", "id": "not-a-uuid", "plugin_ids": []string{uuid.NewString()}}
 	ruleBody, err := json.Marshal(ruleReq)
 	require.NoError(t, err)
 	req2 := httptest.NewRequest("DELETE", "/api/v1/plugins", bytes.NewReader(ruleBody))
@@ -185,7 +189,7 @@ func TestDeletePluginsHandler_NotFound(t *testing.T) {
 	app.Delete("/api/v1/plugins", handler.Handle)
 
 	gatewayID := uuid.New()
-	gwReq := map[string]interface{}{"type": "gateway", "id": gatewayID.String(), "plugins": []string{"cors"}}
+	gwReq := map[string]interface{}{"type": "gateway", "id": gatewayID.String(), "plugin_ids": []string{uuid.NewString()}}
 	gwBody, err := json.Marshal(gwReq)
 	require.NoError(t, err)
 	gatewayRepo.On("Get", mock.Anything, gatewayID).Return(nil, assert.AnError)
@@ -196,7 +200,7 @@ func TestDeletePluginsHandler_NotFound(t *testing.T) {
 	assert.Equal(t, 404, gwResp.StatusCode)
 
 	ruleID := uuid.New()
-	ruleReq := map[string]interface{}{"type": "rule", "id": ruleID.String(), "plugins": []string{"cors"}}
+	ruleReq := map[string]interface{}{"type": "rule", "id": ruleID.String(), "plugin_ids": []string{uuid.NewString()}}
 	ruleBody, err := json.Marshal(ruleReq)
 	require.NoError(t, err)
 	ruleRepo.On("GetRuleByID", mock.Anything, ruleID).Return(nil, assert.AnError)
@@ -220,20 +224,22 @@ func TestDeletePluginsHandler_ValidatorError(t *testing.T) {
 	app.Delete("/api/v1/plugins", handler.Handle)
 
 	gatewayID := uuid.New()
+	plugin1ID := uuid.NewString()
+	plugin2ID := uuid.NewString()
 	existingGateway := &domainGateway.Gateway{
 		ID:   gatewayID,
 		Name: "test-gateway",
 		RequiredPlugins: []types.PluginConfig{
-			{Name: "rate_limiter", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"limit": 100}},
-			{Name: "cors", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"allowed_origins": []string{"*"}}},
+			{ID: plugin1ID, Name: "rate_limiter", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"limit": 100}},
+			{ID: plugin2ID, Name: "cors", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"allowed_origins": []string{"*"}}},
 		},
 		UpdatedAt: time.Now(),
 	}
 
 	reqBody := map[string]interface{}{
-		"type":    "gateway",
-		"id":      gatewayID.String(),
-		"plugins": []string{"cors"},
+		"type":       "gateway",
+		"id":         gatewayID.String(),
+		"plugin_ids": []string{plugin2ID},
 	}
 	body, err := json.Marshal(reqBody)
 	require.NoError(t, err)

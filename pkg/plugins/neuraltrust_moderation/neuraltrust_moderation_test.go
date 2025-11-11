@@ -181,7 +181,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 		validConfig = types.PluginConfig{
 			Settings: map[string]interface{}{
 				"llm_moderation": map[string]interface{}{
-					"provider": "gemini",
+					"provider": "google",
 					"model":    "gemini-pro",
 					"credentials": map[string]interface{}{
 						"api_key": "key",
