@@ -11,8 +11,17 @@ type Client interface {
 }
 
 type Credentials struct {
+	NeuralTrustCredentials NeuralTrustCredentials
+	OpenAICredentials      OpenAICredentials
+}
+
+type NeuralTrustCredentials struct {
 	BaseURL string
 	Token   string
+}
+
+type OpenAICredentials struct {
+	APIKey string
 }
 
 type JailbreakResponse struct {

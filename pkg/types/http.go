@@ -24,6 +24,7 @@ type RequestContext struct {
 	ProcessAt *time.Time
 	IP        string
 	SessionID string
+	Provider  string
 }
 
 // ResponseContext represents the context for a response

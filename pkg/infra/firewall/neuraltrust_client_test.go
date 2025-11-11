@@ -57,8 +57,10 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
-			BaseURL: server.URL,
-			Token:   "test-token",
+			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+				BaseURL: server.URL,
+				Token:   "test-token",
+			},
 		}
 		requestBody := []byte(`{"text": "test prompt"}`)
 		content := firewall.Content{
@@ -86,8 +88,10 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
-			BaseURL: server.URL,
-			Token:   "test-token",
+			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+				BaseURL: server.URL,
+				Token:   "test-token",
+			},
 		}
 		requestBody := []byte(`{"text": "test prompt"}`)
 		content := firewall.Content{
@@ -117,8 +121,10 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 		defer cancel()
 
 		credentials := firewall.Credentials{
-			BaseURL: server.URL,
-			Token:   "test-token",
+			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+				BaseURL: server.URL,
+				Token:   "test-token",
+			},
 		}
 		requestBody := []byte(`{"text": "test prompt"}`)
 		content := firewall.Content{
@@ -160,8 +166,10 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 
 		// Test data
 		credentials := firewall.Credentials{
-			BaseURL: server.URL,
-			Token:   "test-token",
+			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+				BaseURL: server.URL,
+				Token:   "test-token",
+			},
 		}
 		requestBody := []byte(`{"text": "test content"}`)
 		content := firewall.Content{
@@ -195,8 +203,10 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
-			BaseURL: server.URL,
-			Token:   "test-token",
+			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+				BaseURL: server.URL,
+				Token:   "test-token",
+			},
 		}
 		requestBody := []byte(`{"text": "test content"}`)
 		content := firewall.Content{
@@ -222,8 +232,10 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
-			BaseURL: server.URL,
-			Token:   "test-token",
+			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+				BaseURL: server.URL,
+				Token:   "test-token",
+			},
 		}
 		requestBody := []byte(`{"text": "test content"}`)
 		content := firewall.Content{
@@ -259,8 +271,10 @@ func TestNeuralTrustFirewallClient_RequestPool(t *testing.T) {
 		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
-			BaseURL: server.URL,
-			Token:   "test-token",
+			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+				BaseURL: server.URL,
+				Token:   "test-token",
+			},
 		}
 		requestBody := []byte(`{"text": "test prompt"}`)
 		content := firewall.Content{
@@ -297,8 +311,10 @@ func TestNeuralTrustFirewallClient_BufferPool(t *testing.T) {
 		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
-			BaseURL: server.URL,
-			Token:   "test-token",
+			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+				BaseURL: server.URL,
+				Token:   "test-token",
+			},
 		}
 		requestBody := []byte(`{"text": "test content"}`)
 		content := firewall.Content{
@@ -335,8 +351,10 @@ func TestNeuralTrustFirewallClient_ConcurrentRequests(t *testing.T) {
 		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
-			BaseURL: server.URL,
-			Token:   "test-token",
+			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+				BaseURL: server.URL,
+				Token:   "test-token",
+			},
 		}
 		requestBody := []byte(`{"text": "test prompt"}`)
 		content := firewall.Content{
@@ -376,8 +394,10 @@ func TestNeuralTrustFirewallClient_EmptyRequestBody(t *testing.T) {
 		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
-			BaseURL: server.URL,
-			Token:   "test-token",
+			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+				BaseURL: server.URL,
+				Token:   "test-token",
+			},
 		}
 
 		content := firewall.Content{
@@ -400,8 +420,10 @@ func TestNeuralTrustFirewallClient_EmptyRequestBody(t *testing.T) {
 		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
 
 		credentials := firewall.Credentials{
-			BaseURL: server.URL,
-			Token:   "test-token",
+			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+				BaseURL: server.URL,
+				Token:   "test-token",
+			},
 		}
 
 		content := firewall.Content{

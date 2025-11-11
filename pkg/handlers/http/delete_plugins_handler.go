@@ -83,7 +83,7 @@ func (h *deletePluginsHandler) handleGatewayDelete(c *fiber.Ctx, req *request.De
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 	}
 
-	updated := filterOutPlugins(entity.RequiredPlugins, req.Plugins)
+	updated := filterOutPlugins(entity.RequiredPlugins, req.PluginIds)
 
 	if err := h.pluginChainValidator.Validate(c.Context(), gatewayUUID, updated); err != nil {
 		h.logger.WithError(err).Error("failed to validate updated plugin chain")
@@ -119,7 +119,7 @@ func (h *deletePluginsHandler) handleRuleDelete(c *fiber.Ctx, req *request.Delet
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
 	}
 
-	updated := filterOutPlugins(rule.PluginChain, req.Plugins)
+	updated := filterOutPlugins(rule.PluginChain, req.PluginIds)
 
 	// Validate with gateway context
 	if err := h.pluginChainValidator.Validate(c.Context(), rule.GatewayID, updated); err != nil {
@@ -151,13 +151,13 @@ func filterOutPlugins(current []types.PluginConfig, toDelete []string) []types.P
 	}
 	// Build set for faster lookup
 	set := make(map[string]struct{}, len(toDelete))
-	for _, name := range toDelete {
-		set[name] = struct{}{}
+	for _, id := range toDelete {
+		set[id] = struct{}{}
 	}
 
 	res := make([]types.PluginConfig, 0, len(current))
 	for _, p := range current {
-		if _, ok := set[p.Name]; !ok {
+		if _, ok := set[p.ID]; !ok {
 			res = append(res, p)
 		}
 	}

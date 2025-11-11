@@ -60,6 +60,13 @@ func (c *NeuralTrustFirewallClient) executeJailbreakRequest(
 	content Content,
 	credentials Credentials,
 ) ([]JailbreakResponse, error) {
+	creds := credentials.NeuralTrustCredentials
+	if creds.BaseURL == "" {
+		return nil, fmt.Errorf("neuraltrust base url is required")
+	}
+	if creds.Token == "" {
+		return nil, fmt.Errorf("neuraltrust token is required")
+	}
 	body, err := json.Marshal(content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal content: %w", err)
@@ -67,7 +74,7 @@ func (c *NeuralTrustFirewallClient) executeJailbreakRequest(
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		credentials.BaseURL+jailbreakPath,
+		creds.BaseURL+jailbreakPath,
 		bytes.NewReader(body),
 	)
 	if err != nil {
@@ -75,7 +82,7 @@ func (c *NeuralTrustFirewallClient) executeJailbreakRequest(
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Token", credentials.Token)
+	req.Header.Set("Token", creds.Token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -132,6 +139,13 @@ func (c *NeuralTrustFirewallClient) executeToxicityRequest(
 	content Content,
 	credentials Credentials,
 ) ([]ToxicityResponse, error) {
+	creds := credentials.NeuralTrustCredentials
+	if creds.BaseURL == "" {
+		return nil, fmt.Errorf("neuraltrust base url is required")
+	}
+	if creds.Token == "" {
+		return nil, fmt.Errorf("neuraltrust token is required")
+	}
 	body, err := json.Marshal(content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal content: %w", err)
@@ -139,7 +153,7 @@ func (c *NeuralTrustFirewallClient) executeToxicityRequest(
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		credentials.BaseURL+toxicityPath,
+		creds.BaseURL+toxicityPath,
 		bytes.NewReader(body),
 	)
 	if err != nil {
@@ -147,7 +161,7 @@ func (c *NeuralTrustFirewallClient) executeToxicityRequest(
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Token", credentials.Token)
+	req.Header.Set("Token", creds.Token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {

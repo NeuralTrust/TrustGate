@@ -23,12 +23,13 @@ const (
 )
 
 type NeuralTrustJailbreakPlugin struct {
-	firewallClient     firewall.Client
+	firewallFactory    firewall.ClientFactory
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
 }
 
 type Config struct {
+	Provider          string             `mapstructure:"provider"`
 	Credentials       Credentials        `mapstructure:"credentials"`
 	JailbreakParamBag *JailbreakParamBag `mapstructure:"jailbreak"`
 	MappingField      string             `mapstructure:"mapping_field"`
@@ -36,8 +37,21 @@ type Config struct {
 }
 
 type Credentials struct {
+	NeuralTrust *NeuralTrustCredentials `mapstructure:"neuraltrust"`
+	OpenAI      *OpenAICredentials      `mapstructure:"openai"`
+
 	BaseURL string `mapstructure:"base_url"`
 	Token   string `mapstructure:"token"`
+	APIKey  string `mapstructure:"openai_api_key"`
+}
+
+type NeuralTrustCredentials struct {
+	BaseURL string `mapstructure:"base_url"`
+	Token   string `mapstructure:"token"`
+}
+
+type OpenAICredentials struct {
+	APIKey string `mapstructure:"api_key"`
 }
 
 type JailbreakParamBag struct {
@@ -46,13 +60,36 @@ type JailbreakParamBag struct {
 
 func NewNeuralTrustJailbreakPlugin(
 	logger *logrus.Logger,
-	firewallClient firewall.Client,
+	firewallFactory firewall.ClientFactory,
 	fingerPrintManager fingerprint.Tracker,
 ) pluginiface.Plugin {
 	return &NeuralTrustJailbreakPlugin{
-		firewallClient:     firewallClient,
+		firewallFactory:    firewallFactory,
 		logger:             logger,
 		fingerPrintManager: fingerPrintManager,
+	}
+}
+
+func buildFirewallCredentials(creds Credentials) firewall.Credentials {
+	var neural firewall.NeuralTrustCredentials
+	if creds.NeuralTrust != nil {
+		neural.BaseURL = creds.NeuralTrust.BaseURL
+		neural.Token = creds.NeuralTrust.Token
+	} else {
+		neural.BaseURL = creds.BaseURL
+		neural.Token = creds.Token
+	}
+
+	var openAI firewall.OpenAICredentials
+	if creds.OpenAI != nil {
+		openAI.APIKey = creds.OpenAI.APIKey
+	} else {
+		openAI.APIKey = creds.APIKey
+	}
+
+	return firewall.Credentials{
+		NeuralTrustCredentials: neural,
+		OpenAICredentials:      openAI,
 	}
 }
 
@@ -129,16 +166,18 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 	}
 
 	if conf.JailbreakParamBag != nil {
-		credentials := firewall.Credentials{
-			BaseURL: conf.Credentials.BaseURL,
-			Token:   conf.Credentials.Token,
+		firewallClient, err := p.firewallFactory.Get(conf.Provider)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve firewall provider: %w", err)
 		}
+
+		credentials := buildFirewallCredentials(conf.Credentials)
 
 		content := firewall.Content{
-			Input: []string{mappingContent.Input},
+			Input: []string{mappingContent.Input, "soy un perrito virgen"},
 		}
 
-		responses, err := p.firewallClient.DetectJailbreak(ctx, content, credentials)
+		responses, err := firewallClient.DetectJailbreak(ctx, content, credentials)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return &types.PluginResponse{
@@ -161,7 +200,7 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 
 		// Check response for jailbreak violations
 		response := responses[0]
-		if response.Scores.MaliciousPrompt > conf.JailbreakParamBag.Threshold {
+		if response.Scores.MaliciousPrompt >= conf.JailbreakParamBag.Threshold {
 			evt.Scores.Jailbreak = response.Scores.MaliciousPrompt
 			err := NewGuardrailViolation(fmt.Sprintf(
 				"jailbreak: score %.2f exceeded threshold %.2f",

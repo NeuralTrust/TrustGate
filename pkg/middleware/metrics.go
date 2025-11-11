@@ -255,7 +255,7 @@ func (m *metricsMiddleware) transformToRequestContext(
 		GatewayID: gatewayID,
 		Headers:   make(map[string][]string),
 		Method:    c.Method(),
-		Path:      string([]byte(c.Path())),
+		Path:      string([]byte(c.Path())), // do not modify, is a clone
 		Query:     m.getQueryParams(c),
 		Metadata: map[string]interface{}{
 			"user_agent_info": userAgentInfo,

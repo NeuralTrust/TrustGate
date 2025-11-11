@@ -287,7 +287,7 @@ func (r *UpstreamRequest) validateProviderOptions(
 
 func (r *UpstreamRequest) isValidProvider(provider string) bool {
 	return provider == factory.ProviderOpenAI ||
-		provider == factory.ProviderGemini ||
+		provider == factory.ProviderGoogle ||
 		provider == factory.ProviderAnthropic ||
 		provider == factory.ProviderBedrock ||
 		provider == factory.ProviderAzure

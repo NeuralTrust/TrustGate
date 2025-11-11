@@ -3,6 +3,7 @@ package http
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -241,7 +242,12 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "internal server error"})
 	}
 
-	// Create the RequestContext
+	upstreamModel, err := h.getUpstream(c.Context(), matchingRule)
+	if err != nil {
+		h.logger.WithError(err).Error("failed to get upstream")
+		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "failed to get upstream"})
+	}
+
 	reqCtx := &types.RequestContext{
 		C:         c,
 		Context:   c.Context(),
@@ -253,6 +259,22 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		Metadata:  metadata,
 		Body:      c.Body(),
 		RuleID:    matchingRule.ID,
+	}
+
+	lb, err := h.getOrCreateLoadBalancer(upstreamModel)
+	if err != nil {
+		h.logger.WithError(err).Error("failed to get load balancer")
+		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "failed to get load balancer"})
+	}
+
+	var preselectedTarget *types.UpstreamTarget
+	preselectedTarget, err = h.preselectTarget(reqCtx, lb)
+	if err != nil {
+		h.logger.WithError(err).Warn("failed to pre-select target, will select during forwardRequest")
+	}
+
+	if preselectedTarget != nil && preselectedTarget.Provider != "" {
+		reqCtx.Provider = preselectedTarget.Provider
 	}
 
 	for key, values := range c.GetReqHeaders() {
@@ -330,7 +352,10 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	response, err := h.forwardRequest(
 		reqCtx,
 		matchingRule,
+		upstreamModel,
 		gatewayData.Gateway.TlS,
+		preselectedTarget,
+		lb,
 	)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to forward request")
@@ -475,7 +500,6 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 }
 
 func (h *forwardedHandler) configureRulePlugins(gatewayID string, rule *types.ForwardingRule) error {
-	// The last call SetPluginChain is here
 	if rule != nil && len(rule.PluginChain) > 0 {
 		if err := h.pluginManager.SetPluginChain(gatewayID, rule.PluginChain); err != nil {
 			return fmt.Errorf("failed to configure rule plugins: %w", err)
@@ -484,29 +508,42 @@ func (h *forwardedHandler) configureRulePlugins(gatewayID string, rule *types.Fo
 	return nil
 }
 
-func (h *forwardedHandler) forwardRequest(
-	req *types.RequestContext,
+func (h *forwardedHandler) preselectTarget(
+	reqCtx *types.RequestContext,
+	lb *loadbalancer.LoadBalancer,
+) (*types.UpstreamTarget, error) {
+	target, err := lb.NextTarget(reqCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select target: %w", err)
+	}
+	return target, nil
+}
+
+func (h *forwardedHandler) getUpstream(
+	ctx context.Context,
 	rule *types.ForwardingRule,
-	tlsConfig map[string]types.ClientTLSConfig,
-) (*types.ResponseContext, error) {
-	serviceEntity, err := h.serviceFinder.Find(req.Context, rule.GatewayID, rule.ServiceID)
+) (*domainUpstream.Upstream, error) {
+	serviceEntity, err := h.serviceFinder.Find(ctx, rule.GatewayID, rule.ServiceID)
 	if err != nil {
 		return nil, fmt.Errorf("service not found: %w", err)
 	}
-	switch serviceEntity.Type {
-	case domainService.TypeUpstream:
-		return h.handleUpstreamRequest(req, rule, serviceEntity, tlsConfig)
-	case domainService.TypeEndpoint:
-		return h.handleEndpointRequest(req, rule, serviceEntity, tlsConfig)
-	default:
-		return nil, fmt.Errorf("unsupported service type: %s", serviceEntity.Type)
+	if serviceEntity.Type != domainService.TypeUpstream {
+		return nil, fmt.Errorf("service is not an upstream: %w", err)
 	}
+	upstreamModel, err := h.upstreamFinder.Find(ctx, serviceEntity.GatewayID, serviceEntity.UpstreamID)
+	if err != nil {
+		return nil, fmt.Errorf("upstream not found: %w", err)
+	}
+	return upstreamModel, nil
 }
-func (h *forwardedHandler) handleUpstreamRequest(
+
+func (h *forwardedHandler) forwardRequest(
 	req *types.RequestContext,
 	rule *types.ForwardingRule,
-	serviceEntity *domainService.Service,
+	upstreamModel *domainUpstream.Upstream,
 	tlsConfig map[string]types.ClientTLSConfig,
+	preselectedTarget *types.UpstreamTarget,
+	lb *loadbalancer.LoadBalancer,
 ) (*types.ResponseContext, error) {
 
 	streamResponse, ok := req.C.Locals(common.StreamResponseContextKey).(chan []byte)
@@ -521,16 +558,6 @@ func (h *forwardedHandler) handleUpstreamRequest(
 		return nil, fmt.Errorf("failed to get stream mode channel")
 	}
 
-	upstreamModel, err := h.upstreamFinder.Find(req.Context, serviceEntity.GatewayID, serviceEntity.UpstreamID)
-	if err != nil {
-		return nil, fmt.Errorf("upstream not found: %w", err)
-	}
-
-	lb, err := h.getOrCreateLoadBalancer(upstreamModel)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get load balancer: %w", err)
-	}
-
 	maxRetries := rule.RetryAttempts
 	if maxRetries == 0 {
 		maxRetries = 2
@@ -538,13 +565,35 @@ func (h *forwardedHandler) handleUpstreamRequest(
 
 	var reqErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		target, err := lb.NextTarget(req)
-		if err != nil {
-			if attempt == maxRetries {
-				return nil, fmt.Errorf("failed to get target after retries: %w", err)
+		var (
+			target *types.UpstreamTarget
+			err    error
+		)
+
+		if attempt == 0 && preselectedTarget != nil {
+			target = preselectedTarget
+		} else {
+			target, err = lb.NextTarget(req)
+			if err != nil {
+				if attempt == maxRetries {
+					return nil, fmt.Errorf("failed to get target after retries: %w", err)
+				}
+				reqErr = err
+				continue
 			}
-			continue
 		}
+
+		if req.Provider != target.Provider {
+			if attempt > 0 {
+				h.logger.WithFields(logrus.Fields{
+					"old_provider": req.Provider,
+					"new_provider": target.Provider,
+					"attempt":      attempt + 1,
+				}).Debug("provider changed during retry")
+			}
+			req.Provider = target.Provider
+		}
+
 		h.logger.WithFields(logrus.Fields{
 			"attempt":   attempt + 1,
 			"provider":  target.Provider,
@@ -581,8 +630,10 @@ func (h *forwardedHandler) handleUpstreamRequest(
 			lb.ReportSuccess(target)
 			return response, nil
 		}
+
 		lb.ReportFailure(target, err)
 	}
+
 	select {
 	case <-streamResponse:
 	default:
@@ -639,51 +690,6 @@ func (h *forwardedHandler) applyTargetOAuth(
 	}
 	target.Headers["Authorization"] = "Bearer " + accessToken
 	return nil
-}
-
-func (h *forwardedHandler) handleEndpointRequest(
-	req *types.RequestContext,
-	rule *types.ForwardingRule,
-	serviceEntity *domainService.Service,
-	tlsConfig map[string]types.ClientTLSConfig,
-) (*types.ResponseContext, error) {
-	streamResponse, ok := req.C.Locals(common.StreamResponseContextKey).(chan []byte)
-	if !ok || streamResponse == nil {
-		h.logger.Error("failed to get stream response channel")
-		return nil, fmt.Errorf("failed to make read response channel")
-	}
-
-	target := &types.UpstreamTarget{
-		Host:        serviceEntity.Host,
-		Port:        serviceEntity.Port,
-		Protocol:    serviceEntity.Protocol,
-		Path:        serviceEntity.Path,
-		Headers:     serviceEntity.Headers,
-		Credentials: serviceEntity.Credentials,
-		Stream:      serviceEntity.Stream,
-	}
-	rsp, err := h.doForwardRequest(&forwardedRequestDTO{
-		req:            req,
-		rule:           rule,
-		target:         target,
-		tlsConfig:      tlsConfig,
-		streamResponse: streamResponse,
-	})
-	if err != nil {
-		h.logger.WithError(err).Error("failed to forward request")
-		select {
-		case <-streamResponse:
-			// Channel already closed, skip
-		default:
-			close(streamResponse)
-		}
-		return nil, fmt.Errorf("failed to forward request: %w", err)
-	}
-	if !target.Stream {
-		close(streamResponse)
-	}
-	rsp.Target = target
-	return rsp, nil
 }
 
 func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upstream) (*loadbalancer.LoadBalancer, error) {

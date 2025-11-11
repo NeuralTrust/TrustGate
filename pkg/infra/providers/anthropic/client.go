@@ -13,12 +13,14 @@ import (
 )
 
 type anthropicStreamRequest struct {
-	Model       string        `json:"model"`
-	Messages    []interface{} `json:"messages"`
-	MaxTokens   int           `json:"max_tokens"`
-	Temperature float64       `json:"temperature"`
-	System      string        `json:"system"`
-	Stream      bool          `json:"stream"`
+	Model       string                     `json:"model"`
+	Messages    []map[string]interface{}   `json:"messages"`
+	MaxTokens   int                        `json:"max_tokens"`
+	Temperature float64                    `json:"temperature"`
+	System      string                     `json:"system"`
+	Stream      bool                       `json:"stream"`
+	Tools       []anthropic.ToolUnionParam `json:"tools,omitempty"`
+	ToolChoice  json.RawMessage            `json:"tool_choice,omitempty"`
 }
 
 type client struct {
@@ -196,32 +198,18 @@ func (c *client) getParams(reqBody []byte, config *providers.Config) (anthropic.
 	}
 
 	var anthropicMessages []anthropic.MessageParam
-	for _, m := range req.Messages {
-		msgMap, ok := m.(map[string]interface{})
-		if !ok {
-			continue
+	for _, msg := range req.Messages {
+		msgBytes, err := json.Marshal(msg)
+		if err != nil {
+			return anthropic.MessageNewParams{}, fmt.Errorf("failed to marshal message: %w", err)
 		}
 
-		role, roleOk := msgMap["role"].(string)
-		content, contentOk := msgMap["content"].(string)
+		var anthropicMsg anthropic.MessageParam
+		if err := json.Unmarshal(msgBytes, &anthropicMsg); err != nil {
+			return anthropic.MessageNewParams{}, fmt.Errorf("failed to unmarshal message: %w", err)
+		}
 
-		if !roleOk || !contentOk {
-			continue
-		}
-		switch role {
-		case "user":
-			anthropicMessages = append(anthropicMessages, anthropic.NewUserMessage(
-				anthropic.NewTextBlock(content),
-			))
-		case "assistant":
-			anthropicMessages = append(anthropicMessages, anthropic.NewAssistantMessage(
-				anthropic.NewTextBlock(content),
-			))
-		case "system":
-			if req.System == "" {
-				req.System = content
-			}
-		}
+		anthropicMessages = append(anthropicMessages, anthropicMsg)
 	}
 
 	params := anthropic.MessageNewParams{
@@ -239,6 +227,19 @@ func (c *client) getParams(reqBody []byte, config *providers.Config) (anthropic.
 	if req.Temperature > 0 {
 		params.Temperature = anthropic.Float(req.Temperature)
 	}
+
+	if len(req.Tools) > 0 {
+		params.Tools = req.Tools
+	}
+
+	if len(req.ToolChoice) > 0 {
+		var toolChoice anthropic.ToolChoiceUnionParam
+		if err := json.Unmarshal(req.ToolChoice, &toolChoice); err != nil {
+			return anthropic.MessageNewParams{}, fmt.Errorf("invalid tool_choice: %w", err)
+		}
+		params.ToolChoice = toolChoice
+	}
+
 	return params, nil
 }
 

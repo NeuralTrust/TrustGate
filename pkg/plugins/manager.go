@@ -86,7 +86,7 @@ type manager struct {
 	plugins            map[string]pluginiface.Plugin
 	configurations     map[string][][]types.PluginConfig
 	providerLocator    providersFactory.ProviderLocator
-	firewallClient     firewall.Client
+	firewallFactory    firewall.ClientFactory
 }
 
 func NewManager(
@@ -98,7 +98,7 @@ func NewManager(
 	embeddingRepo embedding.EmbeddingRepository,
 	serviceLocator factory.EmbeddingServiceLocator,
 	providerFactory providersFactory.ProviderLocator,
-	firewallClient firewall.Client,
+	firewallFactory firewall.ClientFactory,
 ) Manager {
 	once.Do(func() {
 		instance = &manager{
@@ -112,7 +112,7 @@ func NewManager(
 			embeddingRepo:      embeddingRepo,
 			serviceLocator:     serviceLocator,
 			providerLocator:    providerFactory,
-			firewallClient:     firewallClient,
+			firewallFactory:    firewallFactory,
 		}
 		instance.InitializePlugins()
 	})
@@ -167,7 +167,7 @@ func (m *manager) InitializePlugins() {
 
 	if err := m.RegisterPlugin(neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
 		m.logger,
-		m.firewallClient,
+		m.firewallFactory,
 		m.fingerprintTracker,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
@@ -189,7 +189,7 @@ func (m *manager) InitializePlugins() {
 	if err := m.RegisterPlugin(neuraltrust_toxicity.NewNeuralTrustToxicity(
 		m.logger,
 		m.fingerprintTracker,
-		m.firewallClient,
+		m.firewallFactory,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register toxicity neuraltrust plugin")
 	}

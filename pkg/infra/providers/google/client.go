@@ -1,4 +1,4 @@
-package gemini
+package google
 
 import (
 	"context"
@@ -13,18 +13,23 @@ import (
 )
 
 type geminiStreamRequest struct {
-	Model       string        `json:"model"`
-	Messages    []interface{} `json:"messages"`
-	MaxTokens   int32         `json:"max_tokens"`
-	Temperature float64       `json:"temperature"`
-	System      string        `json:"system"`
+	Model             string                       `json:"model"`
+	Messages          []interface{}                `json:"messages,omitempty"`
+	Contents          []*genai.Content             `json:"contents,omitempty"`
+	SystemInstruction *genai.Content               `json:"systemInstruction,omitempty"`
+	GenerationConfig  *genai.GenerateContentConfig `json:"generationConfig,omitempty"`
+	MaxTokens         int32                        `json:"max_tokens,omitempty"`
+	Temperature       float64                      `json:"temperature,omitempty"`
+	System            string                       `json:"system,omitempty"`
+	Tools             []*genai.Tool                `json:"tools,omitempty"`
+	ToolConfig        *genai.ToolConfig            `json:"toolConfig,omitempty"`
 }
 
 type client struct {
 	clientPool *sync.Map
 }
 
-func NewGeminiClient() providers.Client {
+func NewGoogleClient() providers.Client {
 	return &client{
 		clientPool: &sync.Map{},
 	}
@@ -111,71 +116,6 @@ func (c *client) Ask(
 	return completionResp, nil
 }
 
-func (c *client) parseRequest(reqBody []byte, config *providers.Config) (geminiStreamRequest, string, *genai.GenerateContentConfig, error) {
-	var req geminiStreamRequest
-	if err := json.Unmarshal(reqBody, &req); err != nil {
-		return req, "", nil, fmt.Errorf("invalid request body: %w", err)
-	}
-
-	if req.Model == "" {
-		req.Model = "gemini-pro"
-	}
-
-	if !providers.IsAllowedModel(req.Model, config.AllowedModels) {
-		req.Model = config.DefaultModel
-	}
-
-	var userContent string
-	for _, m := range req.Messages {
-		msgMap, ok := m.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		role, roleOk := msgMap["role"].(string)
-		content, contentOk := msgMap["content"].(string)
-
-		if !roleOk || !contentOk {
-			continue
-		}
-
-		if role == "user" {
-			userContent = content
-			break
-		}
-	}
-	var contentConfig *genai.GenerateContentConfig
-	if req.System != "" {
-		contentConfig = &genai.GenerateContentConfig{
-			SystemInstruction: &genai.Content{
-				Parts: []*genai.Part{
-					{
-						Text: req.System,
-					},
-				},
-				Role: "system",
-			},
-		}
-	}
-
-	if req.MaxTokens > 0 {
-		if contentConfig == nil {
-			contentConfig = &genai.GenerateContentConfig{}
-		}
-		contentConfig.MaxOutputTokens = req.MaxTokens
-	}
-
-	if req.Temperature > 0 {
-		if contentConfig == nil {
-			contentConfig = &genai.GenerateContentConfig{}
-		}
-		temp := float32(req.Temperature)
-		contentConfig.Temperature = &temp
-	}
-
-	return req, userContent, contentConfig, nil
-}
-
 func (c *client) Completions(
 	ctx context.Context,
 	config *providers.Config,
@@ -189,7 +129,7 @@ func (c *client) Completions(
 		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
 	}
 
-	req, userContent, contentConfig, err := c.parseRequest(reqBody, config)
+	req, contents, contentConfig, err := c.parseRequest(reqBody, config)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +137,7 @@ func (c *client) Completions(
 	result, err := genaiClient.Models.GenerateContent(
 		ctx,
 		req.Model,
-		genai.Text(userContent),
+		contents,
 		contentConfig,
 	)
 	if err != nil {
@@ -226,12 +166,12 @@ func (c *client) CompletionsStream(
 		return fmt.Errorf("failed to create Gemini client: %w", err)
 	}
 
-	req, userContent, contentConfig, err := c.parseRequest(reqBody, config)
+	req, contents, contentConfig, err := c.parseRequest(reqBody, config)
 	if err != nil {
 		return err
 	}
 
-	stream := genaiClient.Models.GenerateContentStream(reqCtx.C.Context(), req.Model, genai.Text(userContent), contentConfig)
+	stream := genaiClient.Models.GenerateContentStream(reqCtx.C.Context(), req.Model, contents, contentConfig)
 	times := 0
 	for obj, err := range stream {
 		if err != nil {
@@ -280,4 +220,136 @@ func (c *client) getOrCreateClient(ctx context.Context, apiKey string) (*genai.C
 	}
 	c.clientPool.Store(apiKey, genaiClient)
 	return genaiClient, nil
+}
+
+func (c *client) parseRequest(
+	reqBody []byte,
+	config *providers.Config,
+) (geminiStreamRequest, []*genai.Content, *genai.GenerateContentConfig, error) {
+	var req geminiStreamRequest
+	if err := json.Unmarshal(reqBody, &req); err != nil {
+		return req, nil, nil, fmt.Errorf("invalid request body: %w", err)
+	}
+
+	if req.Model == "" {
+		req.Model = "gemini-pro"
+	}
+
+	if !providers.IsAllowedModel(req.Model, config.AllowedModels) {
+		req.Model = config.DefaultModel
+	}
+
+	var contents []*genai.Content
+
+	if len(req.Contents) > 0 {
+		contents = req.Contents
+	} else if len(req.Messages) > 0 {
+		for _, m := range req.Messages {
+			msgMap, ok := m.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			role := "user"
+			if r, ok := msgMap["role"].(string); ok && r != "" {
+				role = r
+			}
+			var parts []*genai.Part
+
+			if contentVal, ok := msgMap["content"]; ok {
+				switch v := contentVal.(type) {
+				case string:
+					parts = append(parts, &genai.Part{Text: v})
+				case []interface{}:
+					for _, part := range v {
+						partBytes, err := json.Marshal(part)
+						if err != nil {
+							return req, nil, nil, fmt.Errorf("failed to marshal part: %w", err)
+						}
+						var genPart genai.Part
+						if err := json.Unmarshal(partBytes, &genPart); err != nil {
+							return req, nil, nil, fmt.Errorf("failed to unmarshal part: %w", err)
+						}
+						parts = append(parts, &genPart)
+					}
+				case map[string]interface{}:
+					partBytes, err := json.Marshal(v)
+					if err != nil {
+						return req, nil, nil, fmt.Errorf("failed to marshal part: %w", err)
+					}
+					var genPart genai.Part
+					if err := json.Unmarshal(partBytes, &genPart); err != nil {
+						return req, nil, nil, fmt.Errorf("failed to unmarshal part: %w", err)
+					}
+					parts = append(parts, &genPart)
+				}
+			}
+
+			if len(parts) == 0 {
+				continue
+			}
+
+			contents = append(contents, &genai.Content{
+				Role:  role,
+				Parts: parts,
+			})
+		}
+	}
+
+	if len(contents) == 0 {
+		return req, nil, nil, fmt.Errorf("no user content provided")
+	}
+
+	var genConfig *genai.GenerateContentConfig
+	if req.GenerationConfig != nil {
+		copyConfig := *req.GenerationConfig
+		genConfig = &copyConfig
+	}
+
+	if req.SystemInstruction != nil {
+		if genConfig == nil {
+			genConfig = &genai.GenerateContentConfig{}
+		}
+		genConfig.SystemInstruction = req.SystemInstruction
+	} else if req.System != "" {
+		if genConfig == nil {
+			genConfig = &genai.GenerateContentConfig{}
+		}
+		genConfig.SystemInstruction = &genai.Content{
+			Role:  "system",
+			Parts: []*genai.Part{{Text: req.System}},
+		}
+
+	}
+
+	if req.MaxTokens > 0 {
+		if genConfig == nil {
+			genConfig = &genai.GenerateContentConfig{}
+		}
+		genConfig.MaxOutputTokens = req.MaxTokens
+	}
+
+	if req.Temperature > 0 {
+		if genConfig == nil {
+			genConfig = &genai.GenerateContentConfig{}
+		}
+		temp := float32(req.Temperature)
+		genConfig.Temperature = &temp
+	}
+
+	if len(req.Tools) > 0 {
+		if genConfig == nil {
+			genConfig = &genai.GenerateContentConfig{}
+		}
+		genConfig.Tools = req.Tools
+	}
+
+	if req.ToolConfig != nil {
+		if genConfig == nil {
+			genConfig = &genai.GenerateContentConfig{}
+		}
+		genConfig.ToolConfig = req.ToolConfig
+	}
+
+	return req, contents, genConfig, nil
 }

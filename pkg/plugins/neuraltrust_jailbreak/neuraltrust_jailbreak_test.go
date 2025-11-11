@@ -36,11 +36,14 @@ func TestNeuralTrustJailbreakPlugin_ValidateConfig(t *testing.T) {
 
 func TestNeuralTrustJailbreakPlugin_Execute_JailbreakSafe(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	fingerPrintTrackerMock := new(mocks.Tracker)
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
 
 	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
 		logrus.New(),
-		mockFirewallClient,
+		mockFirewallFactory,
 		fingerPrintTrackerMock,
 	)
 
@@ -73,15 +76,19 @@ func TestNeuralTrustJailbreakPlugin_Execute_JailbreakSafe(t *testing.T) {
 	assert.Equal(t, 200, pluginResp.StatusCode)
 	assert.Equal(t, "prompt content is safe", pluginResp.Message)
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustJailbreakPlugin_Execute_JailbreakUnsafe(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	fingerPrintTrackerMock := new(mocks.Tracker)
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
 
 	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
 		logrus.New(),
-		mockFirewallClient,
+		mockFirewallFactory,
 		fingerPrintTrackerMock,
 	)
 
@@ -113,15 +120,19 @@ func TestNeuralTrustJailbreakPlugin_Execute_JailbreakUnsafe(t *testing.T) {
 	assert.Contains(t, err.Error(), "jailbreak: score 0.80 exceeded threshold 0.50")
 	assert.Nil(t, pluginResp)
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustJailbreakPlugin_Execute_WithMappingFieldArray(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	fingerPrintTrackerMock := new(mocks.Tracker)
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
 
 	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
 		logrus.New(),
-		mockFirewallClient,
+		mockFirewallFactory,
 		fingerPrintTrackerMock,
 	)
 
@@ -153,15 +164,19 @@ func TestNeuralTrustJailbreakPlugin_Execute_WithMappingFieldArray(t *testing.T) 
 	assert.NotNil(t, pluginResp)
 	assert.Equal(t, 200, pluginResp.StatusCode)
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustJailbreakPlugin_Execute_FirewallError(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	fingerPrintTrackerMock := new(mocks.Tracker)
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
 
 	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
 		logrus.New(),
-		mockFirewallClient,
+		mockFirewallFactory,
 		fingerPrintTrackerMock,
 	)
 
@@ -186,15 +201,19 @@ func TestNeuralTrustJailbreakPlugin_Execute_FirewallError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, pluginResp)
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustJailbreakPlugin_Execute_FirewallServiceUnavailable(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	fingerPrintTrackerMock := new(mocks.Tracker)
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
 
 	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
 		logrus.New(),
-		mockFirewallClient,
+		mockFirewallFactory,
 		fingerPrintTrackerMock,
 	)
 
@@ -227,15 +246,19 @@ func TestNeuralTrustJailbreakPlugin_Execute_FirewallServiceUnavailable(t *testin
 	assert.Contains(t, err.Error(), "firewall service call failed")
 
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }
 
 func TestNeuralTrustJailbreakPlugin_Execute_FirewallServiceError(t *testing.T) {
 	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
 	fingerPrintTrackerMock := new(mocks.Tracker)
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
 
 	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
 		logrus.New(),
-		mockFirewallClient,
+		mockFirewallFactory,
 		fingerPrintTrackerMock,
 	)
 
@@ -267,4 +290,5 @@ func TestNeuralTrustJailbreakPlugin_Execute_FirewallServiceError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to call firewall")
 
 	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
 }

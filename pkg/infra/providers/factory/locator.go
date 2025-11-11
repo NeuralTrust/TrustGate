@@ -7,14 +7,14 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/anthropic"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/azure"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/bedrock"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/gemini"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/google"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"github.com/valyala/fasthttp"
 )
 
 const (
 	ProviderOpenAI    = "openai"
-	ProviderGemini    = "gemini"
+	ProviderGoogle    = "google"
 	ProviderAnthropic = "anthropic"
 	ProviderBedrock   = "bedrock"
 	ProviderAzure     = "azure"
@@ -39,8 +39,8 @@ func (f *providerLocator) Get(provider string) (providers.Client, error) {
 	switch provider {
 	case ProviderOpenAI:
 		return openai.NewOpenaiClient(), nil
-	case ProviderGemini:
-		return gemini.NewGeminiClient(), nil
+	case ProviderGoogle:
+		return google.NewGoogleClient(), nil
 	case ProviderAnthropic:
 		return anthropic.NewAnthropicClient(), nil
 	case ProviderBedrock:

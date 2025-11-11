@@ -35,6 +35,8 @@ type CompletionRequest struct {
 	Stream           bool                     `json:"stream"`
 	System           string                   `json:"system"`
 	AnthropicVersion string                   `json:"anthropic_version"`
+	Tools            []map[string]interface{} `json:"tools,omitempty"`
+	ToolChoice       json.RawMessage          `json:"tool_choice,omitempty"`
 }
 
 type Request struct {
@@ -46,6 +48,8 @@ type Request struct {
 	AnthropicVersion string                   `json:"anthropic_version,omitempty"`
 	Messages         []map[string]interface{} `json:"messages,omitempty"`
 	System           string                   `json:"system,omitempty"`
+	Tools            []map[string]interface{} `json:"tools,omitempty"`
+	ToolChoice       json.RawMessage          `json:"tool_choice,omitempty"`
 
 	// Amazon Titan specific fields
 	InputText            string                 `json:"inputText,omitempty"`
@@ -719,11 +723,33 @@ func (c *client) prepareRequestFromBody(config *providers.Config, reqBody []byte
 	// Extract user message from messages array
 	var userMessage string
 	for _, msg := range req.Messages {
-		if role, ok := msg["role"].(string); ok && role == "user" {
-			if content, ok := msg["content"].(string); ok {
-				userMessage = content
-				break
+		role, ok := msg["role"].(string)
+		if !ok || role != "user" {
+			continue
+		}
+
+		switch content := msg["content"].(type) {
+		case string:
+			userMessage = content
+		case []interface{}:
+			for _, part := range content {
+				partMap, ok := part.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if text, ok := partMap["text"].(string); ok && text != "" {
+					userMessage = text
+					break
+				}
 			}
+		case map[string]interface{}:
+			if text, ok := content["text"].(string); ok {
+				userMessage = text
+			}
+		}
+
+		if userMessage != "" {
+			break
 		}
 	}
 
@@ -753,7 +779,7 @@ func (c *client) prepareRequestFromBody(config *providers.Config, reqBody []byte
 	var err error
 	switch {
 	case isClaudeModel(config.Model):
-		request, err = c.prepareClaudeRequestFromMessages(config, req.Messages, request)
+		request, err = c.prepareClaudeRequestFromMessages(config, req.Messages, req.Tools, req.ToolChoice, request)
 	case isTitanModel(config.Model):
 		request, err = c.prepareTitanRequestFromMessages(config, req.Messages, request)
 	case isMistralModel(config.Model):
@@ -763,7 +789,7 @@ func (c *client) prepareRequestFromBody(config *providers.Config, reqBody []byte
 	case isDeepseekModel(config.Model):
 		request, err = c.prepareDeepseekRequestFromMessages(config, req.Messages, request)
 	default:
-		request, err = c.prepareDefaultRequestFromMessages(config, req.Messages, request)
+		request, err = c.prepareDefaultRequestFromMessages(config, req.Messages, req.Tools, req.ToolChoice, request)
 	}
 
 	if err != nil {
@@ -773,7 +799,13 @@ func (c *client) prepareRequestFromBody(config *providers.Config, reqBody []byte
 	return json.Marshal(request)
 }
 
-func (c *client) prepareClaudeRequestFromMessages(config *providers.Config, messages []map[string]interface{}, request *Request) (*Request, error) {
+func (c *client) prepareClaudeRequestFromMessages(
+	config *providers.Config,
+	messages []map[string]interface{},
+	tools []map[string]interface{},
+	toolChoice json.RawMessage,
+	request *Request,
+) (*Request, error) {
 	if config.SystemPrompt != "" {
 		request.System = config.SystemPrompt
 	}
@@ -783,6 +815,12 @@ func (c *client) prepareClaudeRequestFromMessages(config *providers.Config, mess
 
 	if isClaudeV3Model(config.Model) {
 		request.Messages = messages
+		if len(tools) > 0 {
+			request.Tools = tools
+		}
+		if len(toolChoice) > 0 {
+			request.ToolChoice = toolChoice
+		}
 		if request.AnthropicVersion == "" {
 			request.AnthropicVersion = "bedrock-2023-05-31"
 		}
@@ -811,7 +849,11 @@ func (c *client) prepareClaudeRequestFromMessages(config *providers.Config, mess
 	return request, nil
 }
 
-func (c *client) prepareTitanRequestFromMessages(config *providers.Config, messages []map[string]interface{}, request *Request) (*Request, error) {
+func (c *client) prepareTitanRequestFromMessages(
+	config *providers.Config,
+	messages []map[string]interface{},
+	request *Request,
+) (*Request, error) {
 	var inputText string
 
 	if config.SystemPrompt != "" {
@@ -842,7 +884,11 @@ func (c *client) prepareTitanRequestFromMessages(config *providers.Config, messa
 	return req, nil
 }
 
-func (c *client) prepareMistralRequestFromMessages(config *providers.Config, messages []map[string]interface{}, request *Request) (*Request, error) {
+func (c *client) prepareMistralRequestFromMessages(
+	config *providers.Config,
+	messages []map[string]interface{},
+	request *Request,
+) (*Request, error) {
 	var prompt string
 
 	if config.SystemPrompt != "" {
@@ -869,7 +915,11 @@ func (c *client) prepareMistralRequestFromMessages(config *providers.Config, mes
 	return request, nil
 }
 
-func (c *client) prepareLlamaRequestFromMessages(config *providers.Config, messages []map[string]interface{}, request *Request) (*Request, error) {
+func (c *client) prepareLlamaRequestFromMessages(
+	config *providers.Config,
+	messages []map[string]interface{},
+	request *Request,
+) (*Request, error) {
 	var prompt string
 
 	if config.SystemPrompt != "" {
@@ -896,7 +946,11 @@ func (c *client) prepareLlamaRequestFromMessages(config *providers.Config, messa
 	return request, nil
 }
 
-func (c *client) prepareDeepseekRequestFromMessages(config *providers.Config, messages []map[string]interface{}, request *Request) (*Request, error) {
+func (c *client) prepareDeepseekRequestFromMessages(
+	config *providers.Config,
+	messages []map[string]interface{},
+	request *Request,
+) (*Request, error) {
 	var prompt string
 
 	if config.SystemPrompt != "" {
@@ -925,13 +979,17 @@ func (c *client) prepareDeepseekRequestFromMessages(config *providers.Config, me
 	return request, nil
 }
 
-func (c *client) prepareDefaultRequestFromMessages(config *providers.Config, messages []map[string]interface{}, request *Request) (*Request, error) {
+func (c *client) prepareDefaultRequestFromMessages(
+	config *providers.Config,
+	messages []map[string]interface{},
+	tools []map[string]interface{},
+	toolChoice json.RawMessage,
+	request *Request,
+) (*Request, error) {
 	var prompt string
-
 	if config.SystemPrompt != "" {
 		prompt += config.SystemPrompt + "\n\n"
 	}
-
 	for _, msg := range messages {
 		if role, ok := msg["role"].(string); ok {
 			if content, ok := msg["content"].(string); ok {
@@ -943,9 +1001,13 @@ func (c *client) prepareDefaultRequestFromMessages(config *providers.Config, mes
 			}
 		}
 	}
-
 	request.Prompt = prompt
-
+	if len(tools) > 0 {
+		request.Tools = tools
+	}
+	if len(toolChoice) > 0 {
+		request.ToolChoice = toolChoice
+	}
 	return request, nil
 }
 

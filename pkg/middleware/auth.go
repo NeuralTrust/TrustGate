@@ -46,7 +46,7 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 		key, err := m.keyFinder.Find(ctx.Context(), apiKey)
 		if err != nil {
 			m.logger.WithError(err).Error("error retrieving apikey")
-			return m.respondWithError(ctx, fiber.StatusInternalServerError, "invalid API key")
+			return m.respondWithError(ctx, fiber.StatusUnauthorized, "invalid API key")
 		}
 
 		if !key.IsValid() {
