@@ -210,7 +210,7 @@ func TestOpenAIFirewallClient_DetectJailbreak(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "API request failed with status 400")
+		assert.Contains(t, err.Error(), "firewall service call failed: status 400")
 	})
 
 	t.Run("Empty response text", func(t *testing.T) {
@@ -453,7 +453,7 @@ func TestOpenAIFirewallClient_DetectToxicity(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "API request failed with status 500")
+		assert.Contains(t, err.Error(), "firewall service call failed: status 500")
 	})
 }
 

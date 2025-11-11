@@ -39,20 +39,20 @@ var (
 	toxicityResponseSchema = map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"categories": map[string]any{
-				"type":                 "object",
-				"additionalProperties": map[string]any{"type": "number"},
-			},
 			"category_scores": map[string]any{
-				"type":                 "object",
-				"additionalProperties": map[string]any{"type": "number"},
-			},
-			"scores": map[string]any{
-				"type":                 "object",
-				"additionalProperties": map[string]any{"type": "number"},
+				"type": "object",
+				"properties": map[string]any{
+					"hate":       map[string]any{"type": "number"},
+					"violence":   map[string]any{"type": "number"},
+					"harassment": map[string]any{"type": "number"},
+					"self_harm":  map[string]any{"type": "number"},
+					"sexual":     map[string]any{"type": "number"},
+				},
+				"additionalProperties": false,
 			},
 		},
-		"required": []string{"category_scores"},
+		"required":             []string{"category_scores"},
+		"additionalProperties": false,
 	}
 )
 
@@ -221,7 +221,7 @@ func (c *OpenAIFirewallClient) callResponsesAPI(
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("%w: status %d: %s", ErrFailedFirewallCall, resp.StatusCode, string(body))
 	}
 
 	var parsed openAIResponsesResponse
@@ -277,5 +277,17 @@ Rules:
 }
 
 func toxicitySystemPrompt() string {
-	return "You are a toxicity classifier that evaluates user content for toxic, hateful, or unsafe language. Provide numeric scores between 0 and 1 for each relevant category following the response schema."
+	return `You are a toxicity classifier that evaluates user content for toxic, hateful, or unsafe language.
+
+You must produce only a JSON object that exactly matches this schema:
+{"category_scores": {"hate": <number>, "violence": <number>, "harassment": <number>, "self_harm": <number>, "sexual": <number>}}
+
+Provide numeric scores between 0 and 1 for each category:
+- hate: Score for hateful content targeting groups or individuals
+- violence: Score for violent or graphic content
+- harassment: Score for harassing or bullying content
+- self_harm: Score for content promoting self-harm
+- sexual: Score for sexual or explicit content
+
+Output only the JSON, conforming to the schema. Include all categories even if the score is 0.`
 }
