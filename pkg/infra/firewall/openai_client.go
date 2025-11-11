@@ -48,6 +48,7 @@ var (
 					"self_harm":  map[string]any{"type": "number"},
 					"sexual":     map[string]any{"type": "number"},
 				},
+				"required":             []string{"hate", "violence", "harassment", "self_harm", "sexual"},
 				"additionalProperties": false,
 			},
 		},
