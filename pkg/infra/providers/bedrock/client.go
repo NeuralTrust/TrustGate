@@ -34,6 +34,7 @@ type CompletionRequest struct {
 	MaxTokens        int                      `json:"max_tokens"`
 	Stream           bool                     `json:"stream"`
 	System           string                   `json:"system"`
+	Temperature      float64                  `json:"temperature"`
 	AnthropicVersion string                   `json:"anthropic_version"`
 	Tools            []map[string]interface{} `json:"tools,omitempty"`
 	ToolChoice       json.RawMessage          `json:"tool_choice,omitempty"`
@@ -765,6 +766,9 @@ func (c *client) prepareRequestFromBody(config *providers.Config, reqBody []byte
 	if req.System != "" {
 		newConfig.SystemPrompt = req.System
 	}
+	if req.Temperature > 0 {
+		newConfig.Temperature = req.Temperature
+	}
 
 	// Prepare the request based on the model
 	request := &Request{}
@@ -779,17 +783,17 @@ func (c *client) prepareRequestFromBody(config *providers.Config, reqBody []byte
 	var err error
 	switch {
 	case isClaudeModel(config.Model):
-		request, err = c.prepareClaudeRequestFromMessages(config, req.Messages, req.Tools, req.ToolChoice, request)
+		request, err = c.prepareClaudeRequestFromMessages(&newConfig, req.Messages, req.Tools, req.ToolChoice, request)
 	case isTitanModel(config.Model):
-		request, err = c.prepareTitanRequestFromMessages(config, req.Messages, request)
+		request, err = c.prepareTitanRequestFromMessages(&newConfig, req.Messages, request)
 	case isMistralModel(config.Model):
-		request, err = c.prepareMistralRequestFromMessages(config, req.Messages, request)
+		request, err = c.prepareMistralRequestFromMessages(&newConfig, req.Messages, request)
 	case isLlamaModel(config.Model):
-		request, err = c.prepareLlamaRequestFromMessages(config, req.Messages, request)
+		request, err = c.prepareLlamaRequestFromMessages(&newConfig, req.Messages, request)
 	case isDeepseekModel(config.Model):
-		request, err = c.prepareDeepseekRequestFromMessages(config, req.Messages, request)
+		request, err = c.prepareDeepseekRequestFromMessages(&newConfig, req.Messages, request)
 	default:
-		request, err = c.prepareDefaultRequestFromMessages(config, req.Messages, req.Tools, req.ToolChoice, request)
+		request, err = c.prepareDefaultRequestFromMessages(&newConfig, req.Messages, req.Tools, req.ToolChoice, request)
 	}
 
 	if err != nil {
@@ -811,6 +815,9 @@ func (c *client) prepareClaudeRequestFromMessages(
 	}
 	if config.MaxTokens > 0 {
 		request.MaxTokens = config.MaxTokens
+	}
+	if config.Temperature > 0 {
+		request.Temperature = config.Temperature
 	}
 
 	if isClaudeV3Model(config.Model) {
