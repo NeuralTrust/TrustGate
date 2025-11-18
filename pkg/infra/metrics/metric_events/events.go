@@ -85,6 +85,7 @@ func NewTraceEvent() *Event {
 		Task:           "message",
 		Type:           TraceType,
 		StartTimestamp: time.Now().Unix(),
+		Upstream:       &UpstreamEvent{},
 	}
 }
 
@@ -94,6 +95,7 @@ func NewPluginEvent() *Event {
 		Task:           "message",
 		Type:           PluginType,
 		StartTimestamp: time.Now().Unix(),
+		Upstream:       &UpstreamEvent{},
 	}
 }
 
