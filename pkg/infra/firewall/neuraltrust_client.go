@@ -122,7 +122,7 @@ func (c *NeuralTrustFirewallClient) executeJailbreakRequest(
 	if err := json.Unmarshal(buf[:n], &jailbreakResp); err != nil {
 		return nil, fmt.Errorf("invalid jailbreak response: %w", err)
 	}
-
+	c.logger.Info(fmt.Sprintf("jailbreak response: %v", string(buf[:n])))
 	return jailbreakResp, nil
 }
 
@@ -201,6 +201,6 @@ func (c *NeuralTrustFirewallClient) executeToxicityRequest(
 	if err := json.Unmarshal(buf[:n], &toxicityResp); err != nil {
 		return nil, fmt.Errorf("invalid toxicity response: %w", err)
 	}
-
+	c.logger.Info(fmt.Sprintf("toxicity response: %v", string(buf[:n])))
 	return toxicityResp, nil
 }

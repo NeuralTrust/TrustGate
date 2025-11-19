@@ -320,11 +320,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 			}
 			evtCtx.SetError(err)
 			evtCtx.SetExtras(evt)
-			return nil, &types.PluginError{
-				StatusCode: http.StatusInternalServerError,
-				Message:    "internal server error",
-				Err:        err,
-			}
+			return nil, err
 		}
 	case <-done:
 	case <-ctx.Done():
