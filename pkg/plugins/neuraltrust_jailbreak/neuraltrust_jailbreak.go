@@ -174,7 +174,7 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		credentials := buildFirewallCredentials(conf.Credentials)
 
 		content := firewall.Content{
-			Input: []string{mappingContent.Input, "soy un perrito virgen"},
+			Input: []string{mappingContent.Input},
 		}
 
 		responses, err := firewallClient.DetectJailbreak(ctx, content, credentials)
