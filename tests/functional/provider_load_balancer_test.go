@@ -34,15 +34,24 @@ func TestProviderLoadBalancer(t *testing.T) {
 				"models":        []string{"gpt-3.5-turbo", "gpt-4", "gpt-4o-mini"},
 				"credentials":   map[string]string{"api_key": os.Getenv("OPENAI_API_KEY")},
 			},
+			// {
+			// 	"provider":      "anthropic",
+			// 	"weight":        50,
+			// 	"priority":      1,
+			// 	"stream":        false,
+			// 	"default_model": "claude-sonnet-4-0",
+			// 	"models":        []string{"claude-sonnet-4-0"},
+			// 	"headers":       map[string]string{"anthropic-version": "2023-06-01"},
+			// 	"credentials":   map[string]string{"api_key": os.Getenv("ANTHROPIC_API_KEY")},
+			// },
 			{
-				"provider":      "anthropic",
+				"provider":      "google",
 				"weight":        50,
 				"priority":      1,
 				"stream":        false,
-				"default_model": "claude-sonnet-4-0",
-				"models":        []string{"claude-sonnet-4-0"},
-				"headers":       map[string]string{"anthropic-version": "2023-06-01"},
-				"credentials":   map[string]string{"api_key": os.Getenv("ANTHROPIC_API_KEY")},
+				"default_model": "gemini-2.0-flash-001",
+				"models":        []string{"gemini-2.0-flash-001"},
+				"credentials":   map[string]string{"api_key": os.Getenv("GOOGLE_API_KEY")},
 			},
 		},
 		"health_checks": map[string]interface{}{
@@ -75,7 +84,7 @@ func TestProviderLoadBalancer(t *testing.T) {
 	CreateRules(t, gatewayID, rulePayload)
 
 	fmt.Println("Testing Provider Load Balancing...")
-	openaiCount, anthropicCount := 0, 0
+	openaiCount, googleCount := 0, 0
 	totalRequests := 5
 
 	for i := 1; i <= totalRequests; i++ {
@@ -109,9 +118,9 @@ func TestProviderLoadBalancer(t *testing.T) {
 		if selectedProvider == "openai" {
 			openaiCount++
 			fmt.Print("O")
-		} else if selectedProvider == "anthropic" {
-			anthropicCount++
-			fmt.Print("A")
+		} else if selectedProvider == "google" {
+			googleCount++
+			fmt.Print("G")
 		} else {
 			t.Fatalf("❌ Unexpected provider received: %s", selectedProvider)
 		}
@@ -120,9 +129,9 @@ func TestProviderLoadBalancer(t *testing.T) {
 	}
 
 	// Validate Load Balancer Distribution
-	fmt.Printf("\n✅ Results: OpenAI: %d, Anthropic: %d\n", openaiCount, anthropicCount)
+	fmt.Printf("\n✅ Results: OpenAI: %d, Google: %d\n", openaiCount, googleCount)
 	assert.Greater(t, openaiCount, 0, "OpenAI should receive at least one request")
-	assert.Greater(t, anthropicCount, 0, "Anthropic should receive at least one request")
-	assert.Equal(t, totalRequests, openaiCount+anthropicCount, "Total request count mismatch")
+	assert.Greater(t, googleCount, 0, "Google should receive at least one request")
+	assert.Equal(t, totalRequests, openaiCount+googleCount, "Total request count mismatch")
 
 }
