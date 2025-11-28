@@ -75,13 +75,18 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	gatewayUUID, ruleUUID, err := s.parseRequestParams(c)
-	if err != nil {
-		return err
-	}
-
 	gatewayID := c.Params("gateway_id")
 	ruleID := c.Params("rule_id")
+
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
+	}
+
+	ruleUUID, err := uuid.Parse(ruleID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_id"})
+	}
 
 	if err := s.updateForwardingRuleDB(c.Context(), ruleUUID, gatewayUUID, *updateReq); err != nil {
 		return s.handleUpdateError(c, err)
@@ -263,23 +268,6 @@ func (s *updateRuleHandler) parseRequestBody(c *fiber.Ctx) (*req.UpdateRuleReque
 		return nil, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 	return &updateReq, nil
-}
-
-func (s *updateRuleHandler) parseRequestParams(c *fiber.Ctx) (uuid.UUID, uuid.UUID, error) {
-	gatewayID := c.Params("gateway_id")
-	ruleID := c.Params("rule_id")
-
-	gatewayUUID, err := uuid.Parse(gatewayID)
-	if err != nil {
-		return uuid.Nil, uuid.Nil, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
-	}
-
-	ruleUUID, err := uuid.Parse(ruleID)
-	if err != nil {
-		return uuid.Nil, uuid.Nil, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_id"})
-	}
-
-	return gatewayUUID, ruleUUID, nil
 }
 
 func (s *updateRuleHandler) handleUpdateError(c *fiber.Ctx, err error) error {
