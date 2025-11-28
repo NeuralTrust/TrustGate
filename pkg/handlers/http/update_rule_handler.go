@@ -60,134 +60,38 @@ func NewUpdateRuleHandler(
 // @Failure 404 {object} map[string]interface{} "Rule not found"
 // @Router /api/v1/gateways/{gateway_id}/rules/{rule_id} [put]
 func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
-	gatewayID := c.Params("gateway_id")
-	ruleID := c.Params("rule_id")
+	updateReq, err := s.parseRequestBody(c)
+	if err != nil {
+		return err
+	}
 
-	var req req.UpdateRuleRequest
-	if err := c.BodyParser(&req); err != nil {
-		s.logger.WithError(err).Error("Failed to bind request")
+	if updateReq == nil {
+		s.logger.Error("parsed request body is nil")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
-	if err := s.validate(&req); err != nil {
-		s.logger.WithError(err).Error("Rule validation failed")
+	if err := s.validate(updateReq); err != nil {
+		s.logger.WithError(err).Error("rule validation failed")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
-	gatewayUUID, err := uuid.Parse(gatewayID)
+
+	gatewayUUID, ruleUUID, err := s.parseRequestParams(c)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
-	}
-	ruleUUID, err := uuid.Parse(ruleID)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_id"})
+		return err
 	}
 
-	err = s.updateForwardingRuleDB(c.Context(), ruleUUID, gatewayUUID, req)
-	if err != nil {
-		if errors.As(err, &domain.ErrEntityNotFound) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
-		}
-		if errors.Is(err, domain.ErrRuleAlreadyExists) {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-		}
-		if errors.Is(err, domain.ErrInvalidRuleType) {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-		}
-		s.logger.WithError(err).Error("Failed to update rule in database")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
+	gatewayID := c.Params("gateway_id")
+	ruleID := c.Params("rule_id")
+
+	if err := s.updateForwardingRuleDB(c.Context(), ruleUUID, gatewayUUID, *updateReq); err != nil {
+		return s.handleUpdateError(c, err)
 	}
 
-	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
-	rulesJSON, err := s.cache.Get(c.Context(), rulesKey)
-	if err != nil {
-		s.logger.WithError(err).Error("Failed to get rules")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
+	if err := s.updateRuleInCache(c, gatewayID, ruleID, *updateReq); err != nil {
+		return err
 	}
 
-	var rules []types.ForwardingRule
-	if err := json.Unmarshal([]byte(rulesJSON), &rules); err != nil {
-		s.logger.WithError(err).Error("Failed to unmarshal rules")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
-	}
-
-	found := false
-	for i, r := range rules {
-		if r.ID == ruleID {
-			if req.Name != "" {
-				rules[i].Name = req.Name
-			}
-			if req.Path != "" {
-				rules[i].Path = req.Path
-			}
-			if req.ServiceID != "" {
-				rules[i].ServiceID = req.ServiceID
-			}
-			if req.Type != nil {
-				rules[i].Type = *req.Type
-			}
-			if len(req.Methods) > 0 {
-				rules[i].Methods = req.Methods
-			}
-			if req.Headers != nil {
-				rules[i].Headers = s.convertMapToDBHeaders(req.Headers)
-			}
-			if req.StripPath != nil {
-				rules[i].StripPath = *req.StripPath
-			}
-			if req.Active != nil {
-				rules[i].Active = *req.Active
-			}
-			if req.PreserveHost != nil {
-				rules[i].PreserveHost = *req.PreserveHost
-			}
-			if req.RetryAttempts != nil {
-				rules[i].RetryAttempts = *req.RetryAttempts
-			}
-			if req.PluginChain != nil {
-				chainJSON, err := json.Marshal(req.PluginChain)
-				if err != nil {
-					s.logger.WithError(err).Error("Failed to marshal plugin chain")
-					return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process plugin chain"})
-				}
-				var pluginChain []types.PluginConfig
-				if err := json.Unmarshal(chainJSON, &pluginChain); err != nil {
-					s.logger.WithError(err).Error("Failed to unmarshal plugin chain")
-					return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process plugin chain"})
-				}
-				rules[i].PluginChain = pluginChain
-			}
-			if req.TrustLens != nil {
-				rules[i].TrustLens = req.TrustLens
-			}
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
-	}
-
-	updatedJSON, err := json.Marshal(rules)
-	if err != nil {
-		s.logger.WithError(err).Error("Failed to marshal rules")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update rule"})
-	}
-
-	if err := s.cache.Set(c.Context(), rulesKey, string(updatedJSON), 0); err != nil {
-		s.logger.WithError(err).Error("Failed to save rules")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update rule"})
-	}
-
-	if err := s.invalidationPublisher.Publish(
-		c.Context(),
-		channel.GatewayEventsChannel,
-		event.DeleteGatewayCacheEvent{
-			GatewayID: gatewayID,
-		},
-	); err != nil {
-		s.logger.WithError(err).Error("failed to publish cache invalidation")
-	}
+	s.publishCacheInvalidation(c.Context(), gatewayID)
 
 	return c.Status(fiber.StatusNoContent).JSON(fiber.Map{})
 }
@@ -195,98 +99,23 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 func (s *updateRuleHandler) updateForwardingRuleDB(
 	ctx context.Context,
 	ruleUUID, gatewayUUID uuid.UUID,
-	req req.UpdateRuleRequest,
+	updateReq req.UpdateRuleRequest,
 ) error {
-	forwardingRule, err := s.repo.GetRule(ctx, ruleUUID, gatewayUUID)
+	forwardingRule, err := s.getRuleFromDB(ctx, ruleUUID, gatewayUUID)
 	if err != nil {
-		s.logger.WithError(err).Error("failed to get rule")
-		return fmt.Errorf("failed to get rule: %w", err)
+		return err
 	}
 
-	if forwardingRule == nil {
-		return domain.NewNotFoundError("rule", ruleUUID)
+	serviceUUID, err := s.parseAndUpdateServiceID(forwardingRule, updateReq)
+	if err != nil {
+		return err
 	}
 
-	var serviceUUID uuid.UUID
-	if req.ServiceID != "" {
-		var err error
-		serviceUUID, err = uuid.Parse(req.ServiceID)
-		if err != nil {
-			s.logger.WithError(err).Error("failed to parse service ID")
-			return fmt.Errorf("invalid service ID: %w", err)
-		}
-		forwardingRule.ServiceID = serviceUUID
+	if err := s.validateRuleUniqueness(ctx, ruleUUID, gatewayUUID, updateReq, serviceUUID); err != nil {
+		return err
 	}
 
-	if req.Path != "" && req.ServiceID != "" {
-		rules, err := s.repo.ListRules(ctx, gatewayUUID)
-		if err != nil {
-			s.logger.WithError(err).Error("failed to list rules")
-			return fmt.Errorf("failed to check existing rules: %w", err)
-		}
-
-		for _, rule := range rules {
-			if rule.ID == ruleUUID {
-				continue
-			}
-
-			if rule.Path == req.Path && rule.ServiceID == serviceUUID {
-				s.logger.WithField("path", req.Path).Error("rule with this path already exists for this service")
-				return domain.ErrRuleAlreadyExists
-			}
-		}
-	}
-
-	if req.Path != "" {
-		forwardingRule.Path = req.Path
-	}
-	if req.Type != nil {
-		ruleType := forwarding_rule.Type(*req.Type)
-		if ruleType != forwarding_rule.AgentRuleType && ruleType != forwarding_rule.EndpointRuleType {
-			return domain.ErrInvalidRuleType
-		}
-		forwardingRule.Type = ruleType
-	}
-	if len(req.Methods) > 0 {
-		forwardingRule.Methods = req.Methods
-	}
-	if req.Headers != nil {
-		forwardingRule.Headers = req.Headers
-	}
-
-	if req.Name != "" {
-		forwardingRule.Name = req.Name
-	}
-
-	if req.StripPath != nil {
-		forwardingRule.StripPath = *req.StripPath
-	}
-	if req.PreserveHost != nil {
-		forwardingRule.PreserveHost = *req.PreserveHost
-	}
-	if req.RetryAttempts != nil {
-		forwardingRule.RetryAttempts = *req.RetryAttempts
-	}
-	if req.Active != nil {
-		forwardingRule.Active = *req.Active
-	}
-
-	var trustLensConfig *domain.TrustLensJSON
-	if req.TrustLens != nil {
-		trustLensConfig = &domain.TrustLensJSON{
-			AppID:   req.TrustLens.AppID,
-			TeamID:  req.TrustLens.TeamID,
-			Type:    req.TrustLens.Type,
-			Mapping: req.TrustLens.Mapping,
-		}
-		forwardingRule.TrustLens = trustLensConfig
-	}
-
-	if req.PluginChain != nil {
-		var pc domain.PluginChainJSON
-		pc = append(pc, req.PluginChain...)
-		forwardingRule.PluginChain = pc
-	}
+	s.applyRequestToDBRule(forwardingRule, updateReq)
 	forwardingRule.UpdatedAt = time.Now()
 
 	if err := s.repo.Update(ctx, forwardingRule); err != nil {
@@ -297,47 +126,432 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 	return nil
 }
 
-func (s *updateRuleHandler) convertMapToDBHeaders(headers map[string]string) map[string]string {
-	result := make(map[string]string)
+func (s *updateRuleHandler) getRuleFromDB(
+	ctx context.Context,
+	ruleUUID, gatewayUUID uuid.UUID,
+) (*forwarding_rule.ForwardingRule, error) {
+	forwardingRule, err := s.repo.GetRule(ctx, ruleUUID, gatewayUUID)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to get rule")
+		return nil, fmt.Errorf("failed to get rule: %w", err)
+	}
+
+	if forwardingRule == nil {
+		return nil, domain.NewNotFoundError("rule", ruleUUID)
+	}
+
+	return forwardingRule, nil
+}
+
+func (s *updateRuleHandler) parseAndUpdateServiceID(
+	forwardingRule *forwarding_rule.ForwardingRule,
+	updateReq req.UpdateRuleRequest,
+) (uuid.UUID, error) {
+	if updateReq.ServiceID == "" {
+		return uuid.Nil, nil
+	}
+
+	serviceUUID, err := uuid.Parse(updateReq.ServiceID)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to parse service ID")
+		return uuid.Nil, fmt.Errorf("invalid service ID: %w", err)
+	}
+
+	forwardingRule.ServiceID = serviceUUID
+	return serviceUUID, nil
+}
+
+func (s *updateRuleHandler) validateRuleUniqueness(
+	ctx context.Context,
+	ruleUUID, gatewayUUID uuid.UUID,
+	updateReq req.UpdateRuleRequest,
+	serviceUUID uuid.UUID,
+) error {
+	if updateReq.Path == "" || serviceUUID == uuid.Nil {
+		return nil
+	}
+
+	rules, err := s.repo.ListRules(ctx, gatewayUUID)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to list rules")
+		return fmt.Errorf("failed to check existing rules: %w", err)
+	}
+
+	for _, rule := range rules {
+		if rule.ID == ruleUUID {
+			continue
+		}
+
+		if rule.Path == updateReq.Path && rule.ServiceID == serviceUUID {
+			s.logger.WithField("path", updateReq.Path).Error("rule with this path already exists for this service")
+			return domain.ErrRuleAlreadyExists
+		}
+	}
+
+	return nil
+}
+
+func (s *updateRuleHandler) applyRequestToDBRule(
+	forwardingRule *forwarding_rule.ForwardingRule,
+	updateReq req.UpdateRuleRequest,
+) {
+	if updateReq.Name != "" {
+		forwardingRule.Name = updateReq.Name
+	}
+
+	if updateReq.Path != "" {
+		forwardingRule.Path = updateReq.Path
+	}
+
+	if updateReq.Type != nil {
+		ruleType := forwarding_rule.Type(*updateReq.Type)
+		forwardingRule.Type = ruleType
+	}
+
+	if len(updateReq.Methods) > 0 {
+		forwardingRule.Methods = updateReq.Methods
+	}
+
+	if updateReq.Headers != nil {
+		forwardingRule.Headers = updateReq.Headers
+	}
+
+	if updateReq.StripPath != nil {
+		forwardingRule.StripPath = *updateReq.StripPath
+	}
+
+	if updateReq.PreserveHost != nil {
+		forwardingRule.PreserveHost = *updateReq.PreserveHost
+	}
+
+	if updateReq.RetryAttempts != nil {
+		forwardingRule.RetryAttempts = *updateReq.RetryAttempts
+	}
+
+	if updateReq.Active != nil {
+		forwardingRule.Active = *updateReq.Active
+	}
+
+	if updateReq.TrustLens != nil {
+		forwardingRule.TrustLens = s.buildTrustLensConfig(updateReq.TrustLens)
+	}
+
+	if updateReq.PluginChain != nil {
+		forwardingRule.PluginChain = s.buildPluginChain(updateReq.PluginChain)
+	}
+}
+
+func (s *updateRuleHandler) buildTrustLensConfig(trustLens *types.TrustLensConfig) *domain.TrustLensJSON {
+	return &domain.TrustLensJSON{
+		AppID:   trustLens.AppID,
+		TeamID:  trustLens.TeamID,
+		Type:    trustLens.Type,
+		Mapping: trustLens.Mapping,
+	}
+}
+
+func (s *updateRuleHandler) buildPluginChain(pluginChain []types.PluginConfig) domain.PluginChainJSON {
+	var pc domain.PluginChainJSON
+	pc = append(pc, pluginChain...)
+	return pc
+}
+
+func (s *updateRuleHandler) parseRequestBody(c *fiber.Ctx) (*req.UpdateRuleRequest, error) {
+	var updateReq req.UpdateRuleRequest
+	if err := c.BodyParser(&updateReq); err != nil {
+		s.logger.WithError(err).Error("failed to bind request")
+		return nil, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
+	}
+	return &updateReq, nil
+}
+
+func (s *updateRuleHandler) parseRequestParams(c *fiber.Ctx) (uuid.UUID, uuid.UUID, error) {
+	gatewayID := c.Params("gateway_id")
+	ruleID := c.Params("rule_id")
+
+	gatewayUUID, err := uuid.Parse(gatewayID)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
+	}
+
+	ruleUUID, err := uuid.Parse(ruleID)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_id"})
+	}
+
+	return gatewayUUID, ruleUUID, nil
+}
+
+func (s *updateRuleHandler) handleUpdateError(c *fiber.Ctx, err error) error {
+	if errors.As(err, &domain.ErrEntityNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
+	}
+
+	if errors.Is(err, domain.ErrRuleAlreadyExists) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	if errors.Is(err, domain.ErrInvalidRuleType) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	s.logger.WithError(err).Error("failed to update rule in database")
+	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
+}
+
+func (s *updateRuleHandler) updateRuleInCache(
+	c *fiber.Ctx,
+	gatewayID, ruleID string,
+	updateReq req.UpdateRuleRequest,
+) error {
+	rules, err := s.getRulesFromCache(c.Context(), gatewayID)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to get rules from cache")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
+	}
+
+	if err := s.applyRequestToCacheRule(rules, ruleID, updateReq); err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
+	}
+
+	if err := s.saveRulesToCache(c.Context(), gatewayID, rules); err != nil {
+		s.logger.WithError(err).Error("failed to save rules to cache")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
+	}
+
+	return nil
+}
+
+func (s *updateRuleHandler) getRulesFromCache(ctx context.Context, gatewayID string) ([]types.ForwardingRule, error) {
+	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
+	rulesJSON, err := s.cache.Get(ctx, rulesKey)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to get rules")
+		return nil, fmt.Errorf("failed to get rules from cache: %w", err)
+	}
+
+	var rules []types.ForwardingRule
+	if err := json.Unmarshal([]byte(rulesJSON), &rules); err != nil {
+		s.logger.WithError(err).Error("failed to unmarshal rules")
+		return nil, fmt.Errorf("failed to unmarshal rules: %w", err)
+	}
+
+	return rules, nil
+}
+
+func (s *updateRuleHandler) applyRequestToCacheRule(
+	rules []types.ForwardingRule,
+	ruleID string,
+	updateReq req.UpdateRuleRequest,
+) error {
+	for i := range rules {
+		if rules[i].ID != ruleID {
+			continue
+		}
+
+		s.updateCacheRuleFields(&rules[i], updateReq)
+		return nil
+	}
+
+	return fmt.Errorf("rule not found in cache")
+}
+
+func (s *updateRuleHandler) updateCacheRuleFields(
+	rule *types.ForwardingRule,
+	updateReq req.UpdateRuleRequest,
+) {
+	if updateReq.Name != "" {
+		rule.Name = updateReq.Name
+	}
+
+	if updateReq.Path != "" {
+		rule.Path = updateReq.Path
+	}
+
+	if updateReq.ServiceID != "" {
+		rule.ServiceID = updateReq.ServiceID
+	}
+
+	if updateReq.Type != nil {
+		rule.Type = *updateReq.Type
+	}
+
+	if len(updateReq.Methods) > 0 {
+		rule.Methods = updateReq.Methods
+	}
+
+	if updateReq.Headers != nil {
+		rule.Headers = s.copyHeaders(updateReq.Headers)
+	}
+
+	if updateReq.StripPath != nil {
+		rule.StripPath = *updateReq.StripPath
+	}
+
+	if updateReq.Active != nil {
+		rule.Active = *updateReq.Active
+	}
+
+	if updateReq.PreserveHost != nil {
+		rule.PreserveHost = *updateReq.PreserveHost
+	}
+
+	if updateReq.RetryAttempts != nil {
+		rule.RetryAttempts = *updateReq.RetryAttempts
+	}
+
+	if updateReq.PluginChain != nil {
+		rule.PluginChain = s.convertPluginChainToCache(updateReq.PluginChain)
+	}
+
+	if updateReq.TrustLens != nil {
+		rule.TrustLens = updateReq.TrustLens
+	}
+}
+
+func (s *updateRuleHandler) convertPluginChainToCache(pluginChain []types.PluginConfig) []types.PluginConfig {
+	if len(pluginChain) == 0 {
+		return nil
+	}
+
+	chainJSON, err := json.Marshal(pluginChain)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to marshal plugin chain")
+		return pluginChain
+	}
+
+	var result []types.PluginConfig
+	if err := json.Unmarshal(chainJSON, &result); err != nil {
+		s.logger.WithError(err).Error("failed to unmarshal plugin chain")
+		return pluginChain
+	}
+
+	return result
+}
+
+func (s *updateRuleHandler) copyHeaders(headers map[string]string) map[string]string {
+	result := make(map[string]string, len(headers))
 	for k, v := range headers {
 		result[k] = v
 	}
 	return result
 }
 
+func (s *updateRuleHandler) saveRulesToCache(
+	ctx context.Context,
+	gatewayID string,
+	rules []types.ForwardingRule,
+) error {
+	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
+	updatedJSON, err := json.Marshal(rules)
+	if err != nil {
+		s.logger.WithError(err).Error("failed to marshal rules")
+		return fmt.Errorf("failed to marshal rules: %w", err)
+	}
+
+	if err := s.cache.Set(ctx, rulesKey, string(updatedJSON), 0); err != nil {
+		s.logger.WithError(err).Error("failed to save rules")
+		return fmt.Errorf("failed to save rules to cache: %w", err)
+	}
+
+	return nil
+}
+
+func (s *updateRuleHandler) publishCacheInvalidation(ctx context.Context, gatewayID string) {
+	if err := s.invalidationPublisher.Publish(
+		ctx,
+		channel.GatewayEventsChannel,
+		event.DeleteGatewayCacheEvent{
+			GatewayID: gatewayID,
+		},
+	); err != nil {
+		s.logger.WithError(err).Error("failed to publish cache invalidation")
+	}
+}
+
 func (s *updateRuleHandler) validate(rule *req.UpdateRuleRequest) error {
-	if len(rule.Methods) > 0 {
-		validMethods := map[string]bool{
-			"GET":     true,
-			"POST":    true,
-			"PUT":     true,
-			"DELETE":  true,
-			"PATCH":   true,
-			"HEAD":    true,
-			"OPTIONS": true,
-		}
-		for _, method := range rule.Methods {
-			if !validMethods[strings.ToUpper(method)] {
-				return fmt.Errorf("invalid HTTP method: %s", method)
-			}
+	if err := s.validateHTTPMethods(rule.Methods); err != nil {
+		return err
+	}
+
+	if err := s.validatePluginChain(rule.PluginChain); err != nil {
+		return err
+	}
+
+	if err := s.validateTrustLens(rule.TrustLens); err != nil {
+		return err
+	}
+
+	if err := s.validateRuleType(rule.Type); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *updateRuleHandler) validateHTTPMethods(methods []string) error {
+	if len(methods) == 0 {
+		return nil
+	}
+
+	validMethods := map[string]bool{
+		"GET":     true,
+		"POST":    true,
+		"PUT":     true,
+		"DELETE":  true,
+		"PATCH":   true,
+		"HEAD":    true,
+		"OPTIONS": true,
+	}
+
+	for _, method := range methods {
+		if !validMethods[strings.ToUpper(method)] {
+			return fmt.Errorf("invalid HTTP method: %s", method)
 		}
 	}
 
-	if len(rule.PluginChain) > 0 {
-		for i, pl := range rule.PluginChain {
-			if err := s.validatePlugin.Validate(pl); err != nil {
-				return fmt.Errorf("plugin %d: %v", i, err)
-			}
+	return nil
+}
+
+func (s *updateRuleHandler) validatePluginChain(pluginChain []types.PluginConfig) error {
+	if len(pluginChain) == 0 {
+		return nil
+	}
+
+	for i, pl := range pluginChain {
+		if err := s.validatePlugin.Validate(pl); err != nil {
+			return fmt.Errorf("plugin %d: %v", i, err)
 		}
 	}
 
-	if rule.TrustLens != nil {
-		if rule.TrustLens.AppID == "" {
-			return fmt.Errorf("trust lens app id is required")
-		}
-		if rule.TrustLens.TeamID == "" {
-			return fmt.Errorf("trust lens team id is required")
-		}
+	return nil
+}
+
+func (s *updateRuleHandler) validateTrustLens(trustLens *types.TrustLensConfig) error {
+	if trustLens == nil {
+		return nil
 	}
+
+	if trustLens.AppID == "" {
+		return fmt.Errorf("trust lens app id is required")
+	}
+
+	if trustLens.TeamID == "" {
+		return fmt.Errorf("trust lens team id is required")
+	}
+
+	return nil
+}
+
+func (s *updateRuleHandler) validateRuleType(ruleType *string) error {
+	if ruleType == nil {
+		return nil
+	}
+
+	rt := forwarding_rule.Type(*ruleType)
+	if rt != forwarding_rule.AgentRuleType && rt != forwarding_rule.EndpointRuleType {
+		return domain.ErrInvalidRuleType
+	}
+
 	return nil
 }
