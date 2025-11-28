@@ -153,7 +153,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	if request.Type != nil {
 		ruleType = forwarding_rule.Type(*request.Type)
 		if ruleType != forwarding_rule.AgentRuleType && ruleType != forwarding_rule.EndpointRuleType {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_type, must be 'agent' or 'endpoint'"})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": domain.ErrInvalidRuleType.Error()})
 		}
 	}
 
@@ -194,7 +194,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	for _, rule := range rules {
 		if rule.Path == request.Path && rule.GatewayID == gatewayUUID {
 			s.logger.WithField("path", request.Path).Error("rule with this path already exists for this service")
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rule already exists"})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": domain.ErrRuleAlreadyExists.Error()})
 		}
 	}
 

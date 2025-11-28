@@ -10,8 +10,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	domainTypes "github.com/NeuralTrust/TrustGate/pkg/domain"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -88,11 +87,11 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		if errors.As(err, &domain.ErrEntityNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
 		}
-		if err.Error() == "failed to get rule: record not found" {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
+		if errors.Is(err, domain.ErrRuleAlreadyExists) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		if err.Error() == "rule already exists" {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rule already exists"})
+		if errors.Is(err, domain.ErrInvalidRuleType) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		s.logger.WithError(err).Error("Failed to update rule in database")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
@@ -233,7 +232,7 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 
 			if rule.Path == req.Path && rule.ServiceID == serviceUUID {
 				s.logger.WithField("path", req.Path).Error("rule with this path already exists for this service")
-				return fmt.Errorf("rule already exists")
+				return domain.ErrRuleAlreadyExists
 			}
 		}
 	}
@@ -244,7 +243,7 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 	if req.Type != nil {
 		ruleType := forwarding_rule.Type(*req.Type)
 		if ruleType != forwarding_rule.AgentRuleType && ruleType != forwarding_rule.EndpointRuleType {
-			return fmt.Errorf("invalid rule_type, must be 'agent' or 'endpoint'")
+			return domain.ErrInvalidRuleType
 		}
 		forwardingRule.Type = ruleType
 	}
@@ -272,9 +271,9 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 		forwardingRule.Active = *req.Active
 	}
 
-	var trustLensConfig *domainTypes.TrustLensJSON
+	var trustLensConfig *domain.TrustLensJSON
 	if req.TrustLens != nil {
-		trustLensConfig = &domainTypes.TrustLensJSON{
+		trustLensConfig = &domain.TrustLensJSON{
 			AppID:   req.TrustLens.AppID,
 			TeamID:  req.TrustLens.TeamID,
 			Type:    req.TrustLens.Type,
@@ -284,7 +283,7 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 	}
 
 	if req.PluginChain != nil {
-		var pc domainTypes.PluginChainJSON
+		var pc domain.PluginChainJSON
 		pc = append(pc, req.PluginChain...)
 		forwardingRule.PluginChain = pc
 	}

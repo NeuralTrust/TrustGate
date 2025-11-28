@@ -1,12 +1,17 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
 )
 
-var ErrEntityNotFound *notFoundError
+var (
+	ErrEntityNotFound    *notFoundError
+	ErrInvalidRuleType   = errors.New("invalid rule_type, must be 'agent' or 'endpoint'")
+	ErrRuleAlreadyExists = errors.New("rule already exists")
+)
 
 type notFoundError struct {
 	EntityType string

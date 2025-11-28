@@ -3,10 +3,12 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
@@ -100,6 +102,9 @@ func (r *forwardedRuleRepository) GetRule(
 	var rule forwarding_rule.ForwardingRule
 	err := r.db.WithContext(ctx).Where("id = ? AND gateway_id = ?", id, gatewayID).First(&rule).Error
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domain.NewNotFoundError("rule", id)
+		}
 		return nil, err
 	}
 	return &rule, nil
@@ -109,6 +114,9 @@ func (r *forwardedRuleRepository) GetRuleByID(ctx context.Context, id uuid.UUID)
 	var rule forwarding_rule.ForwardingRule
 	err := r.db.WithContext(ctx).Where("id = ?", id).First(&rule).Error
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domain.NewNotFoundError("rule", id)
+		}
 		return nil, err
 	}
 	return &rule, nil
