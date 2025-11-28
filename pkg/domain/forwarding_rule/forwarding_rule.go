@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-var (
+const (
 	AgentRuleType    Type = "agent"
 	EndpointRuleType Type = "endpoint"
 )
