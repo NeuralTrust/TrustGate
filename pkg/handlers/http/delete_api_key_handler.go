@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"

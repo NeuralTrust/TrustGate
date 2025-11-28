@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"

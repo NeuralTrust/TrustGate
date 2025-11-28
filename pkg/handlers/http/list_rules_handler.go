@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
@@ -90,6 +90,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			Name:          rule.Name,
 			GatewayID:     rule.GatewayID.String(),
 			Path:          rule.Path,
+			Type:          string(rule.Type),
 			ServiceID:     rule.ServiceID.String(),
 			Methods:       rule.Methods,
 			Headers:       rule.Headers,
@@ -125,6 +126,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			Upstream:      upstreamOutput,
 			ServiceID:     rule.ServiceID.String(),
 			Path:          rule.Path,
+			Type:          string(rule.Type),
 			Methods:       rule.Methods,
 			Headers:       rule.Headers,
 			StripPath:     rule.StripPath,

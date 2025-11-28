@@ -8,6 +8,7 @@ type UpdateRuleRequest struct {
 	Path          string                 `json:"path"`
 	Name          string                 `json:"name"`
 	ServiceID     string                 `json:"service_id"`
+	Type          *string                `json:"type,omitempty"`
 	Methods       []string               `json:"methods"`
 	Headers       map[string]string      `json:"headers"`
 	StripPath     *bool                  `json:"strip_path"`

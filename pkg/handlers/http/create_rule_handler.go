@@ -149,11 +149,20 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		pluginChainDB = append(pluginChainDB, request.PluginChain...)
 	}
 
+	ruleType := forwarding_rule.EndpointRuleType
+	if request.Type != nil {
+		ruleType = forwarding_rule.Type(*request.Type)
+		if ruleType != forwarding_rule.AgentRuleType && ruleType != forwarding_rule.EndpointRuleType {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": domain.ErrInvalidRuleType.Error()})
+		}
+	}
+
 	dbRule := &forwarding_rule.ForwardingRule{
 		ID:            id,
 		Name:          request.Name,
 		GatewayID:     gatewayUUID,
 		Path:          request.Path,
+		Type:          ruleType,
 		ServiceID:     serviceUUID,
 		Methods:       request.Methods,
 		Headers:       domain.HeadersJSON(request.Headers),
@@ -185,7 +194,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	for _, rule := range rules {
 		if rule.Path == request.Path && rule.GatewayID == gatewayUUID {
 			s.logger.WithField("path", request.Path).Error("rule with this path already exists for this service")
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "rule already exists"})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": domain.ErrRuleAlreadyExists.Error()})
 		}
 	}
 
@@ -247,6 +256,7 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		Name:          rule.Name,
 		GatewayID:     rule.GatewayID.String(),
 		Path:          rule.Path,
+		Type:          string(rule.Type),
 		ServiceID:     rule.ServiceID.String(),
 		Methods:       rule.Methods,
 		Headers:       headers,

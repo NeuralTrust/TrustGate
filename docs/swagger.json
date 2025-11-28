@@ -1556,6 +1556,9 @@
                 "trustLens": {
                     "$ref": "#/definitions/domain.TrustLensJSON"
                 },
+                "type": {
+                    "type": "string"
+                },
                 "updatedAt": {
                     "type": "string"
                 }
@@ -1805,6 +1808,9 @@
                 "retry_attempts": {
                     "type": "integer"
                 },
+                "rule_type": {
+                    "type": "string"
+                },
                 "service_id": {
                     "type": "string"
                 },
@@ -1822,7 +1828,7 @@
                 "id": {
                     "type": "string"
                 },
-                "plugins": {
+                "plugin_ids": {
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -2222,6 +2228,9 @@
                 "retry_attempts": {
                     "type": "integer"
                 },
+                "rule_type": {
+                    "type": "string"
+                },
                 "service_id": {
                     "type": "string"
                 },
@@ -2414,6 +2423,9 @@
                 },
                 "trustlens": {
                     "$ref": "#/definitions/domain.TrustLensJSON"
+                },
+                "type": {
+                    "type": "string"
                 },
                 "updated_at": {
                     "type": "string"

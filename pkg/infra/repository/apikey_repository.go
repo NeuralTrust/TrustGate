@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/errors"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
