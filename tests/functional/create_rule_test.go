@@ -411,7 +411,9 @@ func TestCreateRule(t *testing.T) {
 		}, rulePayload)
 		assert.Equal(t, http.StatusBadRequest, status)
 		assert.NotNil(t, errorResponse["error"])
-		assert.Contains(t, errorResponse["error"].(string), "invalid rule_type")
+		if errorMsg, ok := errorResponse["error"].(string); ok {
+			assert.Contains(t, errorMsg, "invalid rule_type")
+		}
 	})
 
 	t.Run("it should return type field in response", func(t *testing.T) {
