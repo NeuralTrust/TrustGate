@@ -9,12 +9,20 @@ import (
 	"gorm.io/gorm"
 )
 
+var (
+	AgentRuleType    Type = "agent"
+	EndpointRuleType Type = "endpoint"
+)
+
+type Type string
+
 type ForwardingRule struct {
 	ID            uuid.UUID `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	Name          string
 	GatewayID     uuid.UUID              `gorm:"type:uuid;not null"`
 	ServiceID     uuid.UUID              `gorm:"type:uuid;not null"`
 	Path          string                 `gorm:"not null"`
+	Type          Type                   `gorm:"column:rule_type;type:rule_type;default:'endpoint';not null"`
 	Methods       domain.MethodsJSON     `gorm:"type:jsonb"`
 	Headers       domain.HeadersJSON     `gorm:"type:jsonb"`
 	StripPath     bool                   `gorm:"default:false"`
@@ -28,7 +36,6 @@ type ForwardingRule struct {
 	UpdatedAt     time.Time
 }
 
-// Validate checks if the rule is valid
 func (r *ForwardingRule) Validate() error {
 	if r.Path == "" {
 		return fmt.Errorf("path is required")
@@ -67,6 +74,11 @@ func (r *ForwardingRule) BeforeCreate(tx *gorm.DB) error {
 	now := time.Now()
 	r.CreatedAt = now
 	r.UpdatedAt = now
+
+	// Set default rule type if not provided
+	if r.Type == "" {
+		r.Type = EndpointRuleType
+	}
 
 	// Generate unique IDs for plugins in the chain
 	if r.PluginChain != nil {

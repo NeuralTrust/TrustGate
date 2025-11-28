@@ -166,6 +166,9 @@ func TestUpdateRule(t *testing.T) {
 		assert.Equal(t, true, getResponse["preserve_host"])
 		assert.Equal(t, float64(5), getResponse["retry_attempts"])
 		assert.Equal(t, true, getResponse["active"])
+		// Verify type field is present (should default to endpoint)
+		assert.NotNil(t, getResponse["type"])
+		assert.Equal(t, "endpoint", getResponse["type"])
 
 		// Check methods
 		responseMethods, ok := getResponse["methods"].([]interface{})
@@ -352,12 +355,126 @@ func TestUpdateRule(t *testing.T) {
 		t.Logf("✅ Rule deactivation successful")
 	})
 
+	t.Run("should update rule type to agent", func(t *testing.T) {
+		updatePayload := map[string]interface{}{
+			"type":    "agent",
+			"methods": []string{"GET"},
+		}
+
+		status, _ := sendRequest(
+			t,
+			http.MethodPut,
+			fmt.Sprintf("%s/gateways/%s/rules/%s", AdminUrl, gatewayID, ruleID),
+			map[string]string{
+				"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+			},
+			updatePayload,
+		)
+
+		assert.Equal(t, http.StatusNoContent, status)
+
+		// Verify the type was updated
+		getResponse := findRuleByID(t, gatewayID, ruleID)
+		assert.Equal(t, "agent", getResponse["type"])
+		t.Logf("✅ Rule type updated to agent successfully")
+	})
+
+	t.Run("should update rule type to endpoint", func(t *testing.T) {
+		updatePayload := map[string]interface{}{
+			"type":    "endpoint",
+			"methods": []string{"GET"},
+		}
+
+		status, _ := sendRequest(
+			t,
+			http.MethodPut,
+			fmt.Sprintf("%s/gateways/%s/rules/%s", AdminUrl, gatewayID, ruleID),
+			map[string]string{
+				"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+			},
+			updatePayload,
+		)
+
+		assert.Equal(t, http.StatusNoContent, status)
+
+		// Verify the type was updated
+		getResponse := findRuleByID(t, gatewayID, ruleID)
+		assert.Equal(t, "endpoint", getResponse["type"])
+		t.Logf("✅ Rule type updated to endpoint successfully")
+	})
+
+	t.Run("should fail with invalid rule type", func(t *testing.T) {
+		updatePayload := map[string]interface{}{
+			"type":    "invalid",
+			"methods": []string{"GET"},
+		}
+
+		status, errorResponse := sendRequest(
+			t,
+			http.MethodPut,
+			fmt.Sprintf("%s/gateways/%s/rules/%s", AdminUrl, gatewayID, ruleID),
+			map[string]string{
+				"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+			},
+			updatePayload,
+		)
+
+		assert.Equal(t, http.StatusBadRequest, status)
+		if errorMsg, ok := errorResponse["error"].(string); ok {
+			assert.Contains(t, errorMsg, "invalid rule_type")
+		}
+		t.Logf("✅ Correctly rejected invalid rule type")
+	})
+
+	t.Run("should preserve type when updating other fields", func(t *testing.T) {
+		// First set type to agent
+		updatePayload := map[string]interface{}{
+			"type":    "agent",
+			"methods": []string{"GET"},
+		}
+
+		status, _ := sendRequest(
+			t,
+			http.MethodPut,
+			fmt.Sprintf("%s/gateways/%s/rules/%s", AdminUrl, gatewayID, ruleID),
+			map[string]string{
+				"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+			},
+			updatePayload,
+		)
+		assert.Equal(t, http.StatusNoContent, status)
+
+		// Now update only the path without specifying type
+		updatePayload2 := map[string]interface{}{
+			"path":    "/preserve-type-test",
+			"methods": []string{"GET"},
+		}
+
+		status, _ = sendRequest(
+			t,
+			http.MethodPut,
+			fmt.Sprintf("%s/gateways/%s/rules/%s", AdminUrl, gatewayID, ruleID),
+			map[string]string{
+				"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+			},
+			updatePayload2,
+		)
+		assert.Equal(t, http.StatusNoContent, status)
+
+		// Verify type is still agent
+		getResponse := findRuleByID(t, gatewayID, ruleID)
+		assert.Equal(t, "agent", getResponse["type"])
+		assert.Equal(t, "/preserve-type-test", getResponse["path"])
+		t.Logf("✅ Rule type preserved during partial update")
+	})
+
 	// Final verification: ensure rule still exists and has expected state
 	t.Run("should verify final rule state", func(t *testing.T) {
 		getResponse := findRuleByID(t, gatewayID, ruleID)
 		assert.Equal(t, ruleID, getResponse["id"])
-		assert.Equal(t, "/plugin-test", getResponse["path"]) // From path update test
-		assert.Equal(t, false, getResponse["active"])        // From deactivation test
+		assert.Equal(t, "/preserve-type-test", getResponse["path"]) // From preserve type test
+		assert.Equal(t, false, getResponse["active"])               // From deactivation test
+		assert.Equal(t, "agent", getResponse["type"])               // From preserve type test
 
 		t.Logf("✅ Final rule state verified")
 	})

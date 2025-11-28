@@ -57,6 +57,8 @@ func TestCreateRule(t *testing.T) {
 		assert.Equal(t, serviceID, response["service_id"])
 		assert.Equal(t, []interface{}{"GET"}, response["methods"])
 		assert.Equal(t, gatewayID, response["gateway_id"])
+		// Verify default type is endpoint
+		assert.Equal(t, "endpoint", response["type"])
 	})
 
 	t.Run("it should create a rule with headers", func(t *testing.T) {
@@ -340,5 +342,94 @@ func TestCreateRule(t *testing.T) {
 		}, secondGatewayRulePayload)
 		assert.Equal(t, http.StatusCreated, status)
 		assert.NotEmpty(t, response["id"])
+	})
+
+	t.Run("it should default to endpoint type when type is not provided", func(t *testing.T) {
+		rulePayload := map[string]interface{}{
+			"path":       "/test-default-type",
+			"name":       "rulename",
+			"service_id": serviceID,
+			"methods":    []string{"GET"},
+		}
+
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
+		assert.Equal(t, http.StatusCreated, status)
+
+		// Verify default type is endpoint
+		assert.Equal(t, "endpoint", response["type"])
+	})
+
+	t.Run("it should create a rule with endpoint type explicitly", func(t *testing.T) {
+		rulePayload := map[string]interface{}{
+			"path":       "/test-endpoint-type",
+			"name":       "rulename",
+			"service_id": serviceID,
+			"methods":    []string{"GET"},
+			"type":       "endpoint",
+		}
+
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
+		assert.Equal(t, http.StatusCreated, status)
+
+		// Verify type is endpoint
+		assert.Equal(t, "endpoint", response["type"])
+	})
+
+	t.Run("it should create a rule with agent type", func(t *testing.T) {
+		rulePayload := map[string]interface{}{
+			"path":       "/test-agent-type",
+			"name":       "rulename",
+			"service_id": serviceID,
+			"methods":    []string{"GET"},
+			"type":       "agent",
+		}
+
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
+		assert.Equal(t, http.StatusCreated, status)
+
+		// Verify type is agent
+		assert.Equal(t, "agent", response["type"])
+	})
+
+	t.Run("it should fail with invalid type", func(t *testing.T) {
+		rulePayload := map[string]interface{}{
+			"path":       "/test-invalid-type",
+			"name":       "rulename",
+			"service_id": serviceID,
+			"methods":    []string{"GET"},
+			"type":       "invalid",
+		}
+
+		status, errorResponse := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
+		assert.Equal(t, http.StatusBadRequest, status)
+		assert.NotNil(t, errorResponse["error"])
+		assert.Contains(t, errorResponse["error"].(string), "invalid rule_type")
+	})
+
+	t.Run("it should return type field in response", func(t *testing.T) {
+		rulePayload := map[string]interface{}{
+			"path":       "/test-type-in-response",
+			"name":       "rulename",
+			"service_id": serviceID,
+			"methods":    []string{"GET"},
+			"type":       "agent",
+		}
+
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
+		}, rulePayload)
+		assert.Equal(t, http.StatusCreated, status)
+
+		// Verify type is present in response
+		assert.NotNil(t, response["type"])
+		assert.Equal(t, "agent", response["type"])
 	})
 }

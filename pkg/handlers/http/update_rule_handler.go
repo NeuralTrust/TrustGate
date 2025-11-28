@@ -70,7 +70,6 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
-	// Validate the rule request
 	if err := s.validate(&req); err != nil {
 		s.logger.WithError(err).Error("Rule validation failed")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -89,7 +88,6 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		if errors.As(err, &domain.ErrEntityNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
 		}
-		// Check for not found error from database
 		if err.Error() == "failed to get rule: record not found" {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
 		}
@@ -100,7 +98,6 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
 	}
 
-	// Get existing rules from cache
 	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
 	rulesJSON, err := s.cache.Get(c.Context(), rulesKey)
 	if err != nil {
@@ -114,7 +111,6 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
 	}
 
-	// Find and update rule
 	found := false
 	for i, r := range rules {
 		if r.ID == ruleID {
@@ -126,6 +122,9 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 			}
 			if req.ServiceID != "" {
 				rules[i].ServiceID = req.ServiceID
+			}
+			if req.Type != nil {
+				rules[i].Type = *req.Type
 			}
 			if len(req.Methods) > 0 {
 				rules[i].Methods = req.Methods
@@ -158,7 +157,6 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 				}
 				rules[i].PluginChain = pluginChain
 			}
-			// Update TrustLens in cache if provided
 			if req.TrustLens != nil {
 				rules[i].TrustLens = req.TrustLens
 			}
@@ -171,7 +169,6 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
 	}
 
-	// Save updated rules in cache
 	updatedJSON, err := json.Marshal(rules)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to marshal rules")
@@ -183,7 +180,6 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update rule"})
 	}
 
-	// Invalidate cache after updating the rule
 	if err := s.invalidationPublisher.Publish(
 		c.Context(),
 		channel.GatewayEventsChannel,
@@ -212,7 +208,6 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 		return domain.NewNotFoundError("rule", ruleUUID)
 	}
 
-	// Only update fields that are provided (partial updates)
 	var serviceUUID uuid.UUID
 	if req.ServiceID != "" {
 		var err error
@@ -224,7 +219,6 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 		forwardingRule.ServiceID = serviceUUID
 	}
 
-	// Check for path conflicts only if both path and service_id are being updated
 	if req.Path != "" && req.ServiceID != "" {
 		rules, err := s.repo.ListRules(ctx, gatewayUUID)
 		if err != nil {
@@ -233,12 +227,10 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 		}
 
 		for _, rule := range rules {
-			// Skip the current rule being updated
 			if rule.ID == ruleUUID {
 				continue
 			}
 
-			// Check if another rule has the same path and service ID
 			if rule.Path == req.Path && rule.ServiceID == serviceUUID {
 				s.logger.WithField("path", req.Path).Error("rule with this path already exists for this service")
 				return fmt.Errorf("rule already exists")
@@ -248,6 +240,13 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 
 	if req.Path != "" {
 		forwardingRule.Path = req.Path
+	}
+	if req.Type != nil {
+		ruleType := forwarding_rule.Type(*req.Type)
+		if ruleType != forwarding_rule.AgentRuleType && ruleType != forwarding_rule.EndpointRuleType {
+			return fmt.Errorf("invalid rule_type, must be 'agent' or 'endpoint'")
+		}
+		forwardingRule.Type = ruleType
 	}
 	if len(req.Methods) > 0 {
 		forwardingRule.Methods = req.Methods
@@ -284,7 +283,6 @@ func (s *updateRuleHandler) updateForwardingRuleDB(
 		forwardingRule.TrustLens = trustLensConfig
 	}
 
-	// Only update plugin chain if explicitly provided
 	if req.PluginChain != nil {
 		var pc domainTypes.PluginChainJSON
 		pc = append(pc, req.PluginChain...)
@@ -309,9 +307,6 @@ func (s *updateRuleHandler) convertMapToDBHeaders(headers map[string]string) map
 }
 
 func (s *updateRuleHandler) validate(rule *req.UpdateRuleRequest) error {
-	// For updates, only validate fields that are provided (partial updates allowed)
-
-	// Validate methods only if provided
 	if len(rule.Methods) > 0 {
 		validMethods := map[string]bool{
 			"GET":     true,

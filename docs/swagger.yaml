@@ -170,6 +170,8 @@ definitions:
         type: boolean
       trustLens:
         $ref: '#/definitions/domain.TrustLensJSON'
+      type:
+        type: string
       updatedAt:
         type: string
     type: object
@@ -330,6 +332,8 @@ definitions:
         type: boolean
       retry_attempts:
         type: integer
+      rule_type:
+        type: string
       service_id:
         type: string
       strip_path:
@@ -345,7 +349,7 @@ definitions:
     properties:
       id:
         type: string
-      plugins:
+      plugin_ids:
         items:
           type: string
         type: array
@@ -609,6 +613,8 @@ definitions:
         type: boolean
       retry_attempts:
         type: integer
+      rule_type:
+        type: string
       service_id:
         type: string
       strip_path:
@@ -736,6 +742,8 @@ definitions:
         type: boolean
       trustlens:
         $ref: '#/definitions/domain.TrustLensJSON'
+      type:
+        type: string
       updated_at:
         type: string
       upstream:

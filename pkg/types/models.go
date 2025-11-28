@@ -82,6 +82,7 @@ type ForwardingRule struct {
 	Name          string            `json:"name"`
 	GatewayID     string            `json:"gateway_id"`
 	Path          string            `json:"path"`
+	Type          string            `json:"type"`
 	ServiceID     string            `json:"service_id"`
 	Methods       []string          `json:"methods"`
 	Headers       map[string]string `json:"headers"`
