@@ -28,7 +28,7 @@ func TestInjectionProtectionPlugin_Execute(t *testing.T) {
 					"enabled": true,
 				},
 				{
-					"type":    "javascript",
+					"type":    "xss",
 					"enabled": true,
 				},
 			},
