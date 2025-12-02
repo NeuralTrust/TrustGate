@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
+	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
@@ -28,6 +29,7 @@ type updateRuleHandler struct {
 	cache                 cache.Cache
 	validatePlugin        *plugin.ValidatePlugin
 	invalidationPublisher infraCache.EventPublisher
+	ruleMatcher           routing.RuleMatcher
 }
 
 func NewUpdateRuleHandler(
@@ -36,6 +38,7 @@ func NewUpdateRuleHandler(
 	cache cache.Cache,
 	validatePlugin *plugin.ValidatePlugin,
 	invalidationPublisher infraCache.EventPublisher,
+	ruleMatcher routing.RuleMatcher,
 ) Handler {
 	return &updateRuleHandler{
 		logger:                logger,
@@ -43,6 +46,7 @@ func NewUpdateRuleHandler(
 		cache:                 cache,
 		validatePlugin:        validatePlugin,
 		invalidationPublisher: invalidationPublisher,
+		ruleMatcher:           ruleMatcher,
 	}
 }
 
@@ -182,12 +186,14 @@ func (s *updateRuleHandler) validateRuleUniqueness(
 		return fmt.Errorf("failed to check existing rules: %w", err)
 	}
 
+	normalizedUpdatePath := s.ruleMatcher.NormalizePath(updateReq.Path)
 	for _, rule := range rules {
 		if rule.ID == ruleUUID {
 			continue
 		}
 
-		if rule.Path == updateReq.Path && rule.ServiceID == serviceUUID {
+		normalizedRulePath := s.ruleMatcher.NormalizePath(rule.Path)
+		if normalizedRulePath == normalizedUpdatePath && rule.ServiceID == serviceUUID {
 			s.logger.WithField("path", updateReq.Path).Error("rule with this path already exists for this service")
 			return domain.ErrRuleAlreadyExists
 		}

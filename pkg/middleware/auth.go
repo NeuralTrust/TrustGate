@@ -7,6 +7,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
@@ -21,17 +22,20 @@ type authMiddleware struct {
 	logger        *logrus.Logger
 	keyFinder     apikey.Finder
 	gatewayFinder gateway.DataFinder
+	ruleMatcher   routing.RuleMatcher
 }
 
 func NewAuthMiddleware(
 	logger *logrus.Logger,
 	keyFinder apikey.Finder,
 	gatewayFinder gateway.DataFinder,
+	ruleMatcher routing.RuleMatcher,
 ) Middleware {
 	return &authMiddleware{
 		logger:        logger,
 		keyFinder:     keyFinder,
 		gatewayFinder: gatewayFinder,
+		ruleMatcher:   ruleMatcher,
 	}
 }
 
@@ -67,13 +71,19 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 
 		m.attachRequestContext(ctx, apiKey, key.ID.String(), key.Subject.String(), gatewayData)
 
-		matchingRule := m.matchForwardingRule(ctx, gatewayData)
+		matchingRule, pathParams := m.ruleMatcher.MatchRule(ctx.Path(), ctx.Method(), gatewayData.Rules)
 		if matchingRule == nil {
 			m.logger.WithFields(logrus.Fields{
 				"path":   ctx.Path(),
 				"method": ctx.Method(),
 			}).Debug("no matching rule found")
 			return m.respondWithError(ctx, fiber.StatusNotFound, "no matching rule found")
+		}
+
+		if len(pathParams) > 0 {
+			ctx.Locals(common.PathParamsKey, pathParams)
+			c := context.WithValue(ctx.Context(), common.PathParamsKey, pathParams)
+			ctx.SetUserContext(c)
 		}
 
 		if len(key.Policies) > 0 {
@@ -134,34 +144,6 @@ func (m *authMiddleware) attachRequestContext(
 	//nolint
 	c = context.WithValue(c, string(common.GatewayDataContextKey), gatewayData)
 	ctx.SetUserContext(c)
-}
-
-func (m *authMiddleware) matchForwardingRule(ctx *fiber.Ctx, gatewayData *types.GatewayData) *types.ForwardingRule {
-	method := ctx.Method()
-	path := ctx.Path()
-
-	for _, rule := range gatewayData.Rules {
-		if !rule.Active {
-			continue
-		}
-		if !m.methodAllowed(method, rule.Methods) {
-			continue
-		}
-		if path == rule.Path {
-			r := rule
-			return &r
-		}
-	}
-	return nil
-}
-
-func (m *authMiddleware) methodAllowed(requestMethod string, allowed []string) bool {
-	for _, method := range allowed {
-		if method == requestMethod {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *authMiddleware) setRuleContext(ctx *fiber.Ctx, rule *types.ForwardingRule) {

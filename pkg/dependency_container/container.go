@@ -19,6 +19,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
+	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
@@ -175,6 +176,7 @@ func NewContainer(
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
 	gatewayDataFinder := gateway.NewDataFinder(gatewayRepository, ruleRepository, cacheInstance, logger)
+	ruleMatcher := routing.NewRuleMatcher()
 	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager, gatewayRepository)
 
 	//policy
@@ -243,6 +245,7 @@ func NewContainer(
 			cfg,
 			providerFactory,
 			oauthTokenClient,
+			ruleMatcher,
 		),
 		// Gateway
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(
@@ -269,7 +272,7 @@ func NewContainer(
 		UpdateServiceHandler: handlers.NewUpdateServiceHandler(logger, serviceRepository, redisPublisher),
 		DeleteServiceHandler: handlers.NewDeleteServiceHandler(logger, serviceRepository, redisPublisher),
 		// Rule
-		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, ruleRepository, gatewayRepository, serviceRepository, pluginChainValidator, redisPublisher),
+		CreateRuleHandler: handlers.NewCreateRuleHandler(logger, ruleRepository, gatewayRepository, serviceRepository, pluginChainValidator, redisPublisher, ruleMatcher),
 		ListRulesHandler: handlers.NewListRulesHandler(
 			logger,
 			ruleRepository,
@@ -277,7 +280,7 @@ func NewContainer(
 			serviceRepository,
 			cacheInstance,
 		),
-		UpdateRuleHandler: handlers.NewUpdateRuleHandler(logger, ruleRepository, cacheInstance, validatePlugin, redisPublisher),
+		UpdateRuleHandler: handlers.NewUpdateRuleHandler(logger, ruleRepository, cacheInstance, validatePlugin, redisPublisher, ruleMatcher),
 		DeleteRuleHandler: handlers.NewDeleteRuleHandler(logger, ruleRepository, cacheInstance, redisPublisher),
 		// APIKey
 		CreateAPIKeyHandler: handlers.NewCreateAPIKeyHandler(
@@ -332,7 +335,7 @@ func NewContainer(
 			[]string{"Content-Length", "X-Response-Time"},
 			"12h",
 		),
-		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, gatewayDataFinder),
+		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, gatewayDataFinder, ruleMatcher),
 		AdminAuthMiddleware:   middleware.NewAdminAuthMiddleware(logger, jwtManager),
 		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, metricsWorker),
 		PluginMiddleware:      middleware.NewPluginChainMiddleware(pluginManager, logger),

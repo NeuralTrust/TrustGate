@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	HealthPath    = "/health"
-	PingPath      = "/__/ping"
-	MirrorPath    = "/__/mirror"
-	WebsocketPath = "/ws/*"
+	HealthPath       = "/health"
+	PingPath         = "/__/ping"
+	MirrorPath       = "/__/mirror"
+	MirrorParamsPath = "/:id/mirror"
+	WebsocketPath    = "/ws/*"
 )
 
 type proxyRouter struct {
@@ -74,6 +75,13 @@ func (r *proxyRouter) BuildRoutes(router *fiber.App) error {
 	router.Post(MirrorPath, func(ctx *fiber.Ctx) error {
 		return ctx.Status(http.StatusOK).JSON(fiber.Map{
 			"body": string(ctx.Body()),
+		})
+	})
+
+	router.Post(MirrorParamsPath, func(ctx *fiber.Ctx) error {
+		return ctx.Status(http.StatusOK).JSON(fiber.Map{
+			"body":   string(ctx.Body()),
+			"params": ctx.Params("id"),
 		})
 	})
 
