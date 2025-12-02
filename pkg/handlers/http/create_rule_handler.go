@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
+	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -28,6 +29,7 @@ type createRuleHandler struct {
 	serviceRepo          service.Repository
 	pluginChainValidator plugin.ValidatePluginChain
 	publisher            infraCache.EventPublisher
+	ruleMatcher          routing.RuleMatcher
 }
 
 func NewCreateRuleHandler(
@@ -37,6 +39,7 @@ func NewCreateRuleHandler(
 	serviceRepo service.Repository,
 	pluginChainValidator plugin.ValidatePluginChain,
 	publisher infraCache.EventPublisher,
+	ruleMatcher routing.RuleMatcher,
 ) Handler {
 	return &createRuleHandler{
 		logger:               logger,
@@ -45,6 +48,7 @@ func NewCreateRuleHandler(
 		serviceRepo:          serviceRepo,
 		pluginChainValidator: pluginChainValidator,
 		publisher:            publisher,
+		ruleMatcher:          ruleMatcher,
 	}
 }
 
@@ -191,8 +195,10 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to check existing rules"})
 	}
 
+	normalizedRequestPath := s.ruleMatcher.NormalizePath(request.Path)
 	for _, rule := range rules {
-		if rule.Path == request.Path && rule.GatewayID == gatewayUUID {
+		normalizedRulePath := s.ruleMatcher.NormalizePath(rule.Path)
+		if normalizedRulePath == normalizedRequestPath && rule.GatewayID == gatewayUUID {
 			s.logger.WithField("path", request.Path).Error("rule with this path already exists for this service")
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": domain.ErrRuleAlreadyExists.Error()})
 		}

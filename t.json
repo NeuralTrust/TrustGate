@@ -1,0 +1,22 @@
+[
+  {
+    "id": "d0ee675b-1599-48d4-8419-426d5083d4a3",
+    "name": "agent_guardian",
+    "stage": "pre_response",
+    "enabled": true,
+    "parallel": false,
+    "priority": 1,
+    "settings": {
+      "host": "http://agentguardian.agentguardian.svc.cluster.local:8085",
+      "mode": "enforce",
+      "async": false,
+      "include": [
+        "query_guardian",
+        "code_guardian"
+      ],
+      "credentials": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.396KCDWMomWrMEImsF84AmFRjBEvSvnyLh3ZA_mB_Wg"
+      }
+    }
+  }
+]

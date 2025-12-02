@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/cache"
@@ -67,6 +68,7 @@ type forwardedHandler struct {
 	tlsClientCache      *infraCache.TLSClientCache
 	providerLocator     factory.ProviderLocator
 	tokenClient         oauth.TokenClient
+	ruleMatcher         routing.RuleMatcher
 }
 
 func NewForwardedHandler(
@@ -79,6 +81,7 @@ func NewForwardedHandler(
 	cfg *config.Config,
 	providerLocator factory.ProviderLocator,
 	tokenClient oauth.TokenClient,
+	ruleMatcher routing.RuleMatcher,
 ) Handler {
 
 	client := &fasthttp.Client{
@@ -106,6 +109,7 @@ func NewForwardedHandler(
 		tlsClientCache:      infraCache.NewTLSClientCache(logger),
 		providerLocator:     providerLocator,
 		tokenClient:         tokenClient,
+		ruleMatcher:         ruleMatcher,
 	}
 }
 
@@ -792,9 +796,13 @@ func (h *forwardedHandler) doForwardRequest(dto *forwardedRequestDTO) (*types.Re
 }
 
 func (h *forwardedHandler) rewriteTargetURL(dto *forwardedRequestDTO) string {
-	l := h.buildUpstreamTargetUrl(dto.target)
-	if dto.rule != nil && dto.rule.StripPath && strings.HasPrefix(dto.req.Path, dto.rule.Path) {
-		return strings.TrimSuffix(l, "/") + dto.req.Path[len(dto.rule.Path):]
+	pathParams := h.getPathParamsFromContext(dto.req.Context)
+	l := h.buildUpstreamTargetUrl(dto.target, pathParams)
+	if dto.rule != nil && dto.rule.StripPath {
+		remainingPath := h.ruleMatcher.ExtractPathAfterMatch(dto.req.Path, dto.rule.Path)
+		if remainingPath != dto.req.Path {
+			return strings.TrimSuffix(l, "/") + remainingPath
+		}
 	}
 	return l
 }
@@ -938,14 +946,40 @@ func (h *forwardedHandler) handleStreamingRequest(
 	return h.handleStreamingResponse(req, target, streamResponse)
 }
 
-func (h *forwardedHandler) buildUpstreamTargetUrl(target *types.UpstreamTarget) string {
+func (h *forwardedHandler) buildUpstreamTargetUrl(target *types.UpstreamTarget, pathParams map[string]string) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("%s://%s", target.Protocol, target.Host))
 	if (target.Protocol == "https" && target.Port != 443) || (target.Protocol == "http" && target.Port != 80) {
 		sb.WriteString(fmt.Sprintf(":%d", target.Port))
 	}
-	sb.WriteString(target.Path)
+
+	targetPath := target.Path
+	if len(pathParams) > 0 {
+		targetPath = h.replacePathParams(targetPath, pathParams)
+	}
+
+	sb.WriteString(targetPath)
 	return sb.String()
+}
+
+func (h *forwardedHandler) replacePathParams(path string, pathParams map[string]string) string {
+	result := path
+	for paramName, paramValue := range pathParams {
+		paramPlaceholder := "{" + paramName + "}"
+		if strings.Contains(result, paramPlaceholder) {
+			result = strings.ReplaceAll(result, paramPlaceholder, paramValue)
+		}
+	}
+	return result
+}
+
+func (h *forwardedHandler) getPathParamsFromContext(ctx context.Context) map[string]string {
+	if pathParams := ctx.Value(common.PathParamsKey); pathParams != nil {
+		if params, ok := pathParams.(map[string]string); ok {
+			return params
+		}
+	}
+	return nil
 }
 
 func (h *forwardedHandler) handleStreamingResponseByProvider(
@@ -1038,8 +1072,8 @@ func (h *forwardedHandler) handleStreamingResponse(
 	target *types.UpstreamTarget,
 	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
-
-	upstreamURL := h.buildUpstreamTargetUrl(target)
+	pathParams := h.getPathParamsFromContext(req.Context)
+	upstreamURL := h.buildUpstreamTargetUrl(target, pathParams)
 
 	httpReq, err := http.NewRequestWithContext(req.Context, req.Method, upstreamURL, bytes.NewReader(req.Body))
 	if err != nil {
