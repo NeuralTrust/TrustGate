@@ -10,27 +10,8 @@ ARG BUILD_DATE
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
 
-# Install build dependencies and build librdkafka from source
-RUN apt-get update && \
-    apt-get install -y \
-        git \
-        curl \
-        build-essential \
-        zlib1g-dev \
-        libssl-dev \
-        libsasl2-dev \
-        libzstd-dev \
-        pkg-config \
-        cmake && \
-    git clone --depth 1 --branch v2.3.0 https://github.com/confluentinc/librdkafka.git && \
-    cd librdkafka && \
-    ./configure --prefix=/usr && \
-    make -j$(nproc) && \
-    make install && \
-    ldconfig && \
-    cd .. && \
-    rm -rf librdkafka && \
-    rm -rf /var/lib/apt/lists/*
+# Install build dependencies (use precompiled librdkafka-dev instead of building from source)
+RUN apt-get update && apt-get install -y git ca-certificates librdkafka-dev && rm -rf /var/lib/apt/lists/*
 
 # Copy go mod files
 COPY go.mod go.sum ./
@@ -54,30 +35,17 @@ FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Install runtime dependencies and librdkafka from source
-RUN apt-get update && \
-    apt-get install -y \
-        ca-certificates \
-        tzdata \
-        curl \
-        libssl3 \
-        libsasl2-2 \
-        zlib1g \
-        libzstd1 \
-        build-essential \
-        git \
-        cmake && \
-    git clone --depth 1 --branch v2.3.0 https://github.com/confluentinc/librdkafka.git && \
-    cd librdkafka && \
-    ./configure --prefix=/usr && \
-    make -j$(nproc) && \
-    make install && \
-    ldconfig && \
-    cd .. && \
-    rm -rf librdkafka && \
-    apt-get remove -y build-essential git cmake && \
-    apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/*
+# Install runtime dependencies (use precompiled librdkafka1 instead of building from source)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    tzdata \
+    curl \
+    librdkafka1 \
+    libssl3 \
+    libsasl2-2 \
+    zlib1g \
+    libzstd1 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/gateway /app/
 COPY config/ /app/config/
