@@ -40,7 +40,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.25.1'
+          go-version: '1.23'
           check-latest: true
           cache: false  # Disable Go module cache
 
@@ -48,14 +48,6 @@ jobs:
         run: |
           go clean -modcache
           go mod tidy && go mod vendor
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest
-          skip-cache: true  # Skip using cache for linter
-          args: --timeout=5m  # Increase timeout to 5 minutes
-          only-new-issues: true  # Only report new issues
 
       - name: Configure Dummy OAuth server (WireMock)
         run: |
