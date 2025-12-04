@@ -48,7 +48,7 @@ func NewLogger(serverType string) *logrus.Logger {
 	if err != nil {
 		log.Fatalf("Failed to open log file: %v", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	asyncWriter, err := NewAsyncFileWriter(logFile, 32*1024)
 	if err != nil {
 		log.Fatalf("Failed to initialize async log writer: %v", err)

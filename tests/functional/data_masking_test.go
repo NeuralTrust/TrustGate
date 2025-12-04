@@ -118,7 +118,7 @@ func TestDataMasking(t *testing.T) {
 			client := &http.Client{}
 			resp, err := client.Do(req)
 			assert.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, tc.expectCode, resp.StatusCode)
 			respBody, err := io.ReadAll(resp.Body)
@@ -227,7 +227,7 @@ func TestDataMaskingApplyAll(t *testing.T) {
 			client := &http.Client{}
 			resp, err := client.Do(req)
 			assert.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, tc.expectCode, resp.StatusCode)
 			respBody, err := io.ReadAll(resp.Body)
@@ -359,7 +359,7 @@ func TestDataMaskingReversibleHash(t *testing.T) {
 			client := &http.Client{}
 			resp, err := client.Do(req)
 			assert.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, tc.expectCode, resp.StatusCode)
 			respBody, err := io.ReadAll(resp.Body)
@@ -495,7 +495,7 @@ func TestDataMaskingPostResponse(t *testing.T) {
 			client := &http.Client{}
 			resp, err := client.Do(req)
 			assert.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, tc.expectCode, resp.StatusCode)
 			respBody, err := io.ReadAll(resp.Body)
@@ -619,7 +619,7 @@ func TestDataMaskingPreResponse(t *testing.T) {
 			client := &http.Client{}
 			resp, err := client.Do(req)
 			assert.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, tc.expectCode, resp.StatusCode)
 			respBody, err := io.ReadAll(resp.Body)

@@ -202,7 +202,7 @@ func (p *BotDetectorPlugin) decompressBotInfo(headerValue string) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	decompressed, err := io.ReadAll(reader)
 	if err != nil {

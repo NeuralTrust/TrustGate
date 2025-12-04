@@ -248,7 +248,7 @@ func (h *forwardedWebsocketHandler) handleDirectCommunication(
 		return err
 	}
 
-	defer targetConn.Close()
+	defer func() { _ = targetConn.Close() }()
 
 	if err := clientConn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
 		h.logger.WithError(err).Error("failed to set read deadline")

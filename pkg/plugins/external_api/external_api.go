@@ -306,7 +306,7 @@ func (p *ExternalApiPlugin) Execute(
 			Err:        err,
 		}
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	// Parse response
 	var validationResp map[string]interface{}

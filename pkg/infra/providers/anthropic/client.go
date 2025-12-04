@@ -157,7 +157,7 @@ func (c *client) CompletionsStream(
 	}
 
 	stream := providerClient.Messages.NewStreaming(reqCtx.C.Context(), params)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if err := stream.Err(); err != nil {
 		return fmt.Errorf("streaming error: %w", err)

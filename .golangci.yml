@@ -1,11 +1,10 @@
+version: 2
+
 linters:
   enable:
-    - gofmt
     - govet
     - gosec
-    - gosimple
     - staticcheck
-    - typecheck
     - unused
     - misspell
     - errcheck

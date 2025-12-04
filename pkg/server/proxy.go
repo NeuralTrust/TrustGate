@@ -37,7 +37,7 @@ func NewProxyServer(di ProxyServerDI) *ProxyServer {
 	s := &ProxyServer{
 		BaseServer: NewBaseServer(di.Config, di.Logger).WithRouters(di.Routers...),
 	}
-	s.BaseServer.setupMetricsEndpoint()
+	s.setupMetricsEndpoint()
 	return s
 }
 

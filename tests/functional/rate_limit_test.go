@@ -93,18 +93,19 @@ func TestRateLimit(t *testing.T) {
 		assert.NoError(t, err)
 
 		duration := time.Since(startTime)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
-		if resp.StatusCode == http.StatusOK {
+		switch resp.StatusCode {
+		case http.StatusOK:
 			t.Logf("✅ Request %d: Success (Time: %v)", i, duration)
 			assert.Equal(t, http.StatusOK, resp.StatusCode, "Expected HTTP 200 for successful requests")
-		} else if resp.StatusCode == http.StatusTooManyRequests {
+		case http.StatusTooManyRequests:
 			if i <= 5 {
 				t.Fatalf("❌ Request %d: Unexpected Rate Limit Too Early! Expected at 6th request, got at %d", i, i)
 			}
 			t.Logf("⛔ Request %d: Rate Limited (Expected after 5 requests)", i)
 			assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode, "Expected HTTP 429 when hitting rate limit")
-		} else {
+		default:
 			t.Fatalf("❌ Request %d: Unexpected Status Code: %d", i, resp.StatusCode)
 		}
 
@@ -200,18 +201,19 @@ func TestRateLimitPerFingerprint(t *testing.T) {
 		assert.NoError(t, err)
 
 		duration := time.Since(startTime)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
-		if resp.StatusCode == http.StatusOK {
+		switch resp.StatusCode {
+		case http.StatusOK:
 			t.Logf("✅ Request %d: Success (Time: %v)", i, duration)
 			assert.Equal(t, http.StatusOK, resp.StatusCode, "Expected HTTP 200 for successful requests")
-		} else if resp.StatusCode == http.StatusTooManyRequests {
+		case http.StatusTooManyRequests:
 			if i <= 3 {
 				t.Fatalf("❌ Request %d: Unexpected Rate Limit Too Early! Expected at 4th request, got at %d", i, i)
 			}
 			t.Logf("⛔ Request %d: Rate Limited by fingerprint (Expected after 3 requests)", i)
 			assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode, "Expected HTTP 429 when hitting fingerprint rate limit")
-		} else {
+		default:
 			t.Fatalf("❌ Request %d: Unexpected Status Code: %d", i, resp.StatusCode)
 		}
 

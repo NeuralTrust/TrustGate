@@ -837,9 +837,10 @@ func (c *client) prepareClaudeRequestFromMessages(
 		for _, msg := range messages {
 			if role, ok := msg["role"].(string); ok {
 				if content, ok := msg["content"].(string); ok {
-					if role == "user" {
+					switch role {
+					case "user":
 						prompt += "Human: " + content + "\n\n"
-					} else if role == "assistant" {
+					case "assistant":
 						prompt += "Assistant: " + content + "\n\n"
 					}
 				}
@@ -870,9 +871,10 @@ func (c *client) prepareTitanRequestFromMessages(
 	for _, msg := range messages {
 		if role, ok := msg["role"].(string); ok {
 			if content, ok := msg["content"].(string); ok {
-				if role == "user" {
+				switch role {
+				case "user":
 					inputText += "User: " + content + " "
-				} else if role == "assistant" {
+				case "assistant":
 					inputText += "Assistant: " + content + " "
 				}
 			}
@@ -905,9 +907,10 @@ func (c *client) prepareMistralRequestFromMessages(
 	for _, msg := range messages {
 		if role, ok := msg["role"].(string); ok {
 			if content, ok := msg["content"].(string); ok {
-				if role == "user" {
+				switch role {
+				case "user":
 					prompt += "User: " + content + "\n"
-				} else if role == "assistant" {
+				case "assistant":
 					prompt += "Assistant: " + content + "\n"
 				}
 			}
@@ -936,9 +939,10 @@ func (c *client) prepareLlamaRequestFromMessages(
 	for _, msg := range messages {
 		if role, ok := msg["role"].(string); ok {
 			if content, ok := msg["content"].(string); ok {
-				if role == "user" {
+				switch role {
+				case "user":
 					prompt += "User: " + content + "\n"
-				} else if role == "assistant" {
+				case "assistant":
 					prompt += "Assistant: " + content + "\n"
 				}
 			}
@@ -967,9 +971,10 @@ func (c *client) prepareDeepseekRequestFromMessages(
 	for _, msg := range messages {
 		if role, ok := msg["role"].(string); ok {
 			if content, ok := msg["content"].(string); ok {
-				if role == "user" {
+				switch role {
+				case "user":
 					prompt += "User: " + content + "\n"
-				} else if role == "assistant" {
+				case "assistant":
 					prompt += "Assistant: " + content + "\n"
 				}
 			}
@@ -1000,9 +1005,10 @@ func (c *client) prepareDefaultRequestFromMessages(
 	for _, msg := range messages {
 		if role, ok := msg["role"].(string); ok {
 			if content, ok := msg["content"].(string); ok {
-				if role == "user" {
+				switch role {
+				case "user":
 					prompt += "User: " + content + "\n"
-				} else if role == "assistant" {
+				case "assistant":
 					prompt += "Assistant: " + content + "\n"
 				}
 			}

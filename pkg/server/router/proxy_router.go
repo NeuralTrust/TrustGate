@@ -14,6 +14,7 @@ import (
 
 const (
 	HealthPath       = "/health"
+	AdminHealthPath  = "/__/health"
 	PingPath         = "/__/ping"
 	MirrorPath       = "/__/mirror"
 	MirrorParamsPath = "/:id/mirror"
@@ -54,6 +55,13 @@ func (r *proxyRouter) BuildRoutes(router *fiber.App) error {
 	}
 
 	router.Get(HealthPath, func(ctx *fiber.Ctx) error {
+		return ctx.Status(http.StatusOK).JSON(fiber.Map{
+			"status": "ok",
+			"time":   time.Now().Format(time.RFC3339),
+		})
+	})
+
+	router.Get(AdminHealthPath, func(ctx *fiber.Ctx) error {
 		return ctx.Status(http.StatusOK).JSON(fiber.Map{
 			"status": "ok",
 			"time":   time.Now().Format(time.RFC3339),

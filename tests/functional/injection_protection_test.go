@@ -901,7 +901,7 @@ func TestInjectionProtection_BlockAttacks(t *testing.T) {
 
 			resp, err := http.DefaultClient.Do(req)
 			assert.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode,
 				"Expected attack type %s to be blocked with status %d, got %d",
@@ -1136,7 +1136,7 @@ func TestInjectionProtection_AllowSafeInputs(t *testing.T) {
 
 			resp, err := http.DefaultClient.Do(req)
 			assert.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode,
 				"%s: Expected status %d, got %d. %s",

@@ -92,7 +92,7 @@ func (c *NeuralTrustFirewallClient) executeJailbreakRequest(
 		c.logger.WithError(err).WithField("error_type", fmt.Sprintf("%T", err)).Warn("failed to call jailbreak firewall")
 		return nil, fmt.Errorf("failed to call jailbreak firewall: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		entry := c.logger.WithField("status_code", resp.StatusCode)
@@ -171,7 +171,7 @@ func (c *NeuralTrustFirewallClient) executeToxicityRequest(
 		c.logger.WithError(err).WithField("error_type", fmt.Sprintf("%T", err)).Warn("failed to call toxicity firewall")
 		return nil, fmt.Errorf("failed to call toxicity firewall: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		entry := c.logger.WithField("status_code", resp.StatusCode)

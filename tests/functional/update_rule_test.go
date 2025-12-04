@@ -325,7 +325,7 @@ func TestUpdateRule(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		assert.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 		t.Logf("✅ Correctly rejected invalid JSON payload")

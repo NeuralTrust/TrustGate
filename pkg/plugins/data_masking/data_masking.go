@@ -399,9 +399,10 @@ func (p *DataMaskingPlugin) Execute(
 		if maskValue == "" {
 			maskValue = DefaultMaskChar
 		}
-		if rule.Type == "keyword" {
+		switch rule.Type {
+		case "keyword":
 			keywords[rule.Pattern] = maskValue
-		} else if rule.Type == "regex" {
+		case "regex":
 			regex, err := regexp.Compile(rule.Pattern)
 			if err != nil {
 				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", rule.Pattern, err)

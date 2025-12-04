@@ -107,7 +107,7 @@ func TestProviderLoadBalancer(t *testing.T) {
 		resp, err := client.Do(req)
 		assert.NoError(t, err, "Request execution failed")
 
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.NotNil(t, resp, "Response should not be nil")
 		assert.Contains(t, []int{http.StatusOK, http.StatusTooManyRequests}, resp.StatusCode, "Unexpected status code")
@@ -115,13 +115,14 @@ func TestProviderLoadBalancer(t *testing.T) {
 		selectedProvider := resp.Header.Get("X-Selected-Provider")
 		assert.NotEmpty(t, selectedProvider, "X-Selected-Provider header should not be empty")
 
-		if selectedProvider == "openai" {
+		switch selectedProvider {
+		case "openai":
 			openaiCount++
 			fmt.Print("O")
-		} else if selectedProvider == "google" {
+		case "google":
 			googleCount++
 			fmt.Print("G")
-		} else {
+		default:
 			t.Fatalf("❌ Unexpected provider received: %s", selectedProvider)
 		}
 

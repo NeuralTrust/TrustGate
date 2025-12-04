@@ -46,7 +46,7 @@ func setupWireMockProtectedEndpoint(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	res, err := http.DefaultClient.Do(req)
 	assert.NoError(t, err)
-	defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 	assert.True(t, res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusOK)
 
 	// Stub token endpoint for client credentials: POST /oauth/token -> {access_token, expires_in}
@@ -73,7 +73,7 @@ func setupWireMockProtectedEndpoint(t *testing.T) {
 	treq.Header.Set("Content-Type", "application/json")
 	tres, err := http.DefaultClient.Do(treq)
 	assert.NoError(t, err)
-	defer tres.Body.Close()
+		defer func() { _ = tres.Body.Close() }()
 	assert.True(t, tres.StatusCode == http.StatusCreated || tres.StatusCode == http.StatusOK)
 }
 
@@ -130,7 +130,7 @@ func setupWireMockTokenFormExpectation(t *testing.T, clientID, clientSecret stri
 	req.Header.Set("Content-Type", "application/json")
 	res, err := http.DefaultClient.Do(req)
 	assert.NoError(t, err)
-	defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 	assert.True(t, res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusOK)
 }
 
@@ -203,7 +203,7 @@ func TestUpstreamTargetOAuth_ClientCredentials_WithClientSecretAudienceScopes(t 
 
 	resp, err := http.DefaultClient.Do(req)
 	assert.NoError(t, err)
-	defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err := io.ReadAll(resp.Body)
@@ -270,7 +270,7 @@ func TestUpstreamTargetOAuth_ClientCredentials(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	assert.NoError(t, err)
-	defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err := io.ReadAll(resp.Body)

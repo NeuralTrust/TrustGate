@@ -413,7 +413,7 @@ func (p *ToxicityAzurePlugin) Execute(
 			Message:    fmt.Sprintf("Failed to send request to Azure: %v", err),
 		}, nil
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
