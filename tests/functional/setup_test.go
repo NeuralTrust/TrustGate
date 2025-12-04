@@ -215,6 +215,8 @@ func setupTestEnvironment() {
 		} else {
 			fmt.Printf("✅ Proxy server process is still running (PID: %d)\n", proxyCmd.Process.Pid)
 		}
+		// Check if port is listening
+		checkPortListening(8081, "proxy")
 	} else {
 		log.Printf("❌ Proxy server process is nil")
 	}
@@ -248,6 +250,8 @@ func setupTestEnvironment() {
 		} else {
 			fmt.Printf("✅ Admin server process is still running (PID: %d)\n", adminCmd.Process.Pid)
 		}
+		// Check if port is listening
+		checkPortListening(8080, "admin")
 	} else {
 		log.Printf("❌ Admin server process is nil")
 	}
@@ -343,6 +347,27 @@ func dropTestDB(name string) {
 		log.Printf("error removing database: %v", err)
 	}
 	fmt.Printf("🗑 Database %s removed\n", name)
+}
+
+func checkPortListening(port int, serverName string) {
+	cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port)) //nolint:gosec // port is controlled from hardcoded list
+	output, err := cmd.Output()
+	if err != nil {
+		fmt.Printf("⚠ Port %d is not listening (no process found) for %s server\n", port, serverName)
+		return
+	}
+	pidLines := strings.TrimSpace(string(output))
+	if pidLines == "" {
+		fmt.Printf("⚠ Port %d is not listening (no process found) for %s server\n", port, serverName)
+		return
+	}
+	pids := strings.Split(pidLines, "\n")
+	for _, pidStr := range pids {
+		pidStr = strings.TrimSpace(pidStr)
+		if pidStr != "" {
+			fmt.Printf("✅ Port %d is listening (PID: %s) for %s server\n", port, pidStr, serverName)
+		}
+	}
 }
 
 func killProcessesOnPorts(ports []int) {
