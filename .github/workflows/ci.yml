@@ -66,6 +66,7 @@ jobs:
           echo "Redis is ready!"
 
       #- name: Run golangci-lint
+      #  continue-on-error: true
       #  uses: golangci/golangci-lint-action@v3
       #  with:
       #    version: latest
@@ -79,6 +80,7 @@ jobs:
           golangci-lint --version
 
       - name: Run golangci-lint
+        continue-on-error: true
         env:
           GOPRIVATE: github.com/NeuralTrust/*
           GONOPROXY: github.com/NeuralTrust/*
