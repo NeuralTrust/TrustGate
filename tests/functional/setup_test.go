@@ -89,13 +89,22 @@ func setupTestEnvironment() {
 		DB:   9,
 	})
 
+	// Get the current working directory and set it for the commands
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Failed to get working directory: %v", err)
+	}
+	fmt.Printf("📁 Current working directory: %s\n", wd)
+
 	proxyCmd = exec.Command("go", "run", "../../cmd/gateway/main.go", "proxy")
+	proxyCmd.Dir = wd
 	proxyCmd.Env = append(os.Environ(), "ENV_FILE=../../.env.functional")
 	proxyCmd.Stdout = os.Stdout
 	proxyCmd.Stderr = os.Stderr
 	proxyCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	adminCmd = exec.Command("go", "run", "../../cmd/gateway/main.go", "admin")
+	adminCmd.Dir = wd
 	adminCmd.Env = append(os.Environ(), "ENV_FILE=../../.env.functional")
 	adminCmd.Stdout = os.Stdout
 	adminCmd.Stderr = os.Stderr
@@ -110,12 +119,16 @@ func setupTestEnvironment() {
 	fmt.Printf("   Proxy server started with PID: %d\n", proxyCmd.Process.Pid)
 
 	time.Sleep(5 * time.Second)
-	
+
 	// Check if proxy process is still running
 	if proxyCmd.Process != nil {
 		if err := proxyCmd.Process.Signal(syscall.Signal(0)); err != nil {
 			log.Printf("⚠ Warning: Proxy server process may have exited: %v", err)
+		} else {
+			fmt.Printf("✅ Proxy server process is still running (PID: %d)\n", proxyCmd.Process.Pid)
 		}
+	} else {
+		log.Printf("❌ Proxy server process is nil")
 	}
 
 	fmt.Println("✨ Starting Admin Server:", adminCmd.String())
@@ -127,12 +140,16 @@ func setupTestEnvironment() {
 	fmt.Printf("   Admin server started with PID: %d\n", adminCmd.Process.Pid)
 
 	time.Sleep(5 * time.Second)
-	
+
 	// Check if admin process is still running
 	if adminCmd.Process != nil {
 		if err := adminCmd.Process.Signal(syscall.Signal(0)); err != nil {
 			log.Printf("⚠ Warning: Admin server process may have exited: %v", err)
+		} else {
+			fmt.Printf("✅ Admin server process is still running (PID: %d)\n", adminCmd.Process.Pid)
 		}
+	} else {
+		log.Printf("❌ Admin server process is nil")
 	}
 
 	// Wait for servers to be ready
@@ -154,11 +171,14 @@ func waitForServerReady(url, serverName string) {
 			return
 		}
 		if resp != nil {
+			fmt.Printf("   Response status: %d\n", resp.StatusCode)
 			_ = resp.Body.Close()
+		} else if err != nil {
+			fmt.Printf("   Connection error: %v\n", err)
 		}
 
 		if i == maxRetries-1 {
-			log.Fatalf("❌ %s failed to become ready after %d seconds", serverName, maxRetries)
+			log.Fatalf("❌ %s failed to become ready after %d seconds. Last error: %v", serverName, maxRetries, err)
 		}
 
 		fmt.Printf("⏳ Waiting for %s to be ready... (attempt %d/%d)\n", serverName, i+1, maxRetries)
