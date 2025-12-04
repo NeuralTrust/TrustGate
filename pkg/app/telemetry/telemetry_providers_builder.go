@@ -22,6 +22,7 @@ func NewTelemetryExportersBuilder(locator *factory.ExporterLocator) ExportersBui
 
 func (v *exportersBuilder) Build(configs []types.Exporter) ([]domain.Exporter, error) {
 	var providers []domain.Exporter
+
 	for _, config := range configs {
 		telemetryProvider, err := v.locator.GetExporter(config)
 		if err != nil {
