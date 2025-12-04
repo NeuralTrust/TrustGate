@@ -53,7 +53,7 @@ jobs:
         run: |
           echo "Waiting for PostgreSQL to be ready..."
           until nc -z localhost 5432; do
-            echo "PostgreSQL is not ready yet, waiting..."
+            echo "Postgre is not ready yet, waiting..."
             sleep 1
           done
           echo "PostgreSQL is ready!"
