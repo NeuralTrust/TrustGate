@@ -78,6 +78,13 @@ jobs:
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           golangci-lint --version
 
+      - name: Run golangci-lint
+        env:
+          GOPRIVATE: github.com/NeuralTrust/*
+          GONOPROXY: github.com/NeuralTrust/*
+          GONOSUMDB: github.com/NeuralTrust/*
+        run: golangci-lint run --timeout=10m ./...
+
       - name: Configure Dummy OAuth server (WireMock)
         run: |
           echo "Waiting for WireMock to be ready..."
