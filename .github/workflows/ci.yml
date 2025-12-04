@@ -49,6 +49,23 @@ jobs:
           go clean -modcache
           go mod tidy && go mod vendor
 
+      - name: Wait for services to be ready
+        run: |
+          sleep 300
+          echo "Waiting for PostgreSQL to be ready..."
+          until nc -z localhost 5432; do
+            echo "PostgreSQL is not ready yet, waiting..."
+            sleep 1
+          done
+          echo "PostgreSQL is ready!"
+          
+          echo "Waiting for Redis to be ready..."
+          until nc -z localhost 6379; do
+            echo "Redis is not ready yet, waiting..."
+            sleep 1
+          done
+          echo "Redis is ready!"
+
       #- name: Run golangci-lint
       #  uses: golangci/golangci-lint-action@v3
       #  with:
