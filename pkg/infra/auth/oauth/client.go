@@ -94,7 +94,7 @@ func (c *tokenClient) GetToken(ctx context.Context, dto TokenRequestDTO) (string
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {

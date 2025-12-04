@@ -195,15 +195,12 @@ func (c *client) handleCompletionsStreamAPI(
 		return err
 	}
 	respStream := openaiClient.Chat.Completions.NewStreaming(req.C.Context(), params)
-	defer respStream.Close()
+	defer func() { _ = respStream.Close() }()
 	if err := respStream.Err(); err != nil {
 		return err
 	}
 	close(breakChan)
-	for {
-		if !respStream.Next() {
-			break
-		}
+	for respStream.Next() {
 		chunk := respStream.Current()
 		for _, choice := range chunk.Choices {
 			if content := choice.Delta.Content; content != "" {
@@ -240,7 +237,7 @@ func (c *client) handleResponsesStreamAPI(
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var preview bytes.Buffer
@@ -459,7 +456,7 @@ func (c *client) callResponsesAPI(
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var responseBody bytes.Buffer
 	if _, err := responseBody.ReadFrom(resp.Body); err != nil {

@@ -121,7 +121,7 @@ func TestNeuralTrustModerationPlugin(t *testing.T) {
 			client := &http.Client{}
 			resp, err := client.Do(req)
 			assert.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, tc.expectCode, resp.StatusCode)
 		})
@@ -241,7 +241,7 @@ func TestNeuralTrustModerationPlugin_KeyReg(t *testing.T) {
 			client := &http.Client{}
 			resp, err := client.Do(req)
 			assert.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, tc.expectCode, resp.StatusCode)
 		})

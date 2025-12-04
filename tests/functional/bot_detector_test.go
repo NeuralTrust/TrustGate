@@ -188,7 +188,7 @@ func TestBotDetectorPlugin(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		assert.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 		assert.Equal(t, "true", resp.Header.Get("bot_detected"))
@@ -207,7 +207,7 @@ func TestBotDetectorPlugin(t *testing.T) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		assert.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Empty(t, resp.Header.Get("bot_detected"))

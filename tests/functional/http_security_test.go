@@ -86,7 +86,7 @@ func TestSecurityMiddleware(t *testing.T) {
 
 		resp, err := http.DefaultClient.Do(req)
 		assert.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))

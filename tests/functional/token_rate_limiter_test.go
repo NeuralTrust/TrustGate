@@ -87,7 +87,7 @@ func TestTokenRateLimiter(t *testing.T) {
 
 		resp, err := client.Do(req)
 		assert.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		// Basic headers should be present (set in PostResponse stage)
@@ -111,7 +111,7 @@ func TestTokenRateLimiter(t *testing.T) {
 
 		resp, err := client.Do(req)
 		assert.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 		// PreRequest stage sets headers too when limiting

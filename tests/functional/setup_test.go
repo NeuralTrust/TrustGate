@@ -127,14 +127,14 @@ func waitForServerReady(url, serverName string) {
 	retryInterval := time.Second
 
 	for i := 0; i < maxRetries; i++ {
-		resp, err := http.Get(url)
+		resp, err := http.Get(url) //nolint:gosec // URL is controlled in test environment
 		if err == nil && resp.StatusCode < 500 {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			fmt.Printf("✅ %s is ready\n", serverName)
 			return
 		}
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 
 		if i == maxRetries-1 {
@@ -154,7 +154,7 @@ func createTestDB(name string) {
 	if err != nil {
 		log.Fatalf("Cannot connect to PostgreSQL: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %s;", name))
 	if err != nil {
@@ -180,7 +180,7 @@ func teardownTestEnvironment() {
 		}
 	}
 	fmt.Printf("🗑 Servers Stopped\n")
-	defer redisDB.Close()
+	defer func() { _ = redisDB.Close() }()
 	dropTestDB(dbName)
 	redisDB.FlushDB(context.Background())
 	fmt.Printf("🗑 Redis flushed\n")
@@ -196,7 +196,7 @@ func dropTestDB(name string) {
 		log.Printf("cannot connect to postgre to remove db %v", err)
 		return
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec(fmt.Sprintf("DROP DATABASE %s;", name))
 	if err != nil {
@@ -209,7 +209,7 @@ func killProcessesOnPorts(ports []int) {
 	for _, port := range ports {
 		fmt.Printf("🔍 Checking for processes on port %d...\n", port)
 
-		cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port))
+		cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port)) //nolint:gosec // port is controlled from hardcoded list
 		output, err := cmd.Output()
 		if err != nil {
 			continue

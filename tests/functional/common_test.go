@@ -160,7 +160,7 @@ func sendRequest(t *testing.T, method, url string, headers map[string]string, bo
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	assert.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// For 204 No Content responses, return empty map
 	if resp.StatusCode == http.StatusNoContent {

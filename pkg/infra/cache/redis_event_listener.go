@@ -49,7 +49,7 @@ func (r *redisEventListener) Listen(ctx context.Context, channels ...channel.Cha
 	}
 
 	pubSub := r.cache.Client().Subscribe(ctx, channelNames...)
-	defer pubSub.Close()
+	defer func() { _ = pubSub.Close() }()
 
 	for msg := range pubSub.Channel() {
 		var envelope RedisMessage

@@ -1160,7 +1160,7 @@ func (h *forwardedHandler) handleStreamingResponse(
 	req.C.Set("X-Accel-Buffering", "no")
 
 	req.C.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		defer close(streamResponse)
 		reader := bufio.NewReader(resp.Body)
 		for {
@@ -1183,7 +1183,7 @@ func (h *forwardedHandler) handleStreamingResponse(
 
 				if err := json.Unmarshal(line, &parsed); err != nil {
 					streamResponse <- line
-					fmt.Fprintf(w, "data: %s\n", string(line))
+					_, _ = fmt.Fprintf(w, "data: %s\n", string(line))
 					_ = w.Flush()
 				} else {
 					encoder := json.NewEncoder(&buffer)
@@ -1194,7 +1194,7 @@ func (h *forwardedHandler) handleStreamingResponse(
 						return
 					}
 					streamResponse <- buffer.Bytes()
-					fmt.Fprintf(w, "data: %s\n", buffer.String())
+					_, _ = fmt.Fprintf(w, "data: %s\n", buffer.String())
 					_ = w.Flush()
 				}
 			}

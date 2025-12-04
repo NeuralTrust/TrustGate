@@ -56,13 +56,14 @@ func TestDeletePluginsHandler(t *testing.T) {
 		if m, ok := p.(map[string]interface{}); ok {
 			name := fmt.Sprintf("%v", m["name"])
 			id, idOk := m["id"].(string)
-			if idOk {
-				if name == "cors" {
-					corsPluginID = id
-				} else if name == "rate_limiter" {
-					rateLimiterPluginID = id
-				}
+		if idOk {
+			switch name {
+			case "cors":
+				corsPluginID = id
+			case "rate_limiter":
+				rateLimiterPluginID = id
 			}
+		}
 		}
 	}
 	assert.NotEmpty(t, corsPluginID, "CORS plugin ID should not be empty")

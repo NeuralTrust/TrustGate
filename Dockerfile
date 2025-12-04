@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24-bullseye AS builder
+FROM golang:1.25-bookworm AS builder
 
 WORKDIR /build
 
@@ -50,7 +50,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -tags dynamic \
     -o gateway ./cmd/gateway
 
 # Final stage
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 WORKDIR /app
 
@@ -60,7 +60,7 @@ RUN apt-get update && \
         ca-certificates \
         tzdata \
         curl \
-        libssl1.1 \
+        libssl3 \
         libsasl2-2 \
         zlib1g \
         libzstd1 \

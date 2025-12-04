@@ -62,7 +62,7 @@ func main() {
 	if err != nil {
 		logger.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	container, err := dependency_container.NewContainer(
 		cfg,
