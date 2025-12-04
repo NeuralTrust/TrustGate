@@ -23,12 +23,13 @@ const (
 	ServiceKeyPattern   = "gateway:%s:service:%s"
 	ApiKeyPattern       = "apikey:%s"
 
-	GatewayTTLName  = "gateway"
-	ApiKeyTTLName   = "api_key"
-	RulesTTLName    = "rules"
-	PluginTTLName   = "plugin"
-	ServiceTTLName  = "service"
-	UpstreamTTLName = "upstream"
+	GatewayTTLName      = "gateway"
+	ApiKeyTTLName       = "api_key"
+	RulesTTLName        = "rules"
+	PluginTTLName       = "plugin"
+	ServiceTTLName      = "service"
+	UpstreamTTLName     = "upstream"
+	LoadBalancerTTLName = "lb"
 
 	DataMaskingTTLName = "data_masking"
 )
