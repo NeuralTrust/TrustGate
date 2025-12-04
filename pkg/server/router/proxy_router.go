@@ -61,15 +61,24 @@ func (r *proxyRouter) BuildRoutes(router *fiber.App) error {
 	})
 
 	router.Get(PingPath, func(ctx *fiber.Ctx) error {
-		return ctx.Status(http.StatusOK).JSON(fiber.Map{
+		response := fiber.Map{
 			"message": "pong",
-		})
+		}
+		if len(ctx.Queries()) > 0 {
+			response["query_params"] = ctx.Queries()
+		}
+		return ctx.Status(http.StatusOK).JSON(response)
 	})
 
 	router.Post(PingPath, func(ctx *fiber.Ctx) error {
-		return ctx.Status(http.StatusOK).JSON(fiber.Map{
+		response := fiber.Map{
 			"message": "pong",
-		})
+		}
+		// Add query parameters if they exist
+		if len(ctx.Queries()) > 0 {
+			response["query_params"] = ctx.Queries()
+		}
+		return ctx.Status(http.StatusOK).JSON(response)
 	})
 
 	router.Post(MirrorPath, func(ctx *fiber.Ctx) error {
