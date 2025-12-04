@@ -249,5 +249,3 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 
 	return c.Status(fiber.StatusOK).JSON(updatedUpstream)
 }
-
-// upstream-level Auth removed; per-target auth is supported instead

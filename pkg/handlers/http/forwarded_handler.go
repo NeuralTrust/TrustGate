@@ -58,10 +58,10 @@ type forwardedHandler struct {
 	logger              *logrus.Logger
 	cache               cache.Cache
 	gatewayCache        *cache.TTLMap
+	loadBalancerCache   *cache.TTLMap
 	upstreamFinder      upstream.Finder
 	serviceFinder       service.Finder
 	pluginManager       plugins.Manager
-	loadBalancers       sync.Map
 	client              *fasthttp.Client
 	loadBalancerFactory loadbalancer.Factory
 	cfg                 *config.Config
@@ -100,6 +100,7 @@ func NewForwardedHandler(
 		logger:              logger,
 		cache:               c,
 		gatewayCache:        c.GetTTLMap(cache.GatewayTTLName),
+		loadBalancerCache:   c.GetTTLMap(cache.LoadBalancerTTLName),
 		upstreamFinder:      upstreamFinder,
 		serviceFinder:       serviceFinder,
 		pluginManager:       pluginManager,
@@ -697,8 +698,12 @@ func (h *forwardedHandler) applyTargetOAuth(
 }
 
 func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upstream) (*loadbalancer.LoadBalancer, error) {
-	if lb, ok := h.loadBalancers.Load(upstream.ID); ok {
-		if lb, ok := lb.(*loadbalancer.LoadBalancer); ok {
+	upstreamID := upstream.ID.String()
+	if h.loadBalancerCache == nil {
+		h.loadBalancerCache = h.cache.CreateTTLMap(cache.LoadBalancerTTLName, common.LoadBalancerCacheTTL)
+	}
+	if lbValue, ok := h.loadBalancerCache.Get(upstreamID); ok {
+		if lb, ok := lbValue.(*loadbalancer.LoadBalancer); ok {
 			return lb, nil
 		}
 	}
@@ -708,7 +713,7 @@ func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upst
 		return nil, err
 	}
 
-	h.loadBalancers.Store(upstream.ID, lb)
+	h.loadBalancerCache.Set(upstreamID, lb)
 	return lb, nil
 }
 

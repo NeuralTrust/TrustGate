@@ -13,10 +13,11 @@ import (
 )
 
 type UpdateUpstreamCacheEventSubscriber struct {
-	logger      *logrus.Logger
-	cache       cache.Cache
-	repository  upstream.Repository
-	memoryCache *cache.TTLMap
+	logger              *logrus.Logger
+	cache               cache.Cache
+	repository          upstream.Repository
+	upstreamMemoryCache *cache.TTLMap
+	lbMemoryCache       *cache.TTLMap
 }
 
 func NewUpdateUpstreamCacheEventSubscriber(
@@ -25,10 +26,11 @@ func NewUpdateUpstreamCacheEventSubscriber(
 	repository upstream.Repository,
 ) infraCache.EventSubscriber[event.UpdateUpstreamCacheEvent] {
 	return &UpdateUpstreamCacheEventSubscriber{
-		logger:      logger,
-		cache:       c,
-		repository:  repository,
-		memoryCache: c.GetTTLMap(cache.UpstreamTTLName),
+		logger:              logger,
+		cache:               c,
+		repository:          repository,
+		upstreamMemoryCache: c.GetTTLMap(cache.UpstreamTTLName),
+		lbMemoryCache:       c.GetTTLMap(cache.LoadBalancerTTLName),
 	}
 }
 
@@ -50,8 +52,11 @@ func (s UpdateUpstreamCacheEventSubscriber) OnEvent(ctx context.Context, evt eve
 	if err := s.cache.SaveUpstream(ctx, evt.GatewayID, entity); err != nil {
 		s.logger.WithError(err).Error("failed to cache upstream")
 	}
-
-	s.memoryCache.Set(entity.ID.String(), entity)
-
+	if s.upstreamMemoryCache != nil {
+		s.upstreamMemoryCache.Set(entity.ID.String(), entity)
+	}
+	if s.lbMemoryCache != nil {
+		s.lbMemoryCache.Delete(entity.ID.String())
+	}
 	return nil
 }

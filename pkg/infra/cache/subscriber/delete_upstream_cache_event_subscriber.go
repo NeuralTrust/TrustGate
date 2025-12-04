@@ -11,9 +11,10 @@ import (
 )
 
 type DeleteUpstreamCacheEventSubscriber struct {
-	logger      *logrus.Logger
-	cache       cache.Cache
-	memoryCache *cache.TTLMap
+	logger        *logrus.Logger
+	cache         cache.Cache
+	memoryCache   *cache.TTLMap
+	lbMemoryCache *cache.TTLMap
 }
 
 func NewDeleteUpstreamCacheEventSubscriber(
@@ -21,9 +22,10 @@ func NewDeleteUpstreamCacheEventSubscriber(
 	c cache.Cache,
 ) infraCache.EventSubscriber[event.DeleteUpstreamCacheEvent] {
 	return &DeleteUpstreamCacheEventSubscriber{
-		logger:      logger,
-		cache:       c,
-		memoryCache: c.GetTTLMap(cache.UpstreamTTLName),
+		logger:        logger,
+		cache:         c,
+		memoryCache:   c.GetTTLMap(cache.UpstreamTTLName),
+		lbMemoryCache: c.GetTTLMap(cache.LoadBalancerTTLName),
 	}
 }
 
@@ -33,7 +35,12 @@ func (s DeleteUpstreamCacheEventSubscriber) OnEvent(ctx context.Context, evt eve
 		"gatewayID":  evt.GatewayID,
 	}).Debug("invalidating upstream cache")
 
-	s.memoryCache.Delete(evt.UpstreamID)
+	if s.memoryCache != nil {
+		s.memoryCache.Delete(evt.UpstreamID)
+	}
+	if s.lbMemoryCache != nil {
+		s.lbMemoryCache.Delete(evt.UpstreamID)
+	}
 
 	if err := s.cache.Delete(ctx, fmt.Sprintf(cache.UpstreamKeyPattern, evt.GatewayID, evt.UpstreamID)); err != nil {
 		s.logger.WithError(err).Warn("failed to delete upstream from redis cache")
