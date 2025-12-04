@@ -1,11 +1,9 @@
 package functional_test
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -104,87 +102,11 @@ func setupTestEnvironment() {
 	proxyCmd.Env = append(os.Environ(), "ENV_FILE=../../.env.functional")
 	proxyCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	// Create pipes to capture proxy server output (must be called before Start)
-	proxyStdout, err := proxyCmd.StdoutPipe()
-	if err != nil {
-		log.Fatalf("Failed to create proxy stdout pipe: %v", err)
-	}
-	proxyStderr, err := proxyCmd.StderrPipe()
-	if err != nil {
-		log.Fatalf("Failed to create proxy stderr pipe: %v", err)
-	}
-
-	// Start goroutines to capture and log proxy server output
-	go func() {
-		reader := bufio.NewReader(proxyStdout)
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				if err != io.EOF {
-					fmt.Printf("[PROXY STDOUT ERROR] %v\n", err)
-				}
-				break
-			}
-			fmt.Printf("[PROXY STDOUT] %s", line)
-		}
-	}()
-	go func() {
-		reader := bufio.NewReader(proxyStderr)
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				if err != io.EOF {
-					fmt.Printf("[PROXY STDERR ERROR] %v\n", err)
-				}
-				break
-			}
-			fmt.Printf("[PROXY STDERR] %s", line)
-		}
-	}()
-
 	// Create admin command
 	adminCmd = exec.Command("go", "run", "../../cmd/gateway/main.go", "admin")
 	adminCmd.Dir = wd
 	adminCmd.Env = append(os.Environ(), "ENV_FILE=../../.env.functional")
 	adminCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	// Create pipes to capture admin server output (must be called before Start)
-	adminStdout, err := adminCmd.StdoutPipe()
-	if err != nil {
-		log.Fatalf("Failed to create admin stdout pipe: %v", err)
-	}
-	adminStderr, err := adminCmd.StderrPipe()
-	if err != nil {
-		log.Fatalf("Failed to create admin stderr pipe: %v", err)
-	}
-
-	// Start goroutines to capture and log admin server output
-	go func() {
-		reader := bufio.NewReader(adminStdout)
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				if err != io.EOF {
-					fmt.Printf("[ADMIN STDOUT ERROR] %v\n", err)
-				}
-				break
-			}
-			fmt.Printf("[ADMIN STDOUT] %s", line)
-		}
-	}()
-	go func() {
-		reader := bufio.NewReader(adminStderr)
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				if err != io.EOF {
-					fmt.Printf("[ADMIN STDERR ERROR] %v\n", err)
-				}
-				break
-			}
-			fmt.Printf("[ADMIN STDERR] %s", line)
-		}
-	}()
 
 	fmt.Println("✨ Starting ProxyConfig Server:", proxyCmd.String())
 	fmt.Printf("   Command: %s\n", proxyCmd.String())

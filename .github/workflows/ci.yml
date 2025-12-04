@@ -55,6 +55,43 @@ jobs:
           echo "Go env:"
           go env | grep -E "(GOROOT|GOPATH|GOPRIVATE|GONOPROXY|GONOSUMDB)" || true
 
+      - name: Install service check tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client redis-tools
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for PostgreSQL to be ready..."
+          for i in {1..120}; do
+            if PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SELECT 1;" > /dev/null 2>&1; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            if [ $i -eq 120 ]; then
+              echo "PostgreSQL failed to start after 120 seconds"
+              exit 1
+            fi
+            echo "PostgreSQL is not ready yet, waiting... ($i/120)"
+            sleep 1
+          done
+          
+          echo "Waiting for Redis to be ready..."
+          for i in {1..120}; do
+            if redis-cli -h localhost -p 6379 ping > /dev/null 2>&1; then
+              echo "Redis is ready!"
+              break
+            fi
+            if [ $i -eq 120 ]; then
+              echo "Redis failed to start after 120 seconds"
+              exit 1
+            fi
+            echo "Redis is not ready yet, waiting... ($i/120)"
+            sleep 1
+          done
+          
+          echo "All services are ready!"
+
       - name: Configure Dummy OAuth server (WireMock)
         run: |
           echo "Waiting for WireMock to be ready..."
