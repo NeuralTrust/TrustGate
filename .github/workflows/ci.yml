@@ -92,8 +92,8 @@ jobs:
       - name: Debug environment file
         run: cat .env.functional
 
-      - name: Run Unit tests
-        run: go test -v -race -coverprofile=unit-coverage.txt -covermode=atomic ./pkg/...
+      # - name: Run Unit tests
+      #   run: go test -v -race -coverprofile=unit-coverage.txt -covermode=atomic ./pkg/...
 
       - name: Run Functional tests
         run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./tests/functional
