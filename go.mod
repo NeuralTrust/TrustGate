@@ -1,6 +1,6 @@
 module github.com/NeuralTrust/TrustGate
 
-go 1.25.1
+go 1.24
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.0
