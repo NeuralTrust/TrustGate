@@ -102,18 +102,38 @@ func setupTestEnvironment() {
 	adminCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	fmt.Println("✨ Starting ProxyConfig Server:", proxyCmd.String())
+	fmt.Printf("   Command: %s\n", proxyCmd.String())
+	fmt.Printf("   Working directory: %s\n", proxyCmd.Dir)
 	if err := proxyCmd.Start(); err != nil {
 		log.Fatalf("Failed to start proxy: %v", err)
 	}
+	fmt.Printf("   Proxy server started with PID: %d\n", proxyCmd.Process.Pid)
 
 	time.Sleep(5 * time.Second)
+	
+	// Check if proxy process is still running
+	if proxyCmd.Process != nil {
+		if err := proxyCmd.Process.Signal(syscall.Signal(0)); err != nil {
+			log.Printf("⚠ Warning: Proxy server process may have exited: %v", err)
+		}
+	}
 
 	fmt.Println("✨ Starting Admin Server:", adminCmd.String())
+	fmt.Printf("   Command: %s\n", adminCmd.String())
+	fmt.Printf("   Working directory: %s\n", adminCmd.Dir)
 	if err := adminCmd.Start(); err != nil {
 		log.Fatalf("Failed to start admin: %v", err)
 	}
+	fmt.Printf("   Admin server started with PID: %d\n", adminCmd.Process.Pid)
 
 	time.Sleep(5 * time.Second)
+	
+	// Check if admin process is still running
+	if adminCmd.Process != nil {
+		if err := adminCmd.Process.Signal(syscall.Signal(0)); err != nil {
+			log.Printf("⚠ Warning: Admin server process may have exited: %v", err)
+		}
+	}
 
 	// Wait for servers to be ready
 	waitForServerReady("http://localhost:8081/__/health", "proxy server")
