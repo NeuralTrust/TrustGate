@@ -195,6 +195,7 @@ func setupTestEnvironment() {
 	fmt.Printf("   Proxy server started with PID: %d\n", proxyCmd.Process.Pid)
 
 	// Monitor process exit in background
+	exitChan := make(chan bool, 1)
 	go func() {
 		if err := proxyCmd.Wait(); err != nil {
 			fmt.Printf("[PROXY EXIT] Process exited with error: %v\n", err)
@@ -204,9 +205,19 @@ func setupTestEnvironment() {
 		if state := proxyCmd.ProcessState; state != nil {
 			fmt.Printf("[PROXY EXIT] Exit code: %d\n", state.ExitCode())
 		}
+		exitChan <- true
 	}()
 
-	time.Sleep(5 * time.Second)
+	// Wait a bit and check if process exited immediately
+	select {
+	case <-exitChan:
+		log.Printf("❌ Proxy server exited immediately! Check logs above for errors.")
+		time.Sleep(2 * time.Second) // Give time for logs to be captured
+	case <-time.After(2 * time.Second):
+		fmt.Printf("✅ Proxy server still running after 2 seconds\n")
+	}
+
+	time.Sleep(3 * time.Second) // Additional wait for server to start
 
 	// Check if proxy process is still running
 	if proxyCmd.Process != nil {
@@ -230,6 +241,7 @@ func setupTestEnvironment() {
 	fmt.Printf("   Admin server started with PID: %d\n", adminCmd.Process.Pid)
 
 	// Monitor process exit in background
+	adminExitChan := make(chan bool, 1)
 	go func() {
 		if err := adminCmd.Wait(); err != nil {
 			fmt.Printf("[ADMIN EXIT] Process exited with error: %v\n", err)
@@ -239,9 +251,19 @@ func setupTestEnvironment() {
 		if state := adminCmd.ProcessState; state != nil {
 			fmt.Printf("[ADMIN EXIT] Exit code: %d\n", state.ExitCode())
 		}
+		adminExitChan <- true
 	}()
 
-	time.Sleep(5 * time.Second)
+	// Wait a bit and check if process exited immediately
+	select {
+	case <-adminExitChan:
+		log.Printf("❌ Admin server exited immediately! Check logs above for errors.")
+		time.Sleep(2 * time.Second) // Give time for logs to be captured
+	case <-time.After(2 * time.Second):
+		fmt.Printf("✅ Admin server still running after 2 seconds\n")
+	}
+
+	time.Sleep(3 * time.Second) // Additional wait for server to start
 
 	// Check if admin process is still running
 	if adminCmd.Process != nil {
