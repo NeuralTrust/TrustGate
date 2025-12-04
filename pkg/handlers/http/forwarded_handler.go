@@ -806,9 +806,21 @@ func (h *forwardedHandler) rewriteTargetURL(dto *forwardedRequestDTO) string {
 	if dto.rule != nil && dto.rule.StripPath {
 		remainingPath := h.ruleMatcher.ExtractPathAfterMatch(dto.req.Path, dto.rule.Path)
 		if remainingPath != dto.req.Path {
-			return strings.TrimSuffix(l, "/") + remainingPath
+			l = strings.TrimSuffix(l, "/") + remainingPath
 		}
 	}
+
+	if len(dto.req.Query) > 0 {
+		queryString := dto.req.Query.Encode()
+		if queryString != "" {
+			if strings.Contains(l, "?") {
+				l += "&" + queryString
+			} else {
+				l += "?" + queryString
+			}
+		}
+	}
+
 	return l
 }
 
@@ -1079,6 +1091,17 @@ func (h *forwardedHandler) handleStreamingResponse(
 ) (*types.ResponseContext, error) {
 	pathParams := h.getPathParamsFromContext(req.Context)
 	upstreamURL := h.buildUpstreamTargetUrl(target, pathParams)
+
+	if len(req.Query) > 0 {
+		queryString := req.Query.Encode()
+		if queryString != "" {
+			if strings.Contains(upstreamURL, "?") {
+				upstreamURL += "&" + queryString
+			} else {
+				upstreamURL += "?" + queryString
+			}
+		}
+	}
 
 	httpReq, err := http.NewRequestWithContext(req.Context, req.Method, upstreamURL, bytes.NewReader(req.Body))
 	if err != nil {
