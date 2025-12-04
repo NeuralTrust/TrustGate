@@ -40,7 +40,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.23'
+          go-version: '1.25.1'
           check-latest: true
           cache: false  # Disable Go module cache
 
@@ -49,21 +49,42 @@ jobs:
           go clean -modcache
           go mod tidy && go mod vendor
 
+      - name: Install service check tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client redis-tools
+
       - name: Wait for services to be ready
         run: |
           echo "Waiting for PostgreSQL to be ready..."
-          until nc -z localhost 5432; do
-            echo "PostgreSQL is not ready yet, waiting..."
+          for i in {1..120}; do
+            if PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SELECT 1;" > /dev/null 2>&1; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            if [ $i -eq 120 ]; then
+              echo "PostgreSQL failed to start after 120 seconds"
+              exit 1
+            fi
+            echo "PostgreSQL is not ready yet, waiting... ($i/120)"
             sleep 1
           done
-          echo "PostgreSQL is ready!"
           
           echo "Waiting for Redis to be ready..."
-          until nc -z localhost 6379; do
-            echo "Redis is not ready yet, waiting..."
+          for i in {1..120}; do
+            if redis-cli -h localhost -p 6379 ping > /dev/null 2>&1; then
+              echo "Redis is ready!"
+              break
+            fi
+            if [ $i -eq 120 ]; then
+              echo "Redis failed to start after 120 seconds"
+              exit 1
+            fi
+            echo "Redis is not ready yet, waiting... ($i/120)"
             sleep 1
           done
-          echo "Redis is ready!"
+          
+          echo "All services are ready!"
 
       #- name: Run golangci-lint
       #  continue-on-error: true
