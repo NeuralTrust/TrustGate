@@ -40,7 +40,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.25.1'
+          go-version: '1.23'
           check-latest: true
           cache: false  # Disable Go module cache
 
@@ -49,9 +49,21 @@ jobs:
           go clean -modcache
           go mod tidy && go mod vendor
 
-      - name: Configure Dummy OAuth server (WireMock)
+      - name: Wait for services to be ready
         run: |
-          sleep 120
+          echo "Waiting for PostgreSQL to be ready..."
+          until nc -z localhost 5432; do
+            echo "PostgreSQL is not ready yet, waiting..."
+            sleep 1
+          done
+          echo "PostgreSQL is ready!"
+          
+          echo "Waiting for Redis to be ready..."
+          until nc -z localhost 6379; do
+            echo "Redis is not ready yet, waiting..."
+            sleep 1
+          done
+          echo "Redis is ready!"
 
       # - name: Run golangci-lint
       #   uses: golangci/golangci-lint-action@v3
