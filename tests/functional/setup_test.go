@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -115,15 +116,29 @@ func setupTestEnvironment() {
 
 	// Start goroutines to capture and log proxy server output
 	go func() {
-		scanner := bufio.NewScanner(proxyStdout)
-		for scanner.Scan() {
-			fmt.Printf("[PROXY STDOUT] %s\n", scanner.Text())
+		reader := bufio.NewReader(proxyStdout)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if err != io.EOF {
+					fmt.Printf("[PROXY STDOUT ERROR] %v\n", err)
+				}
+				break
+			}
+			fmt.Printf("[PROXY STDOUT] %s", line)
 		}
 	}()
 	go func() {
-		scanner := bufio.NewScanner(proxyStderr)
-		for scanner.Scan() {
-			fmt.Printf("[PROXY STDERR] %s\n", scanner.Text())
+		reader := bufio.NewReader(proxyStderr)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if err != io.EOF {
+					fmt.Printf("[PROXY STDERR ERROR] %v\n", err)
+				}
+				break
+			}
+			fmt.Printf("[PROXY STDERR] %s", line)
 		}
 	}()
 
@@ -145,15 +160,29 @@ func setupTestEnvironment() {
 
 	// Start goroutines to capture and log admin server output
 	go func() {
-		scanner := bufio.NewScanner(adminStdout)
-		for scanner.Scan() {
-			fmt.Printf("[ADMIN STDOUT] %s\n", scanner.Text())
+		reader := bufio.NewReader(adminStdout)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if err != io.EOF {
+					fmt.Printf("[ADMIN STDOUT ERROR] %v\n", err)
+				}
+				break
+			}
+			fmt.Printf("[ADMIN STDOUT] %s", line)
 		}
 	}()
 	go func() {
-		scanner := bufio.NewScanner(adminStderr)
-		for scanner.Scan() {
-			fmt.Printf("[ADMIN STDERR] %s\n", scanner.Text())
+		reader := bufio.NewReader(adminStderr)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if err != io.EOF {
+					fmt.Printf("[ADMIN STDERR ERROR] %v\n", err)
+				}
+				break
+			}
+			fmt.Printf("[ADMIN STDERR] %s", line)
 		}
 	}()
 
@@ -164,6 +193,18 @@ func setupTestEnvironment() {
 		log.Fatalf("Failed to start proxy: %v", err)
 	}
 	fmt.Printf("   Proxy server started with PID: %d\n", proxyCmd.Process.Pid)
+
+	// Monitor process exit in background
+	go func() {
+		if err := proxyCmd.Wait(); err != nil {
+			fmt.Printf("[PROXY EXIT] Process exited with error: %v\n", err)
+		} else {
+			fmt.Printf("[PROXY EXIT] Process exited successfully\n")
+		}
+		if state := proxyCmd.ProcessState; state != nil {
+			fmt.Printf("[PROXY EXIT] Exit code: %d\n", state.ExitCode())
+		}
+	}()
 
 	time.Sleep(5 * time.Second)
 
@@ -185,6 +226,18 @@ func setupTestEnvironment() {
 		log.Fatalf("Failed to start admin: %v", err)
 	}
 	fmt.Printf("   Admin server started with PID: %d\n", adminCmd.Process.Pid)
+
+	// Monitor process exit in background
+	go func() {
+		if err := adminCmd.Wait(); err != nil {
+			fmt.Printf("[ADMIN EXIT] Process exited with error: %v\n", err)
+		} else {
+			fmt.Printf("[ADMIN EXIT] Process exited successfully\n")
+		}
+		if state := adminCmd.ProcessState; state != nil {
+			fmt.Printf("[ADMIN EXIT] Exit code: %d\n", state.ExitCode())
+		}
+	}()
 
 	time.Sleep(5 * time.Second)
 
