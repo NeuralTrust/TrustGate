@@ -1,6 +1,7 @@
 package functional_test
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"fmt"
@@ -96,19 +97,65 @@ func setupTestEnvironment() {
 	}
 	fmt.Printf("📁 Current working directory: %s\n", wd)
 
+	// Create proxy command
 	proxyCmd = exec.Command("go", "run", "../../cmd/gateway/main.go", "proxy")
 	proxyCmd.Dir = wd
 	proxyCmd.Env = append(os.Environ(), "ENV_FILE=../../.env.functional")
-	proxyCmd.Stdout = os.Stdout
-	proxyCmd.Stderr = os.Stderr
 	proxyCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
+	// Create pipes to capture proxy server output (must be called before Start)
+	proxyStdout, err := proxyCmd.StdoutPipe()
+	if err != nil {
+		log.Fatalf("Failed to create proxy stdout pipe: %v", err)
+	}
+	proxyStderr, err := proxyCmd.StderrPipe()
+	if err != nil {
+		log.Fatalf("Failed to create proxy stderr pipe: %v", err)
+	}
+
+	// Start goroutines to capture and log proxy server output
+	go func() {
+		scanner := bufio.NewScanner(proxyStdout)
+		for scanner.Scan() {
+			fmt.Printf("[PROXY STDOUT] %s\n", scanner.Text())
+		}
+	}()
+	go func() {
+		scanner := bufio.NewScanner(proxyStderr)
+		for scanner.Scan() {
+			fmt.Printf("[PROXY STDERR] %s\n", scanner.Text())
+		}
+	}()
+
+	// Create admin command
 	adminCmd = exec.Command("go", "run", "../../cmd/gateway/main.go", "admin")
 	adminCmd.Dir = wd
 	adminCmd.Env = append(os.Environ(), "ENV_FILE=../../.env.functional")
-	adminCmd.Stdout = os.Stdout
-	adminCmd.Stderr = os.Stderr
 	adminCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	// Create pipes to capture admin server output (must be called before Start)
+	adminStdout, err := adminCmd.StdoutPipe()
+	if err != nil {
+		log.Fatalf("Failed to create admin stdout pipe: %v", err)
+	}
+	adminStderr, err := adminCmd.StderrPipe()
+	if err != nil {
+		log.Fatalf("Failed to create admin stderr pipe: %v", err)
+	}
+
+	// Start goroutines to capture and log admin server output
+	go func() {
+		scanner := bufio.NewScanner(adminStdout)
+		for scanner.Scan() {
+			fmt.Printf("[ADMIN STDOUT] %s\n", scanner.Text())
+		}
+	}()
+	go func() {
+		scanner := bufio.NewScanner(adminStderr)
+		for scanner.Scan() {
+			fmt.Printf("[ADMIN STDERR] %s\n", scanner.Text())
+		}
+	}()
 
 	fmt.Println("✨ Starting ProxyConfig Server:", proxyCmd.String())
 	fmt.Printf("   Command: %s\n", proxyCmd.String())
