@@ -40,7 +40,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.23'
+          go-version: '1.25.1'
           check-latest: true
           cache: false  # Disable Go module cache
 
@@ -75,6 +75,20 @@ jobs:
                     "jsonBody": { "access_token": "ci-dummy-token", "expires_in": 3600 }
                   }
                 }'
+
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.7.0
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          golangci-lint --version
+
+      - name: Run golangci-lint
+        continue-on-error: true
+        env:
+          GOPRIVATE: github.com/NeuralTrust/*
+          GONOPROXY: github.com/NeuralTrust/*
+          GONOSUMDB: github.com/NeuralTrust/*
+        run: golangci-lint run --timeout=10m ./...
 
       - name: Copy environment file
         run: cp .env.example .env && cp .env.functional.example .env.functional
