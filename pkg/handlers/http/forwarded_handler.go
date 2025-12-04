@@ -1136,7 +1136,15 @@ func (h *forwardedHandler) handleStreamingResponse(
 	}
 
 	if resp.StatusCode > 299 {
-		return nil, fmt.Errorf("failed to make streaming request: %s", resp.Status)
+		defer func() { _ = resp.Body.Close() }()
+		errorMsg := fmt.Sprintf("failed to make streaming request: %s", resp.Status)
+		if resp.Body != nil {
+			bodyBytes, readErr := io.ReadAll(resp.Body)
+			if readErr == nil && len(bodyBytes) > 0 {
+				errorMsg += fmt.Sprintf(" - body: %s", string(bodyBytes))
+			}
+		}
+		return nil, errors.New(errorMsg)
 	}
 
 	responseHeaders := make(map[string][]string)
