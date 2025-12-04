@@ -51,7 +51,6 @@ jobs:
 
       - name: Wait for services to be ready
         run: |
-          sleep 300
           echo "Waiting for PostgreSQL to be ready..."
           until nc -z localhost 5432; do
             echo "PostgreSQL is not ready yet, waiting..."
@@ -73,6 +72,11 @@ jobs:
       #    skip-cache: true  # Skip using cache for linter
       #    args: --timeout=5m  # Increase timeout to 5 minutes
       #    only-new-issues: true  # Only report new issues
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.6.4
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          golangci-lint --version
 
       - name: Configure Dummy OAuth server (WireMock)
         run: |
