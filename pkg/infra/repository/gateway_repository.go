@@ -70,6 +70,15 @@ func (r *gatewayRepository) Update(ctx context.Context, gateway *gateway.Gateway
 }
 
 func (r *gatewayRepository) Delete(id uuid.UUID) error {
+	// First verify the gateway exists
+	var entity gateway.Gateway
+	if err := r.db.First(&entity, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return domain.NewNotFoundError("gateway", id)
+		}
+		return err
+	}
+
 	// Start a transaction
 	tx := r.db.Begin()
 	tx = tx.Debug()
@@ -96,7 +105,7 @@ func (r *gatewayRepository) Delete(id uuid.UUID) error {
 	}
 
 	// Then delete the gateway
-	if err := tx.Unscoped().Delete(&gateway.Gateway{ID: id}).Error; err != nil {
+	if err := tx.Unscoped().Where("id = ?", id).Delete(&gateway.Gateway{}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
