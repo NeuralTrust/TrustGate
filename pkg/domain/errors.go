@@ -28,3 +28,12 @@ func NewNotFoundError(entityType string, id uuid.UUID) error {
 		ID:         id,
 	}
 }
+
+func IsNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var notFoundError *notFoundError
+	ok := errors.As(err, &notFoundError)
+	return ok
+}
