@@ -90,7 +90,7 @@ func (r *gatewayRepository) Delete(id uuid.UUID) error {
 		tx.Rollback()
 		return err
 	}
-	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&apikey.APIKey{}).Error; err != nil {
+	if err := tx.Unscoped().Where("subject = ?", id).Delete(&apikey.APIKey{}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
