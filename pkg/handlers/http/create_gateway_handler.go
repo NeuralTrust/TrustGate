@@ -12,8 +12,8 @@ import (
 )
 
 type createGatewayHandler struct {
-	logger   *logrus.Logger
-	creator  gateway.Creator
+	logger  *logrus.Logger
+	creator gateway.Creator
 }
 
 func NewCreateGatewayHandler(
@@ -53,12 +53,19 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 	entity, err := h.creator.Create(c.Context(), &req, gatewayId)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to create gateway")
-		// Return 400 for plugin validation errors
-		if errors.Is(err, types.ErrRequiredPluginNotFound) {
+		if isValidationError(err) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(entity)
+}
+
+func isValidationError(err error) bool {
+	return errors.Is(err, types.ErrRequiredPluginNotFound) ||
+		errors.Is(err, types.ErrDuplicateTelemetryExporter) ||
+		errors.Is(err, types.ErrTelemetryValidation) ||
+		errors.Is(err, types.ErrUnknownPlugin) ||
+		errors.Is(err, types.ErrPluginChainValidation)
 }

@@ -102,14 +102,14 @@ func (c *creator) Create(
 		for _, e := range exporters {
 			if _, exists := seenProviders[e.Name]; exists {
 				c.logger.WithField("provider", e.Name).Error("duplicate telemetry exporter provider")
-				return nil, fmt.Errorf("duplicate telemetry exporter provider: %s", e.Name)
+				return nil, fmt.Errorf("%w: %s", types.ErrDuplicateTelemetryExporter, e.Name)
 			}
 			seenProviders[e.Name] = struct{}{}
 		}
 		err = c.telemetryProvidersValidator.Validate(exporters)
 		if err != nil {
 			c.logger.WithError(err).Error("failed to validate telemetry providers")
-			return nil, fmt.Errorf("failed to validate telemetry providers: %w", err)
+			return nil, fmt.Errorf("%w: %w", types.ErrTelemetryValidation, err)
 		}
 		telemetryObj = &telemetry.Telemetry{
 			Exporters:           c.telemetryExportersToDomain(exporters),
@@ -147,7 +147,7 @@ func (c *creator) Create(
 	err = c.pluginChainValidator.Validate(ctx, id, entity.RequiredPlugins)
 	if err != nil {
 		c.logger.WithError(err).Error("failed to validate plugin chain")
-		return nil, fmt.Errorf("failed to validate plugin chain: %w", err)
+		return nil, fmt.Errorf("%w: %w", types.ErrPluginChainValidation, err)
 	}
 
 	if err := c.repo.Save(ctx, &entity); err != nil {

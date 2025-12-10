@@ -222,7 +222,7 @@ func (m *manager) InitializePlugins() {
 func (m *manager) ValidatePlugin(name string, config types.PluginConfig) error {
 	plugin, exists := m.plugins[name]
 	if !exists {
-		return fmt.Errorf("unknown plugin: %s", name)
+		return fmt.Errorf("%w: %s", types.ErrUnknownPlugin, name)
 	}
 
 	if err := plugin.ValidateConfig(config); err != nil {
