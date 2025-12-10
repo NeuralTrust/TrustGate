@@ -19,6 +19,7 @@ type MetricsConfig struct {
 
 type Config struct {
 	Server        ServerConfig        `mapstructure:"server"`
+	Multitenant   MultiTenantConfig   `mapstructure:"multitenant"`
 	Metrics       MetricsConfig       `mapstructure:"metrics"`
 	Database      DatabaseConfig      `mapstructure:"database"`
 	Redis         RedisConfig         `mapstructure:"redis"`
@@ -37,6 +38,13 @@ type ServerConfig struct {
 	Port        int    `mapstructure:"port"`
 	Host        string `mapstructure:"host"`
 	SecretKey   string `mapstructure:"secret_key"`
+}
+
+type MultiTenantConfig struct {
+	IngressDataHostTemplate    string `mapstructure:"ingress_data_host_template"`
+	IngressActionsHostTemplate string `mapstructure:"ingress_actions_host_template"`
+	Image                      string `mapstructure:"trustgate_image"`
+	K8sTemplatesPath           string `mapstructure:"k8s_templates_path"`
 }
 
 type DatabaseConfig struct {

@@ -1,10 +1,16 @@
 package types
 
 import (
-	"fmt"
+	"errors"
 )
 
-var ErrRequiredPluginNotFound = fmt.Errorf("plugin is required")
+var (
+	ErrRequiredPluginNotFound     = errors.New("plugin is required")
+	ErrDuplicateTelemetryExporter = errors.New("duplicate telemetry exporter provider")
+	ErrTelemetryValidation        = errors.New("failed to validate telemetry providers")
+	ErrUnknownPlugin              = errors.New("unknown plugin")
+	ErrPluginChainValidation      = errors.New("failed to validate plugin chain")
+)
 
 // Stage represents when a plugin should be executed
 type Stage string

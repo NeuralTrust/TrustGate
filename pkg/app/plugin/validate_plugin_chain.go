@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -53,19 +54,23 @@ func (v *validatePluginChain) Validate(ctx context.Context, gatewayID uuid.UUID,
 				continue
 			}
 			requiredFound := false
-			for _, stage := range currentPlugin.Stages() {
-				entity, err := v.repo.Get(ctx, gatewayID)
-				if err != nil {
-					return err
-				}
-				for _, p := range entity.RequiredPlugins {
-					if p.Name == required && p.Stage == stage {
-						requiredFound = true
+			// Try to get the gateway to check its RequiredPlugins
+			entity, err := v.repo.Get(ctx, gatewayID)
+			if err != nil && !domain.IsNotFoundError(err) {
+				return err
+			}
+			// If gateway exists, check its RequiredPlugins
+			if entity != nil {
+				for _, stage := range currentPlugin.Stages() {
+					for _, p := range entity.RequiredPlugins {
+						if p.Name == required && p.Stage == stage {
+							requiredFound = true
+							break
+						}
+					}
+					if requiredFound {
 						break
 					}
-				}
-				if requiredFound {
-					break
 				}
 			}
 			if !requiredFound {
