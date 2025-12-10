@@ -1,9 +1,12 @@
 package http
 
 import (
+	"errors"
+
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -50,6 +53,10 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 	entity, err := h.creator.Create(c.Context(), &req, gatewayId)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to create gateway")
+		// Return 400 for plugin validation errors
+		if errors.Is(err, types.ErrRequiredPluginNotFound) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
