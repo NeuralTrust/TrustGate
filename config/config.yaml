@@ -12,6 +12,11 @@ metrics:
   enable_per_route: true    # Per-route metrics (high cardinality)
   enable_detailed_status: true # Detailed status codes
 
+multitenant:
+  ingress_data_host_template: ${MULTITENANT_INGRESS_DATA_HOST_TEMPLATE}
+  ingress_actions_host_template: ${MULTITENANT_INGRESS_ACTIONS_HOST_TEMPLATE}
+  image: ${MULTITENANT_TRUSTGATE_IMAGE}
+
 database:
   host: ${DATABASE_HOST}
   port: ${DATABASE_PORT}

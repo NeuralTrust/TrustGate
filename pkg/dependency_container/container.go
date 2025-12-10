@@ -51,33 +51,35 @@ import (
 )
 
 type Container struct {
-	Cache                  cache.Cache
-	BedrockClient          bedrock.Client
-	PluginManager          plugins.Manager
-	HandlerTransport       handlers.HandlerTransport
-	WSHandlerTransport     wsHandlers.HandlerTransport
-	RedisListener          infraCache.EventListener
-	PanicRecoverMiddleware middleware.Middleware
-	AuthMiddleware         middleware.Middleware
-	CORSGlobalMiddleware   middleware.Middleware
-	AdminAuthMiddleware    middleware.Middleware
-	MetricsMiddleware      middleware.Middleware
-	PluginMiddleware       middleware.Middleware
-	FingerPrintMiddleware  middleware.Middleware
-	SecurityMiddleware     middleware.Middleware
-	WebSocketMiddleware    middleware.Middleware
-	SessionMiddleware      middleware.Middleware
-	ApiKeyRepository       domainApikey.Repository
-	EmbeddingRepository    domainEmbedding.EmbeddingRepository
-	SessionRepository      domainSession.Repository
-	FingerprintTracker     fingerprint.Tracker
-	PluginChainValidator   plugin.ValidatePluginChain
-	MetricsWorker          metrics.Worker
-	RedisIndexCreator      infraCache.RedisIndexCreator
-	JWTManager             jwt.Manager
-	RuleRepository         ruledomain.Repository
-	GatewayRepository      domainGateway.Repository
-	FirewallFactory        firewall.ClientFactory
+	Cache                    cache.Cache
+	BedrockClient            bedrock.Client
+	PluginManager            plugins.Manager
+	HandlerTransport         handlers.HandlerTransport
+	WSHandlerTransport       wsHandlers.HandlerTransport
+	RedisListener            infraCache.EventListener
+	PanicRecoverMiddleware   middleware.Middleware
+	AuthMiddleware           middleware.Middleware
+	CORSGlobalMiddleware     middleware.Middleware
+	AdminAuthMiddleware      middleware.Middleware
+	MetricsMiddleware        middleware.Middleware
+	PluginMiddleware         middleware.Middleware
+	FingerPrintMiddleware    middleware.Middleware
+	SecurityMiddleware       middleware.Middleware
+	WebSocketMiddleware      middleware.Middleware
+	SessionMiddleware        middleware.Middleware
+	ApiKeyRepository         domainApikey.Repository
+	EmbeddingRepository      domainEmbedding.EmbeddingRepository
+	SessionRepository        domainSession.Repository
+	FingerprintTracker       fingerprint.Tracker
+	PluginChainValidator     plugin.ValidatePluginChain
+	MetricsWorker            metrics.Worker
+	RedisIndexCreator        infraCache.RedisIndexCreator
+	JWTManager               jwt.Manager
+	RuleRepository           ruledomain.Repository
+	GatewayRepository        domainGateway.Repository
+	FirewallFactory          firewall.ClientFactory
+	TelemetryExporterLocator *infraTelemetry.ExporterLocator
+	GatewayCreator           gateway.Creator
 }
 
 func NewContainer(
@@ -190,6 +192,15 @@ func NewContainer(
 	telemetryBuilder := telemetry.NewTelemetryExportersBuilder(providerLocator)
 	telemetryValidator := telemetry.NewTelemetryExportersValidator(providerLocator)
 
+	// gateway creator
+	gatewayCreator := gateway.NewCreator(
+		logger,
+		gatewayRepository,
+		updateGatewayCache,
+		pluginChainValidator,
+		telemetryValidator,
+	)
+
 	// redis publisher
 	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
 	redisListener := infraCache.NewRedisEventListener(logger, cacheInstance, eventsRegistry)
@@ -250,10 +261,7 @@ func NewContainer(
 		// Gateway
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(
 			logger,
-			gatewayRepository,
-			updateGatewayCache,
-			pluginChainValidator,
-			telemetryValidator,
+			gatewayCreator,
 		),
 		ListGatewayHandler:   handlers.NewListGatewayHandler(logger, gatewayRepository, updateGatewayCache),
 		GetGatewayHandler:    handlers.NewGetGatewayHandler(logger, gatewayRepository, getGatewayCache, updateGatewayCache),
@@ -335,27 +343,29 @@ func NewContainer(
 			[]string{"Content-Length", "X-Response-Time"},
 			"12h",
 		),
-		AuthMiddleware:        middleware.NewAuthMiddleware(logger, apiKeyFinder, gatewayDataFinder, ruleMatcher),
-		AdminAuthMiddleware:   middleware.NewAdminAuthMiddleware(logger, jwtManager),
-		MetricsMiddleware:     middleware.NewMetricsMiddleware(logger, metricsWorker),
-		PluginMiddleware:      middleware.NewPluginChainMiddleware(pluginManager, logger),
-		FingerPrintMiddleware: middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),
-		SecurityMiddleware:    middleware.NewSecurityMiddleware(logger),
-		WebSocketMiddleware:   middleware.NewWebsocketMiddleware(cfg, logger),
-		SessionMiddleware:     middleware.NewSessionMiddleware(logger, sessionRepository),
-		ApiKeyRepository:      apiKeyRepository,
-		EmbeddingRepository:   embeddingRepository,
-		SessionRepository:     sessionRepository,
-		PluginManager:         pluginManager,
-		BedrockClient:         bedrockClient,
-		FingerprintTracker:    fingerprintTracker,
-		PluginChainValidator:  pluginChainValidator,
-		MetricsWorker:         metricsWorker,
-		RedisIndexCreator:     redisIndexCreator,
-		JWTManager:            jwtManager,
-		RuleRepository:        ruleRepository,
-		GatewayRepository:     gatewayRepository,
-		FirewallFactory:       firewallFactory,
+		AuthMiddleware:           middleware.NewAuthMiddleware(logger, apiKeyFinder, gatewayDataFinder, ruleMatcher),
+		AdminAuthMiddleware:      middleware.NewAdminAuthMiddleware(logger, jwtManager),
+		MetricsMiddleware:        middleware.NewMetricsMiddleware(logger, metricsWorker),
+		PluginMiddleware:         middleware.NewPluginChainMiddleware(pluginManager, logger),
+		FingerPrintMiddleware:    middleware.NewFingerPrintMiddleware(logger, fingerprintTracker),
+		SecurityMiddleware:       middleware.NewSecurityMiddleware(logger),
+		WebSocketMiddleware:      middleware.NewWebsocketMiddleware(cfg, logger),
+		SessionMiddleware:        middleware.NewSessionMiddleware(logger, sessionRepository),
+		ApiKeyRepository:         apiKeyRepository,
+		EmbeddingRepository:      embeddingRepository,
+		SessionRepository:        sessionRepository,
+		PluginManager:            pluginManager,
+		BedrockClient:            bedrockClient,
+		FingerprintTracker:       fingerprintTracker,
+		PluginChainValidator:     pluginChainValidator,
+		MetricsWorker:            metricsWorker,
+		RedisIndexCreator:        redisIndexCreator,
+		JWTManager:               jwtManager,
+		RuleRepository:           ruleRepository,
+		GatewayRepository:        gatewayRepository,
+		FirewallFactory:          firewallFactory,
+		TelemetryExporterLocator: providerLocator,
+		GatewayCreator:           gatewayCreator,
 	}
 
 	return container, nil
