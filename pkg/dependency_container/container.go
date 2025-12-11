@@ -80,6 +80,7 @@ type Container struct {
 	FirewallFactory          firewall.ClientFactory
 	TelemetryExporterLocator *infraTelemetry.ExporterLocator
 	GatewayCreator           gateway.Creator
+	GatewayDeleter           gateway.Deleter
 }
 
 func NewContainer(
@@ -205,6 +206,13 @@ func NewContainer(
 	redisPublisher := infraCache.NewRedisEventPublisher(cacheInstance)
 	redisListener := infraCache.NewRedisEventListener(logger, cacheInstance, eventsRegistry)
 
+	// gateway deleter
+	gatewayDeleter := gateway.NewDeleter(
+		logger,
+		gatewayRepository,
+		redisPublisher,
+	)
+
 	// subscribers
 	deleteGatewaySubscriber := subscriber.NewDeleteGatewayCacheEventSubscriber(logger, cacheInstance)
 	deleteRulesSubscriber := subscriber.NewDeleteRulesEventSubscriber(logger, cacheInstance)
@@ -266,7 +274,7 @@ func NewContainer(
 		ListGatewayHandler:   handlers.NewListGatewayHandler(logger, gatewayRepository, updateGatewayCache),
 		GetGatewayHandler:    handlers.NewGetGatewayHandler(logger, gatewayRepository, getGatewayCache, updateGatewayCache),
 		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(logger, gatewayRepository, pluginManager, redisPublisher, telemetryValidator),
-		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(logger, gatewayRepository, redisPublisher),
+		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(logger, gatewayDeleter),
 		// Upstream
 		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(logger, upstreamRepository, gatewayRepository, cacheInstance, descriptionEmbeddingCreator, cfg),
 		ListUpstreamHandler:   handlers.NewListUpstreamHandler(logger, upstreamRepository, cacheInstance),
@@ -366,6 +374,7 @@ func NewContainer(
 		FirewallFactory:          firewallFactory,
 		TelemetryExporterLocator: providerLocator,
 		GatewayCreator:           gatewayCreator,
+		GatewayDeleter:           gatewayDeleter,
 	}
 
 	return container, nil

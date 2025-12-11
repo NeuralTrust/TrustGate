@@ -3,31 +3,25 @@ package http
 import (
 	"net/http"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
-	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
 type deleteGatewayHandler struct {
-	logger    *logrus.Logger
-	repo      domainGateway.Repository
-	publisher infraCache.EventPublisher
+	logger  *logrus.Logger
+	deleter gateway.Deleter
 }
 
 func NewDeleteGatewayHandler(
 	logger *logrus.Logger,
-	repo domainGateway.Repository,
-	publisher infraCache.EventPublisher,
+	deleter gateway.Deleter,
 ) Handler {
 	return &deleteGatewayHandler{
-		logger:    logger,
-		repo:      repo,
-		publisher: publisher,
+		logger:  logger,
+		deleter: deleter,
 	}
 }
 
@@ -50,21 +44,12 @@ func (s *deleteGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
 	}
 
-	if err := s.repo.Delete(parsedId); err != nil {
+	if err := s.deleter.Delete(c.Context(), parsedId); err != nil {
 		if domain.IsNotFoundError(err) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 		}
-		s.logger.WithError(err).Error("Failed to delete gateway")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
-	if err := s.publisher.Publish(
-		c.Context(),
-		channel.GatewayEventsChannel,
-		event.DeleteGatewayCacheEvent{
-			GatewayID: id,
-		},
-	); err != nil {
-		s.logger.WithError(err).Error("failed to publish gateway event")
-	}
+
 	return c.SendStatus(http.StatusNoContent)
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
+//go:generate mockery --name=Repository --dir=. --output=./mocks --filename=api_key_repo_mock.go --case=underscore --with-expecter
 type Repository interface {
 	GetByKey(ctx context.Context, key string) (*APIKey, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*APIKey, error)
