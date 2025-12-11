@@ -45,6 +45,7 @@ type MultiTenantConfig struct {
 	IngressActionsHostTemplate string `mapstructure:"ingress_actions_host_template"`
 	Image                      string `mapstructure:"trustgate_image"`
 	K8sTemplatesPath           string `mapstructure:"k8s_templates_path"`
+	ServiceAccountToken        string `mapstructure:"service_account_token"`
 }
 
 type DatabaseConfig struct {

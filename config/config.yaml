@@ -16,6 +16,8 @@ multitenant:
   ingress_data_host_template: ${MULTITENANT_INGRESS_DATA_HOST_TEMPLATE}
   ingress_actions_host_template: ${MULTITENANT_INGRESS_ACTIONS_HOST_TEMPLATE}
   image: ${MULTITENANT_TRUSTGATE_IMAGE}
+  service_account_token: ${MULTITENANT_SERVICE_ACCOUNT_TOKEN}
+
 
 database:
   host: ${DATABASE_HOST}
