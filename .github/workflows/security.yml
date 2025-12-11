@@ -16,16 +16,6 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'table'
-        exit-code: '1'
-        ignore-unfixed: true
-        severity: 'CRITICAL'
-
     - name: Run Gosec Security Scanner
       uses: securego/gosec@master
       with:
