@@ -158,7 +158,11 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 	}
 
 	evt := &NeuralTrustJailbreakData{
-		Scores: &JailbreakScores{},
+		Provider:     conf.Provider,
+		MappingField: conf.MappingField,
+		InputLength:  len(mappingContent.Input),
+		Scores:       &JailbreakScores{},
+		Blocked:      false,
 	}
 
 	if conf.JailbreakParamBag != nil {
@@ -177,9 +181,14 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 			Input: []string{mappingContent.Input},
 		}
 
+		// Measure detection latency
+		startTime := time.Now()
 		responses, err := firewallClient.DetectJailbreak(ctx, content, credentials)
+		evt.DetectionLatencyMs = time.Since(startTime).Milliseconds()
+
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
+				evtCtx.SetExtras(evt)
 				return &types.PluginResponse{
 					StatusCode: 200,
 					Message:    "prompt content is safe",
@@ -198,22 +207,34 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 			return nil, fmt.Errorf("failed to call firewall: %w", err)
 		}
 
-		// Check response for jailbreak violations
+		// Store detection scores
 		response := responses[0]
+		evt.Scores.MaliciousPrompt = response.Scores.MaliciousPrompt
+
+		// Check response for jailbreak violations
 		if response.Scores.MaliciousPrompt >= conf.JailbreakParamBag.Threshold {
-			evt.Scores.Jailbreak = response.Scores.MaliciousPrompt
-			err := NewGuardrailViolation(fmt.Sprintf(
+			evt.Blocked = true
+			violationMsg := fmt.Sprintf(
 				"jailbreak: score %.2f exceeded threshold %.2f",
 				response.Scores.MaliciousPrompt,
 				conf.JailbreakParamBag.Threshold,
-			))
+			)
+			evt.Violation = &ViolationInfo{
+				Type:      "jailbreak",
+				Score:     response.Scores.MaliciousPrompt,
+				Threshold: conf.JailbreakParamBag.Threshold,
+				Message:   violationMsg,
+			}
+
 			p.notifyGuardrailViolation(ctx, conf)
-			evtCtx.SetError(err)
+
+			violationErr := NewGuardrailViolation(violationMsg)
+			evtCtx.SetError(violationErr)
 			evtCtx.SetExtras(evt)
 			return nil, &types.PluginError{
 				StatusCode: http.StatusForbidden,
-				Message:    err.Error(),
-				Err:        err,
+				Message:    violationErr.Error(),
+				Err:        violationErr,
 			}
 		}
 	}

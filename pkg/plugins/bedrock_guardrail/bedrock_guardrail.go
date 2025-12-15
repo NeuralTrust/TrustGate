@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -176,7 +177,10 @@ func (p *BedrockGuardrailPlugin) Execute(
 		return nil, fmt.Errorf("failed to create Bedrock client: %v", err)
 	}
 
+	startTime := time.Now()
 	output, err := bedrockClient.ApplyGuardrail(ctx, input)
+	latencyMs := time.Since(startTime).Milliseconds()
+
 	if err != nil {
 		p.logger.WithError(err).Error("Failed to call Bedrock API")
 		return nil, fmt.Errorf("failed to call Bedrock API: %v", err)
@@ -185,6 +189,15 @@ func (p *BedrockGuardrailPlugin) Execute(
 	p.logger.WithFields(logrus.Fields{
 		"assessments": output.Assessments,
 	}).Debug("Received response from Bedrock")
+
+	evt := &BedrockGuardrailData{
+		GuardrailID:        conf.GuardrailID,
+		Version:            conf.Version,
+		Region:             conf.Credentials.AWSRegion,
+		InputLength:        len(content),
+		Blocked:            false,
+		DetectionLatencyMs: latencyMs,
+	}
 
 	// Check if content is flagged by examining the assessments
 	for _, assessment := range output.Assessments {
@@ -198,22 +211,21 @@ func (p *BedrockGuardrailPlugin) Execute(
 						"action": topic.Action,
 					}).Info("Content blocked due to topic policy violation")
 
+					evt.Blocked = true
+					evt.Violation = &ViolationInfo{
+						PolicyType: "topic_policy",
+						Name:       aws.ToString(topic.Name),
+						Action:     string(topic.Action),
+						Message:    message,
+					}
+
 					evtCtx.SetError(errors.New(message))
-					evtCtx.SetExtras(BedrockGuardrailData{
-						GuardrailID: conf.GuardrailID,
-						Version:     conf.Version,
-						Blocked:     true,
-						Event: &BedrockGuardrailEvent{
-							Type:   "topic_policy",
-							Name:   aws.ToString(topic.Name),
-							Action: string(topic.Action),
-						},
-					})
+					evtCtx.SetExtras(evt)
 
 					return nil, &plugintypes.PluginError{
 						StatusCode: 403,
 						Message:    fmt.Sprintf(conf.Actions.Message, message),
-						Err:        fmt.Errorf("content blocked by guardrail: topic policy violation"),
+						Err:        errors.New("content blocked by guardrail: topic policy violation"),
 					}
 				}
 			}
@@ -232,21 +244,21 @@ func (p *BedrockGuardrailPlugin) Execute(
 						"action":      filter.Action,
 					}).Info("Content blocked due to content policy violation")
 
+					evt.Blocked = true
+					evt.Violation = &ViolationInfo{
+						PolicyType: "content_policy",
+						Name:       string(filter.Type),
+						Action:     string(filter.Action),
+						Message:    message,
+					}
+
 					evtCtx.SetError(errors.New(message))
-					evtCtx.SetExtras(BedrockGuardrailData{
-						GuardrailID: conf.GuardrailID,
-						Version:     conf.Version,
-						Blocked:     true,
-						Event: &BedrockGuardrailEvent{
-							Type:   "content_policy",
-							Name:   string(filter.Type),
-							Action: string(filter.Action),
-						},
-					})
+					evtCtx.SetExtras(evt)
+
 					return nil, &plugintypes.PluginError{
 						StatusCode: 403,
 						Message:    fmt.Sprintf(conf.Actions.Message, message),
-						Err:        fmt.Errorf("content blocked by guardrail"),
+						Err:        errors.New("content blocked by guardrail"),
 					}
 				}
 			}
@@ -263,32 +275,29 @@ func (p *BedrockGuardrailPlugin) Execute(
 							"action":      entity.Action,
 						}).Info("Content blocked due to sensitive information violation")
 
-						evtCtx.SetError(errors.New(message))
-						evtCtx.SetExtras(BedrockGuardrailData{
-							GuardrailID: conf.GuardrailID,
-							Version:     conf.Version,
-							Blocked:     true,
-							Event: &BedrockGuardrailEvent{
-								Type:   "sensitive_information",
-								Name:   aws.ToString(entity.Match),
-								Action: string(entity.Action),
-							},
-						})
-						return nil, &plugintypes.PluginError{
-							StatusCode: 403,
-							Message:    fmt.Sprintf(conf.Actions.Message, message),
-							Err:        fmt.Errorf("content blocked by guardrail: sensitive information"),
+						evt.Blocked = true
+						evt.Violation = &ViolationInfo{
+							PolicyType: "sensitive_information",
+							Name:       aws.ToString(entity.Match),
+							Action:     string(entity.Action),
+							Message:    message,
 						}
+
+					evtCtx.SetError(errors.New(message))
+					evtCtx.SetExtras(evt)
+
+					return nil, &plugintypes.PluginError{
+						StatusCode: 403,
+						Message:    fmt.Sprintf(conf.Actions.Message, message),
+						Err:        errors.New("content blocked by guardrail: sensitive information"),
+					}
 					}
 				}
 			}
 		}
 	}
-	evtCtx.SetExtras(BedrockGuardrailData{
-		GuardrailID: conf.GuardrailID,
-		Version:     conf.Version,
-		Blocked:     false,
-	})
+
+	evtCtx.SetExtras(evt)
 	p.logger.Info("Content allowed - no policy violations detected")
 	return &plugintypes.PluginResponse{
 		StatusCode: 200,
