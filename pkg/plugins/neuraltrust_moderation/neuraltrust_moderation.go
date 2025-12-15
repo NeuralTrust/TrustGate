@@ -224,14 +224,9 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	inputBytes := []byte(mappingContent.Input)
 
 	evt := &NeuralTrustModerationData{
-		EmbeddingModeration: &EmbeddingModeration{
-			Scores: &EmbeddingScores{
-				Scores: make(map[string]float64),
-			},
-		},
-		KeyRegModeration: &KeyRegModeration{
-			Reason: KeyRegReason{},
-		},
+		MappingField: conf.MappingField,
+		InputLength:  len(mappingContent.Input),
+		Blocked:      false,
 	}
 
 	keyRegFound := false
@@ -246,6 +241,14 @@ func (p *NeuralTrustModerationPlugin) Execute(
 			}
 			regexRules[i] = regex
 		}
+
+		evt.KeyRegModeration = &KeyRegModeration{
+			SimilarityThreshold: conf.KeyRegParamBag.SimilarityThreshold,
+		}
+		if evt.KeyRegModeration.SimilarityThreshold == 0 {
+			evt.KeyRegModeration.SimilarityThreshold = 0.8
+		}
+
 		keyRegFound = p.callKeyRegModeration(
 			ctx,
 			conf.KeyRegParamBag,
@@ -255,10 +258,23 @@ func (p *NeuralTrustModerationPlugin) Execute(
 			keywords,
 			regexRules,
 		)
+
+		if keyRegFound {
+			evt.Blocked = true
+			evt.KeyRegModeration.Blocked = true
+		}
 	}
 
 	if !keyRegFound && conf.EmbeddingParamBag != nil && conf.EmbeddingParamBag.Enabled {
-		evt.EmbeddingModeration.Threshold = conf.EmbeddingParamBag.Threshold
+		evt.EmbeddingModeration = &EmbeddingModeration{
+			Provider:  conf.EmbeddingParamBag.EmbeddingsConfig.Provider,
+			Model:     conf.EmbeddingParamBag.EmbeddingsConfig.Model,
+			Threshold: conf.EmbeddingParamBag.Threshold,
+			Scores: &EmbeddingScores{
+				Scores: make(map[string]float64),
+			},
+		}
+
 		if len(conf.EmbeddingParamBag.DenySamples) > 0 {
 			err := p.createEmbeddings(ctx, conf.EmbeddingParamBag, req.GatewayID)
 			if err != nil {
@@ -281,6 +297,8 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	}
 
 	if !keyRegFound && conf.LLMParamBag != nil && conf.LLMParamBag.Enabled {
+		evt.LLMModeration = &LLMModeration{}
+
 		wg.Add(1)
 		go p.callAIModeration(
 			ctx,
@@ -306,6 +324,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 			break
 		}
 		if err != nil {
+			evt.Blocked = true
 			p.notifyGuardrailViolation(ctx, conf)
 			cancel()
 			var moderationViolationError *moderationViolationError
@@ -524,12 +543,11 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 	if evtMu != nil {
 		evtMu.Lock()
 	}
-	evt.LLMModeration = &LLMModeration{
-		Blocked:          resp.Flagged,
-		InstructionMatch: resp.InstructionMatch,
-		Model:            cfg.Model,
-		Provider:         cfg.Provider,
-		Topic:            resp.Topic,
+	if evt.LLMModeration != nil {
+		evt.LLMModeration.Blocked = resp.Flagged
+		evt.LLMModeration.InstructionMatch = resp.InstructionMatch
+		evt.LLMModeration.Topic = resp.Topic
+		evt.LLMModeration.DetectionLatencyMs = int64(duration * 1000)
 	}
 	if evtMu != nil {
 		evtMu.Unlock()
@@ -554,6 +572,9 @@ func (p *NeuralTrustModerationPlugin) callEmbeddingModeration(
 	if len(inputBody) == 0 {
 		return
 	}
+
+	startTime := time.Now()
+
 	creator, err := p.serviceLocator.GetService(cfg.EmbeddingsConfig.Provider)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to get embeddings service")
@@ -582,41 +603,66 @@ func (p *NeuralTrustModerationPlugin) callEmbeddingModeration(
 	query := fmt.Sprintf("@gateway_id:{%s}=>[KNN 5 @embedding $BLOB AS score]", p.hashGatewayID(gatewayID))
 
 	results, err := p.embeddingRepo.Search(ctx, common.NeuralTrustJailbreakIndexName, query, emb)
+
+	latencyMs := time.Since(startTime).Milliseconds()
+
 	if err != nil {
 		p.logger.WithError(err).Error("failed to search embeddings")
 		p.sendError(firewallErrors, err)
 		return
 	}
+
+	if evtMu != nil {
+		evtMu.Lock()
+	}
+	if evt.EmbeddingModeration != nil {
+		evt.EmbeddingModeration.DetectionLatencyMs = latencyMs
+	}
+	if evtMu != nil {
+		evtMu.Unlock()
+	}
+
 	if len(results) == 0 {
 		return
 	}
 
 	scores := make(map[string]float64, len(results))
+	var maxScore float64
+	matchCount := 0
+	blocked := false
+
 	for _, result := range results {
 		scores[result.Data] = result.Score
+		if result.Score > maxScore {
+			maxScore = result.Score
+		}
+		if result.Score >= cfg.Threshold {
+			matchCount++
+			blocked = true
+		}
 	}
 
 	if evtMu != nil {
 		evtMu.Lock()
 	}
-	evt.EmbeddingModeration.Scores.Scores = scores
-	evt.EmbeddingModeration.Threshold = cfg.Threshold
+	if evt.EmbeddingModeration != nil && evt.EmbeddingModeration.Scores != nil {
+		evt.EmbeddingModeration.Scores.Scores = scores
+		evt.EmbeddingModeration.Scores.MaxScore = maxScore
+		evt.EmbeddingModeration.Scores.MatchCount = matchCount
+		evt.EmbeddingModeration.Blocked = blocked
+	}
 	if evtMu != nil {
 		evtMu.Unlock()
 	}
 
-	for _, result := range results {
-		if result.Score >= cfg.Threshold {
-			p.sendError(
-				firewallErrors,
-				NewModerationViolation(fmt.Sprintf("content blocked: with similarity score %f exceeds threshold %f",
-					result.Score,
-					cfg.Threshold,
-				),
-				),
-			)
-			return
-		}
+	if blocked {
+		p.sendError(
+			firewallErrors,
+			NewModerationViolation(fmt.Sprintf("content blocked: similarity score %.2f exceeds threshold %.2f",
+				maxScore,
+				cfg.Threshold,
+			)),
+		)
 	}
 }
 
@@ -640,25 +686,32 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 		return false
 	}
 
+	startTime := time.Now()
+
 	content := string(inputBody)
 	threshold := cfg.SimilarityThreshold
 	if threshold == 0 {
 		threshold = 0.8
 	}
 
-	if foundWord, keyword, found := p.findSimilarKeyword(content, threshold, keywords); found {
-		evt.KeyRegModeration.SimilarityThreshold = threshold
-		evt.KeyRegModeration.Reason = KeyRegReason{
-			Type:    "keyword",
-			Pattern: keyword,
-			Match:   foundWord,
+	if foundWord, keyword, similarity, found := p.findSimilarKeyword(content, threshold, keywords); found {
+		latencyMs := time.Since(startTime).Milliseconds()
+		if evt.KeyRegModeration != nil {
+			evt.KeyRegModeration.DetectionLatencyMs = latencyMs
+			evt.KeyRegModeration.Reason = KeyRegReason{
+				Type:    "keyword",
+				Pattern: keyword,
+				Match:   foundWord,
+				Score:   similarity,
+			}
 		}
 		p.sendError(
 			firewallErrors,
 			NewModerationViolation(
-				fmt.Sprintf("content blocked: word '%s' is similar to blocked keyword '%s'",
+				fmt.Sprintf("content blocked: word '%s' is similar to blocked keyword '%s' (score: %.2f)",
 					foundWord,
 					keyword,
+					similarity,
 				),
 			),
 		)
@@ -668,11 +721,14 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 	for _, pattern := range regexRules {
 		matches := pattern.FindStringSubmatch(content)
 		if len(matches) > 0 {
-			evt.KeyRegModeration.SimilarityThreshold = threshold
-			evt.KeyRegModeration.Reason = KeyRegReason{
-				Type:    "regex",
-				Pattern: pattern.String(),
-				Match:   matches[0],
+			latencyMs := time.Since(startTime).Milliseconds()
+			if evt.KeyRegModeration != nil {
+				evt.KeyRegModeration.DetectionLatencyMs = latencyMs
+				evt.KeyRegModeration.Reason = KeyRegReason{
+					Type:    "regex",
+					Pattern: pattern.String(),
+					Match:   matches[0],
+				}
 			}
 			p.sendError(
 				firewallErrors,
@@ -681,6 +737,12 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 			return true
 		}
 	}
+
+	latencyMs := time.Since(startTime).Milliseconds()
+	if evt.KeyRegModeration != nil {
+		evt.KeyRegModeration.DetectionLatencyMs = latencyMs
+	}
+
 	return false
 }
 
@@ -761,15 +823,15 @@ func (p *NeuralTrustModerationPlugin) calculateSimilarity(s1, s2 string) float64
 	return 1.0 - float64(distance)/maxLen
 }
 
-func (p *NeuralTrustModerationPlugin) findSimilarKeyword(text string, threshold float64, keywords []string) (string, string, bool) {
+func (p *NeuralTrustModerationPlugin) findSimilarKeyword(text string, threshold float64, keywords []string) (string, string, float64, bool) {
 	words := strings.Fields(text)
 	for _, word := range words {
 		for _, keyword := range keywords {
 			similarity := p.calculateSimilarity(word, keyword)
 			if similarity >= threshold {
-				return word, keyword, true
+				return word, keyword, similarity, true
 			}
 		}
 	}
-	return "", "", false
+	return "", "", 0, false
 }

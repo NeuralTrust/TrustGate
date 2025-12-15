@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -149,13 +151,22 @@ func (p *ToxicityOpenAIPlugin) Execute(
 		return &types.PluginResponse{StatusCode: 200, Message: "No content to moderate"}, nil
 	}
 
+	// Calculate input length
+	inputLength := 0
+	for _, input := range moderationInputs {
+		inputLength += len(input.Text)
+	}
+
 	moderationReq := OpenAIModerationRequest{Input: moderationInputs, Model: "omni-moderation-latest"}
 	jsonData, err := json.Marshal(moderationReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal moderation request: %w", err)
 	}
 
+	startTime := time.Now()
 	httpResp, err := p.sendModerationRequest(ctx, conf.OpenAIKey, jsonData)
+	latencyMs := time.Since(startTime).Milliseconds()
+
 	if err != nil {
 		return nil, err
 	}
@@ -166,9 +177,8 @@ func (p *ToxicityOpenAIPlugin) Execute(
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	bodyStr := string(body)
 	if httpResp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OpenAI API returned error: %s", bodyStr)
+		return nil, fmt.Errorf("OpenAI API returned error: %s", string(body))
 	}
 
 	var moderationResp OpenAIModerationResponse
@@ -176,7 +186,7 @@ func (p *ToxicityOpenAIPlugin) Execute(
 		return nil, fmt.Errorf("failed to unmarshal moderation response: %w", err)
 	}
 
-	return p.analyzeModerationResponse(conf, moderationResp.Results, evtCtx, bodyStr)
+	return p.analyzeModerationResponse(conf, moderationResp, evtCtx, inputLength, len(moderationInputs), latencyMs)
 }
 
 func (p *ToxicityOpenAIPlugin) extractModerationInputs(messages []Message) []ModerationInput {
@@ -206,31 +216,75 @@ func (p *ToxicityOpenAIPlugin) sendModerationRequest(ctx context.Context, key st
 
 func (p *ToxicityOpenAIPlugin) analyzeModerationResponse(
 	conf Config,
-	results []ModerationResult,
+	moderationResp OpenAIModerationResponse,
 	evtCtx *metrics.EventContext,
-	body string,
+	inputLength int,
+	inputCount int,
+	latencyMs int64,
 ) (*types.PluginResponse, error) {
-	if len(results) == 0 {
+	if len(moderationResp.Results) == 0 {
 		return nil, fmt.Errorf("no moderation results returned")
 	}
 
-	result := results[0]
-	var flaggedCategories []string
+	result := moderationResp.Results[0]
+
+	// Find max score and category
+	var maxScore float64
+	var maxCategory string
+	for category, score := range result.CategoryScores {
+		if score > maxScore {
+			maxScore = score
+			maxCategory = category
+		}
+	}
+
+	evt := &ToxicityOpenaiData{
+		Model:       moderationResp.Model,
+		InputLength: inputLength,
+		InputCount:  inputCount,
+		Blocked:     false,
+		Scores: &ToxicityScores{
+			CategoryScores:   result.CategoryScores,
+			FlaggedByOpenAI:  result.Flagged,
+			MaxScore:         maxScore,
+			MaxScoreCategory: maxCategory,
+		},
+		DetectionLatencyMs: latencyMs,
+	}
+
+	var flaggedCategories []FlaggedCategory
 	for category, score := range result.CategoryScores {
 		if threshold, exists := conf.Thresholds[category]; exists && score >= threshold {
-			flaggedCategories = append(flaggedCategories, fmt.Sprintf("%s (%.2f)", category, score))
+			flaggedCategories = append(flaggedCategories, FlaggedCategory{
+				Category:  category,
+				Score:     score,
+				Threshold: threshold,
+			})
 		}
 	}
 
 	if len(flaggedCategories) > 0 {
-		evtCtx.SetError(fmt.Errorf("content flagged for categories: %v", flaggedCategories))
-		evtCtx.SetExtras(ToxicityOpenaiData{Flagged: true, Response: body, FlaggedCategories: flaggedCategories})
+		evt.Blocked = true
+		categoryNames := make([]string, len(flaggedCategories))
+		for i, fc := range flaggedCategories {
+			categoryNames[i] = fmt.Sprintf("%s (%.2f)", fc.Category, fc.Score)
+		}
+		violationMsg := fmt.Sprintf("content flagged for categories: %v", categoryNames)
+
+		evt.Violation = &ViolationInfo{
+			FlaggedCategories: flaggedCategories,
+			Message:           violationMsg,
+		}
+
+		evtCtx.SetError(errors.New(violationMsg))
+		evtCtx.SetExtras(evt)
 		return nil, &types.PluginError{
 			StatusCode: http.StatusForbidden,
-			Message:    fmt.Sprintf(conf.Actions.Message+" flagged categories: %v", flaggedCategories),
-			Err:        fmt.Errorf("content flagged for categories: %v", flaggedCategories),
+			Message:    conf.Actions.Message + " " + violationMsg,
+			Err:        errors.New(violationMsg),
 		}
 	}
-	evtCtx.SetExtras(ToxicityOpenaiData{Flagged: false, Response: body})
+
+	evtCtx.SetExtras(evt)
 	return &types.PluginResponse{StatusCode: 200, Message: "Content is safe"}, nil
 }

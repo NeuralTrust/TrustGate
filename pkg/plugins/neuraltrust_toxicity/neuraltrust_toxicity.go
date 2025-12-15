@@ -137,7 +137,13 @@ func (p *NeuralTrustToxicity) Execute(
 	}
 
 	evt := &ToxicityData{
-		Categories: make(map[string]float64),
+		Provider:     conf.Provider,
+		MappingField: conf.MappingField,
+		InputLength:  len(mappingContent.Input),
+		Blocked:      false,
+		Scores: &ToxicityScores{
+			Categories: make(map[string]float64),
+		},
 	}
 
 	if conf.ToxicityParamBag != nil {
@@ -156,9 +162,13 @@ func (p *NeuralTrustToxicity) Execute(
 			Input: []string{mappingContent.Input},
 		}
 
+		startTime := time.Now()
 		responses, err := firewallClient.DetectToxicity(ctx, content, credentials)
+		evt.DetectionLatencyMs = time.Since(startTime).Milliseconds()
+
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
+				evtCtx.SetExtras(evt)
 				return &types.PluginResponse{
 					StatusCode: 200,
 					Message:    "prompt content is safe",
@@ -192,26 +202,41 @@ func (p *NeuralTrustToxicity) Execute(
 		}
 
 		var maxScore float64
-		for _, score := range categories {
+		var maxCategory string
+		for category, score := range categories {
 			if score > maxScore {
 				maxScore = score
+				maxCategory = category
 			}
 		}
 
+		evt.Scores.Categories = categories
+		evt.Scores.MaxScore = maxScore
+		evt.Scores.MaxScoreCategory = maxCategory
+
 		if maxScore > conf.ToxicityParamBag.Threshold {
-			evt.Categories = categories
-			err := NewGuardrailViolation(fmt.Sprintf(
+			evt.Blocked = true
+			violationMsg := fmt.Sprintf(
 				"toxicity: score %.2f exceeded threshold %.2f",
 				maxScore,
 				conf.ToxicityParamBag.Threshold,
-			))
+			)
+			evt.Violation = &ViolationInfo{
+				Type:      "toxicity",
+				Category:  maxCategory,
+				Score:     maxScore,
+				Threshold: conf.ToxicityParamBag.Threshold,
+				Message:   violationMsg,
+			}
+
 			p.notifyGuardrailViolation(ctx, conf)
-			evtCtx.SetError(err)
+			violationErr := NewGuardrailViolation(violationMsg)
+			evtCtx.SetError(violationErr)
 			evtCtx.SetExtras(evt)
 			return nil, &types.PluginError{
 				StatusCode: http.StatusForbidden,
-				Message:    err.Error(),
-				Err:        err,
+				Message:    violationErr.Error(),
+				Err:        violationErr,
 			}
 		}
 	}

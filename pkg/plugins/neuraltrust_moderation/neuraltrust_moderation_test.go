@@ -362,7 +362,7 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationUnsafe(t *testing.T) {
 	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "content blocked: with similarity score 0.9")
+	assert.Contains(t, err.Error(), "content blocked: similarity score")
 	assert.Nil(t, pluginResp)
 }
 
