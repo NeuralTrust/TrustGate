@@ -6,7 +6,6 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
@@ -53,7 +52,6 @@ func (s *deleteUpstreamHandler) Handle(c *fiber.Ctx) error {
 
 	err := s.publisher.Publish(
 		c.Context(),
-		channel.GatewayEventsChannel,
 		event.DeleteUpstreamCacheEvent{
 			GatewayID:  gatewayID,
 			UpstreamID: upstreamID,

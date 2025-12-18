@@ -11,7 +11,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/gofiber/fiber/v2"
@@ -236,10 +235,13 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("failed to update cache after upstream update")
 	}
 
-	err = s.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateUpstreamCacheEvent{
-		UpstreamID: upstreamID,
-		GatewayID:  gatewayID,
-	})
+	err = s.publisher.Publish(
+		c.Context(),
+		event.UpdateUpstreamCacheEvent{
+			UpstreamID: upstreamID,
+			GatewayID:  gatewayID,
+		},
+	)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to publish update upstream event")
 	}

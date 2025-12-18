@@ -15,7 +15,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
@@ -454,7 +453,6 @@ func (s *updateRuleHandler) saveRulesToCache(
 func (s *updateRuleHandler) publishCacheInvalidation(ctx context.Context, gatewayID string) {
 	if err := s.invalidationPublisher.Publish(
 		ctx,
-		channel.GatewayEventsChannel,
 		event.DeleteGatewayCacheEvent{
 			GatewayID: gatewayID,
 		},

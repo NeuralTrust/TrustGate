@@ -9,17 +9,21 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 )
 
+type RedisPublisherInitializer func(cache cache.Cache, channel channel.Channel) EventPublisher
+
 type redisEventPublisher struct {
-	cache cache.Cache
+	cache   cache.Cache
+	channel channel.Channel
 }
 
-func NewRedisEventPublisher(cache cache.Cache) EventPublisher {
+func NewRedisEventPublisher(cache cache.Cache, channel channel.Channel) EventPublisher {
 	return &redisEventPublisher{
-		cache: cache,
+		cache:   cache,
+		channel: channel,
 	}
 }
 
-func (p *redisEventPublisher) Publish(ctx context.Context, channel channel.Channel, ev event.Event) error {
+func (p *redisEventPublisher) Publish(ctx context.Context, ev event.Event) error {
 	b, err := json.Marshal(ev)
 	if err != nil {
 		return err
@@ -32,5 +36,5 @@ func (p *redisEventPublisher) Publish(ctx context.Context, channel channel.Chann
 	if err != nil {
 		return err
 	}
-	return p.cache.Client().Publish(ctx, string(channel), data).Err()
+	return p.cache.Client().Publish(ctx, string(p.channel), data).Err()
 }

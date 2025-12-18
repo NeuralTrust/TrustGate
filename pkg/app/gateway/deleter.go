@@ -6,7 +6,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -46,7 +45,6 @@ func (d *deleter) Delete(ctx context.Context, id uuid.UUID) error {
 
 	if err := d.publisher.Publish(
 		ctx,
-		channel.GatewayEventsChannel,
 		event.DeleteGatewayCacheEvent{
 			GatewayID: id.String(),
 		},

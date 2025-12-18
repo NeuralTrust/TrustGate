@@ -33,6 +33,7 @@ redis:
   password: ""
   db: ${REDIS_DB}
   tls: ${REDIS_TLS}
+  events_channel: ${REDIS_EVENTS_CHANNEL}
 
 plugins:
   ignore_errors: true
