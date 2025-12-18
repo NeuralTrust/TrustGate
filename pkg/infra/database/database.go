@@ -9,15 +9,14 @@ import (
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormLogger "gorm.io/gorm/logger"
 )
 
-// DB represents the database connection
 type DB struct {
 	logger *logrus.Logger
 	*gorm.DB
 }
 
-// Config holds database configuration
 type Config struct {
 	Host     string
 	Port     int
@@ -27,7 +26,6 @@ type Config struct {
 	SSLMode  string
 }
 
-// NewDB creates a new database connection
 func NewDB(logger *logrus.Logger, cfg *Config) (*DB, error) {
 	logger.WithFields(logrus.Fields{
 		"host":    cfg.Host,
@@ -41,12 +39,13 @@ func NewDB(logger *logrus.Logger, cfg *Config) (*DB, error) {
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode)
 
-	gormDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	gormDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: gormLogger.Default.LogMode(gormLogger.Silent),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Configure connection pool
 	sqlDB, err := gormDB.DB()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sql DB: %w", err)

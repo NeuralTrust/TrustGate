@@ -13,7 +13,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream/mocks"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -39,7 +38,7 @@ func buildCacheFromConfig(cfg *config.Config) cache.Cache {
 
 type noopPublisher struct{}
 
-func (n *noopPublisher) Publish(ctx context.Context, ch channel.Channel, ev event.Event) error {
+func (n *noopPublisher) Publish(ctx context.Context, ev event.Event) error {
 	return nil
 }
 

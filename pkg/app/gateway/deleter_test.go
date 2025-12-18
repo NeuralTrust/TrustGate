@@ -7,7 +7,6 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	cacheMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -37,7 +36,6 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	repo.EXPECT().Delete(gatewayID).Return(nil)
 	publisher.EXPECT().Publish(
 		ctx,
-		channel.GatewayEventsChannel,
 		mock.MatchedBy(func(ev interface{}) bool {
 			return true
 		}),
@@ -96,7 +94,6 @@ func TestDeleter_Delete_PublishEventFails_StillReturnsSuccess(t *testing.T) {
 	repo.EXPECT().Delete(gatewayID).Return(nil)
 	publisher.EXPECT().Publish(
 		ctx,
-		channel.GatewayEventsChannel,
 		mock.Anything,
 	).Return(errors.New("redis connection failed"))
 

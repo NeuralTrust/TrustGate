@@ -4,7 +4,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -91,10 +90,13 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Cache the updated service
-	err = s.publisher.Publish(c.Context(), channel.GatewayEventsChannel, event.UpdateServiceCacheEvent{
-		ServiceID: entity.ID.String(),
-		GatewayID: entity.GatewayID.String(),
-	})
+	err = s.publisher.Publish(
+		c.Context(),
+		event.UpdateServiceCacheEvent{
+			ServiceID: entity.ID.String(),
+			GatewayID: entity.GatewayID.String(),
+		},
+	)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to publish update service cache event")
 	}

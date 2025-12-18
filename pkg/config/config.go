@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/spf13/viper"
 )
 
@@ -58,11 +59,12 @@ type DatabaseConfig struct {
 }
 
 type RedisConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	Password string `mapstructure:"password"`
-	DB       int    `mapstructure:"db"`
-	TLS      bool   `mapstructure:"tls"`
+	Host          string `mapstructure:"host"`
+	Port          int    `mapstructure:"port"`
+	Password      string `mapstructure:"password"`
+	DB            int    `mapstructure:"db"`
+	TLS           bool   `mapstructure:"tls"`
+	EventsChannel string `mapstructure:"events_channel"`
 }
 
 type PluginsConfig struct {
@@ -141,6 +143,9 @@ func loadConfigFile(configPath, fileName string, out interface{}) error {
 func setDefaultValues() {
 	if globalConfig.Database.SSLMode == "" {
 		globalConfig.Database.SSLMode = "disable"
+	}
+	if globalConfig.Redis.EventsChannel == "" || globalConfig.Redis.EventsChannel == "${REDIS_EVENTS_CHANNEL}" {
+		globalConfig.Redis.EventsChannel = string(channel.GatewayEventsChannel)
 	}
 }
 

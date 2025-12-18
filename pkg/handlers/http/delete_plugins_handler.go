@@ -8,7 +8,6 @@ import (
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
@@ -99,7 +98,6 @@ func (h *deletePluginsHandler) handleGatewayDelete(c *fiber.Ctx, req *request.De
 
 	if err := h.publisher.Publish(
 		c.Context(),
-		channel.GatewayEventsChannel,
 		event.UpdateGatewayCacheEvent{GatewayID: entity.ID.String()},
 	); err != nil {
 		h.logger.WithError(err).Error("failed to publish gateway cache update event")
@@ -136,7 +134,6 @@ func (h *deletePluginsHandler) handleRuleDelete(c *fiber.Ctx, req *request.Delet
 
 	if err := h.publisher.Publish(
 		c.Context(),
-		channel.GatewayEventsChannel,
 		event.DeleteRulesCacheEvent{GatewayID: rule.GatewayID.String()},
 	); err != nil {
 		h.logger.WithError(err).Error("failed to publish rules cache invalidation event")

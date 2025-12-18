@@ -17,6 +17,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/dependency_container"
+	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
@@ -64,14 +65,21 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
-	container, err := dependency_container.NewContainer(
-		cfg,
-		logger,
-		db,
-		event.GetEventsRegistry(),
-		initializeMemoryCache(),
-		loadbalancer.NewBaseFactory,
-	)
+	eventsChannel := channel.GatewayEventsChannel
+	if cfg.Redis.EventsChannel != "" {
+		eventsChannel = channel.Channel(cfg.Redis.EventsChannel)
+	}
+
+	container, err := dependency_container.NewContainer(dependency_container.ContainerDI{
+		Cfg:                           cfg,
+		Logger:                        logger,
+		DB:                            db,
+		EventsRegistry:                event.GetEventsRegistry(),
+		InitializeMemoryCache:         initializeMemoryCache(),
+		InitializeLoadBalancerFactory: loadbalancer.NewBaseFactory,
+		InitializeCachePublisher:      infraCache.NewRedisEventPublisher,
+		EventsChannel:                 eventsChannel,
+	})
 	if err != nil {
 		logger.Fatalf("Failed to initialize container: %v", err)
 	}
@@ -120,9 +128,9 @@ func main() {
 			logger.WithError(err).Error("failed to create redis indexes")
 		}
 		go func() {
-			fmt.Println("starting listening redis events...")
+			logger.WithField("channel", eventsChannel).Info("starting listening redis events...")
 			container.MetricsWorker.StartWorkers(5)
-			container.RedisListener.Listen(ctx, channel.GatewayEventsChannel)
+			container.RedisListener.Listen(ctx, eventsChannel)
 		}()
 	}
 

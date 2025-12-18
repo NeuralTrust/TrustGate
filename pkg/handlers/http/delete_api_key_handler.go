@@ -7,7 +7,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -71,9 +70,10 @@ func (s *deleteAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete API key"})
 	}
 
-	if err := s.publisher.Publish(ctx, channel.GatewayEventsChannel, event.DeleteKeyCacheEvent{
+	if err := s.publisher.Publish(ctx, event.DeleteKeyCacheEvent{
 		ApiKey:   key.Key,
 		ApiKeyID: keyUUID.String(),
+		Subject:  key.Subject.String(),
 	}); err != nil {
 		s.logger.WithError(err).WithField("key_id", keyID).Warn("failed to publish apiKey cache invalidation")
 	}
