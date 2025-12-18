@@ -70,16 +70,16 @@ func main() {
 		eventsChannel = channel.Channel(cfg.Redis.EventsChannel)
 	}
 
-	container, err := dependency_container.NewContainer(
-		cfg,
-		logger,
-		db,
-		event.GetEventsRegistry(),
-		initializeMemoryCache(),
-		loadbalancer.NewBaseFactory,
-		infraCache.NewRedisEventPublisher,
-		eventsChannel,
-	)
+	container, err := dependency_container.NewContainer(dependency_container.ContainerDI{
+		Cfg:                           cfg,
+		Logger:                        logger,
+		DB:                            db,
+		EventsRegistry:                event.GetEventsRegistry(),
+		InitializeMemoryCache:         initializeMemoryCache(),
+		InitializeLoadBalancerFactory: loadbalancer.NewBaseFactory,
+		InitializeCachePublisher:      infraCache.NewRedisEventPublisher,
+		EventsChannel:                 eventsChannel,
+	})
 	if err != nil {
 		logger.Fatalf("Failed to initialize container: %v", err)
 	}
