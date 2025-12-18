@@ -49,7 +49,7 @@ func (f *dataFinder) Find(ctx context.Context, gatewayID uuid.UUID) (*types.Gate
 	if cached, ok := f.memoryCache.Get(gatewayID.String()); ok {
 		data, err := f.getGatewayDataFromCache(cached)
 		if err != nil {
-			f.logger.WithError(err).Error("failed to get gateway data from cache")
+			f.logger.WithError(err).Warn("failed to get gateway data from cache")
 		} else {
 			return data, nil
 		}
