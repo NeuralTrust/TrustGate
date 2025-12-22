@@ -102,3 +102,5 @@ func TestDeleter_Delete_PublishEventFails_StillReturnsSuccess(t *testing.T) {
 
 	assert.NoError(t, err)
 }
+
+

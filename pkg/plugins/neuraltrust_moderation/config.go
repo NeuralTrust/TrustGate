@@ -34,8 +34,7 @@ type AzureCredentials struct {
 }
 
 type EmbeddingCredentials struct {
-	HeaderValue string `mapstructure:"header_value,omitempty"`
-	HeaderName  string `mapstructure:"header_name,omitempty"`
+	ApiKey string `mapstructure:"api_key,omitempty"`
 }
 
 type KeyRegParamBag struct {

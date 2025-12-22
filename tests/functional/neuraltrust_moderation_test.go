@@ -35,8 +35,7 @@ func TestNeuralTrustModerationPlugin(t *testing.T) {
 							"provider": "openai",
 							"model":    "text-embedding-ada-002",
 							"credentials": map[string]interface{}{
-								"header_name":  "Authorization",
-								"header_value": fmt.Sprintf("Bearer %s", os.Getenv("OPENAI_API_KEY")),
+								"api_key": os.Getenv("OPENAI_API_KEY"),
 							},
 						},
 					},

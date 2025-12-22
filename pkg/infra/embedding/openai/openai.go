@@ -13,12 +13,28 @@ import (
 )
 
 const (
-	vectorDimension = 1536
+	vectorDimension       = 1536
+	openAIEmbeddingsURL   = "https://api.openai.com/v1/embeddings"
+	defaultRequestTimeout = 30 * time.Second
 )
 
 type embeddingService struct {
 	client *fasthttp.Client
 	logger *logrus.Logger
+}
+
+type embeddingRequest struct {
+	Model string `json:"model"`
+	Input string `json:"input"`
+}
+
+type embeddingData struct {
+	Embedding []float64 `json:"embedding"`
+	Index     int       `json:"index"`
+}
+
+type openAIEmbeddingResponse struct {
+	Data []embeddingData `json:"data"`
 }
 
 func NewOpenAIEmbeddingService(client *fasthttp.Client, logger *logrus.Logger) embedding.Creator {
@@ -33,30 +49,22 @@ func (s *embeddingService) Generate(
 	text, model string,
 	upstreamEmbedding *embedding.Config,
 ) (*embedding.Embedding, error) {
-	var emptyData *embedding.Embedding
-
-	if upstreamEmbedding.Credentials.HeaderValue == "" {
+	if upstreamEmbedding.Credentials.ApiKey == "" {
 		s.logger.Warn("embeddings API key not provided, using default embedding")
-		val := make([]float64, vectorDimension)
-		for i := 0; i < vectorDimension; i++ {
-			val[i] = 1.0
-		}
-		return &embedding.Embedding{
-			Value:     val,
-			CreatedAt: time.Now(),
-		}, nil
+		return s.createDefaultEmbedding(), nil
 	}
 
-	url := "https://api.openai.com/v1/embeddings"
-
-	requestPayload := map[string]interface{}{
-		"model": model,
-		"input": text,
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	pBytes, err := json.Marshal(requestPayload)
+
+	pBytes, err := json.Marshal(embeddingRequest{
+		Model: model,
+		Input: text,
+	})
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to marshal embedding request payload")
-		return emptyData, err
+		s.logger.WithError(err).Error("failed to marshal embedding request payload")
+		return nil, err
 	}
 
 	req := fasthttp.AcquireRequest()
@@ -65,87 +73,86 @@ func (s *embeddingService) Generate(
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
 
-	req.SetRequestURI(url)
-	req.Header.SetMethod("POST")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", upstreamEmbedding.Credentials.HeaderValue)
+	req.SetRequestURI(openAIEmbeddingsURL)
+	req.Header.SetMethod(fasthttp.MethodPost)
+	req.Header.SetContentType("application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", upstreamEmbedding.Credentials.ApiKey))
 	req.SetBody(pBytes)
 
-	err = s.client.DoTimeout(req, resp, 30*time.Second)
-	if err != nil {
-		s.logger.WithError(err).Error("Error performing HTTP request for embeddings")
-		return emptyData, err
+	if err := s.doRequestWithContext(ctx, req, resp); err != nil {
+		return nil, err
 	}
 
-	statusCode := resp.StatusCode()
-	if statusCode != fasthttp.StatusOK {
-		respBody := resp.Body()
-		s.logger.WithField("response", string(respBody)).Error("Non-OK response from embeddings API")
-		return emptyData, fmt.Errorf("%w: %d", embedding.ErrProviderNonOKResponse, statusCode)
+	if resp.StatusCode() != fasthttp.StatusOK {
+		s.logger.WithField("response", string(resp.Body())).Error("non-OK response from embeddings API")
+		return nil, fmt.Errorf("%w: %d", embedding.ErrProviderNonOKResponse, resp.StatusCode())
 	}
 
-	// Define structure for the OpenAI embeddings response
-	type OpenAIEmbeddingResponse struct {
-		Data []struct {
-			Embedding []float64 `json:"embedding"`
-			Index     int       `json:"index"`
-		} `json:"data"`
-	}
-
-	var embResp OpenAIEmbeddingResponse
+	var embResp openAIEmbeddingResponse
 	if err := json.Unmarshal(resp.Body(), &embResp); err != nil {
-		s.logger.WithError(err).Error("Failed to decode embeddings response")
-		return emptyData, err
+		s.logger.WithError(err).Error("failed to decode embeddings response")
+		return nil, err
 	}
 
 	if len(embResp.Data) == 0 || len(embResp.Data[0].Embedding) == 0 {
-		s.logger.Error("Empty embeddings received from API")
-		return emptyData, fmt.Errorf("empty embeddings from API")
+		s.logger.Error("empty embeddings received from API")
+		return nil, fmt.Errorf("empty embeddings from API")
 	}
 
-	// Get the embedding from the response
 	rawEmbedding := embResp.Data[0].Embedding
-	s.logger.Debugf("Generated embedding sample (first 5 values): %v", rawEmbedding[:min(5, len(rawEmbedding))])
-
-	// Normalize the embedding to unit length
-	var sumSquares = 0.0
-	for _, val := range rawEmbedding {
-		sumSquares += val * val
-	}
-	norm := math.Sqrt(sumSquares)
-
-	s.logger.WithFields(logrus.Fields{
-		"pre_norm":        norm,
-		"pre_norm_sample": rawEmbedding[:min(5, len(rawEmbedding))],
-	}).Debug("Pre-normalization vector stats")
-
-	if norm > 0 {
-		for i := range rawEmbedding {
-			rawEmbedding[i] /= norm
-		}
-		// Verify normalization
-		sumSquares = 0.0
-		for _, val := range rawEmbedding {
-			sumSquares += val * val
-		}
-		postNorm := math.Sqrt(sumSquares)
-
-		s.logger.WithFields(logrus.Fields{
-			"post_norm":        postNorm,
-			"post_norm_sample": rawEmbedding[:min(5, len(rawEmbedding))],
-			"is_unit_vector":   math.Abs(postNorm-1.0) < 1e-6,
-		}).Debug("post-normalization vector stats")
-	} else {
-		s.logger.Warn("Zero norm encountered during embedding normalization")
-	}
-	s.logger.Debugf("Normalized embedding sample (first 5 values): %v", rawEmbedding[:min(5, len(rawEmbedding))])
 
 	if len(rawEmbedding) != vectorDimension {
-		s.logger.Warnf("Generated embedding size %d does not match expected vector dimension %d", len(rawEmbedding), vectorDimension)
+		s.logger.Warnf("embedding size %d does not match expected dimension %d", len(rawEmbedding), vectorDimension)
 	}
+
+	s.normalizeVector(rawEmbedding)
 
 	return &embedding.Embedding{
 		Value:     rawEmbedding,
 		CreatedAt: time.Now(),
 	}, nil
+}
+
+func (s *embeddingService) doRequestWithContext(ctx context.Context, req *fasthttp.Request, resp *fasthttp.Response) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.client.DoTimeout(req, resp, defaultRequestTimeout)
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-errCh:
+		if err != nil {
+			s.logger.WithError(err).Error("error performing HTTP request for embeddings")
+		}
+		return err
+	}
+}
+
+func (s *embeddingService) createDefaultEmbedding() *embedding.Embedding {
+	val := make([]float64, vectorDimension)
+	for i := range val {
+		val[i] = 1.0
+	}
+	return &embedding.Embedding{
+		Value:     val,
+		CreatedAt: time.Now(),
+	}
+}
+
+func (s *embeddingService) normalizeVector(v []float64) {
+	var sumSquares float64
+	for _, val := range v {
+		sumSquares += val * val
+	}
+
+	norm := math.Sqrt(sumSquares)
+	if norm == 0 {
+		return
+	}
+
+	for i := range v {
+		v[i] /= norm
+	}
 }
