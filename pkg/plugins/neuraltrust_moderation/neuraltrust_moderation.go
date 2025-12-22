@@ -180,8 +180,8 @@ func (p *NeuralTrustModerationPlugin) validateCredentials(provider string, crede
 }
 
 func (p *NeuralTrustModerationPlugin) validateEmbeddingCredentials(credentials EmbeddingCredentials) error {
-	if credentials.HeaderValue == "" || credentials.HeaderName == "" {
-		return fmt.Errorf("credentials must be specified")
+	if credentials.ApiKey == "" {
+		return fmt.Errorf("embedding api_key must be specified")
 	}
 	return nil
 }
@@ -386,8 +386,7 @@ func (p *NeuralTrustModerationPlugin) createEmbeddings(
 		Provider: cfg.EmbeddingsConfig.Provider,
 		Model:    cfg.EmbeddingsConfig.Model,
 		Credentials: domain.CredentialsJSON{
-			HeaderValue: cfg.EmbeddingsConfig.Credentials.HeaderValue,
-			HeaderName:  cfg.EmbeddingsConfig.Credentials.HeaderName,
+			ApiKey: cfg.EmbeddingsConfig.Credentials.ApiKey,
 		},
 	}
 	wg := &sync.WaitGroup{}
@@ -585,8 +584,7 @@ func (p *NeuralTrustModerationPlugin) callEmbeddingModeration(
 		Provider: cfg.EmbeddingsConfig.Provider,
 		Model:    cfg.EmbeddingsConfig.Model,
 		Credentials: domain.CredentialsJSON{
-			HeaderValue: cfg.EmbeddingsConfig.Credentials.HeaderValue,
-			HeaderName:  cfg.EmbeddingsConfig.Credentials.HeaderName,
+			ApiKey: cfg.EmbeddingsConfig.Credentials.ApiKey,
 		},
 	}
 	emb, err := creator.Generate(ctx, string(inputBody), cfg.EmbeddingsConfig.Model, config)

@@ -69,7 +69,7 @@ func (s *testEmbeddingService) Generate(
 ) (*embedding.Embedding, error) {
 	var emptyData *embedding.Embedding = nil
 
-	if upstreamEmbedding.Credentials.HeaderValue == "" {
+	if upstreamEmbedding.Credentials.ApiKey == "" {
 		s.logger.Warn("embeddings API key not provided, using default embedding")
 		val := make([]float64, vectorDimension)
 		for i := 0; i < vectorDimension; i++ {
@@ -81,7 +81,9 @@ func (s *testEmbeddingService) Generate(
 		}, nil
 	}
 
-	url := "https://api.openai.com/v1/embeddings"
+	if err := ctx.Err(); err != nil {
+		return emptyData, err
+	}
 
 	requestPayload := map[string]interface{}{
 		"model": model,
@@ -99,13 +101,13 @@ func (s *testEmbeddingService) Generate(
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseResponse(resp)
 
-	req.SetRequestURI(url)
+	req.SetRequestURI(openAIEmbeddingsURL)
 	req.Header.SetMethod("POST")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", upstreamEmbedding.Credentials.HeaderValue)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", upstreamEmbedding.Credentials.ApiKey))
 	req.SetBody(pBytes)
 
-	err = s.mockClient.DoTimeout(req, resp, 30*time.Second)
+	err = s.mockClient.DoTimeout(req, resp, defaultRequestTimeout)
 	if err != nil {
 		s.logger.WithError(err).Error("Error performing HTTP request for embeddings")
 		return emptyData, err
@@ -202,8 +204,7 @@ func TestGenerate_DefaultEmbedding(t *testing.T) {
 		Provider: "openai",
 		Model:    "text-embedding-ada-002",
 		Credentials: domain.CredentialsJSON{
-			HeaderName:  "Authorization",
-			HeaderValue: "", // Empty API key
+			ApiKey: "", // Empty API key
 		},
 	}
 
@@ -244,8 +245,7 @@ func TestGenerate_SuccessfulRequest(t *testing.T) {
 		Provider: "openai",
 		Model:    "text-embedding-ada-002",
 		Credentials: domain.CredentialsJSON{
-			HeaderName:  "Authorization",
-			HeaderValue: "Bearer test-api-key",
+			ApiKey: "test-api-key",
 		},
 	}
 
@@ -277,8 +277,7 @@ func TestGenerate_HTTPError(t *testing.T) {
 		Provider: "openai",
 		Model:    "text-embedding-ada-002",
 		Credentials: domain.CredentialsJSON{
-			HeaderName:  "Authorization",
-			HeaderValue: "Bearer test-api-key",
+			ApiKey: "test-api-key",
 		},
 	}
 
@@ -303,8 +302,7 @@ func TestGenerate_NonOKResponse(t *testing.T) {
 		Provider: "openai",
 		Model:    "text-embedding-ada-002",
 		Credentials: domain.CredentialsJSON{
-			HeaderName:  "Authorization",
-			HeaderValue: "Bearer test-api-key",
+			ApiKey: "test-api-key",
 		},
 	}
 
@@ -329,8 +327,7 @@ func TestGenerate_InvalidResponseFormat(t *testing.T) {
 		Provider: "openai",
 		Model:    "text-embedding-ada-002",
 		Credentials: domain.CredentialsJSON{
-			HeaderName:  "Authorization",
-			HeaderValue: "Bearer test-api-key",
+			ApiKey: "test-api-key",
 		},
 	}
 
@@ -360,8 +357,7 @@ func TestGenerate_EmptyEmbeddings(t *testing.T) {
 		Provider: "openai",
 		Model:    "text-embedding-ada-002",
 		Credentials: domain.CredentialsJSON{
-			HeaderName:  "Authorization",
-			HeaderValue: "Bearer test-api-key",
+			ApiKey: "test-api-key",
 		},
 	}
 
@@ -398,8 +394,7 @@ func TestGenerate_ZeroNorm(t *testing.T) {
 		Provider: "openai",
 		Model:    "text-embedding-ada-002",
 		Credentials: domain.CredentialsJSON{
-			HeaderName:  "Authorization",
-			HeaderValue: "Bearer test-api-key",
+			ApiKey: "test-api-key",
 		},
 	}
 

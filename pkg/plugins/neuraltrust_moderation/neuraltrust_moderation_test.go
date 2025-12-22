@@ -122,8 +122,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 						"provider": "openai",
 						"model":    "text-embedding-ada-002",
 						"credentials": map[string]interface{}{
-							"header_name":  "Authorization",
-							"header_value": "Bearer test-token",
+							"api_key": "test-api-key",
 						},
 					},
 				},
@@ -276,8 +275,7 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationSafe(t *testing.T) {
 					"provider": "openai",
 					"model":    "text-embedding-ada-002",
 					"credentials": map[string]interface{}{
-						"header_name":  "Authorization",
-						"header_value": "Bearer test-token",
+						"api_key": "test-api-key",
 					},
 				},
 			},
@@ -345,8 +343,7 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationUnsafe(t *testing.T) {
 					"provider": "openai",
 					"model":    "text-embedding-ada-002",
 					"credentials": map[string]interface{}{
-						"header_name":  "Authorization",
-						"header_value": "Bearer test-token",
+						"api_key": "test-api-key",
 					},
 				},
 			},
@@ -395,8 +392,7 @@ func TestNeuralTrustModerationPlugin_Execute_WithMappingFieldArray(t *testing.T)
 					"provider": "openai",
 					"model":    "text-embedding-ada-002",
 					"credentials": map[string]interface{}{
-						"header_name":  "Authorization",
-						"header_value": "Bearer test-token",
+						"api_key": "test-api-key",
 					},
 				},
 			},
@@ -457,8 +453,7 @@ func TestNeuralTrustModerationPlugin_Execute_EmbeddingError(t *testing.T) {
 					"provider": "openai",
 					"model":    "text-embedding-ada-002",
 					"credentials": map[string]interface{}{
-						"header_name":  "Authorization",
-						"header_value": "Bearer test-token",
+						"api_key": "test-api-key",
 					},
 				},
 			},
@@ -739,8 +734,7 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModeration(t *testing.T) {
 				"model":    "gpt-4",
 				"enabled":  true,
 				"credentials": map[string]interface{}{
-					"header_name":  "Authorization",
-					"header_value": "Bearer test-token",
+					"api_key": "test-api-key",
 				},
 				"instructions": []string{"Block if it mentions politics"},
 			},
@@ -808,8 +802,7 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModerationSafe(t *testing.T) {
 				"model":    "gpt-4",
 				"enabled":  true,
 				"credentials": map[string]interface{}{
-					"header_name":  "Authorization",
-					"header_value": "Bearer test-token",
+					"api_key": "test-api-key",
 				},
 				"instructions": []string{"Block if it mentions politics"},
 			},
