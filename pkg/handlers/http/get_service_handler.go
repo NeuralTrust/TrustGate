@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
@@ -13,10 +13,10 @@ import (
 type getServiceHandler struct {
 	logger *logrus.Logger
 	repo   service.Repository
-	cache  cache.Cache
+	cache  cache.Client
 }
 
-func NewGetServiceHandler(logger *logrus.Logger, repo service.Repository, cache cache.Cache) Handler {
+func NewGetServiceHandler(logger *logrus.Logger, repo service.Repository, cache cache.Client) Handler {
 	return &getServiceHandler{
 		logger: logger,
 		repo:   repo,

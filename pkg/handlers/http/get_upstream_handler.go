@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -15,14 +15,14 @@ import (
 type getUpstreamHandler struct {
 	logger         *logrus.Logger
 	repo           domain.Repository
-	cache          cache.Cache
+	cache          cache.Client
 	upstreamFinder upstream.Finder
 }
 
 func NewGetUpstreamHandler(
 	logger *logrus.Logger,
 	repo domain.Repository,
-	cache cache.Cache,
+	cache cache.Client,
 	upstreamFinder upstream.Finder,
 ) Handler {
 	return &getUpstreamHandler{

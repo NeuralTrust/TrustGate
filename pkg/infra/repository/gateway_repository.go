@@ -11,7 +11,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )

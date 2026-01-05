@@ -16,12 +16,12 @@ type ServiceRequest struct {
 
 	UpstreamID string `json:"upstream_id,omitempty"`
 
-	Host        string            `json:"host,omitempty"`
-	Port        int               `json:"port,omitempty"`
-	Protocol    string            `json:"protocol,omitempty"`
-	Path        string            `json:"path,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty"`
-	Credentials types.Credentials `json:"credentials,omitempty"`
+	Host        string               `json:"host,omitempty"`
+	Port        int                  `json:"port,omitempty"`
+	Protocol    string               `json:"protocol,omitempty"`
+	Path        string               `json:"path,omitempty"`
+	Headers     map[string]string    `json:"headers,omitempty"`
+	Credentials types.CredentialsDTO `json:"credentials,omitempty"`
 
 	Retries   int       `json:"retries,omitempty"`
 	CreatedAt time.Time `json:"CreatedAt"`

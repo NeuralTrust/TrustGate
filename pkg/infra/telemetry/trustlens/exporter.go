@@ -104,7 +104,7 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 		return nil
 	}
 
-	if rule, ok := ctx.Value(string(common.MatchedRuleContextKey)).(*types.ForwardingRule); ok {
+	if rule, ok := ctx.Value(string(common.MatchedRuleContextKey)).(*types.ForwardingRuleDTO); ok {
 		if rule.TrustLens == nil {
 			return nil
 		}

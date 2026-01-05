@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -23,10 +23,10 @@ var (
 type forwardedRuleRepository struct {
 	db     *gorm.DB
 	logger *logrus.Logger
-	cache  cache.Cache
+	cache  cache.Client
 }
 
-func NewForwardedRuleRepository(db *gorm.DB, logger *logrus.Logger, cache cache.Cache) forwarding_rule.Repository {
+func NewForwardedRuleRepository(db *gorm.DB, logger *logrus.Logger, cache cache.Client) forwarding_rule.Repository {
 	return &forwardedRuleRepository{
 		db:     db,
 		logger: logger,
@@ -140,7 +140,7 @@ func (r *forwardedRuleRepository) UpdateRulesCache(
 	gatewayID uuid.UUID,
 	rules []forwarding_rule.ForwardingRule,
 ) error {
-	apiRules := make([]types.ForwardingRule, len(rules))
+	apiRules := make([]types.ForwardingRuleDTO, len(rules))
 	for i, rule := range rules {
 		if rule.GatewayID == uuid.Nil {
 			rule.GatewayID = gatewayID
@@ -153,16 +153,16 @@ func (r *forwardedRuleRepository) UpdateRulesCache(
 			rule.UpdatedAt = time.Now()
 		}
 
-		var trustLensConfig *types.TrustLensConfig
+		var trustLensConfig *types.TrustLensConfigDTO
 		if rule.TrustLens != nil {
-			trustLensConfig = &types.TrustLensConfig{
+			trustLensConfig = &types.TrustLensConfigDTO{
 				AppID:  rule.TrustLens.AppID,
 				TeamID: rule.TrustLens.TeamID,
 				Type:   rule.TrustLens.Type,
 			}
 		}
 
-		apiRules[i] = types.ForwardingRule{
+		apiRules[i] = types.ForwardingRuleDTO{
 			ID:            rule.ID.String(),
 			GatewayID:     rule.GatewayID.String(),
 			Path:          rule.Path,

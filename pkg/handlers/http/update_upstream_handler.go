@@ -4,13 +4,12 @@ import (
 	"fmt"
 
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/gofiber/fiber/v2"
@@ -21,17 +20,17 @@ import (
 type updateUpstreamHandler struct {
 	logger                      *logrus.Logger
 	repo                        upstream.Repository
-	publisher                   infraCache.EventPublisher
+	publisher                   cache.EventPublisher
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
-	cache                       cache.Cache
+	cache                       cache.Client
 	cfg                         *config.Config
 }
 
 func NewUpdateUpstreamHandler(
 	logger *logrus.Logger,
 	repo upstream.Repository,
-	publisher infraCache.EventPublisher,
-	cache cache.Cache,
+	publisher cache.EventPublisher,
+	cache cache.Client,
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator,
 	cfg *config.Config,
 ) Handler {

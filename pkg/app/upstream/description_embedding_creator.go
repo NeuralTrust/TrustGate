@@ -17,13 +17,13 @@ type DescriptionEmbeddingCreator interface {
 
 type descriptionEmbeddingCreator struct {
 	embeddingServiceLocator factory.EmbeddingServiceLocator
-	embeddingRepository     embedding.EmbeddingRepository
+	embeddingRepository     embedding.Repository
 	logger                  *logrus.Logger
 }
 
 func NewDescriptionEmbeddingCreator(
 	embeddingServiceLocator factory.EmbeddingServiceLocator,
-	embeddingRepository embedding.EmbeddingRepository,
+	embeddingRepository embedding.Repository,
 	logger *logrus.Logger,
 ) DescriptionEmbeddingCreator {
 	return &descriptionEmbeddingCreator{

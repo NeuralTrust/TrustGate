@@ -12,15 +12,16 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
+	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	infraWebsocket "github.com/NeuralTrust/TrustGate/pkg/infra/websocket"
-	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
@@ -34,7 +35,7 @@ type forwardedWebsocketHandler struct {
 	upstreamFinder        upstream.Finder
 	serviceFinder         service.Finder
 	lbFactory             loadbalancer.Factory
-	cache                 cache.Cache
+	cache                 cache.Client
 	connections           map[string]*gorilla.Conn
 	connectionMutex       sync.RWMutex
 	clientChannels        map[string]map[string]chan *infraWebsocket.ResponseMessage
@@ -58,7 +59,7 @@ func NewWebsocketHandler(
 	upstreamFinder upstream.Finder,
 	serviceFinder service.Finder,
 	lbFactory loadbalancer.Factory,
-	cache cache.Cache,
+	cache cache.Client,
 	pluginManager plugins.Manager,
 ) Handler {
 	return &forwardedWebsocketHandler{
@@ -99,7 +100,7 @@ func (h *forwardedWebsocketHandler) Handle(c *websocket.Conn) {
 		return
 	}
 
-	matchingRule, ok := c.Locals(string(common.MatchedRuleContextKey)).(*types.ForwardingRule)
+	matchingRule, ok := c.Locals(string(common.MatchedRuleContextKey)).(*types.ForwardingRuleDTO)
 	if !ok {
 		h.logger.Error("failed to get matched rule from context")
 		return
@@ -170,7 +171,7 @@ func (h *forwardedWebsocketHandler) Handle(c *websocket.Conn) {
 func (h *forwardedWebsocketHandler) forwardWebsocketRequest(
 	clientConn *websocket.Conn,
 	reqCtx *types.RequestContext,
-	rule *types.ForwardingRule,
+	rule *types.ForwardingRuleDTO,
 	pongWait time.Duration,
 	gatewayData *types.GatewayData,
 	collector *metrics.Collector,
@@ -210,7 +211,7 @@ func (h *forwardedWebsocketHandler) forwardWebsocketRequest(
 	}
 }
 
-func (h *forwardedWebsocketHandler) configureRulePlugins(gatewayID string, rule *types.ForwardingRule) error {
+func (h *forwardedWebsocketHandler) configureRulePlugins(gatewayID string, rule *types.ForwardingRuleDTO) error {
 	if rule != nil && len(rule.PluginChain) > 0 {
 		if err := h.pluginManager.SetPluginChain(gatewayID, rule.PluginChain); err != nil {
 			return fmt.Errorf("failed to configure rule plugins: %w", err)
@@ -223,7 +224,7 @@ func (h *forwardedWebsocketHandler) handleDirectCommunication(
 	clientConn *websocket.Conn,
 	gatewayData *types.GatewayData,
 	reqCtx *types.RequestContext,
-	target *types.UpstreamTarget,
+	target *types.UpstreamTargetDTO,
 	lb *loadbalancer.LoadBalancer,
 	pongWait time.Duration,
 	collector *metrics.Collector,
@@ -286,13 +287,13 @@ func (h *forwardedWebsocketHandler) handleDirectCommunication(
 			respCtx.Body = message
 			if _, err := h.pluginManager.ExecuteStage(
 				context.Background(),
-				types.PostResponse,
+				pluginTypes.PostResponse,
 				gatewayData.Gateway.ID,
 				reqCtx,
 				respCtx,
 				collector,
 			); err != nil {
-				var pluginErr *types.PluginError
+				var pluginErr *pluginTypes.PluginError
 				if errors.As(err, &pluginErr) {
 					errorPayload := fiber.Map{
 						"error":       pluginErr.Message,
@@ -364,13 +365,13 @@ func (h *forwardedWebsocketHandler) handleDirectCommunication(
 			// Execute PreRequest plugins
 			if _, err := h.pluginManager.ExecuteStage(
 				context.Background(),
-				types.PreRequest,
+				pluginTypes.PreRequest,
 				gatewayData.Gateway.ID,
 				reqCtx,
 				respCtx,
 				collector,
 			); err != nil {
-				var pluginErr *types.PluginError
+				var pluginErr *pluginTypes.PluginError
 				if errors.As(err, &pluginErr) {
 					// Handle plugin error
 					errorPayload := fiber.Map{
@@ -420,7 +421,7 @@ func (h *forwardedWebsocketHandler) handleMultiplexing(
 	clientConn *websocket.Conn,
 	gatewayData *types.GatewayData,
 	reqCtx *types.RequestContext,
-	target *types.UpstreamTarget,
+	target *types.UpstreamTargetDTO,
 	lb *loadbalancer.LoadBalancer,
 	collector *metrics.Collector,
 ) error {
@@ -682,7 +683,7 @@ func (h *forwardedWebsocketHandler) getOrCreateLoadBalancer(upstream *domainUpst
 
 func (h *forwardedWebsocketHandler) connectToTarget(
 	reqCtx *types.RequestContext,
-	target *types.UpstreamTarget,
+	target *types.UpstreamTargetDTO,
 ) (*gorilla.Conn, error) {
 	protocol := target.Protocol
 	if protocol == "https" {
@@ -742,7 +743,7 @@ func (h *forwardedWebsocketHandler) readFromTarget(
 	targetConn *gorilla.Conn,
 	targetKey string,
 	metricsCollector *metrics.Collector,
-	target *types.UpstreamTarget,
+	target *types.UpstreamTargetDTO,
 	lb *loadbalancer.LoadBalancer,
 ) {
 	defer func() {
@@ -812,13 +813,13 @@ func (h *forwardedWebsocketHandler) readFromTarget(
 
 		if _, err := h.pluginManager.ExecuteStage(
 			context.Background(),
-			types.PostResponse,
+			pluginTypes.PostResponse,
 			gatewayData.Gateway.ID,
 			reqCtx,
 			respCtx,
 			metricsCollector,
 		); err != nil {
-			var pluginErr *types.PluginError
+			var pluginErr *pluginTypes.PluginError
 			if errors.As(err, &pluginErr) {
 				errorPayload := fiber.Map{
 					"error":       pluginErr.Message,
@@ -1024,13 +1025,13 @@ func (h *forwardedWebsocketHandler) forwardToTarget(
 
 		if _, err := h.pluginManager.ExecuteStage(
 			context.Background(),
-			types.PreRequest,
+			pluginTypes.PreRequest,
 			gatewayData.Gateway.ID,
 			reqCtx,
 			respCtx,
 			collector,
 		); err != nil {
-			var pluginErr *types.PluginError
+			var pluginErr *pluginTypes.PluginError
 			if errors.As(err, &pluginErr) {
 				errorPayload := fiber.Map{
 					"error":       pluginErr.Message,

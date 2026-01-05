@@ -3,9 +3,9 @@ package http
 import (
 	"errors"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -17,7 +17,7 @@ type updateAPIKeyPoliciesRequest struct {
 
 type updateAPIKeyPoliciesHandler struct {
 	logger          *logrus.Logger
-	cache           cache.Cache
+	cache           cache.Client
 	apiKeyRepo      domain.Repository
 	ruleRepo        ruledomain.Repository
 	policyValidator domain.PolicyValidator
@@ -25,7 +25,7 @@ type updateAPIKeyPoliciesHandler struct {
 
 func NewUpdateAPIKeyPoliciesHandler(
 	logger *logrus.Logger,
-	cache cache.Cache,
+	cache cache.Client,
 	apiKeyRepo domain.Repository,
 	ruleRepo ruledomain.Repository,
 	policyValidator domain.PolicyValidator,

@@ -5,12 +5,11 @@ import (
 	"time"
 
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -19,7 +18,7 @@ import (
 
 type createUpstreamHandler struct {
 	logger                      *logrus.Logger
-	cache                       cache.Cache
+	cache                       cache.Client
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
 	repo                        upstream.Repository
 	gatewayRepo                 gateway.Repository
@@ -30,7 +29,7 @@ func NewCreateUpstreamHandler(
 	logger *logrus.Logger,
 	repo upstream.Repository,
 	gatewayRepo gateway.Repository,
-	cache cache.Cache,
+	cache cache.Client,
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator,
 	cfg *config.Config,
 ) Handler {
@@ -157,7 +156,7 @@ func (s *createUpstreamHandler) createUpstreamEntity(
 			Description:     target.Description,
 			Stream:          target.Stream,
 			InsecureSSL:     target.InsecureSSL,
-			Credentials:     domain.CredentialsJSON(target.Credentials),
+			Credentials:     target.Credentials,
 		}
 		if target.Auth != nil && target.Auth.Type == request.AuthTypeOAuth2 && target.Auth.OAuth != nil {
 			t.Auth = &upstream.TargetAuth{
@@ -210,7 +209,7 @@ func (s *createUpstreamHandler) createUpstreamEntity(
 		embedding = &upstream.EmbeddingConfig{
 			Provider:    req.Embedding.Provider,
 			Model:       req.Embedding.Model,
-			Credentials: domain.CredentialsJSON(req.Embedding.Credentials),
+			Credentials: req.Embedding.Credentials,
 		}
 	}
 
@@ -253,5 +252,3 @@ func (s *createUpstreamHandler) createUpstreamEntity(
 
 	return &entity, nil
 }
-
-// upstream-level Auth removed; per-target auth is supported instead

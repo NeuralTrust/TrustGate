@@ -4,9 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -14,7 +13,7 @@ import (
 
 type UpdateUpstreamCacheEventSubscriber struct {
 	logger              *logrus.Logger
-	cache               cache.Cache
+	cache               cache.Client
 	repository          upstream.Repository
 	upstreamMemoryCache *cache.TTLMap
 	lbMemoryCache       *cache.TTLMap
@@ -22,9 +21,9 @@ type UpdateUpstreamCacheEventSubscriber struct {
 
 func NewUpdateUpstreamCacheEventSubscriber(
 	logger *logrus.Logger,
-	c cache.Cache,
+	c cache.Client,
 	repository upstream.Repository,
-) infraCache.EventSubscriber[event.UpdateUpstreamCacheEvent] {
+) cache.EventSubscriber[event.UpdateUpstreamCacheEvent] {
 	return &UpdateUpstreamCacheEventSubscriber{
 		logger:              logger,
 		cache:               c,

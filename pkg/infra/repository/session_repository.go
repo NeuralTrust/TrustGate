@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/session"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/google/uuid"
 )
 
@@ -16,10 +16,10 @@ const (
 )
 
 type SessionRepository struct {
-	cache cache.Cache
+	cache cache.Client
 }
 
-func NewSessionRepository(cache cache.Cache) session.Repository {
+func NewSessionRepository(cache cache.Client) session.Repository {
 	return &SessionRepository{
 		cache: cache,
 	}
@@ -50,7 +50,7 @@ func (r *SessionRepository) GetByID(ctx context.Context, sessionID string, gatew
 	var sessions []*session.Session
 
 	for {
-		keys, nextCursor, err := r.cache.Client().Scan(ctx, cursor, sessionKeyPattern, 100).Result()
+		keys, nextCursor, err := r.cache.RedisClient().Scan(ctx, cursor, sessionKeyPattern, 100).Result()
 		if err != nil {
 			return nil, fmt.Errorf("error scanning keys: %w", err)
 		}
@@ -85,7 +85,7 @@ func (r *SessionRepository) GetAll(ctx context.Context, gatewayID uuid.UUID) ([]
 	var sessions []*session.Session
 
 	for {
-		keys, nextCursor, err := r.cache.Client().Scan(ctx, cursor, sessionKeyPattern, 100).Result()
+		keys, nextCursor, err := r.cache.RedisClient().Scan(ctx, cursor, sessionKeyPattern, 100).Result()
 		if err != nil {
 			return nil, fmt.Errorf("error scanning keys: %w", err)
 		}

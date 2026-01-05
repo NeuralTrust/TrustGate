@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
@@ -17,7 +17,7 @@ import (
 
 type createAPIKeyHandler struct {
 	logger          *logrus.Logger
-	cache           cache.Cache
+	cache           cache.Client
 	apiKeyRepo      apikey.Repository
 	ruleRepo        ruledomain.Repository
 	policyValidator apikey.PolicyValidator
@@ -26,7 +26,7 @@ type createAPIKeyHandler struct {
 
 func NewCreateAPIKeyHandler(
 	logger *logrus.Logger,
-	cache cache.Cache,
+	cache cache.Client,
 	apiKeyRepo apikey.Repository,
 	ruleRepo ruledomain.Repository,
 	policyValidator apikey.PolicyValidator,

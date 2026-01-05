@@ -4,22 +4,21 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/sirupsen/logrus"
 )
 
 type DeleteRulesEventSubscriber struct {
 	logger      *logrus.Logger
-	cache       cache.Cache
+	cache       cache.Client
 	memoryCache *cache.TTLMap
 }
 
 func NewDeleteRulesEventSubscriber(
 	logger *logrus.Logger,
-	c cache.Cache,
-) infraCache.EventSubscriber[event.DeleteRulesCacheEvent] {
+	c cache.Client,
+) cache.EventSubscriber[event.DeleteRulesCacheEvent] {
 	return &DeleteRulesEventSubscriber{
 		logger:      logger,
 		cache:       c,

@@ -1,0 +1,71 @@
+package cache
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
+
+	"github.com/go-redis/redis/v8"
+)
+
+func (c *client) GetAPIKeys(gatewayID string) ([]apikey.APIKey, error) {
+	key := fmt.Sprintf("apikeys:%s", gatewayID)
+	data, err := c.RedisClient().Get(context.Background(), key).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return []apikey.APIKey{}, nil
+		}
+		return nil, err
+	}
+
+	var keys []apikey.APIKey
+	if err := json.Unmarshal([]byte(data), &keys); err != nil {
+		return nil, err
+	}
+
+	return keys, nil
+}
+
+func (c *client) ValidateAPIKey(gatewayID, apiKey string) bool {
+	key, err := c.GetAPIKey(gatewayID, apiKey)
+	if err != nil {
+		return false
+	}
+
+	if key == nil {
+		return false
+	}
+
+	now := time.Now()
+	return key.Active && (key.ExpiresAt.IsZero() || key.ExpiresAt.After(now))
+}
+
+func (c *client) GetAPIKey(gatewayID, apiKey string) (*apikey.APIKey, error) {
+	// Get all API keys for the gateway
+	keys, err := c.GetAPIKeys(gatewayID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find the matching key
+	for _, key := range keys {
+		if key.Key == apiKey {
+			return &key, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func (c *client) SaveAPIKey(ctx context.Context, key *apikey.APIKey) error {
+	data, err := json.Marshal(key)
+	if err != nil {
+		return err
+	}
+	cacheKey := fmt.Sprintf(ApiKeyPattern, key.Key)
+	return c.RedisClient().Set(ctx, cacheKey, string(data), 0).Err()
+}

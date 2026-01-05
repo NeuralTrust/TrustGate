@@ -49,8 +49,8 @@ func (c *client) applyAuthHeader(req *http.Request, useIdentity bool, token stri
 
 // Ask sends a request to the Azure OpenAI API and returns the response
 // It supports both API key and Azure AD token authentication
-// For API key authentication, set config.Credentials.ApiKey
-// For Azure AD token authentication, set config.Credentials.Azure.UseIdentity to true
+// For API key authentication, set config.CredentialsDTO.ApiKey
+// For Azure AD token authentication, set config.CredentialsDTO.Azure.UseIdentity to true
 // Note: Azure AD token authentication is not currently implemented and will return an error
 //
 // Parameters:

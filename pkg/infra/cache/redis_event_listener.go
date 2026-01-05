@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/sirupsen/logrus"
@@ -14,14 +13,14 @@ import (
 
 type redisEventListener struct {
 	logger      *logrus.Logger
-	cache       cache.Cache
+	cache       Client
 	subscribers map[reflect.Type]interface{}
 	registry    map[string]reflect.Type
 }
 
 func NewRedisEventListener(
 	logger *logrus.Logger,
-	cache cache.Cache,
+	cache Client,
 	registry map[string]reflect.Type,
 ) EventListener {
 	return &redisEventListener{
@@ -48,7 +47,7 @@ func (r *redisEventListener) Listen(ctx context.Context, channels ...channel.Cha
 		channelNames = append(channelNames, string(ch))
 	}
 
-	pubSub := r.cache.Client().Subscribe(ctx, channelNames...)
+	pubSub := r.cache.RedisClient().Subscribe(ctx, channelNames...)
 	defer func() { _ = pubSub.Close() }()
 
 	for msg := range pubSub.Channel() {

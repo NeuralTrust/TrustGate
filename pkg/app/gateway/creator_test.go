@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/mocks"
 	pluginmocks "github.com/NeuralTrust/TrustGate/pkg/app/plugin/mocks"
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	gatewayMocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -32,14 +33,14 @@ type mockTelemetryExportersValidator struct {
 	mock.Mock
 }
 
-func (m *mockTelemetryExportersValidator) Validate(exporters []types.Exporter) error {
+func (m *mockTelemetryExportersValidator) Validate(exporters []types.ExporterDTO) error {
 	args := m.Called(exporters)
 	return args.Error(0)
 }
 
 func setupCreator(
 	t *testing.T,
-	repo *mocks.Repository,
+	repo *gatewayMocks.Repository,
 	updateCache *mockUpdateGatewayCache,
 	pluginValidator *pluginmocks.ValidatePluginChain,
 	telemetryValidator *mockTelemetryExportersValidator,
@@ -50,7 +51,7 @@ func setupCreator(
 }
 
 func TestCreator_Create_Success(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -58,9 +59,9 @@ func TestCreator_Create_Success(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:            "Test Gateway",
+		Name:            "Test GatewayDTO",
 		Status:          "active",
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
@@ -77,7 +78,7 @@ func TestCreator_Create_Success(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, "Test Gateway", result.Name)
+	assert.Equal(t, "Test GatewayDTO", result.Name)
 	assert.Equal(t, "active", result.Status)
 	assert.NotEqual(t, uuid.Nil, result.ID)
 	repo.AssertExpectations(t)
@@ -86,7 +87,7 @@ func TestCreator_Create_Success(t *testing.T) {
 }
 
 func TestCreator_Create_WithGatewayID(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -94,9 +95,9 @@ func TestCreator_Create_WithGatewayID(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:            "Test Gateway",
+		Name:            "Test GatewayDTO",
 		Status:          "active",
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
@@ -114,14 +115,14 @@ func TestCreator_Create_WithGatewayID(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, expectedID, result.ID)
-	assert.Equal(t, "Test Gateway", result.Name)
+	assert.Equal(t, "Test GatewayDTO", result.Name)
 	repo.AssertExpectations(t)
 	updateCache.AssertExpectations(t)
 	pluginValidator.AssertExpectations(t)
 }
 
 func TestCreator_Create_WithSecurityConfig(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -129,7 +130,7 @@ func TestCreator_Create_WithSecurityConfig(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:   "Test Gateway",
+		Name:   "Test GatewayDTO",
 		Status: "active",
 		SecurityConfig: &request.SecurityConfigRequest{
 			AllowedHosts:            []string{"example.com"},
@@ -147,7 +148,7 @@ func TestCreator_Create_WithSecurityConfig(t *testing.T) {
 			BrowserXSSFilter:        true,
 			IsDevelopment:           false,
 		},
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
@@ -173,7 +174,7 @@ func TestCreator_Create_WithSecurityConfig(t *testing.T) {
 }
 
 func TestCreator_Create_WithTelemetry(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -181,7 +182,7 @@ func TestCreator_Create_WithTelemetry(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:   "Test Gateway",
+		Name:   "Test GatewayDTO",
 		Status: "active",
 		Telemetry: &request.TelemetryRequest{
 			Exporters: []request.ExporterRequest{
@@ -195,12 +196,12 @@ func TestCreator_Create_WithTelemetry(t *testing.T) {
 			EnableRequestTraces: true,
 			HeaderMapping:       map[string]string{"conversation_id": "X-Conversation-ID"},
 		},
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
 
-	telemetryValidator.On("Validate", mock.MatchedBy(func(exporters []types.Exporter) bool {
+	telemetryValidator.On("Validate", mock.MatchedBy(func(exporters []types.ExporterDTO) bool {
 		return len(exporters) == 1 && exporters[0].Name == "kafka"
 	})).Return(nil)
 	pluginValidator.On("Validate", ctx, mock.AnythingOfType("uuid.UUID"), req.RequiredPlugins).Return(nil)
@@ -226,7 +227,7 @@ func TestCreator_Create_WithTelemetry(t *testing.T) {
 }
 
 func TestCreator_Create_WithSessionConfig(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -234,7 +235,7 @@ func TestCreator_Create_WithSessionConfig(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:   "Test Gateway",
+		Name:   "Test GatewayDTO",
 		Status: "active",
 		SessionConfig: &request.SessionConfigRequest{
 			Enabled:       true,
@@ -243,7 +244,7 @@ func TestCreator_Create_WithSessionConfig(t *testing.T) {
 			Mapping:       "user_id",
 			TTL:           3600,
 		},
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
@@ -270,7 +271,7 @@ func TestCreator_Create_WithSessionConfig(t *testing.T) {
 }
 
 func TestCreator_Create_WithClientTLSConfig(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -278,7 +279,7 @@ func TestCreator_Create_WithClientTLSConfig(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:   "Test Gateway",
+		Name:   "Test GatewayDTO",
 		Status: "active",
 		TlS: map[string]request.ClientTLSConfigRequest{
 			"backend1": {
@@ -295,7 +296,7 @@ func TestCreator_Create_WithClientTLSConfig(t *testing.T) {
 				MaxVersion:          "TLS13",
 			},
 		},
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
@@ -320,7 +321,7 @@ func TestCreator_Create_WithClientTLSConfig(t *testing.T) {
 }
 
 func TestCreator_Create_SetsCreatedAtAndUpdatedAt(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -328,9 +329,9 @@ func TestCreator_Create_SetsCreatedAtAndUpdatedAt(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:            "Test Gateway",
+		Name:            "Test GatewayDTO",
 		Status:          "active",
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
@@ -359,7 +360,7 @@ func TestCreator_Create_SetsCreatedAtAndUpdatedAt(t *testing.T) {
 }
 
 func TestCreator_Create_InvalidGatewayID(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -367,9 +368,9 @@ func TestCreator_Create_InvalidGatewayID(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:            "Test Gateway",
+		Name:            "Test GatewayDTO",
 		Status:          "active",
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
@@ -385,7 +386,7 @@ func TestCreator_Create_InvalidGatewayID(t *testing.T) {
 }
 
 func TestCreator_Create_PluginChainValidationFails(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -393,9 +394,9 @@ func TestCreator_Create_PluginChainValidationFails(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:            "Test Gateway",
+		Name:            "Test GatewayDTO",
 		Status:          "active",
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
@@ -414,7 +415,7 @@ func TestCreator_Create_PluginChainValidationFails(t *testing.T) {
 }
 
 func TestCreator_Create_DuplicateTelemetryExporters(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -422,7 +423,7 @@ func TestCreator_Create_DuplicateTelemetryExporters(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:   "Test Gateway",
+		Name:   "Test GatewayDTO",
 		Status: "active",
 		Telemetry: &request.TelemetryRequest{
 			Exporters: []request.ExporterRequest{
@@ -436,7 +437,7 @@ func TestCreator_Create_DuplicateTelemetryExporters(t *testing.T) {
 				},
 			},
 		},
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
@@ -453,7 +454,7 @@ func TestCreator_Create_DuplicateTelemetryExporters(t *testing.T) {
 }
 
 func TestCreator_Create_TelemetryValidationFails(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -461,7 +462,7 @@ func TestCreator_Create_TelemetryValidationFails(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:   "Test Gateway",
+		Name:   "Test GatewayDTO",
 		Status: "active",
 		Telemetry: &request.TelemetryRequest{
 			Exporters: []request.ExporterRequest{
@@ -471,13 +472,13 @@ func TestCreator_Create_TelemetryValidationFails(t *testing.T) {
 				},
 			},
 		},
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
 	validationError := errors.New("invalid exporter")
 
-	telemetryValidator.On("Validate", mock.AnythingOfType("[]types.Exporter")).Return(validationError)
+	telemetryValidator.On("Validate", mock.AnythingOfType("[]types.ExporterDTO")).Return(validationError)
 
 	result, err := creator.Create(ctx, req, "")
 
@@ -491,7 +492,7 @@ func TestCreator_Create_TelemetryValidationFails(t *testing.T) {
 }
 
 func TestCreator_Create_RepositorySaveFails(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -499,9 +500,9 @@ func TestCreator_Create_RepositorySaveFails(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:            "Test Gateway",
+		Name:            "Test GatewayDTO",
 		Status:          "active",
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
@@ -521,7 +522,7 @@ func TestCreator_Create_RepositorySaveFails(t *testing.T) {
 }
 
 func TestCreator_Create_CacheUpdateFails_StillReturnsSuccess(t *testing.T) {
-	repo := new(mocks.Repository)
+	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
@@ -529,9 +530,9 @@ func TestCreator_Create_CacheUpdateFails_StillReturnsSuccess(t *testing.T) {
 	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
 
 	req := &request.CreateGatewayRequest{
-		Name:            "Test Gateway",
+		Name:            "Test GatewayDTO",
 		Status:          "active",
-		RequiredPlugins: []types.PluginConfig{},
+		RequiredPlugins: []pluginTypes.PluginConfig{},
 	}
 
 	ctx := context.Background()
@@ -550,4 +551,3 @@ func TestCreator_Create_CacheUpdateFails_StillReturnsSuccess(t *testing.T) {
 	updateCache.AssertExpectations(t)
 	pluginValidator.AssertExpectations(t)
 }
-

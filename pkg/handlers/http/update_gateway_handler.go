@@ -11,7 +11,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
+	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -42,15 +43,15 @@ func NewUpdateGatewayHandler(
 	}
 }
 
-// Handle @Summary Update a Gateway
+// Handle @Summary Update a GatewayDTO
 // @Description Updates an existing gateway
 // @Tags Gateways
 // @Param Authorization header string true "Authorization token"
 // @Accept json
 // @Produce json
-// @Param gateway_id path string true "Gateway ID"
+// @Param gateway_id path string true "GatewayDTO ID"
 // @Param gateway body request.UpdateGatewayRequest true "Updated gateway data"
-// @Success 204 "Gateway updated successfully"
+// @Success 204 "GatewayDTO updated successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Router /api/v1/gateways/{gateway_id} [put]
 func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
@@ -82,7 +83,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	if req.RequiredPlugins != nil {
 		// Initialize plugins map
 		if dbGateway.RequiredPlugins == nil {
-			dbGateway.RequiredPlugins = []types.PluginConfig{}
+			dbGateway.RequiredPlugins = []pluginTypes.PluginConfig{}
 		}
 
 		// Convert and validate plugins
@@ -119,9 +120,9 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	dbGateway.UpdatedAt = time.Now()
 
 	if req.Telemetry != nil {
-		var exporters []types.Exporter
+		var exporters []types.ExporterDTO
 		for _, config := range req.Telemetry.Exporters {
-			exporters = append(exporters, types.Exporter(config))
+			exporters = append(exporters, types.ExporterDTO(config))
 		}
 
 		// Disallow duplicate exporters with the same provider name
@@ -172,7 +173,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusNoContent).JSON(fiber.Map{})
 }
 
-func (h *updateGatewayHandler) telemetryExporterToDomain(configs []types.Exporter) []telemetry.ExporterConfig {
+func (h *updateGatewayHandler) telemetryExporterToDomain(configs []types.ExporterDTO) []telemetry.ExporterConfig {
 	result := make([]telemetry.ExporterConfig, 0, len(configs))
 	for _, cfg := range configs {
 		result = append(result, telemetry.ExporterConfig{

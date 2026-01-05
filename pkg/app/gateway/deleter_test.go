@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/NeuralTrust/TrustGate/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
+	gatewayMocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	cacheMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -16,7 +16,7 @@ import (
 
 func setupDeleter(
 	t *testing.T,
-	repo *mocks.Repository,
+	repo *gatewayMocks.Repository,
 	publisher *cacheMocks.EventPublisher,
 ) Deleter {
 	logger := logrus.New()
@@ -25,7 +25,7 @@ func setupDeleter(
 }
 
 func TestDeleter_Delete_Success(t *testing.T) {
-	repo := mocks.NewRepository(t)
+	repo := gatewayMocks.NewRepository(t)
 	publisher := cacheMocks.NewEventPublisher(t)
 
 	deleter := setupDeleter(t, repo, publisher)
@@ -47,7 +47,7 @@ func TestDeleter_Delete_Success(t *testing.T) {
 }
 
 func TestDeleter_Delete_NotFound(t *testing.T) {
-	repo := mocks.NewRepository(t)
+	repo := gatewayMocks.NewRepository(t)
 	publisher := cacheMocks.NewEventPublisher(t)
 
 	deleter := setupDeleter(t, repo, publisher)
@@ -65,7 +65,7 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 }
 
 func TestDeleter_Delete_RepositoryError(t *testing.T) {
-	repo := mocks.NewRepository(t)
+	repo := gatewayMocks.NewRepository(t)
 	publisher := cacheMocks.NewEventPublisher(t)
 
 	deleter := setupDeleter(t, repo, publisher)
@@ -83,7 +83,7 @@ func TestDeleter_Delete_RepositoryError(t *testing.T) {
 }
 
 func TestDeleter_Delete_PublishEventFails_StillReturnsSuccess(t *testing.T) {
-	repo := mocks.NewRepository(t)
+	repo := gatewayMocks.NewRepository(t)
 	publisher := cacheMocks.NewEventPublisher(t)
 
 	deleter := setupDeleter(t, repo, publisher)
@@ -102,5 +102,3 @@ func TestDeleter_Delete_PublishEventFails_StillReturnsSuccess(t *testing.T) {
 
 	assert.NoError(t, err)
 }
-
-

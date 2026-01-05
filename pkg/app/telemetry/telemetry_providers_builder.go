@@ -7,7 +7,7 @@ import (
 )
 
 type ExportersBuilder interface {
-	Build(configs []types.Exporter) ([]domain.Exporter, error)
+	Build(configs []types.ExporterDTO) ([]domain.Exporter, error)
 }
 
 type exportersBuilder struct {
@@ -20,7 +20,7 @@ func NewTelemetryExportersBuilder(locator *factory.ExporterLocator) ExportersBui
 	}
 }
 
-func (v *exportersBuilder) Build(configs []types.Exporter) ([]domain.Exporter, error) {
+func (v *exportersBuilder) Build(configs []types.ExporterDTO) ([]domain.Exporter, error) {
 	var providers []domain.Exporter
 	for _, config := range configs {
 		telemetryProvider, err := v.locator.GetExporter(config)

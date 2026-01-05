@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts/types"
 )
 
-//go:generate mockery --name=Client --dir=. --output=../../../mocks --filename=bedrock_client_mock.go --case=underscore --with-expecter
+//go:generate mockery --name=Client --dir=. --output=./mocks --filename=bedrock_client_mock.go --case=underscore --with-expecter
 type Client interface {
 	ApplyGuardrail(
 		ctx context.Context,

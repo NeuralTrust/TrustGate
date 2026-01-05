@@ -7,7 +7,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	wsHandlers "github.com/NeuralTrust/TrustGate/pkg/handlers/websocket"
-	"github.com/NeuralTrust/TrustGate/pkg/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/server/middleware"
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
 )

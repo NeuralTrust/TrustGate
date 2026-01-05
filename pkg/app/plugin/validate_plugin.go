@@ -3,8 +3,8 @@ package plugin
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/plugins"
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 )
 
 type ValidatePlugin struct {

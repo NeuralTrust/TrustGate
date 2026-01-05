@@ -1,0 +1,194 @@
+package toxicity_azure_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"testing"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/toxicity_azure"
+	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
+	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+)
+
+func TestToxicityAzurePlugin_Name(t *testing.T) {
+	plugin := &toxicity_azure.ToxicityAzurePlugin{}
+	assert.Equal(t, "toxicity_azure", plugin.Name())
+}
+
+func TestToxicityAzurePlugin_Stages(t *testing.T) {
+	plugin := &toxicity_azure.ToxicityAzurePlugin{}
+	assert.Equal(t, []pluginTypes.Stage{pluginTypes.PreRequest}, plugin.Stages())
+}
+
+func TestToxicityAzurePlugin_AllowedStages(t *testing.T) {
+	plugin := &toxicity_azure.ToxicityAzurePlugin{}
+	assert.Equal(t, []pluginTypes.Stage{pluginTypes.PreRequest}, plugin.AllowedStages())
+}
+
+func TestToxicityAzurePlugin_ValidateConfig(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	logger := logrus.New()
+	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient)
+
+	validConfig := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"api_key": "apikey",
+			"endpoints": map[string]interface{}{
+				"text": "https://test.azure.com/text",
+			},
+			"actions": map[string]interface{}{
+				"type":    "alert",
+				"message": "Content flagged",
+			},
+		},
+	}
+
+	invalidConfig := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{},
+	}
+
+	t.Run("Valid Configuration", func(t *testing.T) {
+		err := plugin.ValidateConfig(validConfig)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Invalid Configuration", func(t *testing.T) {
+		err := plugin.ValidateConfig(invalidConfig)
+		assert.Error(t, err)
+	})
+}
+
+func TestToxicityAzurePlugin_ValidateConfig_InvalidApiKey(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	logger := logrus.New()
+	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient)
+
+	validConfig := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"api_key": "",
+			"endpoints": map[string]interface{}{
+				"text": "https://test.azure.com/text",
+			},
+			"actions": map[string]interface{}{
+				"type":    "alert",
+				"message": "Content flagged",
+			},
+		},
+	}
+
+	err := plugin.ValidateConfig(validConfig)
+	assert.Error(t, err)
+}
+
+func TestToxicityAzurePlugin_Execute_Success(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	logger := logrus.New()
+	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient)
+
+	cfg := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"api_key": "test-key",
+			"endpoints": map[string]interface{}{
+				"text": "https://test.azure.com/text",
+			},
+			"content_types": []map[string]interface{}{
+				{
+					"type": "text",
+					"path": "text",
+				},
+			},
+		},
+	}
+
+	req := &types.RequestContext{Body: []byte(`{"text": "hello"}`)}
+	resp := &types.ResponseContext{}
+
+	serverResponse := toxicity_azure.AzureResponse{
+		CategoriesAnalysis: []struct {
+			Category string `json:"category"`
+			Severity int    `json:"severity"`
+		}{{Category: "Hate", Severity: 1}},
+	}
+
+	serverResponseBytes, err := json.Marshal(serverResponse)
+	assert.NoError(t, err)
+	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
+
+	httpResponse := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       mockResp,
+	}
+
+	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
+
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+
+	assert.NotNil(t, pluginResponse)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, pluginResponse.StatusCode)
+	mockClient.AssertExpectations(t)
+}
+
+func TestToxicityAzurePlugin_Execute_FlaggedContent(t *testing.T) {
+	mockClient := new(mocks.MockHTTPClient)
+	logger := logrus.New()
+	plugin := toxicity_azure.NewToxicityAzurePlugin(logger, mockClient)
+
+	cfg := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"api_key": "test-key",
+			"endpoints": map[string]interface{}{
+				"text": "https://test.azure.com/text",
+			},
+			"category_severity": map[string]interface{}{
+				"Hate": 2,
+			},
+			"actions": map[string]interface{}{
+				"type":    "reject",
+				"message": "Toxic content detected",
+			},
+			"content_types": []map[string]interface{}{
+				{
+					"type": "text",
+					"path": "text",
+				},
+			},
+		},
+	}
+
+	req := &types.RequestContext{Body: []byte(`{"text": "hate speech"}`)}
+	resp := &types.ResponseContext{}
+
+	serverResponse := toxicity_azure.AzureResponse{
+		CategoriesAnalysis: []struct {
+			Category string `json:"category"`
+			Severity int    `json:"severity"`
+		}{{Category: "Hate", Severity: 3}},
+	}
+
+	serverResponseBytes, err := json.Marshal(serverResponse)
+	assert.NoError(t, err)
+	mockResp := io.NopCloser(bytes.NewReader(serverResponseBytes))
+
+	httpResponse := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       mockResp,
+	}
+
+	mockClient.On("Do", mock.Anything).Return(httpResponse, nil).Once()
+
+	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+
+	assert.Nil(t, pluginResponse)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "Toxic content detected")
+	mockClient.AssertExpectations(t)
+}

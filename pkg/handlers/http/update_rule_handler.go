@@ -10,12 +10,12 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -25,18 +25,18 @@ import (
 type updateRuleHandler struct {
 	logger                *logrus.Logger
 	repo                  forwarding_rule.Repository
-	cache                 cache.Cache
+	cache                 cache.Client
 	validatePlugin        *plugin.ValidatePlugin
-	invalidationPublisher infraCache.EventPublisher
+	invalidationPublisher cache.EventPublisher
 	ruleMatcher           routing.RuleMatcher
 }
 
 func NewUpdateRuleHandler(
 	logger *logrus.Logger,
 	repo forwarding_rule.Repository,
-	cache cache.Cache,
+	cache cache.Client,
 	validatePlugin *plugin.ValidatePlugin,
-	invalidationPublisher infraCache.EventPublisher,
+	invalidationPublisher cache.EventPublisher,
 	ruleMatcher routing.RuleMatcher,
 ) Handler {
 	return &updateRuleHandler{
@@ -55,7 +55,7 @@ func NewUpdateRuleHandler(
 // @Accept json
 // @Produce json
 // @Param Authorization header string true "Authorization token"
-// @Param gateway_id path string true "Gateway ID"
+// @Param gateway_id path string true "GatewayDTO ID"
 // @Param rule_id path string true "Rule ID"
 // @Param rule body request.UpdateRuleRequest true "Updated rule data"
 // @Success 204 "Rule updated successfully"
@@ -251,7 +251,7 @@ func (s *updateRuleHandler) applyRequestToDBRule(
 	}
 }
 
-func (s *updateRuleHandler) buildTrustLensConfig(trustLens *types.TrustLensConfig) *domain.TrustLensJSON {
+func (s *updateRuleHandler) buildTrustLensConfig(trustLens *types.TrustLensConfigDTO) *domain.TrustLensJSON {
 	return &domain.TrustLensJSON{
 		AppID:   trustLens.AppID,
 		TeamID:  trustLens.TeamID,
@@ -260,7 +260,7 @@ func (s *updateRuleHandler) buildTrustLensConfig(trustLens *types.TrustLensConfi
 	}
 }
 
-func (s *updateRuleHandler) buildPluginChain(pluginChain []types.PluginConfig) domain.PluginChainJSON {
+func (s *updateRuleHandler) buildPluginChain(pluginChain []pluginTypes.PluginConfig) domain.PluginChainJSON {
 	var pc domain.PluginChainJSON
 	pc = append(pc, pluginChain...)
 	return pc
@@ -315,7 +315,7 @@ func (s *updateRuleHandler) updateRuleInCache(
 	return nil
 }
 
-func (s *updateRuleHandler) getRulesFromCache(ctx context.Context, gatewayID string) ([]types.ForwardingRule, error) {
+func (s *updateRuleHandler) getRulesFromCache(ctx context.Context, gatewayID string) ([]types.ForwardingRuleDTO, error) {
 	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
 	rulesJSON, err := s.cache.Get(ctx, rulesKey)
 	if err != nil {
@@ -323,7 +323,7 @@ func (s *updateRuleHandler) getRulesFromCache(ctx context.Context, gatewayID str
 		return nil, fmt.Errorf("failed to get rules from cache: %w", err)
 	}
 
-	var rules []types.ForwardingRule
+	var rules []types.ForwardingRuleDTO
 	if err := json.Unmarshal([]byte(rulesJSON), &rules); err != nil {
 		s.logger.WithError(err).Error("failed to unmarshal rules")
 		return nil, fmt.Errorf("failed to unmarshal rules: %w", err)
@@ -333,7 +333,7 @@ func (s *updateRuleHandler) getRulesFromCache(ctx context.Context, gatewayID str
 }
 
 func (s *updateRuleHandler) applyRequestToCacheRule(
-	rules []types.ForwardingRule,
+	rules []types.ForwardingRuleDTO,
 	ruleID string,
 	updateReq req.UpdateRuleRequest,
 ) error {
@@ -350,7 +350,7 @@ func (s *updateRuleHandler) applyRequestToCacheRule(
 }
 
 func (s *updateRuleHandler) updateCacheRuleFields(
-	rule *types.ForwardingRule,
+	rule *types.ForwardingRuleDTO,
 	updateReq req.UpdateRuleRequest,
 ) {
 	if updateReq.Name != "" {
@@ -402,7 +402,7 @@ func (s *updateRuleHandler) updateCacheRuleFields(
 	}
 }
 
-func (s *updateRuleHandler) convertPluginChainToCache(pluginChain []types.PluginConfig) []types.PluginConfig {
+func (s *updateRuleHandler) convertPluginChainToCache(pluginChain []pluginTypes.PluginConfig) []pluginTypes.PluginConfig {
 	if len(pluginChain) == 0 {
 		return nil
 	}
@@ -413,7 +413,7 @@ func (s *updateRuleHandler) convertPluginChainToCache(pluginChain []types.Plugin
 		return pluginChain
 	}
 
-	var result []types.PluginConfig
+	var result []pluginTypes.PluginConfig
 	if err := json.Unmarshal(chainJSON, &result); err != nil {
 		s.logger.WithError(err).Error("failed to unmarshal plugin chain")
 		return pluginChain
@@ -433,7 +433,7 @@ func (s *updateRuleHandler) copyHeaders(headers map[string]string) map[string]st
 func (s *updateRuleHandler) saveRulesToCache(
 	ctx context.Context,
 	gatewayID string,
-	rules []types.ForwardingRule,
+	rules []types.ForwardingRuleDTO,
 ) error {
 	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
 	updatedJSON, err := json.Marshal(rules)
@@ -505,7 +505,7 @@ func (s *updateRuleHandler) validateHTTPMethods(methods []string) error {
 	return nil
 }
 
-func (s *updateRuleHandler) validatePluginChain(pluginChain []types.PluginConfig) error {
+func (s *updateRuleHandler) validatePluginChain(pluginChain []pluginTypes.PluginConfig) error {
 	if len(pluginChain) == 0 {
 		return nil
 	}
@@ -519,7 +519,7 @@ func (s *updateRuleHandler) validatePluginChain(pluginChain []types.PluginConfig
 	return nil
 }
 
-func (s *updateRuleHandler) validateTrustLens(trustLens *types.TrustLensConfig) error {
+func (s *updateRuleHandler) validateTrustLens(trustLens *types.TrustLensConfigDTO) error {
 	if trustLens == nil {
 		return nil
 	}

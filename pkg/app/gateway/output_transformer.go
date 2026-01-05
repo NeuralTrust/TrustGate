@@ -5,6 +5,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
@@ -15,25 +16,25 @@ func NewOutputTransformer() *OutputTransformer {
 	return &OutputTransformer{}
 }
 
-func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) *types.Gateway {
+func (ot OutputTransformer) Transform(dbGateway *gateway.Gateway) *types.GatewayDTO {
 	return ot.convertGatewayToTypes(dbGateway)
 }
 
-func (ot OutputTransformer) convertGatewayToTypes(g *gateway.Gateway) *types.Gateway {
+func (ot OutputTransformer) convertGatewayToTypes(g *gateway.Gateway) *types.GatewayDTO {
 	if g.RequiredPlugins == nil {
-		g.RequiredPlugins = []types.PluginConfig{}
+		g.RequiredPlugins = []pluginTypes.PluginConfig{}
 	}
 
-	var telemetry *types.Telemetry
+	var telemetry *types.TelemetryDTO
 	if g.Telemetry != nil {
-		var exporters []types.Exporter
+		var exporters []types.ExporterDTO
 		for _, config := range g.Telemetry.Exporters {
-			exporters = append(exporters, types.Exporter{
+			exporters = append(exporters, types.ExporterDTO{
 				Name:     config.Name,
 				Settings: config.Settings,
 			})
 		}
-		telemetry = &types.Telemetry{
+		telemetry = &types.TelemetryDTO{
 			Exporters:           exporters,
 			ExtraParams:         g.Telemetry.ExtraParams,
 			EnablePluginTraces:  g.Telemetry.EnablePluginTraces,
@@ -42,9 +43,9 @@ func (ot OutputTransformer) convertGatewayToTypes(g *gateway.Gateway) *types.Gat
 		}
 	}
 
-	var securityConfig *types.SecurityConfig
+	var securityConfig *types.SecurityConfigDTO
 	if g.SecurityConfig != nil {
-		securityConfig = &types.SecurityConfig{
+		securityConfig = &types.SecurityConfigDTO{
 			AllowedHosts:            g.SecurityConfig.AllowedHosts,
 			AllowedHostsAreRegex:    g.SecurityConfig.AllowedHostsAreRegex,
 			SSLRedirect:             g.SecurityConfig.SSLRedirect,
@@ -62,9 +63,9 @@ func (ot OutputTransformer) convertGatewayToTypes(g *gateway.Gateway) *types.Gat
 		}
 	}
 
-	var sessionConfig *types.SessionConfig
+	var sessionConfig *types.SessionConfigDTO
 	if g.SessionConfig != nil {
-		sessionConfig = &types.SessionConfig{
+		sessionConfig = &types.SessionConfigDTO{
 			Enabled:       g.SessionConfig.Enabled,
 			HeaderName:    g.SessionConfig.HeaderName,
 			BodyParamName: g.SessionConfig.BodyParamName,
@@ -73,7 +74,7 @@ func (ot OutputTransformer) convertGatewayToTypes(g *gateway.Gateway) *types.Gat
 		}
 	}
 
-	result := &types.Gateway{
+	result := &types.GatewayDTO{
 		ID:              g.ID.String(),
 		Name:            g.Name,
 		Status:          g.Status,
@@ -90,16 +91,16 @@ func (ot OutputTransformer) convertGatewayToTypes(g *gateway.Gateway) *types.Gat
 	return result
 }
 
-func (ot OutputTransformer) transformClientTLSConfigToType(tls domain.ClientTLSConfig) map[string]types.ClientTLSConfig {
+func (ot OutputTransformer) transformClientTLSConfigToType(tls domain.ClientTLSConfig) map[string]types.ClientTLSConfigDTO {
 	if len(tls) == 0 {
 		return nil
 	}
-	result := make(map[string]types.ClientTLSConfig, len(tls))
+	result := make(map[string]types.ClientTLSConfigDTO, len(tls))
 	for k, v := range tls {
-		result[k] = types.ClientTLSConfig{
+		result[k] = types.ClientTLSConfigDTO{
 			AllowInsecureConnections: v.AllowInsecureConnections,
 			CACerts:                  v.CACerts,
-			ClientCerts: types.ClientTLSCert{
+			ClientCerts: types.ClientTLSCertDTO{
 				Certificate: v.ClientCerts.Certificate,
 				PrivateKey:  v.ClientCerts.PrivateKey,
 			},

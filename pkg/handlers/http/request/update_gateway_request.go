@@ -1,7 +1,7 @@
 package request
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 )
 
 type UpdateGatewayRequest struct {

@@ -6,15 +6,16 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
-//go:generate mockery --name=DataFinder --dir=. --output=../../../mocks --filename=gateway_data_finder_mock.go --case=underscore --with-expecter
+//go:generate mockery --name=DataFinder --dir=. --output=./mocks --filename=gateway_data_finder_mock.go --case=underscore --with-expecter
 type DataFinder interface {
 	Find(ctx context.Context, gatewayID uuid.UUID) (*types.GatewayData, error)
 }
@@ -22,7 +23,7 @@ type DataFinder interface {
 type dataFinder struct {
 	repo              gateway.Repository
 	ruleRepository    forwarding_rule.Repository
-	cache             cache.Cache
+	cache             cache.Client
 	memoryCache       *cache.TTLMap
 	logger            *logrus.Logger
 	outputTransformer *OutputTransformer
@@ -31,7 +32,7 @@ type dataFinder struct {
 func NewDataFinder(
 	repository gateway.Repository,
 	ruleRepository forwarding_rule.Repository,
-	c cache.Cache,
+	c cache.Client,
 	logger *logrus.Logger,
 ) DataFinder {
 	return &dataFinder{
@@ -65,7 +66,7 @@ func (f *dataFinder) getGatewayDataFromCache(value interface{}) (*types.GatewayD
 	return data, nil
 }
 
-func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.Gateway {
+func (f *dataFinder) convertModelToTypesGateway(g *gateway.Gateway) *types.GatewayDTO {
 	return f.outputTransformer.convertGatewayToTypes(g)
 }
 
@@ -100,23 +101,23 @@ func (f *dataFinder) getGatewayDataFromDB(ctx context.Context, gatewayID uuid.UU
 	return gatewayData, nil
 }
 
-func (f *dataFinder) convertModelToTypesRules(rules []forwarding_rule.ForwardingRule) []types.ForwardingRule {
-	var result []types.ForwardingRule
+func (f *dataFinder) convertModelToTypesRules(rules []forwarding_rule.ForwardingRule) []types.ForwardingRuleDTO {
+	var result []types.ForwardingRuleDTO
 	for _, r := range rules {
-		var pluginChain []types.PluginConfig
+		var pluginChain []pluginTypes.PluginConfig
 
 		jsonBytes, err := f.getJSONBytes(r.PluginChain)
 		if err != nil {
-			return []types.ForwardingRule{}
+			return []types.ForwardingRuleDTO{}
 		}
 
 		if err := json.Unmarshal(jsonBytes, &pluginChain); err != nil {
-			pluginChain = []types.PluginConfig{} // fallback to empty slice on error
+			pluginChain = []pluginTypes.PluginConfig{} // fallback to empty slice on error
 		}
 
-		var trustLensConfig *types.TrustLensConfig
+		var trustLensConfig *types.TrustLensConfigDTO
 		if r.TrustLens != nil {
-			trustLensConfig = &types.TrustLensConfig{
+			trustLensConfig = &types.TrustLensConfigDTO{
 				AppID:   r.TrustLens.AppID,
 				TeamID:  r.TrustLens.TeamID,
 				Type:    r.TrustLens.Type,
@@ -124,7 +125,7 @@ func (f *dataFinder) convertModelToTypesRules(rules []forwarding_rule.Forwarding
 			}
 		}
 
-		result = append(result, types.ForwardingRule{
+		result = append(result, types.ForwardingRuleDTO{
 			ID:            r.ID.String(),
 			GatewayID:     r.GatewayID.String(),
 			Path:          r.Path,

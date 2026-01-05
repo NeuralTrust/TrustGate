@@ -116,27 +116,27 @@ func (_c *RuleMatcher_MatchPath_Call) RunAndReturn(run func(string, string) rout
 }
 
 // MatchRule provides a mock function with given fields: path, method, rules
-func (_m *RuleMatcher) MatchRule(path string, method string, rules []types.ForwardingRule) (*types.ForwardingRule, map[string]string) {
+func (_m *RuleMatcher) MatchRule(path string, method string, rules []types.ForwardingRuleDTO) (*types.ForwardingRuleDTO, map[string]string) {
 	ret := _m.Called(path, method, rules)
 
 	if len(ret) == 0 {
 		panic("no return value specified for MatchRule")
 	}
 
-	var r0 *types.ForwardingRule
+	var r0 *types.ForwardingRuleDTO
 	var r1 map[string]string
-	if rf, ok := ret.Get(0).(func(string, string, []types.ForwardingRule) (*types.ForwardingRule, map[string]string)); ok {
+	if rf, ok := ret.Get(0).(func(string, string, []types.ForwardingRuleDTO) (*types.ForwardingRuleDTO, map[string]string)); ok {
 		return rf(path, method, rules)
 	}
-	if rf, ok := ret.Get(0).(func(string, string, []types.ForwardingRule) *types.ForwardingRule); ok {
+	if rf, ok := ret.Get(0).(func(string, string, []types.ForwardingRuleDTO) *types.ForwardingRuleDTO); ok {
 		r0 = rf(path, method, rules)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*types.ForwardingRule)
+			r0 = ret.Get(0).(*types.ForwardingRuleDTO)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(string, string, []types.ForwardingRule) map[string]string); ok {
+	if rf, ok := ret.Get(1).(func(string, string, []types.ForwardingRuleDTO) map[string]string); ok {
 		r1 = rf(path, method, rules)
 	} else {
 		if ret.Get(1) != nil {
@@ -155,24 +155,24 @@ type RuleMatcher_MatchRule_Call struct {
 // MatchRule is a helper method to define mock.On call
 //   - path string
 //   - method string
-//   - rules []types.ForwardingRule
+//   - rules []types.ForwardingRuleDTO
 func (_e *RuleMatcher_Expecter) MatchRule(path interface{}, method interface{}, rules interface{}) *RuleMatcher_MatchRule_Call {
 	return &RuleMatcher_MatchRule_Call{Call: _e.mock.On("MatchRule", path, method, rules)}
 }
 
-func (_c *RuleMatcher_MatchRule_Call) Run(run func(path string, method string, rules []types.ForwardingRule)) *RuleMatcher_MatchRule_Call {
+func (_c *RuleMatcher_MatchRule_Call) Run(run func(path string, method string, rules []types.ForwardingRuleDTO)) *RuleMatcher_MatchRule_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(string), args[2].([]types.ForwardingRule))
+		run(args[0].(string), args[1].(string), args[2].([]types.ForwardingRuleDTO))
 	})
 	return _c
 }
 
-func (_c *RuleMatcher_MatchRule_Call) Return(_a0 *types.ForwardingRule, _a1 map[string]string) *RuleMatcher_MatchRule_Call {
+func (_c *RuleMatcher_MatchRule_Call) Return(_a0 *types.ForwardingRuleDTO, _a1 map[string]string) *RuleMatcher_MatchRule_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *RuleMatcher_MatchRule_Call) RunAndReturn(run func(string, string, []types.ForwardingRule) (*types.ForwardingRule, map[string]string)) *RuleMatcher_MatchRule_Call {
+func (_c *RuleMatcher_MatchRule_Call) RunAndReturn(run func(string, string, []types.ForwardingRuleDTO) (*types.ForwardingRuleDTO, map[string]string)) *RuleMatcher_MatchRule_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -139,8 +139,8 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 		name        string
 		path        string
 		method      string
-		rules       []types.ForwardingRule
-		wantRule    *types.ForwardingRule
+		rules       []types.ForwardingRuleDTO
+		wantRule    *types.ForwardingRuleDTO
 		wantParams  map[string]string
 		description string
 	}{
@@ -148,7 +148,7 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 			name:   "match first active rule",
 			path:   "/api/v1/users/123",
 			method: "GET",
-			rules: []types.ForwardingRule{
+			rules: []types.ForwardingRuleDTO{
 				{
 					ID:      "rule1",
 					Path:    "/api/v1/users/{id}",
@@ -162,7 +162,7 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 					Active:  true,
 				},
 			},
-			wantRule: &types.ForwardingRule{
+			wantRule: &types.ForwardingRuleDTO{
 				ID:      "rule1",
 				Path:    "/api/v1/users/{id}",
 				Methods: []string{"GET"},
@@ -174,7 +174,7 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 			name:   "skip inactive rules",
 			path:   "/api/v1/users/123",
 			method: "GET",
-			rules: []types.ForwardingRule{
+			rules: []types.ForwardingRuleDTO{
 				{
 					ID:      "rule1",
 					Path:    "/api/v1/users/{id}",
@@ -188,7 +188,7 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 					Active:  true,
 				},
 			},
-			wantRule: &types.ForwardingRule{
+			wantRule: &types.ForwardingRuleDTO{
 				ID:      "rule2",
 				Path:    "/api/v1/users/{id}",
 				Methods: []string{"GET"},
@@ -200,7 +200,7 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 			name:   "skip rules with wrong method",
 			path:   "/api/v1/users/123",
 			method: "POST",
-			rules: []types.ForwardingRule{
+			rules: []types.ForwardingRuleDTO{
 				{
 					ID:      "rule1",
 					Path:    "/api/v1/users/{id}",
@@ -214,7 +214,7 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 					Active:  true,
 				},
 			},
-			wantRule: &types.ForwardingRule{
+			wantRule: &types.ForwardingRuleDTO{
 				ID:      "rule2",
 				Path:    "/api/v1/users/{id}",
 				Methods: []string{"POST", "PUT"},
@@ -226,7 +226,7 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 			name:   "no match found",
 			path:   "/api/v1/unknown",
 			method: "GET",
-			rules: []types.ForwardingRule{
+			rules: []types.ForwardingRuleDTO{
 				{
 					ID:      "rule1",
 					Path:    "/api/v1/users/{id}",
@@ -241,7 +241,7 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 			name:       "empty rules list",
 			path:       "/api/v1/users/123",
 			method:     "GET",
-			rules:      []types.ForwardingRule{},
+			rules:      []types.ForwardingRuleDTO{},
 			wantRule:   nil,
 			wantParams: nil,
 		},
@@ -249,7 +249,7 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 			name:   "match with multiple methods",
 			path:   "/api/v1/users/123",
 			method: "PUT",
-			rules: []types.ForwardingRule{
+			rules: []types.ForwardingRuleDTO{
 				{
 					ID:      "rule1",
 					Path:    "/api/v1/users/{id}",
@@ -257,7 +257,7 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 					Active:  true,
 				},
 			},
-			wantRule: &types.ForwardingRule{
+			wantRule: &types.ForwardingRuleDTO{
 				ID:      "rule1",
 				Path:    "/api/v1/users/{id}",
 				Methods: []string{"GET", "POST", "PUT", "DELETE"},
@@ -429,7 +429,7 @@ func TestRuleMatcher_Concurrency(t *testing.T) {
 	matcher := NewRuleMatcher()
 
 	// Test concurrent access to the same matcher instance
-	rules := []types.ForwardingRule{
+	rules := []types.ForwardingRuleDTO{
 		{
 			ID:      "rule1",
 			Path:    "/api/v1/users/{id}",
@@ -453,7 +453,7 @@ func TestRuleMatcher_Concurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	numGoroutines := 100
 	results := make([]struct {
-		rule   *types.ForwardingRule
+		rule   *types.ForwardingRuleDTO
 		params map[string]string
 	}, numGoroutines)
 
@@ -473,7 +473,7 @@ func TestRuleMatcher_Concurrency(t *testing.T) {
 
 			rule, params := matcher.MatchRule(path, "GET", rules)
 			results[index] = struct {
-				rule   *types.ForwardingRule
+				rule   *types.ForwardingRuleDTO
 				params map[string]string
 			}{rule, params}
 		}(i)
@@ -554,7 +554,7 @@ func TestRuleMatcher_MethodAllowed(t *testing.T) {
 	matcher := NewRuleMatcher()
 
 	// Test through MatchRule since methodAllowed is private
-	rules := []types.ForwardingRule{
+	rules := []types.ForwardingRuleDTO{
 		{
 			ID:      "rule1",
 			Path:    "/api/v1/test",

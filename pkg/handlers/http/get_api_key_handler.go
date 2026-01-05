@@ -3,7 +3,7 @@ package http
 import (
 	"errors"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/gofiber/fiber/v2"
@@ -13,11 +13,11 @@ import (
 
 type getAPIKeyHandler struct {
 	logger *logrus.Logger
-	cache  cache.Cache
+	cache  cache.Client
 	repo   apikey.Repository
 }
 
-func NewGetAPIKeyHandler(logger *logrus.Logger, cache cache.Cache, repo apikey.Repository) Handler {
+func NewGetAPIKeyHandler(logger *logrus.Logger, cache cache.Client, repo apikey.Repository) Handler {
 	return &getAPIKeyHandler{
 		logger: logger,
 		cache:  cache,

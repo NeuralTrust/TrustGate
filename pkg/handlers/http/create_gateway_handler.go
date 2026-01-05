@@ -6,7 +6,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -26,14 +26,14 @@ func NewCreateGatewayHandler(
 	}
 }
 
-// Handle @Summary      Create a new Gateway
+// Handle @Summary      Create a new GatewayDTO
 // @Description  Creates a new gateway in the system
 // @Tags         Gateways
 // @Accept       json
 // @Produce      json
 // @Param        Authorization header string true "Authorization token"
-// @Param        gateway body request.CreateGatewayRequest true "Gateway data"
-// @Success      201 {object} gateway.Gateway "Gateway created successfully"
+// @Param        gateway body request.CreateGatewayRequest true "GatewayDTO data"
+// @Success      201 {object} gateway.Gateway "GatewayDTO created successfully"
 // @Failure      400 {object} map[string]interface{} "Invalid request data"
 // @Router       /api/v1/gateways [post]
 func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
