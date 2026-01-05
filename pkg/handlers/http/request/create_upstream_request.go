@@ -60,29 +60,29 @@ type UpstreamAuthRequest struct {
 }
 
 type EmbeddingRequest struct {
-	Provider    string            `json:"provider"`
-	Model       string            `json:"model"`
-	Credentials types.Credentials `json:"credentials,omitempty"`
+	Provider    string               `json:"provider"`
+	Model       string               `json:"model"`
+	Credentials types.CredentialsDTO `json:"credentials,omitempty"`
 }
 
 type TargetRequest struct {
-	ID              string             `json:"id"`
-	Weight          int                `json:"weight,omitempty"`
-	Tags            []string           `json:"tags,omitempty"`
-	Headers         map[string]string  `json:"headers,omitempty"`
-	Path            string             `json:"path,omitempty"`
-	Host            string             `json:"host,omitempty"`
-	Port            int                `json:"port,omitempty"`
-	Protocol        string             `json:"protocol,omitempty"`
-	Provider        string             `json:"provider,omitempty"`
-	ProviderOptions map[string]any     `json:"provider_options,omitempty"`
-	Models          []string           `json:"models,omitempty"`
-	DefaultModel    string             `json:"default_model,omitempty"`
-	Description     string             `json:"description,omitempty"`
-	Stream          bool               `json:"stream"`
-	InsecureSSL     bool               `json:"insecure_ssl,omitempty"`
-	Credentials     types.Credentials  `json:"credentials,omitempty"`
-	Auth            *TargetAuthRequest `json:"auth,omitempty"`
+	ID              string               `json:"id"`
+	Weight          int                  `json:"weight,omitempty"`
+	Tags            []string             `json:"tags,omitempty"`
+	Headers         map[string]string    `json:"headers,omitempty"`
+	Path            string               `json:"path,omitempty"`
+	Host            string               `json:"host,omitempty"`
+	Port            int                  `json:"port,omitempty"`
+	Protocol        string               `json:"protocol,omitempty"`
+	Provider        string               `json:"provider,omitempty"`
+	ProviderOptions map[string]any       `json:"provider_options,omitempty"`
+	Models          []string             `json:"models,omitempty"`
+	DefaultModel    string               `json:"default_model,omitempty"`
+	Description     string               `json:"description,omitempty"`
+	Stream          bool                 `json:"stream"`
+	InsecureSSL     bool                 `json:"insecure_ssl,omitempty"`
+	Credentials     types.CredentialsDTO `json:"credentials,omitempty"`
+	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
 }
 
 type TargetAuthRequest struct {
@@ -242,7 +242,7 @@ func (r *UpstreamRequest) Validate() error {
 		}
 	}
 
-	// Upstream-level Auth removed: auth is handled per-target
+	// UpstreamDTO-level Auth removed: auth is handled per-target
 
 	return nil
 }

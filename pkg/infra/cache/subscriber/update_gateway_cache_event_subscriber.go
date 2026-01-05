@@ -5,9 +5,8 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -16,7 +15,7 @@ import (
 type UpdateGatewayCacheEventSubscriber struct {
 	logger       *logrus.Logger
 	cacheService gateway.UpdateGatewayCache
-	cache        cache.Cache
+	cache        cache.Client
 	repo         domainGateway.Repository
 	memoryCache  *cache.TTLMap
 }
@@ -24,9 +23,9 @@ type UpdateGatewayCacheEventSubscriber struct {
 func NewUpdateGatewayCacheEventSubscriber(
 	logger *logrus.Logger,
 	cacheService gateway.UpdateGatewayCache,
-	c cache.Cache,
+	c cache.Client,
 	repo domainGateway.Repository,
-) infraCache.EventSubscriber[event.UpdateGatewayCacheEvent] {
+) cache.EventSubscriber[event.UpdateGatewayCacheEvent] {
 	return &UpdateGatewayCacheEventSubscriber{
 		logger:       logger,
 		cacheService: cacheService,

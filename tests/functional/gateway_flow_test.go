@@ -69,7 +69,7 @@ func TestGatewayFlowPolicies(t *testing.T) {
 		// create API key with both policies via new IAM endpoint
 		apiKeyPayload := map[string]interface{}{
 			"name":         "Benchmark Key",
-			"expires_at":   "2026-01-01T00:00:00Z",
+			"expires_at":   "2066-01-01T00:00:00Z",
 			"subject_type": "gateway",
 			"subject":      gatewayID,
 			"policies":     []string{ruleID1, ruleID2},
@@ -134,7 +134,7 @@ func TestGatewayFlowPolicies(t *testing.T) {
 		fake := uuid.New().String()
 		payload := map[string]interface{}{
 			"name":         "Benchmark Key",
-			"expires_at":   "2026-01-01T00:00:00Z",
+			"expires_at":   "2066-01-01T00:00:00Z",
 			"subject_type": "gateway",
 			"subject":      gatewayID,
 			"policies":     []string{ruleID, fake},
@@ -184,7 +184,7 @@ func TestGatewayFlowPolicies(t *testing.T) {
 
 		payload := map[string]interface{}{
 			"name":         "Benchmark Key",
-			"expires_at":   "2026-01-01T00:00:00Z",
+			"expires_at":   "2066-01-01T00:00:00Z",
 			"subject_type": "policy",
 			"subject":      gatewayID,
 			"policies":     []string{ruleID},

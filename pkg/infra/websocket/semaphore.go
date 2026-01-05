@@ -1,12 +1,37 @@
 package websocket
 
+const defaultMaxConnections = 1000
+
 type Semaphore struct {
 	connections chan struct{}
 }
 
-func NewSemaphore(maxConnections int) *Semaphore {
+// SemaphoreOption is a functional option for configuring Semaphore.
+type SemaphoreOption func(*semaphoreConfig)
+
+type semaphoreConfig struct {
+	maxConnections int
+}
+
+// WithMaxConnections sets the maximum number of concurrent connections.
+// Default: 1000
+func WithMaxConnections(max int) SemaphoreOption {
+	return func(c *semaphoreConfig) {
+		c.maxConnections = max
+	}
+}
+
+func NewSemaphore(opts ...SemaphoreOption) *Semaphore {
+	cfg := &semaphoreConfig{
+		maxConnections: defaultMaxConnections,
+	}
+
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	return &Semaphore{
-		connections: make(chan struct{}, maxConnections),
+		connections: make(chan struct{}, cfg.maxConnections),
 	}
 }
 

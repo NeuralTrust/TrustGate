@@ -1,9 +1,9 @@
 package http
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -12,7 +12,7 @@ import (
 type createServiceHandler struct {
 	logger *logrus.Logger
 	repo   service.Repository
-	cache  cache.Cache
+	cache  cache.Client
 }
 
 // NewCreateServiceHandler @Summary Create a new Service
@@ -27,7 +27,7 @@ type createServiceHandler struct {
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
 // @Router /api/v1/gateways/{gateway_id}/services [post]
-func NewCreateServiceHandler(logger *logrus.Logger, repo service.Repository, cache cache.Cache) Handler {
+func NewCreateServiceHandler(logger *logrus.Logger, repo service.Repository, cache cache.Client) Handler {
 	return &createServiceHandler{
 		logger: logger,
 		repo:   repo,
@@ -38,12 +38,12 @@ func NewCreateServiceHandler(logger *logrus.Logger, repo service.Repository, cac
 func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 
-	var req req.ServiceRequest
-	if err := c.BodyParser(&req); err != nil {
+	var r req.ServiceRequest
+	if err := c.BodyParser(&r); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
-	upstreamId, err := uuid.Parse(req.UpstreamID)
+	upstreamId, err := uuid.Parse(r.UpstreamID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to parse upstream ID")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid upstream ID"})
@@ -61,19 +61,19 @@ func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 	entity := service.Service{
 		ID:          id,
 		GatewayID:   gatewayUUID,
-		Name:        req.Name,
-		Type:        req.Type,
-		Description: req.Description,
-		Tags:        req.Tags,
+		Name:        r.Name,
+		Type:        r.Type,
+		Description: r.Description,
+		Tags:        r.Tags,
 		UpstreamID:  upstreamId,
-		Host:        req.Host,
-		Port:        req.Port,
-		Protocol:    req.Protocol,
-		Path:        req.Path,
-		Headers:     req.Headers,
-		Credentials: req.Credentials,
-		CreatedAt:   req.CreatedAt,
-		UpdatedAt:   req.UpdatedAt,
+		Host:        r.Host,
+		Port:        r.Port,
+		Protocol:    r.Protocol,
+		Path:        r.Path,
+		Headers:     r.Headers,
+		Credentials: r.Credentials,
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
 	}
 
 	if err := s.repo.Create(c.Context(), &entity); err != nil {

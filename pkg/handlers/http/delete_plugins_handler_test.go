@@ -13,7 +13,7 @@ import (
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	gatewayMocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	publisherMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -155,7 +155,7 @@ func TestDeletePluginsHandler_InvalidUUID(t *testing.T) {
 	app := fiber.New()
 	app.Delete("/api/v1/plugins", handler.Handle)
 
-	// Gateway invalid UUID
+	// GatewayDTO invalid UUID
 	gwReq := map[string]interface{}{"type": "gateway", "id": "not-a-uuid", "plugin_ids": []string{uuid.NewString()}}
 	gwBody, err := json.Marshal(gwReq)
 	require.NoError(t, err)

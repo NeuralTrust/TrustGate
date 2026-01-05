@@ -55,7 +55,7 @@ func TestUpdateAPIKeyPolicies(t *testing.T) {
 	// Create an API key using the new IAM endpoint and get its ID from the response
 	apiKeyPayload := map[string]interface{}{
 		"name":         "Test API Key",
-		"expires_at":   "2026-01-01T00:00:00Z",
+		"expires_at":   "2066-01-01T00:00:00Z",
 		"subject_type": "gateway",
 		"subject":      gatewayID,
 	}

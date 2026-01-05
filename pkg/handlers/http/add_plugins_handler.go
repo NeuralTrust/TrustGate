@@ -9,7 +9,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -39,7 +39,7 @@ func NewAddPluginsHandler(
 	}
 }
 
-// Handle @Summary Add plugins to a Gateway or Rule
+// Handle @Summary Add plugins to a GatewayDTO or Rule
 // @Description Adds plugins to a gateway's required plugins or a rule's plugin chain.
 // @Tags Plugins
 // @Accept json

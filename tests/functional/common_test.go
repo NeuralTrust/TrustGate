@@ -39,7 +39,7 @@ func CreateGateway(t *testing.T, gatewayPayload map[string]interface{}) string {
 func CreateApiKey(t *testing.T, gatewayID string) string {
 	apiKeyPayload := map[string]interface{}{
 		"name":         "Test Key",
-		"expires_at":   "2026-01-01T00:00:00Z",
+		"expires_at":   "2066-01-01T00:00:00Z",
 		"subject":      gatewayID,
 		"subject_type": "gateway",
 	}

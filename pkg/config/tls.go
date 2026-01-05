@@ -74,7 +74,7 @@ func BuildTLSConfig(cfg *TLSConfig) (*tls.Config, error) {
 	return config, nil
 }
 
-func BuildTLSConfigFromClientConfig(cfg types.ClientTLSConfig) (*tls.Config, error) {
+func BuildTLSConfigFromClientConfig(cfg types.ClientTLSConfigDTO) (*tls.Config, error) {
 	var certificates []tls.Certificate
 	if cfg.ClientCerts.Certificate != "" && cfg.ClientCerts.PrivateKey != "" {
 		certPath, err := resolvePath(cfg.ClientCerts.Certificate)

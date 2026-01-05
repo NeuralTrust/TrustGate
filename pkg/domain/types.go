@@ -12,11 +12,11 @@ type (
 	MethodsJSON        []string
 	HeadersJSON        map[string]string
 	PluginChainJSON    []types.PluginConfig
-	CredentialsJSON    types.Credentials
-	SecurityConfigJSON types.SecurityConfig
-	ClientTLSConfig    map[string]types.ClientTLSConfig
+	CredentialsJSON    = types.CredentialsDTO
+	SecurityConfigJSON types.SecurityConfigDTO
+	ClientTLSConfig    map[string]types.ClientTLSConfigDTO
 	TagsJSON           []string
-	TrustLensJSON      types.TrustLensConfig
+	TrustLensJSON      types.TrustLensConfigDTO
 )
 
 func (c TrustLensJSON) Value() (driver.Value, error) {
@@ -118,21 +118,6 @@ func (p *PluginChainJSON) Scan(value interface{}) error {
 		return fmt.Errorf("expected []byte, got %T", value)
 	}
 	return json.Unmarshal(bytes, p)
-}
-
-func (c CredentialsJSON) Value() (driver.Value, error) {
-	return json.Marshal(c)
-}
-
-func (c *CredentialsJSON) Scan(value interface{}) error {
-	if value == nil {
-		return nil
-	}
-	bytes, ok := value.([]byte)
-	if !ok {
-		return fmt.Errorf("expected []byte, got %T", value)
-	}
-	return json.Unmarshal(bytes, c)
 }
 
 func (t TagsJSON) Value() (driver.Value, error) {

@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/response"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -23,7 +23,7 @@ type listRulesHandler struct {
 	ruleRepo    forwarding_rule.Repository
 	gatewayRepo gateway.Repository
 	serviceRepo service.Repository
-	cache       cache.Cache
+	cache       cache.Client
 }
 
 func NewListRulesHandler(
@@ -31,7 +31,7 @@ func NewListRulesHandler(
 	ruleRepo forwarding_rule.Repository,
 	gatewayRepo gateway.Repository,
 	serviceRepo service.Repository,
-	cache cache.Cache,
+	cache cache.Client,
 ) Handler {
 	return &listRulesHandler{
 		logger:      logger,
@@ -47,9 +47,9 @@ func NewListRulesHandler(
 // @Tags Rules
 // @Param Authorization header string true "Authorization token"
 // @Produce json
-// @Param gateway_id path string true "Gateway ID"
+// @Param gateway_id path string true "GatewayDTO ID"
 // @Success 200 {object} response.ListRulesOutput "List of rules"
-// @Failure 404 {object} map[string]interface{} "Gateway not found"
+// @Failure 404 {object} map[string]interface{} "GatewayDTO not found"
 // @Router /api/v1/gateways/{gateway_id}/rules [get]
 func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
@@ -74,18 +74,18 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list rules"})
 	}
 
-	rules := make([]types.ForwardingRule, len(dbRules))
+	rules := make([]types.ForwardingRuleDTO, len(dbRules))
 	rulesOutput := make([]response.ForwardingRuleOutput, len(dbRules))
 	for i, rule := range dbRules {
-		var trustLensConfig *types.TrustLensConfig
+		var trustLensConfig *types.TrustLensConfigDTO
 		if rule.TrustLens != nil {
-			trustLensConfig = &types.TrustLensConfig{
+			trustLensConfig = &types.TrustLensConfigDTO{
 				AppID:  rule.TrustLens.AppID,
 				TeamID: rule.TrustLens.TeamID,
 				Type:   rule.TrustLens.Type,
 			}
 		}
-		rules[i] = types.ForwardingRule{
+		rules[i] = types.ForwardingRuleDTO{
 			ID:            rule.ID.String(),
 			Name:          rule.Name,
 			GatewayID:     rule.GatewayID.String(),

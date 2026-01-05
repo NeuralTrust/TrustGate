@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -15,10 +15,10 @@ import (
 type listUpstreamHandler struct {
 	logger *logrus.Logger
 	repo   upstream.Repository
-	cache  cache.Cache
+	cache  cache.Client
 }
 
-func NewListUpstreamHandler(logger *logrus.Logger, repo upstream.Repository, cache cache.Cache) Handler {
+func NewListUpstreamHandler(logger *logrus.Logger, repo upstream.Repository, cache cache.Client) Handler {
 	return &listUpstreamHandler{
 		logger: logger,
 		repo:   repo,

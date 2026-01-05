@@ -17,21 +17,21 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	infrahttpx "github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
+	plugintypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
-	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
@@ -40,10 +40,10 @@ import (
 )
 
 type forwardedRequestDTO struct {
-	tlsConfig      map[string]types.ClientTLSConfig
+	tlsConfig      map[string]types.ClientTLSConfigDTO
 	req            *types.RequestContext
-	rule           *types.ForwardingRule
-	target         *types.UpstreamTarget
+	rule           *types.ForwardingRuleDTO
+	target         *types.UpstreamTargetDTO
 	proxy          *domainUpstream.Proxy
 	streamResponse chan []byte
 }
@@ -56,7 +56,7 @@ var responseBodyPool = sync.Pool{
 
 type forwardedHandler struct {
 	logger              *logrus.Logger
-	cache               cache.Cache
+	cache               cache.Client
 	gatewayCache        *cache.TTLMap
 	loadBalancerCache   *cache.TTLMap
 	upstreamFinder      upstream.Finder
@@ -65,25 +65,27 @@ type forwardedHandler struct {
 	client              *fasthttp.Client
 	loadBalancerFactory loadbalancer.Factory
 	cfg                 *config.Config
-	tlsClientCache      *infraCache.TLSClientCache
+	tlsClientCache      *cache.TLSClientCache
 	providerLocator     factory.ProviderLocator
 	tokenClient         oauth.TokenClient
 	ruleMatcher         routing.RuleMatcher
 }
 
-func NewForwardedHandler(
-	logger *logrus.Logger,
-	c cache.Cache,
-	upstreamFinder upstream.Finder,
-	serviceFinder service.Finder,
-	pluginManager plugins.Manager,
-	loadBalancerFactory loadbalancer.Factory,
-	cfg *config.Config,
-	providerLocator factory.ProviderLocator,
-	tokenClient oauth.TokenClient,
-	ruleMatcher routing.RuleMatcher,
-) Handler {
+// ForwardedHandlerDeps contains all dependencies for ForwardedHandler.
+type ForwardedHandlerDeps struct {
+	Logger              *logrus.Logger
+	Cache               cache.Client
+	UpstreamFinder      upstream.Finder
+	ServiceFinder       service.Finder
+	PluginManager       plugins.Manager
+	LoadBalancerFactory loadbalancer.Factory
+	Cfg                 *config.Config
+	ProviderLocator     factory.ProviderLocator
+	TokenClient         oauth.TokenClient
+	RuleMatcher         routing.RuleMatcher
+}
 
+func NewForwardedHandler(deps ForwardedHandlerDeps) Handler {
 	client := &fasthttp.Client{
 		ReadTimeout:                   60 * time.Second,
 		WriteTimeout:                  60 * time.Second,
@@ -97,20 +99,20 @@ func NewForwardedHandler(
 	}
 
 	return &forwardedHandler{
-		logger:              logger,
-		cache:               c,
-		gatewayCache:        c.GetTTLMap(cache.GatewayTTLName),
-		loadBalancerCache:   c.GetTTLMap(cache.LoadBalancerTTLName),
-		upstreamFinder:      upstreamFinder,
-		serviceFinder:       serviceFinder,
-		pluginManager:       pluginManager,
+		logger:              deps.Logger,
+		cache:               deps.Cache,
+		gatewayCache:        deps.Cache.GetTTLMap(cache.GatewayTTLName),
+		loadBalancerCache:   deps.Cache.GetTTLMap(cache.LoadBalancerTTLName),
+		upstreamFinder:      deps.UpstreamFinder,
+		serviceFinder:       deps.ServiceFinder,
+		pluginManager:       deps.PluginManager,
 		client:              client,
-		loadBalancerFactory: loadBalancerFactory,
-		cfg:                 cfg,
-		tlsClientCache:      infraCache.NewTLSClientCache(logger),
-		providerLocator:     providerLocator,
-		tokenClient:         tokenClient,
-		ruleMatcher:         ruleMatcher,
+		loadBalancerFactory: deps.LoadBalancerFactory,
+		cfg:                 deps.Cfg,
+		tlsClientCache:      cache.NewTLSClientCache(deps.Logger),
+		providerLocator:     deps.ProviderLocator,
+		tokenClient:         deps.TokenClient,
+		ruleMatcher:         deps.RuleMatcher,
 	}
 }
 
@@ -241,7 +243,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "internal server error"})
 	}
 
-	matchingRule, ok := c.Locals(string(common.MatchedRuleContextKey)).(*types.ForwardingRule)
+	matchingRule, ok := c.Locals(string(common.MatchedRuleContextKey)).(*types.ForwardingRuleDTO)
 	if !ok {
 		h.logger.Error("failed to get matched rule from context")
 		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "internal server error"})
@@ -272,7 +274,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "failed to get load balancer"})
 	}
 
-	var preselectedTarget *types.UpstreamTarget
+	var preselectedTarget *types.UpstreamTargetDTO
 	preselectedTarget, err = h.preselectTarget(reqCtx, lb)
 	if err != nil {
 		h.logger.WithError(err).Warn("failed to pre-select target, will select during forwardRequest")
@@ -307,13 +309,13 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	if _, err := h.pluginManager.ExecuteStage(
 		c.Context(),
-		types.PreRequest,
+		plugintypes.PreRequest,
 		gatewayID,
 		reqCtx,
 		respCtx,
 		metricsCollector,
 	); err != nil {
-		var pluginErr *types.PluginError
+		var pluginErr *plugintypes.PluginError
 		if errors.As(err, &pluginErr) {
 			for k, values := range respCtx.Headers {
 				for _, v := range values {
@@ -415,13 +417,13 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	// Execute pre-response plugins
 	if _, err := h.pluginManager.ExecuteStage(
 		c.Context(),
-		types.PreResponse,
+		plugintypes.PreResponse,
 		gatewayID,
 		reqCtx,
 		respCtx,
 		metricsCollector,
 	); err != nil {
-		var pluginErr *types.PluginError
+		var pluginErr *plugintypes.PluginError
 		if errors.As(err, &pluginErr) {
 			// Copy headers from response context
 			for k, values := range respCtx.Headers {
@@ -444,13 +446,13 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	// Execute post-response plugins
 	if _, err := h.pluginManager.ExecuteStage(
 		c.Context(),
-		types.PostResponse,
+		plugintypes.PostResponse,
 		gatewayID,
 		reqCtx,
 		respCtx,
 		metricsCollector,
 	); err != nil {
-		var pluginErr *types.PluginError
+		var pluginErr *plugintypes.PluginError
 		if errors.As(err, &pluginErr) {
 			// Copy headers from response context
 			h.logger.WithFields(logrus.Fields{
@@ -504,7 +506,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 }
 
-func (h *forwardedHandler) configureRulePlugins(gatewayID string, rule *types.ForwardingRule) error {
+func (h *forwardedHandler) configureRulePlugins(gatewayID string, rule *types.ForwardingRuleDTO) error {
 	if rule != nil && len(rule.PluginChain) > 0 {
 		if err := h.pluginManager.SetPluginChain(gatewayID, rule.PluginChain); err != nil {
 			return fmt.Errorf("failed to configure rule plugins: %w", err)
@@ -516,7 +518,7 @@ func (h *forwardedHandler) configureRulePlugins(gatewayID string, rule *types.Fo
 func (h *forwardedHandler) preselectTarget(
 	reqCtx *types.RequestContext,
 	lb *loadbalancer.LoadBalancer,
-) (*types.UpstreamTarget, error) {
+) (*types.UpstreamTargetDTO, error) {
 	target, err := lb.NextTarget(reqCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select target: %w", err)
@@ -526,7 +528,7 @@ func (h *forwardedHandler) preselectTarget(
 
 func (h *forwardedHandler) getUpstream(
 	ctx context.Context,
-	rule *types.ForwardingRule,
+	rule *types.ForwardingRuleDTO,
 ) (*domainUpstream.Upstream, error) {
 	serviceEntity, err := h.serviceFinder.Find(ctx, rule.GatewayID, rule.ServiceID)
 	if err != nil {
@@ -544,10 +546,10 @@ func (h *forwardedHandler) getUpstream(
 
 func (h *forwardedHandler) forwardRequest(
 	req *types.RequestContext,
-	rule *types.ForwardingRule,
+	rule *types.ForwardingRuleDTO,
 	upstreamModel *domainUpstream.Upstream,
-	tlsConfig map[string]types.ClientTLSConfig,
-	preselectedTarget *types.UpstreamTarget,
+	tlsConfig map[string]types.ClientTLSConfigDTO,
+	preselectedTarget *types.UpstreamTargetDTO,
 	lb *loadbalancer.LoadBalancer,
 ) (*types.ResponseContext, error) {
 
@@ -571,7 +573,7 @@ func (h *forwardedHandler) forwardRequest(
 	var reqErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		var (
-			target *types.UpstreamTarget
+			target *types.UpstreamTargetDTO
 			err    error
 		)
 
@@ -649,7 +651,7 @@ func (h *forwardedHandler) forwardRequest(
 
 func (h *forwardedHandler) applyTargetOAuth(
 	req *types.RequestContext,
-	target *types.UpstreamTarget,
+	target *types.UpstreamTargetDTO,
 	upstreamModel *domainUpstream.Upstream,
 ) error {
 	if upstreamModel == nil || target == nil {
@@ -719,7 +721,7 @@ func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upst
 
 func (h *forwardedHandler) handlerProviderResponse(
 	req *types.RequestContext,
-	target *types.UpstreamTarget,
+	target *types.UpstreamTargetDTO,
 ) (*types.ResponseContext, error) {
 	providerClient, err := h.providerLocator.Get(target.Provider)
 	if err != nil {
@@ -908,7 +910,7 @@ func (h *forwardedHandler) prepareClient(dto *forwardedRequestDTO) (*fasthttp.Cl
 		return h.tlsClientCache.GetOrCreate(dto.target.ID, conf, proxyAddr, proxyProtocol), nil
 
 	case dto.target.InsecureSSL:
-		conf, err := config.BuildTLSConfigFromClientConfig(types.ClientTLSConfig{AllowInsecureConnections: true})
+		conf, err := config.BuildTLSConfigFromClientConfig(types.ClientTLSConfigDTO{AllowInsecureConnections: true})
 		if err != nil {
 			return nil, fmt.Errorf("failed to build insecure TLS config: %w", err)
 		}
@@ -922,7 +924,7 @@ func (h *forwardedHandler) prepareClient(dto *forwardedRequestDTO) (*fasthttp.Cl
 	}
 }
 
-func (h *forwardedHandler) applyAuthentication(req *fasthttp.Request, creds *types.Credentials, body []byte) {
+func (h *forwardedHandler) applyAuthentication(req *fasthttp.Request, creds *types.CredentialsDTO, body []byte) {
 	if creds == nil {
 		return
 	}
@@ -957,13 +959,13 @@ func (h *forwardedHandler) applyAuthentication(req *fasthttp.Request, creds *typ
 
 func (h *forwardedHandler) handleStreamingRequest(
 	req *types.RequestContext,
-	target *types.UpstreamTarget,
+	target *types.UpstreamTargetDTO,
 	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
 	return h.handleStreamingResponse(req, target, streamResponse)
 }
 
-func (h *forwardedHandler) buildUpstreamTargetUrl(target *types.UpstreamTarget, pathParams map[string]string) string {
+func (h *forwardedHandler) buildUpstreamTargetUrl(target *types.UpstreamTargetDTO, pathParams map[string]string) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("%s://%s", target.Protocol, target.Host))
 	if (target.Protocol == "https" && target.Port != 443) || (target.Protocol == "http" && target.Port != 80) {
@@ -1001,7 +1003,7 @@ func (h *forwardedHandler) getPathParamsFromContext(ctx context.Context) map[str
 
 func (h *forwardedHandler) handleStreamingResponseByProvider(
 	req *types.RequestContext,
-	target *types.UpstreamTarget,
+	target *types.UpstreamTargetDTO,
 	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
 
@@ -1086,7 +1088,7 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 
 func (h *forwardedHandler) handleStreamingResponse(
 	req *types.RequestContext,
-	target *types.UpstreamTarget,
+	target *types.UpstreamTargetDTO,
 	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
 	pathParams := h.getPathParamsFromContext(req.Context)

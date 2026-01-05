@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/utils"
 	"github.com/go-redis/redis/v8"
 	"github.com/gofiber/fiber/v2"
@@ -27,7 +27,7 @@ const (
 	fingerPrintByUserAgentKey = "fp_by_ua:%s"
 )
 
-//go:generate mockery --name=Tracker --dir=. --output=../../../mocks --filename=fingerprint_tracker_mock.go --case=underscore --with-expecter
+//go:generate mockery --name=Tracker --dir=. --output=./mocks --filename=fingerprint_tracker_mock.go --case=underscore --with-expecter
 type Tracker interface {
 	MakeFingerprint(ctx *fiber.Ctx) Fingerprint
 	CountMaliciousSimilarFingerprints(
@@ -70,10 +70,10 @@ type Tracker interface {
 }
 
 type tracker struct {
-	redis cache.Cache
+	redis cache.Client
 }
 
-func NewFingerPrintTracker(redis cache.Cache) Tracker {
+func NewFingerPrintTracker(redis cache.Client) Tracker {
 	return &tracker{
 		redis: redis,
 	}
@@ -99,7 +99,7 @@ func (p *tracker) CountMaliciousSimilarFingerprints(
 		badKey := fmt.Sprintf(fingerPrintMaliciousKey, id)
 		seenKey := fmt.Sprintf(fingerPrintSeenKey, id)
 
-		pipe := p.redis.Client().Pipeline()
+		pipe := p.redis.RedisClient().Pipeline()
 		bad := pipe.Get(ctx, badKey)
 		seen := pipe.Get(ctx, seenKey)
 		_, err := pipe.Exec(ctx)
@@ -130,7 +130,7 @@ func (p *tracker) CountBlockedSimilarFingerprints(
 		return 0, nil
 	}
 
-	pipe := p.redis.Client().Pipeline()
+	pipe := p.redis.RedisClient().Pipeline()
 	cmds := make([]*redis.IntCmd, len(fps))
 
 	for i, f := range fps {
@@ -166,7 +166,7 @@ func (p *tracker) Store(
 		return err
 	}
 
-	pipe := p.redis.Client().TxPipeline()
+	pipe := p.redis.RedisClient().TxPipeline()
 
 	pipe.Set(ctx, fmt.Sprintf(fingerPrintKey, id), data, ttl)
 
@@ -221,7 +221,7 @@ func (p *tracker) FindSimilarFingerprints(
 		return nil, nil
 	}
 
-	ids, err := p.redis.Client().SUnion(ctx, keys...).Result()
+	ids, err := p.redis.RedisClient().SUnion(ctx, keys...).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +231,7 @@ func (p *tracker) FindSimilarFingerprints(
 		if id == fp.ID() {
 			continue
 		}
-		data, err := p.redis.Client().Get(ctx, fmt.Sprintf(fingerPrintKey, id)).Bytes()
+		data, err := p.redis.RedisClient().Get(ctx, fmt.Sprintf(fingerPrintKey, id)).Bytes()
 		if err != nil {
 			continue
 		}
@@ -261,7 +261,7 @@ func (p *tracker) FindSimilarFingerprints(
 
 func (p *tracker) GetFingerprint(ctx context.Context, id string) (*Fingerprint, error) {
 	key := fmt.Sprintf(fingerPrintKey, id)
-	data, err := p.redis.Client().Get(ctx, key).Bytes()
+	data, err := p.redis.RedisClient().Get(ctx, key).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, nil
@@ -282,7 +282,7 @@ func (p *tracker) IsFingerprintBlocked(
 	fp *Fingerprint,
 ) (bool, error) {
 	blockKey := fmt.Sprintf(fingerPrintBlockedKey, fp.ID())
-	exists, err := p.redis.Client().Exists(ctx, blockKey).Result()
+	exists, err := p.redis.RedisClient().Exists(ctx, blockKey).Result()
 	if err != nil {
 		return false, err
 	}
@@ -295,7 +295,7 @@ func (p *tracker) BlockFingerprint(
 	duration time.Duration,
 ) error {
 	blockKey := fmt.Sprintf(fingerPrintBlockedKey, fp.ID())
-	return p.redis.Client().Set(ctx, blockKey, "1", duration).Err()
+	return p.redis.RedisClient().Set(ctx, blockKey, "1", duration).Err()
 }
 
 func (p *tracker) IncrementMaliciousCount(
@@ -303,10 +303,10 @@ func (p *tracker) IncrementMaliciousCount(
 	id string,
 	ttl time.Duration,
 ) error {
-	if err := p.redis.Client().Incr(ctx, fmt.Sprintf(fingerPrintMaliciousKey, id)).Err(); err != nil {
+	if err := p.redis.RedisClient().Incr(ctx, fmt.Sprintf(fingerPrintMaliciousKey, id)).Err(); err != nil {
 		return err
 	}
-	if err := p.redis.Client().Expire(ctx, fmt.Sprintf(fingerPrintMaliciousKey, id), ttl).Err(); err != nil {
+	if err := p.redis.RedisClient().Expire(ctx, fmt.Sprintf(fingerPrintMaliciousKey, id), ttl).Err(); err != nil {
 		return err
 
 	}
@@ -317,7 +317,7 @@ func (p *tracker) GetMaliciousCount(
 	ctx context.Context,
 	id string,
 ) (int, error) {
-	count, err := p.redis.Client().Get(ctx, fmt.Sprintf(fingerPrintMaliciousKey, id)).Int64()
+	count, err := p.redis.RedisClient().Get(ctx, fmt.Sprintf(fingerPrintMaliciousKey, id)).Int64()
 	if errors.Is(err, redis.Nil) {
 		return 0, nil
 	}

@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 )
 
 const (
@@ -19,10 +19,10 @@ const (
 )
 
 type redisEmbeddingRepository struct {
-	cache cache.Cache
+	cache cache.Client
 }
 
-func NewRedisEmbeddingRepository(cache cache.Cache) embedding.EmbeddingRepository {
+func NewRedisEmbeddingRepository(cache cache.Client) embedding.Repository {
 	return &redisEmbeddingRepository{
 		cache: cache,
 	}
@@ -67,7 +67,7 @@ func (r *redisEmbeddingRepository) GetByTargetID(
 func (r *redisEmbeddingRepository) Count(ctx context.Context, index, gatewayID string) (int, error) {
 	query := fmt.Sprintf("@gateway_id:{%s}", r.hashGatewayID(gatewayID))
 
-	resp, err := r.cache.Client().Do(ctx, "FT.SEARCH", index, query, "NOCONTENT").Result()
+	resp, err := r.cache.RedisClient().Do(ctx, "FT.SEARCH", index, query, "NOCONTENT").Result()
 	if err != nil {
 		return 0, fmt.Errorf("failed to count keys for gateway ID %s: %w", gatewayID, err)
 	}
@@ -101,7 +101,7 @@ func (r *redisEmbeddingRepository) StoreWithHMSet(
 		return fmt.Errorf("failed to convert embedding to blob: %w", err)
 	}
 
-	_, err = r.cache.Client().HMSet(ctx, fullKey, map[string]interface{}{
+	_, err = r.cache.RedisClient().HMSet(ctx, fullKey, map[string]interface{}{
 		"embedding":  blob,
 		"gateway_id": r.hashGatewayID(gatewayID),
 		"data":       string(data),
@@ -132,7 +132,7 @@ func (r *redisEmbeddingRepository) Search(
 		"SORTBY", "score",
 	}
 
-	result := r.cache.Client().Do(ctx, args...)
+	result := r.cache.RedisClient().Do(ctx, args...)
 	if err := result.Err(); err != nil {
 		return nil, fmt.Errorf("search error: %w", err)
 	}

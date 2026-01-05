@@ -9,7 +9,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -39,7 +39,7 @@ func NewDeletePluginsHandler(
 	}
 }
 
-// Handle @Summary Delete plugins from a Gateway or Rule
+// Handle @Summary Delete plugins from a GatewayDTO or Rule
 // @Description Deletes the specified plugins from a gateway's required plugins or a rule's plugin chain
 // @Tags Plugins
 // @Accept json

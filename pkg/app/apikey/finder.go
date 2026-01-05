@@ -4,28 +4,28 @@ import (
 	"context"
 	"errors"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/sirupsen/logrus"
 )
 
 var ErrInvalidCacheType = errors.New("invalid type assertion for apikey model")
 
-//go:generate mockery --name=Finder --dir=. --output=../../../mocks --filename=apikey_data_finder_mock.go --case=underscore --with-expecter
+//go:generate mockery --name=Finder --dir=. --output=./mocks --filename=apikey_data_finder_mock.go --case=underscore --with-expecter
 type Finder interface {
 	Find(ctx context.Context, key string) (*domain.APIKey, error)
 }
 
 type finder struct {
 	repo        domain.Repository
-	cache       cache.Cache
+	cache       cache.Client
 	memoryCache *cache.TTLMap
 	logger      *logrus.Logger
 }
 
 func NewFinder(
 	repository domain.Repository,
-	c cache.Cache,
+	c cache.Client,
 	logger *logrus.Logger,
 ) Finder {
 	return &finder{

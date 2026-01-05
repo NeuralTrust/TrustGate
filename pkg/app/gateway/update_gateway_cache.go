@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/google/uuid"
 )
 
@@ -16,10 +16,10 @@ type UpdateGatewayCache interface {
 
 type updateGatewayCache struct {
 	transformer *OutputTransformer
-	cache       cache.Cache
+	cache       cache.Client
 }
 
-func NewUpdateGatewayCache(cache cache.Cache) UpdateGatewayCache {
+func NewUpdateGatewayCache(cache cache.Client) UpdateGatewayCache {
 	return &updateGatewayCache{
 		transformer: NewOutputTransformer(),
 		cache:       cache,

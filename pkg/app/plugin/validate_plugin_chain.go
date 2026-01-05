@@ -6,8 +6,8 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins"
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/google/uuid"
 )
 
@@ -29,17 +29,17 @@ func NewValidatePluginChain(manager plugins.Manager, repo gateway.Repository) Va
 	}
 }
 
-func (v *validatePluginChain) Validate(ctx context.Context, gatewayID uuid.UUID, plugins []types.PluginConfig) error {
-	if len(plugins) == 0 {
+func (v *validatePluginChain) Validate(ctx context.Context, gatewayID uuid.UUID, pluginConfigs []types.PluginConfig) error {
+	if len(pluginConfigs) == 0 {
 		return nil
 	}
 
-	pluginMap := make(map[string]types.PluginConfig, len(plugins))
-	for _, plugin := range plugins {
+	pluginMap := make(map[string]types.PluginConfig, len(pluginConfigs))
+	for _, plugin := range pluginConfigs {
 		pluginMap[plugin.Name] = plugin
 	}
 
-	for _, plugin := range plugins {
+	for _, plugin := range pluginConfigs {
 		if err := v.manager.ValidatePlugin(plugin.Name, plugin); err != nil {
 			return err
 		}

@@ -25,7 +25,7 @@ type Worker interface {
 	StartWorkers(n int)
 	Process(
 		metricsCollector *Collector,
-		exporters []types.Exporter,
+		exporters []types.ExporterDTO,
 		req types.RequestContext,
 		resp types.ResponseContext,
 		startTime time.Time,
@@ -82,7 +82,7 @@ func (m *worker) Shutdown() {
 
 func (m *worker) Process(
 	metricsCollector *Collector,
-	exporters []types.Exporter,
+	exporters []types.ExporterDTO,
 	req types.RequestContext,
 	resp types.ResponseContext,
 	startTime,
@@ -99,7 +99,7 @@ func (m *worker) Process(
 
 func (m *worker) registryMetricsToExporters(
 	collector *Collector,
-	exporters []types.Exporter,
+	exporters []types.ExporterDTO,
 	req types.RequestContext,
 	resp types.ResponseContext,
 	startTime,
@@ -286,7 +286,7 @@ func (m *worker) feedEvent(
 	return evt
 }
 
-func (m *worker) createExportersCacheKey(exporters []types.Exporter) string {
+func (m *worker) createExportersCacheKey(exporters []types.ExporterDTO) string {
 	data, err := json.Marshal(exporters)
 	if err != nil {
 		var key string

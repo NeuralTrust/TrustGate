@@ -11,12 +11,13 @@ import (
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
-//go:generate mockery --name=Creator --dir=. --output=../../../mocks --filename=gateway_creator_mock.go --case=underscore --with-expecter
+//go:generate mockery --name=Creator --dir=. --output=./mocks --filename=gateway_creator_mock.go --case=underscore --with-expecter
 type Creator interface {
 	Create(ctx context.Context, req *request.CreateGatewayRequest, gatewayID string) (*domainGateway.Gateway, error)
 }
@@ -92,9 +93,9 @@ func (c *creator) Create(
 
 	var telemetryObj *telemetry.Telemetry
 	if req.Telemetry != nil {
-		var exporters []types.Exporter
+		var exporters []types.ExporterDTO
 		for _, config := range req.Telemetry.Exporters {
-			exporters = append(exporters, types.Exporter(config))
+			exporters = append(exporters, types.ExporterDTO(config))
 		}
 
 		// Disallow duplicate exporters with the same provider name
@@ -102,14 +103,14 @@ func (c *creator) Create(
 		for _, e := range exporters {
 			if _, exists := seenProviders[e.Name]; exists {
 				c.logger.WithField("provider", e.Name).Error("duplicate telemetry exporter provider")
-				return nil, fmt.Errorf("%w: %s", types.ErrDuplicateTelemetryExporter, e.Name)
+				return nil, fmt.Errorf("%w: %s", pluginTypes.ErrDuplicateTelemetryExporter, e.Name)
 			}
 			seenProviders[e.Name] = struct{}{}
 		}
 		err = c.telemetryProvidersValidator.Validate(exporters)
 		if err != nil {
 			c.logger.WithError(err).Error("failed to validate telemetry providers")
-			return nil, fmt.Errorf("%w: %w", types.ErrTelemetryValidation, err)
+			return nil, fmt.Errorf("%w: %w", pluginTypes.ErrTelemetryValidation, err)
 		}
 		telemetryObj = &telemetry.Telemetry{
 			Exporters:           c.telemetryExportersToDomain(exporters),
@@ -147,7 +148,7 @@ func (c *creator) Create(
 	err = c.pluginChainValidator.Validate(ctx, id, entity.RequiredPlugins)
 	if err != nil {
 		c.logger.WithError(err).Error("failed to validate plugin chain")
-		return nil, fmt.Errorf("%w: %w", types.ErrPluginChainValidation, err)
+		return nil, fmt.Errorf("%w: %w", pluginTypes.ErrPluginChainValidation, err)
 	}
 
 	if err := c.repo.Save(ctx, &entity); err != nil {
@@ -162,7 +163,7 @@ func (c *creator) Create(
 	return &entity, nil
 }
 
-func (c *creator) telemetryExportersToDomain(configs []types.Exporter) []telemetry.ExporterConfig {
+func (c *creator) telemetryExportersToDomain(configs []types.ExporterDTO) []telemetry.ExporterConfig {
 	result := make([]telemetry.ExporterConfig, 0, len(configs))
 	for _, cfg := range configs {
 		result = append(result, telemetry.ExporterConfig{
@@ -175,17 +176,17 @@ func (c *creator) telemetryExportersToDomain(configs []types.Exporter) []telemet
 
 func (c *creator) mapClientTLSConfig(
 	req map[string]request.ClientTLSConfigRequest,
-) map[string]types.ClientTLSConfig {
+) map[string]types.ClientTLSConfigDTO {
 	if len(req) == 0 {
 		return nil
 	}
 
-	result := make(map[string]types.ClientTLSConfig, len(req))
+	result := make(map[string]types.ClientTLSConfigDTO, len(req))
 	for k, v := range req {
-		result[k] = types.ClientTLSConfig{
+		result[k] = types.ClientTLSConfigDTO{
 			AllowInsecureConnections: v.AllowInsecureConnections,
 			CACerts:                  v.CACert,
-			ClientCerts: types.ClientTLSCert{
+			ClientCerts: types.ClientTLSCertDTO{
 				Certificate: v.ClientCerts.Certificate,
 				PrivateKey:  v.ClientCerts.PrivateKey,
 			},

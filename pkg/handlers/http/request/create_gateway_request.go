@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 )
 
 const (

@@ -15,6 +15,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/policy"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
+	middleware "github.com/NeuralTrust/TrustGate/pkg/server/middleware"
 	"github.com/valyala/fasthttp"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
@@ -24,7 +25,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	domainEmbedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
@@ -38,29 +39,27 @@ import (
 	wsHandlers "github.com/NeuralTrust/TrustGate/pkg/handlers/websocket"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	infraTelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
-	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
-	"github.com/NeuralTrust/TrustGate/pkg/middleware"
-	"github.com/NeuralTrust/TrustGate/pkg/plugins"
 	"github.com/sirupsen/logrus"
 )
 
 type Container struct {
-	Cache                       cache.Cache
+	Cache                       cache.Client
 	BedrockClient               bedrock.Client
 	PluginManager               plugins.Manager
 	HandlerTransport            handlers.HandlerTransport
 	WSHandlerTransport          wsHandlers.HandlerTransport
-	RedisListener               infraCache.EventListener
-	RedisPublisher              infraCache.EventPublisher
+	RedisListener               cache.EventListener
+	RedisPublisher              cache.EventPublisher
 	PanicRecoverMiddleware      middleware.Middleware
 	AuthMiddleware              middleware.Middleware
 	CORSGlobalMiddleware        middleware.Middleware
@@ -72,12 +71,12 @@ type Container struct {
 	WebSocketMiddleware         middleware.Middleware
 	SessionMiddleware           middleware.Middleware
 	ApiKeyRepository            domainApikey.Repository
-	EmbeddingRepository         domainEmbedding.EmbeddingRepository
+	EmbeddingRepository         domainEmbedding.Repository
 	SessionRepository           domainSession.Repository
 	FingerprintTracker          fingerprint.Tracker
 	PluginChainValidator        plugin.ValidatePluginChain
 	MetricsWorker               metrics.Worker
-	RedisIndexCreator           infraCache.RedisIndexCreator
+	RedisIndexCreator           cache.RedisIndexCreator
 	JWTManager                  jwt.Manager
 	RuleRepository              ruledomain.Repository
 	GatewayRepository           domainGateway.Repository
@@ -96,9 +95,9 @@ type ContainerDI struct {
 	Logger                        *logrus.Logger
 	DB                            *database.DB
 	EventsRegistry                map[string]reflect.Type
-	InitializeMemoryCache         func(cacheInstance cache.Cache)
+	InitializeMemoryCache         func(cacheInstance cache.Client)
 	InitializeLoadBalancerFactory loadbalancer.FactoryInitializer
-	InitializeCachePublisher      infraCache.RedisPublisherInitializer
+	InitializeCachePublisher      cache.RedisPublisherInitializer
 	EventsChannel                 channel.Channel
 }
 
@@ -122,7 +121,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		DB:       di.Cfg.Redis.DB,
 		TLS:      di.Cfg.Redis.TLS,
 	}
-	cacheInstance, err := cache.NewCache(cacheConfig)
+	cacheInstance, err := cache.NewClient(cacheConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize cache: %v", err)
 	}
@@ -130,9 +129,9 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	di.InitializeMemoryCache(cacheInstance)
 	redisPublisher := di.InitializeCachePublisher(cacheInstance, di.EventsChannel)
 
-	redisListener := infraCache.NewRedisEventListener(di.Logger, cacheInstance, di.EventsRegistry)
+	redisListener := cache.NewRedisEventListener(di.Logger, cacheInstance, di.EventsRegistry)
 
-	redisIndexCreator := infraCache.NewRedisIndexCreator(cacheInstance.Client(), di.Logger)
+	redisIndexCreator := cache.NewRedisIndexCreator(cacheInstance.RedisClient(), di.Logger)
 
 	bedrockClient := bedrock.NewClient()
 
@@ -167,15 +166,14 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	firewallFactory := firewall.NewClientFactory(neuralTrustFirewallClient, openAIFirewallClient)
 
 	pluginManager := plugins.NewManager(
-		di.Cfg,
-		cacheInstance,
 		di.Logger,
-		bedrockClient,
-		fingerprintTracker,
-		embeddingRepository,
-		embeddingServiceLocator,
-		providerFactory,
-		firewallFactory,
+		cacheInstance,
+		plugins.WithBedrockClient(bedrockClient),
+		plugins.WithFingerprintTracker(fingerprintTracker),
+		plugins.WithEmbeddingRepo(embeddingRepository),
+		plugins.WithServiceLocator(embeddingServiceLocator),
+		plugins.WithProviderLocator(providerFactory),
+		plugins.WithFirewallFactory(firewallFactory),
 	)
 
 	// repository
@@ -234,14 +232,14 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	updateUpstreamSubscriber := subscriber.NewUpdateUpstreamCacheEventSubscriber(di.Logger, cacheInstance, upstreamRepository)
 	updateServiceSubscriber := subscriber.NewUpdateServiceCacheEventSubscriber(di.Logger, cacheInstance, serviceRepository)
 
-	infraCache.RegisterEventSubscriber[event.DeleteGatewayCacheEvent](redisListener, deleteGatewaySubscriber)
-	infraCache.RegisterEventSubscriber[event.DeleteRulesCacheEvent](redisListener, deleteRulesSubscriber)
-	infraCache.RegisterEventSubscriber[event.DeleteServiceCacheEvent](redisListener, deleteServiceSubscriber)
-	infraCache.RegisterEventSubscriber[event.DeleteUpstreamCacheEvent](redisListener, deleteUpstreamSubscriber)
-	infraCache.RegisterEventSubscriber[event.DeleteKeyCacheEvent](redisListener, deleteApiKeySubscriber)
-	infraCache.RegisterEventSubscriber[event.UpdateGatewayCacheEvent](redisListener, updateGatewaySubscriber)
-	infraCache.RegisterEventSubscriber[event.UpdateUpstreamCacheEvent](redisListener, updateUpstreamSubscriber)
-	infraCache.RegisterEventSubscriber[event.UpdateServiceCacheEvent](redisListener, updateServiceSubscriber)
+	cache.RegisterEventSubscriber[event.DeleteGatewayCacheEvent](redisListener, deleteGatewaySubscriber)
+	cache.RegisterEventSubscriber[event.DeleteRulesCacheEvent](redisListener, deleteRulesSubscriber)
+	cache.RegisterEventSubscriber[event.DeleteServiceCacheEvent](redisListener, deleteServiceSubscriber)
+	cache.RegisterEventSubscriber[event.DeleteUpstreamCacheEvent](redisListener, deleteUpstreamSubscriber)
+	cache.RegisterEventSubscriber[event.DeleteKeyCacheEvent](redisListener, deleteApiKeySubscriber)
+	cache.RegisterEventSubscriber[event.UpdateGatewayCacheEvent](redisListener, updateGatewaySubscriber)
+	cache.RegisterEventSubscriber[event.UpdateUpstreamCacheEvent](redisListener, updateUpstreamSubscriber)
+	cache.RegisterEventSubscriber[event.UpdateServiceCacheEvent](redisListener, updateServiceSubscriber)
 
 	lbFactory := di.InitializeLoadBalancerFactory(embeddingRepository, embeddingServiceLocator)
 
@@ -265,18 +263,18 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	// Handler Transport
 	handlerTransport := &handlers.HandlerTransportDTO{
 		// ProxyConfig
-		ForwardedHandler: handlers.NewForwardedHandler(
-			di.Logger,
-			cacheInstance,
-			upstreamFinder,
-			serviceFinder,
-			pluginManager,
-			lbFactory,
-			di.Cfg,
-			providerFactory,
-			oauthTokenClient,
-			ruleMatcher,
-		),
+		ForwardedHandler: handlers.NewForwardedHandler(handlers.ForwardedHandlerDeps{
+			Logger:              di.Logger,
+			Cache:               cacheInstance,
+			UpstreamFinder:      upstreamFinder,
+			ServiceFinder:       serviceFinder,
+			PluginManager:       pluginManager,
+			LoadBalancerFactory: lbFactory,
+			Cfg:                 di.Cfg,
+			ProviderLocator:     providerFactory,
+			TokenClient:         oauthTokenClient,
+			RuleMatcher:         ruleMatcher,
+		}),
 		// Gateway
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(
 			di.Logger,

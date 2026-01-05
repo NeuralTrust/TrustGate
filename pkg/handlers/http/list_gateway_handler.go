@@ -60,7 +60,7 @@ func (h *listGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list gateways"})
 	}
 
-	var gateways []types.Gateway
+	var gateways []types.GatewayDTO
 	for _, dbGateway := range dbGateways {
 		output := h.transformer.Transform(&dbGateway)
 		gateways = append(gateways, *output)

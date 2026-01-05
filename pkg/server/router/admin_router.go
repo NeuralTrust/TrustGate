@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
-	"github.com/NeuralTrust/TrustGate/pkg/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/server/middleware"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/swagger"
 )

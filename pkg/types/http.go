@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -20,7 +21,7 @@ type RequestContext struct {
 	Query     url.Values
 	Body      []byte
 	Metadata  map[string]interface{}
-	Stage     Stage
+	Stage     types.Stage
 	ProcessAt *time.Time
 	IP        string
 	SessionID string
@@ -38,7 +39,7 @@ type ResponseContext struct {
 	Streaming      bool
 	StopProcessing bool
 	ProcessAt      *time.Time
-	Target         *UpstreamTarget
-	Rule           *ForwardingRule
+	Target         *UpstreamTargetDTO
+	Rule           *ForwardingRuleDTO
 	TargetLatency  float64
 }

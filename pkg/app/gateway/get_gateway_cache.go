@@ -5,26 +5,26 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
 )
 
 type GetGatewayCache interface {
-	Retrieve(c context.Context, id string) (*types.Gateway, error)
+	Retrieve(c context.Context, id string) (*types.GatewayDTO, error)
 }
 
 type getGatewayCache struct {
-	cache cache.Cache
+	cache cache.Client
 }
 
-func NewGetGatewayCache(cache cache.Cache) GetGatewayCache {
+func NewGetGatewayCache(cache cache.Client) GetGatewayCache {
 	return &getGatewayCache{
 		cache: cache,
 	}
 }
 
-func (s *getGatewayCache) Retrieve(c context.Context, id string) (*types.Gateway, error) {
+func (s *getGatewayCache) Retrieve(c context.Context, id string) (*types.GatewayDTO, error) {
 	if err := s.validateGatewayID(id); err != nil {
 		return nil, err
 	}
@@ -34,7 +34,7 @@ func (s *getGatewayCache) Retrieve(c context.Context, id string) (*types.Gateway
 		return nil, err
 	}
 
-	var gateway types.Gateway
+	var gateway types.GatewayDTO
 	if err := json.Unmarshal([]byte(gatewayJSON), &gateway); err != nil {
 		return nil, err
 	}

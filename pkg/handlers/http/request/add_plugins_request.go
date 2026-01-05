@@ -3,7 +3,7 @@ package request
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 )
 
 type AddPluginsRequest struct {

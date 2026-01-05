@@ -1,19 +1,19 @@
 package http
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
 
 type invalidateCacheHandler struct {
 	logger *logrus.Logger
-	cache  cache.Cache
+	cache  cache.Client
 }
 
 func NewInvalidateCacheHandler(
 	logger *logrus.Logger,
-	cache cache.Cache,
+	cache cache.Client,
 ) Handler {
 	return &invalidateCacheHandler{
 		logger: logger,

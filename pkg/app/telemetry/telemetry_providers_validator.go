@@ -6,7 +6,7 @@ import (
 )
 
 type ExportersValidator interface {
-	Validate(configs []types.Exporter) error
+	Validate(configs []types.ExporterDTO) error
 }
 
 type exportersValidator struct {
@@ -19,7 +19,7 @@ func NewTelemetryExportersValidator(locator *factory.ExporterLocator) ExportersV
 	}
 }
 
-func (v *exportersValidator) Validate(configs []types.Exporter) error {
+func (v *exportersValidator) Validate(configs []types.ExporterDTO) error {
 	for _, config := range configs {
 		err := v.locator.ValidateExporter(config)
 		if err != nil {

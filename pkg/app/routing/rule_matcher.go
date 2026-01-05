@@ -10,7 +10,7 @@ import (
 
 //go:generate mockery --name=RuleMatcher --dir=. --output=./mocks --filename=rule_matcher_mock.go --case=underscore --with-expecter
 type RuleMatcher interface {
-	MatchRule(path string, method string, rules []types.ForwardingRule) (*types.ForwardingRule, map[string]string)
+	MatchRule(path string, method string, rules []types.ForwardingRuleDTO) (*types.ForwardingRuleDTO, map[string]string)
 	MatchPath(requestPath string, rulePath string) MatchResult
 	ExtractPathAfterMatch(requestPath string, rulePath string) string
 	NormalizePath(path string) string
@@ -31,7 +31,7 @@ func NewRuleMatcher() RuleMatcher {
 	}
 }
 
-func (m *ruleMatcher) MatchRule(path string, method string, rules []types.ForwardingRule) (*types.ForwardingRule, map[string]string) {
+func (m *ruleMatcher) MatchRule(path string, method string, rules []types.ForwardingRuleDTO) (*types.ForwardingRuleDTO, map[string]string) {
 	for _, rule := range rules {
 		if !rule.Active {
 			continue

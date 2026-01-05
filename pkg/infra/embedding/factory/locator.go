@@ -13,7 +13,7 @@ const (
 	OpenAIProvider = "openai"
 )
 
-//go:generate mockery --name=EmbeddingServiceLocator --dir=. --output=../../../../mocks --filename=embedding_locator_mock.go --case=underscore --with-expecter
+//go:generate mockery --name=EmbeddingServiceLocator --dir=. --output=./mocks --filename=embedding_locator_mock.go --case=underscore --with-expecter
 
 type EmbeddingServiceLocator interface {
 	GetService(provider string) (embedding.Creator, error)

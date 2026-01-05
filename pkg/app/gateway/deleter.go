@@ -11,7 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-//go:generate mockery --name=Deleter --dir=. --output=../../../mocks --filename=gateway_deleter_mock.go --case=underscore --with-expecter
+//go:generate mockery --name=Deleter --dir=. --output=./mocks --filename=gateway_deleter_mock.go --case=underscore --with-expecter
 type Deleter interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 }
@@ -54,5 +54,3 @@ func (d *deleter) Delete(ctx context.Context, id uuid.UUID) error {
 
 	return nil
 }
-
-

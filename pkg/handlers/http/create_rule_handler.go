@@ -15,6 +15,7 @@ import (
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -57,7 +58,7 @@ func NewCreateRuleHandler(
 // @Accept json
 // @Produce json
 // @Param Authorization header string true "Authorization token"
-// @Param gateway_id path string true "Gateway ID"
+// @Param gateway_id path string true "GatewayDTO ID"
 // @Param rule body request.CreateRuleRequest true "Rule request body"
 // @Success 201 {object} forwarding_rule.ForwardingRule "Rule created successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
@@ -114,8 +115,8 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	// Validate that gateway exists
 	_, err = s.gatewayRepo.Get(c.Context(), gatewayUUID)
 	if err != nil {
-		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Gateway not found")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Gateway not found"})
+		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("GatewayDTO not found")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "GatewayDTO not found"})
 	}
 
 	// Validate that service exists
@@ -224,15 +225,15 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(response)
 }
 
-func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule) (types.ForwardingRule, error) {
-	var pluginChain []types.PluginConfig
+func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule) (types.ForwardingRuleDTO, error) {
+	var pluginChain []pluginTypes.PluginConfig
 	if rule.PluginChain != nil {
 		chainJSON, err := json.Marshal(rule.PluginChain)
 		if err != nil {
-			return types.ForwardingRule{}, fmt.Errorf("failed to marshal plugin chain: %w", err)
+			return types.ForwardingRuleDTO{}, fmt.Errorf("failed to marshal plugin chain: %w", err)
 		}
 		if err := json.Unmarshal(chainJSON, &pluginChain); err != nil {
-			return types.ForwardingRule{}, fmt.Errorf("failed to unmarshal plugin chain: %w", err)
+			return types.ForwardingRuleDTO{}, fmt.Errorf("failed to unmarshal plugin chain: %w", err)
 		}
 	}
 
@@ -244,10 +245,10 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		}
 	}
 
-	var trustLensConfig *types.TrustLensConfig
+	var trustLensConfig *types.TrustLensConfigDTO
 	if rule.TrustLens != nil {
-		tl := types.TrustLensConfig(*rule.TrustLens)
-		trustLensConfig = &types.TrustLensConfig{
+		tl := types.TrustLensConfigDTO(*rule.TrustLens)
+		trustLensConfig = &types.TrustLensConfigDTO{
 			AppID:   tl.AppID,
 			TeamID:  tl.TeamID,
 			Type:    tl.Type,
@@ -255,7 +256,7 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		}
 	}
 
-	return types.ForwardingRule{
+	return types.ForwardingRuleDTO{
 		ID:            rule.ID.String(),
 		Name:          rule.Name,
 		GatewayID:     rule.GatewayID.String(),

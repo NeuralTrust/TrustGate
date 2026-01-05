@@ -13,19 +13,18 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/dependency_container"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	infraLogger "github.com/NeuralTrust/TrustGate/pkg/infra/logger"
 	_ "github.com/NeuralTrust/TrustGate/pkg/infra/migrations"
-	"github.com/NeuralTrust/TrustGate/pkg/loadbalancer"
-	"github.com/NeuralTrust/TrustGate/pkg/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/server"
+	"github.com/NeuralTrust/TrustGate/pkg/server/middleware"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
 	"github.com/joho/godotenv"
 )
@@ -77,7 +76,7 @@ func main() {
 		EventsRegistry:                event.GetEventsRegistry(),
 		InitializeMemoryCache:         initializeMemoryCache(),
 		InitializeLoadBalancerFactory: loadbalancer.NewBaseFactory,
-		InitializeCachePublisher:      infraCache.NewRedisEventPublisher,
+		InitializeCachePublisher:      cache.NewRedisEventPublisher,
 		EventsChannel:                 eventsChannel,
 	})
 	if err != nil {
@@ -155,9 +154,9 @@ func main() {
 	fmt.Println("server gracefully stopped")
 }
 
-func initializeMemoryCache() func(cacheInstance cache.Cache) {
+func initializeMemoryCache() func(cacheInstance cache.Client) {
 	// memoryCache
-	return func(cacheInstance cache.Cache) {
+	return func(cacheInstance cache.Client) {
 		_ = cacheInstance.CreateTTLMap(cache.GatewayTTLName, common.GatewayCacheTTL)
 		_ = cacheInstance.CreateTTLMap(cache.RulesTTLName, common.RulesCacheTTL)
 		_ = cacheInstance.CreateTTLMap(cache.PluginTTLName, common.PluginCacheTTL)

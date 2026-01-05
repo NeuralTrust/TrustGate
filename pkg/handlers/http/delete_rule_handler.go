@@ -4,9 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	"github.com/gofiber/fiber/v2"
@@ -17,15 +16,15 @@ import (
 type deleteRuleHandler struct {
 	logger    *logrus.Logger
 	repo      forwarding_rule.Repository
-	cache     cache.Cache
-	publisher infraCache.EventPublisher
+	cache     cache.Client
+	publisher cache.EventPublisher
 }
 
 func NewDeleteRuleHandler(
 	logger *logrus.Logger,
 	repo forwarding_rule.Repository,
-	cache cache.Cache,
-	publisher infraCache.EventPublisher,
+	cache cache.Client,
+	publisher cache.EventPublisher,
 ) Handler {
 	return &deleteRuleHandler{
 		logger:    logger,
