@@ -20,11 +20,14 @@ type tokenClient struct {
 	http *http.Client
 }
 
-func NewTokenClient(httpClient *http.Client) TokenClient {
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
+func NewTokenClient(opts ...TokenClientOption) TokenClient {
+	tc := &tokenClient{
+		http: &http.Client{Timeout: 30 * time.Second},
 	}
-	return &tokenClient{http: httpClient}
+	for _, opt := range opts {
+		opt(tc)
+	}
+	return tc
 }
 
 type GrantType string

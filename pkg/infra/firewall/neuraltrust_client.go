@@ -27,16 +27,9 @@ type NeuralTrustFirewallClient struct {
 	bufferPool sync.Pool
 }
 
-func NewNeuralTrustFirewallClient(
-	client httpx.Client,
-	logger *logrus.Logger,
-) Client {
-	if client == nil {
-		client = &http.Client{}
-	}
-
-	return &NeuralTrustFirewallClient{
-		client: client,
+func NewNeuralTrustFirewallClient(logger *logrus.Logger, opts ...NeuralTrustFirewallClientOption) Client {
+	c := &NeuralTrustFirewallClient{
+		client: &http.Client{},
 		logger: logger,
 		bufferPool: sync.Pool{
 			New: func() any {
@@ -45,6 +38,10 @@ func NewNeuralTrustFirewallClient(
 			},
 		},
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 func (c *NeuralTrustFirewallClient) DetectJailbreak(

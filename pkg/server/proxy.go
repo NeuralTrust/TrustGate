@@ -58,7 +58,11 @@ func (s *ProxyServer) Run() error {
 		return err
 	}
 
-	s.Logger.Info("TLS enabled — serving HTTPS")
+	if s.Config.TLS.EnableMTLS {
+		s.Logger.Info("mTLS enabled — serving HTTPS with mutual authentication")
+	} else {
+		s.Logger.Info("TLS enabled — serving HTTPS with custom certificates")
+	}
 	return s.Router.Listener(ln)
 }
 

@@ -7,6 +7,7 @@ import (
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	infraTLS "github.com/NeuralTrust/TrustGate/pkg/infra/tls"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
@@ -17,20 +18,23 @@ type Deleter interface {
 }
 
 type deleter struct {
-	logger    *logrus.Logger
-	repo      domainGateway.Repository
-	publisher infraCache.EventPublisher
+	logger        *logrus.Logger
+	repo          domainGateway.Repository
+	publisher     infraCache.EventPublisher
+	tlsCertWriter infraTLS.CertWriter
 }
 
 func NewDeleter(
 	logger *logrus.Logger,
 	repo domainGateway.Repository,
 	publisher infraCache.EventPublisher,
+	tlsCertWriter infraTLS.CertWriter,
 ) Deleter {
 	return &deleter{
-		logger:    logger,
-		repo:      repo,
-		publisher: publisher,
+		logger:        logger,
+		repo:          repo,
+		publisher:     publisher,
+		tlsCertWriter: tlsCertWriter,
 	}
 }
 
@@ -41,6 +45,11 @@ func (d *deleter) Delete(ctx context.Context, id uuid.UUID) error {
 		}
 		d.logger.WithError(err).Error("Failed to delete gateway")
 		return err
+	}
+
+	// Delete all TLS certificates for this gateway
+	if err := d.tlsCertWriter.DeleteAllGatewayCerts(id); err != nil {
+		d.logger.WithError(err).Warn("failed to delete TLS certificates for gateway")
 	}
 
 	if err := d.publisher.Publish(
