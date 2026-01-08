@@ -61,7 +61,6 @@ func (w *certWriter) WriteCerts(
 	gatewayID uuid.UUID,
 	host, caCert, clientCert, clientKey string,
 ) (*CertPaths, error) {
-	// Validate PEM content
 	if caCert != "" {
 		if err := validatePEMCertificate(caCert); err != nil {
 			return nil, fmt.Errorf("invalid ca_cert: %w", err)
@@ -78,7 +77,6 @@ func (w *certWriter) WriteCerts(
 		}
 	}
 
-	// Normalize PEM content
 	if caCert != "" {
 		caCert = normalizePEM(caCert)
 	}
@@ -89,22 +87,44 @@ func (w *certWriter) WriteCerts(
 		clientKey = normalizePEM(clientKey)
 	}
 
-	// Save to database if repository is configured
-	if w.repo != nil {
-		cert := &tls_cert.TLSCert{
-			GatewayID:  gatewayID,
-			Host:       host,
-			CACert:     caCert,
-			ClientCert: clientCert,
-			ClientKey:  clientKey,
-		}
-		if err := w.repo.Save(ctx, cert); err != nil {
-			return nil, fmt.Errorf("failed to save cert to database: %w", err)
-		}
+	if w.repo == nil {
+		return nil, fmt.Errorf("repository is required to save certificates")
 	}
 
-	// Write files
-	return w.writeFilesToDisk(gatewayID, host, caCert, clientCert, clientKey)
+	cert := &tls_cert.TLSCert{
+		GatewayID:  gatewayID,
+		Host:       host,
+		CACert:     caCert,
+		ClientCert: clientCert,
+		ClientKey:  clientKey,
+	}
+	if err := w.repo.Save(ctx, cert); err != nil {
+		return nil, fmt.Errorf("failed to save cert to database: %w", err)
+	}
+
+	w.logger.WithFields(logrus.Fields{
+		"gateway_id": gatewayID.String(),
+		"host":       host,
+	}).Info("TLS certificates saved to database")
+
+	return w.buildCertPaths(gatewayID, host, caCert, clientCert, clientKey), nil
+}
+
+func (w *certWriter) buildCertPaths(gatewayID uuid.UUID, host, caCert, clientCert, clientKey string) *CertPaths {
+	hostDir := sanitizeHost(host)
+	dir := filepath.Join(w.basePath, gatewayID.String(), hostDir)
+
+	paths := &CertPaths{}
+	if caCert != "" {
+		paths.CACertPath = filepath.Join(dir, "ca.crt")
+	}
+	if clientCert != "" {
+		paths.ClientCertPath = filepath.Join(dir, "client.crt")
+	}
+	if clientKey != "" {
+		paths.ClientKeyPath = filepath.Join(dir, "client.key")
+	}
+	return paths
 }
 
 func (w *certWriter) writeFilesToDisk(gatewayID uuid.UUID, host string, caCert, clientCert, clientKey string) (*CertPaths, error) {
