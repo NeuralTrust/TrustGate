@@ -11,6 +11,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/tls_cert"
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -39,12 +40,14 @@ type CertWriter interface {
 type certWriter struct {
 	basePath string
 	repo     tls_cert.Repository
+	logger   *logrus.Logger
 }
 
-// NewCertWriter creates a new CertWriter instance with the required repository and optional configuration
-func NewCertWriter(repo tls_cert.Repository, opts ...CertWriterOption) CertWriter {
+// NewCertWriter creates a new CertWriter instance with the required dependencies and optional configuration
+func NewCertWriter(logger *logrus.Logger, repo tls_cert.Repository, opts ...CertWriterOption) CertWriter {
 	cw := &certWriter{
 		basePath: DefaultCertsDir,
+		logger:   logger,
 		repo:     repo,
 	}
 	for _, opt := range opts {
@@ -138,6 +141,15 @@ func (w *certWriter) writeFilesToDisk(gatewayID uuid.UUID, host string, caCert, 
 		}
 	}
 
+	w.logger.WithFields(logrus.Fields{
+		"gateway_id":       gatewayID.String(),
+		"host":             host,
+		"directory":        dir,
+		"ca_cert_path":     paths.CACertPath,
+		"client_cert_path": paths.ClientCertPath,
+		"client_key_path":  paths.ClientKeyPath,
+	}).Info("TLS certificates written to disk")
+
 	return paths, nil
 }
 
@@ -179,23 +191,44 @@ func (w *certWriter) EnsureCertFiles(ctx context.Context, gatewayID uuid.UUID, h
 		return nil // No repository configured, cannot recover
 	}
 
-	needsRecovery := (paths.CACertPath != "" && !fileExists(paths.CACertPath)) ||
-		(paths.ClientCertPath != "" && !fileExists(paths.ClientCertPath)) ||
-		(paths.ClientKeyPath != "" && !fileExists(paths.ClientKeyPath))
+	var missingFiles []string
+	if paths.CACertPath != "" && !fileExists(paths.CACertPath) {
+		missingFiles = append(missingFiles, paths.CACertPath)
+	}
+	if paths.ClientCertPath != "" && !fileExists(paths.ClientCertPath) {
+		missingFiles = append(missingFiles, paths.ClientCertPath)
+	}
+	if paths.ClientKeyPath != "" && !fileExists(paths.ClientKeyPath) {
+		missingFiles = append(missingFiles, paths.ClientKeyPath)
+	}
 
-	if !needsRecovery {
+	if len(missingFiles) == 0 {
 		return nil
 	}
+
+	w.logger.WithFields(logrus.Fields{
+		"gateway_id":    gatewayID.String(),
+		"host":          host,
+		"missing_files": missingFiles,
+	}).Warn("TLS certificate files not found, recovering from database")
 
 	cert, err := w.repo.GetByGatewayAndHost(ctx, gatewayID, host)
 	if err != nil {
 		return fmt.Errorf("failed to recover cert from database: %w", err)
 	}
 
-	_, err = w.writeFilesToDisk(gatewayID, host, cert.CACert, cert.ClientCert, cert.ClientKey)
+	paths, err = w.writeFilesToDisk(gatewayID, host, cert.CACert, cert.ClientCert, cert.ClientKey)
 	if err != nil {
 		return fmt.Errorf("failed to recreate cert files: %w", err)
 	}
+
+	w.logger.WithFields(logrus.Fields{
+		"gateway_id":       gatewayID.String(),
+		"host":             host,
+		"ca_cert_path":     paths.CACertPath,
+		"client_cert_path": paths.ClientCertPath,
+		"client_key_path":  paths.ClientKeyPath,
+	}).Info("TLS certificate files recreated successfully from database")
 
 	return nil
 }
