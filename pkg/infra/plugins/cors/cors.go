@@ -198,7 +198,7 @@ func (p *CorsPlugin) Execute(
 	resp.Headers["Vary"] = []string{"Origin"}
 
 	if conf.AllowCredentials {
-		resp.Headers["Access-Control-Allow-CredentialsDTO"] = []string{"true"}
+		resp.Headers["Access-Control-Allow-Credentials"] = []string{"true"}
 	}
 
 	if req.Method == http.MethodOptions {

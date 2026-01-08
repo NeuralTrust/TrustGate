@@ -1,154 +1,243 @@
 package config
 
 import (
-	"errors"
-	"fmt"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
-	"github.com/spf13/viper"
 )
 
 type MetricsConfig struct {
-	Enabled           bool `mapstructure:"enabled"`
-	RetentionDays     int  `mapstructure:"retention_days"`
-	EnableLatency     bool `mapstructure:"enable_latency"`
-	EnableUpstream    bool `mapstructure:"enable_upstream"`
-	EnableConnections bool `mapstructure:"enable_connections"`
-	EnablePerRoute    bool `mapstructure:"enable_per_route"`
+	Enabled           bool
+	RetentionDays     int
+	EnableLatency     bool
+	EnableUpstream    bool
+	EnableConnections bool
+	EnablePerRoute    bool
 }
 
 type Config struct {
-	Server        ServerConfig        `mapstructure:"server"`
-	Multitenant   MultiTenantConfig   `mapstructure:"multitenant"`
-	Metrics       MetricsConfig       `mapstructure:"metrics"`
-	Database      DatabaseConfig      `mapstructure:"database"`
-	Redis         RedisConfig         `mapstructure:"redis"`
-	Plugins       PluginsConfig       `mapstructure:"plugins"`
-	WebSocket     WebSocketConfig     `mapstructure:"websocket"`
-	TLS           TLSConfig           `mapstructure:"tls"`
-	OpenTelemetry OpenTelemetryConfig `mapstructure:"opentelemetry"`
+	Server    ServerConfig
+	Metrics   MetricsConfig
+	Database  DatabaseConfig
+	Redis     RedisConfig
+	Plugins   PluginsConfig
+	WebSocket WebSocketConfig
+	TLS       TLSConfig
 }
 
 type ServerConfig struct {
-	AdminPort   int    `mapstructure:"admin_port"`
-	ProxyPort   int    `mapstructure:"proxy_port"`
-	MetricsPort int    `mapstructure:"metrics_port"`
-	ActionsPort int    `mapstructure:"actions_port"`
-	Type        string `mapstructure:"type"`
-	Port        int    `mapstructure:"port"`
-	Host        string `mapstructure:"host"`
-	SecretKey   string `mapstructure:"secret_key"`
-}
-
-type MultiTenantConfig struct {
-	IngressDataHostTemplate    string `mapstructure:"ingress_data_host_template"`
-	IngressActionsHostTemplate string `mapstructure:"ingress_actions_host_template"`
-	Image                      string `mapstructure:"trustgate_image"`
-	K8sTemplatesPath           string `mapstructure:"k8s_templates_path"`
-	ServiceAccountToken        string `mapstructure:"service_account_token"`
+	AdminPort   int
+	ProxyPort   int
+	MetricsPort int
+	Type        string
+	Port        int
+	Host        string
+	SecretKey   string
 }
 
 type DatabaseConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	DBName   string `mapstructure:"name"`
-	SSLMode  string `mapstructure:"sslmode"`
+	Host     string
+	Port     int
+	User     string
+	Password string
+	DBName   string
+	SSLMode  string
 }
 
 type RedisConfig struct {
-	Host          string `mapstructure:"host"`
-	Port          int    `mapstructure:"port"`
-	Password      string `mapstructure:"password"`
-	DB            int    `mapstructure:"db"`
-	TLS           bool   `mapstructure:"tls"`
-	EventsChannel string `mapstructure:"events_channel"`
+	Host          string
+	Port          int
+	Password      string
+	DB            int
+	TLS           bool
+	EventsChannel string
 }
 
 type PluginsConfig struct {
-	IgnoreErrors bool `mapstructure:"ignore_errors"`
+	IgnoreErrors bool
 }
 
 type WebSocketConfig struct {
-	MaxConnections int    `mapstructure:"max_connections"`
-	PingPeriod     string `mapstructure:"ping_period"`
-	PongWait       string `mapstructure:"pong_wait"`
+	MaxConnections int
+	PingPeriod     string
+	PongWait       string
 }
 
 type TLSConfig struct {
-	Disabled            bool       `mapstructure:"disabled"`
-	EnableMTLS          bool       `mapstructure:"enable_mtls"`
-	DisableSystemCAPool bool       `mapstructure:"disable_system_ca_pool"`
-	CACert              string     `mapstructure:"ca_cert"`
-	Keys                TLSKeyPair `mapstructure:"keys"`
-	CipherSuites        []uint16   `mapstructure:"cipher_suites"`
-	CurvePreferences    []uint16   `mapstructure:"curve_preferences"`
-	MinVersion          string     `mapstructure:"min_version"`
-	MaxVersion          string     `mapstructure:"max_version"`
+	Disabled            bool
+	EnableMTLS          bool
+	DisableSystemCAPool bool
+	CACert              string
+	Keys                TLSKeyPair
+	CipherSuites        []uint16
+	CurvePreferences    []uint16
+	MinVersion          string
+	MaxVersion          string
+	CertsBasePath       string
 }
 
 type TLSKeyPair struct {
-	PublicKey  string `mapstructure:"public_key"`
-	PrivateKey string `mapstructure:"private_key"`
+	PublicKey  string
+	PrivateKey string
 }
 
-type OpenTelemetryConfig struct {
-	Enabled         bool    `mapstructure:"enabled"`
-	ServiceName     string  `mapstructure:"service_name"`
-	ServiceVersion  string  `mapstructure:"service_version"`
-	Environment     string  `mapstructure:"environment"`
-	TracesEndpoint  string  `mapstructure:"traces_endpoint"`
-	MetricsEndpoint string  `mapstructure:"metrics_endpoint"`
-	SamplingRatio   float64 `mapstructure:"sampling_ratio"`
-	Insecure        bool    `mapstructure:"insecure"`
-}
+var globalConfig *Config
 
-var globalConfig Config
+func Load() (*Config, error) {
+	// Server configuration
+	serverAdminPort, _ := strconv.Atoi(getEnv("SERVER_ADMIN_PORT", "8080"))
+	serverProxyPort, _ := strconv.Atoi(getEnv("SERVER_PROXY_PORT", "8081"))
+	serverMetricsPort, _ := strconv.Atoi(getEnv("SERVER_METRICS_PORT", "9090"))
+	serverSecretKey := getEnv("SERVER_SECRET_KEY", "")
 
-func Load(configPath string) error {
-	if err := loadConfigFile(configPath, "config", &globalConfig); err != nil {
-		return fmt.Errorf("⚠️ Warning: Could not load main config file: %v", err)
+	// Metrics configuration
+	metricsEnabled := getEnvBool("METRICS_ENABLED", true)
+	metricsRetentionDays, _ := strconv.Atoi(getEnv("METRICS_RETENTION_DAYS", "30"))
+	metricsEnableLatency := getEnvBool("METRICS_ENABLE_LATENCY", true)
+	metricsEnableUpstream := getEnvBool("METRICS_ENABLE_UPSTREAM", true)
+	metricsEnableConnections := getEnvBool("METRICS_ENABLE_CONNECTIONS", true)
+	metricsEnablePerRoute := getEnvBool("METRICS_ENABLE_PER_ROUTE", true)
+
+	// Database configuration
+	databaseHost := getEnv("DATABASE_HOST", "localhost")
+	databasePort, _ := strconv.Atoi(getEnv("DATABASE_PORT", "5432"))
+	databaseUser := getEnv("DATABASE_USER", "postgres")
+	databasePassword := getEnv("DATABASE_PASSWORD", "")
+	databaseName := getEnv("DATABASE_NAME", "trustgate")
+	databaseSSLMode := getEnv("DATABASE_SSL_MODE", "disable")
+
+	// Redis configuration
+	redisHost := getEnv("REDIS_HOST", "localhost")
+	redisPort, _ := strconv.Atoi(getEnv("REDIS_PORT", "6379"))
+	redisPassword := getEnv("REDIS_PASSWORD", "")
+	redisDB, _ := strconv.Atoi(getEnv("REDIS_DB", "0"))
+	redisTLS := getEnvBool("REDIS_TLS", false)
+	redisEventsChannel := getEnv("REDIS_EVENTS_CHANNEL", string(channel.GatewayEventsChannel))
+
+	// Plugins configuration
+	pluginsIgnoreErrors := getEnvBool("PLUGINS_IGNORE_ERRORS", true)
+
+	// WebSocket configuration
+	websocketMaxConnections, _ := strconv.Atoi(getEnv("WEBSOCKET_MAX_CONNECTIONS", "1000"))
+	websocketPingPeriod := getEnv("WEBSOCKET_PING_PERIOD", "30s")
+	websocketPongWait := getEnv("WEBSOCKET_PONG_WAIT", "2m")
+
+	// TLS configuration
+	tlsDisabled := getEnvBool("TLS_DISABLED", true)
+	tlsEnableMTLS := getEnvBool("TLS_ENABLE_MTLS", true)
+	tlsDisableSystemCAPool := getEnvBool("TLS_DISABLE_SYSTEM_CA_POOL", false)
+	tlsCACert := getEnv("TLS_CA_CERT", "")
+	tlsPublicKey := getEnv("TLS_KEYS_PUBLIC_KEY", "")
+	tlsPrivateKey := getEnv("TLS_KEYS_PRIVATE_KEY", "")
+	tlsMinVersion := getEnv("TLS_MIN_VERSION", "TLS12")
+	tlsMaxVersion := getEnv("TLS_MAX_VERSION", "TLS13")
+	tlsCipherSuites := parseUint16Slice(getEnv("TLS_CIPHER_SUITES", "4865,4866,4867"))
+	tlsCurvePreferences := parseUint16Slice(getEnv("TLS_CURVE_PREFERENCES", "23,24,25"))
+	tlsCertsBasePath := getEnv("TLS_CERTS_BASE_PATH", "/tmp/certs")
+
+	config := &Config{
+		Server: ServerConfig{
+			AdminPort:   serverAdminPort,
+			ProxyPort:   serverProxyPort,
+			MetricsPort: serverMetricsPort,
+			SecretKey:   serverSecretKey,
+		},
+		Metrics: MetricsConfig{
+			Enabled:           metricsEnabled,
+			RetentionDays:     metricsRetentionDays,
+			EnableLatency:     metricsEnableLatency,
+			EnableUpstream:    metricsEnableUpstream,
+			EnableConnections: metricsEnableConnections,
+			EnablePerRoute:    metricsEnablePerRoute,
+		},
+		Database: DatabaseConfig{
+			Host:     databaseHost,
+			Port:     databasePort,
+			User:     databaseUser,
+			Password: databasePassword,
+			DBName:   databaseName,
+			SSLMode:  databaseSSLMode,
+		},
+		Redis: RedisConfig{
+			Host:          redisHost,
+			Port:          redisPort,
+			Password:      redisPassword,
+			DB:            redisDB,
+			TLS:           redisTLS,
+			EventsChannel: redisEventsChannel,
+		},
+		Plugins: PluginsConfig{
+			IgnoreErrors: pluginsIgnoreErrors,
+		},
+		WebSocket: WebSocketConfig{
+			MaxConnections: websocketMaxConnections,
+			PingPeriod:     websocketPingPeriod,
+			PongWait:       websocketPongWait,
+		},
+		TLS: TLSConfig{
+			Disabled:            tlsDisabled,
+			EnableMTLS:          tlsEnableMTLS,
+			DisableSystemCAPool: tlsDisableSystemCAPool,
+			CACert:              tlsCACert,
+			Keys: TLSKeyPair{
+				PublicKey:  tlsPublicKey,
+				PrivateKey: tlsPrivateKey,
+			},
+			CipherSuites:     tlsCipherSuites,
+			CurvePreferences: tlsCurvePreferences,
+			MinVersion:       tlsMinVersion,
+			MaxVersion:       tlsMaxVersion,
+			CertsBasePath:    tlsCertsBasePath,
+		},
 	}
-	setDefaultValues()
-	return nil
+
+	globalConfig = config
+
+	return config, nil
 }
 
-func loadConfigFile(configPath, fileName string, out interface{}) error {
-	viper.SetConfigName(fileName)
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath(configPath)
-	viper.AddConfigPath("./config")
-	viper.AddConfigPath(".")
+func getEnv(key, defaultValue string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}
 
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	viper.AutomaticEnv()
+func getEnvBool(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return defaultValue
+	}
+	return parsed
+}
 
-	if err := viper.ReadInConfig(); err != nil {
-		var configFileNotFoundError viper.ConfigFileNotFoundError
-		if errors.As(err, &configFileNotFoundError) {
-			return fmt.Errorf("config file %s.yaml not found, using only environment variables", fileName)
+func parseUint16Slice(s string) []uint16 {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	result := make([]uint16, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
 		}
-		return fmt.Errorf("error reading config file %s.yaml: %w", fileName, err)
+		v, err := strconv.ParseUint(p, 10, 16)
+		if err != nil {
+			continue
+		}
+		result = append(result, uint16(v))
 	}
-
-	if err := viper.Unmarshal(out); err != nil {
-		return fmt.Errorf("failed to unmarshal %s config: %w", fileName, err)
-	}
-
-	return nil
-}
-
-func setDefaultValues() {
-	if globalConfig.Database.SSLMode == "" {
-		globalConfig.Database.SSLMode = "disable"
-	}
-	if globalConfig.Redis.EventsChannel == "" || globalConfig.Redis.EventsChannel == "${REDIS_EVENTS_CHANNEL}" {
-		globalConfig.Redis.EventsChannel = string(channel.GatewayEventsChannel)
-	}
+	return result
 }
 
 func GetConfig() *Config {
-	return &globalConfig
+	return globalConfig
 }

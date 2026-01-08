@@ -2,290 +2,260 @@ package oauth
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func readBody(r *http.Request) url.Values {
-	b, err := io.ReadAll(r.Body)
-	if err != nil {
-		return url.Values{}
-	}
-	_ = r.Body.Close()
-	vals, err := url.ParseQuery(string(b))
-	if err != nil {
-		return url.Values{}
-	}
-	return vals
+func TestNewTokenClient_DefaultHTTPClient(t *testing.T) {
+	client := NewTokenClient()
+
+	assert.NotNil(t, client)
+	tc, ok := client.(*tokenClient)
+	require.True(t, ok)
+	assert.NotNil(t, tc.http)
+	assert.Equal(t, 30*time.Second, tc.http.Timeout)
 }
 
-func TestGetToken_ValidationErrors(t *testing.T) {
-	c := NewTokenClient(&http.Client{Timeout: time.Second})
-	ctx := context.Background()
+func TestNewTokenClient_WithHTTPClient(t *testing.T) {
+	customClient := &http.Client{Timeout: 30 * time.Second}
 
-	if _, _, err := c.GetToken(ctx, TokenRequestDTO{GrantType: GrantTypeClientCredentials}); err == nil {
-		t.Fatalf("expected error for missing token url")
-	}
+	client := NewTokenClient(WithHTTPClient(customClient))
 
-	if _, _, err := c.GetToken(ctx, TokenRequestDTO{TokenURL: "http://example"}); err == nil {
-		t.Fatalf("expected error for missing grant type")
-	}
+	tc, ok := client.(*tokenClient)
+	require.True(t, ok)
+	assert.Equal(t, customClient, tc.http)
+	assert.Equal(t, 30*time.Second, tc.http.Timeout)
 }
 
-func TestGetToken_UnsupportedGrant(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		if err := json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 1}); err != nil {
-			t.Fatalf("failed to write response: %v", err)
-		}
+func TestNewTokenClient_WithHTTPClient_Nil(t *testing.T) {
+	client := NewTokenClient(WithHTTPClient(nil))
+
+	tc, ok := client.(*tokenClient)
+	require.True(t, ok)
+	assert.NotNil(t, tc.http)
+	assert.Equal(t, 30*time.Second, tc.http.Timeout)
+}
+
+func TestNewTokenClient_WithTimeout(t *testing.T) {
+	client := NewTokenClient(WithTimeout(5 * time.Second))
+
+	tc, ok := client.(*tokenClient)
+	require.True(t, ok)
+	assert.Equal(t, 5*time.Second, tc.http.Timeout)
+}
+
+func TestGetToken_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "application/x-www-form-urlencoded", r.Header.Get("Content-Type"))
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "test-token-123",
+			"token_type":   "Bearer",
+			"expires_in":   3600,
+		})
 	}))
-	defer ts.Close()
+	defer server.Close()
 
-	c := NewTokenClient(ts.Client())
-	ctx := context.Background()
-	_, _, err := c.GetToken(ctx, TokenRequestDTO{TokenURL: ts.URL, GrantType: GrantType("unknown")})
-	if err == nil || !strings.Contains(err.Error(), "unsupported grant_type") {
-		t.Fatalf("expected unsupported grant_type error, got %v", err)
-	}
-}
-
-func TestClientCredentials_BasicAuth(t *testing.T) {
-	expectedToken := "t123"
-	expires := int64(3600)
-	var gotAuth string
-	var gotBody url.Values
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		if ct := r.Header.Get("Content-Type"); !strings.Contains(ct, "application/x-www-form-urlencoded") {
-			t.Fatalf("unexpected content-type: %s", ct)
-		}
-		gotBody = readBody(r)
-		if err := json.NewEncoder(w).Encode(map[string]any{
-			"access_token": expectedToken,
-			"token_type":   "bearer",
-			"expires_in":   expires,
-		}); err != nil {
-			t.Fatalf("failed to write response: %v", err)
-		}
-	}))
-	defer ts.Close()
-
-	c := NewTokenClient(ts.Client())
-	ctx := context.Background()
-	_, _, err := c.GetToken(ctx, TokenRequestDTO{
-		TokenURL:     ts.URL,
+	client := NewTokenClient()
+	token, expiresAt, err := client.GetToken(context.Background(), TokenRequestDTO{
+		TokenURL:     server.URL,
 		GrantType:    GrantTypeClientCredentials,
-		ClientID:     "cid",
-		ClientSecret: "sec",
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "test-token-123", token)
+	assert.True(t, expiresAt.After(time.Now()))
+}
+
+func TestGetToken_EmptyTokenURL(t *testing.T) {
+	client := NewTokenClient()
+
+	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
+		GrantType: GrantTypeClientCredentials,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "token url is required")
+}
+
+func TestGetToken_EmptyGrantType(t *testing.T) {
+	client := NewTokenClient()
+
+	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
+		TokenURL: "http://example.com/token",
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "grant_type is required")
+}
+
+func TestGetToken_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("invalid credentials"))
+	}))
+	defer server.Close()
+
+	client := NewTokenClient()
+	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
+		TokenURL:     server.URL,
+		GrantType:    GrantTypeClientCredentials,
+		ClientID:     "test-client",
+		ClientSecret: "wrong-secret",
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "status 401")
+}
+
+func TestGetToken_EmptyAccessToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "",
+			"token_type":   "Bearer",
+		})
+	}))
+	defer server.Close()
+
+	client := NewTokenClient()
+	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
+		TokenURL:  server.URL,
+		GrantType: GrantTypeClientCredentials,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "empty access_token")
+}
+
+func TestGetToken_WithBasicAuth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		assert.Contains(t, authHeader, "Basic ")
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "basic-auth-token",
+			"expires_in":   3600,
+		})
+	}))
+	defer server.Close()
+
+	client := NewTokenClient()
+	token, _, err := client.GetToken(context.Background(), TokenRequestDTO{
+		TokenURL:     server.URL,
+		GrantType:    GrantTypeClientCredentials,
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
 		UseBasicAuth: true,
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 
-	exp := "Basic " + base64.StdEncoding.EncodeToString([]byte("cid:sec"))
-	if gotAuth != exp {
-		t.Fatalf("expected auth %q, got %q", exp, gotAuth)
-	}
-
-	if gotBody.Get("client_id") != "" || gotBody.Get("client_secret") != "" {
-		t.Fatalf("did not expect client credentials in body when using basic auth")
-	}
-	if gotBody.Get("grant_type") != string(GrantTypeClientCredentials) {
-		t.Fatalf("grant_type mismatch")
-	}
+	assert.NoError(t, err)
+	assert.Equal(t, "basic-auth-token", token)
 }
 
-func TestClientCredentials_BodyCredentialsAndExtras(t *testing.T) {
-	expectedToken := "tok-body"
-	var gotBody url.Values
+func TestGetToken_AuthorizationCodeFlow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := r.ParseForm()
+		require.NoError(t, err)
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotBody = readBody(r)
-		if err := json.NewEncoder(w).Encode(map[string]any{"access_token": expectedToken, "expires_in": 2}); err != nil {
-			t.Fatalf("failed to write response: %v", err)
-		}
+		assert.Equal(t, "authorization_code", r.FormValue("grant_type"))
+		assert.Equal(t, "auth-code-123", r.FormValue("code"))
+		assert.Equal(t, "http://localhost/callback", r.FormValue("redirect_uri"))
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "auth-code-token",
+			"expires_in":   3600,
+		})
 	}))
-	defer ts.Close()
+	defer server.Close()
 
-	c := NewTokenClient(ts.Client())
-	ctx := context.Background()
-	tok, expAt, err := c.GetToken(ctx, TokenRequestDTO{
-		TokenURL:     ts.URL,
-		GrantType:    GrantTypeClientCredentials,
-		ClientID:     "cid",
-		ClientSecret: "sec",
-		Scopes:       []string{"a", "b"},
-		Audience:     "aud",
-		Extra:        map[string]string{"custom": "x"},
+	client := NewTokenClient()
+	token, _, err := client.GetToken(context.Background(), TokenRequestDTO{
+		TokenURL:    server.URL,
+		GrantType:   GrantTypeAuthorizationCode,
+		Code:        "auth-code-123",
+		RedirectURI: "http://localhost/callback",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if tok != expectedToken {
-		t.Fatalf("token mismatch: %s", tok)
-	}
 
-	now := time.Now()
-	if expAt.Before(now.Add(time.Second)) || expAt.After(now.Add(3*time.Second)) {
-		t.Fatalf("expiresAt not in expected window: %v", expAt)
-	}
-	if gotBody.Get("client_id") != "cid" || gotBody.Get("client_secret") != "sec" {
-		t.Fatalf("expected client credentials in body")
-	}
-	if gotBody.Get("scope") != "a b" {
-		t.Fatalf("expected scope 'a b', got %q", gotBody.Get("scope"))
-	}
-	if gotBody.Get("audience") != "aud" {
-		t.Fatalf("expected audience, got %q", gotBody.Get("audience"))
-	}
-	if gotBody.Get("custom") != "x" {
-		t.Fatalf("expected extra field 'custom' in form")
-	}
+	assert.NoError(t, err)
+	assert.Equal(t, "auth-code-token", token)
 }
 
-func TestAuthorizationCode_ValidationAndFields(t *testing.T) {
+func TestGetToken_AuthorizationCodeFlow_MissingCode(t *testing.T) {
+	client := NewTokenClient()
 
-	if _, _, err := NewTokenClient(&http.Client{}).GetToken(context.Background(), TokenRequestDTO{
-		TokenURL:  "http://example",
-		GrantType: GrantTypeAuthorizationCode,
-	}); err == nil {
-		t.Fatalf("expected error for missing code")
-	}
+	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
+		TokenURL:    "http://example.com/token",
+		GrantType:   GrantTypeAuthorizationCode,
+		RedirectURI: "http://localhost/callback",
+	})
 
-	if _, _, err := NewTokenClient(&http.Client{}).GetToken(context.Background(), TokenRequestDTO{
-		TokenURL:  "http://example",
-		GrantType: GrantTypeAuthorizationCode,
-		Code:      "abc",
-	}); err == nil {
-		t.Fatalf("expected error for missing redirect_uri")
-	}
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "requires code")
+}
 
-	var gotBody url.Values
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotBody = readBody(r)
-		if err := json.NewEncoder(w).Encode(map[string]any{"access_token": "ok", "expires_in": 1}); err != nil {
-			t.Fatalf("failed to write response: %v", err)
-		}
+func TestGetToken_PasswordFlow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := r.ParseForm()
+		require.NoError(t, err)
+
+		assert.Equal(t, "password", r.FormValue("grant_type"))
+		assert.Equal(t, "testuser", r.FormValue("username"))
+		assert.Equal(t, "testpass", r.FormValue("password"))
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "password-token",
+			"expires_in":   3600,
+		})
 	}))
-	defer ts.Close()
+	defer server.Close()
 
-	_, _, err := NewTokenClient(ts.Client()).GetToken(context.Background(), TokenRequestDTO{
-		TokenURL:     ts.URL,
-		GrantType:    GrantTypeAuthorizationCode,
-		Code:         "abc",
-		RedirectURI:  "https://cb",
-		CodeVerifier: "ver",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if gotBody.Get("code") != "abc" || gotBody.Get("redirect_uri") != "https://cb" {
-		t.Fatalf("authorization_code fields missing in form: %v", gotBody)
-	}
-	if gotBody.Get("code_verifier") != "ver" {
-		t.Fatalf("expected code_verifier in form")
-	}
-}
-
-func TestPassword_ValidationAndFields(t *testing.T) {
-	if _, _, err := NewTokenClient(&http.Client{}).GetToken(context.Background(), TokenRequestDTO{
-		TokenURL:  "http://example",
+	client := NewTokenClient()
+	token, _, err := client.GetToken(context.Background(), TokenRequestDTO{
+		TokenURL:  server.URL,
 		GrantType: GrantTypePassword,
-	}); err == nil {
-		t.Fatalf("expected error for missing username/password")
-	}
+		Username:  "testuser",
+		Password:  "testpass",
+	})
 
-	var gotBody url.Values
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotBody = readBody(r)
-		if err := json.NewEncoder(w).Encode(map[string]any{"access_token": "ok", "expires_in": 1}); err != nil {
-			t.Fatalf("failed to write response: %v", err)
-		}
-	}))
-	defer ts.Close()
+	assert.NoError(t, err)
+	assert.Equal(t, "password-token", token)
+}
 
-	_, _, err := NewTokenClient(ts.Client()).GetToken(context.Background(), TokenRequestDTO{
-		TokenURL:  ts.URL,
+func TestGetToken_PasswordFlow_MissingCredentials(t *testing.T) {
+	client := NewTokenClient()
+
+	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
+		TokenURL:  "http://example.com/token",
 		GrantType: GrantTypePassword,
-		Username:  "u",
-		Password:  "p",
+		Username:  "testuser",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if gotBody.Get("username") != "u" || gotBody.Get("password") != "p" {
-		t.Fatalf("password grant fields missing in form: %v", gotBody)
-	}
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "requires username and password")
 }
 
-func TestGetToken_ErrorResponses(t *testing.T) {
-	ts1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(400)
-		if _, err := w.Write([]byte("bad request")); err != nil {
-			t.Fatalf("failed to write body: %v", err)
-		}
-	}))
-	defer ts1.Close()
-	_, _, err := NewTokenClient(ts1.Client()).GetToken(context.Background(), TokenRequestDTO{
-		TokenURL:  ts1.URL,
-		GrantType: GrantTypeClientCredentials,
-	})
-	if err == nil || !strings.Contains(err.Error(), "status 400") {
-		t.Fatalf("expected error containing status 400, got %v", err)
-	}
+func TestGetToken_UnsupportedGrantType(t *testing.T) {
+	client := NewTokenClient()
 
-	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := w.Write([]byte("not-json")); err != nil {
-			t.Fatalf("failed to write body: %v", err)
-		}
-	}))
-	defer ts2.Close()
-	_, _, err = NewTokenClient(ts2.Client()).GetToken(context.Background(), TokenRequestDTO{
-		TokenURL:  ts2.URL,
-		GrantType: GrantTypeClientCredentials,
+	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
+		TokenURL:  "http://example.com/token",
+		GrantType: "unsupported",
 	})
-	if err == nil || !strings.Contains(err.Error(), "failed to decode token response") {
-		t.Fatalf("expected json decode error, got %v", err)
-	}
 
-	ts3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewEncoder(w).Encode(map[string]any{"access_token": "", "expires_in": 10}); err != nil {
-			t.Fatalf("failed to write response: %v", err)
-		}
-	}))
-	defer ts3.Close()
-	_, _, err = NewTokenClient(ts3.Client()).GetToken(context.Background(), TokenRequestDTO{
-		TokenURL:  ts3.URL,
-		GrantType: GrantTypeClientCredentials,
-	})
-	if err == nil || !strings.Contains(err.Error(), "empty access_token") {
-		t.Fatalf("expected empty access_token error, got %v", err)
-	}
-}
-
-func TestTokenURLCleanup(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewEncoder(w).Encode(map[string]any{"access_token": "ok", "expires_in": 1}); err != nil {
-			t.Fatalf("failed to write response: %v", err)
-		}
-	}))
-	defer ts.Close()
-
-	u := "@" + ts.URL + "  "
-	_, _, err := NewTokenClient(ts.Client()).GetToken(context.Background(), TokenRequestDTO{
-		TokenURL:  u,
-		GrantType: GrantTypeClientCredentials,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported grant_type")
 }

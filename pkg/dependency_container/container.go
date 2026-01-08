@@ -33,7 +33,6 @@ import (
 	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainSession "github.com/NeuralTrust/TrustGate/pkg/domain/session"
-	domain "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	wsHandlers "github.com/NeuralTrust/TrustGate/pkg/handlers/websocket"
@@ -49,6 +48,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	infraTelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
+	infraTLS "github.com/NeuralTrust/TrustGate/pkg/infra/tls"
 	"github.com/sirupsen/logrus"
 )
 
@@ -142,8 +142,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 
 	providerFactory := providersFactory.NewProviderLocator(httpClient)
 
-	stdHTTPClient := &http.Client{Timeout: 10 * time.Second}
-	oauthTokenClient := oauth.NewTokenClient(stdHTTPClient)
+	oauthTokenClient := oauth.NewTokenClient()
 
 	fingerprintTracker := fingerprint.NewFingerPrintTracker(cacheInstance)
 
@@ -159,8 +158,8 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		},
 	}
 	neuralTrustFirewallClient := firewall.NewNeuralTrustFirewallClient(
-		firewallHTTPClient,
 		di.Logger,
+		firewall.WithHTTPClient(firewallHTTPClient),
 	)
 	openAIFirewallClient := firewall.NewOpenAIFirewallClient(di.Logger)
 	firewallFactory := firewall.NewClientFactory(neuralTrustFirewallClient, openAIFirewallClient)
@@ -199,12 +198,19 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	policyValidator := policy.NewApiKeyPolicyValidator(ruleRepository, di.Logger)
 
 	// telemetry
-	providerLocator := infraTelemetry.NewProviderLocator(map[string]domain.Exporter{
-		kafka.ExporterName:     kafka.NewKafkaExporter(di.Logger),
-		trustlens.ExporterName: trustlens.NewTrustLensExporter(di.Logger),
-	})
+	providerLocator := infraTelemetry.NewProviderLocator(
+		infraTelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaExporter(di.Logger)),
+		infraTelemetry.WithExporter(trustlens.ExporterName, trustlens.NewTrustLensExporter(di.Logger)),
+	)
 	telemetryBuilder := telemetry.NewTelemetryExportersBuilder(providerLocator)
 	telemetryValidator := telemetry.NewTelemetryExportersValidator(providerLocator)
+
+	// TLS cert repository and writer
+	tlsCertRepository := repository.NewTLSCertRepository(di.DB.DB)
+	tlsCertWriter := infraTLS.NewCertWriter(
+		tlsCertRepository,
+		infraTLS.WithBasePath(di.Cfg.TLS.CertsBasePath),
+	)
 
 	// gateway creator
 	gatewayCreator := gateway.NewCreator(
@@ -213,6 +219,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		updateGatewayCache,
 		pluginChainValidator,
 		telemetryValidator,
+		tlsCertWriter,
 	)
 
 	// gateway deleter
@@ -220,6 +227,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		di.Logger,
 		gatewayRepository,
 		redisPublisher,
+		tlsCertWriter,
 	)
 
 	// subscribers
@@ -274,6 +282,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 			ProviderLocator:     providerFactory,
 			TokenClient:         oauthTokenClient,
 			RuleMatcher:         ruleMatcher,
+			TLSCertWriter:       tlsCertWriter,
 		}),
 		// Gateway
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(
@@ -282,7 +291,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		),
 		ListGatewayHandler:   handlers.NewListGatewayHandler(di.Logger, gatewayRepository, updateGatewayCache),
 		GetGatewayHandler:    handlers.NewGetGatewayHandler(di.Logger, gatewayRepository, getGatewayCache, updateGatewayCache),
-		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(di.Logger, gatewayRepository, pluginManager, redisPublisher, telemetryValidator),
+		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(di.Logger, gatewayRepository, pluginManager, redisPublisher, telemetryValidator, tlsCertWriter),
 		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(di.Logger, gatewayDeleter),
 		// Upstream
 		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(di.Logger, upstreamRepository, gatewayRepository, cacheInstance, descriptionEmbeddingCreator, di.Cfg),

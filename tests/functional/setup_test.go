@@ -65,17 +65,20 @@ func setupTestEnvironment() {
 		log.Println("no .env file found, using system environment variables")
 	}
 
-	if err := config.Load("../../config/"); err != nil {
+	cfg, err := config.Load()
+	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-
-	GlobalConfig = config.GetConfig()
+	GlobalConfig = cfg
 
 	killProcessesOnPorts([]int{8080, 8081})
 
 	AdminUrl = getEnv("ADMIN_URL", "http://localhost:8080/api/v1")
 	ProxyUrl = getEnv("PROXY_URL", "http://localhost:8081")
 	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
+
+	// Set TLS_CERTS_BASE_PATH for the test process (must match proxy/admin)
+	_ = os.Setenv("TLS_CERTS_BASE_PATH", "/tmp/certs")
 
 	jwtManager := jwt.NewJwtManager(&GlobalConfig.Server)
 	tkn, err := jwtManager.CreateToken()
@@ -100,7 +103,10 @@ func setupTestEnvironment() {
 	// Create proxy command
 	proxyCmd = exec.Command("go", "run", "../../cmd/gateway/main.go", "proxy")
 	proxyCmd.Dir = wd
-	proxyCmd.Env = append(os.Environ(), "ENV_FILE=../../.env.functional")
+	proxyCmd.Env = append(os.Environ(),
+		"ENV_FILE=../../.env.functional",
+		"TLS_CERTS_BASE_PATH=/tmp/certs",
+	)
 	proxyCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	// Capture proxy server output
@@ -130,7 +136,10 @@ func setupTestEnvironment() {
 	// Create admin command
 	adminCmd = exec.Command("go", "run", "../../cmd/gateway/main.go", "admin")
 	adminCmd.Dir = wd
-	adminCmd.Env = append(os.Environ(), "ENV_FILE=../../.env.functional")
+	adminCmd.Env = append(os.Environ(),
+		"ENV_FILE=../../.env.functional",
+		"TLS_CERTS_BASE_PATH=/tmp/certs",
+	)
 	adminCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	// Capture admin server output

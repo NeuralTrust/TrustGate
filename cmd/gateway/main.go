@@ -45,10 +45,10 @@ func main() {
 	logger := infraLogger.NewLogger(serverType)
 
 	// Load configuration
-	if err := config.Load("../../config"); err != nil {
+	cfg, err := config.Load()
+	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-	cfg := config.GetConfig()
 
 	// Initialize database
 	db, err := database.NewDB(logger, &database.Config{

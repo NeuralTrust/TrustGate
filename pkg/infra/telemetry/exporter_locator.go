@@ -11,10 +11,14 @@ type ExporterLocator struct {
 	exporters map[string]telemetry.Exporter
 }
 
-func NewProviderLocator(providers map[string]telemetry.Exporter) *ExporterLocator {
-	return &ExporterLocator{
-		exporters: providers,
+func NewProviderLocator(opts ...ExporterLocatorOption) *ExporterLocator {
+	el := &ExporterLocator{
+		exporters: make(map[string]telemetry.Exporter),
 	}
+	for _, opt := range opts {
+		opt(el)
+	}
+	return el
 }
 
 func (p *ExporterLocator) GetExporter(exporter types.ExporterDTO) (telemetry.Exporter, error) {

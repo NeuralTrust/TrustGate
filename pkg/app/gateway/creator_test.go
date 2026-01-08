@@ -11,6 +11,8 @@ import (
 	gatewayMocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
+	infraTLS "github.com/NeuralTrust/TrustGate/pkg/infra/tls"
+	tlsMocks "github.com/NeuralTrust/TrustGate/pkg/infra/tls/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -38,16 +40,21 @@ func (m *mockTelemetryExportersValidator) Validate(exporters []types.ExporterDTO
 	return args.Error(0)
 }
 
+
 func setupCreator(
 	t *testing.T,
 	repo *gatewayMocks.Repository,
 	updateCache *mockUpdateGatewayCache,
 	pluginValidator *pluginmocks.ValidatePluginChain,
 	telemetryValidator *mockTelemetryExportersValidator,
+	tlsCertWriter *tlsMocks.CertWriter,
 ) Creator {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel) // Reduce noise in tests
-	return NewCreator(logger, repo, updateCache, pluginValidator, telemetryValidator)
+	if tlsCertWriter == nil {
+		tlsCertWriter = tlsMocks.NewCertWriter(t)
+	}
+	return NewCreator(logger, repo, updateCache, pluginValidator, telemetryValidator, tlsCertWriter)
 }
 
 func TestCreator_Create_Success(t *testing.T) {
@@ -56,7 +63,7 @@ func TestCreator_Create_Success(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:            "Test GatewayDTO",
@@ -92,7 +99,7 @@ func TestCreator_Create_WithGatewayID(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:            "Test GatewayDTO",
@@ -127,7 +134,7 @@ func TestCreator_Create_WithSecurityConfig(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:   "Test GatewayDTO",
@@ -179,7 +186,7 @@ func TestCreator_Create_WithTelemetry(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:   "Test GatewayDTO",
@@ -232,7 +239,7 @@ func TestCreator_Create_WithSessionConfig(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:   "Test GatewayDTO",
@@ -275,8 +282,9 @@ func TestCreator_Create_WithClientTLSConfig(t *testing.T) {
 	updateCache := new(mockUpdateGatewayCache)
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
+	tlsCertWriter := tlsMocks.NewCertWriter(t)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, tlsCertWriter)
 
 	req := &request.CreateGatewayRequest{
 		Name:   "Test GatewayDTO",
@@ -284,10 +292,10 @@ func TestCreator_Create_WithClientTLSConfig(t *testing.T) {
 		TlS: map[string]request.ClientTLSConfigRequest{
 			"backend1": {
 				AllowInsecureConnections: false,
-				CACert:                   "ca-cert",
+				CACert:                   "ca-cert-content",
 				ClientCerts: request.ClientTLSCertRequest{
-					Certificate: "client-cert",
-					PrivateKey:  "client-key",
+					Certificate: "client-cert-content",
+					PrivateKey:  "client-key-content",
 				},
 				CipherSuites:        []uint16{0x002F},
 				CurvePreferences:    []uint16{0x0017},
@@ -301,11 +309,36 @@ func TestCreator_Create_WithClientTLSConfig(t *testing.T) {
 
 	ctx := context.Background()
 
+	// Mock TLS cert writer to return paths
+	expectedPaths := &infraTLS.CertPaths{
+		CACertPath:     "/tmp/certs/test-gateway/backend1/ca.crt",
+		ClientCertPath: "/tmp/certs/test-gateway/backend1/client.crt",
+		ClientKeyPath:  "/tmp/certs/test-gateway/backend1/client.key",
+	}
+
 	pluginValidator.On("Validate", ctx, mock.AnythingOfType("uuid.UUID"), req.RequiredPlugins).Return(nil)
+
+	// First Save call: gateway without TLS config (before WriteCerts due to FK constraint)
 	repo.On("Save", ctx, mock.MatchedBy(func(g *domainGateway.Gateway) bool {
+		return g.Name == "Test GatewayDTO" && len(g.ClientTLSConfig) == 0
+	})).Return(nil).Once()
+
+	// WriteCerts is called after gateway is saved
+	tlsCertWriter.EXPECT().WriteCerts(
+		mock.Anything,
+		mock.AnythingOfType("uuid.UUID"),
+		"backend1",
+		"ca-cert-content",
+		"client-cert-content",
+		"client-key-content",
+	).Return(expectedPaths, nil)
+
+	// Update call: gateway with TLS config paths
+	repo.On("Update", ctx, mock.MatchedBy(func(g *domainGateway.Gateway) bool {
 		return len(g.ClientTLSConfig) > 0 &&
-			g.ClientTLSConfig["backend1"].CACerts == "ca-cert"
-	})).Return(nil)
+			g.ClientTLSConfig["backend1"].CACerts == expectedPaths.CACertPath
+	})).Return(nil).Once()
+
 	updateCache.On("Update", ctx, mock.AnythingOfType("*gateway.Gateway")).Return(nil)
 
 	result, err := creator.Create(ctx, req, "")
@@ -314,7 +347,9 @@ func TestCreator_Create_WithClientTLSConfig(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.NotNil(t, result.ClientTLSConfig)
 	assert.NotNil(t, result.ClientTLSConfig["backend1"])
-	assert.Equal(t, "ca-cert", result.ClientTLSConfig["backend1"].CACerts)
+	assert.Equal(t, expectedPaths.CACertPath, result.ClientTLSConfig["backend1"].CACerts)
+	assert.Equal(t, expectedPaths.ClientCertPath, result.ClientTLSConfig["backend1"].ClientCerts.Certificate)
+	assert.Equal(t, expectedPaths.ClientKeyPath, result.ClientTLSConfig["backend1"].ClientCerts.PrivateKey)
 	repo.AssertExpectations(t)
 	updateCache.AssertExpectations(t)
 	pluginValidator.AssertExpectations(t)
@@ -326,7 +361,7 @@ func TestCreator_Create_SetsCreatedAtAndUpdatedAt(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:            "Test GatewayDTO",
@@ -365,7 +400,7 @@ func TestCreator_Create_InvalidGatewayID(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:            "Test GatewayDTO",
@@ -391,7 +426,7 @@ func TestCreator_Create_PluginChainValidationFails(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:            "Test GatewayDTO",
@@ -420,7 +455,7 @@ func TestCreator_Create_DuplicateTelemetryExporters(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:   "Test GatewayDTO",
@@ -459,7 +494,7 @@ func TestCreator_Create_TelemetryValidationFails(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:   "Test GatewayDTO",
@@ -497,7 +532,7 @@ func TestCreator_Create_RepositorySaveFails(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:            "Test GatewayDTO",
@@ -527,7 +562,7 @@ func TestCreator_Create_CacheUpdateFails_StillReturnsSuccess(t *testing.T) {
 	pluginValidator := pluginmocks.NewValidatePluginChain(t)
 	telemetryValidator := new(mockTelemetryExportersValidator)
 
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator)
+	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
 
 	req := &request.CreateGatewayRequest{
 		Name:            "Test GatewayDTO",

@@ -9,10 +9,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -20,6 +20,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+func getTestConfig() *config.Config {
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = &config.Config{
+			Redis: config.RedisConfig{
+				Host: "localhost",
+				Port: 6379,
+			},
+		}
+	}
+	return cfg
+}
 
 func buildCacheFromConfig(cfg *config.Config) cache.Client {
 	rc := cfg.Redis
@@ -51,10 +64,11 @@ func newFiber() *fiber.App { return fiber.New() }
 func TestUpdateUpstream_OAuthValidation_ClientCredentialsMissingClientID(t *testing.T) {
 	repo := new(mocks.Repository)
 	pub := &noopPublisher{}
-	cacheInstance := buildCacheFromConfig(config.GetConfig())
+	cfg := getTestConfig()
+	cacheInstance := buildCacheFromConfig(cfg)
 	desc := &noopDescEmbedding{}
 	logger := logrus.New()
-	h := NewUpdateUpstreamHandler(logger, repo, pub, cacheInstance, desc, config.GetConfig())
+	h := NewUpdateUpstreamHandler(logger, repo, pub, cacheInstance, desc, cfg)
 
 	app := newFiber()
 	app.Put("/api/v1/gateways/:gateway_id/upstreams/:upstream_id", h.Handle)
@@ -98,10 +112,11 @@ func TestUpdateUpstream_OAuthValidation_ClientCredentialsMissingClientID(t *test
 func TestUpdateUpstream_Success_Minimal(t *testing.T) {
 	repo := new(mocks.Repository)
 	pub := &noopPublisher{}
-	cacheInstance := buildCacheFromConfig(config.GetConfig())
+	cfg := getTestConfig()
+	cacheInstance := buildCacheFromConfig(cfg)
 	desc := &noopDescEmbedding{}
 	logger := logrus.New()
-	h := NewUpdateUpstreamHandler(logger, repo, pub, cacheInstance, desc, config.GetConfig())
+	h := NewUpdateUpstreamHandler(logger, repo, pub, cacheInstance, desc, cfg)
 
 	app := newFiber()
 	app.Put("/api/v1/gateways/:gateway_id/upstreams/:upstream_id", h.Handle)

@@ -13,6 +13,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
+	infraTLS "github.com/NeuralTrust/TrustGate/pkg/infra/tls"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -25,6 +26,7 @@ type updateGatewayHandler struct {
 	pluginManager               plugins.Manager
 	publisher                   infraCache.EventPublisher
 	telemetryProvidersValidator appTelemetry.ExportersValidator
+	tlsCertWriter               infraTLS.CertWriter
 }
 
 func NewUpdateGatewayHandler(
@@ -33,6 +35,7 @@ func NewUpdateGatewayHandler(
 	pluginManager plugins.Manager,
 	publisher infraCache.EventPublisher,
 	telemetryProvidersValidator appTelemetry.ExportersValidator,
+	tlsCertWriter infraTLS.CertWriter,
 ) Handler {
 	return &updateGatewayHandler{
 		logger:                      logger,
@@ -40,6 +43,7 @@ func NewUpdateGatewayHandler(
 		pluginManager:               pluginManager,
 		publisher:                   publisher,
 		telemetryProvidersValidator: telemetryProvidersValidator,
+		tlsCertWriter:               tlsCertWriter,
 	}
 }
 
@@ -156,6 +160,48 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		dbGateway.SessionConfig.BodyParamName = req.SessionConfig.BodyParamName
 		dbGateway.SessionConfig.Mapping = req.SessionConfig.Mapping
 		dbGateway.SessionConfig.TTL = req.SessionConfig.TTL
+	}
+
+	// Handle TLS configuration updates
+	if req.TlS != nil {
+		// Delete old TLS certs for hosts that are being updated or removed
+		for host := range dbGateway.ClientTLSConfig {
+			if err := h.tlsCertWriter.DeleteCerts(c.Context(), gatewayUUID, host); err != nil {
+				h.logger.WithError(err).WithField("host", host).Warn("failed to delete old TLS certs")
+			}
+		}
+
+		// Write new TLS certs
+		newTLSConfig := make(map[string]types.ClientTLSConfigDTO, len(req.TlS))
+		for host, tlsReq := range req.TlS {
+			paths, err := h.tlsCertWriter.WriteCerts(
+				c.Context(),
+				gatewayUUID,
+				host,
+				tlsReq.CACert,
+				tlsReq.ClientCerts.Certificate,
+				tlsReq.ClientCerts.PrivateKey,
+			)
+			if err != nil {
+				h.logger.WithError(err).WithField("host", host).Error("failed to write TLS certs")
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("failed to write TLS certs for host %s: %v", host, err)})
+			}
+
+			newTLSConfig[host] = types.ClientTLSConfigDTO{
+				AllowInsecureConnections: tlsReq.AllowInsecureConnections,
+				CACerts:                  paths.CACertPath,
+				ClientCerts: types.ClientTLSCertDTO{
+					Certificate: paths.ClientCertPath,
+					PrivateKey:  paths.ClientKeyPath,
+				},
+				CipherSuites:        tlsReq.CipherSuites,
+				CurvePreferences:    tlsReq.CurvePreferences,
+				DisableSystemCAPool: tlsReq.DisableSystemCAPool,
+				MinVersion:          tlsReq.MinVersion,
+				MaxVersion:          tlsReq.MaxVersion,
+			}
+		}
+		dbGateway.ClientTLSConfig = newTLSConfig
 	}
 
 	if err := h.repo.Update(c.Context(), dbGateway); err != nil {

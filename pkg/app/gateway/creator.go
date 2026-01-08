@@ -12,6 +12,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
+	infraTLS "github.com/NeuralTrust/TrustGate/pkg/infra/tls"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -28,6 +29,7 @@ type creator struct {
 	updateGatewayCache          UpdateGatewayCache
 	pluginChainValidator        plugin.ValidatePluginChain
 	telemetryProvidersValidator appTelemetry.ExportersValidator
+	tlsCertWriter               infraTLS.CertWriter
 }
 
 func NewCreator(
@@ -36,6 +38,7 @@ func NewCreator(
 	updateGatewayCache UpdateGatewayCache,
 	pluginChainValidator plugin.ValidatePluginChain,
 	telemetryProvidersValidator appTelemetry.ExportersValidator,
+	tlsCertWriter infraTLS.CertWriter,
 ) Creator {
 	return &creator{
 		logger:                      logger,
@@ -43,6 +46,7 @@ func NewCreator(
 		updateGatewayCache:          updateGatewayCache,
 		pluginChainValidator:        pluginChainValidator,
 		telemetryProvidersValidator: telemetryProvidersValidator,
+		tlsCertWriter:               tlsCertWriter,
 	}
 }
 
@@ -138,7 +142,6 @@ func (c *creator) Create(
 		Status:          req.Status,
 		RequiredPlugins: req.RequiredPlugins,
 		Telemetry:       telemetryObj,
-		ClientTLSConfig: c.mapClientTLSConfig(req.TlS),
 		SecurityConfig:  securityConfig,
 		SessionConfig:   sessionConfig,
 		CreatedAt:       req.CreatedAt,
@@ -154,6 +157,23 @@ func (c *creator) Create(
 	if err := c.repo.Save(ctx, &entity); err != nil {
 		c.logger.WithError(err).Error("Failed to create gateway")
 		return nil, fmt.Errorf("failed to create gateway: %w", err)
+	}
+
+	if len(req.TlS) > 0 {
+		clientTLSConfig, err := c.mapClientTLSConfig(ctx, id, req.TlS)
+		if err != nil {
+			c.logger.WithError(err).Error("failed to write TLS certificates")
+			if delErr := c.repo.Delete(id); delErr != nil {
+				c.logger.WithError(delErr).Error("failed to rollback gateway creation")
+			}
+			return nil, fmt.Errorf("failed to write TLS certificates: %w", err)
+		}
+		entity.ClientTLSConfig = clientTLSConfig
+
+		if err := c.repo.Update(ctx, &entity); err != nil {
+			c.logger.WithError(err).Error("Failed to update gateway with TLS config")
+			return nil, fmt.Errorf("failed to update gateway with TLS config: %w", err)
+		}
 	}
 
 	if err := c.updateGatewayCache.Update(ctx, &entity); err != nil {
@@ -175,20 +195,35 @@ func (c *creator) telemetryExportersToDomain(configs []types.ExporterDTO) []tele
 }
 
 func (c *creator) mapClientTLSConfig(
+	ctx context.Context,
+	gatewayID uuid.UUID,
 	req map[string]request.ClientTLSConfigRequest,
-) map[string]types.ClientTLSConfigDTO {
+) (map[string]types.ClientTLSConfigDTO, error) {
 	if len(req) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	result := make(map[string]types.ClientTLSConfigDTO, len(req))
-	for k, v := range req {
-		result[k] = types.ClientTLSConfigDTO{
+	for host, v := range req {
+		// Write certificate files and get their paths
+		paths, err := c.tlsCertWriter.WriteCerts(
+			ctx,
+			gatewayID,
+			host,
+			v.CACert,
+			v.ClientCerts.Certificate,
+			v.ClientCerts.PrivateKey,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to write TLS certs for host %s: %w", host, err)
+		}
+
+		result[host] = types.ClientTLSConfigDTO{
 			AllowInsecureConnections: v.AllowInsecureConnections,
-			CACerts:                  v.CACert,
+			CACerts:                  paths.CACertPath,
 			ClientCerts: types.ClientTLSCertDTO{
-				Certificate: v.ClientCerts.Certificate,
-				PrivateKey:  v.ClientCerts.PrivateKey,
+				Certificate: paths.ClientCertPath,
+				PrivateKey:  paths.ClientKeyPath,
 			},
 			CipherSuites:        v.CipherSuites,
 			CurvePreferences:    v.CurvePreferences,
@@ -197,5 +232,5 @@ func (c *creator) mapClientTLSConfig(
 			MaxVersion:          v.MaxVersion,
 		}
 	}
-	return result
+	return result, nil
 }

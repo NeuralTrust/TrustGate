@@ -111,27 +111,34 @@ func (r *CreateGatewayRequest) Validate() error {
 
 func validateTls(tls map[string]ClientTLSConfigRequest) error {
 	for backend, tlsConfig := range tls {
+		// Skip validation if allow_insecure_connections is true
+		if tlsConfig.AllowInsecureConnections {
+			continue
+		}
+
 		minVersion, okMin := allowedTLSVersions[tlsConfig.MinVersion]
 		maxVersion, okMax := allowedTLSVersions[tlsConfig.MaxVersion]
 
-		if !okMin {
+		if tlsConfig.MinVersion != "" && !okMin {
 			return fmt.Errorf("invalid min_version in client_tls for backend '%s': %s", backend, tlsConfig.MinVersion)
 		}
-		if !okMax {
+		if tlsConfig.MaxVersion != "" && !okMax {
 			return fmt.Errorf("invalid max_version in client_tls for backend '%s': %s", backend, tlsConfig.MaxVersion)
 		}
-		if minVersion > maxVersion {
+		if okMin && okMax && minVersion > maxVersion {
 			return fmt.Errorf("min_version cannot be greater than max_version in client_tls for backend '%s'", backend)
 		}
 
+		// CA cert is required for TLS validation (unless insecure)
 		if tlsConfig.CACert == "" {
 			return fmt.Errorf("ca_cert is required in client_tls for backend '%s'", backend)
 		}
-		if tlsConfig.ClientCerts.Certificate == "" {
-			return fmt.Errorf("client_cert.certificate is required in client_tls for backend '%s'", backend)
-		}
-		if tlsConfig.ClientCerts.PrivateKey == "" {
-			return fmt.Errorf("client_cert.private_key is required in client_tls for backend '%s'", backend)
+
+		// Client certs are optional (mTLS), but if one is provided, both must be provided
+		hasCert := tlsConfig.ClientCerts.Certificate != ""
+		hasKey := tlsConfig.ClientCerts.PrivateKey != ""
+		if hasCert != hasKey {
+			return fmt.Errorf("client_certs.certificate and client_certs.private_key must both be provided or both be empty for backend '%s'", backend)
 		}
 
 		for _, v := range tlsConfig.CipherSuites {

@@ -27,7 +27,7 @@ import (
 func TestNeuralTrustModerationPlugin_Name(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
@@ -45,7 +45,7 @@ func TestNeuralTrustModerationPlugin_Name(t *testing.T) {
 func TestNeuralTrustModerationPlugin_RequiredPlugins(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
@@ -63,7 +63,7 @@ func TestNeuralTrustModerationPlugin_RequiredPlugins(t *testing.T) {
 func TestNeuralTrustModerationPlugin_Stages(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 
@@ -82,7 +82,7 @@ func TestNeuralTrustModerationPlugin_Stages(t *testing.T) {
 func TestNeuralTrustModerationPlugin_AllowedStages(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 
@@ -101,7 +101,7 @@ func TestNeuralTrustModerationPlugin_AllowedStages(t *testing.T) {
 func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 
@@ -240,7 +240,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 func TestNeuralTrustModerationPlugin_Execute_ModerationSafe(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	embeddingCreatorMock := new(embeddingMocks.Creator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
@@ -302,7 +302,7 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationSafe(t *testing.T) {
 func TestNeuralTrustModerationPlugin_Execute_ModerationUnsafe(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	embeddingCreatorMock := new(embeddingMocks.Creator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
@@ -370,7 +370,7 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationUnsafe(t *testing.T) {
 func TestNeuralTrustModerationPlugin_Execute_WithMappingFieldArray(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 
@@ -424,7 +424,7 @@ func TestNeuralTrustModerationPlugin_Execute_WithMappingFieldArray(t *testing.T)
 func TestNeuralTrustModerationPlugin_Execute_EmbeddingError(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	embeddingCreatorMock := new(embeddingMocks.Creator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
@@ -479,7 +479,7 @@ func TestNeuralTrustModerationPlugin_Execute_EmbeddingError(t *testing.T) {
 func TestNeuralTrustModerationPlugin_Execute_DisabledPlugin(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 
@@ -517,7 +517,7 @@ func TestNeuralTrustModerationPlugin_Execute_DisabledPlugin(t *testing.T) {
 func TestNeuralTrustModerationPlugin_Execute_KeyRegSafe(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 
@@ -561,7 +561,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSafe(t *testing.T) {
 func TestNeuralTrustModerationPlugin_Execute_KeyRegKeywordBlocked(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 
@@ -605,7 +605,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegKeywordBlocked(t *testing.T) 
 func TestNeuralTrustModerationPlugin_Execute_KeyRegSimilarWordBlocked(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 
@@ -649,7 +649,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSimilarWordBlocked(t *testing
 func TestNeuralTrustModerationPlugin_Execute_KeyRegRegexBlocked(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 
@@ -693,7 +693,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegRegexBlocked(t *testing.T) {
 func TestNeuralTrustModerationPlugin_Execute_LLMModeration(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	clientMock := new(clientMocks.Client)
@@ -761,7 +761,7 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModeration(t *testing.T) {
 func TestNeuralTrustModerationPlugin_Execute_LLMModerationSafe(t *testing.T) {
 	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
-	embeddingRepositoryMock := new(embeddingMocks.EmbeddingRepository)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
 	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	clientMock := new(clientMocks.Client)

@@ -16,16 +16,19 @@ import (
 func TestNewNeuralTrustFirewallClient(t *testing.T) {
 	logger := logrus.New()
 
-	t.Run("With provided client", func(t *testing.T) {
+	t.Run("With custom HTTP client", func(t *testing.T) {
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(
+			logger,
+			firewall.WithHTTPClient(httpClient),
+		)
 
 		assert.NotNil(t, client)
 		assert.IsType(t, &firewall.NeuralTrustFirewallClient{}, client)
 	})
 
-	t.Run("With nil client", func(t *testing.T) {
-		client := firewall.NewNeuralTrustFirewallClient(nil, logger)
+	t.Run("With default HTTP client", func(t *testing.T) {
+		client := firewall.NewNeuralTrustFirewallClient(logger)
 
 		assert.NotNil(t, client)
 		assert.IsType(t, &firewall.NeuralTrustFirewallClient{}, client)
@@ -54,7 +57,7 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(logger, firewall.WithHTTPClient(httpClient))
 
 		credentials := firewall.Credentials{
 			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
@@ -85,7 +88,7 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(logger, firewall.WithHTTPClient(httpClient))
 
 		credentials := firewall.Credentials{
 			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
@@ -114,7 +117,7 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(logger, firewall.WithHTTPClient(httpClient))
 
 		// Create context with short timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -162,7 +165,7 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 
 		// Create client
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(logger, firewall.WithHTTPClient(httpClient))
 
 		// Test data
 		credentials := firewall.Credentials{
@@ -200,7 +203,7 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(logger, firewall.WithHTTPClient(httpClient))
 
 		credentials := firewall.Credentials{
 			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
@@ -229,7 +232,7 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(logger, firewall.WithHTTPClient(httpClient))
 
 		credentials := firewall.Credentials{
 			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
@@ -268,7 +271,7 @@ func TestNeuralTrustFirewallClient_RequestPool(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(logger, firewall.WithHTTPClient(httpClient))
 
 		credentials := firewall.Credentials{
 			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
@@ -308,7 +311,7 @@ func TestNeuralTrustFirewallClient_BufferPool(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(logger, firewall.WithHTTPClient(httpClient))
 
 		credentials := firewall.Credentials{
 			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
@@ -348,7 +351,7 @@ func TestNeuralTrustFirewallClient_ConcurrentRequests(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(logger, firewall.WithHTTPClient(httpClient))
 
 		credentials := firewall.Credentials{
 			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
@@ -391,7 +394,7 @@ func TestNeuralTrustFirewallClient_EmptyRequestBody(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(logger, firewall.WithHTTPClient(httpClient))
 
 		credentials := firewall.Credentials{
 			NeuralTrustCredentials: firewall.NeuralTrustCredentials{
@@ -417,7 +420,7 @@ func TestNeuralTrustFirewallClient_EmptyRequestBody(t *testing.T) {
 		defer server.Close()
 
 		httpClient := &http.Client{Timeout: 5 * time.Second}
-		client := firewall.NewNeuralTrustFirewallClient(httpClient, logger)
+		client := firewall.NewNeuralTrustFirewallClient(logger, firewall.WithHTTPClient(httpClient))
 
 		credentials := firewall.Credentials{
 			NeuralTrustCredentials: firewall.NeuralTrustCredentials{

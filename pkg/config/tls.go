@@ -136,14 +136,16 @@ func BuildTLSConfigFromClientConfig(cfg types.ClientTLSConfigDTO) (*tls.Config, 
 }
 
 func resolvePath(path string) (string, error) {
+	// If the path is already absolute, return it as-is
 	if filepath.IsAbs(path) {
-		projectPath, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(projectPath, path), nil
+		return path, nil
 	}
-	return path, nil
+	// If the path is relative, resolve it against the working directory
+	projectPath, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(projectPath, path), nil
 }
 
 func tlsVersion(version string) uint16 {
