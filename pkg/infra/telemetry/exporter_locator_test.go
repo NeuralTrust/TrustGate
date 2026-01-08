@@ -214,3 +214,4 @@ func TestValidateExporter_ValidationError(t *testing.T) {
 	assert.Equal(t, "broker is required", err.Error())
 }
 
+

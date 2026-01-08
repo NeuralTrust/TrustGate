@@ -205,8 +205,12 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	telemetryBuilder := telemetry.NewTelemetryExportersBuilder(providerLocator)
 	telemetryValidator := telemetry.NewTelemetryExportersValidator(providerLocator)
 
-	// TLS cert writer
-	tlsCertWriter := infraTLS.NewCertWriter(infraTLS.WithBasePath(di.Cfg.TLS.CertsBasePath))
+	// TLS cert repository and writer
+	tlsCertRepository := repository.NewTLSCertRepository(di.DB.DB)
+	tlsCertWriter := infraTLS.NewCertWriter(
+		tlsCertRepository,
+		infraTLS.WithBasePath(di.Cfg.TLS.CertsBasePath),
+	)
 
 	// gateway creator
 	gatewayCreator := gateway.NewCreator(
@@ -278,6 +282,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 			ProviderLocator:     providerFactory,
 			TokenClient:         oauthTokenClient,
 			RuleMatcher:         ruleMatcher,
+			TLSCertWriter:       tlsCertWriter,
 		}),
 		// Gateway
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(

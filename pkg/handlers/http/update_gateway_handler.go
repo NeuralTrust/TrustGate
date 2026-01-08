@@ -166,7 +166,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 	if req.TlS != nil {
 		// Delete old TLS certs for hosts that are being updated or removed
 		for host := range dbGateway.ClientTLSConfig {
-			if err := h.tlsCertWriter.DeleteCerts(gatewayUUID, host); err != nil {
+			if err := h.tlsCertWriter.DeleteCerts(c.Context(), gatewayUUID, host); err != nil {
 				h.logger.WithError(err).WithField("host", host).Warn("failed to delete old TLS certs")
 			}
 		}
@@ -175,6 +175,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		newTLSConfig := make(map[string]types.ClientTLSConfigDTO, len(req.TlS))
 		for host, tlsReq := range req.TlS {
 			paths, err := h.tlsCertWriter.WriteCerts(
+				c.Context(),
 				gatewayUUID,
 				host,
 				tlsReq.CACert,

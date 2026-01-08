@@ -315,13 +315,30 @@ func TestCreator_Create_WithClientTLSConfig(t *testing.T) {
 		ClientCertPath: "/tmp/certs/test-gateway/backend1/client.crt",
 		ClientKeyPath:  "/tmp/certs/test-gateway/backend1/client.key",
 	}
-	tlsCertWriter.EXPECT().WriteCerts(mock.AnythingOfType("uuid.UUID"), "backend1", "ca-cert-content", "client-cert-content", "client-key-content").Return(expectedPaths, nil)
 
 	pluginValidator.On("Validate", ctx, mock.AnythingOfType("uuid.UUID"), req.RequiredPlugins).Return(nil)
+
+	// First Save call: gateway without TLS config (before WriteCerts due to FK constraint)
 	repo.On("Save", ctx, mock.MatchedBy(func(g *domainGateway.Gateway) bool {
+		return g.Name == "Test GatewayDTO" && len(g.ClientTLSConfig) == 0
+	})).Return(nil).Once()
+
+	// WriteCerts is called after gateway is saved
+	tlsCertWriter.EXPECT().WriteCerts(
+		mock.Anything,
+		mock.AnythingOfType("uuid.UUID"),
+		"backend1",
+		"ca-cert-content",
+		"client-cert-content",
+		"client-key-content",
+	).Return(expectedPaths, nil)
+
+	// Update call: gateway with TLS config paths
+	repo.On("Update", ctx, mock.MatchedBy(func(g *domainGateway.Gateway) bool {
 		return len(g.ClientTLSConfig) > 0 &&
 			g.ClientTLSConfig["backend1"].CACerts == expectedPaths.CACertPath
-	})).Return(nil)
+	})).Return(nil).Once()
+
 	updateCache.On("Update", ctx, mock.AnythingOfType("*gateway.Gateway")).Return(nil)
 
 	result, err := creator.Create(ctx, req, "")

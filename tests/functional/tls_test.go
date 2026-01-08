@@ -13,6 +13,8 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,9 +25,24 @@ import (
 
 // TLS test server ports
 const (
-	tlsServerPort  = 19443
-	mtlsServerPort = 19444
+	tlsServerPort        = 19443
+	mtlsServerPort       = 19444
+	defaultCertsBasePath = "/tmp/certs"
 )
+
+// getCertsBasePath returns the base path for TLS certificates
+// This must match the TLS_CERTS_BASE_PATH set for the proxy in setup_test.go
+func getCertsBasePath() string {
+	path := os.Getenv("TLS_CERTS_BASE_PATH")
+	if path == "" {
+		path = defaultCertsBasePath
+	}
+	// Ensure we use an absolute path
+	if !filepath.IsAbs(path) {
+		path = defaultCertsBasePath
+	}
+	return path
+}
 
 // CertBundle holds generated certificates and keys in PEM format
 type CertBundle struct {
@@ -491,6 +508,232 @@ func TestMTLS_FailsWithoutClientCert(t *testing.T) {
 
 		// Should get an error response (502 Bad Gateway or 500)
 		assert.True(t, resp.StatusCode >= 400, "Expected error status code, got %d", resp.StatusCode)
+	})
+}
+
+func TestTLS_CertRecoveryFromDatabase(t *testing.T) {
+	t.Run("certificates are recovered from database when files are deleted", func(t *testing.T) {
+		// Generate certificates
+		bundle := generateCertBundle(t, "localhost")
+
+		// Start TLS server
+		stopServer := startTLSServer(t, tlsServerPort+2, bundle)
+		defer stopServer()
+
+		// Create gateway with TLS config
+		gatewayID := CreateGateway(t, map[string]interface{}{
+			"name":      "TLS Recovery Test Gateway",
+			"subdomain": fmt.Sprintf("tls-recovery-%d", time.Now().UnixNano()),
+			"client_tls": map[string]interface{}{
+				"localhost": map[string]interface{}{
+					"ca_cert":     bundle.CACertPEM,
+					"min_version": "TLS12",
+					"max_version": "TLS13",
+				},
+			},
+		})
+
+		// Create upstream
+		upstreamID := CreateUpstream(t, gatewayID, map[string]interface{}{
+			"name":      "TLS Recovery Backend",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "localhost",
+					"port":     tlsServerPort + 2,
+					"protocol": "https",
+					"weight":   100,
+					"priority": 1,
+				},
+			},
+		})
+
+		// Create service and rule
+		serviceID := CreateService(t, gatewayID, map[string]interface{}{
+			"name":        "TLS Recovery Service",
+			"type":        "upstream",
+			"upstream_id": upstreamID,
+		})
+
+		CreateRules(t, gatewayID, map[string]interface{}{
+			"path":       "/tls-recovery",
+			"service_id": serviceID,
+			"methods":    []string{"GET"},
+		})
+
+		// Create API key
+		apiKey := CreateApiKey(t, gatewayID)
+
+		// STEP 1: First request should succeed
+		t.Log("Step 1: Making first request (certs exist on disk)")
+		req1, err := http.NewRequest(http.MethodGet, ProxyUrl+"/tls-recovery", nil)
+		require.NoError(t, err)
+		req1.Header.Set("X-TG-API-Key", apiKey)
+
+		resp1, err := http.DefaultClient.Do(req1)
+		require.NoError(t, err)
+		body1, _ := io.ReadAll(resp1.Body)
+		_ = resp1.Body.Close()
+
+		t.Logf("First request - Status: %d, Body: %s", resp1.StatusCode, string(body1))
+		require.Equal(t, http.StatusOK, resp1.StatusCode, "First request should succeed")
+		assert.Contains(t, string(body1), "TLS OK")
+
+		// STEP 2: Delete certificate files from filesystem
+		t.Log("Step 2: Deleting certificate files from filesystem")
+		certDir := filepath.Join(getCertsBasePath(), gatewayID, "localhost")
+		t.Logf("Deleting cert directory: %s", certDir)
+
+		// Verify the directory exists before deletion
+		_, err = os.Stat(certDir)
+		require.NoError(t, err, "Cert directory should exist before deletion")
+
+		// Delete the entire certificate directory
+		err = os.RemoveAll(certDir)
+		require.NoError(t, err, "Failed to delete cert directory")
+
+		// Verify deletion
+		_, err = os.Stat(certDir)
+		require.True(t, os.IsNotExist(err), "Cert directory should be deleted")
+		t.Log("✅ Certificate files deleted successfully")
+
+		// STEP 3: Second request should succeed (certs recovered from database)
+		t.Log("Step 3: Making second request (certs should be recovered from DB)")
+		req2, err := http.NewRequest(http.MethodGet, ProxyUrl+"/tls-recovery", nil)
+		require.NoError(t, err)
+		req2.Header.Set("X-TG-API-Key", apiKey)
+
+		resp2, err := http.DefaultClient.Do(req2)
+		require.NoError(t, err)
+		body2, _ := io.ReadAll(resp2.Body)
+		_ = resp2.Body.Close()
+
+		t.Logf("Second request - Status: %d, Body: %s", resp2.StatusCode, string(body2))
+		assert.Equal(t, http.StatusOK, resp2.StatusCode, "Second request should succeed after cert recovery")
+		assert.Contains(t, string(body2), "TLS OK")
+
+		// STEP 4: Verify certs were recreated on disk
+		t.Log("Step 4: Verifying certificates were recreated on disk")
+		_, err = os.Stat(filepath.Join(certDir, "ca.crt"))
+		assert.NoError(t, err, "CA cert should be recreated on disk")
+		t.Log("✅ Certificates successfully recovered from database")
+	})
+}
+
+func TestMTLS_CertRecoveryFromDatabase(t *testing.T) {
+	t.Run("mTLS certificates are recovered from database when files are deleted", func(t *testing.T) {
+		// Generate certificates
+		bundle := generateCertBundle(t, "localhost")
+
+		// Start mTLS server
+		stopServer := startMTLSServer(t, mtlsServerPort+2, bundle)
+		defer stopServer()
+
+		// Create gateway with mTLS config (including client certs)
+		gatewayID := CreateGateway(t, map[string]interface{}{
+			"name":      "mTLS Recovery Test Gateway",
+			"subdomain": fmt.Sprintf("mtls-recovery-%d", time.Now().UnixNano()),
+			"client_tls": map[string]interface{}{
+				"localhost": map[string]interface{}{
+					"ca_cert": bundle.CACertPEM,
+					"client_certs": map[string]interface{}{
+						"certificate": bundle.ClientCertPEM,
+						"private_key": bundle.ClientKeyPEM,
+					},
+					"min_version": "TLS12",
+					"max_version": "TLS13",
+				},
+			},
+		})
+
+		// Create upstream
+		upstreamID := CreateUpstream(t, gatewayID, map[string]interface{}{
+			"name":      "mTLS Recovery Backend",
+			"algorithm": "round-robin",
+			"targets": []map[string]interface{}{
+				{
+					"host":     "localhost",
+					"port":     mtlsServerPort + 2,
+					"protocol": "https",
+					"weight":   100,
+					"priority": 1,
+				},
+			},
+		})
+
+		// Create service and rule
+		serviceID := CreateService(t, gatewayID, map[string]interface{}{
+			"name":        "mTLS Recovery Service",
+			"type":        "upstream",
+			"upstream_id": upstreamID,
+		})
+
+		CreateRules(t, gatewayID, map[string]interface{}{
+			"path":       "/mtls-recovery",
+			"service_id": serviceID,
+			"methods":    []string{"GET"},
+		})
+
+		// Create API key
+		apiKey := CreateApiKey(t, gatewayID)
+
+		// STEP 1: First request should succeed
+		t.Log("Step 1: Making first request (mTLS certs exist on disk)")
+		req1, err := http.NewRequest(http.MethodGet, ProxyUrl+"/mtls-recovery", nil)
+		require.NoError(t, err)
+		req1.Header.Set("X-TG-API-Key", apiKey)
+
+		resp1, err := http.DefaultClient.Do(req1)
+		require.NoError(t, err)
+		body1, _ := io.ReadAll(resp1.Body)
+		_ = resp1.Body.Close()
+
+		t.Logf("First request - Status: %d, Body: %s", resp1.StatusCode, string(body1))
+		require.Equal(t, http.StatusOK, resp1.StatusCode, "First request should succeed")
+		assert.Contains(t, string(body1), "mTLS OK")
+
+		// STEP 2: Delete certificate files from filesystem
+		t.Log("Step 2: Deleting mTLS certificate files from filesystem")
+		certDir := filepath.Join(getCertsBasePath(), gatewayID, "localhost")
+		t.Logf("Deleting cert directory: %s", certDir)
+
+		// Verify files exist before deletion
+		_, err = os.Stat(filepath.Join(certDir, "ca.crt"))
+		require.NoError(t, err, "CA cert should exist")
+		_, err = os.Stat(filepath.Join(certDir, "client.crt"))
+		require.NoError(t, err, "Client cert should exist")
+		_, err = os.Stat(filepath.Join(certDir, "client.key"))
+		require.NoError(t, err, "Client key should exist")
+
+		// Delete the entire certificate directory
+		err = os.RemoveAll(certDir)
+		require.NoError(t, err, "Failed to delete cert directory")
+		t.Log("✅ mTLS certificate files deleted successfully")
+
+		// STEP 3: Second request should succeed (certs recovered from database)
+		t.Log("Step 3: Making second request (mTLS certs should be recovered from DB)")
+		req2, err := http.NewRequest(http.MethodGet, ProxyUrl+"/mtls-recovery", nil)
+		require.NoError(t, err)
+		req2.Header.Set("X-TG-API-Key", apiKey)
+
+		resp2, err := http.DefaultClient.Do(req2)
+		require.NoError(t, err)
+		body2, _ := io.ReadAll(resp2.Body)
+		_ = resp2.Body.Close()
+
+		t.Logf("Second request - Status: %d, Body: %s", resp2.StatusCode, string(body2))
+		assert.Equal(t, http.StatusOK, resp2.StatusCode, "Second request should succeed after mTLS cert recovery")
+		assert.Contains(t, string(body2), "mTLS OK")
+
+		// STEP 4: Verify all certs were recreated on disk
+		t.Log("Step 4: Verifying mTLS certificates were recreated on disk")
+		_, err = os.Stat(filepath.Join(certDir, "ca.crt"))
+		assert.NoError(t, err, "CA cert should be recreated on disk")
+		_, err = os.Stat(filepath.Join(certDir, "client.crt"))
+		assert.NoError(t, err, "Client cert should be recreated on disk")
+		_, err = os.Stat(filepath.Join(certDir, "client.key"))
+		assert.NoError(t, err, "Client key should be recreated on disk")
+		t.Log("✅ mTLS certificates successfully recovered from database")
 	})
 }
 

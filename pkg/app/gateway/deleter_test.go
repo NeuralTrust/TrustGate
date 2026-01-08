@@ -40,7 +40,7 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	gatewayID := uuid.New()
 
 	repo.EXPECT().Delete(gatewayID).Return(nil)
-	tlsCertWriter.EXPECT().DeleteAllGatewayCerts(gatewayID).Return(nil)
+	tlsCertWriter.EXPECT().DeleteAllGatewayCerts(ctx, gatewayID).Return(nil)
 	publisher.EXPECT().Publish(
 		ctx,
 		mock.MatchedBy(func(ev interface{}) bool {
@@ -100,7 +100,7 @@ func TestDeleter_Delete_PublishEventFails_StillReturnsSuccess(t *testing.T) {
 	gatewayID := uuid.New()
 
 	repo.EXPECT().Delete(gatewayID).Return(nil)
-	tlsCertWriter.EXPECT().DeleteAllGatewayCerts(gatewayID).Return(nil)
+	tlsCertWriter.EXPECT().DeleteAllGatewayCerts(ctx, gatewayID).Return(nil)
 	publisher.EXPECT().Publish(
 		ctx,
 		mock.Anything,

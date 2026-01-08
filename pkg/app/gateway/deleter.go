@@ -48,7 +48,7 @@ func (d *deleter) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 
 	// Delete all TLS certificates for this gateway
-	if err := d.tlsCertWriter.DeleteAllGatewayCerts(id); err != nil {
+	if err := d.tlsCertWriter.DeleteAllGatewayCerts(ctx, id); err != nil {
 		d.logger.WithError(err).Warn("failed to delete TLS certificates for gateway")
 	}
 

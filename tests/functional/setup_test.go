@@ -77,6 +77,9 @@ func setupTestEnvironment() {
 	ProxyUrl = getEnv("PROXY_URL", "http://localhost:8081")
 	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
 
+	// Set TLS_CERTS_BASE_PATH for the test process (must match proxy/admin)
+	_ = os.Setenv("TLS_CERTS_BASE_PATH", "/tmp/certs")
+
 	jwtManager := jwt.NewJwtManager(&GlobalConfig.Server)
 	tkn, err := jwtManager.CreateToken()
 	if err != nil {

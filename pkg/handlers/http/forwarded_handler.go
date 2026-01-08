@@ -32,7 +32,9 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
+	infraTLS "github.com/NeuralTrust/TrustGate/pkg/infra/tls"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/google/uuid"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
@@ -46,6 +48,7 @@ type forwardedRequestDTO struct {
 	target         *types.UpstreamTargetDTO
 	proxy          *domainUpstream.Proxy
 	streamResponse chan []byte
+	gatewayID      string
 }
 
 var responseBodyPool = sync.Pool{
@@ -69,6 +72,7 @@ type forwardedHandler struct {
 	providerLocator     factory.ProviderLocator
 	tokenClient         oauth.TokenClient
 	ruleMatcher         routing.RuleMatcher
+	tlsCertWriter       infraTLS.CertWriter
 }
 
 // ForwardedHandlerDeps contains all dependencies for ForwardedHandler.
@@ -83,6 +87,7 @@ type ForwardedHandlerDeps struct {
 	ProviderLocator     factory.ProviderLocator
 	TokenClient         oauth.TokenClient
 	RuleMatcher         routing.RuleMatcher
+	TLSCertWriter       infraTLS.CertWriter
 }
 
 func NewForwardedHandler(deps ForwardedHandlerDeps) Handler {
@@ -113,6 +118,7 @@ func NewForwardedHandler(deps ForwardedHandlerDeps) Handler {
 		providerLocator:     deps.ProviderLocator,
 		tokenClient:         deps.TokenClient,
 		ruleMatcher:         deps.RuleMatcher,
+		tlsCertWriter:       deps.TLSCertWriter,
 	}
 }
 
@@ -619,6 +625,7 @@ func (h *forwardedHandler) forwardRequest(
 		}
 
 		response, err := h.doForwardRequest(
+			req.C.Context(),
 			&forwardedRequestDTO{
 				req:            req,
 				rule:           rule,
@@ -626,6 +633,7 @@ func (h *forwardedHandler) forwardRequest(
 				tlsConfig:      tlsConfig,
 				streamResponse: streamResponse,
 				proxy:          upstreamModel.Proxy,
+				gatewayID:      rule.GatewayID,
 			},
 		)
 		reqErr = err
@@ -768,7 +776,7 @@ func (h *forwardedHandler) handlerProviderResponse(
 
 }
 
-func (h *forwardedHandler) doForwardRequest(dto *forwardedRequestDTO) (*types.ResponseContext, error) {
+func (h *forwardedHandler) doForwardRequest(ctx context.Context, dto *forwardedRequestDTO) (*types.ResponseContext, error) {
 	if dto.target.Provider != "" {
 		if dto.target.Stream {
 			return h.handleStreamingResponseByProvider(dto.req, dto.target, dto.streamResponse)
@@ -776,7 +784,7 @@ func (h *forwardedHandler) doForwardRequest(dto *forwardedRequestDTO) (*types.Re
 		return h.handlerProviderResponse(dto.req, dto.target)
 	}
 
-	client, err := h.prepareClient(dto)
+	client, err := h.prepareClient(ctx, dto)
 	if err != nil {
 		return nil, err
 	}
@@ -888,7 +896,7 @@ func (h *forwardedHandler) processUpstreamResponse(
 	return response, nil
 }
 
-func (h *forwardedHandler) prepareClient(dto *forwardedRequestDTO) (*fasthttp.Client, error) {
+func (h *forwardedHandler) prepareClient(ctx context.Context, dto *forwardedRequestDTO) (*fasthttp.Client, error) {
 	tlsConf, hasTLS := dto.tlsConfig[dto.target.Host]
 	proxyAddr := ""
 	proxyProtocol := ""
@@ -902,6 +910,20 @@ func (h *forwardedHandler) prepareClient(dto *forwardedRequestDTO) (*fasthttp.Cl
 	case hasTLS:
 		if dto.target.InsecureSSL {
 			tlsConf.AllowInsecureConnections = true
+		}
+		// Ensure cert files exist, recovering from DB if needed
+		if h.tlsCertWriter != nil && dto.gatewayID != "" {
+			gatewayUUID, err := parseUUID(dto.gatewayID)
+			if err == nil {
+				certPaths := &infraTLS.CertPaths{
+					CACertPath:     tlsConf.CACerts,
+					ClientCertPath: tlsConf.ClientCerts.Certificate,
+					ClientKeyPath:  tlsConf.ClientCerts.PrivateKey,
+				}
+				if err := h.tlsCertWriter.EnsureCertFiles(ctx, gatewayUUID, dto.target.Host, certPaths); err != nil {
+					h.logger.WithError(err).Warn("failed to ensure TLS cert files exist")
+				}
+			}
 		}
 		conf, err := config.BuildTLSConfigFromClientConfig(tlsConf)
 		if err != nil {
@@ -922,6 +944,10 @@ func (h *forwardedHandler) prepareClient(dto *forwardedRequestDTO) (*fasthttp.Cl
 	default:
 		return h.client, nil
 	}
+}
+
+func parseUUID(s string) (uuid.UUID, error) {
+	return uuid.Parse(s)
 }
 
 func (h *forwardedHandler) applyAuthentication(req *fasthttp.Request, creds *types.CredentialsDTO, body []byte) {

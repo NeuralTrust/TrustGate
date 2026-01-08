@@ -136,19 +136,12 @@ func (c *creator) Create(
 		}
 	}
 
-	clientTLSConfig, err := c.mapClientTLSConfig(id, req.TlS)
-	if err != nil {
-		c.logger.WithError(err).Error("failed to write TLS certificates")
-		return nil, fmt.Errorf("failed to write TLS certificates: %w", err)
-	}
-
 	entity := domainGateway.Gateway{
 		ID:              id,
 		Name:            req.Name,
 		Status:          req.Status,
 		RequiredPlugins: req.RequiredPlugins,
 		Telemetry:       telemetryObj,
-		ClientTLSConfig: clientTLSConfig,
 		SecurityConfig:  securityConfig,
 		SessionConfig:   sessionConfig,
 		CreatedAt:       req.CreatedAt,
@@ -164,6 +157,23 @@ func (c *creator) Create(
 	if err := c.repo.Save(ctx, &entity); err != nil {
 		c.logger.WithError(err).Error("Failed to create gateway")
 		return nil, fmt.Errorf("failed to create gateway: %w", err)
+	}
+
+	if len(req.TlS) > 0 {
+		clientTLSConfig, err := c.mapClientTLSConfig(ctx, id, req.TlS)
+		if err != nil {
+			c.logger.WithError(err).Error("failed to write TLS certificates")
+			if delErr := c.repo.Delete(id); delErr != nil {
+				c.logger.WithError(delErr).Error("failed to rollback gateway creation")
+			}
+			return nil, fmt.Errorf("failed to write TLS certificates: %w", err)
+		}
+		entity.ClientTLSConfig = clientTLSConfig
+
+		if err := c.repo.Update(ctx, &entity); err != nil {
+			c.logger.WithError(err).Error("Failed to update gateway with TLS config")
+			return nil, fmt.Errorf("failed to update gateway with TLS config: %w", err)
+		}
 	}
 
 	if err := c.updateGatewayCache.Update(ctx, &entity); err != nil {
@@ -185,6 +195,7 @@ func (c *creator) telemetryExportersToDomain(configs []types.ExporterDTO) []tele
 }
 
 func (c *creator) mapClientTLSConfig(
+	ctx context.Context,
 	gatewayID uuid.UUID,
 	req map[string]request.ClientTLSConfigRequest,
 ) (map[string]types.ClientTLSConfigDTO, error) {
@@ -196,6 +207,7 @@ func (c *creator) mapClientTLSConfig(
 	for host, v := range req {
 		// Write certificate files and get their paths
 		paths, err := c.tlsCertWriter.WriteCerts(
+			ctx,
 			gatewayID,
 			host,
 			v.CACert,
