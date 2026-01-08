@@ -95,28 +95,21 @@ func TestCreateGateway(t *testing.T) {
 	})
 
 	t.Run("it should create a gateway with TLS configuration", func(t *testing.T) {
+		// Generate valid certificate bundle for testing
+		bundle := generateCertBundle(t, "localhost")
+
 		gatewayPayload := map[string]interface{}{
 			"name": "TLS Gateway",
 			"client_tls": map[string]interface{}{
-				"default": map[string]interface{}{
-					"allow_insecure_connections": true,
+				"localhost": map[string]interface{}{
+					"allow_insecure_connections": false,
 					"disable_system_ca_pool":     false,
 					"min_version":                "TLS12",
 					"max_version":                "TLS13",
-					"ca_cert":                    "certs/ca.pem",
+					"ca_cert":                    bundle.CACertPEM,
 					"client_certs": map[string]interface{}{
-						"certificate": "certs/client.pem",
-						"private_key": "certs/client.key",
-					},
-					"cipher_suites": []int{
-						4865,
-						4866,
-						4867,
-					},
-					"curve_preferences": []int{
-						23,
-						24,
-						25,
+						"certificate": bundle.ClientCertPEM,
+						"private_key": bundle.ClientKeyPEM,
 					},
 				},
 			},

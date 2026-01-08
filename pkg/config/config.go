@@ -18,34 +18,23 @@ type MetricsConfig struct {
 }
 
 type Config struct {
-	Server        ServerConfig
-	Multitenant   MultiTenantConfig
-	Metrics       MetricsConfig
-	Database      DatabaseConfig
-	Redis         RedisConfig
-	Plugins       PluginsConfig
-	WebSocket     WebSocketConfig
-	TLS           TLSConfig
-	OpenTelemetry OpenTelemetryConfig
+	Server    ServerConfig
+	Metrics   MetricsConfig
+	Database  DatabaseConfig
+	Redis     RedisConfig
+	Plugins   PluginsConfig
+	WebSocket WebSocketConfig
+	TLS       TLSConfig
 }
 
 type ServerConfig struct {
 	AdminPort   int
 	ProxyPort   int
 	MetricsPort int
-	ActionsPort int
 	Type        string
 	Port        int
 	Host        string
 	SecretKey   string
-}
-
-type MultiTenantConfig struct {
-	IngressDataHostTemplate    string
-	IngressActionsHostTemplate string
-	Image                      string
-	K8sTemplatesPath           string
-	ServiceAccountToken        string
 }
 
 type DatabaseConfig struct {
@@ -94,17 +83,6 @@ type TLSKeyPair struct {
 	PrivateKey string
 }
 
-type OpenTelemetryConfig struct {
-	Enabled         bool
-	ServiceName     string
-	ServiceVersion  string
-	Environment     string
-	TracesEndpoint  string
-	MetricsEndpoint string
-	SamplingRatio   float64
-	Insecure        bool
-}
-
 var globalConfig *Config
 
 func Load() (*Config, error) {
@@ -112,15 +90,7 @@ func Load() (*Config, error) {
 	serverAdminPort, _ := strconv.Atoi(getEnv("SERVER_ADMIN_PORT", "8080"))
 	serverProxyPort, _ := strconv.Atoi(getEnv("SERVER_PROXY_PORT", "8081"))
 	serverMetricsPort, _ := strconv.Atoi(getEnv("SERVER_METRICS_PORT", "9090"))
-	serverActionsPort, _ := strconv.Atoi(getEnv("SERVER_ACTIONS_PORT", "8082"))
 	serverSecretKey := getEnv("SERVER_SECRET_KEY", "")
-
-	// Multitenant configuration
-	multitenantIngressDataHostTemplate := getEnv("MULTITENANT_INGRESS_DATA_HOST_TEMPLATE", "")
-	multitenantIngressActionsHostTemplate := getEnv("MULTITENANT_INGRESS_ACTIONS_HOST_TEMPLATE", "")
-	multitenantImage := getEnv("MULTITENANT_TRUSTGATE_IMAGE", "")
-	multitenantK8sTemplatesPath := getEnv("MULTITENANT_K8S_TEMPLATES_PATH", "")
-	multitenantServiceAccountToken := getEnv("MULTITENANT_SERVICE_ACCOUNT_TOKEN", "")
 
 	// Metrics configuration
 	metricsEnabled := getEnvBool("METRICS_ENABLED", true)
@@ -167,30 +137,12 @@ func Load() (*Config, error) {
 	tlsCurvePreferences := parseUint16Slice(getEnv("TLS_CURVE_PREFERENCES", "23,24,25"))
 	tlsCertsBasePath := getEnv("TLS_CERTS_BASE_PATH", "/tmp/certs")
 
-	// OpenTelemetry configuration
-	otelEnabled := getEnvBool("OPENTELEMETRY_ENABLED", false)
-	otelServiceName := getEnv("OPENTELEMETRY_SERVICE_NAME", "trustgate")
-	otelServiceVersion := getEnv("OPENTELEMETRY_SERVICE_VERSION", "1.0.0")
-	otelEnvironment := getEnv("OPENTELEMETRY_ENVIRONMENT", "development")
-	otelTracesEndpoint := getEnv("OPENTELEMETRY_TRACES_ENDPOINT", "")
-	otelMetricsEndpoint := getEnv("OPENTELEMETRY_METRICS_ENDPOINT", "")
-	otelSamplingRatio, _ := strconv.ParseFloat(getEnv("OPENTELEMETRY_SAMPLING_RATIO", "1.0"), 64)
-	otelInsecure := getEnvBool("OPENTELEMETRY_INSECURE", false)
-
 	config := &Config{
 		Server: ServerConfig{
 			AdminPort:   serverAdminPort,
 			ProxyPort:   serverProxyPort,
 			MetricsPort: serverMetricsPort,
-			ActionsPort: serverActionsPort,
 			SecretKey:   serverSecretKey,
-		},
-		Multitenant: MultiTenantConfig{
-			IngressDataHostTemplate:    multitenantIngressDataHostTemplate,
-			IngressActionsHostTemplate: multitenantIngressActionsHostTemplate,
-			Image:                      multitenantImage,
-			K8sTemplatesPath:           multitenantK8sTemplatesPath,
-			ServiceAccountToken:        multitenantServiceAccountToken,
 		},
 		Metrics: MetricsConfig{
 			Enabled:           metricsEnabled,
@@ -238,16 +190,6 @@ func Load() (*Config, error) {
 			MinVersion:       tlsMinVersion,
 			MaxVersion:       tlsMaxVersion,
 			CertsBasePath:    tlsCertsBasePath,
-		},
-		OpenTelemetry: OpenTelemetryConfig{
-			Enabled:         otelEnabled,
-			ServiceName:     otelServiceName,
-			ServiceVersion:  otelServiceVersion,
-			Environment:     otelEnvironment,
-			TracesEndpoint:  otelTracesEndpoint,
-			MetricsEndpoint: otelMetricsEndpoint,
-			SamplingRatio:   otelSamplingRatio,
-			Insecure:        otelInsecure,
 		},
 	}
 
