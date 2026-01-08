@@ -48,7 +48,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/gateway /app/
-COPY config/ /app/config/
 
 ENV GIN_MODE=release
 

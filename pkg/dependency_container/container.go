@@ -208,6 +208,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	// TLS cert repository and writer
 	tlsCertRepository := repository.NewTLSCertRepository(di.DB.DB)
 	tlsCertWriter := infraTLS.NewCertWriter(
+		di.Logger,
 		tlsCertRepository,
 		infraTLS.WithBasePath(di.Cfg.TLS.CertsBasePath),
 	)
