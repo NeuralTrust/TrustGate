@@ -19,4 +19,5 @@ const (
 	StreamModeContextKey       contextKey = "__stream_mode"
 	SessionContextKey          contextKey = "session_id"
 	PathParamsKey              contextKey = "path_params"
+	TeamIDContextKey           contextKey = "team_id"
 )
