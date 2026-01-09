@@ -59,6 +59,20 @@ func TestValidateToken_Expired(t *testing.T) {
 	assert.Equal(t, ErrExpiredToken, err)
 }
 
+func TestValidateToken_NoExpClaim(t *testing.T) {
+	secret := "no-exp-secret"
+	// Token without exp claim - should be valid if signature is correct
+	claims := &Claims{RegisteredClaims: jwtlib.RegisteredClaims{
+		IssuedAt: jwtlib.NewNumericDate(time.Now()),
+	}}
+	signed, err := signTokenWithSecret(secret, claims)
+	assert.NoError(t, err)
+
+	mgr := newManagerWithSecret(secret)
+	err = mgr.ValidateToken(signed)
+	assert.NoError(t, err)
+}
+
 func TestDecodeToken_Success(t *testing.T) {
 	mgr := newManagerWithSecret("decode-secret")
 	token, err := mgr.CreateToken()

@@ -3,6 +3,7 @@ package middleware
 import (
 	"strings"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
@@ -48,6 +49,16 @@ func (m *adminAuthMiddleware) Middleware() fiber.Handler {
 		if err != nil {
 			m.logger.WithError(err).Debug("invalid token")
 			return ctx.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid token"})
+		}
+
+		claims, err := m.jwtManager.DecodeToken(tokenString)
+		if err != nil {
+			m.logger.WithError(err).Debug("failed to decode token")
+			return ctx.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid token"})
+		}
+
+		if claims.TeamID != "" {
+			ctx.Locals(string(common.TeamIDContextKey), claims.TeamID)
 		}
 
 		return ctx.Next()
