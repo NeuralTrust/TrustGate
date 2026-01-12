@@ -198,10 +198,6 @@ func (p *NeuralTrustToxicity) Execute(
 			categories = response.Scores
 		}
 
-		if len(categories) == 0 {
-			return nil, fmt.Errorf("invalid toxicity response: missing categories")
-		}
-
 		var maxScore float64
 		var maxCategory string
 		for category, score := range categories {
