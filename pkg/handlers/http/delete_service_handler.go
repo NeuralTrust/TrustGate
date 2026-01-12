@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
@@ -12,20 +13,23 @@ import (
 )
 
 type deleteServiceHandler struct {
-	logger    *logrus.Logger
-	repo      service.Repository
-	publisher infraCache.EventPublisher
+	logger       *logrus.Logger
+	repo         service.Repository
+	publisher    infraCache.EventPublisher
+	auditService auditlogs.Service
 }
 
 func NewDeleteServiceHandler(
 	logger *logrus.Logger,
 	repo service.Repository,
 	publisher infraCache.EventPublisher,
+	auditService auditlogs.Service,
 ) Handler {
 	return &deleteServiceHandler{
-		logger:    logger,
-		repo:      repo,
-		publisher: publisher,
+		logger:       logger,
+		repo:         repo,
+		publisher:    publisher,
+		auditService: auditService,
 	}
 }
 
@@ -62,5 +66,31 @@ func (s *deleteServiceHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("failed to publish service cache invalidation")
 	}
 
+	s.emitAuditLog(c, serviceID, "", auditlogs.StatusSuccess, "")
+
 	return c.SendStatus(http.StatusNoContent)
+}
+
+func (s *deleteServiceHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if s.auditService == nil {
+		return
+	}
+	s.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeServiceDeleted,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeService,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }

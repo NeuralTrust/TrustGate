@@ -25,6 +25,7 @@ type Config struct {
 	Plugins   PluginsConfig
 	WebSocket WebSocketConfig
 	TLS       TLSConfig
+	AuditLogs AuditLogsConfig
 }
 
 type ServerConfig struct {
@@ -83,6 +84,14 @@ type TLSKeyPair struct {
 	PrivateKey string
 }
 
+type AuditLogsConfig struct {
+	Enabled              bool
+	KafkaBrokers         []string
+	AuditEventsTopic     string
+	AuditLogsIngestTopic string
+	TopicAutoCreate      bool
+}
+
 var globalConfig *Config
 
 func Load() (*Config, error) {
@@ -136,6 +145,12 @@ func Load() (*Config, error) {
 	tlsCipherSuites := parseUint16Slice(getEnv("TLS_CIPHER_SUITES", "4865,4866,4867"))
 	tlsCurvePreferences := parseUint16Slice(getEnv("TLS_CURVE_PREFERENCES", "23,24,25"))
 	tlsCertsBasePath := getEnv("TLS_CERTS_BASE_PATH", "/tmp/certs")
+
+	auditLogsEnabled := getEnvBool("ENABLE_AUDIT_LOGS", false)
+	auditLogsKafkaBrokers := getEnvSlice("AUDIT_LOGS_KAFKA_BROKERS", []string{})
+	auditLogsEventsTopic := getEnv("AUDIT_LOGS_EVENTS_TOPIC", "")
+	auditLogsIngestTopic := getEnv("AUDIT_LOGS_INGEST_TOPIC", "")
+	auditLogsTopicAutoCreate := getEnvBool("AUDIT_LOGS_TOPIC_AUTO_CREATE", false)
 
 	config := &Config{
 		Server: ServerConfig{
@@ -191,6 +206,13 @@ func Load() (*Config, error) {
 			MaxVersion:       tlsMaxVersion,
 			CertsBasePath:    tlsCertsBasePath,
 		},
+		AuditLogs: AuditLogsConfig{
+			Enabled:              auditLogsEnabled,
+			KafkaBrokers:         auditLogsKafkaBrokers,
+			AuditEventsTopic:     auditLogsEventsTopic,
+			AuditLogsIngestTopic: auditLogsIngestTopic,
+			TopicAutoCreate:      auditLogsTopicAutoCreate,
+		},
 	}
 
 	globalConfig = config
@@ -216,6 +238,22 @@ func getEnvBool(key string, defaultValue bool) bool {
 		return defaultValue
 	}
 	return parsed
+}
+
+func getEnvSlice(key string, defaultValue []string) []string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 func parseUint16Slice(s string) []uint16 {

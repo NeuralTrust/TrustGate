@@ -13,6 +13,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
@@ -22,6 +23,16 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type UpdateRuleHandlerDeps struct {
+	Logger                *logrus.Logger
+	Repo                  forwarding_rule.Repository
+	Cache                 cache.Client
+	ValidatePlugin        *plugin.ValidatePlugin
+	InvalidationPublisher cache.EventPublisher
+	RuleMatcher           routing.RuleMatcher
+	AuditService          auditlogs.Service
+}
+
 type updateRuleHandler struct {
 	logger                *logrus.Logger
 	repo                  forwarding_rule.Repository
@@ -29,23 +40,18 @@ type updateRuleHandler struct {
 	validatePlugin        *plugin.ValidatePlugin
 	invalidationPublisher cache.EventPublisher
 	ruleMatcher           routing.RuleMatcher
+	auditService          auditlogs.Service
 }
 
-func NewUpdateRuleHandler(
-	logger *logrus.Logger,
-	repo forwarding_rule.Repository,
-	cache cache.Client,
-	validatePlugin *plugin.ValidatePlugin,
-	invalidationPublisher cache.EventPublisher,
-	ruleMatcher routing.RuleMatcher,
-) Handler {
+func NewUpdateRuleHandler(deps UpdateRuleHandlerDeps) Handler {
 	return &updateRuleHandler{
-		logger:                logger,
-		repo:                  repo,
-		cache:                 cache,
-		validatePlugin:        validatePlugin,
-		invalidationPublisher: invalidationPublisher,
-		ruleMatcher:           ruleMatcher,
+		logger:                deps.Logger,
+		repo:                  deps.Repo,
+		cache:                 deps.Cache,
+		validatePlugin:        deps.ValidatePlugin,
+		invalidationPublisher: deps.InvalidationPublisher,
+		ruleMatcher:           deps.RuleMatcher,
+		auditService:          deps.AuditService,
 	}
 }
 
@@ -101,7 +107,33 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 
 	s.publishCacheInvalidation(c.Context(), gatewayID)
 
+	s.emitAuditLog(c, ruleID, "", auditlogs.StatusSuccess, "")
+
 	return c.Status(fiber.StatusNoContent).JSON(fiber.Map{})
+}
+
+func (s *updateRuleHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if s.auditService == nil {
+		return
+	}
+	s.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeRuleUpdated,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeRule,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }
 
 func (s *updateRuleHandler) updateForwardingRuleDB(

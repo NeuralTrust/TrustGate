@@ -13,6 +13,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
@@ -22,6 +23,17 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type CreateRuleHandlerDeps struct {
+	Logger               *logrus.Logger
+	Repo                 forwarding_rule.Repository
+	GatewayRepo          gateway.Repository
+	ServiceRepo          service.Repository
+	PluginChainValidator plugin.ValidatePluginChain
+	Publisher            infraCache.EventPublisher
+	RuleMatcher          routing.RuleMatcher
+	AuditService         auditlogs.Service
+}
+
 type createRuleHandler struct {
 	logger               *logrus.Logger
 	repo                 forwarding_rule.Repository
@@ -30,25 +42,19 @@ type createRuleHandler struct {
 	pluginChainValidator plugin.ValidatePluginChain
 	publisher            infraCache.EventPublisher
 	ruleMatcher          routing.RuleMatcher
+	auditService         auditlogs.Service
 }
 
-func NewCreateRuleHandler(
-	logger *logrus.Logger,
-	repo forwarding_rule.Repository,
-	gatewayRepo gateway.Repository,
-	serviceRepo service.Repository,
-	pluginChainValidator plugin.ValidatePluginChain,
-	publisher infraCache.EventPublisher,
-	ruleMatcher routing.RuleMatcher,
-) Handler {
+func NewCreateRuleHandler(deps CreateRuleHandlerDeps) Handler {
 	return &createRuleHandler{
-		logger:               logger,
-		repo:                 repo,
-		gatewayRepo:          gatewayRepo,
-		serviceRepo:          serviceRepo,
-		pluginChainValidator: pluginChainValidator,
-		publisher:            publisher,
-		ruleMatcher:          ruleMatcher,
+		logger:               deps.Logger,
+		repo:                 deps.Repo,
+		gatewayRepo:          deps.GatewayRepo,
+		serviceRepo:          deps.ServiceRepo,
+		pluginChainValidator: deps.PluginChainValidator,
+		publisher:            deps.Publisher,
+		ruleMatcher:          deps.RuleMatcher,
+		auditService:         deps.AuditService,
 	}
 }
 
@@ -222,7 +228,33 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("failed to publish cache invalidation")
 	}
 
+	s.emitAuditLog(c, dbRule.ID.String(), dbRule.Name, auditlogs.StatusSuccess, "")
+
 	return c.Status(fiber.StatusCreated).JSON(response)
+}
+
+func (s *createRuleHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if s.auditService == nil {
+		return
+	}
+	s.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeRuleCreated,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeRule,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }
 
 func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule) (types.ForwardingRuleDTO, error) {

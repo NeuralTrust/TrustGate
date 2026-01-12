@@ -61,6 +61,14 @@ func (m *adminAuthMiddleware) Middleware() fiber.Handler {
 			ctx.Locals(string(common.TeamIDContextKey), claims.TeamID)
 		}
 
+		if claims.UserID != "" {
+			ctx.Locals(string(common.UserIDContextKey), claims.UserID)
+		}
+
+		if claims.UserEmail != "" {
+			ctx.Locals(string(common.UserEmailContextKey), claims.UserEmail)
+		}
+
 		return ctx.Next()
 	}
 }

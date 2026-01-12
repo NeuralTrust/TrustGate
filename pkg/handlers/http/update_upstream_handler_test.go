@@ -68,7 +68,15 @@ func TestUpdateUpstream_OAuthValidation_ClientCredentialsMissingClientID(t *test
 	cacheInstance := buildCacheFromConfig(cfg)
 	desc := &noopDescEmbedding{}
 	logger := logrus.New()
-	h := NewUpdateUpstreamHandler(logger, repo, pub, cacheInstance, desc, cfg)
+	h := NewUpdateUpstreamHandler(UpdateUpstreamHandlerDeps{
+		Logger:                      logger,
+		Repo:                        repo,
+		Publisher:                   pub,
+		Cache:                       cacheInstance,
+		DescriptionEmbeddingCreator: desc,
+		Cfg:                         cfg,
+		AuditService:                nil,
+	})
 
 	app := newFiber()
 	app.Put("/api/v1/gateways/:gateway_id/upstreams/:upstream_id", h.Handle)
@@ -116,7 +124,15 @@ func TestUpdateUpstream_Success_Minimal(t *testing.T) {
 	cacheInstance := buildCacheFromConfig(cfg)
 	desc := &noopDescEmbedding{}
 	logger := logrus.New()
-	h := NewUpdateUpstreamHandler(logger, repo, pub, cacheInstance, desc, cfg)
+	h := NewUpdateUpstreamHandler(UpdateUpstreamHandlerDeps{
+		Logger:                      logger,
+		Repo:                        repo,
+		Publisher:                   pub,
+		Cache:                       cacheInstance,
+		DescriptionEmbeddingCreator: desc,
+		Cfg:                         cfg,
+		AuditService:                nil,
+	})
 
 	app := newFiber()
 	app.Put("/api/v1/gateways/:gateway_id/upstreams/:upstream_id", h.Handle)

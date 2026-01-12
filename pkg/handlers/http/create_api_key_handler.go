@@ -5,15 +5,26 @@ import (
 	"encoding/base64"
 	"errors"
 
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
+
+type CreateAPIKeyHandlerDeps struct {
+	Logger          *logrus.Logger
+	Cache           cache.Client
+	ApiKeyRepo      apikey.Repository
+	RuleRepo        ruledomain.Repository
+	PolicyValidator apikey.PolicyValidator
+	GatewayRepo     gateway.Repository
+	AuditService    auditlogs.Service
+}
 
 type createAPIKeyHandler struct {
 	logger          *logrus.Logger
@@ -22,23 +33,18 @@ type createAPIKeyHandler struct {
 	ruleRepo        ruledomain.Repository
 	policyValidator apikey.PolicyValidator
 	gatewayRepo     gateway.Repository
+	auditService    auditlogs.Service
 }
 
-func NewCreateAPIKeyHandler(
-	logger *logrus.Logger,
-	cache cache.Client,
-	apiKeyRepo apikey.Repository,
-	ruleRepo ruledomain.Repository,
-	policyValidator apikey.PolicyValidator,
-	gatewayRepo gateway.Repository,
-) Handler {
+func NewCreateAPIKeyHandler(deps CreateAPIKeyHandlerDeps) Handler {
 	return &createAPIKeyHandler{
-		logger:          logger,
-		cache:           cache,
-		apiKeyRepo:      apiKeyRepo,
-		ruleRepo:        ruleRepo,
-		policyValidator: policyValidator,
-		gatewayRepo:     gatewayRepo,
+		logger:          deps.Logger,
+		cache:           deps.Cache,
+		apiKeyRepo:      deps.ApiKeyRepo,
+		ruleRepo:        deps.RuleRepo,
+		policyValidator: deps.PolicyValidator,
+		gatewayRepo:     deps.GatewayRepo,
+		auditService:    deps.AuditService,
 	}
 }
 
@@ -186,7 +192,33 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		response["gateway_id"] = apiKey.Subject.String()
 	}
 
+	s.emitAuditLog(c, apiKey.ID.String(), apiKey.Name, auditlogs.StatusSuccess, "")
+
 	return c.Status(fiber.StatusCreated).JSON(response)
+}
+
+func (s *createAPIKeyHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if s.auditService == nil {
+		return
+	}
+	s.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeAPIKeyCreated,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeAPIKey,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }
 
 func (s *createAPIKeyHandler) generateAPIKey() string {

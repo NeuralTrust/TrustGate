@@ -4,18 +4,29 @@ import (
 	"fmt"
 
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
+
+type UpdateUpstreamHandlerDeps struct {
+	Logger                      *logrus.Logger
+	Repo                        upstream.Repository
+	Publisher                   cache.EventPublisher
+	Cache                       cache.Client
+	DescriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
+	Cfg                         *config.Config
+	AuditService                auditlogs.Service
+}
 
 type updateUpstreamHandler struct {
 	logger                      *logrus.Logger
@@ -24,23 +35,18 @@ type updateUpstreamHandler struct {
 	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
 	cache                       cache.Client
 	cfg                         *config.Config
+	auditService                auditlogs.Service
 }
 
-func NewUpdateUpstreamHandler(
-	logger *logrus.Logger,
-	repo upstream.Repository,
-	publisher cache.EventPublisher,
-	cache cache.Client,
-	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator,
-	cfg *config.Config,
-) Handler {
+func NewUpdateUpstreamHandler(deps UpdateUpstreamHandlerDeps) Handler {
 	return &updateUpstreamHandler{
-		logger:                      logger,
-		repo:                        repo,
-		publisher:                   publisher,
-		descriptionEmbeddingCreator: descriptionEmbeddingCreator,
-		cache:                       cache,
-		cfg:                         cfg,
+		logger:                      deps.Logger,
+		repo:                        deps.Repo,
+		publisher:                   deps.Publisher,
+		descriptionEmbeddingCreator: deps.DescriptionEmbeddingCreator,
+		cache:                       deps.Cache,
+		cfg:                         deps.Cfg,
+		auditService:                deps.AuditService,
 	}
 }
 
@@ -248,5 +254,31 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("Failed to process embeddings for upstream targets")
 	}
 
+	s.emitAuditLog(c, updatedUpstream.ID.String(), updatedUpstream.Name, auditlogs.StatusSuccess, "")
+
 	return c.Status(fiber.StatusOK).JSON(updatedUpstream)
+}
+
+func (s *updateUpstreamHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if s.auditService == nil {
+		return
+	}
+	s.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeUpstreamUpdated,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeUpstream,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }

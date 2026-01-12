@@ -7,6 +7,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
@@ -15,27 +16,32 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type AddPluginsHandlerDeps struct {
+	Logger               *logrus.Logger
+	GatewayRepo          domainGateway.Repository
+	RuleRepo             forwarding_rule.Repository
+	PluginChainValidator appPlugin.ValidatePluginChain
+	Publisher            infraCache.EventPublisher
+	AuditService         auditlogs.Service
+}
+
 type addPluginsHandler struct {
 	logger               *logrus.Logger
 	gatewayRepo          domainGateway.Repository
 	ruleRepo             forwarding_rule.Repository
 	pluginChainValidator appPlugin.ValidatePluginChain
 	publisher            infraCache.EventPublisher
+	auditService         auditlogs.Service
 }
 
-func NewAddPluginsHandler(
-	logger *logrus.Logger,
-	gatewayRepo domainGateway.Repository,
-	ruleRepo forwarding_rule.Repository,
-	pluginChainValidator appPlugin.ValidatePluginChain,
-	publisher infraCache.EventPublisher,
-) Handler {
+func NewAddPluginsHandler(deps AddPluginsHandlerDeps) Handler {
 	return &addPluginsHandler{
-		logger:               logger,
-		gatewayRepo:          gatewayRepo,
-		ruleRepo:             ruleRepo,
-		pluginChainValidator: pluginChainValidator,
-		publisher:            publisher,
+		logger:               deps.Logger,
+		gatewayRepo:          deps.GatewayRepo,
+		ruleRepo:             deps.RuleRepo,
+		pluginChainValidator: deps.PluginChainValidator,
+		publisher:            deps.Publisher,
+		auditService:         deps.AuditService,
 	}
 }
 
@@ -118,6 +124,8 @@ func (h *addPluginsHandler) handleGatewayAdd(c *fiber.Ctx, req *request.AddPlugi
 		h.logger.WithError(err).Error("failed to publish gateway cache update event")
 	}
 
+	h.emitAuditLog(c, auditlogs.TargetTypeGateway, entity.ID.String(), entity.Name, auditlogs.StatusSuccess, "")
+
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
@@ -168,5 +176,31 @@ func (h *addPluginsHandler) handleRuleAdd(c *fiber.Ctx, req *request.AddPluginsR
 		h.logger.WithError(err).Error("failed to publish rules cache invalidation event")
 	}
 
+	h.emitAuditLog(c, auditlogs.TargetTypeRule, rule.ID.String(), rule.Name, auditlogs.StatusSuccess, "")
+
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (h *addPluginsHandler) emitAuditLog(c *fiber.Ctx, targetType, targetID, targetName, status, errMsg string) {
+	if h.auditService == nil {
+		return
+	}
+	h.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypePluginsAdded,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: targetType,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }

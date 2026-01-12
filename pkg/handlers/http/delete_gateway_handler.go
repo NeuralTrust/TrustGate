@@ -5,23 +5,27 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
 type deleteGatewayHandler struct {
-	logger  *logrus.Logger
-	deleter gateway.Deleter
+	logger       *logrus.Logger
+	deleter      gateway.Deleter
+	auditService auditlogs.Service
 }
 
 func NewDeleteGatewayHandler(
 	logger *logrus.Logger,
 	deleter gateway.Deleter,
+	auditService auditlogs.Service,
 ) Handler {
 	return &deleteGatewayHandler{
-		logger:  logger,
-		deleter: deleter,
+		logger:       logger,
+		deleter:      deleter,
+		auditService: auditService,
 	}
 }
 
@@ -51,5 +55,31 @@ func (s *deleteGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
+	s.emitAuditLog(c, id, "", auditlogs.StatusSuccess, "")
+
 	return c.SendStatus(http.StatusNoContent)
+}
+
+func (s *deleteGatewayHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if s.auditService == nil {
+		return
+	}
+	s.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeGatewayDeleted,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeGateway,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }

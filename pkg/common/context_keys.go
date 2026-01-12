@@ -20,4 +20,6 @@ const (
 	SessionContextKey          contextKey = "session_id"
 	PathParamsKey              contextKey = "path_params"
 	TeamIDContextKey           contextKey = "team_id"
+	UserIDContextKey           contextKey = "user_id"
+	UserEmailContextKey        contextKey = "user_email"
 )

@@ -3,6 +3,7 @@ package http
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
@@ -11,16 +12,18 @@ import (
 )
 
 type updateServiceHandler struct {
-	logger    *logrus.Logger
-	repo      service.Repository
-	publisher infraCache.EventPublisher
+	logger       *logrus.Logger
+	repo         service.Repository
+	publisher    infraCache.EventPublisher
+	auditService auditlogs.Service
 }
 
-func NewUpdateServiceHandler(logger *logrus.Logger, repo service.Repository, publisher infraCache.EventPublisher) Handler {
+func NewUpdateServiceHandler(logger *logrus.Logger, repo service.Repository, publisher infraCache.EventPublisher, auditService auditlogs.Service) Handler {
 	return &updateServiceHandler{
-		logger:    logger,
-		repo:      repo,
-		publisher: publisher,
+		logger:       logger,
+		repo:         repo,
+		publisher:    publisher,
+		auditService: auditService,
 	}
 }
 
@@ -101,5 +104,31 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("failed to publish update service cache event")
 	}
 
+	s.emitAuditLog(c, entity.ID.String(), entity.Name, auditlogs.StatusSuccess, "")
+
 	return c.Status(fiber.StatusOK).JSON(entity)
+}
+
+func (s *updateServiceHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if s.auditService == nil {
+		return
+	}
+	s.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeServiceUpdated,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeService,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }

@@ -29,7 +29,14 @@ func TestDeletePluginsHandler_GatewaySuccess(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewDeletePluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewDeletePluginsHandler(DeletePluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Delete("/api/v1/plugins", handler.Handle)
@@ -74,7 +81,14 @@ func TestDeletePluginsHandler_RuleSuccess(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewDeletePluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewDeletePluginsHandler(DeletePluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Delete("/api/v1/plugins", handler.Handle)
@@ -123,7 +137,14 @@ func TestDeletePluginsHandler_InvalidType(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewDeletePluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewDeletePluginsHandler(DeletePluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Delete("/api/v1/plugins", handler.Handle)
@@ -150,7 +171,14 @@ func TestDeletePluginsHandler_InvalidUUID(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewDeletePluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewDeletePluginsHandler(DeletePluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Delete("/api/v1/plugins", handler.Handle)
@@ -183,7 +211,14 @@ func TestDeletePluginsHandler_NotFound(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewDeletePluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewDeletePluginsHandler(DeletePluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Delete("/api/v1/plugins", handler.Handle)
@@ -218,7 +253,14 @@ func TestDeletePluginsHandler_ValidatorError(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewDeletePluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewDeletePluginsHandler(DeletePluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Delete("/api/v1/plugins", handler.Handle)

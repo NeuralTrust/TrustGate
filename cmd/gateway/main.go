@@ -82,6 +82,11 @@ func main() {
 	if err != nil {
 		logger.Fatalf("Failed to initialize container: %v", err)
 	}
+	defer func() {
+		if err := container.AuditLogsService.Close(); err != nil {
+			logger.WithError(err).Error("failed to close audit logs service")
+		}
+	}()
 
 	proxyTransport := middleware.NewTransport(
 		container.PanicRecoverMiddleware,
