@@ -7,6 +7,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
@@ -15,27 +16,32 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type DeletePluginsHandlerDeps struct {
+	Logger               *logrus.Logger
+	GatewayRepo          domainGateway.Repository
+	RuleRepo             forwarding_rule.Repository
+	PluginChainValidator appPlugin.ValidatePluginChain
+	Publisher            infraCache.EventPublisher
+	AuditService         auditlogs.Service
+}
+
 type deletePluginsHandler struct {
 	logger               *logrus.Logger
 	gatewayRepo          domainGateway.Repository
 	ruleRepo             forwarding_rule.Repository
 	pluginChainValidator appPlugin.ValidatePluginChain
 	publisher            infraCache.EventPublisher
+	auditService         auditlogs.Service
 }
 
-func NewDeletePluginsHandler(
-	logger *logrus.Logger,
-	gatewayRepo domainGateway.Repository,
-	ruleRepo forwarding_rule.Repository,
-	pluginChainValidator appPlugin.ValidatePluginChain,
-	publisher infraCache.EventPublisher,
-) Handler {
+func NewDeletePluginsHandler(deps DeletePluginsHandlerDeps) Handler {
 	return &deletePluginsHandler{
-		logger:               logger,
-		gatewayRepo:          gatewayRepo,
-		ruleRepo:             ruleRepo,
-		pluginChainValidator: pluginChainValidator,
-		publisher:            publisher,
+		logger:               deps.Logger,
+		gatewayRepo:          deps.GatewayRepo,
+		ruleRepo:             deps.RuleRepo,
+		pluginChainValidator: deps.PluginChainValidator,
+		publisher:            deps.Publisher,
+		auditService:         deps.AuditService,
 	}
 }
 
@@ -103,6 +109,8 @@ func (h *deletePluginsHandler) handleGatewayDelete(c *fiber.Ctx, req *request.De
 		h.logger.WithError(err).Error("failed to publish gateway cache update event")
 	}
 
+	h.emitAuditLog(c, auditlogs.TargetTypeGateway, entity.ID.String(), entity.Name, auditlogs.StatusSuccess, "")
+
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
@@ -139,7 +147,33 @@ func (h *deletePluginsHandler) handleRuleDelete(c *fiber.Ctx, req *request.Delet
 		h.logger.WithError(err).Error("failed to publish rules cache invalidation event")
 	}
 
+	h.emitAuditLog(c, auditlogs.TargetTypeRule, rule.ID.String(), rule.Name, auditlogs.StatusSuccess, "")
+
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (h *deletePluginsHandler) emitAuditLog(c *fiber.Ctx, targetType, targetID, targetName, status, errMsg string) {
+	if h.auditService == nil {
+		return
+	}
+	h.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypePluginsDeleted,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: targetType,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }
 
 func filterOutPlugins(current []types.PluginConfig, toDelete []string) []types.PluginConfig {

@@ -9,12 +9,23 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
+
+type CreateUpstreamHandlerDeps struct {
+	Logger                      *logrus.Logger
+	Repo                        upstream.Repository
+	GatewayRepo                 gateway.Repository
+	Cache                       cache.Client
+	DescriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
+	Cfg                         *config.Config
+	AuditService                auditlogs.Service
+}
 
 type createUpstreamHandler struct {
 	logger                      *logrus.Logger
@@ -23,23 +34,18 @@ type createUpstreamHandler struct {
 	repo                        upstream.Repository
 	gatewayRepo                 gateway.Repository
 	cfg                         *config.Config
+	auditService                auditlogs.Service
 }
 
-func NewCreateUpstreamHandler(
-	logger *logrus.Logger,
-	repo upstream.Repository,
-	gatewayRepo gateway.Repository,
-	cache cache.Client,
-	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator,
-	cfg *config.Config,
-) Handler {
+func NewCreateUpstreamHandler(deps CreateUpstreamHandlerDeps) Handler {
 	return &createUpstreamHandler{
-		logger:                      logger,
-		repo:                        repo,
-		gatewayRepo:                 gatewayRepo,
-		cache:                       cache,
-		descriptionEmbeddingCreator: descriptionEmbeddingCreator,
-		cfg:                         cfg,
+		logger:                      deps.Logger,
+		repo:                        deps.Repo,
+		gatewayRepo:                 deps.GatewayRepo,
+		cache:                       deps.Cache,
+		descriptionEmbeddingCreator: deps.DescriptionEmbeddingCreator,
+		cfg:                         deps.Cfg,
+		auditService:                deps.AuditService,
 	}
 }
 
@@ -130,7 +136,33 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("failed to process embeddings for upstream targets")
 	}
 
+	s.emitAuditLog(c, entity.ID.String(), entity.Name, auditlogs.StatusSuccess, "")
+
 	return c.Status(fiber.StatusCreated).JSON(entity)
+}
+
+func (s *createUpstreamHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if s.auditService == nil {
+		return
+	}
+	s.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeUpstreamCreated,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeUpstream,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }
 
 func (s *createUpstreamHandler) createUpstreamEntity(

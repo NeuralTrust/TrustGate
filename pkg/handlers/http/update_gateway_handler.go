@@ -9,6 +9,7 @@ import (
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
@@ -20,6 +21,16 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type UpdateGatewayHandlerDeps struct {
+	Logger                      *logrus.Logger
+	Repo                        domainGateway.Repository
+	PluginManager               plugins.Manager
+	Publisher                   infraCache.EventPublisher
+	TelemetryProvidersValidator appTelemetry.ExportersValidator
+	TLSCertWriter               infraTLS.CertWriter
+	AuditService                auditlogs.Service
+}
+
 type updateGatewayHandler struct {
 	logger                      *logrus.Logger
 	repo                        domainGateway.Repository
@@ -27,23 +38,18 @@ type updateGatewayHandler struct {
 	publisher                   infraCache.EventPublisher
 	telemetryProvidersValidator appTelemetry.ExportersValidator
 	tlsCertWriter               infraTLS.CertWriter
+	auditService                auditlogs.Service
 }
 
-func NewUpdateGatewayHandler(
-	logger *logrus.Logger,
-	repo domainGateway.Repository,
-	pluginManager plugins.Manager,
-	publisher infraCache.EventPublisher,
-	telemetryProvidersValidator appTelemetry.ExportersValidator,
-	tlsCertWriter infraTLS.CertWriter,
-) Handler {
+func NewUpdateGatewayHandler(deps UpdateGatewayHandlerDeps) Handler {
 	return &updateGatewayHandler{
-		logger:                      logger,
-		repo:                        repo,
-		pluginManager:               pluginManager,
-		publisher:                   publisher,
-		telemetryProvidersValidator: telemetryProvidersValidator,
-		tlsCertWriter:               tlsCertWriter,
+		logger:                      deps.Logger,
+		repo:                        deps.Repo,
+		pluginManager:               deps.PluginManager,
+		publisher:                   deps.Publisher,
+		telemetryProvidersValidator: deps.TelemetryProvidersValidator,
+		tlsCertWriter:               deps.TLSCertWriter,
+		auditService:                deps.AuditService,
 	}
 }
 
@@ -162,16 +168,12 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		dbGateway.SessionConfig.TTL = req.SessionConfig.TTL
 	}
 
-	// Handle TLS configuration updates
 	if req.TlS != nil {
-		// Delete old TLS certs for hosts that are being updated or removed
 		for host := range dbGateway.ClientTLSConfig {
 			if err := h.tlsCertWriter.DeleteCerts(c.Context(), gatewayUUID, host); err != nil {
 				h.logger.WithError(err).WithField("host", host).Warn("failed to delete old TLS certs")
 			}
 		}
-
-		// Write new TLS certs
 		newTLSConfig := make(map[string]types.ClientTLSConfigDTO, len(req.TlS))
 		for host, tlsReq := range req.TlS {
 			paths, err := h.tlsCertWriter.WriteCerts(
@@ -216,7 +218,33 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		h.logger.WithError(err).Error("failed to publish update gateway cache event")
 	}
 
+	h.emitAuditLog(c, dbGateway.ID.String(), dbGateway.Name, auditlogs.StatusSuccess, "")
+
 	return c.Status(fiber.StatusNoContent).JSON(fiber.Map{})
+}
+
+func (h *updateGatewayHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if h.auditService == nil {
+		return
+	}
+	h.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeGatewayUpdated,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeGateway,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }
 
 func (h *updateGatewayHandler) telemetryExporterToDomain(configs []types.ExporterDTO) []telemetry.ExporterConfig {

@@ -30,7 +30,14 @@ func TestAddPluginsHandler_GatewaySuccess(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewAddPluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewAddPluginsHandler(AddPluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Post("/api/v1/plugins", handler.Handle)
@@ -83,7 +90,14 @@ func TestAddPluginsHandler_RuleSuccess(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewAddPluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewAddPluginsHandler(AddPluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Post("/api/v1/plugins", handler.Handle)
@@ -140,7 +154,14 @@ func TestAddPluginsHandler_DuplicatePluginSameStage(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewAddPluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewAddPluginsHandler(AddPluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Post("/api/v1/plugins", handler.Handle)
@@ -182,7 +203,14 @@ func TestAddPluginsHandler_InvalidType(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewAddPluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewAddPluginsHandler(AddPluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Post("/api/v1/plugins", handler.Handle)
@@ -209,7 +237,14 @@ func TestAddPluginsHandler_InvalidUUID(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewAddPluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewAddPluginsHandler(AddPluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Post("/api/v1/plugins", handler.Handle)
@@ -242,7 +277,14 @@ func TestAddPluginsHandler_NotFound(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewAddPluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewAddPluginsHandler(AddPluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Post("/api/v1/plugins", handler.Handle)
@@ -277,7 +319,14 @@ func TestAddPluginsHandler_ValidatorError(t *testing.T) {
 	validator := new(chainValidatorMocks.ValidatePluginChain)
 	publisher := new(publisherMocks.EventPublisher)
 
-	handler := NewAddPluginsHandler(logger, gatewayRepo, ruleRepo, validator, publisher)
+	handler := NewAddPluginsHandler(AddPluginsHandlerDeps{
+		Logger:               logger,
+		GatewayRepo:          gatewayRepo,
+		RuleRepo:             ruleRepo,
+		PluginChainValidator: validator,
+		Publisher:            publisher,
+		AuditService:         nil,
+	})
 
 	app := fiber.New()
 	app.Post("/api/v1/plugins", handler.Handle)

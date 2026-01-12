@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
@@ -13,24 +14,29 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type deleteRuleHandler struct {
-	logger    *logrus.Logger
-	repo      forwarding_rule.Repository
-	cache     cache.Client
-	publisher cache.EventPublisher
+type DeleteRuleHandlerDeps struct {
+	Logger       *logrus.Logger
+	Repo         forwarding_rule.Repository
+	Cache        cache.Client
+	Publisher    cache.EventPublisher
+	AuditService auditlogs.Service
 }
 
-func NewDeleteRuleHandler(
-	logger *logrus.Logger,
-	repo forwarding_rule.Repository,
-	cache cache.Client,
-	publisher cache.EventPublisher,
-) Handler {
+type deleteRuleHandler struct {
+	logger       *logrus.Logger
+	repo         forwarding_rule.Repository
+	cache        cache.Client
+	publisher    cache.EventPublisher
+	auditService auditlogs.Service
+}
+
+func NewDeleteRuleHandler(deps DeleteRuleHandlerDeps) Handler {
 	return &deleteRuleHandler{
-		logger:    logger,
-		repo:      repo,
-		cache:     cache,
-		publisher: publisher,
+		logger:       deps.Logger,
+		repo:         deps.Repo,
+		cache:        deps.Cache,
+		publisher:    deps.Publisher,
+		auditService: deps.AuditService,
 	}
 }
 
@@ -75,5 +81,31 @@ func (s *deleteRuleHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("failed to publish cache invalidation")
 	}
 
+	s.emitAuditLog(c, ruleID, "", auditlogs.StatusSuccess, "")
+
 	return c.Status(fiber.StatusNoContent).JSON(fiber.Map{})
+}
+
+func (s *deleteRuleHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if s.auditService == nil {
+		return
+	}
+	s.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeRuleDeleted,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeRule,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }

@@ -37,7 +37,9 @@ func NewJwtManager(config *config.ServerConfig) Manager {
 }
 
 type Claims struct {
-	TeamID string `json:"team_id,omitempty"`
+	TeamID    string `json:"team_id,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+	UserEmail string `json:"user_email,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -47,14 +49,11 @@ func (m *manager) CreateToken() (string, error) {
 			IssuedAt: jwt.NewNumericDate(time.Now()),
 		},
 	}
-
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
 	tokenString, err := token.SignedString([]byte(m.config.SecretKey))
 	if err != nil {
 		return "", err
 	}
-
 	return tokenString, nil
 }
 
@@ -63,7 +62,7 @@ func (m *manager) ValidateToken(tokenString string) error {
 	if len(parts) != 3 {
 		return ErrInvalidToken
 	}
-	
+
 	signingInput := parts[0] + "." + parts[1]
 	h := hmac.New(sha256.New, []byte(m.config.SecretKey))
 	h.Write([]byte(signingInput))

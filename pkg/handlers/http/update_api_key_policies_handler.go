@@ -5,6 +5,7 @@ import (
 
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -15,27 +16,32 @@ type updateAPIKeyPoliciesRequest struct {
 	Policies []string `json:"policies"`
 }
 
+type UpdateAPIKeyPoliciesHandlerDeps struct {
+	Logger          *logrus.Logger
+	Cache           cache.Client
+	ApiKeyRepo      domain.Repository
+	RuleRepo        ruledomain.Repository
+	PolicyValidator domain.PolicyValidator
+	AuditService    auditlogs.Service
+}
+
 type updateAPIKeyPoliciesHandler struct {
 	logger          *logrus.Logger
 	cache           cache.Client
 	apiKeyRepo      domain.Repository
 	ruleRepo        ruledomain.Repository
 	policyValidator domain.PolicyValidator
+	auditService    auditlogs.Service
 }
 
-func NewUpdateAPIKeyPoliciesHandler(
-	logger *logrus.Logger,
-	cache cache.Client,
-	apiKeyRepo domain.Repository,
-	ruleRepo ruledomain.Repository,
-	policyValidator domain.PolicyValidator,
-) Handler {
+func NewUpdateAPIKeyPoliciesHandler(deps UpdateAPIKeyPoliciesHandlerDeps) Handler {
 	return &updateAPIKeyPoliciesHandler{
-		logger:          logger,
-		cache:           cache,
-		apiKeyRepo:      apiKeyRepo,
-		ruleRepo:        ruleRepo,
-		policyValidator: policyValidator,
+		logger:          deps.Logger,
+		cache:           deps.Cache,
+		apiKeyRepo:      deps.ApiKeyRepo,
+		ruleRepo:        deps.RuleRepo,
+		policyValidator: deps.PolicyValidator,
+		auditService:    deps.AuditService,
 	}
 }
 
@@ -138,5 +144,31 @@ func (h *updateAPIKeyPoliciesHandler) Handle(c *fiber.Ctx) error {
 		h.logger.WithError(err).Warn("failed to cache updated api key")
 	}
 
+	h.emitAuditLog(c, entity.ID.String(), entity.Name, auditlogs.StatusSuccess, "")
+
 	return c.Status(fiber.StatusOK).JSON(entity)
+}
+
+func (h *updateAPIKeyPoliciesHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if h.auditService == nil {
+		return
+	}
+	h.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeAPIKeyPoliciesUpdated,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeAPIKey,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }

@@ -18,6 +18,14 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type ListRulesHandlerDeps struct {
+	Logger      *logrus.Logger
+	RuleRepo    forwarding_rule.Repository
+	GatewayRepo gateway.Repository
+	ServiceRepo service.Repository
+	Cache       cache.Client
+}
+
 type listRulesHandler struct {
 	logger      *logrus.Logger
 	ruleRepo    forwarding_rule.Repository
@@ -26,19 +34,13 @@ type listRulesHandler struct {
 	cache       cache.Client
 }
 
-func NewListRulesHandler(
-	logger *logrus.Logger,
-	ruleRepo forwarding_rule.Repository,
-	gatewayRepo gateway.Repository,
-	serviceRepo service.Repository,
-	cache cache.Client,
-) Handler {
+func NewListRulesHandler(deps ListRulesHandlerDeps) Handler {
 	return &listRulesHandler{
-		logger:      logger,
-		ruleRepo:    ruleRepo,
-		gatewayRepo: gatewayRepo,
-		serviceRepo: serviceRepo,
-		cache:       cache,
+		logger:      deps.Logger,
+		ruleRepo:    deps.RuleRepo,
+		gatewayRepo: deps.GatewayRepo,
+		serviceRepo: deps.ServiceRepo,
+		cache:       deps.Cache,
 	}
 }
 

@@ -3,6 +3,7 @@ package http
 import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -10,9 +11,10 @@ import (
 )
 
 type createServiceHandler struct {
-	logger *logrus.Logger
-	repo   service.Repository
-	cache  cache.Client
+	logger       *logrus.Logger
+	repo         service.Repository
+	cache        cache.Client
+	auditService auditlogs.Service
 }
 
 // NewCreateServiceHandler @Summary Create a new Service
@@ -27,11 +29,12 @@ type createServiceHandler struct {
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
 // @Router /api/v1/gateways/{gateway_id}/services [post]
-func NewCreateServiceHandler(logger *logrus.Logger, repo service.Repository, cache cache.Client) Handler {
+func NewCreateServiceHandler(logger *logrus.Logger, repo service.Repository, cache cache.Client, auditService auditlogs.Service) Handler {
 	return &createServiceHandler{
-		logger: logger,
-		repo:   repo,
-		cache:  cache,
+		logger:       logger,
+		repo:         repo,
+		cache:        cache,
+		auditService: auditService,
 	}
 }
 
@@ -86,5 +89,31 @@ func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 		s.logger.WithError(err).Error("Failed to cache service")
 	}
 
+	s.emitAuditLog(c, entity.ID.String(), entity.Name, auditlogs.StatusSuccess, "")
+
 	return c.Status(fiber.StatusCreated).JSON(entity)
+}
+
+func (s *createServiceHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if s.auditService == nil {
+		return
+	}
+	s.auditService.Emit(c, auditlogs.Event{
+		Event: auditlogs.EventInfo{
+			Type:         auditlogs.EventTypeServiceCreated,
+			Category:     auditlogs.CategoryRunTimeSecurity,
+			Status:       status,
+			ErrorMessage: errMsg,
+		},
+		Target: auditlogs.Target{
+			Type: auditlogs.TargetTypeService,
+			ID:   targetID,
+			Name: targetName,
+		},
+		Context: auditlogs.Context{
+			IPAddress: c.IP(),
+			UserAgent: c.Get("User-Agent"),
+			RequestID: c.Get("X-Request-ID"),
+		},
+	})
 }

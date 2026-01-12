@@ -8,6 +8,7 @@ import (
 	"time"
 
 	ruledomain "github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
@@ -16,6 +17,7 @@ import (
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
 	middleware "github.com/NeuralTrust/TrustGate/pkg/server/middleware"
+	audit "github.com/NeuralTrust/audit-sdk-go"
 	"github.com/valyala/fasthttp"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
@@ -88,6 +90,7 @@ type Container struct {
 	GatewayCreator              gateway.Creator
 	GatewayDeleter              gateway.Deleter
 	DescriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
+	AuditLogsService            auditlogs.Service
 }
 
 type ContainerDI struct {
@@ -256,6 +259,23 @@ func NewContainer(di ContainerDI) (*Container, error) {
 
 	jwtManager := jwt.NewJwtManager(&di.Cfg.Server)
 
+	// Audit logs service
+	var auditClient audit.Client
+	if di.Cfg.AuditLogs.Enabled {
+		var err error
+		auditClient, err = audit.New(&audit.Config{
+			Brokers:              di.Cfg.AuditLogs.KafkaBrokers,
+			AuditEventsTopic:     di.Cfg.AuditLogs.AuditEventsTopic,
+			AuditLogsIngestTopic: di.Cfg.AuditLogs.AuditLogsIngestTopic,
+			TopicAutoCreate:      di.Cfg.AuditLogs.TopicAutoCreate,
+		})
+		if err != nil {
+			di.Logger.WithError(err).Warn("failed to initialize audit client, audit logs will be disabled")
+			auditClient = nil
+		}
+	}
+	auditLogsService := auditlogs.NewService(auditClient, di.Logger, di.Cfg.AuditLogs.Enabled && auditClient != nil)
+
 	// WebSocket handler transport
 	wsHandlerTransport := &wsHandlers.HandlerTransportDTO{
 		ForwardedHandler: wsHandlers.NewWebsocketHandler(
@@ -289,70 +309,129 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(
 			di.Logger,
 			gatewayCreator,
+			auditLogsService,
 		),
-		ListGatewayHandler:   handlers.NewListGatewayHandler(di.Logger, gatewayRepository, updateGatewayCache),
-		GetGatewayHandler:    handlers.NewGetGatewayHandler(di.Logger, gatewayRepository, getGatewayCache, updateGatewayCache),
-		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(di.Logger, gatewayRepository, pluginManager, redisPublisher, telemetryValidator, tlsCertWriter),
-		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(di.Logger, gatewayDeleter),
+		ListGatewayHandler: handlers.NewListGatewayHandler(di.Logger, gatewayRepository, updateGatewayCache),
+		GetGatewayHandler:  handlers.NewGetGatewayHandler(di.Logger, gatewayRepository, getGatewayCache, updateGatewayCache),
+		UpdateGatewayHandler: handlers.NewUpdateGatewayHandler(handlers.UpdateGatewayHandlerDeps{
+			Logger:                      di.Logger,
+			Repo:                        gatewayRepository,
+			PluginManager:               pluginManager,
+			Publisher:                   redisPublisher,
+			TelemetryProvidersValidator: telemetryValidator,
+			TLSCertWriter:               tlsCertWriter,
+			AuditService:                auditLogsService,
+		}),
+		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(di.Logger, gatewayDeleter, auditLogsService),
 		// Upstream
-		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(di.Logger, upstreamRepository, gatewayRepository, cacheInstance, descriptionEmbeddingCreator, di.Cfg),
-		ListUpstreamHandler:   handlers.NewListUpstreamHandler(di.Logger, upstreamRepository, cacheInstance),
-		GetUpstreamHandler:    handlers.NewGetUpstreamHandler(di.Logger, upstreamRepository, cacheInstance, upstreamFinder),
-		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(di.Logger, upstreamRepository, redisPublisher, cacheInstance, descriptionEmbeddingCreator, di.Cfg),
-		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(di.Logger, upstreamRepository, redisPublisher),
+		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(handlers.CreateUpstreamHandlerDeps{
+			Logger:                      di.Logger,
+			Repo:                        upstreamRepository,
+			GatewayRepo:                 gatewayRepository,
+			Cache:                       cacheInstance,
+			DescriptionEmbeddingCreator: descriptionEmbeddingCreator,
+			Cfg:                         di.Cfg,
+			AuditService:                auditLogsService,
+		}),
+		ListUpstreamHandler: handlers.NewListUpstreamHandler(di.Logger, upstreamRepository, cacheInstance),
+		GetUpstreamHandler:  handlers.NewGetUpstreamHandler(di.Logger, upstreamRepository, cacheInstance, upstreamFinder),
+		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(handlers.UpdateUpstreamHandlerDeps{
+			Logger:                      di.Logger,
+			Repo:                        upstreamRepository,
+			Publisher:                   redisPublisher,
+			Cache:                       cacheInstance,
+			DescriptionEmbeddingCreator: descriptionEmbeddingCreator,
+			Cfg:                         di.Cfg,
+			AuditService:                auditLogsService,
+		}),
+		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(di.Logger, upstreamRepository, redisPublisher, auditLogsService),
 		// Service
-		CreateServiceHandler: handlers.NewCreateServiceHandler(di.Logger, serviceRepository, cacheInstance),
+		CreateServiceHandler: handlers.NewCreateServiceHandler(di.Logger, serviceRepository, cacheInstance, auditLogsService),
 		ListServicesHandler:  handlers.NewListServicesHandler(di.Logger, serviceRepository),
 		GetServiceHandler:    handlers.NewGetServiceHandler(di.Logger, serviceRepository, cacheInstance),
-		UpdateServiceHandler: handlers.NewUpdateServiceHandler(di.Logger, serviceRepository, redisPublisher),
-		DeleteServiceHandler: handlers.NewDeleteServiceHandler(di.Logger, serviceRepository, redisPublisher),
+		UpdateServiceHandler: handlers.NewUpdateServiceHandler(di.Logger, serviceRepository, redisPublisher, auditLogsService),
+		DeleteServiceHandler: handlers.NewDeleteServiceHandler(di.Logger, serviceRepository, redisPublisher, auditLogsService),
 		// Rule
-		CreateRuleHandler: handlers.NewCreateRuleHandler(di.Logger, ruleRepository, gatewayRepository, serviceRepository, pluginChainValidator, redisPublisher, ruleMatcher),
-		ListRulesHandler: handlers.NewListRulesHandler(
-			di.Logger,
-			ruleRepository,
-			gatewayRepository,
-			serviceRepository,
-			cacheInstance,
-		),
-		UpdateRuleHandler: handlers.NewUpdateRuleHandler(di.Logger, ruleRepository, cacheInstance, validatePlugin, redisPublisher, ruleMatcher),
-		DeleteRuleHandler: handlers.NewDeleteRuleHandler(di.Logger, ruleRepository, cacheInstance, redisPublisher),
+		CreateRuleHandler: handlers.NewCreateRuleHandler(handlers.CreateRuleHandlerDeps{
+			Logger:               di.Logger,
+			Repo:                 ruleRepository,
+			GatewayRepo:          gatewayRepository,
+			ServiceRepo:          serviceRepository,
+			PluginChainValidator: pluginChainValidator,
+			Publisher:            redisPublisher,
+			RuleMatcher:          ruleMatcher,
+			AuditService:         auditLogsService,
+		}),
+		ListRulesHandler: handlers.NewListRulesHandler(handlers.ListRulesHandlerDeps{
+			Logger:      di.Logger,
+			RuleRepo:    ruleRepository,
+			GatewayRepo: gatewayRepository,
+			ServiceRepo: serviceRepository,
+			Cache:       cacheInstance,
+		}),
+		UpdateRuleHandler: handlers.NewUpdateRuleHandler(handlers.UpdateRuleHandlerDeps{
+			Logger:                di.Logger,
+			Repo:                  ruleRepository,
+			Cache:                 cacheInstance,
+			ValidatePlugin:        validatePlugin,
+			InvalidationPublisher: redisPublisher,
+			RuleMatcher:           ruleMatcher,
+			AuditService:          auditLogsService,
+		}),
+		DeleteRuleHandler: handlers.NewDeleteRuleHandler(handlers.DeleteRuleHandlerDeps{
+			Logger:       di.Logger,
+			Repo:         ruleRepository,
+			Cache:        cacheInstance,
+			Publisher:    redisPublisher,
+			AuditService: auditLogsService,
+		}),
 		// APIKey
-		CreateAPIKeyHandler: handlers.NewCreateAPIKeyHandler(
-			di.Logger,
-			cacheInstance,
-			apiKeyRepository,
-			ruleRepository,
-			policyValidator,
-			gatewayRepository,
-		),
-		ListAPIKeysPublicHandler:    handlers.NewListAPIKeysPublicHandler(di.Logger, gatewayRepository, apiKeyRepository),
-		GetAPIKeyHandler:            handlers.NewGetAPIKeyHandler(di.Logger, cacheInstance, apiKeyRepository),
-		DeleteAPIKeyHandler:         handlers.NewDeleteAPIKeyHandler(di.Logger, apiKeyRepository, redisPublisher),
-		UpdateAPIKeyPoliciesHandler: handlers.NewUpdateAPIKeyPoliciesHandler(di.Logger, cacheInstance, apiKeyRepository, ruleRepository, policyValidator),
+		CreateAPIKeyHandler: handlers.NewCreateAPIKeyHandler(handlers.CreateAPIKeyHandlerDeps{
+			Logger:          di.Logger,
+			Cache:           cacheInstance,
+			ApiKeyRepo:      apiKeyRepository,
+			RuleRepo:        ruleRepository,
+			PolicyValidator: policyValidator,
+			GatewayRepo:     gatewayRepository,
+			AuditService:    auditLogsService,
+		}),
+		ListAPIKeysPublicHandler: handlers.NewListAPIKeysPublicHandler(di.Logger, gatewayRepository, apiKeyRepository),
+		GetAPIKeyHandler:         handlers.NewGetAPIKeyHandler(di.Logger, cacheInstance, apiKeyRepository),
+		DeleteAPIKeyHandler:      handlers.NewDeleteAPIKeyHandler(di.Logger, apiKeyRepository, redisPublisher, auditLogsService),
+		UpdateAPIKeyPoliciesHandler: handlers.NewUpdateAPIKeyPoliciesHandler(handlers.UpdateAPIKeyPoliciesHandlerDeps{
+			Logger:          di.Logger,
+			Cache:           cacheInstance,
+			ApiKeyRepo:      apiKeyRepository,
+			RuleRepo:        ruleRepository,
+			PolicyValidator: policyValidator,
+			AuditService:    auditLogsService,
+		}),
 		// Version
 		GetVersionHandler: handlers.NewGetVersionHandler(di.Logger),
-		UpdatePluginsHandler: handlers.NewUpdatePluginsHandler(
-			di.Logger,
-			gatewayRepository,
-			ruleRepository,
-			pluginChainValidator,
-			redisPublisher,
-		),
-		DeletePluginsHandler: handlers.NewDeletePluginsHandler(
-			di.Logger,
-			gatewayRepository,
-			ruleRepository,
-			pluginChainValidator,
-			redisPublisher,
-		),
-		AddPluginsHandler: handlers.NewAddPluginsHandler(
-			di.Logger,
-			gatewayRepository,
-			ruleRepository,
-			pluginChainValidator,
-			redisPublisher,
-		),
+		UpdatePluginsHandler: handlers.NewUpdatePluginsHandler(handlers.UpdatePluginsHandlerDeps{
+			Logger:               di.Logger,
+			GatewayRepo:          gatewayRepository,
+			RuleRepo:             ruleRepository,
+			PluginChainValidator: pluginChainValidator,
+			Publisher:            redisPublisher,
+			AuditService:         auditLogsService,
+		}),
+		DeletePluginsHandler: handlers.NewDeletePluginsHandler(handlers.DeletePluginsHandlerDeps{
+			Logger:               di.Logger,
+			GatewayRepo:          gatewayRepository,
+			RuleRepo:             ruleRepository,
+			PluginChainValidator: pluginChainValidator,
+			Publisher:            redisPublisher,
+			AuditService:         auditLogsService,
+		}),
+		AddPluginsHandler: handlers.NewAddPluginsHandler(handlers.AddPluginsHandlerDeps{
+			Logger:               di.Logger,
+			GatewayRepo:          gatewayRepository,
+			RuleRepo:             ruleRepository,
+			PluginChainValidator: pluginChainValidator,
+			Publisher:            redisPublisher,
+			AuditService:         auditLogsService,
+		}),
 		// Cache
 		InvalidateCacheHandler: handlers.NewInvalidateCacheHandler(di.Logger, cacheInstance),
 	}
@@ -399,6 +478,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		GatewayCreator:              gatewayCreator,
 		GatewayDeleter:              gatewayDeleter,
 		DescriptionEmbeddingCreator: descriptionEmbeddingCreator,
+		AuditLogsService:            auditLogsService,
 	}
 
 	return container, nil

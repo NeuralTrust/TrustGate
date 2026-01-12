@@ -5,6 +5,7 @@ go 1.25.1
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.10.0
+	github.com/NeuralTrust/audit-sdk-go v1.0.1
 	github.com/andybalholm/brotli v1.1.1
 	github.com/anthropics/anthropic-sdk-go v1.16.0
 	github.com/avct/uasurfer v0.0.0-20250320214457-f1f6afeb74db
