@@ -85,3 +85,9 @@ func (rc *Collector) GetEvents() []*metric_events.Event {
 	copy(out, rc.events)
 	return out
 }
+
+func (rc *Collector) AddEmbeddedParam(ep EmbeddedParam) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.embeddedParams = append(rc.embeddedParams, ep)
+}
