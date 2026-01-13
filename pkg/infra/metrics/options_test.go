@@ -91,3 +91,19 @@ func TestWithEmbeddedParam_UnknownKey(t *testing.T) {
 	assert.Empty(t, events[0].RuleID)
 	assert.Empty(t, events[0].PolicyID)
 }
+
+func TestAddEmbeddedParam(t *testing.T) {
+	collector := NewCollector(&Config{
+		EnablePluginTraces:  true,
+		EnableRequestTraces: true,
+	})
+
+	collector.AddEmbeddedParam(EmbeddedParam{Key: "policy_id", Value: "policy-789"})
+
+	evt := metric_events.NewPluginEvent()
+	collector.Emit(evt)
+
+	events := collector.GetEvents()
+	assert.Len(t, events, 1)
+	assert.Equal(t, "policy-789", events[0].PolicyID)
+}
