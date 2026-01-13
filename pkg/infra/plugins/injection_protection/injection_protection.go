@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -54,21 +56,29 @@ const (
 	Block Action = "block"
 )
 
+var (
+	urlPatternForFP      = regexp.MustCompile(`(?i)(https?|ftp|file)://|/[a-z0-9_\-\.]+(?:/[a-z0-9_\-\.]+)*`)
+	templateMathPattern  = regexp.MustCompile(`\{[^}]*\d+\s*[*/+\-<>=]\s*\d+[^}]*\}`)
+	jsonStringPattern    = regexp.MustCompile(`^[\{\[]`)
+	customPatternCache   = make(map[string]*regexp.Regexp)
+	customPatternCacheMu sync.RWMutex
+)
+
 var attackPatterns = map[AttackType]*regexp.Regexp{
 	SQL: regexp.MustCompile(`(?i)(` +
-		`['"]\s*OR\s*['"]?\s*['"]?\d+['"]?\s*=\s*['"]?\d+['"]?\s*['"]?|` +
-		`['"]\s*OR\s*['"][^'"]*['"]\s*=\s*['"][^'"]*['"]\s*['"]?|` +
-		`['"]\s*OR\s*\d+\s*=\s*\d+\s*['"]?|` +
+		`['"]\s*OR\s*['"]?\d+['"]?\s*=\s*['"]?\d+['"]?|` +
+		`['"]\s*OR\s*['"][^'"]*['"]\s*=\s*['"][^'"]*['"]|` +
+		`['"]\s*OR\s*\d+\s*=\s*\d+\s*['";\-]|` +
 		`['"]\s*OR\s*['"][^'"]+['"]\s*LIKE\s*['"][^'"]+['"]|` +
-		`UNION\s+(?:ALL\s+)?SELECT\s+(?:\*|[a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)*)\s+FROM|` +
-		`(?:SLEEP|BENCHMARK|WAITFOR\s+DELAY)\s*\(\s*\d+\s*\)|` +
+		`UNION\s+(?:ALL\s+)?SELECT\s+(?:\*|[\w,\s]+)\s+FROM\s+\w+|` +
+		`(?:SLEEP|BENCHMARK|WAITFOR\s+DELAY)\s*\(\s*['"]?\d+['"]?\s*\)|` +
 		`(?:AND|OR)\s+\d+\s*=\s*(?:CONVERT|SELECT|CAST)\s*\(|` +
-		`['";]\s*;\s*(?:INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\s+(?:INTO|FROM|TABLE|DATABASE|SCHEMA|VIEW|INDEX)|` +
-		`(?:['";]|\s)\s*(?:\/\*[^*]*\*\/|\-\-[^\r\n]*|#[^\r\n]*)|` +
-		`\b(?:DROP|DELETE|TRUNCATE)\s+(?:TABLE|DATABASE|SCHEMA)\s+\w+|` +
-		`(?:INSERT|UPDATE|ALTER|CREATE)\s+(?:INTO|FROM|TABLE|DATABASE|SCHEMA|VIEW|INDEX)\s+[^\s]+['";]|` +
-		`\b(?:ALTER|CREATE)\s+TABLE\s+\w+|` +
-		`\bALTER\s+TABLE\s+\w+\s+(?:ADD|DROP|MODIFY|CHANGE)\s+COLUMN` +
+		`['";]\s*;\s*(?:INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|DROP\s+(?:TABLE|DATABASE)|ALTER\s+TABLE|CREATE\s+(?:TABLE|DATABASE)|TRUNCATE\s+TABLE)|` +
+		`['";]\s*(?:\/\*(?:!|\+)?|--\s*$)|` +
+		`\b(?:DROP|TRUNCATE)\s+(?:TABLE|DATABASE|SCHEMA)\s+(?:IF\s+EXISTS\s+)?['"` + "`" + `]?\w+['"` + "`" + `]?|` +
+		`\bINSERT\s+INTO\s+\w+\s*\([^)]+\)\s*VALUES|` +
+		`\bUPDATE\s+\w+\s+SET\s+\w+\s*=|` +
+		`\bALTER\s+TABLE\s+\w+\s+(?:ADD|DROP|MODIFY|CHANGE|RENAME)\s+(?:COLUMN\s+)?\w+` +
 		`)`),
 
 	NoSQLInjection: regexp.MustCompile(`(?i)(` +
@@ -324,7 +334,7 @@ func (p *InjectionProtectionPlugin) Execute(
 
 	customPatterns := make(map[string]*regexp.Regexp)
 	for _, custom := range cfg.CustomInjections {
-		pattern, err := regexp.Compile(custom.Pattern)
+		pattern, err := p.getOrCompilePattern(custom.Pattern)
 		if err != nil {
 			return nil, fmt.Errorf("invalid custom pattern %s: %v", custom.Name, err)
 		}
@@ -340,24 +350,78 @@ func (p *InjectionProtectionPlugin) Execute(
 
 	contentTypeMap := p.buildContentTypeMap(cfg.ContentToCheck)
 
+	g, ctx := errgroup.WithContext(context.Background())
+	var respMu sync.Mutex
+	var firstResp *pluginTypes.PluginResponse
+	var firstErr error
+
 	if contentTypeMap[Headers] || contentTypeMap[AllContent] {
-		if resp, err := p.checkHeaders(req.Headers, patterns, customPatterns, cfg, evtCtx); err != nil {
-			return resp, err
-		}
+		g.Go(func() error {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+			}
+			resp, err := p.checkHeaders(req.Headers, patterns, customPatterns, cfg, evtCtx)
+			if err != nil {
+				respMu.Lock()
+				if firstErr == nil {
+					firstResp = resp
+					firstErr = err
+				}
+				respMu.Unlock()
+				return err
+			}
+			return nil
+		})
 	}
 
 	if contentTypeMap[PathAndQuery] || contentTypeMap[AllContent] {
-		if resp, err := p.checkPathAndQuery(req, patterns, customPatterns, cfg, evtCtx); err != nil {
-			return resp, err
-		}
+		g.Go(func() error {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+			}
+			resp, err := p.checkPathAndQuery(req, patterns, customPatterns, cfg, evtCtx)
+			if err != nil {
+				respMu.Lock()
+				if firstErr == nil {
+					firstResp = resp
+					firstErr = err
+				}
+				respMu.Unlock()
+				return err
+			}
+			return nil
+		})
 	}
 
-	if contentTypeMap[Body] || contentTypeMap[AllContent] {
-		if len(req.Body) > 0 {
-			if resp, err := p.checkBody(req.Body, patterns, customPatterns, cfg, evtCtx); err != nil {
-				return resp, err
+	if (contentTypeMap[Body] || contentTypeMap[AllContent]) && len(req.Body) > 0 {
+		g.Go(func() error {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
 			}
-		}
+			resp, err := p.checkBody(req.Body, patterns, customPatterns, cfg, evtCtx)
+			if err != nil {
+				respMu.Lock()
+				if firstErr == nil {
+					firstResp = resp
+					firstErr = err
+				}
+				respMu.Unlock()
+				return err
+			}
+			return nil
+		})
+	}
+
+	_ = g.Wait()
+
+	if firstErr != nil {
+		return firstResp, firstErr
 	}
 
 	evtCtx.SetExtras(InjectionProtectionData{
@@ -446,6 +510,14 @@ func (p *InjectionProtectionPlugin) checkBody(
 	evtCtx *metrics.EventContext,
 ) (*pluginTypes.PluginResponse, error) {
 	bodyStr := string(body)
+
+	if len(bodyStr) > 0 && jsonStringPattern.MatchString(strings.TrimSpace(bodyStr)) {
+		var jsonBody interface{}
+		if err := json.Unmarshal(body, &jsonBody); err == nil {
+			return p.checkJSONContent(jsonBody, patterns, customPatterns, cfg, evtCtx)
+		}
+	}
+
 	if injectionType, match := p.findMatch(bodyStr, patterns, customPatterns); match != "" {
 		resp, err := p.reportInjection(cfg, injectionType, match, "body", "", evtCtx)
 		if err != nil {
@@ -453,13 +525,6 @@ func (p *InjectionProtectionPlugin) checkBody(
 		}
 	}
 
-	var jsonBody interface{}
-	if err := json.Unmarshal(body, &jsonBody); err == nil {
-		resp, err := p.checkJSONContent(jsonBody, patterns, customPatterns, cfg, evtCtx)
-		if err != nil {
-			return resp, err
-		}
-	}
 	return nil, nil
 }
 
@@ -469,57 +534,87 @@ func (p *InjectionProtectionPlugin) findMatch(
 	customPatterns map[string]*regexp.Regexp,
 ) (string, string) {
 	for attackType, pattern := range patterns {
-		if pattern.MatchString(content) {
+		if match := pattern.FindString(content); match != "" {
 			if attackType == TemplateInjection {
-				if p.isFalsePositiveTemplate(content) {
+				if p.isFalsePositiveTemplate(content, match) {
 					continue
 				}
 			}
-			return string(attackType), content
+			if attackType == SQL {
+				if p.isFalsePositiveSQL(content, match) {
+					continue
+				}
+			}
+			return string(attackType), match
 		}
 	}
 	for name, pattern := range customPatterns {
-		if pattern.MatchString(content) {
-			return name, content
+		if match := pattern.FindString(content); match != "" {
+			return name, match
 		}
 	}
 	return "", ""
 }
 
-func (p *InjectionProtectionPlugin) isFalsePositiveTemplate(content string) bool {
+func (p *InjectionProtectionPlugin) isFalsePositiveTemplate(content string, match string) bool {
 	if strings.Contains(content, "{{") {
 		return false
 	}
-	urlPattern := regexp.MustCompile(`(?i)(https?|ftp|file)://|/[a-z0-9_\-\.]+(?:/[a-z0-9_\-\.]+)*`)
-	matches := regexp.MustCompile(`\{[^}]*\d+\s*[*/+\-<>=]\s*\d+[^}]*\}`).FindAllString(content, -1)
-	for _, match := range matches {
-		if urlPattern.MatchString(content) {
-			contentStr := content
-			if idx := strings.Index(contentStr, match); idx != -1 {
-				start := p.maxInt(0, idx-50)
-				end := p.minInt(len(contentStr), idx+len(match)+50)
-				contentStr = contentStr[start:end]
-				if urlPattern.MatchString(contentStr) {
-					return true
-				}
+	matches := templateMathPattern.FindAllStringIndex(content, -1)
+	for _, matchIdx := range matches {
+		if matchIdx[0] >= 0 {
+			start := max(0, matchIdx[0]-50)
+			end := min(len(content), matchIdx[1]+50)
+			context := content[start:end]
+			if urlPatternForFP.MatchString(context) {
+				return true
 			}
 		}
 	}
 	return false
 }
 
-func (p *InjectionProtectionPlugin) maxInt(a, b int) int {
-	if a > b {
-		return a
+func (p *InjectionProtectionPlugin) isFalsePositiveSQL(content string, match string) bool {
+	if len(match) < 5 {
+		return true
 	}
-	return b
-}
 
-func (p *InjectionProtectionPlugin) minInt(a, b int) int {
-	if a < b {
-		return a
+	lowerContent := strings.ToLower(content)
+	lowerMatch := strings.ToLower(match)
+
+	if strings.HasPrefix(lowerMatch, "--") || strings.HasPrefix(lowerMatch, "/*") {
+		idx := strings.Index(lowerContent, lowerMatch)
+		if idx > 0 {
+			start := max(0, idx-30)
+			end := min(len(lowerContent), idx+len(match)+30)
+			context := lowerContent[start:end]
+
+			sqlKeywords := []string{"select", "from", "where", "insert", "update", "delete", "table", "database"}
+			hasSQLContext := false
+			for _, kw := range sqlKeywords {
+				if strings.Contains(context, kw) {
+					hasSQLContext = true
+					break
+				}
+			}
+			if !hasSQLContext {
+				return true
+			}
+		}
 	}
-	return b
+
+	if strings.Contains(content, `\\n`) || strings.Contains(content, `\\\"`) || strings.Contains(content, `\\"`) {
+		if !strings.Contains(lowerMatch, "select") &&
+			!strings.Contains(lowerMatch, "union") &&
+			!strings.Contains(lowerMatch, "insert") &&
+			!strings.Contains(lowerMatch, "update") &&
+			!strings.Contains(lowerMatch, "delete") &&
+			!strings.Contains(lowerMatch, "drop") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (p *InjectionProtectionPlugin) reportInjection(
@@ -635,4 +730,24 @@ func (p *InjectionProtectionPlugin) hasAllPattern(injections []struct {
 		}
 	}
 	return false
+}
+
+func (p *InjectionProtectionPlugin) getOrCompilePattern(pattern string) (*regexp.Regexp, error) {
+	customPatternCacheMu.RLock()
+	if compiled, exists := customPatternCache[pattern]; exists {
+		customPatternCacheMu.RUnlock()
+		return compiled, nil
+	}
+	customPatternCacheMu.RUnlock()
+
+	compiled, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	customPatternCacheMu.Lock()
+	customPatternCache[pattern] = compiled
+	customPatternCacheMu.Unlock()
+
+	return compiled, nil
 }
