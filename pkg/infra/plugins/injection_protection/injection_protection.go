@@ -69,13 +69,15 @@ var attackPatterns = map[AttackType]*regexp.Regexp{
 		`['"]\s*OR\s*['"]?\d+['"]?\s*=\s*['"]?\d+['"]?|` +
 		`['"]\s*OR\s*['"][^'"]*['"]\s*=\s*['"][^'"]*['"]|` +
 		`['"]\s*OR\s*\d+\s*=\s*\d+\s*['";\-]|` +
-		`['"]\s*OR\s*['"][^'"]+['"]\s*LIKE\s*['"][^'"]+['"]|` +
+		`['"]\s*OR\s*['"][^'"]+['"]\s*LIKE\s*['"]|` +
 		`UNION\s+(?:ALL\s+)?SELECT\s+(?:\*|[\w,\s]+)\s+FROM\s+\w+|` +
-		`(?:SLEEP|BENCHMARK|WAITFOR\s+DELAY)\s*\(\s*['"]?\d+['"]?\s*\)|` +
+		`(?:SLEEP|BENCHMARK|WAITFOR\s+DELAY)\s*\([^)]+\)|` +
 		`(?:AND|OR)\s+\d+\s*=\s*(?:CONVERT|SELECT|CAST)\s*\(|` +
 		`['";]\s*;\s*(?:INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|DROP\s+(?:TABLE|DATABASE)|ALTER\s+TABLE|CREATE\s+(?:TABLE|DATABASE)|TRUNCATE\s+TABLE)|` +
-		`['";]\s*(?:\/\*(?:!|\+)?|--\s*$)|` +
+		`['"]\s*\/\*.*\*\/|` +
+		`['"]\s*--\s*|` +
 		`\b(?:DROP|TRUNCATE)\s+(?:TABLE|DATABASE|SCHEMA)\s+(?:IF\s+EXISTS\s+)?['"` + "`" + `]?\w+['"` + "`" + `]?|` +
+		`\bCREATE\s+(?:TABLE|DATABASE)\s+\w+|` +
 		`\bINSERT\s+INTO\s+\w+\s*\([^)]+\)\s*VALUES|` +
 		`\bUPDATE\s+\w+\s+SET\s+\w+\s*=|` +
 		`\bALTER\s+TABLE\s+\w+\s+(?:ADD|DROP|MODIFY|CHANGE|RENAME)\s+(?:COLUMN\s+)?\w+` +
@@ -94,16 +96,16 @@ var attackPatterns = map[AttackType]*regexp.Regexp{
 		`"\$elemMatch"\s*:|` +
 		`"\$all"\s*:|` +
 		`"\$size"\s*:|` +
-		`\$where\s*[:=]|` +
-		`\$regex\s*[:=]|` +
-		`\$exists\s*[:=]|` +
-		`\$gt\s*[:=]|` +
-		`\$lt\s*[:=]|` +
-		`\$ne\s*[:=]|` +
-		`\$nin\s*[:=]|` +
-		`\$elemMatch\s*[:=]|` +
-		`\$all\s*[:=]|` +
-		`\$size\s*[:=]` +
+		`^\$where$|` +
+		`^\$regex$|` +
+		`^\$exists$|` +
+		`^\$gt$|` +
+		`^\$lt$|` +
+		`^\$ne$|` +
+		`^\$nin$|` +
+		`^\$elemMatch$|` +
+		`^\$all$|` +
+		`^\$size$` +
 		`)`),
 
 	CommandInjection: regexp.MustCompile(`(?i)(` +
@@ -652,15 +654,15 @@ func (p *InjectionProtectionPlugin) checkJSONContent(
 	switch v := data.(type) {
 	case map[string]interface{}:
 		for key, value := range v {
+			if injectionType, match := p.findMatch(key, patterns, customPatterns); match != "" {
+				resp, err := p.reportInjection(cfg, injectionType, match, "json", key, evtCtx)
+				if err != nil {
+					return resp, err
+				}
+			}
 			if str, ok := value.(string); ok {
 				if injectionType, match := p.findMatch(str, patterns, customPatterns); match != "" {
 					resp, err := p.reportInjection(cfg, injectionType, match, "json", key, evtCtx)
-					if err != nil {
-						return resp, err
-					}
-				}
-				if injectionType, match := p.findMatch(key, patterns, customPatterns); match != "" {
-					resp, err := p.reportInjection(cfg, injectionType, match, "json", "", evtCtx)
 					if err != nil {
 						return resp, err
 					}
