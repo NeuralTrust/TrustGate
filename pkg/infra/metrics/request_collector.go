@@ -18,19 +18,28 @@ type Config struct {
 }
 
 type Collector struct {
-	traceID string
-	mu      sync.Mutex
-	events  []*metric_events.Event
-	cfg     *Config
+	traceID        string
+	mu             sync.Mutex
+	events         []*metric_events.Event
+	cfg            *Config
+	embeddedParams []EmbeddedParam
 }
 
-func NewCollector(traceID string, cfg *Config) *Collector {
+func NewCollector(cfg *Config, opts ...Option) *Collector {
+	options := &collectorOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	traceID := options.traceID
 	if traceID == "" {
 		traceID = uuid.New().String()
 	}
+
 	return &Collector{
-		traceID: traceID,
-		cfg:     cfg,
+		traceID:        traceID,
+		cfg:            cfg,
+		embeddedParams: options.embeddedParams,
 	}
 }
 
@@ -50,6 +59,11 @@ func (rc *Collector) Emit(evt *metric_events.Event) {
 
 	evt.TraceID = rc.traceID
 	evt.Params = rc.cfg.ExtraParams
+
+	for _, ep := range rc.embeddedParams {
+		applyEmbeddedParam(evt, ep)
+	}
+
 	rc.events = append(rc.events, evt)
 }
 

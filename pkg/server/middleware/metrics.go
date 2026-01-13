@@ -217,21 +217,22 @@ func (m *metricsMiddleware) getMetricsCollector(traceId string, gatewayData *typ
 		traceId = uuid.New().String()
 	}
 	metricsCollector := metrics.NewCollector(
-		traceId,
 		&metrics.Config{
 			EnablePluginTraces:  false,
 			EnableRequestTraces: false,
 			ExtraParams:         nil,
 		},
+		metrics.WithTraceID(traceId),
 	)
 	if gatewayData.Gateway.Telemetry != nil {
 		metricsCollector = metrics.NewCollector(
-			traceId,
 			&metrics.Config{
 				EnablePluginTraces:  gatewayData.Gateway.Telemetry.EnablePluginTraces,
 				EnableRequestTraces: gatewayData.Gateway.Telemetry.EnableRequestTraces,
 				ExtraParams:         gatewayData.Gateway.Telemetry.ExtraParams,
-			})
+			},
+			metrics.WithTraceID(traceId),
+		)
 	}
 	return metricsCollector
 }
