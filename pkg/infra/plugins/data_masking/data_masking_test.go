@@ -3,14 +3,13 @@ package data_masking
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log/slog"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	cacheMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -516,22 +515,18 @@ func TestInternationalPII(t *testing.T) {
 }
 
 // createTestCache creates a test cache with a TTL map for data masking
-func createTestCache() cache.Client {
-	logger := logrus.New()
-	c, err := cache.NewClient(cache.Config{
-		Host: "localhost",
-		Port: 6379,
-	}, logger)
-	if err != nil {
-		slog.Error(fmt.Sprintf("%v", err))
-	}
+func createTestCache(t *testing.T) cache.Client {
+	c := cacheMocks.NewClient(t)
+	ttlMap := cache.NewTTLMap(5 * time.Minute)
+	c.EXPECT().CreateTTLMap(cache.DataMaskingTTLName, 5*time.Minute).Return(ttlMap).Maybe()
+	c.EXPECT().GetTTLMap(cache.DataMaskingTTLName).Return(ttlMap).Maybe()
 	c.CreateTTLMap(cache.DataMaskingTTLName, 5*time.Minute)
 	return c
 }
 
 func TestExecutePlugin(t *testing.T) {
 	logger := logrus.New()
-	testCache := createTestCache()
+	testCache := createTestCache(t)
 	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
 	assert.True(t, ok)
 
@@ -785,7 +780,7 @@ func TestRestoreFromHashes(t *testing.T) {
 
 func TestReversibleHashingWorkflow(t *testing.T) {
 	logger := logrus.New()
-	testCache := createTestCache()
+	testCache := createTestCache(t)
 	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
 	assert.True(t, ok)
 

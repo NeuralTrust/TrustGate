@@ -13,6 +13,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	cacheMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -34,19 +35,9 @@ func getTestConfig() *config.Config {
 	return cfg
 }
 
-func buildCacheFromConfig(cfg *config.Config) cache.Client {
-	rc := cfg.Redis
-	logger := logrus.New()
-	c, err := cache.NewClient(cache.Config{
-		Host:     rc.Host,
-		Port:     rc.Port,
-		Password: rc.Password,
-		DB:       rc.DB,
-		TLS:      rc.TLS,
-	}, logger)
-	if err != nil {
-		panic(err)
-	}
+func buildMockCache(t *testing.T) cache.Client {
+	c := cacheMocks.NewClient(t)
+	c.EXPECT().SaveUpstream(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	return c
 }
 
@@ -66,7 +57,7 @@ func TestUpdateUpstream_OAuthValidation_ClientCredentialsMissingClientID(t *test
 	repo := new(mocks.Repository)
 	pub := &noopPublisher{}
 	cfg := getTestConfig()
-	cacheInstance := buildCacheFromConfig(cfg)
+	cacheInstance := buildMockCache(t)
 	desc := &noopDescEmbedding{}
 	logger := logrus.New()
 	h := NewUpdateUpstreamHandler(UpdateUpstreamHandlerDeps{
@@ -122,7 +113,7 @@ func TestUpdateUpstream_Success_Minimal(t *testing.T) {
 	repo := new(mocks.Repository)
 	pub := &noopPublisher{}
 	cfg := getTestConfig()
-	cacheInstance := buildCacheFromConfig(cfg)
+	cacheInstance := buildMockCache(t)
 	desc := &noopDescEmbedding{}
 	logger := logrus.New()
 	h := NewUpdateUpstreamHandler(UpdateUpstreamHandlerDeps{
