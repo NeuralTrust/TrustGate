@@ -12,6 +12,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/go-redis/redis/v8"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -69,7 +70,7 @@ type client struct {
 	ttl         time.Duration
 }
 
-func NewClient(config Config) (Client, error) {
+func NewClient(config Config, logger *logrus.Logger) (Client, error) {
 	options := &redis.Options{
 		Addr:     fmt.Sprintf("%s:%d", config.Host, config.Port),
 		Password: config.Password,
@@ -80,6 +81,22 @@ func NewClient(config Config) (Client, error) {
 		}
 	}
 	redisClient := redis.NewClient(options)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		logger.WithFields(logrus.Fields{
+			"host":  config.Host,
+			"port":  config.Port,
+			"error": err.Error(),
+		}).Error("failed to connect to redis")
+		return nil, fmt.Errorf("failed to connect to redis: %w", err)
+	}
+
+	logger.WithFields(logrus.Fields{
+		"host": config.Host,
+		"port": config.Port,
+	}).Info("redis connected successfully")
 
 	return &client{
 		redisClient: redisClient,
