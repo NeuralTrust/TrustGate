@@ -52,6 +52,9 @@ type Event struct {
 
 	// Plugin Params
 	Plugin *PluginDataEvent `json:"plugin,omitempty"`
+
+	RuleID   string `json:"rule_id,omitempty"`
+	PolicyID string `json:"policy_id,omitempty"`
 }
 
 type UpstreamEvent struct {

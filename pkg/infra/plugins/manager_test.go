@@ -32,10 +32,10 @@ func newManagerForTesting(logger *logrus.Logger) *manager {
 }
 
 func newTestCollector() *metrics.Collector {
-	return metrics.NewCollector("test-trace-id", &metrics.Config{
+	return metrics.NewCollector(&metrics.Config{
 		EnablePluginTraces:  false,
 		EnableRequestTraces: false,
-	})
+	}, metrics.WithTraceID("test-trace-id"))
 }
 
 func TestManager_RegisterPlugin(t *testing.T) {

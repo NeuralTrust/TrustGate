@@ -242,6 +242,7 @@ func (m *worker) feedEvent(
 				evt.Task = strings.ToLower(resp.Rule.TrustLens.Type)
 			}
 		}
+		evt.RuleID = resp.Rule.ID
 	}
 
 	if conversationIDs, ok := req.Headers[common.ConversationIDHeader]; ok && len(conversationIDs) > 0 {
