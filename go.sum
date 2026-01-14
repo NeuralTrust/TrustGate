@@ -21,8 +21,8 @@ github.com/AzureAD/microsoft-authentication-library-for-go v1.4.2/go.mod h1:wP83
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/KyleBanks/depth v1.2.1 h1:5h8fQADFrWtarTdtDudMmGsC7GPbOAu6RVB3ffsVFHc=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
-github.com/NeuralTrust/audit-sdk-go v1.0.2 h1:yV/xPsE9ZUKJf2UY0c34ApM36+BHbOUutanvwvzhl+Y=
-github.com/NeuralTrust/audit-sdk-go v1.0.2/go.mod h1:tmvMVEpGCGwUDQqo/uQxTUJU5INlsS6GrF2k72Tc55w=
+github.com/NeuralTrust/audit-sdk-go v1.0.3 h1:X/a5M2TrN+4oJQhK0EXTe1f9VOsHbj0iTRGzH5QsbRI=
+github.com/NeuralTrust/audit-sdk-go v1.0.3/go.mod h1:tmvMVEpGCGwUDQqo/uQxTUJU5INlsS6GrF2k72Tc55w=
 github.com/actgardner/gogen-avro/v10 v10.1.0/go.mod h1:o+ybmVjEa27AAr35FRqU98DJu1fXES56uXniYFv4yDA=
 github.com/actgardner/gogen-avro/v10 v10.2.1/go.mod h1:QUhjeHPchheYmMDni/Nx7VB0RsT/ee8YIgGY/xpEQgQ=
 github.com/actgardner/gogen-avro/v9 v9.1.0/go.mod h1:nyTj6wPqDJoxM3qdnjcLv+EnMDSDFqE0qDpva2QRmKc=
