@@ -36,13 +36,14 @@ func getTestConfig() *config.Config {
 
 func buildCacheFromConfig(cfg *config.Config) cache.Client {
 	rc := cfg.Redis
+	logger := logrus.New()
 	c, err := cache.NewClient(cache.Config{
 		Host:     rc.Host,
 		Port:     rc.Port,
 		Password: rc.Password,
 		DB:       rc.DB,
 		TLS:      rc.TLS,
-	})
+	}, logger)
 	if err != nil {
 		panic(err)
 	}

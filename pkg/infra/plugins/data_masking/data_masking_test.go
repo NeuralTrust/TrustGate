@@ -517,10 +517,11 @@ func TestInternationalPII(t *testing.T) {
 
 // createTestCache creates a test cache with a TTL map for data masking
 func createTestCache() cache.Client {
+	logger := logrus.New()
 	c, err := cache.NewClient(cache.Config{
 		Host: "localhost",
 		Port: 6379,
-	})
+	}, logger)
 	if err != nil {
 		slog.Error(fmt.Sprintf("%v", err))
 	}
