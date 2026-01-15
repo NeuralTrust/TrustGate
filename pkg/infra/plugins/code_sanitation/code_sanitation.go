@@ -455,7 +455,7 @@ func (p *CodeSanitationPlugin) Execute(
 	}
 
 	evtCtx.SetExtras(CodeSanitationData{
-		Sanitized: compiled.action == Sanitize,
+		Sanitized: compiled.action == Sanitize && len(events) > 0,
 		Events:    events,
 	})
 
