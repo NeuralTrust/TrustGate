@@ -285,7 +285,6 @@ func (s *updateRuleHandler) applyRequestToDBRule(
 
 func (s *updateRuleHandler) buildTrustLensConfig(trustLens *types.TrustLensConfigDTO) *domain.TrustLensJSON {
 	return &domain.TrustLensJSON{
-		AppID:   trustLens.AppID,
 		TeamID:  trustLens.TeamID,
 		Type:    trustLens.Type,
 		Mapping: trustLens.Mapping,
@@ -554,10 +553,6 @@ func (s *updateRuleHandler) validatePluginChain(pluginChain []pluginTypes.Plugin
 func (s *updateRuleHandler) validateTrustLens(trustLens *types.TrustLensConfigDTO) error {
 	if trustLens == nil {
 		return nil
-	}
-
-	if trustLens.AppID == "" {
-		return fmt.Errorf("trust lens app id is required")
 	}
 
 	if trustLens.TeamID == "" {
