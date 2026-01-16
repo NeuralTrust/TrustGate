@@ -118,7 +118,6 @@ func (f *dataFinder) convertModelToTypesRules(rules []forwarding_rule.Forwarding
 		var trustLensConfig *types.TrustLensConfigDTO
 		if r.TrustLens != nil {
 			trustLensConfig = &types.TrustLensConfigDTO{
-				AppID:   r.TrustLens.AppID,
 				TeamID:  r.TrustLens.TeamID,
 				Type:    r.TrustLens.Type,
 				Mapping: r.TrustLens.Mapping,

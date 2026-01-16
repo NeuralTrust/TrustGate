@@ -154,7 +154,6 @@ type ForwardingRuleDTO struct {
 }
 
 type TrustLensConfigDTO struct {
-	AppID   string               `json:"app_id,omitempty"`
 	TeamID  string               `json:"team_id,omitempty"`
 	Type    string               `json:"type,omitempty"`
 	Mapping *TrustLensMappingDTO `json:"mapping,omitempty"`

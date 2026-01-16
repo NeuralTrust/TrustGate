@@ -140,14 +140,10 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 
 	var trustLensConfig *domain.TrustLensJSON
 	if request.TrustLens != nil {
-		if request.TrustLens.AppID == "" {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "trust lens app id is required"})
-		}
 		if request.TrustLens.TeamID == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "trust lens team id is required"})
 		}
 		trustLensConfig = &domain.TrustLensJSON{
-			AppID:   request.TrustLens.AppID,
 			TeamID:  request.TrustLens.TeamID,
 			Type:    request.TrustLens.Type,
 			Mapping: request.TrustLens.Mapping,
@@ -281,7 +277,6 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 	if rule.TrustLens != nil {
 		tl := types.TrustLensConfigDTO(*rule.TrustLens)
 		trustLensConfig = &types.TrustLensConfigDTO{
-			AppID:   tl.AppID,
 			TeamID:  tl.TeamID,
 			Type:    tl.Type,
 			Mapping: tl.Mapping,
@@ -339,9 +334,6 @@ func (s *createRuleHandler) validate(rule *req.CreateRuleRequest) error {
 	}
 
 	if rule.TrustLens != nil {
-		if rule.TrustLens.AppID == "" {
-			return fmt.Errorf("trust lens app id is required")
-		}
 		if rule.TrustLens.TeamID == "" {
 			return fmt.Errorf("trust lens team id is required")
 		}

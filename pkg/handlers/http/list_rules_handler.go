@@ -82,7 +82,6 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 		var trustLensConfig *types.TrustLensConfigDTO
 		if rule.TrustLens != nil {
 			trustLensConfig = &types.TrustLensConfigDTO{
-				AppID:  rule.TrustLens.AppID,
 				TeamID: rule.TrustLens.TeamID,
 				Type:   rule.TrustLens.Type,
 			}

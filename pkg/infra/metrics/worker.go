@@ -236,7 +236,6 @@ func (m *worker) feedEvent(
 
 	if resp.Rule != nil {
 		if resp.Rule.TrustLens != nil {
-			evt.AppID = resp.Rule.TrustLens.AppID
 			evt.TeamID = resp.Rule.TrustLens.TeamID
 			if resp.Rule.TrustLens.Type != "" {
 				evt.Task = strings.ToLower(resp.Rule.TrustLens.Type)
