@@ -10,6 +10,7 @@ import (
 )
 
 func TestRequiredPlugins_Failed(t *testing.T) {
+	defer RunTest(t, "RequiredPlugins", time.Now())()
 	subdomain := fmt.Sprintf("test-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Contextual Security Gateway",
@@ -41,6 +42,7 @@ func TestRequiredPlugins_Failed(t *testing.T) {
 }
 
 func TestRequiredPlugins_Success(t *testing.T) {
+	defer RunTest(t, "RequiredPlugins", time.Now())()
 	subdomain := fmt.Sprintf("test-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Required Plugins Gateway",

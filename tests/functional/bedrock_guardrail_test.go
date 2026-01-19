@@ -12,6 +12,7 @@ import (
 )
 
 func TestBedrockGuardrailPlugin(t *testing.T) {
+	defer RunTest(t, "BedrockGuardrail", time.Now())()
 	subdomain := fmt.Sprintf("bedrock-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Bedrock Guardrail Gateway",

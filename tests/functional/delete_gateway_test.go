@@ -10,6 +10,7 @@ import (
 )
 
 func TestDeleteGateway(t *testing.T) {
+	defer RunTest(t, "DeleteGateway", time.Now())()
 	t.Run("it should delete a gateway and verify it no longer exists", func(t *testing.T) {
 		// Create a gateway first
 		gatewayID := CreateGateway(t, map[string]interface{}{

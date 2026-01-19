@@ -13,6 +13,7 @@ import (
 )
 
 func TestProviderLoadBalancer(t *testing.T) {
+	defer RunTest(t, "ProviderLoadBalancer", time.Now())()
 	subdomain := fmt.Sprintf("gateway-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      fmt.Sprintf("multi-provider-gateway-%d", time.Now().Unix()),

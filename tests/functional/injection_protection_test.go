@@ -15,6 +15,7 @@ import (
 )
 
 func TestInjectionProtection_BlockAttacks(t *testing.T) {
+	defer RunTest(t, "InjectionProtection", time.Now())()
 	subdomain := fmt.Sprintf("injection-%d", time.Now().Unix())
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Injection Protection Test Gateway",
@@ -921,6 +922,7 @@ func TestInjectionProtection_BlockAttacks(t *testing.T) {
 }
 
 func TestInjectionProtection_AllowSafeInputs(t *testing.T) {
+	defer RunTest(t, "InjectionProtection", time.Now())()
 	subdomain := fmt.Sprintf("injection-safe-%d", time.Now().Unix())
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Injection Protection Safe Test Gateway",

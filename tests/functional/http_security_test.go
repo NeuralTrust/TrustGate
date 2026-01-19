@@ -10,6 +10,7 @@ import (
 )
 
 func TestSecurityMiddleware(t *testing.T) {
+	defer RunTest(t, "HttpSecurity", time.Now())()
 	subdomain := fmt.Sprintf("security-%d", time.Now().Unix())
 
 	gatewayPayload := map[string]interface{}{

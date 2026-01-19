@@ -10,6 +10,7 @@ import (
 )
 
 func TestIPWhitelist(t *testing.T) {
+	defer RunTest(t, "IpWhitelist", time.Now())()
 	sub := fmt.Sprintf("ipwl-%d", time.Now().UnixNano())
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "IP Whitelist Gateway",

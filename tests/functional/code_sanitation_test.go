@@ -18,6 +18,7 @@ import (
 // When code injection patterns are detected, they are sanitized (replaced with *)
 // instead of blocking the request.
 func TestCodeSanitation_SanitizeMode(t *testing.T) {
+	defer RunTest(t, "CodeSanitation", time.Now())()
 	subdomain := fmt.Sprintf("code-sanitize-%d", time.Now().Unix())
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Code Sanitation Sanitize Test Gateway",
@@ -178,6 +179,7 @@ func TestCodeSanitation_SanitizeMode(t *testing.T) {
 // TestCodeSanitation_BlockMode tests the code_sanitation plugin in block mode.
 // When code injection patterns are detected, the request is blocked.
 func TestCodeSanitation_BlockMode(t *testing.T) {
+	defer RunTest(t, "CodeSanitation", time.Now())()
 	subdomain := fmt.Sprintf("code-block-%d", time.Now().Unix())
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Code Sanitation Block Test Gateway",
@@ -347,6 +349,7 @@ func TestCodeSanitation_BlockMode(t *testing.T) {
 
 // TestCodeSanitation_SpecificLanguages tests the code_sanitation plugin with specific languages enabled.
 func TestCodeSanitation_SpecificLanguages(t *testing.T) {
+	defer RunTest(t, "CodeSanitation", time.Now())()
 	subdomain := fmt.Sprintf("code-lang-%d", time.Now().Unix())
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Code Sanitation Language Test Gateway",
@@ -485,6 +488,7 @@ func TestCodeSanitation_SpecificLanguages(t *testing.T) {
 
 // TestCodeSanitation_ContentTypes tests the code_sanitation plugin with different content check types.
 func TestCodeSanitation_ContentTypes(t *testing.T) {
+	defer RunTest(t, "CodeSanitation", time.Now())()
 	subdomain := fmt.Sprintf("code-content-%d", time.Now().Unix())
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Code Sanitation Content Test Gateway",
@@ -634,6 +638,7 @@ func TestCodeSanitation_ContentTypes(t *testing.T) {
 
 // TestCodeSanitation_NestedJSON tests sanitization of nested JSON structures.
 func TestCodeSanitation_NestedJSON(t *testing.T) {
+	defer RunTest(t, "CodeSanitation", time.Now())()
 	subdomain := fmt.Sprintf("code-nested-%d", time.Now().Unix())
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Code Sanitation Nested JSON Test Gateway",
@@ -790,6 +795,7 @@ func TestCodeSanitation_NestedJSON(t *testing.T) {
 
 // TestCodeSanitation_PlainTextBody tests sanitization of plain text (non-JSON) bodies.
 func TestCodeSanitation_PlainTextBody(t *testing.T) {
+	defer RunTest(t, "CodeSanitation", time.Now())()
 	subdomain := fmt.Sprintf("code-plain-%d", time.Now().Unix())
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Code Sanitation Plain Text Test Gateway",

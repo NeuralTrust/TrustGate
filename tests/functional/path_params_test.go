@@ -13,6 +13,7 @@ import (
 )
 
 func TestPathParams(t *testing.T) {
+	defer RunTest(t, "PathParams", time.Now())()
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Path Params Test Gateway",
 		"subdomain": fmt.Sprintf("path-params-test-%d", time.Now().UnixNano()),

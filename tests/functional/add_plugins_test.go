@@ -10,6 +10,7 @@ import (
 )
 
 func TestAddPluginsHandler_GatewaySuccess(t *testing.T) {
+	defer RunTest(t, "AddPlugins", time.Now())()
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Add Plugins Gateway",
 		"subdomain": fmt.Sprintf("add-plugins-%d", time.Now().UnixNano()),
@@ -65,6 +66,7 @@ func TestAddPluginsHandler_GatewaySuccess(t *testing.T) {
 }
 
 func TestAddPluginsHandler_GatewayDuplicateStage(t *testing.T) {
+	defer RunTest(t, "AddPlugins", time.Now())()
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Add Plugins Duplicate",
 		"subdomain": fmt.Sprintf("add-plugins-dup-%d", time.Now().UnixNano()),
@@ -109,6 +111,7 @@ func TestAddPluginsHandler_GatewayDuplicateStage(t *testing.T) {
 }
 
 func TestAddPluginsHandler_RuleSuccess(t *testing.T) {
+	defer RunTest(t, "AddPlugins", time.Now())()
 	// Create gateway
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Add Plugins Rule",
@@ -200,6 +203,7 @@ func TestAddPluginsHandler_RuleSuccess(t *testing.T) {
 }
 
 func TestAddPluginsHandler_ValidationErrors(t *testing.T) {
+	defer RunTest(t, "AddPlugins", time.Now())()
 	// Invalid type
 	payload := map[string]interface{}{
 		"type": "invalid",
