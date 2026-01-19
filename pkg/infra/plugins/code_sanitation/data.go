@@ -2,7 +2,7 @@ package code_sanitation
 
 type CodeSanitationData struct {
 	Sanitized bool                  `json:"sanitized"`
-	Events    []CodeSanitationEvent `json:"events"`
+	Events    []CodeSanitationEvent `json:"events,omitempty"`
 }
 
 type CodeSanitationEvent struct {

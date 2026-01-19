@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	Version   = "1.9.47"
+	Version   = "1.9.48"
 	AppName   = "TrustGate"
 	BuildDate = "unknown"
 )
