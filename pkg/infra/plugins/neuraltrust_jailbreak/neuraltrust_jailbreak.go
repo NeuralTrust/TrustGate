@@ -146,22 +146,32 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
 
-	inputBody := req.Body
+	var inputs []string
+	if len(req.Messages) > 0 {
+		inputs = req.Messages
+	} else {
+		inputBody := req.Body
+		if req.Stage == pluginTypes.PostRequest {
+			inputBody = resp.Body
+		}
 
-	if req.Stage == pluginTypes.PostRequest {
-		inputBody = resp.Body
+		mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
+		if err != nil {
+			p.logger.WithError(err).Error("failed to define request body")
+			return nil, fmt.Errorf("failed to define request body: %w", err)
+		}
+		inputs = []string{mappingContent.Input}
 	}
 
-	mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
-	if err != nil {
-		p.logger.WithError(err).Error("failed to define request body")
-		return nil, fmt.Errorf("failed to define request body: %w", err)
+	totalInputLength := 0
+	for _, input := range inputs {
+		totalInputLength += len(input)
 	}
 
 	evt := &NeuralTrustJailbreakData{
 		Provider:     conf.Provider,
 		MappingField: conf.MappingField,
-		InputLength:  len(mappingContent.Input),
+		InputLength:  totalInputLength,
 		Scores:       &JailbreakScores{},
 		Blocked:      false,
 	}
@@ -179,10 +189,9 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		credentials := buildFirewallCredentials(conf.Credentials)
 
 		content := firewall.Content{
-			Input: []string{mappingContent.Input},
+			Input: inputs,
 		}
 
-		// Measure detection latency
 		startTime := time.Now()
 		responses, err := firewallClient.DetectJailbreak(ctx, content, credentials)
 		evt.DetectionLatencyMs = time.Since(startTime).Milliseconds()
@@ -208,21 +217,25 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 			return nil, fmt.Errorf("failed to call firewall: %w", err)
 		}
 
-		// Store detection scores
-		response := responses[0]
-		evt.Scores.MaliciousPrompt = response.Scores.MaliciousPrompt
+		var maxScore float64
+		for _, response := range responses {
+			if response.Scores.MaliciousPrompt > maxScore {
+				maxScore = response.Scores.MaliciousPrompt
+			}
+		}
 
-		// Check response for jailbreak violations
-		if response.Scores.MaliciousPrompt >= conf.JailbreakParamBag.Threshold {
+		evt.Scores.MaliciousPrompt = maxScore
+
+		if maxScore >= conf.JailbreakParamBag.Threshold {
 			evt.Blocked = true
 			violationMsg := fmt.Sprintf(
 				"jailbreak: score %.2f exceeded threshold %.2f",
-				response.Scores.MaliciousPrompt,
+				maxScore,
 				conf.JailbreakParamBag.Threshold,
 			)
 			evt.Violation = &ViolationInfo{
 				Type:      "jailbreak",
-				Score:     response.Scores.MaliciousPrompt,
+				Score:     maxScore,
 				Threshold: conf.JailbreakParamBag.Threshold,
 				Message:   violationMsg,
 			}

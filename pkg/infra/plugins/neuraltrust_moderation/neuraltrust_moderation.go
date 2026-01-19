@@ -209,24 +209,26 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	var keywords []string
 	var regexRules []*regexp.Regexp
 
-	inputBody := req.Body
+	var inputBytes []byte
+	if len(req.Messages) > 0 {
+		inputBytes = []byte(strings.Join(req.Messages, "\n"))
+	} else {
+		inputBody := req.Body
+		if req.Stage == pluginTypes.PostRequest {
+			inputBody = resp.Body
+		}
 
-	if req.Stage == pluginTypes.PostRequest {
-		inputBody = resp.Body
+		mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
+		if err != nil {
+			p.logger.WithError(err).Error("failed to define request body")
+			return nil, fmt.Errorf("failed to define request body: %w", err)
+		}
+		inputBytes = []byte(mappingContent.Input)
 	}
-
-	mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
-	if err != nil {
-		p.logger.WithError(err).Error("failed to define request body")
-		return nil, fmt.Errorf("failed to define request body: %w", err)
-	}
-
-	// Convert to []byte once and reuse
-	inputBytes := []byte(mappingContent.Input)
 
 	evt := &NeuralTrustModerationData{
 		MappingField: conf.MappingField,
-		InputLength:  len(mappingContent.Input),
+		InputLength:  len(inputBytes),
 		Blocked:      false,
 	}
 

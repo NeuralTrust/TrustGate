@@ -115,7 +115,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	)
 
 	t.Run("Valid Configuration", func(t *testing.T) {
-		validConfig := types.PluginConfig{
+		validConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"embedding_moderation": map[string]interface{}{
 					"threshold":         0.7,
@@ -138,7 +138,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	})
 
 	t.Run("Invalid Configuration - Missing Threshold", func(t *testing.T) {
-		invalidConfig := types.PluginConfig{
+		invalidConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"embedding_moderation": map[string]interface{}{
 					"enabled": true,
@@ -151,7 +151,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	})
 
 	t.Run("Invalid Configuration - Invalid Threshold", func(t *testing.T) {
-		invalidConfig := types.PluginConfig{
+		invalidConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"embedding_moderation": map[string]interface{}{
 					"threshold": 1.5, // Invalid: > 1
@@ -165,7 +165,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	})
 
 	t.Run("Valid Configuration - LLM Provider", func(t *testing.T) {
-		validConfig := types.PluginConfig{
+		validConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"llm_moderation": map[string]interface{}{
 					"provider": "openai",
@@ -181,7 +181,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 		err := plugin.ValidateConfig(validConfig)
 		assert.NoError(t, err)
 
-		validConfig = types.PluginConfig{
+		validConfig = plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"llm_moderation": map[string]interface{}{
 					"provider": "google",
@@ -199,7 +199,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	})
 
 	t.Run("Invalid Configuration - LLM Provider", func(t *testing.T) {
-		invalidConfig := types.PluginConfig{
+		invalidConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"llm_moderation": map[string]interface{}{
 					"provider": "invalid-provider", // Invalid: not openai or gemini
@@ -218,7 +218,7 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 	})
 
 	t.Run("Invalid Configuration - Empty LLM Model", func(t *testing.T) {
-		invalidConfig := types.PluginConfig{
+		invalidConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"llm_moderation": map[string]interface{}{
 					"provider": "openai",
@@ -268,7 +268,7 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationSafe(t *testing.T) {
 		providerLocatorMock,
 	)
 
-	cfg := types.PluginConfig{
+	cfg := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"embedding_moderation": map[string]interface{}{
 				"threshold":         0.7,
@@ -336,7 +336,7 @@ func TestNeuralTrustModerationPlugin_Execute_ModerationUnsafe(t *testing.T) {
 		providerLocatorMock,
 	)
 
-	cfg := types.PluginConfig{
+	cfg := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"embedding_moderation": map[string]interface{}{
 				"threshold":         0.7,
@@ -385,7 +385,7 @@ func TestNeuralTrustModerationPlugin_Execute_WithMappingFieldArray(t *testing.T)
 		providerLocatorMock,
 	)
 
-	cfg := types.PluginConfig{
+	cfg := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"embedding_moderation": map[string]interface{}{
 				"threshold":         0.7,
@@ -446,7 +446,7 @@ func TestNeuralTrustModerationPlugin_Execute_EmbeddingError(t *testing.T) {
 		providerLocatorMock,
 	)
 
-	cfg := types.PluginConfig{
+	cfg := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"embedding_moderation": map[string]interface{}{
 				"threshold":         0.7,
@@ -492,7 +492,7 @@ func TestNeuralTrustModerationPlugin_Execute_DisabledPlugin(t *testing.T) {
 		providerLocatorMock,
 	)
 
-	cfg := types.PluginConfig{
+	cfg := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"embedding_moderation": map[string]interface{}{
 				"threshold": 0.7,
@@ -530,7 +530,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSafe(t *testing.T) {
 		providerLocatorMock,
 	)
 
-	cfg := types.PluginConfig{
+	cfg := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"keyreg_moderation": map[string]interface{}{
 				"enabled":              true,
@@ -574,7 +574,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegKeywordBlocked(t *testing.T) 
 		providerLocatorMock,
 	)
 
-	cfg := types.PluginConfig{
+	cfg := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"keyreg_moderation": map[string]interface{}{
 				"enabled":              true,
@@ -618,7 +618,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSimilarWordBlocked(t *testing
 		providerLocatorMock,
 	)
 
-	cfg := types.PluginConfig{
+	cfg := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"keyreg_moderation": map[string]interface{}{
 				"enabled":              true,
@@ -662,7 +662,7 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegRegexBlocked(t *testing.T) {
 		providerLocatorMock,
 	)
 
-	cfg := types.PluginConfig{
+	cfg := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"keyreg_moderation": map[string]interface{}{
 				"enabled":              true,
@@ -731,7 +731,7 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModeration(t *testing.T) {
 		providerLocatorMock,
 	)
 
-	cfg := types.PluginConfig{
+	cfg := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"llm_moderation": map[string]interface{}{
 				"provider": "openai",
@@ -799,7 +799,7 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModerationSafe(t *testing.T) {
 		providerLocatorMock,
 	)
 
-	cfg := types.PluginConfig{
+	cfg := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"llm_moderation": map[string]interface{}{
 				"provider": "openai",
@@ -825,3 +825,94 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModerationSafe(t *testing.T) {
 	assert.NotNil(t, pluginResp)
 	assert.Equal(t, 200, pluginResp.StatusCode)
 }
+
+func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegSafe(t *testing.T) {
+	mockClient := new(httpxMocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
+	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		embeddingRepositoryMock,
+		embeddingLocatorMock,
+		providerLocatorMock,
+	)
+
+	cfg := plugintypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"keyreg_moderation": map[string]interface{}{
+				"enabled":              true,
+				"similarity_threshold": 0.8,
+				"keywords":             []string{"password", "secret"},
+				"actions": map[string]interface{}{
+					"type":    "block",
+					"message": "Content contains sensitive information",
+				},
+			},
+		},
+	}
+
+	// Messages should be used instead of Body
+	req := &types.RequestContext{
+		Body:      []byte(`password secret api_key`), // This would be blocked if used
+		Messages:  []string{"safe message 1", "safe message 2"},
+		GatewayID: "test-gateway",
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	assert.NoError(t, err)
+	assert.NotNil(t, pluginResp)
+	assert.Equal(t, 200, pluginResp.StatusCode)
+}
+
+func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegBlocked(t *testing.T) {
+	mockClient := new(httpxMocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
+	embeddingRepositoryMock := new(embeddingMocks.Repository)
+	embeddingLocatorMock := new(embeddingFactoryMocks.EmbeddingServiceLocator)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		embeddingRepositoryMock,
+		embeddingLocatorMock,
+		providerLocatorMock,
+	)
+
+	cfg := plugintypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"keyreg_moderation": map[string]interface{}{
+				"enabled":              true,
+				"similarity_threshold": 0.8,
+				"keywords":             []string{"password", "secret"},
+				"actions": map[string]interface{}{
+					"type":    "block",
+					"message": "Content contains sensitive information",
+				},
+			},
+		},
+	}
+
+	// Messages contain blocked keyword
+	req := &types.RequestContext{
+		Body:      []byte(`safe content`), // This is safe but should be ignored
+		Messages:  []string{"my password is 12345"},
+		GatewayID: "test-gateway",
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	assert.Error(t, err)
+	assert.Nil(t, pluginResp)
+	assert.Contains(t, err.Error(), "content blocked")
+}
+
