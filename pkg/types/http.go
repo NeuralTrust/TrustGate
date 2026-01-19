@@ -9,6 +9,13 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// Message roles for conversation context
+const (
+	RoleUser      = "user"
+	RoleAssistant = "assistant"
+	RoleSystem    = "system"
+)
+
 // RequestContext represents the context for a request
 type RequestContext struct {
 	C         *fiber.Ctx
@@ -20,6 +27,7 @@ type RequestContext struct {
 	Path      string
 	Query     url.Values
 	Body      []byte
+	Messages  []string
 	Metadata  map[string]interface{}
 	Stage     types.Stage
 	ProcessAt *time.Time

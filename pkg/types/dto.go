@@ -9,10 +9,6 @@ import (
 	plugintypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 )
 
-// PluginConfig is an alias for plugintypes.PluginConfig for backward compatibility
-type PluginConfig = plugintypes.PluginConfig
-
-// CredentialsDTO represents authentication configuration for upstream services
 type CredentialsDTO struct {
 	// Api Key
 	ApiKey string `json:"api_key,omitempty"`
@@ -68,7 +64,7 @@ type GatewayDTO struct {
 	ID              string                        `json:"id"`
 	Name            string                        `json:"name"`
 	Status          string                        `json:"status"`
-	RequiredPlugins []PluginConfig                `json:"required_plugins"`
+	RequiredPlugins []plugintypes.PluginConfig                `json:"required_plugins"`
 	Telemetry       *TelemetryDTO                 `json:"telemetry"`
 	SecurityConfig  *SecurityConfigDTO            `json:"security_config"`
 	TlS             map[string]ClientTLSConfigDTO `json:"tls"`
@@ -145,7 +141,7 @@ type ForwardingRuleDTO struct {
 	StripPath     bool                `json:"strip_path"`
 	PreserveHost  bool                `json:"preserve_host"`
 	RetryAttempts int                 `json:"retry_attempts"`
-	PluginChain   []PluginConfig      `json:"plugin_chain"`
+	PluginChain   []plugintypes.PluginConfig      `json:"plugin_chain"`
 	Active        bool                `json:"active"`
 	Public        bool                `json:"public"`
 	TrustLens     *TrustLensConfigDTO `json:"trustlens,omitempty"`

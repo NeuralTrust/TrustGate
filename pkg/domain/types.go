@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 
+	plugintypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
 type (
 	MethodsJSON        []string
 	HeadersJSON        map[string]string
-	PluginChainJSON    []types.PluginConfig
+	PluginChainJSON    []plugintypes.PluginConfig
 	CredentialsJSON    = types.CredentialsDTO
 	SecurityConfigJSON types.SecurityConfigDTO
 	ClientTLSConfig    map[string]types.ClientTLSConfigDTO

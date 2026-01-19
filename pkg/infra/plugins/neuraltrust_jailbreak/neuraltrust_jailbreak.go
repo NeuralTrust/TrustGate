@@ -146,22 +146,32 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
 
-	inputBody := req.Body
+	var inputs []string
+	if len(req.Messages) > 0 {
+		inputs = req.Messages
+	} else {
+		inputBody := req.Body
+		if req.Stage == pluginTypes.PostRequest {
+			inputBody = resp.Body
+		}
 
-	if req.Stage == pluginTypes.PostRequest {
-		inputBody = resp.Body
+		mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
+		if err != nil {
+			p.logger.WithError(err).Error("failed to define request body")
+			return nil, fmt.Errorf("failed to define request body: %w", err)
+		}
+		inputs = []string{mappingContent.Input}
 	}
-
-	mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
-	if err != nil {
-		p.logger.WithError(err).Error("failed to define request body")
-		return nil, fmt.Errorf("failed to define request body: %w", err)
+	
+	totalInputLength := 0
+	for _, input := range inputs {
+		totalInputLength += len(input)
 	}
 
 	evt := &NeuralTrustJailbreakData{
 		Provider:     conf.Provider,
 		MappingField: conf.MappingField,
-		InputLength:  len(mappingContent.Input),
+		InputLength:  totalInputLength,
 		Scores:       &JailbreakScores{},
 		Blocked:      false,
 	}
@@ -179,7 +189,7 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		credentials := buildFirewallCredentials(conf.Credentials)
 
 		content := firewall.Content{
-			Input: []string{mappingContent.Input},
+			Input: inputs,
 		}
 
 		// Measure detection latency
