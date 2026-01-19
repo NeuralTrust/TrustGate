@@ -65,28 +65,31 @@ const (
 var suspiciousChars = []byte{'<', '>', '(', ')', '{', '}', '[', ']', ';', '|', '&', '$', '`', '\\', '/', '\'', '"', '%', '='}
 
 // Predefined regex patterns for common code patterns - compiled once at package init
+// Matches dangerous function/method names. For functions that require (), we match the name only
+// (without the parenthesis) so sanitization preserves parameters for debugging: eval('x') -> ****('x')
 var predefinedCodePatterns = map[Language]*regexp.Regexp{
-	JavaScript: regexp.MustCompile(`(?i)(eval\s*\(|new\s+Function|setTimeout\s*\(|setInterval\s*\(|` +
-		`document\.write|<\s*script|\bfunction\s*\(|\)\s*{|\bwindow\.|\bdocument\.|\blocation\.|\bhistory\.|` +
-		`localStorage\.|sessionStorage\.|XMLHttpRequest|fetch\s*\(|\bwebsocket|\bpostMessage|\baddEventListener|` +
-		`innerHTML|outerHTML|insertAdjacentHTML|execScript|crypto\.subtle)`),
+	// JavaScript pattern matches both literal < and JSON-escaped \u003c for script tags (including closing)
+	JavaScript: regexp.MustCompile(`(?i)(\beval\b|\bnew\s+Function\b|\bsetTimeout\b|\bsetInterval\b|` +
+		`\bdocument\.write\b|(<|\\u003[cC])\s*/?\s*script|\bwindow\.|\bdocument\.|\blocation\.|\bhistory\.|` +
+		`\blocalStorage\.|\bsessionStorage\.|\bXMLHttpRequest\b|\bfetch\b|\bwebsocket\b|\bpostMessage\b|\baddEventListener\b|` +
+		`\binnerHTML\b|\bouterHTML\b|\binsertAdjacentHTML\b|\bexecScript\b|\bcrypto\.subtle)`),
 
-	Python: regexp.MustCompile(`(?i)(exec\s*\(|eval\s*\(|compile\s*\(|__import__\s*\(|subprocess\.|os\.|sys\.|` +
-		`pickle\.|shelve\.|pty\.|commands\.|\bimport\s+|from\s+\w+\s+import|\bopen\s*\(|\bfile\s*\(|\bexec\s*\(|` +
-		`\bexecfile\s*\(|marshal\.loads|yaml\.load|\bgetattr\s*\(|\bsetattr\s*\(|\bdelattr\s*\(|\bhasattr\s*\(|` +
-		`\bglobals\s*\(|\blocals\s*\()`),
+	Python: regexp.MustCompile(`(?i)(\bexec\b|\beval\b|\bcompile\b|\b__import__\b|\bsubprocess\.|\bos\.|\bsys\.|` +
+		`\bpickle\.|\bshelve\.|\bpty\.|\bcommands\.|\bimport\s+|\bfrom\s+\w+\s+import|\bopen\b|` +
+		`\bexecfile\b|\bmarshal\.loads\b|\byaml\.load\b|\bgetattr\b|\bsetattr\b|\bdelattr\b|\bhasattr\b|` +
+		`\bglobals\b|\blocals\b)`),
 
-	PHP: regexp.MustCompile(`(?i)(eval\s*\(|assert\s*\(|system\s*\(|exec\s*\(|passthru\s*\(|` +
-		`shell_exec\s*\(|phpinfo\s*\(|\binclude\s*\(|\brequire\s*\(|\binclude_once\s*\(|` +
-		`\brequire_once\s*\(|\bproc_open\s*\(|\bpopen\s*\(|\bcurl_exec\s*\(|\bfopen\s*\(|` +
-		`\bfile_get_contents\s*\(|\bfile_put_contents\s*\(|\bunserialize\s*\(|\bcreate_function\s*\(|` +
-		`\bpreg_replace\s*\(.*\/e|\bextract\s*\(|\bparse_str\s*\(|\bheader\s*\(|\bmb_ereg_replace\s*\(.*\/e)`),
+	PHP: regexp.MustCompile(`(?i)(\beval\b|\bassert\b|\bsystem\b|\bexec\b|\bpassthru\b|` +
+		`\bshell_exec\b|\bphpinfo\b|\binclude\b|\brequire\b|\binclude_once\b|` +
+		`\brequire_once\b|\bproc_open\b|\bpopen\b|\bcurl_exec\b|\bfopen\b|` +
+		`\bfile_get_contents\b|\bfile_put_contents\b|\bunserialize\b|\bcreate_function\b|` +
+		`\bpreg_replace\b|\bextract\b|\bparse_str\b|\bheader\b|\bmb_ereg_replace\b)`),
 
-	SQL: regexp.MustCompile(`(?i)(SELECT\s+.*\s+FROM|INSERT\s+INTO|UPDATE\s+.*\s+SET|DELETE\s+FROM|` +
-		`DROP\s+TABLE|ALTER\s+TABLE|UNION\s+SELECT|UNION\s+ALL\s+SELECT|EXEC\s+sp_|EXECUTE\s+sp_|` +
-		`BULK\s+INSERT|MERGE\s+INTO|TRUNCATE\s+TABLE|CREATE\s+TABLE|CREATE\s+DATABASE|CREATE\s+INDEX|` +
-		`CREATE\s+PROCEDURE|CREATE\s+TRIGGER|GRANT\s+|REVOKE\s+|INTO\s+OUTFILE|INTO\s+DUMPFILE|` +
-		`LOAD\s+DATA|SELECT\s+INTO|WAITFOR\s+DELAY|BENCHMARK\s*\()`),
+	SQL: regexp.MustCompile(`(?i)(\bSELECT\s+.*\s+FROM|\bINSERT\s+INTO|\bUPDATE\s+.*\s+SET|\bDELETE\s+FROM|` +
+		`\bDROP\s+TABLE|\bALTER\s+TABLE|\bUNION\s+SELECT|\bUNION\s+ALL\s+SELECT|\bEXEC\s+sp_|\bEXECUTE\s+sp_|` +
+		`\bBULK\s+INSERT|\bMERGE\s+INTO|\bTRUNCATE\s+TABLE|\bCREATE\s+TABLE|\bCREATE\s+DATABASE|\bCREATE\s+INDEX|` +
+		`\bCREATE\s+PROCEDURE|\bCREATE\s+TRIGGER|\bGRANT\s+|\bREVOKE\s+|\bINTO\s+OUTFILE|\bINTO\s+DUMPFILE|` +
+		`\bLOAD\s+DATA|\bSELECT\s+INTO|\bWAITFOR\s+DELAY|\bBENCHMARK\b)`),
 
 	Shell: regexp.MustCompile(`(?i)(` +
 		`\bsh\s+-c|\bbash\s+-c|/bin/sh|/bin/bash|\bcurl\s+|\bwget\s+|` +
@@ -99,7 +102,7 @@ var predefinedCodePatterns = map[Language]*regexp.Regexp{
 		`\|\s*/usr/bin/id|` +
 		`\|\s*/bin/ls|` +
 		`;\s*/usr/bin/id|` +
-		`system\s*\(\s*['"]*cat|` +
+		`\bsystem\s*\(\s*['"]*cat|` +
 		`\|\s*id[\s;]|\&\s*id[\s;]|;\s*id[\s;]|` +
 		`%0A\s*id|%0A\s*/usr/bin/id|` +
 		`\$\s*;|\n\s*/bin/|\n\s*/usr/bin/|` +
@@ -108,42 +111,48 @@ var predefinedCodePatterns = map[Language]*regexp.Regexp{
 		`\(\)\s*\{\s*:\s*;\s*\}\s*;.*?wget|` +
 		`\(\)\s*\{\s*:\s*;\s*\}\s*;.*?sleep|` +
 		`\(\)\s*\{\s*:\s*;\s*\}\s*;.*?nc\s+-|` +
-		`cat\s+/etc/passwd|cat\s+/etc/shadow|` +
-		`grep\s+root\s+/etc/shadow|` +
+		`\bcat\s+/etc/passwd|\bcat\s+/etc/shadow|` +
+		`\bgrep\s+root\s+/etc/shadow|` +
 		`\$\(\s*cat\s+/etc/passwd\)|` +
-		`ping\s+-[in]\s+\d+\s+127\.0\.0\.1|` +
-		`nc\s+-lvvp\s+\d+\s+-e\s+/bin/bash|` +
+		`\bping\s+-[in]\s+\d+\s+127\.0\.0\.1|` +
+		`\bnc\s+-lvvp\s+\d+\s+-e\s+/bin/bash|` +
 		`<\?php\s+system|` +
 		`\{\{\s*get_user_file|` +
 		`%0A.*?cat%20/etc|` +
 		`%0A.*?/usr/bin/id)`),
 
-	Java: regexp.MustCompile(`(?i)(Runtime\.getRuntime\(\)\.exec\(|ProcessBuilder\(|System\.exit\(|` +
-		`Class\.forName\(|\.getMethod\(|\.invoke\(|\.newInstance\(|URLClassLoader|ObjectInputStream|` +
-		`SecurityManager|System\.load|System\.loadLibrary|\.getConstructor\(|\.getDeclaredMethod\(|` +
-		`\.getDeclaredField\(|\.setAccessible\(true\)|javax\.script\.|ScriptEngine|\.defineClass\(|` +
-		`\.getRuntime\(\)|\.exec\(|\.deserialize)`),
+	Java: regexp.MustCompile(`(?i)(\bRuntime\.getRuntime\(\)\.exec\b|\bProcessBuilder\b|\bSystem\.exit\b|` +
+		`\bClass\.forName\b|\.getMethod\b|\.invoke\b|\.newInstance\b|\bURLClassLoader\b|\bObjectInputStream\b|` +
+		`\bSecurityManager\b|\bSystem\.load\b|\bSystem\.loadLibrary\b|\.getConstructor\b|\.getDeclaredMethod\b|` +
+		`\.getDeclaredField\b|\.setAccessible\(true\)|\bjavax\.script\.|\bScriptEngine\b|\.defineClass\b|` +
+		`\.getRuntime\b|\.exec\b|\.deserialize\b)`),
 
-	CSharp: regexp.MustCompile(`(?i)(System\.Diagnostics\.Process\.Start\(|new\s+Process\(|` +
-		`\.StartInfo\.FileName|\.StandardOutput|\.StandardError|System\.Reflection\.Assembly\.Load|` +
-		`Type\.GetType\(|\.InvokeMember\(|Convert\.FromBase64String\(|System\.Runtime\.Serialization|` +
-		`BinaryFormatter|ObjectStateFormatter|LosFormatter|System\.Management|System\.CodeDom\.Compiler|` +
-		`CSharpCodeProvider|System\.Data\.SqlClient|System\.DirectoryServices|System\.IO\.File|` +
-		`System\.Net\.WebClient|System\.Net\.Sockets|System\.Xml\.XmlDocument|XmlReader\.Create)`),
+	CSharp: regexp.MustCompile(`(?i)(\bSystem\.Diagnostics\.Process\.Start\b|\bnew\s+Process\b|` +
+		`\.StartInfo\.FileName|\.StandardOutput|\.StandardError|\bSystem\.Reflection\.Assembly\.Load\b|` +
+		`\bType\.GetType\b|\.InvokeMember\b|\bConvert\.FromBase64String\b|\bSystem\.Runtime\.Serialization|` +
+		`\bBinaryFormatter\b|\bObjectStateFormatter\b|\bLosFormatter\b|\bSystem\.Management|\bSystem\.CodeDom\.Compiler|` +
+		`\bCSharpCodeProvider\b|\bSystem\.Data\.SqlClient|\bSystem\.DirectoryServices|\bSystem\.IO\.File|` +
+		`\bSystem\.Net\.WebClient|\bSystem\.Net\.Sockets|\bSystem\.Xml\.XmlDocument|\bXmlReader\.Create\b)`),
 
-	Ruby: regexp.MustCompile(`(?i)(eval\s*\(|system\s*\(|exec\s*\(|` + "`" + `.*` + "`" + `|\%x\{|\bsend\s*\(|` +
-		`\.constantize|\.classify|\.to_sym|Kernel\.|Process\.|IO\.|File\.|Dir\.|Pathname\.|` +
-		`Marshal\.load|YAML\.load|CSV\.load|JSON\.load|ERB\.new|Tempfile\.|StringIO\.|URI\.|` +
-		`Net::HTTP|Open3\.|Shellwords\.|instance_eval|class_eval|module_eval|define_method)`),
+	Ruby: regexp.MustCompile(`(?i)(\beval\b|\bsystem\b|\bexec\b|` + "`" + `.*` + "`" + `|\%x\{|\bsend\b|` +
+		`\.constantize|\.classify|\.to_sym|\bKernel\.|\bProcess\.|\bIO\.|\bFile\.|\bDir\.|\bPathname\.|` +
+		`\bMarshal\.load\b|\bYAML\.load\b|\bCSV\.load\b|\bJSON\.load\b|\bERB\.new\b|\bTempfile\.|\bStringIO\.|\bURI\.|` +
+		`\bNet::HTTP|\bOpen3\.|\bShellwords\.|\binstance_eval\b|\bclass_eval\b|\bmodule_eval\b|\bdefine_method\b)`),
 
-	HTML: regexp.MustCompile(`(?i)(<\s*script|<\s*iframe|<\s*object|<\s*embed|<\s*applet|<\s*meta|` +
-		`<\s*link|<\s*style|<\s*form|<\s*input|<\s*button|<\s*img[^>]+\bon\w+\s*=|\bon\w+\s*=|` +
-		`javascript:|vbscript:|data:\s*text/html|data:\s*application/javascript|` +
-		`data:\s*application/x-javascript|data:\s*text/javascript|base64|expression\s*\(|url\s*\(|` +
-		`@import|document\.|window\.|\[[\s"]*[^\]]*[\s"]*\]|\[[\s']*[^\]]*[\s']*\]|-moz-binding|` +
-		`behavior:|@charset|<\s*svg|<\s*animate|<\s*set|<\s*handler|<\s*listener|<\s*tbreak|` +
-		`<\s*tcopy|<\s*tref|<\s*video|<\s*audio|<\s*source|<\s*html|<\s*body|<\s*head|` +
-		`<\s*title|<\s*base|<\s*frameset|<\s*frame|<\s*marquee)`),
+	// HTML pattern matches both literal < and JSON-escaped \u003c variants, including closing tags
+	HTML: regexp.MustCompile(`(?i)((<|\\u003[cC])\s*/?\s*script|(<|\\u003[cC])\s*/?\s*iframe|(<|\\u003[cC])\s*/?\s*object|` +
+		`(<|\\u003[cC])\s*/?\s*embed|(<|\\u003[cC])\s*/?\s*applet|(<|\\u003[cC])\s*/?\s*meta|` +
+		`(<|\\u003[cC])\s*/?\s*link|(<|\\u003[cC])\s*/?\s*style|(<|\\u003[cC])\s*/?\s*form|(<|\\u003[cC])\s*/?\s*input|` +
+		`(<|\\u003[cC])\s*/?\s*button|(<|\\u003[cC])\s*img[^>]+\bon\w+\s*=|\bon\w+\s*=|` +
+		`\bjavascript:|\bvbscript:|\bdata:\s*text/html|\bdata:\s*application/javascript|` +
+		`\bdata:\s*application/x-javascript|\bdata:\s*text/javascript|\bbase64\b|\bexpression\b|\burl\s*\(|` +
+		`@import|\bdocument\.|\bwindow\.|\[[\s"]*[^\]]*[\s"]*\]|\[[\s']*[^\]]*[\s']*\]|-moz-binding|` +
+		`\bbehavior:|@charset|(<|\\u003[cC])\s*/?\s*svg|(<|\\u003[cC])\s*/?\s*animate|(<|\\u003[cC])\s*/?\s*set|` +
+		`(<|\\u003[cC])\s*/?\s*handler|(<|\\u003[cC])\s*/?\s*listener|(<|\\u003[cC])\s*/?\s*tbreak|` +
+		`(<|\\u003[cC])\s*/?\s*tcopy|(<|\\u003[cC])\s*/?\s*tref|(<|\\u003[cC])\s*/?\s*video|(<|\\u003[cC])\s*/?\s*audio|` +
+		`(<|\\u003[cC])\s*/?\s*source|(<|\\u003[cC])\s*/?\s*html|(<|\\u003[cC])\s*/?\s*body|(<|\\u003[cC])\s*/?\s*head|` +
+		`(<|\\u003[cC])\s*/?\s*title|(<|\\u003[cC])\s*/?\s*base|(<|\\u003[cC])\s*/?\s*frameset|(<|\\u003[cC])\s*/?\s*frame|` +
+		`(<|\\u003[cC])\s*/?\s*marquee)`),
 }
 
 // compiledConfigCache caches compiled configurations to avoid recompiling on every request
@@ -273,10 +282,30 @@ func (p *CodeSanitationPlugin) ValidateConfig(config pluginTypes.PluginConfig) e
 	return nil
 }
 
-func getConfigHash(config *Config) string {
-	data, _ := json.Marshal(config)
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
+func (p *CodeSanitationPlugin) Execute(
+	ctx context.Context,
+	pluginConfig pluginTypes.PluginConfig,
+	req *types.RequestContext,
+	_ *types.ResponseContext,
+	evtCtx *metrics.EventContext,
+) (*pluginTypes.PluginResponse, error) {
+	var config Config
+	if err := mapstructure.Decode(pluginConfig.Settings, &config); err != nil {
+		return nil, &pluginTypes.PluginError{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "Failed to decode plugin configuration",
+			Err:        err,
+		}
+	}
+	compiled, err := p.getOrCompileConfig(&config)
+	if err != nil {
+		return nil, &pluginTypes.PluginError{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "Failed to compile configuration",
+			Err:        err,
+		}
+	}
+	return p.executeParallel(ctx, req, compiled, evtCtx)
 }
 
 func (p *CodeSanitationPlugin) getOrCompileConfig(config *Config) (*compiledConfig, error) {
@@ -322,7 +351,7 @@ func (p *CodeSanitationPlugin) compileConfig(config *Config) (*compiledConfig, e
 		compiled.errorMessage = "Potential code injection detected"
 	}
 	if compiled.sanitizeChar == "" {
-		compiled.sanitizeChar = "X"
+		compiled.sanitizeChar = "*"
 	}
 
 	for _, contentType := range config.ContentToCheck {
@@ -399,97 +428,26 @@ func containsSuspiciousChars(data []byte) bool {
 	return false
 }
 
-func (p *CodeSanitationPlugin) Execute(
-	ctx context.Context,
-	pluginConfig pluginTypes.PluginConfig,
-	req *types.RequestContext,
-	_ *types.ResponseContext,
-	evtCtx *metrics.EventContext,
-) (*pluginTypes.PluginResponse, error) {
-	var config Config
-	if err := mapstructure.Decode(pluginConfig.Settings, &config); err != nil {
-		return nil, &pluginTypes.PluginError{
-			StatusCode: http.StatusInternalServerError,
-			Message:    "Failed to decode plugin configuration",
-			Err:        err,
-		}
-	}
-
-	compiled, err := p.getOrCompileConfig(&config)
-	if err != nil {
-		return nil, &pluginTypes.PluginError{
-			StatusCode: http.StatusInternalServerError,
-			Message:    "Failed to compile configuration",
-			Err:        err,
-		}
-	}
-
-	if compiled.action == Block {
-		return p.executeParallel(ctx, req, compiled, evtCtx)
-	}
-
-	var events []CodeSanitationEvent
-
-	if compiled.checkHeaders {
-		headerEvents, err := p.checkHeaders(req, compiled, evtCtx)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, headerEvents...)
-	}
-
-	if compiled.checkPathQuery {
-		pathEvents, err := p.checkPathAndQuery(req, compiled, evtCtx)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, pathEvents...)
-	}
-
-	if compiled.checkBody && len(req.Body) > 0 {
-		bodyEvents, err := p.checkBody(req, compiled, evtCtx)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, bodyEvents...)
-	}
-
-	evtCtx.SetExtras(CodeSanitationData{
-		Sanitized: compiled.action == Sanitize && len(events) > 0,
-		Events:    events,
-	})
-
-	return &pluginTypes.PluginResponse{
-		StatusCode: http.StatusOK,
-		Message:    "Request sanitized successfully",
-	}, nil
-}
-
 func (p *CodeSanitationPlugin) executeParallel(
 	_ context.Context,
 	req *types.RequestContext,
 	compiled *compiledConfig,
 	evtCtx *metrics.EventContext,
 ) (*pluginTypes.PluginResponse, error) {
-	g, gctx := errgroup.WithContext(context.Background())
-	var firstErr error
-	var errMu sync.Mutex
+	var (
+		allEvents   []CodeSanitationEvent
+		eventsMutex sync.Mutex
+	)
+
+	g := &errgroup.Group{}
 
 	if compiled.checkHeaders {
 		g.Go(func() error {
-			select {
-			case <-gctx.Done():
-				return nil
-			default:
-			}
-			_, err := p.checkHeaders(req, compiled, evtCtx)
-			if err != nil {
-				errMu.Lock()
-				if firstErr == nil {
-					firstErr = err
-				}
-				errMu.Unlock()
-				return err
+			events := p.checkHeaders(req, compiled)
+			if len(events) > 0 {
+				eventsMutex.Lock()
+				allEvents = append(allEvents, events...)
+				eventsMutex.Unlock()
 			}
 			return nil
 		})
@@ -497,19 +455,11 @@ func (p *CodeSanitationPlugin) executeParallel(
 
 	if compiled.checkPathQuery {
 		g.Go(func() error {
-			select {
-			case <-gctx.Done():
-				return nil
-			default:
-			}
-			_, err := p.checkPathAndQuery(req, compiled, evtCtx)
-			if err != nil {
-				errMu.Lock()
-				if firstErr == nil {
-					firstErr = err
-				}
-				errMu.Unlock()
-				return err
+			events := p.checkPathAndQuery(req, compiled)
+			if len(events) > 0 {
+				eventsMutex.Lock()
+				allEvents = append(allEvents, events...)
+				eventsMutex.Unlock()
 			}
 			return nil
 		})
@@ -517,19 +467,11 @@ func (p *CodeSanitationPlugin) executeParallel(
 
 	if compiled.checkBody && len(req.Body) > 0 {
 		g.Go(func() error {
-			select {
-			case <-gctx.Done():
-				return nil
-			default:
-			}
-			_, err := p.checkBody(req, compiled, evtCtx)
-			if err != nil {
-				errMu.Lock()
-				if firstErr == nil {
-					firstErr = err
-				}
-				errMu.Unlock()
-				return err
+			events := p.checkBody(req, compiled)
+			if len(events) > 0 {
+				eventsMutex.Lock()
+				allEvents = append(allEvents, events...)
+				eventsMutex.Unlock()
 			}
 			return nil
 		})
@@ -537,26 +479,31 @@ func (p *CodeSanitationPlugin) executeParallel(
 
 	_ = g.Wait()
 
-	if firstErr != nil {
-		return nil, firstErr
-	}
-
+	sanitized := len(allEvents) > 0
 	evtCtx.SetExtras(CodeSanitationData{
-		Sanitized: false,
-		Events:    nil,
+		Sanitized: sanitized,
+		Events:    allEvents,
 	})
+
+	if compiled.action == Block && len(allEvents) > 0 {
+		evtCtx.SetError(errors.New(compiled.errorMessage))
+		return nil, &pluginTypes.PluginError{
+			StatusCode: compiled.statusCode,
+			Message:    compiled.errorMessage,
+			Err:        fmt.Errorf("code injection detected in %d location(s)", len(allEvents)),
+		}
+	}
 
 	return &pluginTypes.PluginResponse{
 		StatusCode: http.StatusOK,
-		Message:    "Request sanitized successfully",
+		Message:    "Request processed successfully",
 	}, nil
 }
 
 func (p *CodeSanitationPlugin) checkHeaders(
 	req *types.RequestContext,
 	compiled *compiledConfig,
-	evtCtx *metrics.EventContext,
-) ([]CodeSanitationEvent, error) {
+) []CodeSanitationEvent {
 	var events []CodeSanitationEvent
 	sanitizedHeaders := make(http.Header, len(req.Headers))
 
@@ -584,15 +531,6 @@ func (p *CodeSanitationPlugin) checkHeaders(
 						PatternName: string(lang),
 						Match:       match,
 					})
-					if compiled.action == Block {
-						evtCtx.SetError(errors.New(compiled.errorMessage))
-						evtCtx.SetExtras(CodeSanitationData{Sanitized: false, Events: events})
-						return nil, &pluginTypes.PluginError{
-							StatusCode: compiled.statusCode,
-							Message:    compiled.errorMessage,
-							Err:        fmt.Errorf("code injection detected: %s in header %s", lang, key),
-						}
-					}
 					sanitized = p.sanitizeCode(sanitized, pattern, compiled.sanitizeChar)
 					detected = true
 				}
@@ -607,15 +545,6 @@ func (p *CodeSanitationPlugin) checkHeaders(
 							PatternName: name,
 							Match:       match,
 						})
-						if compiled.action == Block {
-							evtCtx.SetError(errors.New(compiled.errorMessage))
-							evtCtx.SetExtras(CodeSanitationData{Sanitized: false, Events: events})
-							return nil, &pluginTypes.PluginError{
-								StatusCode: compiled.statusCode,
-								Message:    compiled.errorMessage,
-								Err:        fmt.Errorf("custom pattern detected: %s in header %s", name, key),
-							}
-						}
 						sanitized = p.sanitizeCode(sanitized, cp.pattern, compiled.sanitizeChar)
 						detected = true
 					}
@@ -631,14 +560,13 @@ func (p *CodeSanitationPlugin) checkHeaders(
 	}
 
 	req.Headers = sanitizedHeaders
-	return events, nil
+	return events
 }
 
 func (p *CodeSanitationPlugin) checkPathAndQuery(
 	req *types.RequestContext,
 	compiled *compiledConfig,
-	evtCtx *metrics.EventContext,
-) ([]CodeSanitationEvent, error) {
+) []CodeSanitationEvent {
 	var events []CodeSanitationEvent
 
 	path := req.Path
@@ -649,21 +577,12 @@ func (p *CodeSanitationPlugin) checkPathAndQuery(
 			for lang, pattern := range compiled.languagePatterns {
 				if match := pattern.FindString(path); match != "" {
 					events = append(events, CodeSanitationEvent{
-						Source:      "query",
+						Source:      "path",
 						Field:       "path",
-						PatternName: "path",
 						Language:    string(lang),
+						PatternName: string(lang),
 						Match:       match,
 					})
-					if compiled.action == Block {
-						evtCtx.SetError(errors.New(compiled.errorMessage))
-						evtCtx.SetExtras(CodeSanitationData{Sanitized: false, Events: events})
-						return nil, &pluginTypes.PluginError{
-							StatusCode: compiled.statusCode,
-							Message:    compiled.errorMessage,
-							Err:        fmt.Errorf("code injection detected: %s in URL path", lang),
-						}
-					}
 					path = p.sanitizeCode(path, pattern, compiled.sanitizeChar)
 				}
 			}
@@ -685,141 +604,125 @@ func (p *CodeSanitationPlugin) checkPathAndQuery(
 				continue
 			}
 
+			sanitized := value
 			for lang, pattern := range compiled.languagePatterns {
-				if pattern.MatchString(value) {
-					if compiled.action == Block {
-						return nil, &pluginTypes.PluginError{
-							StatusCode: compiled.statusCode,
-							Message:    compiled.errorMessage,
-							Err:        fmt.Errorf("code injection detected: %s in URL query parameter %s", lang, key),
-						}
-					}
-					req.Query[key][i] = p.sanitizeCode(value, pattern, compiled.sanitizeChar)
+				if match := pattern.FindString(value); match != "" {
+					events = append(events, CodeSanitationEvent{
+						Source:      "query",
+						Field:       key,
+						Language:    string(lang),
+						PatternName: string(lang),
+						Match:       match,
+					})
+					sanitized = p.sanitizeCode(sanitized, pattern, compiled.sanitizeChar)
 				}
 			}
+			req.Query[key][i] = sanitized
 		}
 	}
 
-	return events, nil
+	return events
 }
 
 func (p *CodeSanitationPlugin) checkBody(
 	req *types.RequestContext,
 	compiled *compiledConfig,
-	evtCtx *metrics.EventContext,
-) ([]CodeSanitationEvent, error) {
+) []CodeSanitationEvent {
 	var events []CodeSanitationEvent
 
 	if !containsSuspiciousChars(req.Body) {
-		return events, nil
+		return events
 	}
 
 	bodyStr := string(req.Body)
 	if compiled.combinedPattern != nil && !compiled.combinedPattern.MatchString(bodyStr) {
-		return events, nil
+		return events
 	}
 
-	if compiled.action == Block {
+	// Try to parse as JSON
+	var bodyData interface{}
+	if err := json.Unmarshal(req.Body, &bodyData); err != nil {
+		// Not JSON, sanitize as plain text
+		sanitized := bodyStr
 		for lang, pattern := range compiled.languagePatterns {
-			if match := pattern.FindString(bodyStr); match != "" {
-				evtCtx.SetError(errors.New(compiled.errorMessage))
-				evtCtx.SetExtras(CodeSanitationData{Sanitized: false, Events: []CodeSanitationEvent{{
+			if match := pattern.FindString(sanitized); match != "" {
+				events = append(events, CodeSanitationEvent{
 					Source:      "body",
 					Language:    string(lang),
 					PatternName: string(lang),
 					Match:       match,
-				}}})
-				return nil, &pluginTypes.PluginError{
-					StatusCode: compiled.statusCode,
-					Message:    compiled.errorMessage,
-					Err:        fmt.Errorf("code injection detected: %s in request body", lang),
-				}
+				})
+				sanitized = p.sanitizeCode(sanitized, pattern, compiled.sanitizeChar)
 			}
 		}
-		return events, nil
-	}
-
-	var bodyData interface{}
-	if err := json.Unmarshal(req.Body, &bodyData); err != nil {
-		sanitized := bodyStr
-		for _, pattern := range compiled.languagePatterns {
-			sanitized = p.sanitizeCode(sanitized, pattern, compiled.sanitizeChar)
-		}
 		req.Body = []byte(sanitized)
-		return events, nil
+		return events
 	}
 
-	sanitized, err := p.sanitizeJSON(bodyData, compiled)
-	if err != nil {
-		return nil, err
-	}
+	// JSON body - sanitize recursively
+	sanitized, jsonEvents := p.sanitizeJSON(bodyData, compiled)
+	events = append(events, jsonEvents...)
 
 	newBody, err := json.Marshal(sanitized)
 	if err != nil {
-		return nil, &pluginTypes.PluginError{
-			StatusCode: http.StatusInternalServerError,
-			Message:    "Failed to marshal sanitized body",
-			Err:        err,
-		}
+		p.logger.WithError(err).Error("Failed to marshal sanitized body")
+		return events
 	}
 	req.Body = newBody
 
-	return events, nil
+	return events
 }
 
-func (p *CodeSanitationPlugin) sanitizeJSON(data interface{}, compiled *compiledConfig) (interface{}, error) {
+func (p *CodeSanitationPlugin) sanitizeJSON(data interface{}, compiled *compiledConfig) (interface{}, []CodeSanitationEvent) {
+	var events []CodeSanitationEvent
+
 	switch v := data.(type) {
 	case string:
 		if !containsSuspiciousChars([]byte(v)) {
-			return v, nil
+			return v, events
 		}
 
 		if compiled.combinedPattern != nil && !compiled.combinedPattern.MatchString(v) {
-			return v, nil
+			return v, events
 		}
 
 		sanitized := v
 		for lang, pattern := range compiled.languagePatterns {
-			if pattern.MatchString(v) {
-				if compiled.action == Block {
-					return nil, &pluginTypes.PluginError{
-						StatusCode: compiled.statusCode,
-						Message:    compiled.errorMessage,
-						Err:        fmt.Errorf("code injection detected: %s in JSON string", lang),
-					}
-				}
+			if match := pattern.FindString(v); match != "" {
+				events = append(events, CodeSanitationEvent{
+					Source:      "body",
+					Language:    string(lang),
+					PatternName: string(lang),
+					Match:       match,
+				})
 				sanitized = p.sanitizeCode(sanitized, pattern, compiled.sanitizeChar)
 			}
 		}
-		return sanitized, nil
+		return sanitized, events
 
 	case map[string]interface{}:
 		result := make(map[string]interface{}, len(v))
 		for key, value := range v {
-			sanitized, err := p.sanitizeJSON(value, compiled)
-			if err != nil {
-				return nil, err
-			}
+			sanitized, childEvents := p.sanitizeJSON(value, compiled)
+			events = append(events, childEvents...)
 			result[key] = sanitized
 		}
-		return result, nil
+		return result, events
 
 	case []interface{}:
 		result := make([]interface{}, len(v))
 		for i, value := range v {
-			sanitized, err := p.sanitizeJSON(value, compiled)
-			if err != nil {
-				return nil, err
-			}
+			sanitized, childEvents := p.sanitizeJSON(value, compiled)
+			events = append(events, childEvents...)
 			result[i] = sanitized
 		}
-		return result, nil
+		return result, events
 
 	case bool, float64, int, nil:
-		return v, nil
+		return v, events
 
 	default:
-		return v, nil
+		return v, events
 	}
 }
 
@@ -831,4 +734,10 @@ func (p *CodeSanitationPlugin) sanitizeCode(
 	return pattern.ReplaceAllStringFunc(input, func(match string) string {
 		return strings.Repeat(sanitizeChar, len(match))
 	})
+}
+
+func getConfigHash(config *Config) string {
+	data, _ := json.Marshal(config)
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
 }
