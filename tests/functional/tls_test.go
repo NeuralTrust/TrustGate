@@ -292,6 +292,7 @@ func waitForTLSServerReady(t *testing.T, port int, caCertPEM string, clientCert 
 }
 
 func TestTLS_ServerCertValidation(t *testing.T) {
+	defer RunTest(t, "Tls", time.Now())()
 	t.Run("gateway with TLS config can forward to TLS-only backend", func(t *testing.T) {
 		// Generate certificates
 		bundle := generateCertBundle(t, "localhost")
@@ -365,6 +366,7 @@ func TestTLS_ServerCertValidation(t *testing.T) {
 }
 
 func TestMTLS_MutualAuthentication(t *testing.T) {
+	defer RunTest(t, "Tls", time.Now())()
 	t.Run("gateway with mTLS config can forward to mTLS backend", func(t *testing.T) {
 		// Generate certificates
 		bundle := generateCertBundle(t, "localhost")
@@ -442,6 +444,7 @@ func TestMTLS_MutualAuthentication(t *testing.T) {
 }
 
 func TestMTLS_FailsWithoutClientCert(t *testing.T) {
+	defer RunTest(t, "Tls", time.Now())()
 	t.Run("gateway without client certs fails against mTLS backend", func(t *testing.T) {
 		// Generate certificates
 		bundle := generateCertBundle(t, "localhost")
@@ -512,6 +515,7 @@ func TestMTLS_FailsWithoutClientCert(t *testing.T) {
 }
 
 func TestTLS_CertRecoveryFromDatabase(t *testing.T) {
+	defer RunTest(t, "Tls", time.Now())()
 	t.Run("certificates are recovered from database when files are deleted", func(t *testing.T) {
 		// Generate certificates
 		bundle := generateCertBundle(t, "localhost")
@@ -621,6 +625,7 @@ func TestTLS_CertRecoveryFromDatabase(t *testing.T) {
 }
 
 func TestMTLS_CertRecoveryFromDatabase(t *testing.T) {
+	defer RunTest(t, "Tls", time.Now())()
 	t.Run("mTLS certificates are recovered from database when files are deleted", func(t *testing.T) {
 		// Generate certificates
 		bundle := generateCertBundle(t, "localhost")

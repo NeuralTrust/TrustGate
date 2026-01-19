@@ -135,6 +135,7 @@ func setupWireMockTokenFormExpectation(t *testing.T, clientID, clientSecret stri
 }
 
 func TestUpstreamTargetOAuth_ClientCredentials_WithClientSecretAudienceScopes(t *testing.T) {
+	defer RunTest(t, "UpstreamOauthTarget", time.Now())()
 	// Token endpoint should require form-encoded credentials, scopes and audience
 	clientID := "my-client"
 	clientSecret := "my-secret"
@@ -212,6 +213,7 @@ func TestUpstreamTargetOAuth_ClientCredentials_WithClientSecretAudienceScopes(t 
 }
 
 func TestUpstreamTargetOAuth_ClientCredentials(t *testing.T) {
+	defer RunTest(t, "UpstreamOauthTarget", time.Now())()
 	setupWireMockProtectedEndpoint(t)
 
 	subdomain := fmt.Sprintf("oauth-%d", time.Now().Unix())

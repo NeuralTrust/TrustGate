@@ -56,6 +56,7 @@ func waitForUpstreamTags(t *testing.T, gatewayID, upstreamID string, expected []
 }
 
 func TestUpdateUpstreamTags(t *testing.T) {
+	defer RunTest(t, "UpdateUpstream", time.Now())()
 	// Create a gateway
 	gatewayPayload := map[string]interface{}{
 		"name": fmt.Sprintf("test-gateway-%d", time.Now().Unix()),
@@ -349,6 +350,7 @@ func TestUpdateUpstreamTags(t *testing.T) {
 }
 
 func TestUpdateUpstreamEmptyTags(t *testing.T) {
+	defer RunTest(t, "UpdateUpstream", time.Now())()
 	// Create a gateway
 	gatewayPayload := map[string]interface{}{
 		"name": fmt.Sprintf("test-gateway-empty-%d", time.Now().UnixNano()),
@@ -441,6 +443,7 @@ func TestUpdateUpstreamEmptyTags(t *testing.T) {
 
 // TestUpdateUpstreamNullTags tests updating upstream with null tags
 func TestUpdateUpstreamNullTags(t *testing.T) {
+	defer RunTest(t, "UpdateUpstream", time.Now())()
 	// Create a gateway
 	gatewayPayload := map[string]interface{}{
 		"name": fmt.Sprintf("test-gateway-null-%d", time.Now().UnixNano()),

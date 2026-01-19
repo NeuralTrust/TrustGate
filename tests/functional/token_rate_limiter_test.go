@@ -11,6 +11,7 @@ import (
 )
 
 func TestTokenRateLimiter(t *testing.T) {
+	defer RunTest(t, "TokenRateLimiter", time.Now())()
 	subdomain := fmt.Sprintf("token-rl-%d", time.Now().Unix())
 
 	gatewayPayload := map[string]interface{}{

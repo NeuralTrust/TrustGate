@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateGateway(t *testing.T) {
+	defer RunTest(t, "CreateGateway", time.Now())()
 	t.Run("it should create a gateway with minimal configuration", func(t *testing.T) {
 		gatewayPayload := map[string]interface{}{
 			"name": "Minimal Gateway",

@@ -10,6 +10,7 @@ import (
 )
 
 func TestUpdatePluginsHandler_GatewaySuccess(t *testing.T) {
+	defer RunTest(t, "UpdatePlugins", time.Now())()
 	// Create gateway with one plugin
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Update Plugins Gateway",
@@ -116,6 +117,7 @@ func TestUpdatePluginsHandler_GatewaySuccess(t *testing.T) {
 }
 
 func TestUpdatePluginsHandler_GatewayPluginNotFound(t *testing.T) {
+	defer RunTest(t, "UpdatePlugins", time.Now())()
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Update Plugins Not Found",
 		"subdomain": fmt.Sprintf("update-plugins-nf-%d", time.Now().UnixNano()),

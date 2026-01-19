@@ -11,6 +11,7 @@ import (
 )
 
 func TestCreateUpstream(t *testing.T) {
+	defer RunTest(t, "CreateUpstream", time.Now())()
 	// Create a gateway first to use in the upstream tests
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Upstream Test Gateway",

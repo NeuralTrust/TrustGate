@@ -10,6 +10,7 @@ import (
 )
 
 func TestUpdateAPIKeyPolicies(t *testing.T) {
+	defer RunTest(t, "UpdateApiKeyPolicies", time.Now())()
 	// Create a gateway
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Update Policies Gateway",

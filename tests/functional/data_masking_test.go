@@ -13,6 +13,7 @@ import (
 )
 
 func TestDataMasking(t *testing.T) {
+	defer RunTest(t, "DataMasking", time.Now())()
 	subdomain := fmt.Sprintf("datamask-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Data Masking Gateway",
@@ -130,6 +131,7 @@ func TestDataMasking(t *testing.T) {
 }
 
 func TestDataMaskingApplyAll(t *testing.T) {
+	defer RunTest(t, "DataMasking", time.Now())()
 	subdomain := fmt.Sprintf("datamask-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Data Masking Gateway",
@@ -239,6 +241,7 @@ func TestDataMaskingApplyAll(t *testing.T) {
 }
 
 func TestDataMaskingReversibleHash(t *testing.T) {
+	defer RunTest(t, "DataMasking", time.Now())()
 	subdomain := fmt.Sprintf("datamask-rev-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Data Masking Reversible Hash Gateway",
@@ -381,6 +384,7 @@ func assertMirroredJSONBody(t *testing.T, respBody []byte, expected map[string]i
 }
 
 func TestDataMaskingPostResponse(t *testing.T) {
+	defer RunTest(t, "DataMasking", time.Now())()
 	subdomain := fmt.Sprintf("datamask-postresponse-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Data Masking Post Response Gateway",
@@ -506,6 +510,7 @@ func TestDataMaskingPostResponse(t *testing.T) {
 }
 
 func TestDataMaskingPreResponse(t *testing.T) {
+	defer RunTest(t, "DataMasking", time.Now())()
 	subdomain := fmt.Sprintf("datamask-preresponse-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Data Masking Pre Response Gateway",

@@ -43,10 +43,20 @@ const (
 )
 
 func TestMain(m *testing.M) {
-
 	fmt.Println("🔨 Creating Test Environment...")
 	setupTestEnvironment()
+
+	// Initialize test reporter
+	GlobalReporter = NewTestReporter()
+
+	// Run all tests
 	code := m.Run()
+
+	// Print test report
+	if GlobalReporter != nil {
+		GlobalReporter.PrintReportWithExitCode(code)
+	}
+
 	teardownTestEnvironment()
 	os.Exit(code)
 }

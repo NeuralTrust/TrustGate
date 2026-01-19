@@ -13,6 +13,7 @@ import (
 )
 
 func TestQueryParamsForwarding(t *testing.T) {
+	defer RunTest(t, "QueryParams", time.Now())()
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Query Params Test Gateway",
 		"subdomain": fmt.Sprintf("query-params-test-%d", time.Now().UnixNano()),

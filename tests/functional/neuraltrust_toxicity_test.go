@@ -12,6 +12,7 @@ import (
 )
 
 func TestNeuralTrustToxicityPlugin(t *testing.T) {
+	defer RunTest(t, "NeuraltrustToxicity", time.Now())()
 	subdomain := fmt.Sprintf("neuraltrust-toxicity-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "NeuralTrust Toxicity Gateway",
@@ -122,6 +123,7 @@ func TestNeuralTrustToxicityPlugin(t *testing.T) {
 }
 
 func TestNeuralTrustToxicityPlugin_WithOpenAI(t *testing.T) {
+	defer RunTest(t, "NeuraltrustToxicity", time.Now())()
 	subdomain := fmt.Sprintf("neuraltrust-toxicity-openai-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "NeuralTrust Toxicity Gateway with OpenAI",

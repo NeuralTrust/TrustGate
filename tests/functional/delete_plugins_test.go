@@ -10,6 +10,7 @@ import (
 )
 
 func TestDeletePluginsHandler(t *testing.T) {
+	defer RunTest(t, "DeletePlugins", time.Now())()
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Delete Plugins Gateway",
 		"subdomain": fmt.Sprintf("del-plugins-%d", time.Now().UnixNano()),

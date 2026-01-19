@@ -12,6 +12,7 @@ import (
 )
 
 func TestNeuralTrustJailbreakPlugin_JailBreak(t *testing.T) {
+	defer RunTest(t, "NeuraltrustJailbreak", time.Now())()
 	subdomain := fmt.Sprintf("neuraltrust-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "NeuralTrust Jailbreak Gateway",
@@ -125,6 +126,7 @@ func TestNeuralTrustJailbreakPlugin_JailBreak(t *testing.T) {
 }
 
 func TestNeuralTrustJailbreakPlugin_JailBreak_WithOpenAI(t *testing.T) {
+	defer RunTest(t, "NeuraltrustJailbreak", time.Now())()
 	subdomain := fmt.Sprintf("neuraltrust-openai-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "NeuralTrust Jailbreak Gateway with OpenAI",

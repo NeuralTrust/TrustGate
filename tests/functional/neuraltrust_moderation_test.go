@@ -12,6 +12,7 @@ import (
 )
 
 func TestNeuralTrustModerationPlugin(t *testing.T) {
+	defer RunTest(t, "NeuraltrustModeration", time.Now())()
 	subdomain := fmt.Sprintf("neuraltrust-moderation-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "NeuralTrust Moderation Gateway",
@@ -128,6 +129,7 @@ func TestNeuralTrustModerationPlugin(t *testing.T) {
 }
 
 func TestNeuralTrustModerationPlugin_KeyReg(t *testing.T) {
+	defer RunTest(t, "NeuraltrustModeration", time.Now())()
 	subdomain := fmt.Sprintf("neuraltrust-moderation-keyreg-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "NeuralTrust Moderation KeyReg Gateway",

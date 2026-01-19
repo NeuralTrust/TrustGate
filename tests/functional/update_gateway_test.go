@@ -11,6 +11,7 @@ import (
 )
 
 func TestUpdateGateway(t *testing.T) {
+	defer RunTest(t, "UpdateGateway", time.Now())()
 	t.Run("it should update a gateway's name", func(t *testing.T) {
 		// Create a gateway first
 		gatewayID := CreateGateway(t, map[string]interface{}{

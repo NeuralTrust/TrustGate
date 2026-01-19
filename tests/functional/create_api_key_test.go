@@ -11,6 +11,7 @@ import (
 )
 
 func TestCreateAPIKey(t *testing.T) {
+	defer RunTest(t, "CreateApiKey", time.Now())()
 	// Create a gateway first to use in the API key tests
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "API Key Test Gateway",

@@ -10,6 +10,7 @@ import (
 )
 
 func TestCORSPlugin(t *testing.T) {
+	defer RunTest(t, "Cors", time.Now())()
 	subdomain := fmt.Sprintf("cors-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "CORS Test Gateway",
@@ -170,6 +171,7 @@ func TestCORSPlugin(t *testing.T) {
 }
 
 func TestCORSPlugin_WildcardOriginsAllowed(t *testing.T) {
+	defer RunTest(t, "Cors", time.Now())()
 	subdomain := fmt.Sprintf("cors-wild-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "CORS Wildcard Gateway",

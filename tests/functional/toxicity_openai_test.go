@@ -13,6 +13,7 @@ import (
 )
 
 func TestOpenAIToxicityDetection(t *testing.T) {
+	defer RunTest(t, "ToxicityOpenai", time.Now())()
 	subdomain := fmt.Sprintf("toxicity-openai-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "OpenAI Toxicity Detection Gateway",

@@ -48,6 +48,7 @@ func findRuleByID(t *testing.T, gatewayID, ruleID string) map[string]interface{}
 }
 
 func TestUpdateRule(t *testing.T) {
+	defer RunTest(t, "UpdateRule", time.Now())()
 	// Create a gateway first
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Rule Update Test Gateway",

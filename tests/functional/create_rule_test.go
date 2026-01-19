@@ -11,6 +11,7 @@ import (
 )
 
 func TestCreateRule(t *testing.T) {
+	defer RunTest(t, "CreateRule", time.Now())()
 	// Create a gateway first to use in the rule tests
 	gatewayID := CreateGateway(t, map[string]interface{}{
 		"name":      "Rule Test Gateway",

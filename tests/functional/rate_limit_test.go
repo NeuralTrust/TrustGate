@@ -10,6 +10,7 @@ import (
 )
 
 func TestRateLimit(t *testing.T) {
+	defer RunTest(t, "RateLimit", time.Now())()
 	subdomain := fmt.Sprintf("gateway-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Multi Rate Limited Gateway",
@@ -115,6 +116,7 @@ func TestRateLimit(t *testing.T) {
 }
 
 func TestRateLimitPerFingerprint(t *testing.T) {
+	defer RunTest(t, "RateLimit", time.Now())()
 	subdomain := fmt.Sprintf("gateway-fp-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Fingerprint Rate Limited Gateway",

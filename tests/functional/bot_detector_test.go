@@ -14,6 +14,7 @@ import (
 )
 
 func TestBotDetectorPlugin(t *testing.T) {
+	defer RunTest(t, "BotDetector", time.Now())()
 	subdomain := fmt.Sprintf("botdetector-%d", time.Now().Unix())
 	gatewayPayload := map[string]interface{}{
 		"name":      "Bot Detector Gateway",

@@ -11,6 +11,7 @@ import (
 )
 
 func TestGatewayFlowPolicies(t *testing.T) {
+	defer RunTest(t, "GatewayFlow", time.Now())()
 
 	t.Run("happy path with two policies", func(t *testing.T) {
 		gatewayID := CreateGateway(t, map[string]interface{}{
