@@ -191,11 +191,10 @@ func (m *manager) InitializePlugins() {
 			},
 		},
 		m.fingerprintTracker,
-		m.embeddingRepo,
-		m.serviceLocator,
 		m.providerLocator,
+		m.firewallFactory,
 	)); err != nil {
-		m.logger.WithError(err).Error("Failed to register toxicity neuraltrust plugin")
+		m.logger.WithError(err).Error("Failed to register neuraltrust moderation plugin")
 	}
 
 	if err := m.RegisterPlugin(bot_detector.NewBotDetectorPlugin(

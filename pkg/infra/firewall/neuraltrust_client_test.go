@@ -105,7 +105,7 @@ func TestNeuralTrustFirewallClient_DetectJailbreak(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "invalid jailbreak response")
+		assert.Contains(t, err.Error(), "failed to parse response")
 	})
 
 	t.Run("Context cancellation", func(t *testing.T) {
@@ -249,7 +249,7 @@ func TestNeuralTrustFirewallClient_DetectToxicity(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "invalid toxicity response")
+		assert.Contains(t, err.Error(), "failed to parse response")
 	})
 }
 

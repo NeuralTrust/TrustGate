@@ -127,10 +127,6 @@ func main() {
 		Routers: []router.ServerRouter{proxyRouter},
 	}
 	if getServerType() == server.ProxyServerName {
-		err = container.RedisIndexCreator.CreateIndexes(ctx, common.NeuralTrustJailbreakIndexName)
-		if err != nil {
-			logger.WithError(err).Error("failed to create redis indexes")
-		}
 		go func() {
 			logger.WithField("channel", eventsChannel).Info("starting listening redis events...")
 			container.MetricsWorker.StartWorkers(5)

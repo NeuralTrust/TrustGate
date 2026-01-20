@@ -170,6 +170,14 @@ func (c *OpenAIFirewallClient) DetectToxicity(
 	return []ToxicityResponse{parsed}, nil
 }
 
+func (c *OpenAIFirewallClient) DetectModeration(
+	_ context.Context,
+	_ ModerationContent,
+	_ Credentials,
+) ([]ModerationResponse, error) {
+	return nil, fmt.Errorf("moderation detection is not supported by OpenAI client, use NeuralTrust client")
+}
+
 func (c *OpenAIFirewallClient) callResponsesAPI(
 	ctx context.Context,
 	apiKey string,

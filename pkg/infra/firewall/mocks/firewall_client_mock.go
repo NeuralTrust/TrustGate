@@ -82,6 +82,66 @@ func (_c *Client_DetectJailbreak_Call) RunAndReturn(run func(context.Context, fi
 	return _c
 }
 
+// DetectModeration provides a mock function with given fields: ctx, content, credentials
+func (_m *Client) DetectModeration(ctx context.Context, content firewall.ModerationContent, credentials firewall.Credentials) ([]firewall.ModerationResponse, error) {
+	ret := _m.Called(ctx, content, credentials)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DetectModeration")
+	}
+
+	var r0 []firewall.ModerationResponse
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, firewall.ModerationContent, firewall.Credentials) ([]firewall.ModerationResponse, error)); ok {
+		return rf(ctx, content, credentials)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, firewall.ModerationContent, firewall.Credentials) []firewall.ModerationResponse); ok {
+		r0 = rf(ctx, content, credentials)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]firewall.ModerationResponse)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, firewall.ModerationContent, firewall.Credentials) error); ok {
+		r1 = rf(ctx, content, credentials)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Client_DetectModeration_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DetectModeration'
+type Client_DetectModeration_Call struct {
+	*mock.Call
+}
+
+// DetectModeration is a helper method to define mock.On call
+//   - ctx context.Context
+//   - content firewall.ModerationContent
+//   - credentials firewall.Credentials
+func (_e *Client_Expecter) DetectModeration(ctx interface{}, content interface{}, credentials interface{}) *Client_DetectModeration_Call {
+	return &Client_DetectModeration_Call{Call: _e.mock.On("DetectModeration", ctx, content, credentials)}
+}
+
+func (_c *Client_DetectModeration_Call) Run(run func(ctx context.Context, content firewall.ModerationContent, credentials firewall.Credentials)) *Client_DetectModeration_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(firewall.ModerationContent), args[2].(firewall.Credentials))
+	})
+	return _c
+}
+
+func (_c *Client_DetectModeration_Call) Return(_a0 []firewall.ModerationResponse, _a1 error) *Client_DetectModeration_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Client_DetectModeration_Call) RunAndReturn(run func(context.Context, firewall.ModerationContent, firewall.Credentials) ([]firewall.ModerationResponse, error)) *Client_DetectModeration_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // DetectToxicity provides a mock function with given fields: ctx, content, credentials
 func (_m *Client) DetectToxicity(ctx context.Context, content firewall.Content, credentials firewall.Credentials) ([]firewall.ToxicityResponse, error) {
 	ret := _m.Called(ctx, content, credentials)

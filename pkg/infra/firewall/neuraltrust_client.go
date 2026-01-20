@@ -8,35 +8,28 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/sirupsen/logrus"
 )
 
 const (
-	jailbreakPath = "/v1/jailbreak"
-	toxicityPath  = "/v1/toxicity"
+	jailbreakPath  = "/v1/jailbreak"
+	toxicityPath   = "/v1/toxicity"
+	moderationPath = "/v1/prompt-moderation"
 )
 
 var ErrFailedFirewallCall = errors.New("firewall service call failed")
 
 type NeuralTrustFirewallClient struct {
-	client     httpx.Client
-	logger     *logrus.Logger
-	bufferPool sync.Pool
+	client httpx.Client
+	logger *logrus.Logger
 }
 
 func NewNeuralTrustFirewallClient(logger *logrus.Logger, opts ...NeuralTrustFirewallClientOption) Client {
 	c := &NeuralTrustFirewallClient{
 		client: &http.Client{},
 		logger: logger,
-		bufferPool: sync.Pool{
-			New: func() any {
-				buf := make([]byte, 4096)
-				return &buf
-			},
-		},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -49,78 +42,11 @@ func (c *NeuralTrustFirewallClient) DetectJailbreak(
 	content Content,
 	credentials Credentials,
 ) ([]JailbreakResponse, error) {
-	return c.executeJailbreakRequest(ctx, content, credentials)
-}
-
-func (c *NeuralTrustFirewallClient) executeJailbreakRequest(
-	ctx context.Context,
-	content Content,
-	credentials Credentials,
-) ([]JailbreakResponse, error) {
-	creds := credentials.NeuralTrustCredentials
-	if creds.BaseURL == "" {
-		return nil, fmt.Errorf("neuraltrust base url is required")
+	var result []JailbreakResponse
+	if err := c.doRequest(ctx, jailbreakPath, content, credentials, &result); err != nil {
+		return nil, err
 	}
-	if creds.Token == "" {
-		return nil, fmt.Errorf("neuraltrust token is required")
-	}
-	body, err := json.Marshal(content)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal content: %w", err)
-	}
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		creds.BaseURL+jailbreakPath,
-		bytes.NewReader(body),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create jailbreak request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Token", creds.Token)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		if cause := context.Cause(ctx); cause != nil {
-			return nil, context.Canceled
-		}
-		c.logger.WithError(err).WithField("error_type", fmt.Sprintf("%T", err)).Warn("failed to call jailbreak firewall")
-		return nil, fmt.Errorf("failed to call jailbreak firewall: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		entry := c.logger.WithField("status_code", resp.StatusCode)
-		bodyBytes, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			entry.WithError(readErr).Error("jailbreak firewall returned non-200 status (failed to read body)")
-		} else {
-			entry.WithField("response_body", string(bodyBytes)).Error("jailbreak firewall returned non-200 status")
-		}
-
-		return nil, fmt.Errorf("%w: status %d", ErrFailedFirewallCall, resp.StatusCode)
-	}
-
-	bufPtr, ok := c.bufferPool.Get().(*[]byte)
-	if !ok {
-		return nil, fmt.Errorf("failed to get buffer from pool")
-	}
-	defer c.bufferPool.Put(bufPtr)
-	buf := *bufPtr
-
-	n, err := resp.Body.Read(buf)
-	if err != nil && err != io.EOF {
-		return nil, fmt.Errorf("jailbreak response read error: %w", err)
-	}
-
-	var jailbreakResp []JailbreakResponse
-	if err := json.Unmarshal(buf[:n], &jailbreakResp); err != nil {
-		return nil, fmt.Errorf("invalid jailbreak response: %w", err)
-	}
-	c.logger.Info(fmt.Sprintf("jailbreak response: %v", string(buf[:n])))
-	return jailbreakResp, nil
+	return result, nil
 }
 
 func (c *NeuralTrustFirewallClient) DetectToxicity(
@@ -128,76 +54,86 @@ func (c *NeuralTrustFirewallClient) DetectToxicity(
 	content Content,
 	credentials Credentials,
 ) ([]ToxicityResponse, error) {
-	return c.executeToxicityRequest(ctx, content, credentials)
+	var result []ToxicityResponse
+	if err := c.doRequest(ctx, toxicityPath, content, credentials, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
-func (c *NeuralTrustFirewallClient) executeToxicityRequest(
+func (c *NeuralTrustFirewallClient) DetectModeration(
 	ctx context.Context,
-	content Content,
+	content ModerationContent,
 	credentials Credentials,
-) ([]ToxicityResponse, error) {
+) ([]ModerationResponse, error) {
+	var result []ModerationResponse
+	if err := c.doRequest(ctx, moderationPath, content, credentials, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *NeuralTrustFirewallClient) doRequest(
+	ctx context.Context,
+	path string,
+	payload any,
+	credentials Credentials,
+	result any,
+) error {
 	creds := credentials.NeuralTrustCredentials
 	if creds.BaseURL == "" {
-		return nil, fmt.Errorf("neuraltrust base url is required")
+		return errors.New("neuraltrust base url is required")
 	}
 	if creds.Token == "" {
-		return nil, fmt.Errorf("neuraltrust token is required")
-	}
-	body, err := json.Marshal(content)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal content: %w", err)
-	}
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		creds.BaseURL+toxicityPath,
-		bytes.NewReader(body),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create toxicity request: %w", err)
+		return errors.New("neuraltrust token is required")
 	}
 
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, creds.BaseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Token", creds.Token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		if cause := context.Cause(ctx); cause != nil {
-			return nil, context.Canceled
+		if context.Cause(ctx) != nil {
+			return context.Canceled
 		}
-		c.logger.WithError(err).WithField("error_type", fmt.Sprintf("%T", err)).Warn("failed to call toxicity firewall")
-		return nil, fmt.Errorf("failed to call toxicity firewall: %w", err)
+		c.logger.WithError(err).WithField("path", path).Warn("firewall request failed")
+		return fmt.Errorf("firewall request failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
-		entry := c.logger.WithField("status_code", resp.StatusCode)
-		bodyBytes, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			entry.WithError(readErr).Error("toxicity firewall returned non-200 status (failed to read body)")
-		} else {
-			entry.WithField("response_body", string(bodyBytes)).Error("toxicity firewall returned non-200 status")
-		}
-
-		return nil, fmt.Errorf("%w: status %d", ErrFailedFirewallCall, resp.StatusCode)
+		c.logger.WithFields(logrus.Fields{
+			"status_code":   resp.StatusCode,
+			"path":          path,
+			"response_body": string(respBody),
+		}).Error("firewall returned non-200 status")
+		return fmt.Errorf("%w: status %d", ErrFailedFirewallCall, resp.StatusCode)
 	}
 
-	bufPtr, ok := c.bufferPool.Get().(*[]byte)
-	if !ok {
-		return nil, fmt.Errorf("failed to get buffer from pool")
-	}
-	defer c.bufferPool.Put(bufPtr)
-	buf := *bufPtr
-
-	n, err := resp.Body.Read(buf)
-	if err != nil && err != io.EOF {
-		return nil, fmt.Errorf("toxicity response read error: %w", err)
+	if err := json.Unmarshal(respBody, result); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	var toxicityResp []ToxicityResponse
-	if err := json.Unmarshal(buf[:n], &toxicityResp); err != nil {
-		return nil, fmt.Errorf("invalid toxicity response: %w", err)
-	}
-	c.logger.Info(fmt.Sprintf("toxicity response: %v", string(buf[:n])))
-	return toxicityResp, nil
+	c.logger.WithFields(logrus.Fields{
+		"path":     path,
+		"response": string(respBody),
+	}).Debug("firewall response")
+
+	return nil
 }
