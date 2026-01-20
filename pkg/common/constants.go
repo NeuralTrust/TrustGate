@@ -16,6 +16,4 @@ const (
 	TrustgateAuthHeader  = "X-TG-API-Key"
 
 	SemanticStrategyName = "semantic"
-
-	NeuralTrustJailbreakIndexName = "neuraltrust_jailbreak"
 )

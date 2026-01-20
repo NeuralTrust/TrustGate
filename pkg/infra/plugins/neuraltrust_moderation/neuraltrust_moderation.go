@@ -3,9 +3,7 @@ package neuraltrust_moderation
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,10 +14,8 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/NeuralTrust/TrustGate/pkg/domain"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/pluginiface"
@@ -28,14 +24,12 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
-	"github.com/google/uuid"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 )
 
 const (
 	PluginName = "neuraltrust_moderation"
-	cacheKey   = "plugin:%s:neuraltrust_moderation:deny_sample:%s"
 )
 
 type LLMResponse struct {
@@ -48,9 +42,8 @@ type NeuralTrustModerationPlugin struct {
 	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
-	embeddingRepo      embedding.Repository
-	serviceLocator     factory.EmbeddingServiceLocator
 	providerLocator    providersFactory.ProviderLocator
+	firewallFactory    firewall.ClientFactory
 	bufferPool         sync.Pool
 	byteSlicePool      sync.Pool
 }
@@ -59,9 +52,8 @@ func NewNeuralTrustModerationPlugin(
 	logger *logrus.Logger,
 	client httpx.Client,
 	fingerPrintManager fingerprint.Tracker,
-	embeddingRepo embedding.Repository,
-	serviceLocator factory.EmbeddingServiceLocator,
 	providerLocator providersFactory.ProviderLocator,
+	firewallFactory firewall.ClientFactory,
 ) pluginiface.Plugin {
 	if client == nil {
 		client = &http.Client{ //nolint
@@ -74,9 +66,8 @@ func NewNeuralTrustModerationPlugin(
 		client:             client,
 		logger:             logger,
 		fingerPrintManager: fingerPrintManager,
-		embeddingRepo:      embeddingRepo,
-		serviceLocator:     serviceLocator,
 		providerLocator:    providerLocator,
+		firewallFactory:    firewallFactory,
 		bufferPool: sync.Pool{
 			New: func() any {
 				return new(bytes.Buffer)
@@ -113,25 +104,6 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config pluginTypes.PluginCo
 		return fmt.Errorf("failed to decode config: %w", err)
 	}
 
-	if cfg.EmbeddingParamBag != nil && cfg.EmbeddingParamBag.Enabled {
-		if cfg.EmbeddingParamBag.EmbeddingsConfig.Provider != providersFactory.ProviderOpenAI {
-			return fmt.Errorf("embedding provider must be '%s'", providersFactory.ProviderOpenAI)
-		}
-		if cfg.EmbeddingParamBag.Threshold == 0 {
-			return fmt.Errorf("moderation threshold is required")
-		}
-		if cfg.EmbeddingParamBag.Threshold > 1 {
-			return fmt.Errorf("moderation threshold must be between 0 and 1")
-		}
-		if cfg.EmbeddingParamBag.DenyTopicAction != "block" {
-			return fmt.Errorf("deny topic action must be block")
-		}
-		err := p.validateEmbeddingCredentials(cfg.EmbeddingParamBag.EmbeddingsConfig.Credentials)
-		if err != nil {
-			return err
-		}
-	}
-
 	if cfg.KeyRegParamBag != nil && cfg.KeyRegParamBag.Enabled {
 		if len(cfg.KeyRegParamBag.Keywords) == 0 && len(cfg.KeyRegParamBag.Regex) == 0 {
 			return fmt.Errorf("at least one keyword or regex pattern must be specified")
@@ -146,7 +118,7 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config pluginTypes.PluginCo
 		}
 	}
 
-	if cfg.LLMParamBag != nil {
+	if cfg.LLMParamBag != nil && cfg.LLMParamBag.Enabled {
 		if cfg.LLMParamBag.Provider != providersFactory.ProviderOpenAI &&
 			cfg.LLMParamBag.Provider != providersFactory.ProviderAnthropic &&
 			cfg.LLMParamBag.Provider != providersFactory.ProviderAzure &&
@@ -167,6 +139,18 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config pluginTypes.PluginCo
 		}
 	}
 
+	if cfg.NTTopicParamBag != nil && cfg.NTTopicParamBag.Enabled {
+		if cfg.NTCredentials == nil || cfg.NTCredentials.BaseURL == "" {
+			return fmt.Errorf("nt_topic_moderation requires credentials.base_url")
+		}
+		if cfg.NTCredentials.Token == "" {
+			return fmt.Errorf("nt_topic_moderation requires credentials.token")
+		}
+		if len(cfg.NTTopicParamBag.Topics) == 0 {
+			return fmt.Errorf("nt_topic_moderation topics must be specified")
+		}
+	}
+
 	return nil
 }
 
@@ -176,13 +160,6 @@ func (p *NeuralTrustModerationPlugin) validateCredentials(provider string, crede
 	}
 	if provider == providersFactory.ProviderAzure && (credentials.Azure == nil || credentials.Azure.Endpoint == "") {
 		return fmt.Errorf("azure endpoint must be specified")
-	}
-	return nil
-}
-
-func (p *NeuralTrustModerationPlugin) validateEmbeddingCredentials(credentials EmbeddingCredentials) error {
-	if credentials.ApiKey == "" {
-		return fmt.Errorf("embedding api_key must be specified")
 	}
 	return nil
 }
@@ -268,31 +245,17 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		}
 	}
 
-	if !keyRegFound && conf.EmbeddingParamBag != nil && conf.EmbeddingParamBag.Enabled {
-		evt.EmbeddingModeration = &EmbeddingModeration{
-			Provider:  conf.EmbeddingParamBag.EmbeddingsConfig.Provider,
-			Model:     conf.EmbeddingParamBag.EmbeddingsConfig.Model,
-			Threshold: conf.EmbeddingParamBag.Threshold,
-			Scores: &EmbeddingScores{
-				Scores: make(map[string]float64),
-			},
-		}
-
-		if len(conf.EmbeddingParamBag.DenySamples) > 0 {
-			err := p.createEmbeddings(ctx, conf.EmbeddingParamBag, req.GatewayID)
-			if err != nil {
-				p.logger.WithError(err).Error("failed to create deny samples embeddings")
-				return nil, fmt.Errorf("failed to create deny samples embeddings: %w", err)
-			}
+	if !keyRegFound && conf.NTTopicParamBag != nil && conf.NTTopicParamBag.Enabled {
+		evt.NTTopicModeration = &NTTopicModeration{
+			TopicScores: make(map[string]NTTopicScore),
 		}
 
 		wg.Add(1)
-		go p.callEmbeddingModeration(
+		go p.callNTTopicModeration(
 			ctx,
-			conf.EmbeddingParamBag,
+			conf,
 			&wg,
 			inputBytes,
-			req.GatewayID,
 			firewallErrors,
 			evt,
 			&evtMu,
@@ -359,92 +322,6 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		},
 		Body: nil,
 	}, nil
-}
-
-func (p *NeuralTrustModerationPlugin) createEmbeddings(
-	ctx context.Context,
-	cfg *EmbeddingParamBag,
-	gatewayID string,
-) error {
-	if !cfg.Enabled {
-		return nil
-	}
-	if len(cfg.DenySamples) == 0 {
-		return nil
-	}
-
-	total, err := p.embeddingRepo.Count(ctx, common.NeuralTrustJailbreakIndexName, gatewayID)
-	if err != nil {
-		return fmt.Errorf("failed to count embeddings: %w", err)
-	}
-	if total >= len(cfg.DenySamples) {
-		return nil
-	}
-
-	creator, err := p.serviceLocator.GetService(cfg.EmbeddingsConfig.Provider)
-	if err != nil {
-		return fmt.Errorf("failed to create embeddings: %w", err)
-	}
-	config := &embedding.Config{
-		Provider: cfg.EmbeddingsConfig.Provider,
-		Model:    cfg.EmbeddingsConfig.Model,
-		Credentials: domain.CredentialsJSON{
-			ApiKey: cfg.EmbeddingsConfig.Credentials.ApiKey,
-		},
-	}
-	wg := &sync.WaitGroup{}
-	wg.Add(len(cfg.DenySamples))
-	for _, sample := range cfg.DenySamples {
-		go p.generateSampleEmbedding(
-			wg,
-			ctx,
-			cfg.EmbeddingsConfig.Model,
-			sample,
-			gatewayID,
-			creator,
-			config,
-		)
-	}
-	wg.Wait()
-	return nil
-}
-
-func (p *NeuralTrustModerationPlugin) generateSampleEmbedding(
-	wg *sync.WaitGroup,
-	ctx context.Context,
-	model, sample, gatewayID string,
-	creator embedding.Creator,
-	config *embedding.Config,
-) {
-	defer wg.Done()
-	embeddingData, err := creator.Generate(ctx, sample, model, config)
-	if err != nil {
-		p.logger.WithError(err).Error("failed to generate embedding for sample " + sample)
-		return
-	}
-
-	if embeddingData == nil {
-		p.logger.Error("embedding data is nil for sample " + sample)
-		return
-	}
-
-	err = p.embeddingRepo.StoreWithHMSet(
-		ctx,
-		common.NeuralTrustJailbreakIndexName,
-		fmt.Sprintf(cacheKey, gatewayID, uuid.New().String()),
-		gatewayID,
-		embeddingData,
-		[]byte(sample),
-	)
-	if err != nil {
-		p.logger.WithError(err).Error("failed to store embedding for sample " + sample)
-	}
-}
-
-func (p *NeuralTrustModerationPlugin) hashGatewayID(value string) string {
-	h := sha256.New()
-	h.Write([]byte(value))
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (p *NeuralTrustModerationPlugin) notifyGuardrailViolation(ctx context.Context, conf Config) {
@@ -560,109 +437,95 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 	}
 }
 
-func (p *NeuralTrustModerationPlugin) callEmbeddingModeration(
+func (p *NeuralTrustModerationPlugin) callNTTopicModeration(
 	ctx context.Context,
-	cfg *EmbeddingParamBag,
+	cfg Config,
 	wg *sync.WaitGroup,
 	inputBody []byte,
-	gatewayID string,
 	firewallErrors chan<- error,
 	evt *NeuralTrustModerationData,
 	evtMu *sync.Mutex,
 ) {
 	defer wg.Done()
+
 	if len(inputBody) == 0 {
 		return
 	}
 
-	startTime := time.Now()
+	start := time.Now()
 
-	creator, err := p.serviceLocator.GetService(cfg.EmbeddingsConfig.Provider)
+	client, err := p.firewallFactory.Get(firewall.ProviderNeuralTrust)
 	if err != nil {
-		p.logger.WithError(err).Error("failed to get embeddings service")
+		p.logger.WithError(err).Error("failed to get neuraltrust firewall client")
 		p.sendError(firewallErrors, err)
 		return
 	}
-	config := &embedding.Config{
-		Provider: cfg.EmbeddingsConfig.Provider,
-		Model:    cfg.EmbeddingsConfig.Model,
-		Credentials: domain.CredentialsJSON{
-			ApiKey: cfg.EmbeddingsConfig.Credentials.ApiKey,
+
+	content := firewall.ModerationContent{
+		Input:      []string{string(inputBody)},
+		Topics:     cfg.NTTopicParamBag.Topics,
+		Thresholds: cfg.NTTopicParamBag.Thresholds,
+	}
+
+	creds := firewall.Credentials{
+		NeuralTrustCredentials: firewall.NeuralTrustCredentials{
+			BaseURL: cfg.NTCredentials.BaseURL,
+			Token:   cfg.NTCredentials.Token,
 		},
 	}
-	emb, err := creator.Generate(ctx, string(inputBody), cfg.EmbeddingsConfig.Model, config)
+
+	responses, err := client.DetectModeration(ctx, content, creds)
 	if err != nil {
-		if errors.Is(err, embedding.ErrProviderNonOKResponse) {
-			p.logger.WithError(err).Warn("embedding provider non-ok response; skipping moderation signal")
+		if errors.Is(err, context.Canceled) {
 			return
 		}
-		p.logger.WithError(err).Error("failed to generate body embedding")
+		p.logger.WithError(err).Error("failed to call moderation service")
 		p.sendError(firewallErrors, err)
 		return
 	}
 
-	query := fmt.Sprintf("@gateway_id:{%s}=>[KNN 5 @embedding $BLOB AS score]", p.hashGatewayID(gatewayID))
+	duration := time.Since(start)
 
-	results, err := p.embeddingRepo.Search(ctx, common.NeuralTrustJailbreakIndexName, query, emb)
-
-	latencyMs := time.Since(startTime).Milliseconds()
-
-	if err != nil {
-		p.logger.WithError(err).Error("failed to search embeddings")
-		p.sendError(firewallErrors, err)
+	if len(responses) == 0 {
 		return
 	}
 
-	if evtMu != nil {
-		evtMu.Lock()
-	}
-	if evt.EmbeddingModeration != nil {
-		evt.EmbeddingModeration.DetectionLatencyMs = latencyMs
-	}
-	if evtMu != nil {
-		evtMu.Unlock()
-	}
+	resp := responses[0]
 
-	if len(results) == 0 {
-		return
-	}
+	p.logger.WithFields(logrus.Fields{
+		"duration":       duration.Seconds(),
+		"is_blocked":     resp.IsBlocked,
+		"blocked_topics": resp.BlockedTopics,
+	}).Info("NT topic moderation service responded successfully")
 
-	scores := make(map[string]float64, len(results))
-	var maxScore float64
-	matchCount := 0
-	blocked := false
-
-	for _, result := range results {
-		scores[result.Data] = result.Score
-		if result.Score > maxScore {
-			maxScore = result.Score
-		}
-		if result.Score >= cfg.Threshold {
-			matchCount++
-			blocked = true
+	topicScores := make(map[string]NTTopicScore)
+	for topic, score := range resp.TopicScores {
+		topicScores[topic] = NTTopicScore{
+			Topic:       score.Topic,
+			Probability: score.Probability,
+			Blocked:     score.Blocked,
 		}
 	}
 
 	if evtMu != nil {
 		evtMu.Lock()
 	}
-	if evt.EmbeddingModeration != nil && evt.EmbeddingModeration.Scores != nil {
-		evt.EmbeddingModeration.Scores.Scores = scores
-		evt.EmbeddingModeration.Scores.MaxScore = maxScore
-		evt.EmbeddingModeration.Scores.MatchCount = matchCount
-		evt.EmbeddingModeration.Blocked = blocked
+	if evt.NTTopicModeration != nil {
+		evt.NTTopicModeration.TopicScores = topicScores
+		evt.NTTopicModeration.BlockedTopics = resp.BlockedTopics
+		evt.NTTopicModeration.Warnings = resp.Warnings
+		evt.NTTopicModeration.Blocked = resp.IsBlocked
+		evt.NTTopicModeration.DetectionLatencyMs = duration.Milliseconds()
 	}
 	if evtMu != nil {
 		evtMu.Unlock()
 	}
 
-	if blocked {
+	if resp.IsBlocked {
+		blockedTopicsStr := strings.Join(resp.BlockedTopics, ", ")
 		p.sendError(
 			firewallErrors,
-			NewModerationViolation(fmt.Sprintf("content blocked: similarity score %.2f exceeds threshold %.2f",
-				maxScore,
-				cfg.Threshold,
-			)),
+			NewModerationViolation(fmt.Sprintf("content blocked: topics [%s] exceeded threshold", blockedTopicsStr)),
 		)
 	}
 }

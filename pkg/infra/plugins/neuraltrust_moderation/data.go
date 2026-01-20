@@ -5,24 +5,9 @@ type NeuralTrustModerationData struct {
 	InputLength  int    `json:"input_length"`
 	Blocked      bool   `json:"blocked"`
 
-	EmbeddingModeration *EmbeddingModeration `json:"embedding_moderation,omitempty"`
-	KeyRegModeration    *KeyRegModeration    `json:"keyreg_moderation,omitempty"`
-	LLMModeration       *LLMModeration       `json:"llm_moderation,omitempty"`
-}
-
-type EmbeddingModeration struct {
-	Provider           string           `json:"provider"`
-	Model              string           `json:"model"`
-	Threshold          float64          `json:"threshold"`
-	Scores             *EmbeddingScores `json:"scores,omitempty"`
-	Blocked            bool             `json:"blocked"`
-	DetectionLatencyMs int64            `json:"detection_latency_ms"`
-}
-
-type EmbeddingScores struct {
-	Scores     map[string]float64 `json:"scores"`
-	MaxScore   float64            `json:"max_score"`
-	MatchCount int                `json:"match_count"`
+	KeyRegModeration  *KeyRegModeration  `json:"keyreg_moderation,omitempty"`
+	LLMModeration     *LLMModeration     `json:"llm_moderation,omitempty"`
+	NTTopicModeration *NTTopicModeration `json:"nt_topic_moderation,omitempty"`
 }
 
 type KeyRegModeration struct {
@@ -44,4 +29,18 @@ type LLMModeration struct {
 	Topic              string `json:"topic,omitempty"`
 	InstructionMatch   string `json:"instruction_match,omitempty"`
 	DetectionLatencyMs int64  `json:"detection_latency_ms"`
+}
+
+type NTTopicModeration struct {
+	Blocked            bool                        `json:"blocked"`
+	TopicScores        map[string]NTTopicScore     `json:"topic_scores,omitempty"`
+	BlockedTopics      []string                    `json:"blocked_topics,omitempty"`
+	Warnings           []string                    `json:"warnings,omitempty"`
+	DetectionLatencyMs int64                       `json:"detection_latency_ms"`
+}
+
+type NTTopicScore struct {
+	Topic       string  `json:"topic"`
+	Probability float64 `json:"probability"`
+	Blocked     bool    `json:"blocked"`
 }
