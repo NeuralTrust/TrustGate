@@ -105,18 +105,7 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 		if rule.TrustLens == nil {
 			return nil
 		}
-		if rule.TrustLens != nil && rule.TrustLens.Mapping != nil {
-			p.cfg.Mapping = Mapping{
-				Input: DataMapping{
-					ExtractFields:  rule.TrustLens.Mapping.Input.ExtractFields,
-					DataProjection: rule.TrustLens.Mapping.Input.DataProjection,
-				},
-				Output: DataMapping{
-					ExtractFields:  rule.TrustLens.Mapping.Output.ExtractFields,
-					DataProjection: rule.TrustLens.Mapping.Output.DataProjection,
-				},
-			}
-		}
+		p.cfg.Mapping = p.buildMappingWithDefaults(rule.TrustLens.Mapping)
 	}
 
 	if evt.LastStreamLine != nil {
@@ -149,6 +138,7 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
+	fmt.Println(string(data))
 	p.logger.Debug(string(data))
 	deliveryChan := make(chan kafka.Event)
 	err = p.producer.Produce(&kafka.Message{
@@ -321,4 +311,38 @@ func (p *Exporter) createTopicIfNotExists(topic string) error {
 	fmt.Println("create topic result: ", results)
 	p.cfg.Topic = topic
 	return nil
+}
+
+func (p *Exporter) buildMappingWithDefaults(ruleMapping *types.TrustLensMappingDTO) Mapping {
+	defaultExtractFields := map[string]string{
+		"user_id":         "user_id",
+		"conversation_id": "conversation_id",
+	}
+
+	if ruleMapping == nil {
+		return Mapping{
+			Input: DataMapping{
+				ExtractFields: defaultExtractFields,
+			},
+		}
+	}
+
+	inputExtractFields := make(map[string]string)
+	for k, v := range defaultExtractFields {
+		inputExtractFields[k] = v
+	}
+	for k, v := range ruleMapping.Input.ExtractFields {
+		inputExtractFields[k] = v
+	}
+
+	return Mapping{
+		Input: DataMapping{
+			ExtractFields:  inputExtractFields,
+			DataProjection: ruleMapping.Input.DataProjection,
+		},
+		Output: DataMapping{
+			ExtractFields:  ruleMapping.Output.ExtractFields,
+			DataProjection: ruleMapping.Output.DataProjection,
+		},
+	}
 }

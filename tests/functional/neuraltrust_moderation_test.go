@@ -146,15 +146,15 @@ func TestNeuralTrustModerationPlugin_NTTopic(t *testing.T) {
 				"stage":    "pre_request",
 				"priority": 1,
 				"settings": map[string]interface{}{
-					"credentials": map[string]interface{}{
-						"base_url": os.Getenv("NEURAL_TRUST_FIREWALL_URL"),
-						"token":    os.Getenv("NEURAL_TRUST_FIREWALL_API_KEY"),
-					},
 					"nt_topic_moderation": map[string]interface{}{
 						"enabled": true,
 						"topics":  []string{"code_generation"},
 						"thresholds": map[string]interface{}{
 							"code_generation": 0.5,
+						},
+						"credentials": map[string]interface{}{
+							"base_url": os.Getenv("NEURAL_TRUST_FIREWALL_URL"),
+							"token":    os.Getenv("NEURAL_TRUST_FIREWALL_API_KEY"),
 						},
 					},
 					"mapping_field": "input.text",

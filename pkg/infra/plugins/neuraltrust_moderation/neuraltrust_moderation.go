@@ -140,10 +140,10 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config pluginTypes.PluginCo
 	}
 
 	if cfg.NTTopicParamBag != nil && cfg.NTTopicParamBag.Enabled {
-		if cfg.NTCredentials == nil || cfg.NTCredentials.BaseURL == "" {
+		if cfg.NTTopicParamBag.Credentials == nil || cfg.NTTopicParamBag.Credentials.BaseURL == "" {
 			return fmt.Errorf("nt_topic_moderation requires credentials.base_url")
 		}
-		if cfg.NTCredentials.Token == "" {
+		if cfg.NTTopicParamBag.Credentials.Token == "" {
 			return fmt.Errorf("nt_topic_moderation requires credentials.token")
 		}
 		if len(cfg.NTTopicParamBag.Topics) == 0 {
@@ -469,8 +469,8 @@ func (p *NeuralTrustModerationPlugin) callNTTopicModeration(
 
 	creds := firewall.Credentials{
 		NeuralTrustCredentials: firewall.NeuralTrustCredentials{
-			BaseURL: cfg.NTCredentials.BaseURL,
-			Token:   cfg.NTCredentials.Token,
+			BaseURL: cfg.NTTopicParamBag.Credentials.BaseURL,
+			Token:   cfg.NTTopicParamBag.Credentials.Token,
 		},
 	}
 

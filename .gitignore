@@ -60,7 +60,7 @@ __debug_bin
 
 # Air live reload
 tmp/
-.junie
+.mydocs
 
 guides.md
 local

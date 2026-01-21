@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	ServiceIDKey = "service_id"
-	RouteIDKey   = "route_id"
+	ServiceIDKey      = "service_id"
+	RouteIDKey        = "route_id"
+	streamModeTimeout = 30 * time.Second
 )
 
 type metricsMiddleware struct {
@@ -36,227 +37,149 @@ func NewMetricsMiddleware(logger *logrus.Logger, worker metrics.Worker) Middlewa
 
 func (m *metricsMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		gatewayID, ok := c.Locals(common.GatewayContextKey).(string)
-		if !ok || gatewayID == "" {
-			m.logger.Error("gatewayDTO ID not found in context")
-			return c.Next()
-		}
-		gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
-		if !ok {
-			m.logger.
-				WithField("gatewayID", gatewayID).
-				Error("gateway data not found in context (metrics middleware)")
+		gatewayID, gatewayData, err := m.extractGatewayContext(c)
+		if err != nil {
 			return c.Next()
 		}
 
-		streamResponse := make(chan []byte)
-		streamMode := make(chan bool, 1)
-		defer close(streamMode)
-
-		var streamResponseBody bytes.Buffer
-		var streamDetected bool
-
-		traceId := uuid.New().String()
-		metricsCollector := m.getMetricsCollector(traceId, gatewayData)
-
-		c.Locals(common.TraceIdKey, traceId)
-		c.Locals(common.StreamResponseContextKey, streamResponse)
-		c.Locals(common.StreamModeContextKey, streamMode)
-		c.Locals(string(metrics.CollectorKey), metricsCollector)
-
-		ctx := context.WithValue(c.Context(), string(metrics.CollectorKey), metricsCollector) //nolint
-		ctx = context.WithValue(ctx, common.StreamResponseContextKey, streamResponse)
-		ctx = context.WithValue(ctx, common.StreamModeContextKey, streamMode)
-		ctx = context.WithValue(ctx, common.TraceIdKey, traceId)
-
-		c.SetUserContext(ctx)
-
-		var (
-			exporters []types.ExporterDTO
-			startTime time.Time
-		)
-
-		inputRequest := types.RequestContext{}
-
-		telemetryOn := gatewayData.Gateway != nil &&
-			gatewayData.Gateway.Telemetry != nil &&
-			(gatewayData.Gateway.Telemetry.EnablePluginTraces ||
-				gatewayData.Gateway.Telemetry.EnableRequestTraces ||
-				len(gatewayData.Gateway.Telemetry.Exporters) > 0)
-
-		if telemetryOn {
-			userAgentInfo := utils.ParseUserAgent(m.getUserAgent(c), m.getAcceptLanguage(c))
-			m.setTelemetryHeaders(c, gatewayData)
-			inputRequest = m.transformToRequestContext(c, gatewayID, userAgentInfo)
-			startTime, ok = c.Locals(common.LatencyContextKey).(time.Time)
-			if !ok {
-				m.logger.Error("start_time not found in context")
-				startTime = time.Now()
-			}
-		}
-
-		// TODO metrics for websockets
+		// Skip metrics for websockets
 		if strings.Contains(c.Path(), "/ws/") {
 			return c.Next()
 		}
 
-		wg := &sync.WaitGroup{}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			select {
-			case mode := <-streamMode:
-				if mode {
-					streamDetected = true
-				}
-			case <-time.After(30 * time.Second):
-				m.logger.Warn("timeout waiting for stream mode signal")
-			}
-		}()
+		ctx := m.initializeContext(c, gatewayData)
+		telemetryEnabled := m.isTelemetryEnabled(gatewayData)
 
-		err := c.Next()
-
-		var sessionID string
-		sessionID, ok = ctx.Value(common.SessionContextKey).(string)
-		if !ok || sessionID == "" {
-			m.logger.Debug("session ID not found in context")
-		}
-
-		rule, ok := ctx.Value(string(common.MatchedRuleContextKey)).(*types.ForwardingRuleDTO)
-		if !ok || rule == nil {
-			m.logger.Error("failed to get matched rule from context")
-			rule = &types.ForwardingRuleDTO{}
-		}
-
-		headers := make(map[string][]string)
-		for key, values := range c.GetRespHeaders() {
-			headers[key] = values
-		}
-
-		statusCode := c.Response().StatusCode()
-
-		wg.Wait()
-
-		if telemetryOn {
-			inputRequest.SessionID = sessionID
-			exporters = gatewayData.Gateway.Telemetry.Exporters
-		}
-
-		endTime := time.Now()
-		var once sync.Once
-		if streamDetected {
-			go func(
-				gID string,
-				inputReq types.RequestContext,
-				headers map[string][]string,
-				rule *types.ForwardingRuleDTO,
-				sCode int,
-				telemetryOn bool,
-			) {
-				startTimeStream := time.Now()
-				var lastLine []byte
-				for line := range streamResponse {
-					if len(line) > 0 {
-						lastLine = line
-						_, err := streamResponseBody.Write(line)
-						if err != nil {
-							m.logger.WithError(err).Error("error writing to stream buffer")
-						}
-					}
-				}
-				streamDuration := float64(time.Since(startTimeStream).Microseconds()) / 1000
-				if telemetryOn {
-					once.Do(func() {
-						m.logger.Debug("stream channel closed")
-						now := time.Now()
-						m.worker.Process(
-							metricsCollector,
-							exporters,
-							inputReq,
-							types.ResponseContext{
-								Context:   context.Background(),
-								GatewayID: gID,
-								Headers:   headers,
-								Metadata: map[string]interface{}{
-									"lastOutputLine": lastLine,
-								},
-								Body:          streamResponseBody.Bytes(),
-								StatusCode:    sCode,
-								ProcessAt:     &now,
-								Rule:          rule, // rule is already checked for nil above
-								TargetLatency: streamDuration,
-								Streaming:     true,
-							},
-							startTime,
-							time.Now(),
-						)
-					})
-				}
-			}(gatewayID, inputRequest, headers, rule, statusCode, telemetryOn)
-			return err
-		}
-
-		if telemetryOn {
-			outputResponse := m.transformToResponseContext(c, gatewayID, *rule)
-			m.logger.Debug("processing metrics as non stream mode")
-			m.worker.Process(
-				metricsCollector,
-				exporters,
-				inputRequest,
-				outputResponse,
-				startTime,
-				endTime,
-			)
-		}
-		return err
-	}
-}
-
-func (m *metricsMiddleware) getMetricsCollector(traceId string, gatewayData *types.GatewayData) *metrics.Collector {
-	if traceId == "" {
-		traceId = uuid.New().String()
-	}
-	metricsCollector := metrics.NewCollector(
-		&metrics.Config{
-			EnablePluginTraces:  false,
-			EnableRequestTraces: false,
-			ExtraParams:         nil,
-		},
-		metrics.WithTraceID(traceId),
-	)
-	if gatewayData.Gateway.Telemetry != nil {
-		metricsCollector = metrics.NewCollector(
-			&metrics.Config{
-				EnablePluginTraces:  gatewayData.Gateway.Telemetry.EnablePluginTraces,
-				EnableRequestTraces: gatewayData.Gateway.Telemetry.EnableRequestTraces,
-				ExtraParams:         gatewayData.Gateway.Telemetry.ExtraParams,
-			},
-			metrics.WithTraceID(traceId),
+		var (
+			inputRequest types.RequestContext
+			startTime    time.Time
 		)
+
+		if telemetryEnabled {
+			m.setTelemetryHeaders(c, gatewayData)
+			inputRequest = m.buildRequestContext(c, gatewayID)
+			startTime = m.getStartTime(c)
+		}
+
+		stream := m.initStreamState(c)
+		defer stream.cleanup()
+
+		go stream.waitForMode(m.logger)
+
+		nextErr := c.Next()
+
+		stream.wait()
+
+		if stream.isStreaming() {
+			m.handleStreamResponse(ctx, gatewayID, gatewayData, inputRequest, c, startTime, stream, telemetryEnabled)
+			return nextErr
+		}
+
+		if telemetryEnabled {
+			m.handleNonStreamResponse(ctx, gatewayID, gatewayData, inputRequest, c, startTime)
+		}
+
+		return nextErr
 	}
-	return metricsCollector
 }
 
-func (m *metricsMiddleware) getUserAgent(ctx *fiber.Ctx) string {
-	return ctx.Get("User-Agent")
+// extractGatewayContext retrieves gateway ID and data from the fiber context
+func (m *metricsMiddleware) extractGatewayContext(c *fiber.Ctx) (string, *types.GatewayData, error) {
+	gatewayID, ok := c.Locals(common.GatewayContextKey).(string)
+	if !ok || gatewayID == "" {
+		m.logger.Error("gatewayDTO ID not found in context")
+		return "", nil, fiber.ErrNotFound
+	}
+	gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
+	if !ok {
+		m.logger.WithField("gatewayID", gatewayID).Error("gateway data not found in context (metrics middleware)")
+		return "", nil, fiber.ErrNotFound
+	}
+	return gatewayID, gatewayData, nil
 }
 
-func (m *metricsMiddleware) getAcceptLanguage(ctx *fiber.Ctx) string {
-	return ctx.Get("Accept-Language")
+// initializeContext sets up the trace ID, metrics collector, and stream channels in the context
+func (m *metricsMiddleware) initializeContext(c *fiber.Ctx, gatewayData *types.GatewayData) context.Context {
+	traceID := uuid.New().String()
+	fingerprintID, _ := c.Locals(common.FingerprintIdContextKey).(string)
+	collector := m.createMetricsCollector(traceID, fingerprintID, gatewayData)
+
+	streamResponse := make(chan []byte)
+	streamMode := make(chan bool, 1)
+
+	c.Locals(common.TraceIdKey, traceID)
+	c.Locals(common.StreamResponseContextKey, streamResponse)
+	c.Locals(common.StreamModeContextKey, streamMode)
+	c.Locals(string(metrics.CollectorKey), collector)
+
+	ctx := context.WithValue(c.Context(), string(metrics.CollectorKey), collector) //nolint
+	ctx = context.WithValue(ctx, common.StreamResponseContextKey, streamResponse)
+	ctx = context.WithValue(ctx, common.StreamModeContextKey, streamMode)
+	ctx = context.WithValue(ctx, common.TraceIdKey, traceID)
+
+	c.SetUserContext(ctx)
+
+	return ctx
 }
 
-func (m *metricsMiddleware) transformToRequestContext(
-	c *fiber.Ctx,
-	gatewayID string,
-	userAgentInfo *utils.UserAgentInfo,
-) types.RequestContext {
+// createMetricsCollector creates a metrics collector with the appropriate configuration
+func (m *metricsMiddleware) createMetricsCollector(traceID, fingerprintID string, gatewayData *types.GatewayData) *metrics.Collector {
+	if traceID == "" {
+		traceID = uuid.New().String()
+	}
+
+	config := &metrics.Config{
+		EnablePluginTraces:  false,
+		EnableRequestTraces: false,
+		ExtraParams:         nil,
+	}
+
+	if gatewayData.Gateway.Telemetry != nil {
+		config.EnablePluginTraces = gatewayData.Gateway.Telemetry.EnablePluginTraces
+		config.EnableRequestTraces = gatewayData.Gateway.Telemetry.EnableRequestTraces
+		config.ExtraParams = gatewayData.Gateway.Telemetry.ExtraParams
+	}
+
+	return metrics.NewCollector(
+		config,
+		metrics.WithTraceID(traceID),
+		metrics.WithFingerprintID(fingerprintID),
+	)
+}
+
+// isTelemetryEnabled checks if telemetry is enabled for the gateway
+func (m *metricsMiddleware) isTelemetryEnabled(gatewayData *types.GatewayData) bool {
+	if gatewayData.Gateway == nil || gatewayData.Gateway.Telemetry == nil {
+		return false
+	}
+
+	telemetry := gatewayData.Gateway.Telemetry
+	return telemetry.EnablePluginTraces ||
+		telemetry.EnableRequestTraces ||
+		len(telemetry.Exporters) > 0
+}
+
+// getStartTime retrieves the start time from context or returns current time
+func (m *metricsMiddleware) getStartTime(c *fiber.Ctx) time.Time {
+	startTime, ok := c.Locals(common.LatencyContextKey).(time.Time)
+	if !ok {
+		m.logger.Error("start_time not found in context")
+		return time.Now()
+	}
+	return startTime
+}
+
+// buildRequestContext creates a RequestContext from the fiber context
+func (m *metricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) types.RequestContext {
+	userAgentInfo := utils.ParseUserAgent(c.Get("User-Agent"), c.Get("Accept-Language"))
 	now := time.Now()
+
 	reqCtx := types.RequestContext{
 		Context:   context.Background(),
 		GatewayID: gatewayID,
-		Headers:   make(map[string][]string),
+		Headers:   m.copyHeaders(c.GetReqHeaders()),
 		Method:    c.Method(),
-		Path:      string([]byte(c.Path())), // do not modify, is a clone
+		Path:      string([]byte(c.Path())), // clone to avoid mutation
 		Query:     m.getQueryParams(c),
 		Metadata: map[string]interface{}{
 			"user_agent_info": userAgentInfo,
@@ -264,12 +187,6 @@ func (m *metricsMiddleware) transformToRequestContext(
 		Body:      append([]byte(nil), c.Request().Body()...),
 		ProcessAt: &now,
 		IP:        utils.ExtractIP(c),
-	}
-
-	for key, values := range c.GetReqHeaders() {
-		copyValues := make([]string, len(values))
-		copy(copyValues, values)
-		reqCtx.Headers[key] = copyValues
 	}
 
 	if conversationID, ok := c.Locals(common.ConversationIDHeader).(string); ok && conversationID != "" {
@@ -282,30 +199,143 @@ func (m *metricsMiddleware) transformToRequestContext(
 	return reqCtx
 }
 
-func (m *metricsMiddleware) transformToResponseContext(
+// handleStreamResponse processes metrics for streaming responses
+func (m *metricsMiddleware) handleStreamResponse(
+	ctx context.Context,
+	gatewayID string,
+	gatewayData *types.GatewayData,
+	inputRequest types.RequestContext,
+	c *fiber.Ctx,
+	startTime time.Time,
+	state *streamState,
+	telemetryEnabled bool,
+) {
+	if !telemetryEnabled {
+		return
+	}
+
+	inputRequest.SessionID = m.getSessionID(ctx)
+	exporters := gatewayData.Gateway.Telemetry.Exporters
+	rule := m.getMatchedRule(ctx)
+	headers := m.copyHeaders(c.GetRespHeaders())
+	statusCode := c.Response().StatusCode()
+	collector := m.getCollectorFromContext(c)
+
+	go func() {
+		streamStartTime := time.Now()
+		responseBody, lastLine := state.collectStreamData(m.logger)
+		streamDuration := float64(time.Since(streamStartTime).Microseconds()) / 1000
+
+		m.logger.Debug("stream channel closed")
+		now := time.Now()
+
+		m.worker.Process(
+			collector,
+			exporters,
+			inputRequest,
+			types.ResponseContext{
+				Context:   context.Background(),
+				GatewayID: gatewayID,
+				Headers:   headers,
+				Metadata: map[string]interface{}{
+					"lastOutputLine": lastLine,
+				},
+				Body:          responseBody,
+				StatusCode:    statusCode,
+				ProcessAt:     &now,
+				Rule:          rule,
+				TargetLatency: streamDuration,
+				Streaming:     true,
+			},
+			startTime,
+			time.Now(),
+		)
+	}()
+}
+
+// handleNonStreamResponse processes metrics for non-streaming responses
+func (m *metricsMiddleware) handleNonStreamResponse(
+	ctx context.Context,
+	gatewayID string,
+	gatewayData *types.GatewayData,
+	inputRequest types.RequestContext,
+	c *fiber.Ctx,
+	startTime time.Time,
+) {
+	inputRequest.SessionID = m.getSessionID(ctx)
+	rule := m.getMatchedRule(ctx)
+	collector := m.getCollectorFromContext(c)
+
+	outputResponse := m.buildResponseContext(c, gatewayID, rule)
+
+	m.logger.Debug("processing metrics as non stream mode")
+	m.worker.Process(
+		collector,
+		gatewayData.Gateway.Telemetry.Exporters,
+		inputRequest,
+		outputResponse,
+		startTime,
+		time.Now(),
+	)
+}
+
+// buildResponseContext creates a ResponseContext from the fiber context
+func (m *metricsMiddleware) buildResponseContext(
 	c *fiber.Ctx,
 	gatewayID string,
-	rule types.ForwardingRuleDTO,
+	rule *types.ForwardingRuleDTO,
 ) types.ResponseContext {
 	now := time.Now()
-	reqCtx := types.ResponseContext{
+	return types.ResponseContext{
 		Context:    context.Background(),
 		GatewayID:  gatewayID,
-		Headers:    make(map[string][]string),
+		Headers:    m.copyHeaders(c.GetRespHeaders()),
 		Metadata:   nil,
 		Body:       append([]byte(nil), c.Response().Body()...),
 		StatusCode: c.Response().StatusCode(),
-		Rule:       &rule,
+		Rule:       rule,
 		ProcessAt:  &now,
 	}
-	for key, values := range c.GetRespHeaders() {
-		copyValues := make([]string, len(values))
-		copy(copyValues, values)
-		reqCtx.Headers[key] = copyValues
-	}
-	return reqCtx
 }
 
+// getSessionID retrieves the session ID from context
+func (m *metricsMiddleware) getSessionID(ctx context.Context) string {
+	sessionID, ok := ctx.Value(common.SessionContextKey).(string)
+	if !ok || sessionID == "" {
+		m.logger.Debug("session ID not found in context")
+		return ""
+	}
+	return sessionID
+}
+
+// getMatchedRule retrieves the matched rule from context
+func (m *metricsMiddleware) getMatchedRule(ctx context.Context) *types.ForwardingRuleDTO {
+	rule, ok := ctx.Value(string(common.MatchedRuleContextKey)).(*types.ForwardingRuleDTO)
+	if !ok || rule == nil {
+		m.logger.Error("failed to get matched rule from context")
+		return &types.ForwardingRuleDTO{}
+	}
+	return rule
+}
+
+// getCollectorFromContext retrieves the metrics collector from fiber context
+func (m *metricsMiddleware) getCollectorFromContext(c *fiber.Ctx) *metrics.Collector {
+	collector, _ := c.Locals(string(metrics.CollectorKey)).(*metrics.Collector)
+	return collector
+}
+
+// copyHeaders creates a deep copy of headers map
+func (m *metricsMiddleware) copyHeaders(headers map[string][]string) map[string][]string {
+	result := make(map[string][]string, len(headers))
+	for key, values := range headers {
+		copyValues := make([]string, len(values))
+		copy(copyValues, values)
+		result[key] = copyValues
+	}
+	return result
+}
+
+// getQueryParams extracts query parameters from the request
 func (m *metricsMiddleware) getQueryParams(c *fiber.Ctx) url.Values {
 	queryParams := make(url.Values)
 	c.Request().URI().QueryArgs().VisitAll(func(k, v []byte) {
@@ -314,34 +344,101 @@ func (m *metricsMiddleware) getQueryParams(c *fiber.Ctx) url.Values {
 	return queryParams
 }
 
+// setTelemetryHeaders sets conversation and interaction ID headers from request
 func (m *metricsMiddleware) setTelemetryHeaders(c *fiber.Ctx, gatewayData *types.GatewayData) {
-	mapping := make(map[string]string)
-	if gatewayData.Gateway != nil &&
-		gatewayData.Gateway.Telemetry != nil &&
-		gatewayData.Gateway.Telemetry.HeaderMapping != nil {
-		mapping = gatewayData.Gateway.Telemetry.HeaderMapping
+	mapping := m.getHeaderMapping(gatewayData)
+
+	// Set conversation ID
+	conversationIDKey := mapping["conversation_id"]
+	if conversationIDKey == "" {
+		conversationIDKey = common.ConversationIDHeader
+	}
+	if value := c.Get(conversationIDKey); value != "" {
+		c.Locals(common.ConversationIDHeader, value)
 	}
 
-	setHeaderLocal := func(mappingKey, defaultHeader string) {
-		headerKey, ok := mapping[mappingKey]
-		if !ok {
-			headerKey = defaultHeader
-		}
-		if value := c.Get(headerKey); value != "" {
-			c.Locals(defaultHeader, value)
-		}
+	// Set interaction ID (generate if not present)
+	interactionIDKey := mapping["interaction_id"]
+	if interactionIDKey == "" {
+		interactionIDKey = common.InteractionIDHeader
 	}
-
-	setHeaderLocal("conversation_id", common.ConversationIDHeader)
-
-	interactionIDHeaderKey, ok := mapping["interaction_id"]
-	if !ok {
-		interactionIDHeaderKey = common.InteractionIDHeader
-	}
-
-	if value := c.Get(interactionIDHeaderKey); value != "" {
+	if value := c.Get(interactionIDKey); value != "" {
 		c.Locals(common.InteractionIDHeader, value)
 	} else {
 		c.Locals(common.InteractionIDHeader, uuid.New().String())
 	}
+}
+
+// getHeaderMapping retrieves the header mapping configuration
+func (m *metricsMiddleware) getHeaderMapping(gatewayData *types.GatewayData) map[string]string {
+	if gatewayData.Gateway != nil &&
+		gatewayData.Gateway.Telemetry != nil &&
+		gatewayData.Gateway.Telemetry.HeaderMapping != nil {
+		return gatewayData.Gateway.Telemetry.HeaderMapping
+	}
+	return make(map[string]string)
+}
+
+// streamState manages the state of stream detection and data collection
+type streamState struct {
+	responseChan chan []byte
+	modeChan     chan bool
+	wg           *sync.WaitGroup
+	streaming    bool
+	mu           sync.Mutex
+}
+
+func (m *metricsMiddleware) initStreamState(c *fiber.Ctx) *streamState {
+	responseChan := c.Locals(common.StreamResponseContextKey).(chan []byte)
+	modeChan := c.Locals(common.StreamModeContextKey).(chan bool)
+
+	return &streamState{
+		responseChan: responseChan,
+		modeChan:     modeChan,
+		wg:           &sync.WaitGroup{},
+	}
+}
+
+func (s *streamState) waitForMode(logger *logrus.Logger) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	select {
+	case mode := <-s.modeChan:
+		s.mu.Lock()
+		s.streaming = mode
+		s.mu.Unlock()
+	case <-time.After(streamModeTimeout):
+		logger.Warn("timeout waiting for stream mode signal")
+	}
+}
+
+func (s *streamState) wait() {
+	s.wg.Wait()
+}
+
+func (s *streamState) isStreaming() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.streaming
+}
+
+func (s *streamState) cleanup() {
+	close(s.modeChan)
+}
+
+func (s *streamState) collectStreamData(logger *logrus.Logger) ([]byte, []byte) {
+	var buffer bytes.Buffer
+	var lastLine []byte
+
+	for line := range s.responseChan {
+		if len(line) > 0 {
+			lastLine = line
+			if _, err := buffer.Write(line); err != nil {
+				logger.WithError(err).Error("error writing to stream buffer")
+			}
+		}
+	}
+
+	return buffer.Bytes(), lastLine
 }
