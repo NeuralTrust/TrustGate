@@ -7,7 +7,7 @@ type NeuralTrustModerationData struct {
 
 	KeyRegModeration  *KeyRegModeration  `json:"keyreg_moderation,omitempty"`
 	LLMModeration     *LLMModeration     `json:"llm_moderation,omitempty"`
-	NTTopicModeration *NTTopicModeration `json:"nt_topic_moderation,omitempty"`
+	NTTopicModeration *NTTopicModeration `json:"slm_moderation,omitempty"`
 }
 
 type KeyRegModeration struct {
@@ -32,11 +32,11 @@ type LLMModeration struct {
 }
 
 type NTTopicModeration struct {
-	Blocked            bool                        `json:"blocked"`
-	TopicScores        map[string]NTTopicScore     `json:"topic_scores,omitempty"`
-	BlockedTopics      []string                    `json:"blocked_topics,omitempty"`
-	Warnings           []string                    `json:"warnings,omitempty"`
-	DetectionLatencyMs int64                       `json:"detection_latency_ms"`
+	Blocked            bool                    `json:"blocked"`
+	TopicScores        map[string]NTTopicScore `json:"topic_scores,omitempty"`
+	BlockedTopics      []string                `json:"blocked_topics,omitempty"`
+	Warnings           []string                `json:"warnings,omitempty"`
+	DetectionLatencyMs int64                   `json:"detection_latency_ms"`
 }
 
 type NTTopicScore struct {
