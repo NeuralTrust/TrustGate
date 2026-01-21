@@ -9,6 +9,7 @@ type EmbeddedParam struct {
 
 type collectorOptions struct {
 	traceID        string
+	fingerprintID  string
 	embeddedParams []EmbeddedParam
 }
 
@@ -17,6 +18,12 @@ type Option func(*collectorOptions)
 func WithTraceID(traceID string) Option {
 	return func(o *collectorOptions) {
 		o.traceID = traceID
+	}
+}
+
+func WithFingerprintID(fingerprintID string) Option {
+	return func(o *collectorOptions) {
+		o.fingerprintID = fingerprintID
 	}
 }
 

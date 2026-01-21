@@ -19,6 +19,7 @@ type Config struct {
 
 type Collector struct {
 	traceID        string
+	fingerprintID  string
 	mu             sync.Mutex
 	events         []*metric_events.Event
 	cfg            *Config
@@ -38,6 +39,7 @@ func NewCollector(cfg *Config, opts ...Option) *Collector {
 
 	return &Collector{
 		traceID:        traceID,
+		fingerprintID:  options.fingerprintID,
 		cfg:            cfg,
 		embeddedParams: options.embeddedParams,
 	}
@@ -58,6 +60,7 @@ func (rc *Collector) Emit(evt *metric_events.Event) {
 	}
 
 	evt.TraceID = rc.traceID
+	evt.FingerprintID = rc.fingerprintID
 	evt.Params = rc.cfg.ExtraParams
 
 	for _, ep := range rc.embeddedParams {

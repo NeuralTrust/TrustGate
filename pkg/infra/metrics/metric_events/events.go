@@ -17,6 +17,7 @@ type Event struct {
 	TraceID        string            `json:"trace_id"`
 	InteractionID  string            `json:"interaction_id"`
 	ConversationID string            `json:"conversation_id"`
+	UserID         string            `json:"user_id"`
 	Path           string            `json:"path"`
 	Input          string            `json:"input"`
 	Output         string            `json:"output"`
@@ -48,7 +49,8 @@ type Event struct {
 	FeedBackTag  string `json:"feedback_tag,omitempty"`
 	FeedBackText string `json:"feedback_text,omitempty"`
 
-	SessionID string `json:"session_id,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
+	FingerprintID string `json:"fingerprint_id,omitempty"`
 
 	// Plugin Params
 	Plugin *PluginDataEvent `json:"plugin,omitempty"`

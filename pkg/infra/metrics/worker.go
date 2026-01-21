@@ -13,10 +13,12 @@ import (
 	appTelemetry "github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	domainTelemetry "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/NeuralTrust/TrustGate/pkg/utils"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -234,6 +236,10 @@ func (m *worker) feedEvent(
 		evt.SessionID = req.SessionID
 	}
 
+	if evt.FingerprintID != "" {
+		evt.UserID = m.resolveUserIDFromFingerprint(evt.FingerprintID)
+	}
+
 	if resp.Rule != nil {
 		if resp.Rule.TrustLens != nil {
 			evt.TeamID = resp.Rule.TrustLens.TeamID
@@ -304,4 +310,21 @@ func (m *worker) getStatusClass(status string) string {
 		return "5xx" // Return server error class if status code is invalid
 	}
 	return fmt.Sprintf("%dxx", code/100)
+}
+
+func (m *worker) resolveUserIDFromFingerprint(fingerprintID string) string {
+	fp, err := fingerprint.NewFromID(fingerprintID)
+	if err != nil {
+		m.logger.WithError(err).Debug("failed to decode fingerprint, generating deterministic UserID")
+		return m.generateDeterministicUserID(fingerprintID)
+	}
+	if fp.UserID != "" {
+		return fp.UserID
+	}
+	return m.generateDeterministicUserID(fingerprintID)
+}
+
+func (m *worker) generateDeterministicUserID(fingerprintID string) string {
+	namespace := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	return uuid.NewSHA1(namespace, []byte(fingerprintID)).String()
 }
