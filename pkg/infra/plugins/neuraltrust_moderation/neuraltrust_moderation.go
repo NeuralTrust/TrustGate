@@ -118,7 +118,15 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config pluginTypes.PluginCo
 		}
 	}
 
-	if cfg.LLMParamBag != nil && cfg.LLMParamBag.Enabled {
+	llmEnabled := cfg.LLMParamBag != nil && cfg.LLMParamBag.Enabled
+	ntTopicEnabled := cfg.NTTopicParamBag != nil && cfg.NTTopicParamBag.Enabled
+
+	// LLM and NTTopicModeration are mutually exclusive
+	if llmEnabled && ntTopicEnabled {
+		return fmt.Errorf("llm_moderation and nt_topic_moderation cannot be enabled at the same time; choose one")
+	}
+
+	if llmEnabled {
 		if cfg.LLMParamBag.Provider != providersFactory.ProviderOpenAI &&
 			cfg.LLMParamBag.Provider != providersFactory.ProviderAnthropic &&
 			cfg.LLMParamBag.Provider != providersFactory.ProviderAzure &&
@@ -139,7 +147,7 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config pluginTypes.PluginCo
 		}
 	}
 
-	if cfg.NTTopicParamBag != nil && cfg.NTTopicParamBag.Enabled {
+	if ntTopicEnabled {
 		if cfg.NTTopicParamBag.Credentials == nil || cfg.NTTopicParamBag.Credentials.BaseURL == "" {
 			return fmt.Errorf("nt_topic_moderation requires credentials.base_url")
 		}
@@ -246,10 +254,6 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	}
 
 	if !keyRegFound && conf.NTTopicParamBag != nil && conf.NTTopicParamBag.Enabled {
-		evt.NTTopicModeration = &NTTopicModeration{
-			TopicScores: make(map[string]NTTopicScore),
-		}
-
 		wg.Add(1)
 		go p.callNTTopicModeration(
 			ctx,
@@ -263,8 +267,6 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	}
 
 	if !keyRegFound && conf.LLMParamBag != nil && conf.LLMParamBag.Enabled {
-		evt.LLMModeration = &LLMModeration{}
-
 		wg.Add(1)
 		go p.callAIModeration(
 			ctx,
@@ -422,11 +424,11 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 	if evtMu != nil {
 		evtMu.Lock()
 	}
-	if evt.LLMModeration != nil {
-		evt.LLMModeration.Blocked = resp.Flagged
-		evt.LLMModeration.InstructionMatch = resp.InstructionMatch
-		evt.LLMModeration.Topic = resp.Topic
-		evt.LLMModeration.DetectionLatencyMs = int64(duration * 1000)
+	evt.LLMModeration = &LLMModeration{
+		Blocked:            resp.Flagged,
+		InstructionMatch:   resp.InstructionMatch,
+		Topic:              resp.Topic,
+		DetectionLatencyMs: int64(duration * 1000),
 	}
 	if evtMu != nil {
 		evtMu.Unlock()
@@ -510,12 +512,12 @@ func (p *NeuralTrustModerationPlugin) callNTTopicModeration(
 	if evtMu != nil {
 		evtMu.Lock()
 	}
-	if evt.NTTopicModeration != nil {
-		evt.NTTopicModeration.TopicScores = topicScores
-		evt.NTTopicModeration.BlockedTopics = resp.BlockedTopics
-		evt.NTTopicModeration.Warnings = resp.Warnings
-		evt.NTTopicModeration.Blocked = resp.IsBlocked
-		evt.NTTopicModeration.DetectionLatencyMs = duration.Milliseconds()
+	evt.NTTopicModeration = &NTTopicModeration{
+		TopicScores:        topicScores,
+		BlockedTopics:      resp.BlockedTopics,
+		Warnings:           resp.Warnings,
+		Blocked:            resp.IsBlocked,
+		DetectionLatencyMs: duration.Milliseconds(),
 	}
 	if evtMu != nil {
 		evtMu.Unlock()
