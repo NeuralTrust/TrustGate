@@ -43,7 +43,7 @@ func (c *redisIndexCreator) CreateIndexes(ctx context.Context, keys ...string) e
 			"PREFIX", "1", key + ":",
 			"SCHEMA",
 			"gateway_id", "TAG", "SEPARATOR", ",",
-			"data", "TEXT",
+			"data", "TAG", "SEPARATOR", "|",
 			"embedding", "VECTOR", "FLAT", "6",
 			"TYPE", "FLOAT32",
 			"DIM", strconv.Itoa(vectorDimension),
