@@ -6,6 +6,7 @@ type Config struct {
 	NTTopicParamBag *NTTopicParamBag `mapstructure:"nt_topic_moderation"`
 	RetentionPeriod int              `mapstructure:"retention_period"`
 	MappingField    string           `mapstructure:"mapping_field"`
+	Mode            string           `mapstructure:"mode"`
 }
 
 type NeuralTrustCreds struct {

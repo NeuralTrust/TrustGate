@@ -19,21 +19,64 @@ import (
 )
 
 func TestNeuralTrustJailbreakPlugin_ValidateConfig(t *testing.T) {
-	plugin := &neuraltrust_jailbreak.NeuralTrustJailbreakPlugin{}
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
+	fingerPrintTrackerMock := new(mocks.Tracker)
 
-	validCfg := plugintypes.PluginConfig{
-		Settings: map[string]interface{}{
-			"jailbreak": map[string]interface{}{"threshold": 0.3},
-		},
-	}
-	invalidCfg := plugintypes.PluginConfig{
-		Settings: map[string]interface{}{
-			"jailbreak": map[string]interface{}{"threshold": 1.5},
-		},
-	}
+	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
+		logrus.New(),
+		mockFirewallFactory,
+		fingerPrintTrackerMock,
+	)
 
-	assert.NoError(t, plugin.ValidateConfig(validCfg))
-	assert.Error(t, plugin.ValidateConfig(invalidCfg))
+	t.Run("Valid config with default mode", func(t *testing.T) {
+		validCfg := plugintypes.PluginConfig{
+			Settings: map[string]interface{}{
+				"jailbreak": map[string]interface{}{"threshold": 0.3},
+			},
+		}
+		assert.NoError(t, plugin.ValidateConfig(validCfg))
+	})
+
+	t.Run("Valid config with enforce mode", func(t *testing.T) {
+		validCfg := plugintypes.PluginConfig{
+			Settings: map[string]interface{}{
+				"jailbreak": map[string]interface{}{"threshold": 0.3},
+				"mode":      "enforce",
+			},
+		}
+		assert.NoError(t, plugin.ValidateConfig(validCfg))
+	})
+
+	t.Run("Valid config with observe mode", func(t *testing.T) {
+		validCfg := plugintypes.PluginConfig{
+			Settings: map[string]interface{}{
+				"jailbreak": map[string]interface{}{"threshold": 0.3},
+				"mode":      "observe",
+			},
+		}
+		assert.NoError(t, plugin.ValidateConfig(validCfg))
+	})
+
+	t.Run("Invalid mode", func(t *testing.T) {
+		invalidCfg := plugintypes.PluginConfig{
+			Settings: map[string]interface{}{
+				"jailbreak": map[string]interface{}{"threshold": 0.3},
+				"mode":      "invalid_mode",
+			},
+		}
+		err := plugin.ValidateConfig(invalidCfg)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "mode must be either observe or enforce")
+	})
+
+	t.Run("Invalid threshold", func(t *testing.T) {
+		invalidCfg := plugintypes.PluginConfig{
+			Settings: map[string]interface{}{
+				"jailbreak": map[string]interface{}{"threshold": 1.5},
+			},
+		}
+		assert.Error(t, plugin.ValidateConfig(invalidCfg))
+	})
 }
 
 func TestNeuralTrustJailbreakPlugin_Execute_JailbreakSafe(t *testing.T) {
@@ -391,6 +434,103 @@ func TestNeuralTrustJailbreakPlugin_Execute_WithMessages_Blocked(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "jailbreak: score 0.80 exceeded threshold 0.50")
 	assert.Nil(t, pluginResp)
+	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
+}
+
+func TestNeuralTrustJailbreakPlugin_Execute_ObserveMode_Returns200(t *testing.T) {
+	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
+	fingerPrintTrackerMock := new(mocks.Tracker)
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
+
+	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
+		logrus.New(),
+		mockFirewallFactory,
+		fingerPrintTrackerMock,
+	)
+
+	cfg := plugintypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"credentials": map[string]interface{}{
+				"base_url": "https://api.neuraltrust.ai",
+				"token":    "test-token",
+			},
+			"jailbreak": map[string]interface{}{"threshold": 0.5},
+			"mode":      "observe",
+		},
+	}
+
+	// Mock firewall response with unsafe content (above threshold)
+	jailbreakResp := []firewall.JailbreakResponse{{
+		Scores: firewall.JailbreakScores{
+			MaliciousPrompt: 0.8, // Above threshold
+		},
+	}}
+
+	mockFirewallClient.On("DetectJailbreak", mock.Anything, mock.Anything, mock.Anything).Return(jailbreakResp, nil).Once()
+
+	req := &types.RequestContext{Body: []byte(`{"text":"jailbreak attempt"}`)}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	// In observe mode, should return 200 instead of 403
+	assert.NoError(t, err)
+	assert.NotNil(t, pluginResp)
+	assert.Equal(t, 200, pluginResp.StatusCode)
+	assert.Equal(t, "prompt flagged as jailbreak.", pluginResp.Message)
+	mockFirewallClient.AssertExpectations(t)
+	mockFirewallFactory.AssertExpectations(t)
+}
+
+func TestNeuralTrustJailbreakPlugin_Execute_EnforceMode_Returns403(t *testing.T) {
+	mockFirewallClient := new(firewallmocks.Client)
+	mockFirewallFactory := new(firewallmocks.ClientFactory)
+	fingerPrintTrackerMock := new(mocks.Tracker)
+
+	mockFirewallFactory.On("Get", "").Return(mockFirewallClient, nil)
+
+	plugin := neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
+		logrus.New(),
+		mockFirewallFactory,
+		fingerPrintTrackerMock,
+	)
+
+	cfg := plugintypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"credentials": map[string]interface{}{
+				"base_url": "https://api.neuraltrust.ai",
+				"token":    "test-token",
+			},
+			"jailbreak": map[string]interface{}{"threshold": 0.5},
+			"mode":      "enforce",
+		},
+	}
+
+	// Mock firewall response with unsafe content (above threshold)
+	jailbreakResp := []firewall.JailbreakResponse{{
+		Scores: firewall.JailbreakScores{
+			MaliciousPrompt: 0.8, // Above threshold
+		},
+	}}
+
+	mockFirewallClient.On("DetectJailbreak", mock.Anything, mock.Anything, mock.Anything).Return(jailbreakResp, nil).Once()
+
+	req := &types.RequestContext{Body: []byte(`{"text":"jailbreak attempt"}`)}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	// In enforce mode, should return error with 403
+	assert.Error(t, err)
+	assert.Nil(t, pluginResp)
+
+	var pluginError *plugintypes.PluginError
+	ok := errors.As(err, &pluginError)
+	assert.True(t, ok, "expected PluginError")
+	assert.Equal(t, 403, pluginError.StatusCode)
 	mockFirewallClient.AssertExpectations(t)
 	mockFirewallFactory.AssertExpectations(t)
 }

@@ -244,3 +244,239 @@ func TestNeuralTrustModerationPlugin_NTTopic(t *testing.T) {
 		})
 	}
 }
+
+func TestNeuralTrustModerationPlugin_KeyReg_ObserveMode(t *testing.T) {
+	defer RunTest(t, "NeuraltrustModerationObserve", time.Now())()
+	subdomain := fmt.Sprintf("neuraltrust-moderation-observe-%d", time.Now().Unix())
+	gatewayPayload := map[string]interface{}{
+		"name":      "NeuralTrust Moderation KeyReg Gateway Observe Mode",
+		"subdomain": subdomain,
+		"required_plugins": []map[string]interface{}{
+			{
+				"name":     "neuraltrust_moderation",
+				"enabled":  true,
+				"stage":    "pre_request",
+				"priority": 1,
+				"settings": map[string]interface{}{
+					"keyreg_moderation": map[string]interface{}{
+						"enabled":              true,
+						"similarity_threshold": 0.8,
+						"keywords":             []string{"password", "secret", "api_key"},
+						"regex":                []string{"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"},
+						"actions": map[string]interface{}{
+							"type":    "block",
+							"message": "Content contains sensitive information",
+						},
+					},
+					"mapping_field": "input.text",
+					"mode":          "observe",
+				},
+			},
+		},
+	}
+
+	gatewayID := CreateGateway(t, gatewayPayload)
+	apiKey := CreateApiKey(t, gatewayID)
+
+	upstreamPayload := map[string]interface{}{
+		"name":      fmt.Sprintf("echo-upstream-keyreg-observe-%d", time.Now().Unix()),
+		"algorithm": "round-robin",
+		"targets": []map[string]interface{}{
+			{
+				"host":     "localhost",
+				"port":     8081,
+				"protocol": "http",
+				"path":     "/__/ping",
+				"weight":   100,
+				"priority": 1,
+			},
+		},
+	}
+
+	upstreamID := CreateUpstream(t, gatewayID, upstreamPayload)
+
+	servicePayload := map[string]interface{}{
+		"name":        fmt.Sprintf("keyreg-observe-service-%d", time.Now().Unix()),
+		"type":        "upstream",
+		"description": "NeuralTrust KeyReg Test Service Observe Mode",
+		"upstream_id": upstreamID,
+	}
+
+	serviceID := CreateService(t, gatewayID, servicePayload)
+
+	rulePayload := map[string]interface{}{
+		"path":       "/post",
+		"service_id": serviceID,
+		"methods":    []string{"POST"},
+		"strip_path": false,
+		"active":     true,
+	}
+
+	CreateRules(t, gatewayID, rulePayload)
+	time.Sleep(2 * time.Second) // Wait for propagation
+
+	testCases := []struct {
+		name       string
+		input      string
+		expectCode int
+	}{
+		{
+			"Safe Content",
+			"{\"input\": {\"text\": \"I like Cats\"}}",
+			http.StatusOK,
+		},
+		{
+			"Content with Keyword - Observe Mode Returns 200",
+			"{\"input\": {\"text\": \"My password is 12345\"}}",
+			http.StatusOK, // In observe mode, should return 200 instead of 403
+		},
+		{
+			"Content with Similar Word - Observe Mode Returns 200",
+			"{\"input\": {\"text\": \"My passw0rd is 12345\"}}",
+			http.StatusOK, // In observe mode, should return 200 instead of 403
+		},
+		{
+			"Content with Regex Match - Observe Mode Returns 200",
+			"{\"input\": {\"text\": \"My email is test@example.com\"}}",
+			http.StatusOK, // In observe mode, should return 200 instead of 403
+		},
+		{
+			"Direct Text with Keyword - Observe Mode Returns 200",
+			"My secret is 12345",
+			http.StatusOK, // In observe mode, should return 200 instead of 403
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			reqBody := []byte(tc.input)
+			req, err := http.NewRequest(http.MethodPost, ProxyUrl+"/post", bytes.NewReader(reqBody))
+			assert.NoError(t, err)
+			req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
+			req.Header.Set("Host", fmt.Sprintf("%s.%s", subdomain, BaseDomain))
+			req.Header.Set("X-TG-API-Key", apiKey)
+			req.Header.Set("Content-Type", "application/json")
+
+			client := &http.Client{}
+			resp, err := client.Do(req)
+			assert.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+
+			assert.Equal(t, tc.expectCode, resp.StatusCode)
+		})
+	}
+}
+
+func TestNeuralTrustModerationPlugin_NTTopic_ObserveMode(t *testing.T) {
+	defer RunTest(t, "NeuraltrustModeration_NTTopic_Observe", time.Now())()
+	subdomain := fmt.Sprintf("neuraltrust-moderation-nttopic-observe-%d", time.Now().Unix())
+
+	gatewayPayload := map[string]interface{}{
+		"name":      "NeuralTrust Moderation NTTopic Gateway Observe Mode",
+		"subdomain": subdomain,
+		"required_plugins": []map[string]interface{}{
+			{
+				"name":     "neuraltrust_moderation",
+				"enabled":  true,
+				"stage":    "pre_request",
+				"priority": 1,
+				"settings": map[string]interface{}{
+					"nt_topic_moderation": map[string]interface{}{
+						"enabled": true,
+						"topics":  []string{"code_generation"},
+						"thresholds": map[string]interface{}{
+							"code_generation": 0.5,
+						},
+						"credentials": map[string]interface{}{
+							"base_url": os.Getenv("NEURAL_TRUST_FIREWALL_URL"),
+							"token":    os.Getenv("NEURAL_TRUST_FIREWALL_API_KEY"),
+						},
+					},
+					"mapping_field": "input.text",
+					"mode":          "observe",
+				},
+			},
+		},
+	}
+
+	gatewayID := CreateGateway(t, gatewayPayload)
+	apiKey := CreateApiKey(t, gatewayID)
+
+	upstreamPayload := map[string]interface{}{
+		"name":      fmt.Sprintf("echo-upstream-nttopic-observe-%d", time.Now().Unix()),
+		"algorithm": "round-robin",
+		"targets": []map[string]interface{}{
+			{
+				"host":     "localhost",
+				"port":     8081,
+				"protocol": "http",
+				"path":     "/__/ping",
+				"weight":   100,
+				"priority": 1,
+			},
+		},
+	}
+
+	upstreamID := CreateUpstream(t, gatewayID, upstreamPayload)
+
+	servicePayload := map[string]interface{}{
+		"name":        fmt.Sprintf("nttopic-observe-service-%d", time.Now().Unix()),
+		"type":        "upstream",
+		"description": "NeuralTrust NTTopic Test Service Observe Mode",
+		"upstream_id": upstreamID,
+	}
+
+	serviceID := CreateService(t, gatewayID, servicePayload)
+
+	rulePayload := map[string]interface{}{
+		"path":       "/post",
+		"service_id": serviceID,
+		"methods":    []string{"POST"},
+		"strip_path": false,
+		"active":     true,
+	}
+
+	CreateRules(t, gatewayID, rulePayload)
+	time.Sleep(2 * time.Second)
+
+	testCases := []struct {
+		name       string
+		input      string
+		expectCode int
+	}{
+		{
+			"Safe Content - No Code",
+			"{\"input\": {\"text\": \"I like cats and dogs\"}}",
+			http.StatusOK,
+		},
+		{
+			"Code Generation Request - Observe Mode Returns 200",
+			"{\"input\": {\"text\": \"Write me a Python function to sort an array\"}}",
+			http.StatusOK, // In observe mode, should return 200 instead of 403
+		},
+		{
+			"Code Generation Request Direct - Observe Mode Returns 200",
+			"Generate JavaScript code to fetch data from an API",
+			http.StatusOK, // In observe mode, should return 200 instead of 403
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			reqBody := []byte(tc.input)
+			req, err := http.NewRequest(http.MethodPost, ProxyUrl+"/post", bytes.NewReader(reqBody))
+			assert.NoError(t, err)
+			req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
+			req.Header.Set("Host", fmt.Sprintf("%s.%s", subdomain, BaseDomain))
+			req.Header.Set("X-TG-API-Key", apiKey)
+			req.Header.Set("Content-Type", "application/json")
+
+			client := &http.Client{}
+			resp, err := client.Do(req)
+			assert.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+
+			assert.Equal(t, tc.expectCode, resp.StatusCode)
+		})
+	}
+}

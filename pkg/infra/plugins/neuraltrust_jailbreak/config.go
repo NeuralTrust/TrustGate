@@ -1,12 +1,12 @@
-package neuraltrust_toxicity
+package neuraltrust_jailbreak
 
 type Config struct {
-	Provider         string            `mapstructure:"provider"`
-	Credentials      Credentials       `mapstructure:"credentials"`
-	ToxicityParamBag *ToxicityParamBag `mapstructure:"toxicity"`
-	MappingField     string            `mapstructure:"mapping_field"`
-	RetentionPeriod  int               `mapstructure:"retention_period"`
-	Mode             string            `mapstructure:"mode"`
+	Provider          string             `mapstructure:"provider"`
+	Credentials       Credentials        `mapstructure:"credentials"`
+	JailbreakParamBag *JailbreakParamBag `mapstructure:"jailbreak"`
+	MappingField      string             `mapstructure:"mapping_field"`
+	RetentionPeriod   int                `mapstructure:"retention_period"`
+	Mode              string             `mapstructure:"mode"`
 }
 
 type Credentials struct {
@@ -27,6 +27,6 @@ type OpenAICredentials struct {
 	APIKey string `mapstructure:"api_key"`
 }
 
-type ToxicityParamBag struct {
+type JailbreakParamBag struct {
 	Threshold float64 `mapstructure:"threshold"`
 }

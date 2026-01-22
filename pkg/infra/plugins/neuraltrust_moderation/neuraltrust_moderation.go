@@ -39,6 +39,7 @@ type LLMResponse struct {
 }
 
 type NeuralTrustModerationPlugin struct {
+	basePlugin         *pluginTypes.BasePlugin
 	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
@@ -63,6 +64,7 @@ func NewNeuralTrustModerationPlugin(
 		}
 	}
 	return &NeuralTrustModerationPlugin{
+		basePlugin:         pluginTypes.NewBasePlugin(),
 		client:             client,
 		logger:             logger,
 		fingerPrintManager: fingerPrintManager,
@@ -102,6 +104,12 @@ func (p *NeuralTrustModerationPlugin) ValidateConfig(config pluginTypes.PluginCo
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
 		return fmt.Errorf("failed to decode config: %w", err)
+	}
+	if cfg.Mode == "" {
+		cfg.Mode = pluginTypes.ModeEnforce
+	}
+	if err := p.basePlugin.ValidateMode(cfg.Mode); err != nil {
+		return err
 	}
 
 	if cfg.KeyRegParamBag != nil && cfg.KeyRegParamBag.Enabled {
@@ -215,6 +223,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		MappingField: conf.MappingField,
 		InputLength:  len(inputBytes),
 		Blocked:      false,
+		Mode:         conf.Mode,
 	}
 
 	keyRegFound := false
@@ -299,6 +308,15 @@ func (p *NeuralTrustModerationPlugin) Execute(
 			if errors.As(err, &moderationViolationError) {
 				evtCtx.SetError(moderationViolationError)
 				evtCtx.SetExtras(evt)
+				if conf.Mode == pluginTypes.ModeObserve {
+					return &pluginTypes.PluginResponse{
+						StatusCode: 200,
+						Message:    "prompt flagged",
+						Headers: map[string][]string{
+							"Content-Type": {"application/json"},
+						},
+					}, nil
+				}
 				return nil, &pluginTypes.PluginError{
 					StatusCode: http.StatusForbidden,
 					Message:    err.Error(),

@@ -24,39 +24,10 @@ const (
 )
 
 type NeuralTrustJailbreakPlugin struct {
+	basePlugin         *pluginTypes.BasePlugin
 	firewallFactory    firewall.ClientFactory
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
-}
-
-type Config struct {
-	Provider          string             `mapstructure:"provider"`
-	Credentials       Credentials        `mapstructure:"credentials"`
-	JailbreakParamBag *JailbreakParamBag `mapstructure:"jailbreak"`
-	MappingField      string             `mapstructure:"mapping_field"`
-	RetentionPeriod   int                `mapstructure:"retention_period"`
-}
-
-type Credentials struct {
-	NeuralTrust *NeuralTrustCredentials `mapstructure:"neuraltrust"`
-	OpenAI      *OpenAICredentials      `mapstructure:"openai"`
-
-	BaseURL string `mapstructure:"base_url"`
-	Token   string `mapstructure:"token"`
-	APIKey  string `mapstructure:"openai_api_key"`
-}
-
-type NeuralTrustCredentials struct {
-	BaseURL string `mapstructure:"base_url"`
-	Token   string `mapstructure:"token"`
-}
-
-type OpenAICredentials struct {
-	APIKey string `mapstructure:"api_key"`
-}
-
-type JailbreakParamBag struct {
-	Threshold float64 `mapstructure:"threshold"`
 }
 
 func NewNeuralTrustJailbreakPlugin(
@@ -65,6 +36,7 @@ func NewNeuralTrustJailbreakPlugin(
 	fingerPrintManager fingerprint.Tracker,
 ) pluginiface.Plugin {
 	return &NeuralTrustJailbreakPlugin{
+		basePlugin:         pluginTypes.NewBasePlugin(),
 		firewallFactory:    firewallFactory,
 		logger:             logger,
 		fingerPrintManager: fingerPrintManager,
@@ -115,6 +87,14 @@ func (p *NeuralTrustJailbreakPlugin) ValidateConfig(config pluginTypes.PluginCon
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
 		return fmt.Errorf("failed to decode config: %w", err)
+	}
+
+	if cfg.Mode == "" {
+		cfg.Mode = pluginTypes.ModeEnforce
+	}
+
+	if err := p.basePlugin.ValidateMode(cfg.Mode); err != nil {
+		return err
 	}
 
 	if cfg.JailbreakParamBag != nil {
@@ -174,6 +154,7 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		InputLength:  totalInputLength,
 		Scores:       &JailbreakScores{},
 		Blocked:      false,
+		Mode:         conf.Mode,
 	}
 
 	if conf.JailbreakParamBag != nil {
@@ -245,6 +226,15 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 			violationErr := NewGuardrailViolation(violationMsg)
 			evtCtx.SetError(violationErr)
 			evtCtx.SetExtras(evt)
+			if conf.Mode == pluginTypes.ModeObserve {
+				return &pluginTypes.PluginResponse{
+					StatusCode: 200,
+					Message:    "prompt flagged as jailbreak.",
+					Headers: map[string][]string{
+						"Content-Type": {"application/json"},
+					},
+				}, nil
+			}
 			return nil, &pluginTypes.PluginError{
 				StatusCode: http.StatusForbidden,
 				Message:    violationErr.Error(),

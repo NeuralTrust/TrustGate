@@ -3,6 +3,7 @@ package neuraltrust_moderation_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	fingerprintMocks "github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint/mocks"
@@ -172,6 +173,64 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 
 		err := plugin.ValidateConfig(invalidConfig)
 		assert.Error(t, err)
+	})
+
+	t.Run("Valid Configuration - Observe Mode", func(t *testing.T) {
+		validConfig := plugintypes.PluginConfig{
+			Settings: map[string]interface{}{
+				"keyreg_moderation": map[string]interface{}{
+					"enabled":              true,
+					"similarity_threshold": 0.8,
+					"keywords":             []string{"password"},
+					"actions": map[string]interface{}{
+						"type":    "block",
+						"message": "blocked",
+					},
+				},
+				"mode": "observe",
+			},
+		}
+		err := plugin.ValidateConfig(validConfig)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Valid Configuration - Enforce Mode", func(t *testing.T) {
+		validConfig := plugintypes.PluginConfig{
+			Settings: map[string]interface{}{
+				"keyreg_moderation": map[string]interface{}{
+					"enabled":              true,
+					"similarity_threshold": 0.8,
+					"keywords":             []string{"password"},
+					"actions": map[string]interface{}{
+						"type":    "block",
+						"message": "blocked",
+					},
+				},
+				"mode": "enforce",
+			},
+		}
+		err := plugin.ValidateConfig(validConfig)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Invalid Configuration - Invalid Mode", func(t *testing.T) {
+		invalidConfig := plugintypes.PluginConfig{
+			Settings: map[string]interface{}{
+				"keyreg_moderation": map[string]interface{}{
+					"enabled":              true,
+					"similarity_threshold": 0.8,
+					"keywords":             []string{"password"},
+					"actions": map[string]interface{}{
+						"type":    "block",
+						"message": "blocked",
+					},
+				},
+				"mode": "invalid_mode",
+			},
+		}
+		err := plugin.ValidateConfig(invalidConfig)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "mode must be either observe or enforce")
 	})
 }
 
@@ -559,4 +618,165 @@ func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegBlocked(t *testi
 	assert.Error(t, err)
 	assert.Nil(t, pluginResp)
 	assert.Contains(t, err.Error(), "content blocked")
+}
+
+func TestNeuralTrustModerationPlugin_Execute_ObserveMode_Returns200(t *testing.T) {
+	mockClient := new(httpxMocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
+	firewallFactoryMock := new(firewallMocks.ClientFactory)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		providerLocatorMock,
+		firewallFactoryMock,
+	)
+
+	cfg := plugintypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"keyreg_moderation": map[string]interface{}{
+				"enabled":              true,
+				"similarity_threshold": 0.8,
+				"keywords":             []string{"password", "secret"},
+				"actions": map[string]interface{}{
+					"type":    "block",
+					"message": "Content contains sensitive information",
+				},
+			},
+			"mode": "observe",
+		},
+	}
+
+	// Content contains blocked keyword but mode is observe
+	req := &types.RequestContext{
+		Body:      []byte(`my password is 12345`),
+		GatewayID: "test-gateway",
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	// In observe mode, should return 200 instead of 403
+	assert.NoError(t, err)
+	assert.NotNil(t, pluginResp)
+	assert.Equal(t, 200, pluginResp.StatusCode)
+}
+
+func TestNeuralTrustModerationPlugin_Execute_EnforceMode_Returns403(t *testing.T) {
+	mockClient := new(httpxMocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
+	firewallFactoryMock := new(firewallMocks.ClientFactory)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		providerLocatorMock,
+		firewallFactoryMock,
+	)
+
+	cfg := plugintypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"keyreg_moderation": map[string]interface{}{
+				"enabled":              true,
+				"similarity_threshold": 0.8,
+				"keywords":             []string{"password", "secret"},
+				"actions": map[string]interface{}{
+					"type":    "block",
+					"message": "Content contains sensitive information",
+				},
+			},
+			"mode": "enforce",
+		},
+	}
+
+	// Content contains blocked keyword with enforce mode
+	req := &types.RequestContext{
+		Body:      []byte(`my password is 12345`),
+		GatewayID: "test-gateway",
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	// In enforce mode, should return error with 403
+	assert.Error(t, err)
+	assert.Nil(t, pluginResp)
+	assert.Contains(t, err.Error(), "content blocked")
+
+	var pluginError *plugintypes.PluginError
+	ok := errors.As(err, &pluginError)
+	assert.True(t, ok, "expected PluginError")
+	assert.Equal(t, 403, pluginError.StatusCode)
+}
+
+func TestNeuralTrustModerationPlugin_Execute_LLMModeration_ObserveMode(t *testing.T) {
+	mockClient := new(httpxMocks.MockHTTPClient)
+	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
+	firewallFactoryMock := new(firewallMocks.ClientFactory)
+	clientMock := new(clientMocks.Client)
+
+	// Setup mock response for LLM moderation (flagged content)
+	llmResponse := neuraltrust_moderation.LLMResponse{
+		Topic:            "politics",
+		InstructionMatch: "Block if it mentions politics",
+		Flagged:          true,
+	}
+	responseJSON, err := json.Marshal(llmResponse)
+	if err != nil {
+		t.Fatalf("Failed to marshal LLM response: %v", err)
+	}
+
+	// Setup expectations for provider locator and client
+	providerLocatorMock.On("Get", "openai").Return(clientMock, nil)
+	clientMock.On("Ask", mock.Anything, mock.Anything, mock.Anything).Return(&providers.CompletionResponse{
+		ID:       "test-id",
+		Model:    "gpt-4",
+		Response: string(responseJSON),
+		Usage: providers.Usage{
+			PromptTokens:     10,
+			CompletionTokens: 20,
+			TotalTokens:      30,
+		},
+	}, nil)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		mockClient,
+		fingerPrintTrackerMock,
+		providerLocatorMock,
+		firewallFactoryMock,
+	)
+
+	cfg := plugintypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"llm_moderation": map[string]interface{}{
+				"provider": "openai",
+				"model":    "gpt-4",
+				"enabled":  true,
+				"credentials": map[string]interface{}{
+					"api_key": "test-api-key",
+				},
+				"instructions": []string{"Block if it mentions politics"},
+			},
+			"mode": "observe",
+		},
+	}
+
+	req := &types.RequestContext{
+		Body:      []byte(`{"text":"Let's discuss the upcoming elections"}`),
+		GatewayID: "test-gateway",
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	// In observe mode, should return 200 instead of 403
+	assert.NoError(t, err)
+	assert.NotNil(t, pluginResp)
+	assert.Equal(t, 200, pluginResp.StatusCode)
 }

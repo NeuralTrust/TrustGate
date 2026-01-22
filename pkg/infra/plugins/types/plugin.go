@@ -2,6 +2,7 @@ package types
 
 import (
 	"errors"
+	"fmt"
 )
 
 var (
@@ -20,6 +21,9 @@ const (
 	PostRequest  Stage = "post_request"
 	PreResponse  Stage = "pre_response"
 	PostResponse Stage = "post_response"
+
+	ModeObserve string = "observe"
+	ModeEnforce string = "enforce"
 )
 
 // PluginConfig represents the configuration for a plugin
@@ -53,9 +57,22 @@ func (e *PluginError) Error() string {
 	return e.Message
 }
 
-// PluginChain represents a sequence of plugins to be executed
 type PluginChain struct {
 	Stage    Stage          `json:"stage"`
 	Parallel bool           `json:"parallel"`
 	Plugins  []PluginConfig `json:"plugins"`
+}
+
+type BasePlugin struct {
+}
+
+func NewBasePlugin() *BasePlugin {
+	return &BasePlugin{}
+}
+
+func (p *BasePlugin) ValidateMode(mode string) error {
+	if mode != ModeObserve && mode != ModeEnforce {
+		return fmt.Errorf("mode must be either observe or enforce")
+	}
+	return nil
 }
