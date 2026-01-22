@@ -100,9 +100,6 @@ func (p *NeuralTrustToxicity) ValidateConfig(config pluginTypes.PluginConfig) er
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
 		return fmt.Errorf("failed to decode config: %w", err)
 	}
-	if cfg.Mode == "" {
-		cfg.Mode = pluginTypes.ModeEnforce
-	}
 	if err := p.basePlugin.ValidateMode(cfg.Mode); err != nil {
 		return err
 	}
@@ -131,6 +128,9 @@ func (p *NeuralTrustToxicity) Execute(
 	if err := mapstructure.Decode(cfg.Settings, &conf); err != nil {
 		p.logger.WithError(err).Error("failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %v", err)
+	}
+	if conf.Mode == "" {
+		conf.Mode = pluginTypes.ModeEnforce
 	}
 
 	var inputs []string

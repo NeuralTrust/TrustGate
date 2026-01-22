@@ -71,6 +71,10 @@ func NewBasePlugin() *BasePlugin {
 }
 
 func (p *BasePlugin) ValidateMode(mode string) error {
+	if mode == "" {
+		// Empty mode is valid, default will be applied in Execute
+		return nil
+	}
 	if mode != ModeObserve && mode != ModeEnforce {
 		return fmt.Errorf("mode must be either observe or enforce")
 	}
