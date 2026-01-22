@@ -8,6 +8,8 @@ type NeuralTrustModerationData struct {
 	KeyRegModeration  *KeyRegModeration  `json:"keyreg_moderation,omitempty"`
 	LLMModeration     *LLMModeration     `json:"llm_moderation,omitempty"`
 	NTTopicModeration *NTTopicModeration `json:"slm_moderation,omitempty"`
+
+	Mode string `json:"mode"`
 }
 
 type KeyRegModeration struct {

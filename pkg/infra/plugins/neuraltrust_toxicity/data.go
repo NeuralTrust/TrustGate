@@ -12,6 +12,8 @@ type ToxicityData struct {
 	Violation *ViolationInfo  `json:"violation,omitempty"`
 
 	DetectionLatencyMs int64 `json:"detection_latency_ms"`
+
+	Mode string `json:"mode"`
 }
 
 type ToxicityScores struct {

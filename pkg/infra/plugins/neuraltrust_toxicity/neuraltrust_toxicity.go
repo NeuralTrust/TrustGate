@@ -24,6 +24,7 @@ const (
 )
 
 type NeuralTrustToxicity struct {
+	basePlugin         *pluginTypes.BasePlugin
 	firewallFactory    firewall.ClientFactory
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
@@ -47,6 +48,7 @@ func NewNeuralTrustToxicity(
 	firewallFactory firewall.ClientFactory,
 ) pluginiface.Plugin {
 	return &NeuralTrustToxicity{
+		basePlugin:         pluginTypes.NewBasePlugin(),
 		firewallFactory:    firewallFactory,
 		logger:             logger,
 		fingerPrintManager: fingerPrintManager,
@@ -97,6 +99,12 @@ func (p *NeuralTrustToxicity) ValidateConfig(config pluginTypes.PluginConfig) er
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
 		return fmt.Errorf("failed to decode config: %w", err)
+	}
+	if cfg.Mode == "" {
+		cfg.Mode = pluginTypes.ModeEnforce
+	}
+	if err := p.basePlugin.ValidateMode(cfg.Mode); err != nil {
+		return err
 	}
 	if cfg.ToxicityParamBag != nil {
 		if cfg.ToxicityParamBag.Threshold > 1 || cfg.ToxicityParamBag.Threshold < 0 {
@@ -155,6 +163,7 @@ func (p *NeuralTrustToxicity) Execute(
 		Scores: &ToxicityScores{
 			Categories: make(map[string]float64),
 		},
+		Mode: conf.Mode,
 	}
 
 	if conf.ToxicityParamBag != nil {
@@ -240,6 +249,15 @@ func (p *NeuralTrustToxicity) Execute(
 			violationErr := NewGuardrailViolation(violationMsg)
 			evtCtx.SetError(violationErr)
 			evtCtx.SetExtras(evt)
+			if conf.Mode == pluginTypes.ModeObserve {
+				return &pluginTypes.PluginResponse{
+					StatusCode: 200,
+					Message:    "prompt flagged as toxic",
+					Headers: map[string][]string{
+						"Content-Type": {"application/json"},
+					},
+				}, nil
+			}
 			return nil, &pluginTypes.PluginError{
 				StatusCode: http.StatusForbidden,
 				Message:    violationErr.Error(),
