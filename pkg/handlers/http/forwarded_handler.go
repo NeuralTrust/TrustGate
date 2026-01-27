@@ -964,7 +964,6 @@ func (h *forwardedHandler) prepareHTTPClient(dto *forwardedRequestDTO) (*http.Cl
 
 	tlsConf, hasTLS := dto.tlsConfig[dto.target.Host]
 
-	// Configure proxy if present
 	if dto.proxy != nil {
 		proxyURL, err := url.Parse(fmt.Sprintf("%s://%s:%s", dto.proxy.Protocol, dto.proxy.Host, dto.proxy.Port))
 		if err != nil {
