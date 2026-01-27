@@ -785,13 +785,17 @@ func (h *forwardedHandler) doForwardRequest(ctx context.Context, dto *forwardedR
 		return h.handlerProviderResponse(dto.req, dto.target)
 	}
 
+	if dto.target.Stream {
+		httpClient, err := h.prepareHTTPClient(dto)
+		if err != nil {
+			return nil, err
+		}
+		return h.handleStreamingRequest(dto, httpClient)
+	}
+
 	client, err := h.prepareClient(ctx, dto)
 	if err != nil {
 		return nil, err
-	}
-
-	if dto.target.Stream {
-		return h.handleStreamingRequest(dto.req, dto.target, dto.streamResponse)
 	}
 
 	targetURL := h.rewriteTargetURL(dto)
@@ -951,6 +955,48 @@ func parseUUID(s string) (uuid.UUID, error) {
 	return uuid.Parse(s)
 }
 
+func (h *forwardedHandler) prepareHTTPClient(dto *forwardedRequestDTO) (*http.Client, error) {
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
+	tlsConf, hasTLS := dto.tlsConfig[dto.target.Host]
+
+	// Configure proxy if present
+	if dto.proxy != nil {
+		proxyURL, err := url.Parse(fmt.Sprintf("%s://%s:%s", dto.proxy.Protocol, dto.proxy.Host, dto.proxy.Port))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse proxy URL: %w", err)
+		}
+		transport.Proxy = http.ProxyURL(proxyURL)
+		h.logger.Debug("using proxy " + proxyURL.String())
+	}
+
+	switch {
+	case hasTLS:
+		if dto.target.InsecureSSL {
+			tlsConf.AllowInsecureConnections = true
+		}
+		tlsConfig, err := config.BuildTLSConfigFromClientConfig(tlsConf)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build TLS config: %w", err)
+		}
+		transport.TLSClientConfig = tlsConfig
+
+	case dto.target.InsecureSSL:
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec
+		}
+	}
+
+	return &http.Client{
+		Timeout:   60 * time.Second,
+		Transport: transport,
+	}, nil
+}
+
 func (h *forwardedHandler) applyAuthentication(req *fasthttp.Request, creds *types.CredentialsDTO, body []byte) {
 	if creds == nil {
 		return
@@ -984,12 +1030,8 @@ func (h *forwardedHandler) applyAuthentication(req *fasthttp.Request, creds *typ
 	}
 }
 
-func (h *forwardedHandler) handleStreamingRequest(
-	req *types.RequestContext,
-	target *types.UpstreamTargetDTO,
-	streamResponse chan []byte,
-) (*types.ResponseContext, error) {
-	return h.handleStreamingResponse(req, target, streamResponse)
+func (h *forwardedHandler) handleStreamingRequest(dto *forwardedRequestDTO, client *http.Client) (*types.ResponseContext, error) {
+	return h.handleStreamingResponse(dto, client)
 }
 
 func (h *forwardedHandler) buildUpstreamTargetUrl(target *types.UpstreamTargetDTO, pathParams map[string]string) string {
@@ -1113,11 +1155,11 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 	}, nil
 }
 
-func (h *forwardedHandler) handleStreamingResponse(
-	req *types.RequestContext,
-	target *types.UpstreamTargetDTO,
-	streamResponse chan []byte,
-) (*types.ResponseContext, error) {
+func (h *forwardedHandler) handleStreamingResponse(dto *forwardedRequestDTO, client *http.Client) (*types.ResponseContext, error) {
+	req := dto.req
+	target := dto.target
+	streamResponse := dto.streamResponse
+
 	pathParams := h.getPathParamsFromContext(req.Context)
 	upstreamURL := h.buildUpstreamTargetUrl(target, pathParams)
 
@@ -1157,17 +1199,6 @@ func (h *forwardedHandler) handleStreamingResponse(
 		httpReq.Header.Set(k, v)
 	}
 
-	// Create HTTP client with TLS configuration
-	transport := &http.Transport{}
-	if target.InsecureSSL {
-		transport.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec
-		}
-	}
-	client := &http.Client{
-		Timeout:   60 * time.Second,
-		Transport: transport,
-	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make streaming request: %w", err)
