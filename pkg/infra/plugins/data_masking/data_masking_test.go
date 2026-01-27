@@ -12,6 +12,7 @@ import (
 	cacheMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
+	"github.com/NeuralTrust/TrustGate/pkg/pii_entities"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -19,24 +20,24 @@ import (
 
 // helpers to build rules for new per-execution maps
 func buildAllRegexAndKeywords() (map[string]*regexp.Regexp, map[string]string) {
-	rr := make(map[string]*regexp.Regexp, len(predefinedEntityPatterns))
-	kw := make(map[string]string, len(predefinedEntityPatterns))
-	for entity, pattern := range predefinedEntityPatterns {
+	rr := make(map[string]*regexp.Regexp, len(pii_entities.Patterns))
+	kw := make(map[string]string, len(pii_entities.Patterns))
+	for entity, pattern := range pii_entities.Patterns {
 		rr[pattern.String()] = pattern
-		if mask, ok := defaultEntityMasks[entity]; ok {
+		if mask, ok := pii_entities.DefaultMasks[entity]; ok {
 			kw[pattern.String()] = mask
 		}
 	}
 	return rr, kw
 }
 
-func buildRegexAndKeywordsForEntities(entities []PredefinedEntity) (map[string]*regexp.Regexp, map[string]string) {
+func buildRegexAndKeywordsForEntities(entities []pii_entities.Entity) (map[string]*regexp.Regexp, map[string]string) {
 	rr := make(map[string]*regexp.Regexp)
 	kw := make(map[string]string)
 	for _, entity := range entities {
-		if pattern, ok := predefinedEntityPatterns[entity]; ok {
+		if pattern, ok := pii_entities.Patterns[entity]; ok {
 			rr[pattern.String()] = pattern
-			if mask, ok2 := defaultEntityMasks[entity]; ok2 {
+			if mask, ok2 := pii_entities.DefaultMasks[entity]; ok2 {
 				kw[pattern.String()] = mask
 			}
 		}
@@ -132,7 +133,7 @@ func createTestConfig(entities []EntityConfig, applyAll bool) Config {
 
 func TestMasking_PhoneNumber(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{PhoneNumber})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.PhoneNumber})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -145,7 +146,7 @@ func TestMasking_PhoneNumber(t *testing.T) {
 	// Use a phone number format that won't match the Swift BIC pattern
 	example := "+1 (555) 123-4567" // Changed from "+1234567890"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: +" + defaultEntityMasks[PhoneNumber]
+	expected := "Sensitive data: +" + pii_entities.DefaultMasks[pii_entities.PhoneNumber]
 
 	assert.Equal(t, expected, masked, "Phone number masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -153,7 +154,7 @@ func TestMasking_PhoneNumber(t *testing.T) {
 
 func TestMasking_Date(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{Date})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.Date})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -166,7 +167,7 @@ func TestMasking_Date(t *testing.T) {
 
 	example := "07/24/2001" // Changed from "+1234567890"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[Date]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.Date]
 
 	assert.Equal(t, expected, masked, "Date masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -174,7 +175,7 @@ func TestMasking_Date(t *testing.T) {
 
 func TestMasking_SSN(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{SSN})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.SSN})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -186,7 +187,7 @@ func TestMasking_SSN(t *testing.T) {
 	}, false)
 	example := "123-45-6789"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[SSN]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.SSN]
 
 	assert.Equal(t, expected, masked, "SSN masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -194,7 +195,7 @@ func TestMasking_SSN(t *testing.T) {
 
 func TestMasking_IPAddress(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{IPAddress})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.IPAddress})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -206,7 +207,7 @@ func TestMasking_IPAddress(t *testing.T) {
 	}, false)
 	example := "192.168.1.1"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[IPAddress]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.IPAddress]
 
 	assert.Equal(t, expected, masked, "IP address masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -214,7 +215,7 @@ func TestMasking_IPAddress(t *testing.T) {
 
 func TestMasking_Password(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{Password})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.Password})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -226,7 +227,7 @@ func TestMasking_Password(t *testing.T) {
 	}, false)
 	example := "password=SuperSecret123"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[Password]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.Password]
 
 	assert.Equal(t, expected, masked, "Password masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -234,7 +235,7 @@ func TestMasking_Password(t *testing.T) {
 
 func TestMasking_APIKey(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{APIKey})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.APIKey})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -246,7 +247,7 @@ func TestMasking_APIKey(t *testing.T) {
 	}, false)
 	example := "api_key=abcd1234efgh5678"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[APIKey]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.APIKey]
 
 	assert.Equal(t, expected, masked, "API key masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -254,7 +255,7 @@ func TestMasking_APIKey(t *testing.T) {
 
 func TestMasking_AccessToken(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{AccessToken})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.AccessToken})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -266,7 +267,7 @@ func TestMasking_AccessToken(t *testing.T) {
 	}, false)
 	example := "access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[AccessToken]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.AccessToken]
 
 	assert.Equal(t, expected, masked, "Access token masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -274,7 +275,7 @@ func TestMasking_AccessToken(t *testing.T) {
 
 func TestMasking_IBAN(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{IBAN})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.IBAN})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -286,7 +287,7 @@ func TestMasking_IBAN(t *testing.T) {
 	}, false)
 	example := "GB29NWBK60161331926819"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[IBAN]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.IBAN]
 
 	assert.Equal(t, expected, masked, "IBAN masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -294,7 +295,7 @@ func TestMasking_IBAN(t *testing.T) {
 
 func TestMasking_CryptoWallet(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{CryptoWallet})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.CryptoWallet})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -306,7 +307,7 @@ func TestMasking_CryptoWallet(t *testing.T) {
 	}, false)
 	example := "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf0a6x"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[CryptoWallet]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.CryptoWallet]
 
 	assert.Equal(t, expected, masked, "Crypto wallet masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -314,7 +315,7 @@ func TestMasking_CryptoWallet(t *testing.T) {
 
 func TestMasking_TaxID(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{TaxID})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.TaxID})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -326,7 +327,7 @@ func TestMasking_TaxID(t *testing.T) {
 	}, false)
 	example := "12-3456789"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[TaxID]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.TaxID]
 
 	assert.Equal(t, expected, masked, "Tax ID masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -334,7 +335,7 @@ func TestMasking_TaxID(t *testing.T) {
 
 func TestMasking_Swift(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{SwiftBIC})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.SwiftBIC})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -346,7 +347,7 @@ func TestMasking_Swift(t *testing.T) {
 	}, false)
 	example := "DEUTDEFF500"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[SwiftBIC]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.SwiftBIC]
 
 	assert.Equal(t, expected, masked, "Tax ID masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -354,7 +355,7 @@ func TestMasking_Swift(t *testing.T) {
 
 func TestMasking_CreditCard(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{CreditCard})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.CreditCard})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -366,7 +367,7 @@ func TestMasking_CreditCard(t *testing.T) {
 	}, false)
 	example := "4111 1111 1111 1111"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[CreditCard]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.CreditCard]
 
 	assert.Equal(t, expected, masked, "Credit card masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -374,7 +375,7 @@ func TestMasking_CreditCard(t *testing.T) {
 
 func TestMasking_Email(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{Email})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.Email})
 
 	config := createTestConfig([]EntityConfig{
 		{
@@ -386,7 +387,7 @@ func TestMasking_Email(t *testing.T) {
 	}, false)
 	example := "test@example.com"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + defaultEntityMasks[Email]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.Email]
 
 	assert.Equal(t, expected, masked, "Email masking failed")
 	assert.Equal(t, 1, len(evt))
@@ -437,11 +438,11 @@ func TestFuzzyMatching(t *testing.T) {
 	// For regex-based masks, supply patterns and default masks
 	allRR, allKW := buildAllRegexAndKeywords()
 	masked, _ = plugin.maskPlainTextWithRules("My card: 4111 1111 1111 1111", 0.8, config, allKW, allRR)
-	assert.Contains(t, masked, defaultEntityMasks[CreditCard], "Fuzzy regex matching with substitution failed")
+	assert.Contains(t, masked, pii_entities.DefaultMasks[pii_entities.CreditCard], "Fuzzy regex matching with substitution failed")
 
 	// Test with character deletion
 	masked, _ = plugin.maskPlainTextWithRules("My SSN is 123-45-6785", 0.8, config, allKW, allRR)
-	assert.Contains(t, masked, defaultEntityMasks[SSN], "Fuzzy regex matching with deletion failed")
+	assert.Contains(t, masked, pii_entities.DefaultMasks[pii_entities.SSN], "Fuzzy regex matching with deletion failed")
 }
 
 func TestNormalizedInput(t *testing.T) {
@@ -459,38 +460,38 @@ func TestNormalizedInput(t *testing.T) {
 	// Test credit card with spaces and dashes removed
 	example := "4111-1111-1111-1111"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, allKW, allRR)
-	expected := "Sensitive data: " + defaultEntityMasks[Default]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.Default]
 	assert.Equal(t, expected, masked, "Normalized credit card masking failed")
 	assert.Equal(t, 1, len(evt))
 
 	// Test phone number with different format
 	example = "(123) 456-7890"
 	masked, evt = plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, allKW, allRR)
-	assert.Contains(t, masked, defaultEntityMasks[Default], "Normalized phone number masking failed")
+	assert.Contains(t, masked, pii_entities.DefaultMasks[pii_entities.Default], "Normalized phone number masking failed")
 	assert.Equal(t, 1, len(evt))
 }
 
 func TestInternationalPII(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]PredefinedEntity{SpanishDNI, MexicanCURP, BrazilianCPF})
+	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.SpanishDNI, pii_entities.MexicanCURP, pii_entities.BrazilianCPF})
 
 	config := createTestConfig([]EntityConfig{
 		{
 			Entity:      "spanish_dni",
 			Enabled:     true,
-			MaskWith:    defaultEntityMasks[SpanishDNI],
+			MaskWith:    pii_entities.DefaultMasks[pii_entities.SpanishDNI],
 			PreserveLen: true,
 		},
 		{
 			Entity:      "mexican_curp",
 			Enabled:     true,
-			MaskWith:    defaultEntityMasks[MexicanCURP],
+			MaskWith:    pii_entities.DefaultMasks[pii_entities.MexicanCURP],
 			PreserveLen: true,
 		},
 		{
 			Entity:      "brazilian_cpf",
 			Enabled:     true,
-			MaskWith:    defaultEntityMasks[BrazilianCPF],
+			MaskWith:    pii_entities.DefaultMasks[pii_entities.BrazilianCPF],
 			PreserveLen: true,
 		},
 	}, false)
@@ -498,19 +499,19 @@ func TestInternationalPII(t *testing.T) {
 	// Test Spanish DNI
 	example := "12345678Z"
 	masked, evt := plugin.maskPlainTextWithRules("Spanish ID: "+example, 0.8, config, keywords, regexRules)
-	assert.Contains(t, masked, defaultEntityMasks[SpanishDNI], "Spanish DNI masking failed")
+	assert.Contains(t, masked, pii_entities.DefaultMasks[pii_entities.SpanishDNI], "Spanish DNI masking failed")
 	assert.Equal(t, 1, len(evt))
 
 	// Test Mexican CURP
 	example = "BADD110313HCMLNS09"
 	masked, evt = plugin.maskPlainTextWithRules("Mexican ID: "+example, 0.8, config, keywords, regexRules)
-	assert.Contains(t, masked, defaultEntityMasks[MexicanCURP], "Mexican CURP masking failed")
+	assert.Contains(t, masked, pii_entities.DefaultMasks[pii_entities.MexicanCURP], "Mexican CURP masking failed")
 	assert.Equal(t, 1, len(evt))
 
 	// Test Brazilian CPF
 	example = "123.456.789-09"
 	masked, evt = plugin.maskPlainTextWithRules("Brazilian CPF: "+example, 0.8, config, keywords, regexRules)
-	assert.Contains(t, masked, defaultEntityMasks[BrazilianCPF], "Brazilian CPF masking failed")
+	assert.Contains(t, masked, pii_entities.DefaultMasks[pii_entities.BrazilianCPF], "Brazilian CPF masking failed")
 	assert.Equal(t, 1, len(evt))
 }
 
@@ -610,10 +611,10 @@ func TestJSONMasking(t *testing.T) {
 	// Check that email was masked
 	maskedUser, ok := maskedJSON.(map[string]interface{})["user"].(map[string]interface{})
 	assert.True(t, ok)
-	assert.Equal(t, defaultEntityMasks[Email], maskedUser["email"])
+	assert.Equal(t, pii_entities.DefaultMasks[pii_entities.Email], maskedUser["email"])
 
 	// Check that credit card was masked
-	assert.Equal(t, defaultEntityMasks[CreditCard], maskedUser["card"])
+	assert.Equal(t, pii_entities.DefaultMasks[pii_entities.CreditCard], maskedUser["card"])
 
 	// Check that nested SSN was masked
 	maskedDetails, ok := maskedUser["details"].([]interface{})
@@ -622,7 +623,7 @@ func TestJSONMasking(t *testing.T) {
 	maskedL := maskedDetails[1]
 	maskedSSN, ok := maskedL.(map[string]interface{})
 	assert.True(t, ok)
-	assert.Equal(t, defaultEntityMasks[SSN], maskedSSN["ssn"])
+	assert.Equal(t, pii_entities.DefaultMasks[pii_entities.SSN], maskedSSN["ssn"])
 }
 
 func TestGenerateReversibleHash(t *testing.T) {
