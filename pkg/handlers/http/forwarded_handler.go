@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,8 +35,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	infraTLS "github.com/NeuralTrust/TrustGate/pkg/infra/tls"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
-	"github.com/google/uuid"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fastjson"
@@ -1155,8 +1156,17 @@ func (h *forwardedHandler) handleStreamingResponse(
 	for k, v := range target.Headers {
 		httpReq.Header.Set(k, v)
 	}
+
+	// Create HTTP client with TLS configuration
+	transport := &http.Transport{}
+	if target.InsecureSSL {
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec
+		}
+	}
 	client := &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout:   60 * time.Second,
+		Transport: transport,
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
