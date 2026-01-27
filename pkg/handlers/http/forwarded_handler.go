@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1155,8 +1156,17 @@ func (h *forwardedHandler) handleStreamingResponse(
 	for k, v := range target.Headers {
 		httpReq.Header.Set(k, v)
 	}
+
+	// Create HTTP client with TLS configuration
+	transport := &http.Transport{}
+	if target.InsecureSSL {
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec
+		}
+	}
 	client := &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout:   60 * time.Second,
+		Transport: transport,
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
