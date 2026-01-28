@@ -957,14 +957,16 @@ func parseUUID(s string) (uuid.UUID, error) {
 
 func (h *forwardedHandler) prepareHTTPClient(dto *forwardedRequestDTO) (*http.Client, error) {
 	transport := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+		DisableCompression:    true,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ForceAttemptHTTP2:     false,
 	}
 
 	tlsConf, hasTLS := dto.tlsConfig[dto.target.Host]
 
-	// Configure proxy if present
 	if dto.proxy != nil {
 		proxyURL, err := url.Parse(fmt.Sprintf("%s://%s:%s", dto.proxy.Protocol, dto.proxy.Host, dto.proxy.Port))
 		if err != nil {
