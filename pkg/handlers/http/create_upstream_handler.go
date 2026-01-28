@@ -247,6 +247,9 @@ func (s *createUpstreamHandler) createUpstreamEntity(
 
 	var proxy *upstream.Proxy
 	if req.ProxyConfig != nil {
+		if req.ProxyConfig.Protocol == "" {
+			req.ProxyConfig.Protocol = "http"
+		}
 		proxy = &upstream.Proxy{
 			Host:     req.ProxyConfig.Host,
 			Port:     req.ProxyConfig.Port,

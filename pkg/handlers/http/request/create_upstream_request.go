@@ -228,22 +228,7 @@ func (r *UpstreamRequest) Validate() error {
 		if r.ProxyConfig.Protocol != "" && r.ProxyConfig.Protocol != "http" && r.ProxyConfig.Protocol != "https" {
 			return fmt.Errorf("proxy_config.protocol must be either 'http' or 'https'")
 		}
-
-		for i, target := range r.Targets {
-			if target.Provider != "" {
-				return fmt.Errorf("target %d: when target has provider specified, proxy_config is not allowed", i)
-			}
-		}
-
-		for i, target := range r.Targets {
-			if target.Stream {
-				return fmt.Errorf("target %d: when target has stream set to true, proxy_config is not allowed", i)
-			}
-		}
 	}
-
-	// UpstreamDTO-level Auth removed: auth is handled per-target
-
 	return nil
 }
 
