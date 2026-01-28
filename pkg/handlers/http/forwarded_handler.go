@@ -957,12 +957,9 @@ func parseUUID(s string) (uuid.UUID, error) {
 
 func (h *forwardedHandler) prepareHTTPClient(dto *forwardedRequestDTO) (*http.Client, error) {
 	transport := &http.Transport{
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   100,
-		IdleConnTimeout:       90 * time.Second,
-		DisableCompression:    true,
-		ResponseHeaderTimeout: 30 * time.Second,
-		ForceAttemptHTTP2:     false,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
 	}
 
 	tlsConf, hasTLS := dto.tlsConfig[dto.target.Host]
