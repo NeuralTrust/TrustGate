@@ -989,7 +989,7 @@ func (h *forwardedHandler) prepareHTTPClient(dto *forwardedRequestDTO) (*http.Cl
 
 	case dto.target.InsecureSSL:
 		transport.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec
+			InsecureSkipVerify: true, //#nosec G402
 		}
 	}
 
