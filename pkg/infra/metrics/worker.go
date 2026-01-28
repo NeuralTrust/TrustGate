@@ -1,9 +1,12 @@
 package metrics
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"mime"
+	"mime/multipart"
 	"strconv"
 	"strings"
 	"sync"
@@ -265,8 +268,8 @@ func (m *worker) feedEvent(
 			evt.Locale = ua.Locale
 		}
 	}
-	evt.Input = string(req.Body)
-	evt.Output = string(resp.Body)
+	evt.Input = m.sanitizeBody(req.Body, req.Headers)
+	evt.Output = m.sanitizeBody(resp.Body, resp.Headers)
 	if evt.StatusCode == 0 {
 		evt.StatusCode = resp.StatusCode
 	}
@@ -327,4 +330,83 @@ func (m *worker) resolveUserIDFromFingerprint(fingerprintID string) string {
 func (m *worker) generateDeterministicUserID(fingerprintID string) string {
 	namespace := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	return uuid.NewSHA1(namespace, []byte(fingerprintID)).String()
+}
+
+func (m *worker) sanitizeBody(body []byte, headers map[string][]string) string {
+	if len(body) == 0 {
+		return ""
+	}
+
+	contentType := m.getContentType(headers)
+	if contentType == "" {
+		return string(body)
+	}
+
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return string(body)
+	}
+
+	if mediaType == "multipart/form-data" {
+		return m.extractMultipartFileNames(body, params["boundary"])
+	}
+
+	return string(body)
+}
+
+func (m *worker) getContentType(headers map[string][]string) string {
+	for key, values := range headers {
+		if strings.EqualFold(key, "Content-Type") && len(values) > 0 {
+			return values[0]
+		}
+	}
+	return ""
+}
+
+func (m *worker) extractMultipartFileNames(body []byte, boundary string) string {
+	if boundary == "" {
+		return `{"_multipart": true}`
+	}
+
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	result := make(map[string]interface{})
+
+	for {
+		part, err := reader.NextPart()
+		if err != nil {
+			break
+		}
+
+		filename := part.FileName()
+		fieldname := part.FormName()
+
+		if filename != "" {
+			result[fieldname] = map[string]string{
+				"_type":    "file",
+				"filename": filename,
+			}
+		} else if fieldname != "" {
+			buf := make([]byte, 1024)
+			n, _ := part.Read(buf)
+			if n > 0 {
+				value := string(buf[:n])
+				if len(value) > 100 {
+					value = value[:100] + "..."
+				}
+				result[fieldname] = value
+			}
+		}
+		_ = part.Close()
+	}
+
+	if len(result) == 0 {
+		return `{"_multipart": true}`
+	}
+
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		return `{"_multipart": true}`
+	}
+
+	return string(jsonBytes)
 }

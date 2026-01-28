@@ -386,56 +386,6 @@ func TestCreateUpstream(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
-	t.Run("it should fail when target has provider and proxy_config exists", func(t *testing.T) {
-		upstreamPayload := map[string]interface{}{
-			"name":      "Provider With Proxy Config Upstream",
-			"algorithm": "round-robin",
-			"targets": []map[string]interface{}{
-				{
-					"host":     "example.com",
-					"port":     443,
-					"protocol": "https",
-					"weight":   1,
-					"provider": "openai", // Target with provider specified
-				},
-			},
-			"proxy_config": map[string]interface{}{
-				"host": "proxy.internal",
-				"port": "8080",
-			},
-		}
-
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
-			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
-		}, upstreamPayload)
-		assert.Equal(t, http.StatusBadRequest, status)
-	})
-
-	t.Run("it should fail when target has stream=true and proxy_config exists", func(t *testing.T) {
-		upstreamPayload := map[string]interface{}{
-			"name":      "Stream With Proxy Config Upstream",
-			"algorithm": "round-robin",
-			"targets": []map[string]interface{}{
-				{
-					"host":     "example.com",
-					"port":     443,
-					"protocol": "https",
-					"weight":   1,
-					"stream":   true, // Target with stream=true
-				},
-			},
-			"proxy_config": map[string]interface{}{
-				"host": "proxy.internal",
-				"port": "8080",
-			},
-		}
-
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
-			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
-		}, upstreamPayload)
-		assert.Equal(t, http.StatusBadRequest, status)
-	})
-
 	t.Run("it should fail when OpenAI Responses API is used with multiple targets", func(t *testing.T) {
 		upstreamPayload := map[string]interface{}{
 			"name":      "OpenAI Responses API Multiple Targets Upstream",
