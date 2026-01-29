@@ -53,6 +53,7 @@ type Client interface {
 	DeleteAllPluginsData(ctx context.Context, gatewayID string) error
 	DeleteAllByGatewayID(ctx context.Context, gatewayID string) error
 	InvalidateAll(ctx context.Context) error
+	ClearAllTTLMaps()
 }
 
 type Config struct {
@@ -225,6 +226,15 @@ func (c *client) GetTTLMap(name string) *TTLMap {
 		return ttlMap
 	}
 	return nil
+}
+
+func (c *client) ClearAllTTLMaps() {
+	c.ttlMaps.Range(func(key, value interface{}) bool {
+		if ttlMap, ok := value.(*TTLMap); ok {
+			ttlMap.Clear()
+		}
+		return true
+	})
 }
 
 func (c *client) SaveUpstream(ctx context.Context, gatewayID string, upstream *upstream.Upstream) error {

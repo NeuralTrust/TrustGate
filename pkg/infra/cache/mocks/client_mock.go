@@ -32,6 +32,38 @@ func (_m *Client) EXPECT() *Client_Expecter {
 	return &Client_Expecter{mock: &_m.Mock}
 }
 
+// ClearAllTTLMaps provides a mock function with no fields
+func (_m *Client) ClearAllTTLMaps() {
+	_m.Called()
+}
+
+// Client_ClearAllTTLMaps_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ClearAllTTLMaps'
+type Client_ClearAllTTLMaps_Call struct {
+	*mock.Call
+}
+
+// ClearAllTTLMaps is a helper method to define mock.On call
+func (_e *Client_Expecter) ClearAllTTLMaps() *Client_ClearAllTTLMaps_Call {
+	return &Client_ClearAllTTLMaps_Call{Call: _e.mock.On("ClearAllTTLMaps")}
+}
+
+func (_c *Client_ClearAllTTLMaps_Call) Run(run func()) *Client_ClearAllTTLMaps_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Client_ClearAllTTLMaps_Call) Return() *Client_ClearAllTTLMaps_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *Client_ClearAllTTLMaps_Call) RunAndReturn(run func()) *Client_ClearAllTTLMaps_Call {
+	_c.Run(run)
+	return _c
+}
+
 // CreateTTLMap provides a mock function with given fields: name, ttl
 func (_m *Client) CreateTTLMap(name string, ttl time.Duration) *cache.TTLMap {
 	ret := _m.Called(name, ttl)
