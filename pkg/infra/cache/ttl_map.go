@@ -67,3 +67,10 @@ func (m *TTLMap) Delete(key string) {
 	defer m.Mu.Unlock()
 	delete(m.Data, key)
 }
+
+// Clear removes all entries from the TTLMap
+func (m *TTLMap) Clear() {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.Data = make(map[string]*TTLEntry)
+}

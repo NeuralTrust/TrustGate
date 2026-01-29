@@ -89,6 +89,7 @@ func (r *redisEventListener) listenWithReconnect(ctx context.Context, channelNam
 }
 
 func (r *redisEventListener) handleMessage(ctx context.Context, payload string) {
+	r.logger.WithField("payload", payload).Info("received redis message")
 	var envelope RedisMessage
 	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
 		r.logger.WithError(err).Error("error decoding redis message")

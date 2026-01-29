@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -14,8 +13,7 @@ import (
 )
 
 type TLSClientCache struct {
-	clients sync.Map
-	logger  *logrus.Logger
+	logger *logrus.Logger
 }
 
 func NewTLSClientCache(logger *logrus.Logger) *TLSClientCache {
@@ -25,13 +23,7 @@ func NewTLSClientCache(logger *logrus.Logger) *TLSClientCache {
 }
 
 func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr string, proxyProtocol string) *fasthttp.Client {
-
-	if cl, ok := c.clients.Load(key); ok {
-		if typedClient, ok := cl.(*fasthttp.Client); ok {
-			return typedClient
-		}
-	}
-
+	// Create a new client each time - no caching to avoid connection reuse issues
 	client := &fasthttp.Client{
 		TLSConfig:                     cfg,
 		ReadTimeout:                   30 * time.Second,
@@ -48,7 +40,10 @@ func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr stri
 	if proxyAddr != "" {
 		client.Dial = func(addr string) (net.Conn, error) {
 			var hostPort string
-			isTLS := false
+			// targetNeedsTLS indicates whether the final destination requires TLS (based on port 443)
+			targetNeedsTLS := false
+			// proxyNeedsTLS indicates whether the connection to the proxy itself needs TLS
+			proxyNeedsTLS := proxyProtocol == "https"
 
 			if strings.Contains(addr, ":") {
 				host, port, err := net.SplitHostPort(addr)
@@ -56,37 +51,46 @@ func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr stri
 					return nil, fmt.Errorf("invalid address format: %w", err)
 				}
 
-				if proxyProtocol != "" {
-					isTLS = proxyProtocol == "https"
-				} else {
-					isTLS = port == "443"
-				}
-
+				// Determine if target needs TLS based on port
+				targetNeedsTLS = port == "443"
 				hostPort = net.JoinHostPort(host, port)
 			} else {
-				if proxyProtocol == "https" {
-					hostPort = net.JoinHostPort(addr, "443")
-					isTLS = true
-				} else {
-					hostPort = net.JoinHostPort(addr, "80")
-					isTLS = false
-				}
+				// Default ports based on common patterns
+				hostPort = net.JoinHostPort(addr, "80")
+				targetNeedsTLS = false
 			}
 
-			proxyConn, err := net.Dial("tcp", proxyAddr)
+			// Connect to the proxy
+			var proxyConn net.Conn
+			var err error
+
+			if proxyNeedsTLS {
+				// Connect to proxy using TLS
+				proxyConn, err = tls.Dial("tcp", proxyAddr, &tls.Config{
+					InsecureSkipVerify: true, // #nosec G402 - proxy connections may use self-signed certs
+				})
+			} else {
+				// Connect to proxy using plain TCP
+				proxyConn, err = net.Dial("tcp", proxyAddr)
+			}
+
 			if err != nil {
 				c.logger.WithFields(logrus.Fields{
-					"proxy_addr": proxyAddr,
-					"error":      err.Error(),
+					"proxy_addr":      proxyAddr,
+					"proxy_needs_tls": proxyNeedsTLS,
+					"error":           err.Error(),
 				}).Debug("proxy connection failed")
 				return nil, fmt.Errorf("failed to connect to proxy: %w", err)
 			}
 
 			c.logger.WithFields(logrus.Fields{
-				"proxy_addr": proxyAddr,
+				"proxy_addr":       proxyAddr,
+				"proxy_needs_tls":  proxyNeedsTLS,
+				"target_needs_tls": targetNeedsTLS,
 			}).Debug("proxy connection established successfully")
 
-			if isTLS {
+			// If the target needs TLS, we need to establish a CONNECT tunnel through the proxy
+			if targetNeedsTLS {
 				connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", hostPort, hostPort)
 				if _, err := proxyConn.Write([]byte(connectReq)); err != nil {
 					closeErr := proxyConn.Close()
@@ -145,6 +149,5 @@ func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr stri
 		}
 	}
 
-	c.clients.Store(key, client)
 	return client
 }
