@@ -1163,3 +1163,116 @@ func TestCodeSanitationPlugin_Execute_CSharp_Process(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 400, pluginErr.StatusCode)
 }
+
+// ============================================================================
+// Execute Tests - False Positive Prevention
+// ============================================================================
+
+func TestCodeSanitationPlugin_Execute_MarkdownLinks_NoFalsePositive(t *testing.T) {
+	plugin := newPlugin()
+	ctx := context.Background()
+
+	// Test with HTML language enabled (which was causing the false positive)
+	cfg := plugintypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"apply_all_languages": true,
+			"content_to_check":    []interface{}{"body"},
+			"action":              "block",
+			"status_code":         400,
+		},
+	}
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "simple markdown link",
+			body: `{"message": "Check out [inversiones](https://example.com/inversiones)"}`,
+		},
+		{
+			name: "multiple markdown links",
+			body: `{"message": "See [docs](https://docs.com) and [help](https://help.com)"}`,
+		},
+		{
+			name: "markdown link with text in brackets",
+			body: `{"message": "[Click here](https://example.com) for more info"}`,
+		},
+		{
+			name: "plain text with brackets",
+			body: `{"message": "The options are [option1] or [option2]"}`,
+		},
+		{
+			name: "array notation should not trigger",
+			body: `{"items": ["item1", "item2"], "note": "Select from [available options]"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &types.RequestContext{
+				Body: []byte(tt.body),
+			}
+			res := &types.ResponseContext{}
+			evtCtx := metrics.NewEventContext("", "", nil)
+
+			resp, err := plugin.Execute(ctx, cfg, req, res, evtCtx)
+
+			// Should NOT detect as injection (no error, successful response)
+			assert.NoError(t, err)
+			assert.NotNil(t, resp)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+		})
+	}
+}
+
+func TestCodeSanitationPlugin_Execute_CSS_AttributeSelector_Detection(t *testing.T) {
+	plugin := newPlugin()
+	ctx := context.Background()
+
+	cfg := plugintypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"languages": []interface{}{
+				map[string]interface{}{"language": "html", "enabled": true},
+			},
+			"content_to_check": []interface{}{"body"},
+			"action":           "block",
+			"status_code":      400,
+		},
+	}
+
+	// These SHOULD be detected as malicious CSS attribute selectors
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "onclick attribute selector",
+			body: `{"message": "div[onclick=alert(1)]"}`,
+		},
+		{
+			name: "style attribute selector",
+			body: `{"message": "div[style=expression(alert(1))]"}`,
+		},
+		{
+			name: "onload attribute selector",
+			body: `{"message": "img[onload=evil()]"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &types.RequestContext{
+				Body: []byte(tt.body),
+			}
+			res := &types.ResponseContext{}
+			evtCtx := metrics.NewEventContext("", "", nil)
+
+			resp, err := plugin.Execute(ctx, cfg, req, res, evtCtx)
+
+			// SHOULD detect as injection (error expected)
+			assert.Error(t, err)
+			assert.Nil(t, resp)
+		})
+	}
+}

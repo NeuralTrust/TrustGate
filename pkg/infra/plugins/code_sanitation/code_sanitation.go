@@ -140,13 +140,15 @@ var predefinedCodePatterns = map[Language]*regexp.Regexp{
 		`\bNet::HTTP|\bOpen3\.|\bShellwords\.|\binstance_eval\b|\bclass_eval\b|\bmodule_eval\b|\bdefine_method\b)`),
 
 	// HTML pattern matches both literal < and JSON-escaped \u003c variants, including closing tags
+	// Note: CSS attribute selectors are matched only for dangerous patterns (on* events, style with expressions)
+	// to avoid false positives with Markdown links like [text](url)
 	HTML: regexp.MustCompile(`(?i)((<|\\u003[cC])\s*/?\s*script|(<|\\u003[cC])\s*/?\s*iframe|(<|\\u003[cC])\s*/?\s*object|` +
 		`(<|\\u003[cC])\s*/?\s*embed|(<|\\u003[cC])\s*/?\s*applet|(<|\\u003[cC])\s*/?\s*meta|` +
 		`(<|\\u003[cC])\s*/?\s*link|(<|\\u003[cC])\s*/?\s*style|(<|\\u003[cC])\s*/?\s*form|(<|\\u003[cC])\s*/?\s*input|` +
 		`(<|\\u003[cC])\s*/?\s*button|(<|\\u003[cC])\s*img[^>]+\bon\w+\s*=|\bon\w+\s*=|` +
 		`\bjavascript:|\bvbscript:|\bdata:\s*text/html|\bdata:\s*application/javascript|` +
 		`\bdata:\s*application/x-javascript|\bdata:\s*text/javascript|\bbase64\b|\bexpression\b|\burl\s*\(|` +
-		`@import|\bdocument\.|\bwindow\.|\[[\s"]*[^\]]*[\s"]*\]|\[[\s']*[^\]]*[\s']*\]|-moz-binding|` +
+		`@import|\bdocument\.|\bwindow\.|\[on\w+\s*=|\[style\s*=|-moz-binding|` +
 		`\bbehavior:|@charset|(<|\\u003[cC])\s*/?\s*svg|(<|\\u003[cC])\s*/?\s*animate|(<|\\u003[cC])\s*/?\s*set|` +
 		`(<|\\u003[cC])\s*/?\s*handler|(<|\\u003[cC])\s*/?\s*listener|(<|\\u003[cC])\s*/?\s*tbreak|` +
 		`(<|\\u003[cC])\s*/?\s*tcopy|(<|\\u003[cC])\s*/?\s*tref|(<|\\u003[cC])\s*/?\s*video|(<|\\u003[cC])\s*/?\s*audio|` +
