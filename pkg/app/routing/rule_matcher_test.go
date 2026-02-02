@@ -320,7 +320,7 @@ func TestRuleMatcher_ExtractPathAfterMatch(t *testing.T) {
 			name:        "path with single param - no remaining",
 			requestPath: "/api/v1/users/123",
 			rulePath:    "/api/v1/users/{id}",
-			wantResult:  "/",
+			wantResult:  "",
 		},
 		{
 			name:        "path with multiple params - remaining path",
@@ -332,7 +332,7 @@ func TestRuleMatcher_ExtractPathAfterMatch(t *testing.T) {
 			name:        "path with multiple params - no remaining",
 			requestPath: "/api/v1/users/123/posts/456",
 			rulePath:    "/api/v1/users/{userId}/posts/{postId}",
-			wantResult:  "/",
+			wantResult:  "",
 		},
 		{
 			name:        "path with trailing slash",

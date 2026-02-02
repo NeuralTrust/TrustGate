@@ -103,9 +103,6 @@ func (m *ruleMatcher) ExtractPathAfterMatch(requestPath string, rulePath string)
 
 	if strings.HasPrefix(requestPath, matchedPath) {
 		remaining := requestPath[len(matchedPath):]
-		if remaining == "" {
-			return "/"
-		}
 		return remaining
 	}
 
