@@ -172,7 +172,7 @@ func NewFastHTTPClient(opts ...FastHTTPClientOption) Client {
 	// Configure TLS if InsecureSkipVerify is set
 	if options.InsecureSkipVerify {
 		client.TLSConfig = &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // intentionally configurable
+			InsecureSkipVerify: true, //#nosec G402 -- intentionally configurable for testing/internal use
 		}
 	}
 
