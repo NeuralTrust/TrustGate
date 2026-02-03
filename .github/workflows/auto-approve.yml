@@ -1,0 +1,25 @@
+# Auto-approve PRs when CI passes + AI Code Review
+# Uses shared workflows from NeuralTrust/workflows
+
+name: PR Automation
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+
+jobs:
+  # AI Code Review - runs immediately on PR
+  ai-review:
+    uses: NeuralTrust/workflows/.github/workflows/ai-code-review.yml@main
+    secrets: inherit
+
+  # Auto Approve - waits for AI review and all CI to pass
+  auto-approve:
+    needs: ai-review
+    uses: NeuralTrust/workflows/.github/workflows/auto-approve.yml@main
+    secrets: inherit
