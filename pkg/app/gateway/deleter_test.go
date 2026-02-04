@@ -7,6 +7,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	gatewayMocks "github.com/NeuralTrust/TrustGate/pkg/domain/gateway/mocks"
+	apikeyMocks "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey/mocks"
 	cacheMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	tlsMocks "github.com/NeuralTrust/TrustGate/pkg/infra/tls/mocks"
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ import (
 func setupDeleter(
 	t *testing.T,
 	repo *gatewayMocks.Repository,
+	apiKeyRepo *apikeyMocks.Repository,
 	publisher *cacheMocks.EventPublisher,
 	tlsCertWriter *tlsMocks.CertWriter,
 ) Deleter {
@@ -26,19 +28,25 @@ func setupDeleter(
 	if tlsCertWriter == nil {
 		tlsCertWriter = tlsMocks.NewCertWriter(t)
 	}
-	return NewDeleter(logger, repo, publisher, tlsCertWriter)
+	if apiKeyRepo == nil {
+		apiKeyRepo = apikeyMocks.NewRepository(t)
+		apiKeyRepo.EXPECT().ListWithSubject(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+	}
+	return NewDeleter(logger, repo, apiKeyRepo, publisher, tlsCertWriter)
 }
 
 func TestDeleter_Delete_Success(t *testing.T) {
 	repo := gatewayMocks.NewRepository(t)
+	apiKeyRepo := apikeyMocks.NewRepository(t)
 	publisher := cacheMocks.NewEventPublisher(t)
 	tlsCertWriter := tlsMocks.NewCertWriter(t)
 
-	deleter := setupDeleter(t, repo, publisher, tlsCertWriter)
+	deleter := setupDeleter(t, repo, apiKeyRepo, publisher, tlsCertWriter)
 
 	ctx := context.Background()
 	gatewayID := uuid.New()
 
+	apiKeyRepo.EXPECT().ListWithSubject(ctx, gatewayID).Return(nil, nil)
 	repo.EXPECT().Delete(gatewayID).Return(nil)
 	tlsCertWriter.EXPECT().DeleteAllGatewayCerts(ctx, gatewayID).Return(nil)
 	publisher.EXPECT().Publish(
@@ -57,7 +65,7 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 	repo := gatewayMocks.NewRepository(t)
 	publisher := cacheMocks.NewEventPublisher(t)
 
-	deleter := setupDeleter(t, repo, publisher, nil)
+	deleter := setupDeleter(t, repo, nil, publisher, nil)
 
 	ctx := context.Background()
 	gatewayID := uuid.New()
@@ -75,7 +83,7 @@ func TestDeleter_Delete_RepositoryError(t *testing.T) {
 	repo := gatewayMocks.NewRepository(t)
 	publisher := cacheMocks.NewEventPublisher(t)
 
-	deleter := setupDeleter(t, repo, publisher, nil)
+	deleter := setupDeleter(t, repo, nil, publisher, nil)
 
 	ctx := context.Background()
 	gatewayID := uuid.New()
@@ -91,14 +99,16 @@ func TestDeleter_Delete_RepositoryError(t *testing.T) {
 
 func TestDeleter_Delete_PublishEventFails_StillReturnsSuccess(t *testing.T) {
 	repo := gatewayMocks.NewRepository(t)
+	apiKeyRepo := apikeyMocks.NewRepository(t)
 	publisher := cacheMocks.NewEventPublisher(t)
 	tlsCertWriter := tlsMocks.NewCertWriter(t)
 
-	deleter := setupDeleter(t, repo, publisher, tlsCertWriter)
+	deleter := setupDeleter(t, repo, apiKeyRepo, publisher, tlsCertWriter)
 
 	ctx := context.Background()
 	gatewayID := uuid.New()
 
+	apiKeyRepo.EXPECT().ListWithSubject(ctx, gatewayID).Return(nil, nil)
 	repo.EXPECT().Delete(gatewayID).Return(nil)
 	tlsCertWriter.EXPECT().DeleteAllGatewayCerts(ctx, gatewayID).Return(nil)
 	publisher.EXPECT().Publish(

@@ -230,6 +230,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	gatewayDeleter := gateway.NewDeleter(
 		di.Logger,
 		gatewayRepository,
+		apiKeyRepository,
 		redisPublisher,
 		tlsCertWriter,
 	)
