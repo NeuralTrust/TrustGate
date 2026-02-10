@@ -7,6 +7,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/server/router"
+	"github.com/NeuralTrust/TrustGate/pkg/version"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -63,14 +64,16 @@ func NewBaseServer(config *config.Config, logger *logrus.Logger) *BaseServer {
 func (s *BaseServer) setupHealthCheck() {
 	s.Router.Get("/health", func(ctx *fiber.Ctx) error {
 		return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
-			"status": "healthy",
-			"time":   time.Now().Format(time.RFC3339),
+			"status":  "healthy",
+			"version": version.Version,
+			"time":    time.Now().Format(time.RFC3339),
 		})
 	})
 	s.Router.Get(AdminHealthPath, func(ctx *fiber.Ctx) error {
 		return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
-			"status": "ok",
-			"time":   time.Now().Format(time.RFC3339),
+			"status":  "healthy",
+			"version": version.Version,
+			"time":    time.Now().Format(time.RFC3339),
 		})
 	})
 }

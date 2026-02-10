@@ -2,6 +2,7 @@ package version
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 )
 
@@ -10,6 +11,15 @@ var (
 	AppName   = "TrustGate"
 	BuildDate = "unknown"
 )
+
+func init() {
+	// Allow runtime override via env var (used in image promotion: dev → prod).
+	// Kubernetes injects APPLICATION_VERSION with the release tag, overriding
+	// whatever was compiled in via ldflags.
+	if v := os.Getenv("APPLICATION_VERSION"); v != "" {
+		Version = v
+	}
+}
 
 // Info contains versioning information
 type Info struct {

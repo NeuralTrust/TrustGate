@@ -4,6 +4,7 @@ FROM golang:1.26-bookworm AS builder
 WORKDIR /build
 
 # Add build arguments
+ARG APP_VERSION=""
 ARG VERSION
 ARG GIT_COMMIT
 ARG BUILD_DATE
@@ -25,7 +26,7 @@ RUN go mod verify
 
 # Build the application with dynamic linking
 RUN CGO_ENABLED=1 GOOS=linux go build -tags dynamic \
-    -ldflags "-X github.com/NeuralTrust/TrustGate/pkg/version.Version=${VERSION} \
+    -ldflags "-X github.com/NeuralTrust/TrustGate/pkg/version.Version=${APP_VERSION:-${VERSION}} \
               -X github.com/NeuralTrust/TrustGate/pkg/version.GitCommit=${GIT_COMMIT} \
               -X github.com/NeuralTrust/TrustGate/pkg/version.BuildDate=${BUILD_DATE}" \
     -o gateway ./cmd/gateway
