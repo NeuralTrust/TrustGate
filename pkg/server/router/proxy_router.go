@@ -8,6 +8,7 @@ import (
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	wsHandlers "github.com/NeuralTrust/TrustGate/pkg/handlers/websocket"
 	"github.com/NeuralTrust/TrustGate/pkg/server/middleware"
+	"github.com/NeuralTrust/TrustGate/pkg/version"
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
 )
@@ -56,15 +57,17 @@ func (r *proxyRouter) BuildRoutes(router *fiber.App) error {
 
 	router.Get(HealthPath, func(ctx *fiber.Ctx) error {
 		return ctx.Status(http.StatusOK).JSON(fiber.Map{
-			"status": "ok",
-			"time":   time.Now().Format(time.RFC3339),
+			"status":  "healthy",
+			"version": version.Version,
+			"time":    time.Now().Format(time.RFC3339),
 		})
 	})
 
 	router.Get(AdminHealthPath, func(ctx *fiber.Ctx) error {
 		return ctx.Status(http.StatusOK).JSON(fiber.Map{
-			"status": "ok",
-			"time":   time.Now().Format(time.RFC3339),
+			"status":  "healthy",
+			"version": version.Version,
+			"time":    time.Now().Format(time.RFC3339),
 		})
 	})
 
