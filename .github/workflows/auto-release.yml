@@ -1,0 +1,24 @@
+# Auto-release pipeline for main branch
+# Uses AI to determine semver bump (major/minor/patch) and creates a GitHub Release.
+# The release event then triggers release.yml for building and pushing to Docker Hub.
+# Also updates pkg/version/version.go with the new version before creating the release.
+# See: https://semver.org/
+
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: NeuralTrust/workflows/.github/workflows/ai-release-bump.yml@main
+    with:
+      version_update_script: |
+        sed -i 's/Version   = "[^"]*"/Version   = "'"$VERSION"'"/' pkg/version/version.go
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
