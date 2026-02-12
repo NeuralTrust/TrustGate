@@ -165,5 +165,8 @@ jobs:
           flags: unittests
   auto-approve:
     needs: test
+    permissions:
+      checks: read
+      pull-requests: write
     uses: NeuralTrust/workflows/.github/workflows/auto-approve.yml@main
     secrets: inherit
