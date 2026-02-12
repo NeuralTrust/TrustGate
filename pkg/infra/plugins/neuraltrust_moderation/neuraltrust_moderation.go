@@ -624,7 +624,7 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 		p.sendError(
 			firewallErrors,
 			NewModerationViolation(
-				fmt.Sprintf("content blocked: word '%s' is similar to blocked keyword '%s' (score: %.2f)",
+				fmt.Sprintf("content blocked: word %q is similar to blocked keyword %q (score: %.2f)",
 					foundWord,
 					keyword,
 					similarity,
@@ -692,7 +692,13 @@ func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
 		m, n = n, m
 	}
 
-	// n is guaranteed <= maxWordLen (4096) here, so n+1 cannot overflow.
+	// Explicitly cap n so the compiler (and static analysis) can verify n+1
+	// will not overflow. n is already bounded by maxWordLen via the truncation
+	// above, but this makes the invariant visible at the allocation site.
+	if n > maxWordLen {
+		n = maxWordLen
+	}
+
 	prev := make([]int, n+1)
 	curr := make([]int, n+1)
 	for j := 0; j <= n; j++ {
