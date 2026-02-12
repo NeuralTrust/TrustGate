@@ -166,6 +166,7 @@ jobs:
   auto-approve:
     needs: test
     permissions:
+      contents: read
       checks: read
       pull-requests: write
     uses: NeuralTrust/workflows/.github/workflows/auto-approve.yml@main
