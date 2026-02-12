@@ -207,9 +207,12 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	if len(req.Messages) > 0 {
 		inputBytes = []byte(strings.Join(req.Messages, "\n"))
 	} else {
-		inputBody := req.Body
-		if req.Stage == pluginTypes.PostRequest && resp != nil {
+		var inputBody []byte
+		switch {
+		case req.Stage == pluginTypes.PostRequest && resp != nil:
 			inputBody = resp.Body
+		default:
+			inputBody = req.Body
 		}
 
 		mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
