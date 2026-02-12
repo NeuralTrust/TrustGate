@@ -59,7 +59,7 @@ type Client interface {
 type Config struct {
 	Host     string
 	Port     int
-	Password string
+	Password string // #nosec G117 -- Config field for Redis password
 	DB       int
 	TLS      bool
 }

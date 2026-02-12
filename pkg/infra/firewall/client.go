@@ -22,7 +22,7 @@ type NeuralTrustCredentials struct {
 }
 
 type OpenAICredentials struct {
-	APIKey string
+	APIKey string // #nosec G117 -- Config field for OpenAI API key
 }
 
 type JailbreakResponse struct {

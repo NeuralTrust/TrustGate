@@ -75,7 +75,7 @@ func (c *client) CompletionsStream(
 	}
 	c.setHeaders(httpReq, config.Credentials.ApiKey)
 
-	resp, err := httpClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is a compile-time constant (messagesURL), not user-controlled
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -117,7 +117,7 @@ func (c *client) rawPost(ctx context.Context, apiKey string, reqBody []byte) ([]
 	}
 	c.setHeaders(httpReq, apiKey)
 
-	resp, err := httpClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is a compile-time constant (messagesURL), not user-controlled
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}

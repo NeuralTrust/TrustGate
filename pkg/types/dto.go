@@ -11,7 +11,7 @@ import (
 
 type CredentialsDTO struct {
 	// Api Key
-	ApiKey string `json:"api_key,omitempty"`
+	ApiKey string `json:"api_key,omitempty"` // #nosec G117 -- DTO field for upstream API key configuration
 	// Header-based auth
 	HeaderName  string `json:"header_name,omitempty"`
 	HeaderValue string `json:"header_value,omitempty"`
@@ -116,7 +116,7 @@ type ClientTLSConfigDTO struct {
 
 type ClientTLSCertDTO struct {
 	Certificate string `json:"certificate"`
-	PrivateKey  string `json:"private_key"`
+	PrivateKey  string `json:"private_key"` // #nosec G117 -- TLS certificate DTO field for private key data
 }
 
 type SessionConfigDTO struct {

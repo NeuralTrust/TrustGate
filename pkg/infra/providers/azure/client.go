@@ -106,7 +106,7 @@ func (c *client) CompletionsStream(
 	httpReq.Header.Set("Content-Type", "application/json")
 	c.applyAuthHeader(httpReq, config.Credentials.Azure.UseIdentity, token)
 
-	resp, err := httpClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is built from admin-configured Azure endpoint, not user-controlled
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -148,7 +148,7 @@ func (c *client) rawPost(ctx context.Context, url, token string, useIdentity boo
 	httpReq.Header.Set("Content-Type", "application/json")
 	c.applyAuthHeader(httpReq, useIdentity, token)
 
-	resp, err := httpClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is built from admin-configured Azure endpoint, not user-controlled
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}

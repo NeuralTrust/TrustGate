@@ -44,7 +44,7 @@ type TokenRequestDTO struct {
 	GrantType GrantType
 
 	ClientID     string
-	ClientSecret string
+	ClientSecret string // #nosec G117 -- OAuth DTO field for client credentials flow
 	UseBasicAuth bool
 
 	Scopes   []string
@@ -54,16 +54,16 @@ type TokenRequestDTO struct {
 	RedirectURI  string
 	CodeVerifier string
 
-	RefreshToken string
+	RefreshToken string // #nosec G117 -- OAuth DTO field for token refresh flow
 
 	Username string
-	Password string
+	Password string // #nosec G117 -- OAuth DTO field for password grant flow
 
 	Extra map[string]string
 }
 
 type tokenResponse struct {
-	AccessToken string `json:"access_token"`
+	AccessToken string `json:"access_token"` // #nosec G117 -- OAuth token response DTO field
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int64  `json:"expires_in"`
 }
@@ -93,7 +93,7 @@ func (c *tokenClient) GetToken(ctx context.Context, dto TokenRequestDTO) (string
 		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(cred)))
 	}
 
-	resp, err := c.http.Do(req)
+	resp, err := c.http.Do(req) // #nosec G704 -- tokenURL is from admin-configured upstream settings, not user-controlled
 	if err != nil {
 		return "", time.Time{}, err
 	}

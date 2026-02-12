@@ -38,7 +38,7 @@ type DataMaskingPlugin struct {
 
 type ReversibleHashingConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
-	Secret  string `mapstructure:"secret"`
+	Secret  string `mapstructure:"secret"` // #nosec G117 -- Config field for reversible hashing secret
 }
 
 type Config struct {

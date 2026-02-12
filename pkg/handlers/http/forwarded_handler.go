@@ -1260,7 +1260,7 @@ func (h *forwardedHandler) handleStreamingResponse(dto *forwardedRequestDTO, cli
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := client.Do(httpReq)
+	resp, err := client.Do(httpReq) // #nosec G704 -- URL is built from admin-configured upstream target (protocol/host/port/path), not user-controlled
 	if err != nil {
 		return nil, fmt.Errorf("failed to make streaming request: %w", err)
 	}
@@ -1320,9 +1320,9 @@ func (h *forwardedHandler) handleStreamingResponse(dto *forwardedRequestDTO, cli
 				var buffer bytes.Buffer
 
 				if err := json.Unmarshal(line, &parsed); err != nil {
-					streamResponse <- line
-					_, _ = fmt.Fprintf(w, "data: %s\n", string(line))
-					_ = w.Flush()
+				streamResponse <- line
+				_, _ = fmt.Fprintf(w, "data: %s\n", string(line)) // #nosec G705 -- SSE streaming with Content-Type text/event-stream; data is proxied JSON, not rendered as HTML
+				_ = w.Flush()
 				} else {
 					encoder := json.NewEncoder(&buffer)
 					encoder.SetEscapeHTML(false)

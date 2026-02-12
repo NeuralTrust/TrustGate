@@ -29,7 +29,7 @@ type ToxicityAzurePlugin struct {
 }
 
 type Config struct {
-	APIKey    string `mapstructure:"api_key"`
+	APIKey    string `mapstructure:"api_key"` // #nosec G117 -- Plugin config field for Azure Content Safety API key
 	Endpoints struct {
 		Text  string `mapstructure:"text"`  // Endpoint for text content
 		Image string `mapstructure:"image"` // Endpoint for image content

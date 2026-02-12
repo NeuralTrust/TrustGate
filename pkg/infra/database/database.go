@@ -21,7 +21,7 @@ type Config struct {
 	Host     string
 	Port     int
 	User     string
-	Password string
+	Password string // #nosec G117 -- Config field for database password
 	DBName   string
 	SSLMode  string
 }

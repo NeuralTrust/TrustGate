@@ -218,7 +218,7 @@ func (c *OpenAIFirewallClient) callResponsesAPI(
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.httpClient.Do(httpReq) // #nosec G704 -- URL is a compile-time constant (openAIResponsesEndpoint) or admin-configured, not user-controlled
 	if err != nil {
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}

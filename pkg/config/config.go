@@ -42,7 +42,7 @@ type DatabaseConfig struct {
 	Host     string
 	Port     int
 	User     string
-	Password string
+	Password string // #nosec G117 -- Config field for database password
 	DBName   string
 	SSLMode  string
 }
@@ -50,7 +50,7 @@ type DatabaseConfig struct {
 type RedisConfig struct {
 	Host          string
 	Port          int
-	Password      string
+	Password      string // #nosec G117 -- Config field for Redis password
 	DB            int
 	TLS           bool
 	EventsChannel string
@@ -81,7 +81,7 @@ type TLSConfig struct {
 
 type TLSKeyPair struct {
 	PublicKey  string
-	PrivateKey string
+	PrivateKey string // #nosec G117 -- Config field for TLS private key path
 }
 
 type AuditLogsConfig struct {

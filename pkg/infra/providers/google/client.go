@@ -101,7 +101,7 @@ func (c *client) CompletionsStream(
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-goog-api-key", config.Credentials.ApiKey)
 
-	resp, err := httpClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is built from compile-time constant (geminiBaseURL) with model name, not user-controlled
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -150,7 +150,7 @@ func (c *client) rawPost(
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-goog-api-key", apiKey)
 
-	resp, err := httpClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is built from compile-time constant (geminiBaseURL) with model name, not user-controlled
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}

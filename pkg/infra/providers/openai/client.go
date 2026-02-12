@@ -102,7 +102,7 @@ func (c *client) CompletionsStream(
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+config.Credentials.ApiKey)
 
-	resp, err := httpClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is a compile-time constant (completionsURL/responsesURL), not user-controlled
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -149,7 +149,7 @@ func (c *client) rawPost(
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
-	resp, err := httpClient.Do(httpReq)
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is a compile-time constant (completionsURL/responsesURL), not user-controlled
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}

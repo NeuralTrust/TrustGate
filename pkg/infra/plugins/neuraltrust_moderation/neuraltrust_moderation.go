@@ -665,6 +665,15 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 // local helpers removed in favor of pluginutils.DefineRequestBody
 
 func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
+	// Bound input length early to avoid excessive allocations from untrusted data.
+	const maxWordLen = 4096
+	if len(s1) > maxWordLen {
+		s1 = s1[:maxWordLen]
+	}
+	if len(s2) > maxWordLen {
+		s2 = s2[:maxWordLen]
+	}
+
 	s1 = strings.ToLower(s1)
 	s2 = strings.ToLower(s2)
 
@@ -677,22 +686,13 @@ func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
 		return m
 	}
 
-	// For extremely large inputs, avoid excessive allocations and potential overflows.
-	// Words for moderation should be reasonably small; if not, treat as maximally distant.
-	const maxWordLen = 4096
-	if m > maxWordLen || n > maxWordLen {
-		if m > n {
-			return m
-		}
-		return n
-	}
-
 	// Ensure n <= m to minimize memory usage (only O(n) memory).
 	if n > m {
 		s1, s2 = s2, s1
 		m, n = n, m
 	}
 
+	// n is guaranteed <= maxWordLen (4096) here, so n+1 cannot overflow.
 	prev := make([]int, n+1)
 	curr := make([]int, n+1)
 	for j := 0; j <= n; j++ {
