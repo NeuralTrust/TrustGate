@@ -439,9 +439,9 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		return
 	}
 
-	if responseBody == nil {
-		err := errors.New("LLM provider returned nil response")
-		p.logger.WithError(err).Error("nil response from LLM provider")
+	if len(responseBody) == 0 {
+		err := errors.New("LLM provider returned empty response")
+		p.logger.WithError(err).Error("empty response from LLM provider")
 		p.sendError(firewallErrors, err)
 		return
 	}
@@ -453,6 +453,13 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 	textContent, parseErr := extractTextFromProviderResponse(responseBody)
 	if parseErr != nil {
 		p.logger.WithError(parseErr).Error("failed to parse llm response")
+		p.sendError(firewallErrors, parseErr)
+		return
+	}
+
+	if textContent == "" {
+		parseErr = errors.New("LLM provider returned empty text content")
+		p.logger.WithError(parseErr).Error("empty text content from LLM response")
 		p.sendError(firewallErrors, parseErr)
 		return
 	}

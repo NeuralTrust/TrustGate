@@ -35,7 +35,5 @@ func (c *TLSCert) BeforeUpdate(tx *gorm.DB) error {
 }
 
 func (c *TLSCert) TableName() string {
-	return "gateway_certs"
+	return "tls_certs"
 }
-
-
