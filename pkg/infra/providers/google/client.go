@@ -1,155 +1,71 @@
 package google
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
-	"google.golang.org/genai"
+	"golang.org/x/sync/singleflight"
 )
 
-type geminiStreamRequest struct {
-	Model             string                       `json:"model"`
-	Messages          []interface{}                `json:"messages,omitempty"`
-	Contents          []*genai.Content             `json:"contents,omitempty"`
-	SystemInstruction *genai.Content               `json:"systemInstruction,omitempty"`
-	GenerationConfig  *genai.GenerateContentConfig `json:"generationConfig,omitempty"`
-	MaxTokens         int32                        `json:"max_tokens,omitempty"`
-	Temperature       float64                      `json:"temperature,omitempty"`
-	System            string                       `json:"system,omitempty"`
-	Tools             []*genai.Tool                `json:"tools,omitempty"`
-	ToolConfig        *genai.ToolConfig            `json:"toolConfig,omitempty"`
-}
+const (
+	httpClientTimeout = 120
+	geminiBaseURL     = "https://generativelanguage.googleapis.com/v1beta/models"
+)
 
 type client struct {
-	clientPool *sync.Map
+	httpClientPool *sync.Map
+	sf             singleflight.Group
 }
 
 func NewGoogleClient() providers.Client {
 	return &client{
-		clientPool: &sync.Map{},
+		httpClientPool: &sync.Map{},
 	}
 }
 
-func (c *client) Ask(
-	ctx context.Context,
-	config *providers.Config,
-	prompt string,
-) (*providers.CompletionResponse, error) {
-	if config.Credentials.ApiKey == "" {
-		return nil, fmt.Errorf("API key is required")
-	}
-
-	if config.Model == "" {
-		config.Model = "gemini-pro"
-	}
-
-	genaiClient, err := c.getOrCreateClient(ctx, config.Credentials.ApiKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
-	}
-
-	var parts []*genai.Part
-	if config.SystemPrompt != "" {
-		parts = append(parts, &genai.Part{
-			Text: config.SystemPrompt,
-		})
-	}
-	if len(config.Instructions) > 0 {
-		parts = append(parts, &genai.Part{
-			Text: providers.FormatInstructions(config.Instructions),
-		})
-	}
-	var contentConfig *genai.GenerateContentConfig
-	temperature := float32(0.0)
-	if config.Temperature > 0 {
-		temperature = float32(config.Temperature)
-	}
-
-	if len(parts) > 0 {
-		topP := float32(1.0)
-		contentConfig = &genai.GenerateContentConfig{
-			Temperature: &temperature,
-			TopP:        &topP,
-			SystemInstruction: &genai.Content{
-				Parts: parts,
-				Role:  "system",
-			},
-		}
-	}
-
-	result, err := genaiClient.Models.GenerateContent(
-		ctx,
-		config.Model,
-		genai.Text(prompt),
-		contentConfig,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate content: %w", err)
-	}
-
-	responseText := result.Text()
-	responseText = strings.TrimPrefix(responseText, "```json")
-	responseText = strings.TrimSuffix(responseText, "```")
-	responseText = strings.TrimSpace(responseText)
-
-	completionResp := &providers.CompletionResponse{
-		ID:       result.ResponseID,
-		Model:    config.Model,
-		Response: responseText,
-	}
-
-	completionResp.Usage = providers.Usage{
-		PromptTokens:     int(result.UsageMetadata.PromptTokenCount),
-		CompletionTokens: int(result.UsageMetadata.CandidatesTokenCount),
-		TotalTokens:      int(result.UsageMetadata.TotalTokenCount),
-	}
-
-	if responseText == "" {
-		return nil, fmt.Errorf("no completions returned")
-	}
-
-	return completionResp, nil
-}
+//
+// ---------------------------------------------------------------------------
+// Completions (non-streaming)
+// ---------------------------------------------------------------------------
+//
 
 func (c *client) Completions(
 	ctx context.Context,
 	config *providers.Config,
 	reqBody []byte,
 ) ([]byte, error) {
+
 	if config.Credentials.ApiKey == "" {
 		return nil, fmt.Errorf("API key is required")
 	}
-	genaiClient, err := c.getOrCreateClient(ctx, config.Credentials.ApiKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
-	}
 
-	req, contents, contentConfig, err := c.parseRequest(reqBody, config)
+	model, err := c.extractModel(reqBody)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := genaiClient.Models.GenerateContent(
-		ctx,
-		req.Model,
-		contents,
-		contentConfig,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate content: %w", err)
-	}
+	url := fmt.Sprintf("%s/%s:generateContent", geminiBaseURL, model)
 
-	if res, err := result.MarshalJSON(); err != nil {
-		return nil, fmt.Errorf("failed to marshal gemini response: %w", err)
-	} else {
-		return res, nil
-	}
+	return c.rawPost(ctx, url, config.Credentials.ApiKey, reqBody)
 }
+
+//
+// ---------------------------------------------------------------------------
+// CompletionsStream (SSE)
+// ---------------------------------------------------------------------------
+//
 
 func (c *client) CompletionsStream(
 	reqCtx *types.RequestContext,
@@ -158,198 +74,229 @@ func (c *client) CompletionsStream(
 	streamChan chan []byte,
 	breakChan chan struct{},
 ) error {
+
 	if config.Credentials.ApiKey == "" {
 		return fmt.Errorf("API key is required")
 	}
-	genaiClient, err := c.getOrCreateClient(reqCtx.C.Context(), config.Credentials.ApiKey)
-	if err != nil {
-		return fmt.Errorf("failed to create Gemini client: %w", err)
-	}
 
-	req, contents, contentConfig, err := c.parseRequest(reqBody, config)
+	model, err := c.extractModel(reqBody)
 	if err != nil {
 		return err
 	}
 
-	stream := genaiClient.Models.GenerateContentStream(reqCtx.C.Context(), req.Model, contents, contentConfig)
-	times := 0
-	for obj, err := range stream {
-		if err != nil {
-			return fmt.Errorf("failed to stream: %w", err)
-		} else {
-			if times == 0 {
-				close(breakChan)
-			}
+	url := fmt.Sprintf("%s/%s:streamGenerateContent?alt=sse", geminiBaseURL, model)
+
+	httpClient := c.getOrCreateHTTPClient()
+
+	httpReq, err := http.NewRequestWithContext(
+		reqCtx.C.Context(),
+		http.MethodPost,
+		url,
+		bytes.NewReader(reqBody),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-goog-api-key", config.Credentials.ApiKey)
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return parseGeminiError(resp)
+	}
+
+	for key, values := range resp.Header {
+		for _, v := range values {
+			reqCtx.C.Set(key, v)
 		}
-		if obj == nil {
+	}
+
+	select {
+	case <-reqCtx.C.Context().Done():
+		return reqCtx.C.Context().Err()
+	default:
+	}
+	close(breakChan)
+
+	return c.streamSSE(reqCtx.C.Context(), resp.Body, streamChan)
+}
+
+//
+// ---------------------------------------------------------------------------
+// Raw HTTP POST
+// ---------------------------------------------------------------------------
+//
+
+func (c *client) rawPost(
+	ctx context.Context,
+	url string,
+	apiKey string,
+	reqBody []byte,
+) ([]byte, error) {
+
+	httpClient := c.getOrCreateHTTPClient()
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-goog-api-key", apiKey)
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, parseGeminiError(resp)
+	}
+
+	var body bytes.Buffer
+	if _, err := body.ReadFrom(resp.Body); err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return body.Bytes(), nil
+}
+
+//
+// ---------------------------------------------------------------------------
+// SSE streaming
+// ---------------------------------------------------------------------------
+//
+
+func (c *client) streamSSE(ctx context.Context, r io.Reader, out chan []byte) error {
+
+	sc := bufio.NewScanner(r)
+	buf := make([]byte, 0, 512*1024)
+	sc.Buffer(buf, 2*1024*1024)
+
+	for sc.Scan() {
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		line := sc.Text()
+
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
 
-		text := obj.Text()
-		if text == "" {
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+
+		if data == "" || data == "[DONE]" {
 			continue
 		}
 
-		msg := map[string]string{"content": text}
-		b, err := json.Marshal(msg)
-		if err != nil {
-			return fmt.Errorf("failed to marshal response: %w", err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case out <- []byte(data):
 		}
+	}
 
-		streamChan <- b
-		times++
+	if err := sc.Err(); err != nil {
+		if errors.Is(err, io.EOF) ||
+			strings.Contains(strings.ToLower(err.Error()), "closed network connection") ||
+			strings.Contains(strings.ToLower(err.Error()), "connection reset by peer") {
+			return nil
+		}
+		return fmt.Errorf("sse scanner error: %w", err)
 	}
 
 	return nil
 }
 
-func (c *client) getOrCreateClient(ctx context.Context, apiKey string) (*genai.Client, error) {
-	if clientVal, ok := c.clientPool.Load(apiKey); ok {
-		client, ok := clientVal.(*genai.Client)
-		if !ok {
-			return nil, fmt.Errorf("invalid client type in pool")
-		}
-		return client, nil
-	}
-	genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
-	})
+//
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+//
+
+func (c *client) extractModel(reqBody []byte) (string, error) {
+
+	model, err := adapter.ExtractModel(reqBody)
 	if err != nil {
-		return nil, err
+		return "", fmt.Errorf("failed to extract model: %w", err)
 	}
-	c.clientPool.Store(apiKey, genaiClient)
-	return genaiClient, nil
+
+	if model == "" {
+		return "", fmt.Errorf("model is required for Gemini requests")
+	}
+
+	return model, nil
 }
 
-func (c *client) parseRequest(
-	reqBody []byte,
-	config *providers.Config,
-) (geminiStreamRequest, []*genai.Content, *genai.GenerateContentConfig, error) {
-	var req geminiStreamRequest
-	if err := json.Unmarshal(reqBody, &req); err != nil {
-		return req, nil, nil, fmt.Errorf("invalid request body: %w", err)
+func parseGeminiError(resp *http.Response) error {
+
+	var body bytes.Buffer
+	_, _ = body.ReadFrom(resp.Body)
+
+	var gemErr struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Status  string `json:"status"`
+		} `json:"error"`
 	}
 
-	if req.Model == "" {
-		req.Model = "gemini-pro"
+	if err := json.Unmarshal(body.Bytes(), &gemErr); err == nil && gemErr.Error.Message != "" {
+		return fmt.Errorf("gemini error (%d - %s): %s",
+			gemErr.Error.Code,
+			gemErr.Error.Status,
+			gemErr.Error.Message,
+		)
 	}
 
-	if !providers.IsAllowedModel(req.Model, config.AllowedModels) {
-		req.Model = config.DefaultModel
-	}
+	return fmt.Errorf("gemini API error (%d): %s",
+		resp.StatusCode,
+		body.String(),
+	)
+}
 
-	var contents []*genai.Content
+func (c *client) getOrCreateHTTPClient() *http.Client {
 
-	if len(req.Contents) > 0 {
-		contents = req.Contents
-	} else if len(req.Messages) > 0 {
-		for _, m := range req.Messages {
-			msgMap, ok := m.(map[string]interface{})
-			if !ok {
-				continue
-			}
+	const clientKey = "default"
 
-			role := "user"
-			if r, ok := msgMap["role"].(string); ok && r != "" {
-				role = r
-			}
-			var parts []*genai.Part
-
-			if contentVal, ok := msgMap["content"]; ok {
-				switch v := contentVal.(type) {
-				case string:
-					parts = append(parts, &genai.Part{Text: v})
-				case []interface{}:
-					for _, part := range v {
-						partBytes, err := json.Marshal(part)
-						if err != nil {
-							return req, nil, nil, fmt.Errorf("failed to marshal part: %w", err)
-						}
-						var genPart genai.Part
-						if err := json.Unmarshal(partBytes, &genPart); err != nil {
-							return req, nil, nil, fmt.Errorf("failed to unmarshal part: %w", err)
-						}
-						parts = append(parts, &genPart)
-					}
-				case map[string]interface{}:
-					partBytes, err := json.Marshal(v)
-					if err != nil {
-						return req, nil, nil, fmt.Errorf("failed to marshal part: %w", err)
-					}
-					var genPart genai.Part
-					if err := json.Unmarshal(partBytes, &genPart); err != nil {
-						return req, nil, nil, fmt.Errorf("failed to unmarshal part: %w", err)
-					}
-					parts = append(parts, &genPart)
-				}
-			}
-
-			if len(parts) == 0 {
-				continue
-			}
-
-			contents = append(contents, &genai.Content{
-				Role:  role,
-				Parts: parts,
-			})
+	if v, ok := c.httpClientPool.Load(clientKey); ok {
+		if cl, ok := v.(*http.Client); ok {
+			return cl
 		}
 	}
 
-	if len(contents) == 0 {
-		return req, nil, nil, fmt.Errorf("no user content provided")
-	}
+	v, err, _ := c.sf.Do(clientKey, func() (any, error) {
 
-	var genConfig *genai.GenerateContentConfig
-	if req.GenerationConfig != nil {
-		copyConfig := *req.GenerationConfig
-		genConfig = &copyConfig
-	}
-
-	if req.SystemInstruction != nil {
-		if genConfig == nil {
-			genConfig = &genai.GenerateContentConfig{}
-		}
-		genConfig.SystemInstruction = req.SystemInstruction
-	} else if req.System != "" {
-		if genConfig == nil {
-			genConfig = &genai.GenerateContentConfig{}
-		}
-		genConfig.SystemInstruction = &genai.Content{
-			Role:  "system",
-			Parts: []*genai.Part{{Text: req.System}},
+		if v2, ok := c.httpClientPool.Load(clientKey); ok {
+			return v2, nil
 		}
 
-	}
-
-	if req.MaxTokens > 0 {
-		if genConfig == nil {
-			genConfig = &genai.GenerateContentConfig{}
+		httpClient := &http.Client{
+			Timeout: httpClientTimeout * time.Second,
 		}
-		genConfig.MaxOutputTokens = req.MaxTokens
+
+		c.httpClientPool.Store(clientKey, httpClient)
+		return httpClient, nil
+	})
+
+	if err != nil {
+		return &http.Client{Timeout: httpClientTimeout * time.Second}
 	}
 
-	if req.Temperature > 0 {
-		if genConfig == nil {
-			genConfig = &genai.GenerateContentConfig{}
-		}
-		temp := float32(req.Temperature)
-		genConfig.Temperature = &temp
+	if cl, ok := v.(*http.Client); ok {
+		return cl
 	}
 
-	if len(req.Tools) > 0 {
-		if genConfig == nil {
-			genConfig = &genai.GenerateContentConfig{}
-		}
-		genConfig.Tools = req.Tools
-	}
-
-	if req.ToolConfig != nil {
-		if genConfig == nil {
-			genConfig = &genai.GenerateContentConfig{}
-		}
-		genConfig.ToolConfig = req.ToolConfig
-	}
-
-	return req, contents, genConfig, nil
+	return &http.Client{Timeout: httpClientTimeout * time.Second}
 }

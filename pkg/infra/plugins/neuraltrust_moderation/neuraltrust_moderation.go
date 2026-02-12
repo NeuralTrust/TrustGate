@@ -405,14 +405,27 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		}
 	}
 
-	response, err := client.Ask(ctx, &providers.Config{
-		Credentials:  providersCreds,
-		Model:        cfg.Model,
-		MaxTokens:    maxTokens,
-		Temperature:  0.0,
-		SystemPrompt: SystemPrompt,
-		Instructions: cfg.Instructions,
-	}, string(inputBody))
+	// Build request body as JSON (replaces the old client.Ask call).
+	userContent := providers.FormatInstructions(cfg.Instructions) + "\n[Input]\n" + string(inputBody)
+	reqBody, marshalErr := json.Marshal(map[string]interface{}{
+		"model": cfg.Model,
+		"messages": []map[string]interface{}{
+			{"role": "system", "content": SystemPrompt},
+			{"role": "user", "content": userContent},
+		},
+		"max_tokens":  maxTokens,
+		"temperature": 0.0,
+	})
+	if marshalErr != nil {
+		p.logger.WithError(marshalErr).Error("failed to build llm request body")
+		p.sendError(firewallErrors, marshalErr)
+		return
+	}
+
+	responseBody, err := client.Completions(ctx, &providers.Config{
+		Credentials: providersCreds,
+		Model:       cfg.Model,
+	}, reqBody)
 	duration := time.Since(start).Seconds()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -423,18 +436,26 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		return
 	}
 
-	if response == nil {
+	if responseBody == nil {
 		err := errors.New("LLM provider returned nil response")
 		p.logger.WithError(err).Error("nil response from LLM provider")
 		p.sendError(firewallErrors, err)
 		return
-	} else {
-		p.logger.WithFields(logrus.Fields{"duration": duration, "response_body": response.Response}).
-			Info("LLM provider responded successfully")
+	}
+
+	p.logger.WithFields(logrus.Fields{"duration": duration, "response_body": string(responseBody)}).
+		Info("LLM provider responded successfully")
+
+	// Parse the provider's raw JSON response to extract the text content.
+	textContent, parseErr := extractTextFromProviderResponse(responseBody)
+	if parseErr != nil {
+		p.logger.WithError(parseErr).Error("failed to parse llm response")
+		p.sendError(firewallErrors, parseErr)
+		return
 	}
 
 	var resp LLMResponse
-	if err := json.Unmarshal([]byte(response.Response), &resp); err != nil {
+	if err := json.Unmarshal([]byte(textContent), &resp); err != nil {
 		p.logger.WithError(err).Error("failed to unmarshal llm response")
 		p.sendError(firewallErrors, err)
 		return
@@ -719,4 +740,44 @@ func (p *NeuralTrustModerationPlugin) findSimilarKeyword(text string, threshold 
 		}
 	}
 	return "", "", 0, false
+}
+
+// extractTextFromProviderResponse extracts the assistant's text content from a
+// raw provider JSON response. It supports both OpenAI chat completion format
+// (choices[0].message.content) and Anthropic messages format (content[0].text).
+func extractTextFromProviderResponse(body []byte) (string, error) {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return "", fmt.Errorf("invalid JSON response: %w", err)
+	}
+
+	// Try OpenAI format: choices[0].message.content
+	if choices, ok := raw["choices"].([]interface{}); ok && len(choices) > 0 {
+		choice, ok := choices[0].(map[string]interface{})
+		if ok {
+			if msg, ok := choice["message"].(map[string]interface{}); ok {
+				if content, ok := msg["content"].(string); ok {
+					content = strings.TrimPrefix(content, "```json")
+					content = strings.TrimSuffix(content, "```")
+					content = strings.TrimSpace(content)
+					return content, nil
+				}
+			}
+		}
+	}
+
+	// Try Anthropic format: content[0].text
+	if blocks, ok := raw["content"].([]interface{}); ok && len(blocks) > 0 {
+		block, ok := blocks[0].(map[string]interface{})
+		if ok {
+			if text, ok := block["text"].(string); ok {
+				text = strings.TrimPrefix(text, "```json")
+				text = strings.TrimSuffix(text, "```")
+				text = strings.TrimSpace(text)
+				return text, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("unable to extract text from provider response")
 }

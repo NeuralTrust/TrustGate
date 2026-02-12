@@ -42,7 +42,6 @@ type Azure struct {
 //go:generate mockery --name=Client --dir=. --output=./mocks --filename=client_mock.go --case=underscore --with-expecter
 
 type Client interface {
-	Ask(ctx context.Context, config *Config, prompt string) (*CompletionResponse, error)
 	CompletionsStream(
 		req *types.RequestContext,
 		config *Config,

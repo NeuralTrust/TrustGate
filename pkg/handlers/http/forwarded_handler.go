@@ -32,6 +32,7 @@ import (
 	plugintypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	infraTLS "github.com/NeuralTrust/TrustGate/pkg/infra/tls"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -737,6 +738,25 @@ func (h *forwardedHandler) handlerProviderResponse(
 		return nil, fmt.Errorf("failed to get streaming provider client: %w", err)
 	}
 
+	sourceFormat := adapter.Format(req.SourceFormat)
+	targetFormat := adapter.Format(target.Provider)
+
+	// Adapt request if cross-provider.
+	body := req.Body
+	if !adapter.IsSameWireFormat(sourceFormat, targetFormat) {
+		body, err = adapter.AdaptRequest(req.Body, sourceFormat, targetFormat)
+		if err != nil {
+			return nil, fmt.Errorf("failed to adapt request (%s->%s): %w", sourceFormat, targetFormat, err)
+		}
+	}
+
+	// Validate/replace model.
+	body, _, err = adapter.ValidateModel(body, target.Models, target.DefaultModel)
+	if err != nil {
+		h.logger.WithError(err).Warn("model validation failed, proceeding with original body")
+		body = req.Body
+	}
+
 	responseBody, err := providerClient.Completions(
 		req.C.Context(),
 		&providers.Config{
@@ -760,10 +780,18 @@ func (h *forwardedHandler) handlerProviderResponse(
 				},
 			},
 		},
-		req.Body,
+		body,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get completions: %w", err)
+	}
+
+	// Adapt response back to source format if cross-provider.
+	if !adapter.IsSameWireFormat(sourceFormat, targetFormat) {
+		responseBody, err = adapter.AdaptResponse(responseBody, sourceFormat, targetFormat)
+		if err != nil {
+			h.logger.WithError(err).Warn("failed to adapt response, returning raw")
+		}
 	}
 
 	req.C.Set("X-Selected-Provider", target.Provider)
@@ -779,6 +807,9 @@ func (h *forwardedHandler) handlerProviderResponse(
 
 func (h *forwardedHandler) doForwardRequest(ctx context.Context, dto *forwardedRequestDTO) (*types.ResponseContext, error) {
 	if dto.target.Provider != "" {
+		if dto.req.SourceFormat == "" {
+			dto.req.SourceFormat = string(adapter.DetectFormat(dto.req.Body))
+		}
 		if dto.target.Stream {
 			return h.handleStreamingResponseByProvider(dto.req, dto.target, dto.streamResponse)
 		}
@@ -1080,6 +1111,26 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 		return nil, fmt.Errorf("failed to get streaming provider client: %w", err)
 	}
 
+	sourceFormat := adapter.Format(req.SourceFormat)
+	targetFormat := adapter.Format(target.Provider)
+	needsAdapt := !adapter.IsSameWireFormat(sourceFormat, targetFormat)
+
+	// Adapt request if cross-provider.
+	body := req.Body
+	if needsAdapt {
+		body, err = adapter.AdaptRequest(req.Body, sourceFormat, targetFormat)
+		if err != nil {
+			return nil, fmt.Errorf("failed to adapt stream request (%s->%s): %w", sourceFormat, targetFormat, err)
+		}
+	}
+
+	// Validate/replace model.
+	body, _, err = adapter.ValidateModel(body, target.Models, target.DefaultModel)
+	if err != nil {
+		h.logger.WithError(err).Warn("model validation failed, proceeding with original body")
+		body = req.Body
+	}
+
 	streamChan := make(chan []byte)
 	errChan := make(chan error, 1)
 	breakChan := make(chan struct{}, 1)
@@ -1110,7 +1161,7 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 					},
 				},
 			},
-			req.Body,
+			body,
 			streamChan,
 			breakChan,
 		)
@@ -1139,8 +1190,19 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 		defer close(streamResponse)
 		for msg := range streamChan {
 			if len(msg) > 0 {
-				streamResponse <- msg
-				_, _ = fmt.Fprintf(w, "data: %s\n\n", msg)
+				outMsg := msg
+				if needsAdapt {
+					adapted, adaptErr := adapter.AdaptStreamChunk(msg, sourceFormat, targetFormat)
+					if adaptErr != nil {
+						h.logger.WithError(adaptErr).Warn("failed to adapt stream chunk")
+					} else if adapted != nil {
+						outMsg = adapted
+					} else {
+						continue // skip this chunk
+					}
+				}
+				streamResponse <- outMsg
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", outMsg)
 				_ = w.Flush()
 			}
 		}

@@ -1,14 +1,6 @@
 package providers
 
-type CompletionResponse struct {
-	ID       string `json:"id"`
-	Model    string `json:"model"`
-	Response string `json:"response"`
-	Usage    Usage  `json:"usage"`
-}
-
-type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}
+// This file previously contained CompletionResponse and Usage types used by
+// the Ask() method. Those types are no longer needed after the migration to
+// raw HTTP Completions(). The file is kept as a placeholder for any future
+// shared provider response types.

@@ -12,10 +12,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/neuraltrust_moderation"
 	plugintypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	providerMocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory/mocks"
 	clientMocks "github.com/NeuralTrust/TrustGate/pkg/infra/providers/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -409,29 +409,28 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModeration(t *testing.T) {
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 	clientMock := new(clientMocks.Client)
 
-	// Setup mock response for LLM moderation
+	// Setup mock response for LLM moderation (OpenAI chat completion format)
 	llmResponse := neuraltrust_moderation.LLMResponse{
 		Topic:            "politics",
 		InstructionMatch: "Block if it mentions politics",
 		Flagged:          true,
 	}
-	responseJSON, err := json.Marshal(llmResponse)
+	llmRespJSON, err := json.Marshal(llmResponse)
 	if err != nil {
 		t.Fatalf("Failed to marshal LLM response: %v", err)
 	}
+	completionResp, _ := json.Marshal(map[string]interface{}{
+		"id":    "test-id",
+		"model": "gpt-4",
+		"choices": []map[string]interface{}{
+			{"index": 0, "message": map[string]interface{}{"role": "assistant", "content": string(llmRespJSON)}, "finish_reason": "stop"},
+		},
+		"usage": map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+	})
 
 	// Setup expectations for provider locator and client
 	providerLocatorMock.On("Get", "openai").Return(clientMock, nil)
-	clientMock.On("Ask", mock.Anything, mock.Anything, mock.Anything).Return(&providers.CompletionResponse{
-		ID:       "test-id",
-		Model:    "gpt-4",
-		Response: string(responseJSON),
-		Usage: providers.Usage{
-			PromptTokens:     10,
-			CompletionTokens: 20,
-			TotalTokens:      30,
-		},
-	}, nil)
+	clientMock.On("Completions", mock.Anything, mock.Anything, mock.Anything).Return(completionResp, nil)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
@@ -475,29 +474,28 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModerationSafe(t *testing.T) {
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 	clientMock := new(clientMocks.Client)
 
-	// Setup mock response for LLM moderation (safe content)
+	// Setup mock response for LLM moderation (safe content, OpenAI format)
 	llmResponse := neuraltrust_moderation.LLMResponse{
 		Topic:            "other",
 		InstructionMatch: "",
 		Flagged:          false,
 	}
-	responseJSON, err := json.Marshal(llmResponse)
+	llmRespJSON, err := json.Marshal(llmResponse)
 	if err != nil {
 		t.Fatalf("Failed to marshal LLM response: %v", err)
 	}
+	completionResp, _ := json.Marshal(map[string]interface{}{
+		"id":    "test-id",
+		"model": "gpt-4",
+		"choices": []map[string]interface{}{
+			{"index": 0, "message": map[string]interface{}{"role": "assistant", "content": string(llmRespJSON)}, "finish_reason": "stop"},
+		},
+		"usage": map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+	})
 
 	// Setup expectations for provider locator and client
 	providerLocatorMock.On("Get", "openai").Return(clientMock, nil)
-	clientMock.On("Ask", mock.Anything, mock.Anything, mock.Anything).Return(&providers.CompletionResponse{
-		ID:       "test-id",
-		Model:    "gpt-4",
-		Response: string(responseJSON),
-		Usage: providers.Usage{
-			PromptTokens:     10,
-			CompletionTokens: 20,
-			TotalTokens:      30,
-		},
-	}, nil)
+	clientMock.On("Completions", mock.Anything, mock.Anything, mock.Anything).Return(completionResp, nil)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
@@ -720,29 +718,28 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModeration_ObserveMode(t *testin
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 	clientMock := new(clientMocks.Client)
 
-	// Setup mock response for LLM moderation (flagged content)
+	// Setup mock response for LLM moderation (flagged content, OpenAI format)
 	llmResponse := neuraltrust_moderation.LLMResponse{
 		Topic:            "politics",
 		InstructionMatch: "Block if it mentions politics",
 		Flagged:          true,
 	}
-	responseJSON, err := json.Marshal(llmResponse)
+	llmRespJSON, err := json.Marshal(llmResponse)
 	if err != nil {
 		t.Fatalf("Failed to marshal LLM response: %v", err)
 	}
+	completionResp, _ := json.Marshal(map[string]interface{}{
+		"id":    "test-id",
+		"model": "gpt-4",
+		"choices": []map[string]interface{}{
+			{"index": 0, "message": map[string]interface{}{"role": "assistant", "content": string(llmRespJSON)}, "finish_reason": "stop"},
+		},
+		"usage": map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+	})
 
 	// Setup expectations for provider locator and client
 	providerLocatorMock.On("Get", "openai").Return(clientMock, nil)
-	clientMock.On("Ask", mock.Anything, mock.Anything, mock.Anything).Return(&providers.CompletionResponse{
-		ID:       "test-id",
-		Model:    "gpt-4",
-		Response: string(responseJSON),
-		Usage: providers.Usage{
-			PromptTokens:     10,
-			CompletionTokens: 20,
-			TotalTokens:      30,
-		},
-	}, nil)
+	clientMock.On("Completions", mock.Anything, mock.Anything, mock.Anything).Return(completionResp, nil)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
