@@ -266,6 +266,38 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		}
 	}
 
+	// When keyreg detected a violation synchronously, the error is already
+	// buffered in firewallErrors. Drain and handle it now to avoid a race
+	// between the buffered error and the done channel in the select below.
+	if keyRegFound {
+		if err := <-firewallErrors; err != nil {
+			p.notifyGuardrailViolation(ctx, conf)
+			cancel()
+			var moderationViolationError *moderationViolationError
+			if errors.As(err, &moderationViolationError) {
+				evtCtx.SetError(moderationViolationError)
+				evtCtx.SetExtras(evt)
+				if conf.Mode == pluginTypes.ModeObserve {
+					return &pluginTypes.PluginResponse{
+						StatusCode: 200,
+						Message:    "prompt flagged",
+						Headers: map[string][]string{
+							"Content-Type": {"application/json"},
+						},
+					}, nil
+				}
+				return nil, &pluginTypes.PluginError{
+					StatusCode: http.StatusForbidden,
+					Message:    err.Error(),
+					Err:        err,
+				}
+			}
+			evtCtx.SetError(err)
+			evtCtx.SetExtras(evt)
+			return nil, err
+		}
+	}
+
 	if !keyRegFound && conf.NTTopicParamBag != nil && conf.NTTopicParamBag.Enabled {
 		wg.Add(1)
 		go p.callNTTopicModeration(

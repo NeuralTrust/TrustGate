@@ -159,4 +159,8 @@ jobs:
         uses: codecov/codecov-action@v3
         with:
           file: ./unit-coverage.txt
-          flags: unittests 
+          flags: unittests
+  auto-approve:
+    needs: test
+    uses: NeuralTrust/workflows/.github/workflows/auto-approve.yml@main
+    secrets: inherit

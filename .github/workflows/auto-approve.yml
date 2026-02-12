@@ -17,9 +17,3 @@ jobs:
   ai-review:
     uses: NeuralTrust/workflows/.github/workflows/ai-code-review.yml@main
     secrets: inherit
-
-  # Auto Approve - waits for AI review and all CI to pass
-  auto-approve:
-    needs: ai-review
-    uses: NeuralTrust/workflows/.github/workflows/auto-approve.yml@main
-    secrets: inherit
