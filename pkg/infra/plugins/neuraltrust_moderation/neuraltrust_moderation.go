@@ -208,7 +208,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		inputBytes = []byte(strings.Join(req.Messages, "\n"))
 	} else {
 		inputBody := req.Body
-		if req.Stage == pluginTypes.PostRequest {
+		if req.Stage == pluginTypes.PostRequest && resp != nil {
 			inputBody = resp.Body
 		}
 
