@@ -27,6 +27,31 @@ func SSEData(dataJSON []byte) [][]byte {
 	}
 }
 
+// DecodeStreamChunkFor decodes a single SSE data payload from the given
+// provider format into a canonical stream chunk. Used by the handler when
+// it needs to accumulate (e.g. tool call arguments) before encoding to source.
+func DecodeStreamChunkFor(chunk []byte, target Format) (*CanonicalStreamChunk, error) {
+	ad, err := getAdapter(target)
+	if err != nil {
+		return nil, fmt.Errorf("adapter stream: %w", err)
+	}
+	return ad.DecodeStreamChunk(chunk)
+}
+
+// EncodeStreamChunkFor encodes a canonical stream chunk into the given
+// provider's SSE format. Used by the handler after accumulation (e.g. when
+// target is Gemini and tool calls were merged from upstream OpenAI deltas).
+func EncodeStreamChunkFor(canonical *CanonicalStreamChunk, source Format) ([][]byte, error) {
+	if canonical == nil {
+		return nil, nil
+	}
+	ad, err := getAdapter(source)
+	if err != nil {
+		return nil, fmt.Errorf("adapter stream: %w", err)
+	}
+	return ad.EncodeStreamChunk(canonical)
+}
+
 // AdaptStreamChunk transforms a single SSE data payload from the target
 // provider format to the source (caller) format via the canonical model.
 //

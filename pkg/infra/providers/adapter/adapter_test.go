@@ -704,6 +704,43 @@ func TestAdaptStreamChunk_AnthropicNonContentSkipped(t *testing.T) {
 	assert.Empty(t, out, "non-content events should be skipped")
 }
 
+// TestAdaptStreamChunk_OpenAIToolCallsToAnthropic ensures OpenAI stream chunks
+// with tool_calls are converted to Anthropic content_block_start(tool_use) and
+// content_block_delta(input_json_delta) so the agent receives a valid stream.
+func TestAdaptStreamChunk_OpenAIToolCallsToAnthropic(t *testing.T) {
+	// First chunk: role + tool_calls with id, name, empty arguments
+	input := `{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"database_agent","arguments":""}}]}}]}`
+	lines, err := AdaptStreamChunk([]byte(input), FormatAnthropic, FormatOpenAI)
+	require.NoError(t, err)
+	require.NotEmpty(t, lines)
+	// Expect message_start and content_block_start(tool_use)
+	var seenMessageStart, seenBlockStart bool
+	for _, line := range lines {
+		if bytes.Contains(line, []byte("message_start")) {
+			seenMessageStart = true
+		}
+		if bytes.Contains(line, []byte("tool_use")) && bytes.Contains(line, []byte("database_agent")) {
+			seenBlockStart = true
+		}
+	}
+	assert.True(t, seenMessageStart, "expected message_start event")
+	assert.True(t, seenBlockStart, "expected content_block_start with tool_use and name")
+
+	// Chunk with only arguments delta
+	input2 := `{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"query\":\"test\"}"}}]}}]}`
+	lines2, err := AdaptStreamChunk([]byte(input2), FormatAnthropic, FormatOpenAI)
+	require.NoError(t, err)
+	require.NotEmpty(t, lines2)
+	var seenInputDelta bool
+	for _, line := range lines2 {
+		if bytes.Contains(line, []byte("input_json_delta")) && bytes.Contains(line, []byte("partial_json")) {
+			seenInputDelta = true
+			break
+		}
+	}
+	assert.True(t, seenInputDelta, "expected content_block_delta with input_json_delta")
+}
+
 // ---------------------------------------------------------------------------
 // Cross-format: Gemini → Anthropic (via canonical, no two-hop hack)
 // ---------------------------------------------------------------------------

@@ -11,6 +11,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -612,6 +615,7 @@ func (h *forwardedHandler) forwardRequest(
 		h.logger.WithFields(logrus.Fields{
 			"attempt":   attempt + 1,
 			"provider":  target.Provider,
+			"stream":    target.Stream,
 			"target_id": target.ID,
 		}).Debug("Attempting request")
 
@@ -1100,6 +1104,22 @@ func (h *forwardedHandler) getPathParamsFromContext(ctx context.Context) map[str
 	return nil
 }
 
+// injectStreamTrue sets "stream": true in a JSON request body so that upstreams
+// using OpenAI-style API (openai, azure) actually use streaming when the agent
+// format (e.g. Gemini) does not include stream in the body. Returns body unchanged on parse error.
+func injectStreamTrue(body []byte) []byte {
+	var m map[string]interface{}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	m["stream"] = true
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
 func (h *forwardedHandler) handleStreamingResponseByProvider(
 	req *types.RequestContext,
 	target *types.UpstreamTargetDTO,
@@ -1129,6 +1149,15 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 	if err != nil {
 		h.logger.WithError(err).Warn("model validation failed, proceeding with original body")
 		body = req.Body
+	}
+
+	// Upstreams that require "stream": true in the body (OpenAI, Azure, Anthropic)
+	// for streaming. When the agent format (e.g. Gemini) does not send stream in
+	// the body, the adapted body may lack it; force it so the upstream actually streams.
+	// - Azure: already covered (normalizeFormat maps it to OpenAI).
+	// - Bedrock: does not use body for streaming (uses InvokeModelWithResponseStream); adapter strips "stream".
+	if adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) || targetFormat == adapter.FormatAnthropic {
+		body = injectStreamTrue(body)
 	}
 
 	streamChan := make(chan []byte)
@@ -1186,8 +1215,59 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 		break
 	}
 
+	// Optional: save the response stream to a file for debugging (compare upstream_agent combos).
+	var streamFile *os.File
+	if os.Getenv("TG_SAVE_STREAM_DEBUG") != "" {
+		dir := "streams"
+		_ = os.MkdirAll(dir, 0750)
+		upstreamName := string(targetFormat)
+		agentName := string(sourceFormat)
+		ts := time.Now().Format("20060102-150405")
+		name := fmt.Sprintf("%s_%s_%s.sse", upstreamName, agentName, ts)
+		path := filepath.Join(dir, name)
+		f, err := os.Create(path) // #nosec G304 -- path is from format names and timestamp, not user input
+		if err != nil {
+			h.logger.WithError(err).Warn("could not create stream debug file")
+		} else {
+			streamFile = f
+			h.logger.WithField("path", path).Info("saving stream response to file")
+		}
+	}
+
 	req.C.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer close(streamResponse)
+		if streamFile != nil {
+			defer func() { _ = streamFile.Close() }()
+		}
+		writeLine := func(line []byte) {
+			_, _ = w.Write(line)
+			_, _ = w.Write([]byte("\n"))
+			if streamFile != nil {
+				_, _ = streamFile.Write(line)
+				_, _ = streamFile.Write([]byte("\n"))
+			}
+		}
+		writeAdaptedLines := func(lines [][]byte) {
+			for _, line := range lines {
+				writeLine(line)
+			}
+			_ = w.Flush()
+			for _, line := range lines {
+				if bytes.HasPrefix(line, []byte("data:")) {
+					mp := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+					if len(mp) > 0 {
+						streamResponse <- mp
+					}
+				}
+			}
+		}
+		// When agent is Gemini and upstream streams tool_calls (e.g. OpenAI), we accumulate
+		// arguments per tool call and emit Gemini-style functionCall parts on finish.
+		var toolCallAcc map[int]*struct {
+			ID   string
+			Name string
+			Args string
+		}
 		for msg := range streamChan {
 			// -----------------------------------------------------------------
 			// Cross-provider adaptation: the encoder produces full SSE lines
@@ -1203,31 +1283,113 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 					continue // [DONE] is OpenAI-specific; Anthropic/Gemini end naturally
 				}
 
+				// Agent Gemini + upstream with incremental tool_calls (OpenAI/Azure or Anthropic): decode, accumulate, then encode.
+				if sourceFormat == adapter.FormatGemini && (adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) || targetFormat == adapter.FormatAnthropic) {
+					canonical, decErr := adapter.DecodeStreamChunkFor(payload, targetFormat)
+					if decErr != nil {
+						preview := payload
+						if len(preview) > 200 {
+							preview = preview[:200]
+						}
+						h.logger.WithError(decErr).WithField("payload_preview", string(preview)).Warn("stream decode chunk failed")
+						continue
+					}
+					if canonical == nil {
+						continue
+					}
+					// Merge tool call deltas by index.
+					for i := range canonical.ToolCallDeltas {
+						tc := &canonical.ToolCallDeltas[i]
+						if toolCallAcc == nil {
+							toolCallAcc = make(map[int]*struct{ ID, Name, Args string })
+						}
+						cur := toolCallAcc[tc.Index]
+						if cur == nil {
+							cur = &struct{ ID, Name, Args string }{ID: tc.ID, Name: tc.Name}
+							toolCallAcc[tc.Index] = cur
+						}
+						if tc.Name != "" {
+							cur.Name = tc.Name
+						}
+						if tc.ID != "" {
+							cur.ID = tc.ID
+						}
+						cur.Args += tc.ArgumentsDelta
+					}
+					// Emit role chunk (first chunk from upstream often has role only).
+					if canonical.Role != "" {
+						roleChunk := &adapter.CanonicalStreamChunk{Role: canonical.Role}
+						lines, encErr := adapter.EncodeStreamChunkFor(roleChunk, sourceFormat)
+						if encErr == nil && len(lines) > 0 {
+							writeAdaptedLines(lines)
+						}
+					}
+					// Emit text delta.
+					if canonical.Delta != "" {
+						deltaChunk := &adapter.CanonicalStreamChunk{Delta: canonical.Delta}
+						lines, encErr := adapter.EncodeStreamChunkFor(deltaChunk, sourceFormat)
+						if encErr == nil && len(lines) > 0 {
+							writeAdaptedLines(lines)
+						}
+					}
+					// On finish: emit accumulated tool calls as Gemini functionCall parts, then finish chunk.
+					if canonical.FinishReason != "" && len(toolCallAcc) > 0 {
+						indices := make([]int, 0, len(toolCallAcc))
+						for idx := range toolCallAcc {
+							indices = append(indices, idx)
+						}
+						sort.Ints(indices)
+						var deltas []adapter.StreamToolCallDelta
+						for _, idx := range indices {
+							cur := toolCallAcc[idx]
+							if cur == nil {
+								continue
+							}
+							deltas = append(deltas, adapter.StreamToolCallDelta{
+								Index:          idx,
+								ID:             cur.ID,
+								Name:           cur.Name,
+								ArgumentsDelta: cur.Args,
+							})
+						}
+						tcChunk := &adapter.CanonicalStreamChunk{ToolCallDeltas: deltas}
+						lines, encErr := adapter.EncodeStreamChunkFor(tcChunk, sourceFormat)
+						if encErr == nil && len(lines) > 0 {
+							writeAdaptedLines(lines)
+						}
+						toolCallAcc = nil
+					}
+					if canonical.FinishReason != "" {
+						finishChunk := &adapter.CanonicalStreamChunk{FinishReason: canonical.FinishReason}
+						lines, encErr := adapter.EncodeStreamChunkFor(finishChunk, sourceFormat)
+						if encErr == nil && len(lines) > 0 {
+							writeAdaptedLines(lines)
+						}
+					}
+					continue
+				}
+
 				adaptedLines, adaptErr := adapter.AdaptStreamChunk(payload, sourceFormat, targetFormat)
 				if adaptErr != nil {
-					h.logger.WithError(adaptErr).Warn("failed to adapt stream chunk")
+					preview := payload
+					if len(preview) > 200 {
+						preview = preview[:200]
+					}
+					h.logger.WithError(adaptErr).WithField("payload_preview", string(preview)).Warn("stream adapt chunk failed")
 					continue
 				}
 				if len(adaptedLines) == 0 {
+					// Decoder returned nil (skip) or encoder produced nothing; log at debug for openai→anthropic diagnostics
+					if h.logger.GetLevel() == logrus.DebugLevel {
+						preview := payload
+						if len(preview) > 200 {
+							preview = preview[:200]
+						}
+						h.logger.WithField("payload_preview", string(preview)).WithField("source", sourceFormat).WithField("target", targetFormat).Debug("stream chunk skipped (empty adapted result)")
+					}
 					continue
 				}
-
-				// Write all adapted SSE lines.
-				for _, line := range adaptedLines {
-					_, _ = w.Write(line)
-					_, _ = w.Write([]byte("\n"))
-				}
-				_ = w.Flush()
-
-				// Extract data: payloads for metrics.
-				for _, line := range adaptedLines {
-					if bytes.HasPrefix(line, []byte("data:")) {
-						mp := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-						if len(mp) > 0 {
-							streamResponse <- mp
-						}
-					}
-				}
+				writeAdaptedLines(adaptedLines)
 				continue
 			}
 
@@ -1244,8 +1406,7 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 				}
 			}
 
-			_, _ = w.Write(msg)
-			_, _ = w.Write([]byte("\n"))
+			writeLine(msg)
 			_ = w.Flush()
 		}
 	})

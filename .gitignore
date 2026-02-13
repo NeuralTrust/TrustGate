@@ -58,6 +58,9 @@ config.*.yaml
 # Debug files
 __debug_bin
 
+# Stream response dumps (TG_SAVE_STREAM_DEBUG=1)
+streams/
+
 # Air live reload
 tmp/
 .mydocs
