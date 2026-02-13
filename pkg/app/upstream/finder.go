@@ -42,7 +42,7 @@ func (f *finder) Find(ctx context.Context, gatewayID, upstreamID uuid.UUID) (*do
 		f.saveUpstreamToMemoryCache(ctx, cachedUpstream)
 		return cachedUpstream, nil
 	} else if err != nil {
-		f.logger.WithError(err).Warn("distributed cache read upstream failure")
+		f.logger.WithError(err).Debug("distributed cache read upstream failure")
 	}
 	upstream, err := f.repo.GetUpstream(ctx, upstreamID)
 	if err != nil {

@@ -95,10 +95,11 @@ type anthropicCacheCreation struct {
 // Stream event types — Decode (incoming)
 
 type anthropicStreamEvent struct {
-	Type    string          `json:"type"`
-	Message json.RawMessage `json:"message,omitempty"`
-	Delta   json.RawMessage `json:"delta,omitempty"`
-	Index   int             `json:"index,omitempty"`
+	Type         string          `json:"type"`
+	Message      json.RawMessage `json:"message,omitempty"`
+	Delta        json.RawMessage `json:"delta,omitempty"`
+	Index        int             `json:"index,omitempty"`
+	ContentBlock json.RawMessage `json:"content_block,omitempty"`
 }
 
 type anthropicMessageStart struct {
@@ -108,9 +109,10 @@ type anthropicMessageStart struct {
 }
 
 type anthropicDelta struct {
-	Type       string `json:"type,omitempty"`
-	Text       string `json:"text,omitempty"`
-	StopReason string `json:"stop_reason,omitempty"`
+	Type        string `json:"type,omitempty"`
+	Text        string `json:"text,omitempty"`
+	PartialJSON string `json:"partial_json,omitempty"` // for input_json_delta (tool_use streaming)
+	StopReason  string `json:"stop_reason,omitempty"`
 }
 
 // Stream event types — Encode (outgoing, faithful to Anthropic API)
@@ -143,8 +145,11 @@ type anthropicSSEContentBlockStart struct {
 }
 
 type anthropicSSEContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type  string          `json:"type"`
+	Text  string          `json:"text,omitempty"`
+	ID    string          `json:"id,omitempty"`
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
 }
 
 type anthropicSSEContentBlockDelta struct {
@@ -551,7 +556,41 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 		if delta.Type == "text_delta" && delta.Text != "" {
 			return &CanonicalStreamChunk{Delta: delta.Text}, nil
 		}
+		if delta.Type == "input_json_delta" {
+			return &CanonicalStreamChunk{
+				ToolCallDeltas: []StreamToolCallDelta{{
+					Index:          event.Index,
+					ArgumentsDelta: delta.PartialJSON,
+				}},
+			}, nil
+		}
 		return nil, nil
+
+	case "content_block_start":
+		if len(event.ContentBlock) == 0 {
+			return nil, nil
+		}
+		var cb anthropicContentBlock
+		if err := json.Unmarshal(event.ContentBlock, &cb); err != nil {
+			return nil, nil
+		}
+		if cb.Type == "tool_use" {
+			inputStr := strings.TrimSpace(string(cb.Input))
+			// Anthropic sends "input": {} (empty object) in content_block_start; do not pass
+			// "{}" as first delta or the OpenAI client merges "{}" + partial_json → invalid JSON.
+			if inputStr == "" || inputStr == "{}" {
+				inputStr = ""
+			}
+			return &CanonicalStreamChunk{
+				ToolCallDeltas: []StreamToolCallDelta{{
+					Index:          event.Index,
+					ID:             cb.ID,
+					Name:           cb.Name,
+					ArgumentsDelta: inputStr,
+				}},
+			}, nil
+		}
+		return nil, nil // text/thinking block start: no delta yet, skip
 
 	case "message_start":
 		var msg anthropicMessageStart
@@ -597,11 +636,10 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 // ---------------------------------------------------------------------------
 
 func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
-	// --- message_start → also emit content_block_start -----------------------
+	// --- message_start (when role is set) ------------------------------------
 	if chunk.Role != "" {
 		var lines [][]byte
 
-		// 1. event: message_start
 		msgStart := anthropicSSEMessageStartPayload{
 			Type: "message_start",
 			Message: anthropicSSEMessageInfo{
@@ -616,22 +654,96 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 		data, _ := json.Marshal(msgStart)
 		lines = append(lines, SSEEvent("message_start", data)...)
 
-		// 2. event: content_block_start (index 0, text block)
-		cbStart := anthropicSSEContentBlockStart{
-			Type:  "content_block_start",
-			Index: 0,
-			ContentBlock: anthropicSSEContentBlock{
-				Type: "text",
-				Text: "",
-			},
+		// If this chunk has tool_calls, emit tool_use block(s) instead of text block.
+		if len(chunk.ToolCallDeltas) > 0 {
+			for _, tc := range chunk.ToolCallDeltas {
+				if tc.ID != "" || tc.Name != "" {
+					cbStart := anthropicSSEContentBlockStart{
+						Type:  "content_block_start",
+						Index: tc.Index,
+						ContentBlock: anthropicSSEContentBlock{
+							Type:  "tool_use",
+							ID:    tc.ID,
+							Name:  tc.Name,
+							Input: []byte("{}"),
+						},
+					}
+					data, _ = json.Marshal(cbStart)
+					lines = append(lines, SSEEvent("content_block_start", data)...)
+				}
+				if tc.ArgumentsDelta != "" {
+					cbDelta := anthropicSSEContentBlockDelta{
+						Type:  "content_block_delta",
+						Index: tc.Index,
+						Delta: anthropicDelta{Type: "input_json_delta", PartialJSON: tc.ArgumentsDelta},
+					}
+					data, _ = json.Marshal(cbDelta)
+					lines = append(lines, SSEEvent("content_block_delta", data)...)
+				}
+			}
+		} else if chunk.Delta != "" {
+			// Role + text in same chunk
+			cbStart := anthropicSSEContentBlockStart{
+				Type:  "content_block_start",
+				Index: 0,
+				ContentBlock: anthropicSSEContentBlock{Type: "text", Text: ""},
+			}
+			data, _ := json.Marshal(cbStart)
+			lines = append(lines, SSEEvent("content_block_start", data)...)
+			cbDelta := anthropicSSEContentBlockDelta{
+				Type:  "content_block_delta",
+				Index: 0,
+				Delta: anthropicDelta{Type: "text_delta", Text: chunk.Delta},
+			}
+			data, _ = json.Marshal(cbDelta)
+			lines = append(lines, SSEEvent("content_block_delta", data)...)
+		} else {
+			// Role only (text response will follow in next chunks)
+			cbStart := anthropicSSEContentBlockStart{
+				Type:  "content_block_start",
+				Index: 0,
+				ContentBlock: anthropicSSEContentBlock{Type: "text", Text: ""},
+			}
+			data, _ := json.Marshal(cbStart)
+			lines = append(lines, SSEEvent("content_block_start", data)...)
 		}
-		data, _ = json.Marshal(cbStart)
-		lines = append(lines, SSEEvent("content_block_start", data)...)
-
 		return lines, nil
 	}
 
-	// --- content_block_delta -------------------------------------------------
+	// --- tool_call deltas only (no role in this chunk) -----------------------
+	if len(chunk.ToolCallDeltas) > 0 {
+		var lines [][]byte
+		for _, tc := range chunk.ToolCallDeltas {
+			if tc.ID != "" || tc.Name != "" {
+				cbStart := anthropicSSEContentBlockStart{
+					Type:  "content_block_start",
+					Index: tc.Index,
+					ContentBlock: anthropicSSEContentBlock{
+						Type:  "tool_use",
+						ID:    tc.ID,
+						Name:  tc.Name,
+						Input: []byte("{}"),
+					},
+				}
+				data, _ := json.Marshal(cbStart)
+				lines = append(lines, SSEEvent("content_block_start", data)...)
+			}
+			if tc.ArgumentsDelta != "" {
+				cbDelta := anthropicSSEContentBlockDelta{
+					Type:  "content_block_delta",
+					Index: tc.Index,
+					Delta: anthropicDelta{Type: "input_json_delta", PartialJSON: tc.ArgumentsDelta},
+				}
+				data, _ := json.Marshal(cbDelta)
+				lines = append(lines, SSEEvent("content_block_delta", data)...)
+			}
+		}
+		if len(lines) > 0 {
+			return lines, nil
+		}
+	}
+
+	// --- text content_block_delta --------------------------------------------
 	if chunk.Delta != "" {
 		cbDelta := anthropicSSEContentBlockDelta{
 			Type:  "content_block_delta",
@@ -653,28 +765,19 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 		}
 
 		var lines [][]byte
-
-		// 1. event: content_block_stop
 		cbStop := anthropicSSEContentBlockStop{Type: "content_block_stop", Index: 0}
 		data, _ := json.Marshal(cbStop)
 		lines = append(lines, SSEEvent("content_block_stop", data)...)
-
-		// 2. event: message_delta
 		msgDelta := anthropicSSEMessageDelta{
-			Type: "message_delta",
-			Delta: anthropicSSEMessageDeltaBody{
-				StopReason: sr,
-			},
+			Type:  "message_delta",
+			Delta: anthropicSSEMessageDeltaBody{StopReason: sr},
 			Usage: anthropicSSEUsage{OutputTokens: 0},
 		}
 		data, _ = json.Marshal(msgDelta)
 		lines = append(lines, SSEEvent("message_delta", data)...)
-
-		// 3. event: message_stop
 		msgStop := anthropicSSESimple{Type: "message_stop"}
 		data, _ = json.Marshal(msgStop)
 		lines = append(lines, SSEEvent("message_stop", data)...)
-
 		return lines, nil
 	}
 

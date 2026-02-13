@@ -92,11 +92,21 @@ type CanonicalUsage struct {
 // Stream chunk types
 // ---------------------------------------------------------------------------
 
+// StreamToolCallDelta is one tool-call delta in a streamed response (OpenAI
+// streams tool_calls with incremental arguments; Anthropic uses input_json_delta).
+type StreamToolCallDelta struct {
+	Index          int    `json:"index"`
+	ID             string `json:"id,omitempty"`
+	Name           string `json:"name,omitempty"`
+	ArgumentsDelta string `json:"arguments_delta,omitempty"` // incremental piece
+}
+
 // CanonicalStreamChunk is one piece of a streamed response.
 type CanonicalStreamChunk struct {
-	ID           string `json:"id,omitempty"`
-	Model        string `json:"model,omitempty"`
-	Role         string `json:"role,omitempty"`  // only on first chunk
-	Delta        string `json:"delta,omitempty"` // text content delta
-	FinishReason string `json:"finish_reason,omitempty"`
+	ID             string                `json:"id,omitempty"`
+	Model          string                `json:"model,omitempty"`
+	Role           string                `json:"role,omitempty"`   // only on first chunk
+	Delta          string                `json:"delta,omitempty"`  // text content delta
+	FinishReason   string                `json:"finish_reason,omitempty"`
+	ToolCallDeltas []StreamToolCallDelta `json:"tool_call_deltas,omitempty"`
 }

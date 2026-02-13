@@ -101,8 +101,21 @@ type openaiStreamChoice struct {
 }
 
 type openaiStreamDelta struct {
-	Role    string `json:"role,omitempty"`
-	Content string `json:"content,omitempty"`
+	Role      string                 `json:"role,omitempty"`
+	Content   string                 `json:"content,omitempty"`
+	ToolCalls []openaiStreamToolCall `json:"tool_calls,omitempty"`
+}
+
+type openaiStreamToolCall struct {
+	Index    int                     `json:"index"`
+	ID       string                  `json:"id,omitempty"`
+	Type     string                  `json:"type,omitempty"`
+	Function openaiStreamToolCallFn  `json:"function,omitempty"`
+}
+
+type openaiStreamToolCallFn struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"` // streamed incrementally
 }
 
 // ---------------------------------------------------------------------------
@@ -383,18 +396,29 @@ func (a *OpenAIAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 	}
 
 	choice := raw.Choices[0]
+	delta := choice.Delta
 	sc := &CanonicalStreamChunk{
 		ID:    raw.ID,
 		Model: raw.Model,
-		Role:  choice.Delta.Role,
-		Delta: choice.Delta.Content,
+		Role:  delta.Role,
+		Delta: delta.Content,
 	}
 	if choice.FinishReason != nil {
 		sc.FinishReason = *choice.FinishReason
 	}
 
-	// Skip empty chunks.
-	if sc.Delta == "" && sc.Role == "" && sc.FinishReason == "" {
+	// Map OpenAI stream tool_calls to canonical tool call deltas.
+	for _, tc := range delta.ToolCalls {
+		sc.ToolCallDeltas = append(sc.ToolCallDeltas, StreamToolCallDelta{
+			Index:          tc.Index,
+			ID:             tc.ID,
+			Name:           tc.Function.Name,
+			ArgumentsDelta: tc.Function.Arguments,
+		})
+	}
+
+	// Skip chunks with no content (text, role, finish_reason, or tool_calls).
+	if sc.Delta == "" && sc.Role == "" && sc.FinishReason == "" && len(sc.ToolCallDeltas) == 0 {
 		return nil, nil
 	}
 
@@ -409,6 +433,17 @@ func (a *OpenAIAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 	delta := openaiStreamDelta{
 		Role:    chunk.Role,
 		Content: chunk.Delta,
+	}
+	for _, tc := range chunk.ToolCallDeltas {
+		delta.ToolCalls = append(delta.ToolCalls, openaiStreamToolCall{
+			Index: tc.Index,
+			ID:    tc.ID,
+			Type:  "function",
+			Function: openaiStreamToolCallFn{
+				Name:      tc.Name,
+				Arguments: tc.ArgumentsDelta,
+			},
+		})
 	}
 
 	choice := openaiStreamChoice{
