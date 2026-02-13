@@ -299,7 +299,7 @@ func (p *ExternalApiPlugin) Execute(
 	p.client.Timeout = timeout
 	startTime := time.Now()
 	// Make request
-	httpResp, err := p.client.Do(httpReq)
+	httpResp, err := p.client.Do(httpReq) // #nosec G704 -- URL is from admin-configured plugin settings (endpoint), not user-controlled
 	if err != nil {
 		return nil, &pluginTypes.PluginError{
 			StatusCode: http.StatusBadGateway,

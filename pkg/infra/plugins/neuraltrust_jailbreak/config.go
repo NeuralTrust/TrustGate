@@ -15,7 +15,7 @@ type Credentials struct {
 
 	BaseURL string `mapstructure:"base_url"`
 	Token   string `mapstructure:"token"`
-	APIKey  string `mapstructure:"openai_api_key"`
+	APIKey  string `mapstructure:"openai_api_key"` // #nosec G117 -- Plugin config field for OpenAI API key
 }
 
 type NeuralTrustCredentials struct {
@@ -24,7 +24,7 @@ type NeuralTrustCredentials struct {
 }
 
 type OpenAICredentials struct {
-	APIKey string `mapstructure:"api_key"`
+	APIKey string `mapstructure:"api_key"` // #nosec G117 -- Plugin config field for OpenAI API key
 }
 
 type JailbreakParamBag struct {

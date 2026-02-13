@@ -207,9 +207,12 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	if len(req.Messages) > 0 {
 		inputBytes = []byte(strings.Join(req.Messages, "\n"))
 	} else {
-		inputBody := req.Body
-		if req.Stage == pluginTypes.PostRequest {
+		var inputBody []byte
+		switch {
+		case req.Stage == pluginTypes.PostRequest && resp != nil:
 			inputBody = resp.Body
+		default:
+			inputBody = req.Body
 		}
 
 		mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
@@ -260,6 +263,38 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		if keyRegFound {
 			evt.Blocked = true
 			evt.KeyRegModeration.Blocked = true
+		}
+	}
+
+	// When keyreg detected a violation synchronously, the error is already
+	// buffered in firewallErrors. Drain and handle it now to avoid a race
+	// between the buffered error and the done channel in the select below.
+	if keyRegFound {
+		if err := <-firewallErrors; err != nil {
+			p.notifyGuardrailViolation(ctx, conf)
+			cancel()
+			var moderationViolationError *moderationViolationError
+			if errors.As(err, &moderationViolationError) {
+				evtCtx.SetError(moderationViolationError)
+				evtCtx.SetExtras(evt)
+				if conf.Mode == pluginTypes.ModeObserve {
+					return &pluginTypes.PluginResponse{
+						StatusCode: 200,
+						Message:    "prompt flagged",
+						Headers: map[string][]string{
+							"Content-Type": {"application/json"},
+						},
+					}, nil
+				}
+				return nil, &pluginTypes.PluginError{
+					StatusCode: http.StatusForbidden,
+					Message:    err.Error(),
+					Err:        err,
+				}
+			}
+			evtCtx.SetError(err)
+			evtCtx.SetExtras(evt)
+			return nil, err
 		}
 	}
 
@@ -405,14 +440,27 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		}
 	}
 
-	response, err := client.Ask(ctx, &providers.Config{
-		Credentials:  providersCreds,
-		Model:        cfg.Model,
-		MaxTokens:    maxTokens,
-		Temperature:  0.0,
-		SystemPrompt: SystemPrompt,
-		Instructions: cfg.Instructions,
-	}, string(inputBody))
+	// Build request body as JSON (replaces the old client.Ask call).
+	userContent := providers.FormatInstructions(cfg.Instructions) + "\n[Input]\n" + string(inputBody)
+	reqBody, marshalErr := json.Marshal(map[string]interface{}{
+		"model": cfg.Model,
+		"messages": []map[string]interface{}{
+			{"role": "system", "content": SystemPrompt},
+			{"role": "user", "content": userContent},
+		},
+		"max_tokens":  maxTokens,
+		"temperature": 0.0,
+	})
+	if marshalErr != nil {
+		p.logger.WithError(marshalErr).Error("failed to build llm request body")
+		p.sendError(firewallErrors, marshalErr)
+		return
+	}
+
+	responseBody, err := client.Completions(ctx, &providers.Config{
+		Credentials: providersCreds,
+		Model:       cfg.Model,
+	}, reqBody)
 	duration := time.Since(start).Seconds()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -423,18 +471,33 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		return
 	}
 
-	if response == nil {
-		err := errors.New("LLM provider returned nil response")
-		p.logger.WithError(err).Error("nil response from LLM provider")
+	if len(responseBody) == 0 {
+		err := errors.New("LLM provider returned empty response")
+		p.logger.WithError(err).Error("empty response from LLM provider")
 		p.sendError(firewallErrors, err)
 		return
-	} else {
-		p.logger.WithFields(logrus.Fields{"duration": duration, "response_body": response.Response}).
-			Info("LLM provider responded successfully")
+	}
+
+	p.logger.WithFields(logrus.Fields{"duration": duration, "response_body": string(responseBody)}).
+		Info("LLM provider responded successfully")
+
+	// Parse the provider's raw JSON response to extract the text content.
+	textContent, parseErr := extractTextFromProviderResponse(responseBody)
+	if parseErr != nil {
+		p.logger.WithError(parseErr).Error("failed to parse llm response")
+		p.sendError(firewallErrors, parseErr)
+		return
+	}
+
+	if textContent == "" {
+		parseErr = errors.New("LLM provider returned empty text content")
+		p.logger.WithError(parseErr).Error("empty text content from LLM response")
+		p.sendError(firewallErrors, parseErr)
+		return
 	}
 
 	var resp LLMResponse
-	if err := json.Unmarshal([]byte(response.Response), &resp); err != nil {
+	if err := json.Unmarshal([]byte(textContent), &resp); err != nil {
 		p.logger.WithError(err).Error("failed to unmarshal llm response")
 		p.sendError(firewallErrors, err)
 		return
@@ -593,7 +656,7 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 		p.sendError(
 			firewallErrors,
 			NewModerationViolation(
-				fmt.Sprintf("content blocked: word '%s' is similar to blocked keyword '%s' (score: %.2f)",
+				fmt.Sprintf("content blocked: word %q is similar to blocked keyword %q (score: %.2f)",
 					foundWord,
 					keyword,
 					similarity,
@@ -634,6 +697,15 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 // local helpers removed in favor of pluginutils.DefineRequestBody
 
 func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
+	// Bound input length early to avoid excessive allocations from untrusted data.
+	const maxWordLen = 4096
+	if len(s1) > maxWordLen {
+		s1 = s1[:maxWordLen]
+	}
+	if len(s2) > maxWordLen {
+		s2 = s2[:maxWordLen]
+	}
+
 	s1 = strings.ToLower(s1)
 	s2 = strings.ToLower(s2)
 
@@ -646,20 +718,17 @@ func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
 		return m
 	}
 
-	// For extremely large inputs, avoid excessive allocations and potential overflows.
-	// Words for moderation should be reasonably small; if not, treat as maximally distant.
-	const maxWordLen = 4096
-	if m > maxWordLen || n > maxWordLen {
-		if m > n {
-			return m
-		}
-		return n
-	}
-
 	// Ensure n <= m to minimize memory usage (only O(n) memory).
 	if n > m {
 		s1, s2 = s2, s1
 		m, n = n, m
+	}
+
+	// Explicitly cap n so the compiler (and static analysis) can verify n+1
+	// will not overflow. n is already bounded by maxWordLen via the truncation
+	// above, but this makes the invariant visible at the allocation site.
+	if n > maxWordLen {
+		n = maxWordLen
 	}
 
 	prev := make([]int, n+1)
@@ -719,4 +788,44 @@ func (p *NeuralTrustModerationPlugin) findSimilarKeyword(text string, threshold 
 		}
 	}
 	return "", "", 0, false
+}
+
+// extractTextFromProviderResponse extracts the assistant's text content from a
+// raw provider JSON response. It supports both OpenAI chat completion format
+// (choices[0].message.content) and Anthropic messages format (content[0].text).
+func extractTextFromProviderResponse(body []byte) (string, error) {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return "", fmt.Errorf("invalid JSON response: %w", err)
+	}
+
+	// Try OpenAI format: choices[0].message.content
+	if choices, ok := raw["choices"].([]interface{}); ok && len(choices) > 0 {
+		choice, ok := choices[0].(map[string]interface{})
+		if ok {
+			if msg, ok := choice["message"].(map[string]interface{}); ok {
+				if content, ok := msg["content"].(string); ok {
+					content = strings.TrimPrefix(content, "```json")
+					content = strings.TrimSuffix(content, "```")
+					content = strings.TrimSpace(content)
+					return content, nil
+				}
+			}
+		}
+	}
+
+	// Try Anthropic format: content[0].text
+	if blocks, ok := raw["content"].([]interface{}); ok && len(blocks) > 0 {
+		block, ok := blocks[0].(map[string]interface{})
+		if ok {
+			if text, ok := block["text"].(string); ok {
+				text = strings.TrimPrefix(text, "```json")
+				text = strings.TrimSuffix(text, "```")
+				text = strings.TrimSpace(text)
+				return text, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("unable to extract text from provider response")
 }

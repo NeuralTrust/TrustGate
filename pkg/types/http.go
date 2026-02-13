@@ -31,9 +31,10 @@ type RequestContext struct {
 	Metadata  map[string]interface{}
 	Stage     types.Stage
 	ProcessAt *time.Time
-	IP        string
-	SessionID string
-	Provider  string
+	IP           string
+	SessionID    string
+	Provider     string
+	SourceFormat string // detected input format (openai, anthropic, google, etc.)
 }
 
 // ResponseContext represents the context for a response

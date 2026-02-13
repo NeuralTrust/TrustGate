@@ -14,7 +14,7 @@ type TLSCert struct {
 	Host       string    `json:"host" gorm:"type:text;not null"`
 	CACert     string    `json:"ca_cert" gorm:"type:text"`
 	ClientCert string    `json:"client_cert" gorm:"type:text"`
-	ClientKey  string    `json:"client_key" gorm:"type:text"`
+	ClientKey  string    `json:"client_key" gorm:"type:text"` // #nosec G117 -- TLS domain field for client key data
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
@@ -37,5 +37,3 @@ func (c *TLSCert) BeforeUpdate(tx *gorm.DB) error {
 func (c *TLSCert) TableName() string {
 	return "tls_certs"
 }
-
-

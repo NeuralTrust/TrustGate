@@ -9,7 +9,7 @@ import (
 // Credentials represents authentication configuration for upstream services
 type Credentials struct {
 	// Api Key
-	ApiKey string `json:"api_key,omitempty"`
+	ApiKey string `json:"api_key,omitempty"` // #nosec G117 -- Domain field for upstream API key configuration
 	// Header-based auth
 	HeaderName  string `json:"header_name,omitempty"`
 	HeaderValue string `json:"header_value,omitempty"`

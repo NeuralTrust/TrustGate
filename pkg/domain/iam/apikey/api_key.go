@@ -11,8 +11,9 @@ import (
 type SubjectType string
 
 const (
-	EngineType  SubjectType = "engine"
-	GatewayType SubjectType = "gateway"
+	EngineType   SubjectType = "engine"
+	GatewayType  SubjectType = "gateway"
+	SentinelType SubjectType = "sentinel"
 )
 
 func SubjectFromString(value string) (SubjectType, error) {
@@ -21,6 +22,8 @@ func SubjectFromString(value string) (SubjectType, error) {
 		return EngineType, nil
 	case string(GatewayType):
 		return GatewayType, nil
+	case string(SentinelType):
+		return SentinelType, nil
 	default:
 		return "", ErrInvalidSubjectType
 	}
@@ -31,7 +34,7 @@ var (
 	ErrInvalidExpiresAt   = errors.New("iam api key expires_at cannot be zero")
 	ErrExpiresAtInPast    = errors.New("iam api key expires_at cannot be in the past")
 	ErrSubjectRequired    = errors.New("iam api key subject is required")
-	ErrInvalidSubjectType = errors.New("invalid subject type: must be 'engine' or 'gateway'")
+	ErrInvalidSubjectType = errors.New("invalid subject type: must be 'engine', 'gateway' or 'sentinel'")
 )
 
 type APIKey struct {

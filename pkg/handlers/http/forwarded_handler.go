@@ -32,6 +32,7 @@ import (
 	plugintypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/prometheus"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	infraTLS "github.com/NeuralTrust/TrustGate/pkg/infra/tls"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -737,6 +738,25 @@ func (h *forwardedHandler) handlerProviderResponse(
 		return nil, fmt.Errorf("failed to get streaming provider client: %w", err)
 	}
 
+	sourceFormat := adapter.Format(req.SourceFormat)
+	targetFormat := adapter.Format(target.Provider)
+
+	// Adapt request if cross-provider.
+	body := req.Body
+	if !adapter.IsSameWireFormat(sourceFormat, targetFormat) {
+		body, err = adapter.AdaptRequest(req.Body, sourceFormat, targetFormat)
+		if err != nil {
+			return nil, fmt.Errorf("failed to adapt request (%s->%s): %w", sourceFormat, targetFormat, err)
+		}
+	}
+
+	// Validate/replace model.
+	body, _, err = adapter.ValidateModel(body, target.Models, target.DefaultModel)
+	if err != nil {
+		h.logger.WithError(err).Warn("model validation failed, proceeding with original body")
+		body = req.Body
+	}
+
 	responseBody, err := providerClient.Completions(
 		req.C.Context(),
 		&providers.Config{
@@ -760,10 +780,18 @@ func (h *forwardedHandler) handlerProviderResponse(
 				},
 			},
 		},
-		req.Body,
+		body,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get completions: %w", err)
+	}
+
+	// Adapt response back to source format if cross-provider.
+	if !adapter.IsSameWireFormat(sourceFormat, targetFormat) {
+		responseBody, err = adapter.AdaptResponse(responseBody, sourceFormat, targetFormat)
+		if err != nil {
+			h.logger.WithError(err).Warn("failed to adapt response, returning raw")
+		}
 	}
 
 	req.C.Set("X-Selected-Provider", target.Provider)
@@ -779,6 +807,9 @@ func (h *forwardedHandler) handlerProviderResponse(
 
 func (h *forwardedHandler) doForwardRequest(ctx context.Context, dto *forwardedRequestDTO) (*types.ResponseContext, error) {
 	if dto.target.Provider != "" {
+		if dto.req.SourceFormat == "" {
+			dto.req.SourceFormat = string(adapter.DetectFormat(dto.req.Body))
+		}
 		if dto.target.Stream {
 			return h.handleStreamingResponseByProvider(dto.req, dto.target, dto.streamResponse)
 		}
@@ -1080,6 +1111,26 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 		return nil, fmt.Errorf("failed to get streaming provider client: %w", err)
 	}
 
+	sourceFormat := adapter.Format(req.SourceFormat)
+	targetFormat := adapter.Format(target.Provider)
+	needsAdapt := !adapter.IsSameWireFormat(sourceFormat, targetFormat)
+
+	// Adapt request if cross-provider.
+	body := req.Body
+	if needsAdapt {
+		body, err = adapter.AdaptRequest(req.Body, sourceFormat, targetFormat)
+		if err != nil {
+			return nil, fmt.Errorf("failed to adapt stream request (%s->%s): %w", sourceFormat, targetFormat, err)
+		}
+	}
+
+	// Validate/replace model.
+	body, _, err = adapter.ValidateModel(body, target.Models, target.DefaultModel)
+	if err != nil {
+		h.logger.WithError(err).Warn("model validation failed, proceeding with original body")
+		body = req.Body
+	}
+
 	streamChan := make(chan []byte)
 	errChan := make(chan error, 1)
 	breakChan := make(chan struct{}, 1)
@@ -1110,7 +1161,7 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 					},
 				},
 			},
-			req.Body,
+			body,
 			streamChan,
 			breakChan,
 		)
@@ -1138,11 +1189,64 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 	req.C.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer close(streamResponse)
 		for msg := range streamChan {
-			if len(msg) > 0 {
-				streamResponse <- msg
-				_, _ = fmt.Fprintf(w, "data: %s\n\n", msg)
+			// -----------------------------------------------------------------
+			// Cross-provider adaptation: the encoder produces full SSE lines
+			// (event:, data:, empty separators) — write them directly and skip
+			// the original upstream line.
+			// -----------------------------------------------------------------
+			if needsAdapt {
+				if !bytes.HasPrefix(msg, []byte("data:")) {
+					continue // skip upstream event:, empty, comment lines
+				}
+				payload := bytes.TrimSpace(bytes.TrimPrefix(msg, []byte("data:")))
+				if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+					continue // [DONE] is OpenAI-specific; Anthropic/Gemini end naturally
+				}
+
+				adaptedLines, adaptErr := adapter.AdaptStreamChunk(payload, sourceFormat, targetFormat)
+				if adaptErr != nil {
+					h.logger.WithError(adaptErr).Warn("failed to adapt stream chunk")
+					continue
+				}
+				if len(adaptedLines) == 0 {
+					continue
+				}
+
+				// Write all adapted SSE lines.
+				for _, line := range adaptedLines {
+					_, _ = w.Write(line)
+					_, _ = w.Write([]byte("\n"))
+				}
 				_ = w.Flush()
+
+				// Extract data: payloads for metrics.
+				for _, line := range adaptedLines {
+					if bytes.HasPrefix(line, []byte("data:")) {
+						mp := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+						if len(mp) > 0 {
+							streamResponse <- mp
+						}
+					}
+				}
+				continue
 			}
+
+			// -----------------------------------------------------------------
+			// Pass-through mode (same format): write the upstream line as-is.
+			// -----------------------------------------------------------------
+			isDataLine := bytes.HasPrefix(msg, []byte("data:"))
+			if isDataLine {
+				payload := bytes.TrimSpace(bytes.TrimPrefix(msg, []byte("data:")))
+				isDone := bytes.Equal(payload, []byte("[DONE]"))
+				// Forward payload to metrics collector (skip empty / [DONE]).
+				if len(payload) > 0 && !isDone {
+					streamResponse <- payload
+				}
+			}
+
+			_, _ = w.Write(msg)
+			_, _ = w.Write([]byte("\n"))
+			_ = w.Flush()
 		}
 	})
 
@@ -1198,7 +1302,7 @@ func (h *forwardedHandler) handleStreamingResponse(dto *forwardedRequestDTO, cli
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := client.Do(httpReq)
+	resp, err := client.Do(httpReq) // #nosec G704 -- URL is built from admin-configured upstream target (protocol/host/port/path), not user-controlled
 	if err != nil {
 		return nil, fmt.Errorf("failed to make streaming request: %w", err)
 	}
@@ -1259,7 +1363,7 @@ func (h *forwardedHandler) handleStreamingResponse(dto *forwardedRequestDTO, cli
 
 				if err := json.Unmarshal(line, &parsed); err != nil {
 					streamResponse <- line
-					_, _ = fmt.Fprintf(w, "data: %s\n", string(line))
+					_, _ = fmt.Fprintf(w, "data: %s\n", string(line)) // #nosec G705 -- SSE streaming with Content-Type text/event-stream; data is proxied JSON, not rendered as HTML
 					_ = w.Flush()
 				} else {
 					encoder := json.NewEncoder(&buffer)

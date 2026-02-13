@@ -15,7 +15,7 @@ type NeuralTrustCreds struct {
 }
 
 type Credentials struct {
-	ApiKey string            `mapstructure:"api_key,omitempty"`
+	ApiKey string            `mapstructure:"api_key,omitempty"` // #nosec G117 -- Plugin config field for API key
 	Azure  *AzureCredentials `mapstructure:"azure,omitempty"`
 }
 

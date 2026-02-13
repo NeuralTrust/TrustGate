@@ -38,7 +38,7 @@ type DataMaskingPlugin struct {
 
 type ReversibleHashingConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
-	Secret  string `mapstructure:"secret"`
+	Secret  string `mapstructure:"secret"` // #nosec G117 -- Config field for reversible hashing secret
 }
 
 type Config struct {
@@ -379,6 +379,15 @@ func restoreFromHashes(data interface{}, hashMap hashToOriginalMap) interface{} 
 }
 
 func levenshteinDistance(s1, s2 string) int {
+	// Cap input lengths to a reasonable bound to prevent excessive allocations.
+	const maxLen = 10_000
+	if len(s1) > maxLen {
+		s1 = s1[:maxLen]
+	}
+	if len(s2) > maxLen {
+		s2 = s2[:maxLen]
+	}
+
 	s1 = strings.ToLower(s1)
 	s2 = strings.ToLower(s2)
 
@@ -392,19 +401,14 @@ func levenshteinDistance(s1, s2 string) int {
 		return l1
 	}
 
-	// Guard against potential allocation overflow (l2+1 sizing below)
-	maxInt := int(^uint(0) >> 1)
-	if l2 >= maxInt-1 {
-		return maxInt
-	}
-
 	// Use O(min(l1,l2)) space dynamic programming to minimize allocations
 	if l1 < l2 {
-		// Ensure s1 is the longer string
+		// Ensure s1 is the longer string so l2 is used for the smaller dimension
 		s1, s2 = s2, s1
 		l1, l2 = l2, l1
 	}
 
+	// l2 <= maxLen (10 000) here, so l2+1 cannot overflow.
 	previous := make([]int, l2+1)
 	current := make([]int, l2+1)
 	for j := 0; j <= l2; j++ {

@@ -41,16 +41,16 @@ type UpstreamOAuthRequest struct {
 	TokenURL     string            `json:"token_url"`
 	GrantType    string            `json:"grant_type"`
 	ClientID     string            `json:"client_id,omitempty"`
-	ClientSecret string            `json:"client_secret,omitempty"`
+	ClientSecret string            `json:"client_secret,omitempty"` // #nosec G117 -- OAuth DTO field for client credentials flow
 	UseBasicAuth bool              `json:"use_basic_auth,omitempty"`
 	Scopes       []string          `json:"scopes,omitempty"`
 	Audience     string            `json:"audience,omitempty"`
 	Code         string            `json:"code,omitempty"`
 	RedirectURI  string            `json:"redirect_uri,omitempty"`
 	CodeVerifier string            `json:"code_verifier,omitempty"`
-	RefreshToken string            `json:"refresh_token,omitempty"`
+	RefreshToken string            `json:"refresh_token,omitempty"` // #nosec G117 -- OAuth DTO field for token refresh flow
 	Username     string            `json:"username,omitempty"`
-	Password     string            `json:"password,omitempty"`
+	Password     string            `json:"password,omitempty"` // #nosec G117 -- OAuth DTO field for password grant flow
 	Extra        map[string]string `json:"extra,omitempty"`
 }
 

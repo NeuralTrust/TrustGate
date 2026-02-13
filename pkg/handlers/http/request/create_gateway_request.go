@@ -67,7 +67,7 @@ type ClientTLSConfigRequest struct {
 
 type ClientTLSCertRequest struct {
 	Certificate string `json:"certificate"`
-	PrivateKey  string `json:"private_key"`
+	PrivateKey  string `json:"private_key"` // #nosec G117 -- TLS certificate request DTO field for private key data
 }
 
 type SecurityConfigRequest struct {

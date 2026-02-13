@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test
@@ -159,4 +162,12 @@ jobs:
         uses: codecov/codecov-action@v3
         with:
           file: ./unit-coverage.txt
-          flags: unittests 
+          flags: unittests
+  auto-approve:
+    needs: test
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: write
+    uses: NeuralTrust/workflows/.github/workflows/auto-approve.yml@main
+    secrets: inherit

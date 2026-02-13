@@ -186,6 +186,7 @@ var DetectionOrder = []Entity{
 }
 
 // DefaultMasks contains default mask values for each entity type
+// #nosec G101 -- These are PII mask placeholder strings, not hardcoded credentials
 var DefaultMasks = map[Entity]string{
 	Default:        "*****",
 	CreditCard:     "[MASKED_CC]",
