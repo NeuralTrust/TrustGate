@@ -19,15 +19,15 @@ type Config struct {
 }
 
 type Credentials struct {
-	ApiKey     string      `json:"api_key"`     // #nosec G117 -- DTO field for provider API key configuration
+	ApiKey     string      `json:"api_key"` // #nosec G117 -- DTO field for provider API key configuration
 	AwsBedrock *AwsBedrock `json:"aws,omitempty"`
 	Azure      *Azure      `json:"azure,omitempty"`
 }
 
 type AwsBedrock struct {
 	Region       string `json:"region"`
-	AccessKey    string `json:"access_key"`     // #nosec G117 -- DTO field for AWS access key configuration
-	SecretKey    string `json:"secret_key"`     // #nosec G117 -- DTO field for AWS secret key configuration
+	AccessKey    string `json:"access_key"`    // #nosec G117 -- DTO field for AWS access key configuration
+	SecretKey    string `json:"secret_key"`    // #nosec G117 -- DTO field for AWS secret key configuration
 	SessionToken string `json:"session_token"` // #nosec G117 -- DTO field for AWS session token configuration
 	UseRole      bool   `json:"use_role"`
 	RoleARN      string `json:"role_arn"`
@@ -54,13 +54,4 @@ type Client interface {
 		config *Config,
 		reqBody []byte,
 	) ([]byte, error)
-}
-
-func IsAllowedModel(model string, allowed []string) bool {
-	for _, m := range allowed {
-		if m == model {
-			return true
-		}
-	}
-	return false
 }

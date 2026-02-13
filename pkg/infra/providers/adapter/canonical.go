@@ -1,11 +1,6 @@
 package adapter
 
 // CanonicalRequest is the internal neutral representation of any AI provider
-// request. Every provider adapter converts FROM its native format TO this
-// struct (Decode) and FROM this struct TO its native format (Encode).
-//
-// Adding a new provider = implementing 2 functions. Adding a new field here
-// enriches all providers at once.
 type CanonicalRequest struct {
 	Model          string                 `json:"model,omitempty"`
 	System         string                 `json:"system,omitempty"`
@@ -71,6 +66,15 @@ type CanonicalResponse struct {
 	ToolCalls    []CanonicalToolCall `json:"tool_calls,omitempty"`
 	FinishReason string              `json:"finish_reason,omitempty"` // "stop", "length", "tool_calls"
 	Usage        *CanonicalUsage     `json:"usage,omitempty"`
+	Reasoning    *CanonicalReasoning `json:"reasoning,omitempty"` // e.g. OpenAI reasoning / thinking
+}
+
+// CanonicalReasoning holds optional reasoning/thinking metadata from the model.
+// OpenAI uses Effort/Summary; Anthropic/Gemini use ThinkingText (raw thinking content).
+type CanonicalReasoning struct {
+	Effort       []byte  `json:"effort,omitempty"`        // OpenAI: provider-specific (e.g. JSON)
+	Summary      *string `json:"summary,omitempty"`       // OpenAI: summary
+	ThinkingText string  `json:"thinking_text,omitempty"` // Anthropic/Gemini: raw thinking blocks concatenated
 }
 
 // CanonicalUsage holds token counts.
@@ -92,7 +96,7 @@ type CanonicalUsage struct {
 type CanonicalStreamChunk struct {
 	ID           string `json:"id,omitempty"`
 	Model        string `json:"model,omitempty"`
-	Role         string `json:"role,omitempty"`   // only on first chunk
-	Delta        string `json:"delta,omitempty"`   // text content delta
+	Role         string `json:"role,omitempty"`  // only on first chunk
+	Delta        string `json:"delta,omitempty"` // text content delta
 	FinishReason string `json:"finish_reason,omitempty"`
 }

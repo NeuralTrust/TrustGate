@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -275,7 +276,7 @@ func TestAdaptRequest_OpenAIToAnthropic(t *testing.T) {
 	// temperature preserved.
 	assert.Equal(t, 0.7, result["temperature"])
 
-	// Tools adapted to Anthropic format.
+	// Tools adapted to Anthropic flat format (name, input_schema, description at top level).
 	tools, ok := result["tools"].([]interface{})
 	require.True(t, ok)
 	assert.Len(t, tools, 1)
@@ -673,12 +674,22 @@ func TestAdaptResponse_AnthropicToOpenAI(t *testing.T) {
 
 func TestAdaptStreamChunk_AnthropicContentDelta(t *testing.T) {
 	input := `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`
-	out, err := AdaptStreamChunk([]byte(input), FormatOpenAI, FormatAnthropic)
+	lines, err := AdaptStreamChunk([]byte(input), FormatOpenAI, FormatAnthropic)
 	require.NoError(t, err)
-	require.NotNil(t, out)
+	require.NotEmpty(t, lines)
+
+	// Find the "data: " line and parse its payload.
+	var payload []byte
+	for _, line := range lines {
+		if bytes.HasPrefix(line, []byte("data: ")) {
+			payload = bytes.TrimPrefix(line, []byte("data: "))
+			break
+		}
+	}
+	require.NotNil(t, payload, "expected a data: line in adapted output")
 
 	var result map[string]interface{}
-	require.NoError(t, json.Unmarshal(out, &result))
+	require.NoError(t, json.Unmarshal(payload, &result))
 
 	assert.Equal(t, "chat.completion.chunk", result["object"])
 	choices := result["choices"].([]interface{})
@@ -690,7 +701,7 @@ func TestAdaptStreamChunk_AnthropicNonContentSkipped(t *testing.T) {
 	input := `{"type":"message_stop"}`
 	out, err := AdaptStreamChunk([]byte(input), FormatOpenAI, FormatAnthropic)
 	require.NoError(t, err)
-	assert.Nil(t, out, "non-content events should be skipped")
+	assert.Empty(t, out, "non-content events should be skipped")
 }
 
 // ---------------------------------------------------------------------------

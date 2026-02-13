@@ -2,7 +2,9 @@ package bedrock
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	bedrockClient "github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
@@ -44,6 +46,13 @@ func (c *client) Completions(
 		return nil, fmt.Errorf("model is required")
 	}
 
+	// Strip fields that Bedrock does not accept in the body.
+	// "model" is resolved from ModelId in the URL, and "stream" is
+	// controlled by using InvokeModel vs InvokeModelWithResponseStream.
+	// ValidateModel may re-inject "model" after the adapter removed it,
+	// so we strip here as a final safeguard.
+	reqBody = stripBedrockFields(reqBody)
+
 	bedrockCl, err := c.getOrCreateClient(ctx, cfg.Credentials)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Bedrock client: %w", err)
@@ -79,6 +88,8 @@ func (c *client) CompletionsStream(
 		return fmt.Errorf("model is required")
 	}
 
+	reqBody = stripBedrockFields(reqBody)
+
 	bedrockCl, err := c.getOrCreateClient(reqCtx.C.Context(), cfg.Credentials)
 	if err != nil {
 		return fmt.Errorf("failed to create Bedrock client: %w", err)
@@ -98,7 +109,13 @@ func (c *client) CompletionsStream(
 		switch v := event.(type) {
 		case *types.ResponseStreamMemberChunk:
 			if len(v.Value.Bytes) > 0 {
-				streamChan <- v.Value.Bytes
+				// Wrap as SSE data line for pass-through consistency with
+				// other providers. The handler writes each line + "\n".
+				line := make([]byte, 0, len(v.Value.Bytes)+6)
+				line = append(line, []byte("data: ")...)
+				line = append(line, v.Value.Bytes...)
+				streamChan <- line
+				streamChan <- []byte{} // empty line = SSE event separator
 			}
 		default:
 			// Ignore unknown event types.
@@ -237,11 +254,43 @@ func assumeRole(ctx context.Context, accessKey, secretKey, roleARN, region strin
 	return output.Credentials, nil
 }
 
+// stripBedrockFields removes keys from the JSON body that the Bedrock
+// InvokeModel / InvokeModelWithResponseStream APIs do not accept.
+// The model is passed as ModelId in the API call, and streaming is
+// controlled by the API method itself (InvokeModelWithResponseStream).
+func stripBedrockFields(body []byte) []byte {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return body // best-effort: return original
+	}
+	delete(raw, "model")
+	delete(raw, "stream")
+	out, err := json.Marshal(raw)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
 // resolveModel extracts the model from the request body. Falls back to
 // defaultModel when the body doesn't contain a "model" field.
+// Strips a leading region prefix (e.g. "eu.") so that the value passed to
+// InvokeModel is the standard Bedrock model ID (e.g. anthropic.claude-3-5-sonnet-...).
 func (c *client) resolveModel(reqBody []byte, defaultModel string) string {
-	if m, err := adapter.ExtractModel(reqBody); err == nil && m != "" {
-		return m
+	m := defaultModel
+	if extracted, err := adapter.ExtractModel(reqBody); err == nil && extracted != "" {
+		m = extracted
 	}
-	return defaultModel
+	return bedrockModelID(m)
+}
+
+// bedrockModelID returns the model ID to pass to InvokeModel. Removes a leading
+// "eu." region prefix when present (e.g. eu.anthropic.claude-... → anthropic.claude-...)
+// so the API receives the standard Bedrock identifier. The "us." prefix is left
+// as-is since it is part of some Bedrock model IDs (e.g. us.deepseek.deepseek-r1-v1:0).
+func bedrockModelID(model string) string {
+	if strings.HasPrefix(model, "eu.") {
+		return strings.TrimPrefix(model, "eu.")
+	}
+	return model
 }

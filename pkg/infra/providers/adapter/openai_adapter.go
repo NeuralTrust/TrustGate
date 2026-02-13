@@ -29,10 +29,10 @@ type openaiRequest struct {
 }
 
 type openaiMessage struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content,omitempty"` // string or []contentPart
+	Role       string           `json:"role"`
+	Content    json.RawMessage  `json:"content,omitempty"` // string or []contentPart
 	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type openaiTool struct {
@@ -62,11 +62,17 @@ type openaiRespFormat struct {
 }
 
 type openaiResponse struct {
-	ID      string         `json:"id"`
-	Object  string         `json:"object"`
-	Model   string         `json:"model"`
-	Choices []openaiChoice `json:"choices"`
-	Usage   *openaiUsage   `json:"usage,omitempty"`
+	ID        string           `json:"id"`
+	Object    string           `json:"object"`
+	Model     string           `json:"model"`
+	Choices   []openaiChoice   `json:"choices"`
+	Usage     *openaiUsage     `json:"usage,omitempty"`
+	Reasoning *openAIReasoning `json:"reasoning,omitempty"`
+}
+
+type openAIReasoning struct {
+	Effort  json.RawMessage `json:"effort,omitempty"`
+	Summary *string         `json:"summary"`
 }
 
 type openaiChoice struct {
@@ -294,6 +300,17 @@ func (a *OpenAIAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 		}
 	}
 
+	if resp.Reasoning != nil {
+		cr.Reasoning = &CanonicalReasoning{
+			Effort:       []byte(resp.Reasoning.Effort),
+			Summary:      resp.Reasoning.Summary,
+			ThinkingText: "",
+		}
+		if resp.Reasoning.Summary != nil {
+			cr.Reasoning.ThinkingText = *resp.Reasoning.Summary
+		}
+	}
+
 	return cr, nil
 }
 
@@ -333,6 +350,18 @@ func (a *OpenAIAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 			PromptTokens:     resp.Usage.PromptTokens,
 			CompletionTokens: resp.Usage.CompletionTokens,
 			TotalTokens:      resp.Usage.TotalTokens,
+		}
+	}
+
+	if resp.Reasoning != nil {
+		summary := resp.Reasoning.Summary
+		if summary == nil && resp.Reasoning.ThinkingText != "" {
+			s := resp.Reasoning.ThinkingText
+			summary = &s
+		}
+		out.Reasoning = &openAIReasoning{
+			Effort:  json.RawMessage(resp.Reasoning.Effort),
+			Summary: summary,
 		}
 	}
 
@@ -376,7 +405,7 @@ func (a *OpenAIAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 // Stream: Encode (Canonical → OpenAI chunk)
 // ---------------------------------------------------------------------------
 
-func (a *OpenAIAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([]byte, error) {
+func (a *OpenAIAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	delta := openaiStreamDelta{
 		Role:    chunk.Role,
 		Content: chunk.Delta,
@@ -398,7 +427,11 @@ func (a *OpenAIAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([]byte, 
 		Choices: []openaiStreamChoice{choice},
 	}
 
-	return json.Marshal(out)
+	data, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	return SSEData(data), nil
 }
 
 // ---------------------------------------------------------------------------

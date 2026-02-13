@@ -18,9 +18,15 @@ type ResponseAdapter interface {
 
 // StreamAdapter converts between a provider's native SSE chunk format and the
 // canonical internal model.
+//
+// EncodeStreamChunk returns a slice of raw SSE lines. Each element is written
+// followed by "\n" by the handler. Typical elements include "event: …",
+// "data: {…}" and "" (empty-line event separator). This allows providers that
+// require multi-line SSE events (e.g. Anthropic's event: + data:) to produce
+// a byte-accurate stream.
 type StreamAdapter interface {
 	DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, error)
-	EncodeStreamChunk(chunk *CanonicalStreamChunk) ([]byte, error)
+	EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error)
 }
 
 // ProviderAdapter combines all three conversion interfaces.

@@ -1,6 +1,9 @@
 package adapter
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // GeminiAdapter converts between Google Gemini generateContent format and the
 // canonical internal model.
@@ -25,6 +28,7 @@ type geminiContent struct {
 
 type geminiPart struct {
 	Text             string                `json:"text,omitempty"`
+	Thought          bool                  `json:"thought,omitempty"`           // true if this part is reasoning/thinking
 	FunctionCall     *geminiFunctionCall   `json:"functionCall,omitempty"`
 	FunctionResponse *geminiFuncResponse   `json:"functionResponse,omitempty"`
 	ThoughtSignature string                `json:"thoughtSignature,omitempty"`
@@ -109,31 +113,51 @@ func (a *GeminiAdapter) DecodeRequest(body []byte) (*CanonicalRequest, error) {
 		}
 	}
 
-	// contents → messages
+	// contents → messages (Gemini "user" with functionResponse must become canonical "tool" for OpenAI)
 	for _, c := range req.Contents {
 		role := c.Role
 		if role == "model" {
 			role = "assistant"
 		}
-		cm := CanonicalMessage{Role: role}
+		var textParts []string
+		var toolCalls []CanonicalToolCall
+		var toolResults []CanonicalMessage
 		for _, p := range c.Parts {
 			if p.Text != "" {
-				cm.Content += p.Text
+				textParts = append(textParts, p.Text)
 			}
 			if p.FunctionCall != nil {
 				args, _ := json.Marshal(p.FunctionCall.Args)
-				cm.ToolCalls = append(cm.ToolCalls, CanonicalToolCall{
+				// Gemini uses function name as identifier; use it as ID so tool results match.
+				toolCalls = append(toolCalls, CanonicalToolCall{
+					ID:        p.FunctionCall.Name,
 					Name:      p.FunctionCall.Name,
 					Arguments: string(args),
 				})
 			}
 			if p.FunctionResponse != nil {
-				cm.ToolCallID = p.FunctionResponse.Name
 				resp, _ := json.Marshal(p.FunctionResponse.Response)
-				cm.Content += string(resp)
+				toolResults = append(toolResults, CanonicalMessage{
+					Role:       "tool",
+					ToolCallID: p.FunctionResponse.Name,
+					Content:    string(resp),
+				})
 			}
 		}
-		cr.Messages = append(cr.Messages, cm)
+		if role == "assistant" && len(toolCalls) > 0 {
+			cr.Messages = append(cr.Messages, CanonicalMessage{
+				Role:      "assistant",
+				Content:   strings.Join(textParts, "\n"),
+				ToolCalls: toolCalls,
+			})
+		} else if len(textParts) > 0 {
+			cr.Messages = append(cr.Messages, CanonicalMessage{
+				Role:    role,
+				Content: strings.Join(textParts, "\n"),
+			})
+		}
+		// Emit tool result messages so OpenAI gets role "tool" after assistant tool_calls.
+		cr.Messages = append(cr.Messages, toolResults...)
 	}
 
 	// generationConfig
@@ -179,11 +203,14 @@ func (a *GeminiAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 		}
 	}
 
-	// contents
+	// contents (canonical "tool" → Gemini "user" with functionResponse)
 	for _, m := range req.Messages {
 		role := m.Role
 		if role == "assistant" {
 			role = "model"
+		}
+		if role == "tool" {
+			role = "user"
 		}
 		var parts []geminiPart
 		if m.Content != "" && m.ToolCallID == "" {
@@ -282,7 +309,17 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 
 	if len(resp.Candidates) > 0 {
 		cand := resp.Candidates[0]
-		for _, p := range cand.Content.Parts {
+		var thinkingParts []string
+		parts := cand.Content.Parts
+		if parts == nil {
+			parts = []geminiPart{}
+		}
+		for _, p := range parts {
+			isThought := p.Thought || p.ThoughtSignature != ""
+			if isThought && p.Text != "" {
+				thinkingParts = append(thinkingParts, p.Text)
+				continue
+			}
 			if p.Text != "" {
 				cr.Content += p.Text
 			}
@@ -293,6 +330,16 @@ func (a *GeminiAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) 
 					Name:      p.FunctionCall.Name,
 					Arguments: string(args),
 				})
+			}
+		}
+		if len(thinkingParts) > 0 {
+			cr.Reasoning = &CanonicalReasoning{
+				ThinkingText: strings.Join(thinkingParts, "\n\n"),
+			}
+			// If the model returned only thought blocks (e.g. Gemini 2.5 thinking mode),
+			// use that as content so the client gets a non-empty response.
+			if cr.Content == "" {
+				cr.Content = strings.Join(thinkingParts, "\n\n")
 			}
 		}
 
@@ -340,6 +387,13 @@ func (a *GeminiAdapter) EncodeResponse(resp *CanonicalResponse) ([]byte, error) 
 	}
 
 	var parts []geminiPart
+	// Prepend thinking part if present (Gemini thinking/reasoning)
+	if resp.Reasoning != nil && resp.Reasoning.ThinkingText != "" {
+		parts = append(parts, geminiPart{
+			Text:    resp.Reasoning.ThinkingText,
+			Thought: true,
+		})
+	}
 	if resp.Content != "" {
 		parts = append(parts, geminiPart{Text: resp.Content})
 	}
@@ -403,7 +457,7 @@ func (a *GeminiAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 // Stream: Encode (Canonical → Gemini SSE chunk)
 // ---------------------------------------------------------------------------
 
-func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([]byte, error) {
+func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	if chunk.Delta == "" && chunk.FinishReason == "" {
 		return nil, nil
 	}
@@ -419,7 +473,11 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([]byte, 
 		}},
 	}
 
-	return json.Marshal(out)
+	data, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	return SSEData(data), nil
 }
 
 // ---------------------------------------------------------------------------

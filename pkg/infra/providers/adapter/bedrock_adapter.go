@@ -185,7 +185,10 @@ func (a *BedrockAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 	}
 }
 
-// encodeClaude wraps the Anthropic encoder and injects anthropic_version.
+// encodeClaude wraps the Anthropic encoder, injects anthropic_version, and
+// strips fields that Bedrock does not accept in the body (model, stream).
+// Bedrock resolves the model from the InvokeModel URL path and uses
+// InvokeModelWithResponseStream for streaming instead of a body field.
 func (a *BedrockAdapter) encodeClaude(req *CanonicalRequest) ([]byte, error) {
 	b, err := a.claude.EncodeRequest(req)
 	if err != nil {
@@ -196,6 +199,8 @@ func (a *BedrockAdapter) encodeClaude(req *CanonicalRequest) ([]byte, error) {
 		return nil, err
 	}
 	raw["anthropic_version"], _ = json.Marshal("bedrock-2023-05-31")
+	delete(raw, "model")  // model is in the Bedrock URL, not the body
+	delete(raw, "stream") // streaming is via InvokeModelWithResponseStream
 	return json.Marshal(raw)
 }
 
@@ -247,7 +252,7 @@ func (a *BedrockAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk,
 	}
 }
 
-func (a *BedrockAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([]byte, error) {
+func (a *BedrockAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 	return a.claude.EncodeStreamChunk(chunk)
 }
 
@@ -282,6 +287,7 @@ type titanResult struct {
 	TokenCount       int    `json:"tokenCount"`
 	OutputText       string `json:"outputText"`
 	CompletionReason string `json:"completionReason"`
+	Reasoning        string `json:"reasoning,omitempty"` // optional; future API extension
 }
 
 type titanStreamChunk struct {
@@ -356,6 +362,9 @@ func (t *bedrockTitanAdapter) DecodeResponse(body []byte) (*CanonicalResponse, e
 		default:
 			cr.FinishReason = r.CompletionReason
 		}
+		if r.Reasoning != "" {
+			cr.Reasoning = &CanonicalReasoning{ThinkingText: r.Reasoning}
+		}
 		cr.Usage = &CanonicalUsage{
 			PromptTokens:     resp.InputTextTokenCount,
 			CompletionTokens: r.TokenCount,
@@ -407,10 +416,11 @@ type llamaRequest struct {
 }
 
 type llamaResponse struct {
-	Generation          string `json:"generation"`
-	PromptTokenCount    int    `json:"prompt_token_count"`
-	GenerationTokenCount int   `json:"generation_token_count"`
-	StopReason          string `json:"stop_reason"`
+	Generation            string `json:"generation"`
+	PromptTokenCount      int    `json:"prompt_token_count"`
+	GenerationTokenCount  int    `json:"generation_token_count"`
+	StopReason            string `json:"stop_reason"`
+	Reasoning             string `json:"reasoning,omitempty"` // optional; future API extension
 }
 
 type llamaStreamChunk struct {
@@ -464,7 +474,7 @@ func (l *bedrockLlamaAdapter) DecodeResponse(body []byte) (*CanonicalResponse, e
 	default:
 		fr = resp.StopReason
 	}
-	return &CanonicalResponse{
+	cr := &CanonicalResponse{
 		Role:         "assistant",
 		Content:      resp.Generation,
 		FinishReason: fr,
@@ -473,7 +483,11 @@ func (l *bedrockLlamaAdapter) DecodeResponse(body []byte) (*CanonicalResponse, e
 			CompletionTokens: resp.GenerationTokenCount,
 			TotalTokens:      resp.PromptTokenCount + resp.GenerationTokenCount,
 		},
-	}, nil
+	}
+	if resp.Reasoning != "" {
+		cr.Reasoning = &CanonicalReasoning{ThinkingText: resp.Reasoning}
+	}
+	return cr, nil
 }
 
 // Stream ----------------------------------------------------------------------
@@ -519,6 +533,7 @@ type mistralResponse struct {
 type mistralOutput struct {
 	Text       string `json:"text"`
 	StopReason string `json:"stop_reason"`
+	Reasoning  string `json:"reasoning,omitempty"` // optional; future API extension
 }
 
 type mistralStreamChunk struct {
@@ -575,6 +590,9 @@ func (m *bedrockMistralAdapter) DecodeResponse(body []byte) (*CanonicalResponse,
 			cr.FinishReason = "length"
 		default:
 			cr.FinishReason = o.StopReason
+		}
+		if o.Reasoning != "" {
+			cr.Reasoning = &CanonicalReasoning{ThinkingText: o.Reasoning}
 		}
 	}
 	return cr, nil

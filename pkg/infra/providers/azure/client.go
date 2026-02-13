@@ -1,14 +1,11 @@
 package azure
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -118,20 +115,15 @@ func (c *client) CompletionsStream(
 		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, preview.String())
 	}
 
-	for key, values := range resp.Header {
-		for _, v := range values {
-			reqCtx.C.Set(key, v)
-		}
-	}
+	// Do not forward upstream headers here: CompletionsStream runs in a goroutine and
+	// Fiber's Ctx is not safe to use from another goroutine. The HTTP handler already
+	// sets stream headers (Content-Type: text/event-stream, etc.) before starting the stream.
+	// Do not use reqCtx.C.Context() from this goroutine: Fiber's context can panic on Done().
 
-	select {
-	case <-reqCtx.C.Context().Done():
-		return reqCtx.C.Context().Err()
-	default:
-	}
 	close(breakChan)
-
-	return c.streamSSE(reqCtx.C.Context(), resp.Body, streamChan)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	return providers.StreamSSE(ctx, resp.Body, streamChan)
 }
 
 // ---------------------------------------------------------------------------
@@ -164,53 +156,6 @@ func (c *client) rawPost(ctx context.Context, url, token string, useIdentity boo
 	}
 
 	return body.Bytes(), nil
-}
-
-// ---------------------------------------------------------------------------
-// SSE streaming
-// ---------------------------------------------------------------------------
-
-func (c *client) streamSSE(ctx context.Context, r io.Reader, out chan []byte) error {
-	sc := bufio.NewScanner(r)
-	buf := make([]byte, 0, 512*1024)
-	sc.Buffer(buf, 2*1024*1024)
-
-	for sc.Scan() {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		line := sc.Text()
-
-		// Only process SSE data lines; skip empty, comment, and event lines.
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-
-		if data == "" || data == "[DONE]" {
-			continue
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case out <- []byte(data):
-		}
-	}
-
-	if err := sc.Err(); err != nil {
-		if errors.Is(err, io.EOF) ||
-			strings.Contains(strings.ToLower(err.Error()), "use of closed network connection") ||
-			strings.Contains(strings.ToLower(err.Error()), "connection reset by peer") {
-			return nil
-		}
-		return fmt.Errorf("sse scanner error: %w", err)
-	}
-	return nil
 }
 
 // ---------------------------------------------------------------------------

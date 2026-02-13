@@ -1189,22 +1189,64 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 	req.C.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer close(streamResponse)
 		for msg := range streamChan {
-			if len(msg) > 0 {
-				outMsg := msg
-				if needsAdapt {
-					adapted, adaptErr := adapter.AdaptStreamChunk(msg, sourceFormat, targetFormat)
-					if adaptErr != nil {
-						h.logger.WithError(adaptErr).Warn("failed to adapt stream chunk")
-					} else if adapted != nil {
-						outMsg = adapted
-					} else {
-						continue // skip this chunk
+			// -----------------------------------------------------------------
+			// Cross-provider adaptation: the encoder produces full SSE lines
+			// (event:, data:, empty separators) — write them directly and skip
+			// the original upstream line.
+			// -----------------------------------------------------------------
+			if needsAdapt {
+				if !bytes.HasPrefix(msg, []byte("data:")) {
+					continue // skip upstream event:, empty, comment lines
+				}
+				payload := bytes.TrimSpace(bytes.TrimPrefix(msg, []byte("data:")))
+				if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+					continue // [DONE] is OpenAI-specific; Anthropic/Gemini end naturally
+				}
+
+				adaptedLines, adaptErr := adapter.AdaptStreamChunk(payload, sourceFormat, targetFormat)
+				if adaptErr != nil {
+					h.logger.WithError(adaptErr).Warn("failed to adapt stream chunk")
+					continue
+				}
+				if len(adaptedLines) == 0 {
+					continue
+				}
+
+				// Write all adapted SSE lines.
+				for _, line := range adaptedLines {
+					_, _ = w.Write(line)
+					_, _ = w.Write([]byte("\n"))
+				}
+				_ = w.Flush()
+
+				// Extract data: payloads for metrics.
+				for _, line := range adaptedLines {
+					if bytes.HasPrefix(line, []byte("data:")) {
+						mp := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+						if len(mp) > 0 {
+							streamResponse <- mp
+						}
 					}
 				}
-				streamResponse <- outMsg
-				_, _ = fmt.Fprintf(w, "data: %s\n\n", outMsg)
-				_ = w.Flush()
+				continue
 			}
+
+			// -----------------------------------------------------------------
+			// Pass-through mode (same format): write the upstream line as-is.
+			// -----------------------------------------------------------------
+			isDataLine := bytes.HasPrefix(msg, []byte("data:"))
+			if isDataLine {
+				payload := bytes.TrimSpace(bytes.TrimPrefix(msg, []byte("data:")))
+				isDone := bytes.Equal(payload, []byte("[DONE]"))
+				// Forward payload to metrics collector (skip empty / [DONE]).
+				if len(payload) > 0 && !isDone {
+					streamResponse <- payload
+				}
+			}
+
+			_, _ = w.Write(msg)
+			_, _ = w.Write([]byte("\n"))
+			_ = w.Flush()
 		}
 	})
 
@@ -1320,9 +1362,9 @@ func (h *forwardedHandler) handleStreamingResponse(dto *forwardedRequestDTO, cli
 				var buffer bytes.Buffer
 
 				if err := json.Unmarshal(line, &parsed); err != nil {
-				streamResponse <- line
-				_, _ = fmt.Fprintf(w, "data: %s\n", string(line)) // #nosec G705 -- SSE streaming with Content-Type text/event-stream; data is proxied JSON, not rendered as HTML
-				_ = w.Flush()
+					streamResponse <- line
+					_, _ = fmt.Fprintf(w, "data: %s\n", string(line)) // #nosec G705 -- SSE streaming with Content-Type text/event-stream; data is proxied JSON, not rendered as HTML
+					_ = w.Flush()
 				} else {
 					encoder := json.NewEncoder(&buffer)
 					encoder.SetEscapeHTML(false)

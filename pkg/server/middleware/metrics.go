@@ -104,7 +104,7 @@ func (m *metricsMiddleware) initializeContext(c *fiber.Ctx, gatewayData *types.G
 	fingerprintID, _ := c.Locals(common.FingerprintIdContextKey).(string)
 	collector := m.createMetricsCollector(traceID, fingerprintID, gatewayData)
 
-	streamResponse := make(chan []byte)
+	streamResponse := make(chan []byte, 512)
 	streamMode := make(chan bool, 1)
 
 	c.Locals(common.TraceIdKey, traceID)

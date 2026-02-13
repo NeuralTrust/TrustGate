@@ -64,7 +64,7 @@ type GatewayDTO struct {
 	ID              string                        `json:"id"`
 	Name            string                        `json:"name"`
 	Status          string                        `json:"status"`
-	RequiredPlugins []plugintypes.PluginConfig                `json:"required_plugins"`
+	RequiredPlugins []plugintypes.PluginConfig    `json:"required_plugins"`
 	Telemetry       *TelemetryDTO                 `json:"telemetry"`
 	SecurityConfig  *SecurityConfigDTO            `json:"security_config"`
 	TlS             map[string]ClientTLSConfigDTO `json:"tls"`
@@ -130,23 +130,23 @@ type SessionConfigDTO struct {
 
 // ForwardingRuleDTO represents a rule for forwarding requests
 type ForwardingRuleDTO struct {
-	ID            string              `json:"id"`
-	Name          string              `json:"name"`
-	GatewayID     string              `json:"gateway_id"`
-	Path          string              `json:"path"`
-	Type          string              `json:"type"`
-	ServiceID     string              `json:"service_id"`
-	Methods       []string            `json:"methods"`
-	Headers       map[string]string   `json:"headers"`
-	StripPath     bool                `json:"strip_path"`
-	PreserveHost  bool                `json:"preserve_host"`
-	RetryAttempts int                 `json:"retry_attempts"`
-	PluginChain   []plugintypes.PluginConfig      `json:"plugin_chain"`
-	Active        bool                `json:"active"`
-	Public        bool                `json:"public"`
-	TrustLens     *TrustLensConfigDTO `json:"trustlens,omitempty"`
-	CreatedAt     string              `json:"created_at"`
-	UpdatedAt     string              `json:"updated_at"`
+	ID            string                     `json:"id"`
+	Name          string                     `json:"name"`
+	GatewayID     string                     `json:"gateway_id"`
+	Path          string                     `json:"path"`
+	Type          string                     `json:"type"`
+	ServiceID     string                     `json:"service_id"`
+	Methods       []string                   `json:"methods"`
+	Headers       map[string]string          `json:"headers"`
+	StripPath     bool                       `json:"strip_path"`
+	PreserveHost  bool                       `json:"preserve_host"`
+	RetryAttempts int                        `json:"retry_attempts"`
+	PluginChain   []plugintypes.PluginConfig `json:"plugin_chain"`
+	Active        bool                       `json:"active"`
+	Public        bool                       `json:"public"`
+	TrustLens     *TrustLensConfigDTO        `json:"trustlens,omitempty"`
+	CreatedAt     string                     `json:"created_at"`
+	UpdatedAt     string                     `json:"updated_at"`
 }
 
 type TrustLensConfigDTO struct {
