@@ -11,6 +11,7 @@ const (
 	FormatGemini    Format = "google"
 	FormatBedrock   Format = "bedrock"
 	FormatAzure     Format = "azure" // wire-compatible with OpenAI
+	FormatMistral   Format = "mistral"
 )
 
 // DetectFormat inspects the raw JSON body and returns the most likely source

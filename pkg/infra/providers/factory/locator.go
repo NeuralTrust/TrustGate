@@ -8,16 +8,20 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/azure"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/google"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/mistral"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"github.com/valyala/fasthttp"
 )
 
+// Provider name constants — aliased from the providers package so existing
+// callers that import factory.ProviderX continue to compile.
 const (
-	ProviderOpenAI    = "openai"
-	ProviderGoogle    = "google"
-	ProviderAnthropic = "anthropic"
-	ProviderBedrock   = "bedrock"
-	ProviderAzure     = "azure"
+	ProviderOpenAI    = providers.ProviderOpenAI
+	ProviderGoogle    = providers.ProviderGoogle
+	ProviderAnthropic = providers.ProviderAnthropic
+	ProviderBedrock   = providers.ProviderBedrock
+	ProviderAzure     = providers.ProviderAzure
+	ProviderMistral   = providers.ProviderMistral
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -47,6 +51,8 @@ func (f *providerLocator) Get(provider string) (providers.Client, error) {
 		return bedrock.NewBedrockClient(), nil
 	case ProviderAzure:
 		return azure.NewAzureClient(), nil
+	case ProviderMistral:
+		return mistral.NewMistralClient(), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}

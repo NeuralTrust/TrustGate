@@ -6,6 +6,17 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
+// Provider name constants. Use these as keys for HTTPClientPool.Get() and
+// anywhere a provider needs to be identified by name.
+const (
+	ProviderOpenAI    = "openai"
+	ProviderGoogle    = "google"
+	ProviderAnthropic = "anthropic"
+	ProviderBedrock   = "bedrock"
+	ProviderAzure     = "azure"
+	ProviderMistral   = "mistral"
+)
+
 type Config struct {
 	Credentials   Credentials    `json:"credentials"`
 	AllowedModels []string       `json:"allowed_models"`

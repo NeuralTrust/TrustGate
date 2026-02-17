@@ -754,7 +754,10 @@ func (h *forwardedHandler) handlerProviderResponse(
 		}
 	}
 
-	// Validate/replace model.
+	if adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) {
+		body = adapter.NormalizeOpenAIRequest(body)
+	}
+
 	body, _, err = adapter.ValidateModel(body, target.Models, target.DefaultModel)
 	if err != nil {
 		h.logger.WithError(err).Warn("model validation failed, proceeding with original body")
@@ -1144,6 +1147,12 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 		}
 	}
 
+	// Normalize OpenAI-compatible bodies: some SDKs (e.g. Mistral) omit
+	// required fields like tool_calls[].type that OpenAI strictly requires.
+	if adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) {
+		body = adapter.NormalizeOpenAIRequest(body)
+	}
+
 	// Validate/replace model.
 	body, _, err = adapter.ValidateModel(body, target.Models, target.DefaultModel)
 	if err != nil {
@@ -1156,7 +1165,7 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 	// the body, the adapted body may lack it; force it so the upstream actually streams.
 	// - Azure: already covered (normalizeFormat maps it to OpenAI).
 	// - Bedrock: does not use body for streaming (uses InvokeModelWithResponseStream); adapter strips "stream".
-	if adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) || targetFormat == adapter.FormatAnthropic {
+	if adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) || targetFormat == adapter.FormatAnthropic || targetFormat == adapter.FormatMistral {
 		body = injectStreamTrue(body)
 	}
 
@@ -1283,8 +1292,8 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 					continue // [DONE] is OpenAI-specific; Anthropic/Gemini end naturally
 				}
 
-				// Agent Gemini + upstream with incremental tool_calls (OpenAI/Azure or Anthropic): decode, accumulate, then encode.
-				if sourceFormat == adapter.FormatGemini && (adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) || targetFormat == adapter.FormatAnthropic) {
+				// Agent Gemini + upstream with incremental tool_calls (OpenAI/Azure, Anthropic, or Mistral): decode, accumulate, then encode.
+				if sourceFormat == adapter.FormatGemini && (adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) || targetFormat == adapter.FormatAnthropic || targetFormat == adapter.FormatMistral) {
 					canonical, decErr := adapter.DecodeStreamChunkFor(payload, targetFormat)
 					if decErr != nil {
 						preview := payload

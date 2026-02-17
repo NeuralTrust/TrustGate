@@ -275,5 +275,6 @@ func (r *UpstreamRequest) isValidProvider(provider string) bool {
 		provider == factory.ProviderGoogle ||
 		provider == factory.ProviderAnthropic ||
 		provider == factory.ProviderBedrock ||
-		provider == factory.ProviderAzure
+		provider == factory.ProviderAzure ||
+		provider == factory.ProviderMistral
 }

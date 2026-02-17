@@ -44,6 +44,7 @@ func init() {
 	adapters[FormatAnthropic] = &AnthropicAdapter{}
 	adapters[FormatGemini] = &GeminiAdapter{}
 	adapters[FormatBedrock] = &BedrockAdapter{}
+	adapters[FormatMistral] = &MistralAdapter{}
 	// Azure uses the same wire format as OpenAI — see normalizeFormat().
 }
 

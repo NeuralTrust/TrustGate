@@ -1,4 +1,4 @@
-package openai
+package mistral
 
 import (
 	"bytes"
@@ -10,34 +10,25 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
-	"github.com/mitchellh/mapstructure"
 )
 
 const (
-	CompletionsAPI = "completions"
-	ResponsesAPI   = "responses"
-	completionsURL = "https://api.openai.com/v1/chat/completions"
-	responsesURL   = "https://api.openai.com/v1/responses"
+	chatCompletionsURL = "https://api.mistral.ai/v1/chat/completions"
 )
-
-type openaiOptions struct {
-	API string `json:"api"`
-}
 
 type client struct {
 	pool *providers.HTTPClientPool
 }
 
-func NewOpenaiClient() providers.Client {
+// NewMistralClient returns a providers.Client that calls Mistral's chat completions API.
+// See https://docs.mistral.ai/api (POST /v1/chat/completions).
+func NewMistralClient() providers.Client {
 	return &client{
 		pool: providers.NewHTTPClientPool(),
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Completions (non-streaming)
-// ---------------------------------------------------------------------------
-
+// Completions performs a non-streaming chat completion request to Mistral.
 func (c *client) Completions(
 	ctx context.Context,
 	config *providers.Config,
@@ -46,24 +37,11 @@ func (c *client) Completions(
 	if config.Credentials.ApiKey == "" {
 		return nil, fmt.Errorf("API key is required")
 	}
-
-	options := c.parseOptions(config)
-
-	var url string
-	switch options.API {
-	case ResponsesAPI:
-		url = responsesURL
-	default:
-		url = completionsURL
-	}
-
-	return c.rawPost(ctx, url, config.Credentials.ApiKey, reqBody)
+	return c.rawPost(ctx, chatCompletionsURL, config.Credentials.ApiKey, reqBody)
 }
 
-// ---------------------------------------------------------------------------
-// CompletionsStream (SSE)
-// ---------------------------------------------------------------------------
-
+// CompletionsStream performs a streaming chat completion request and forwards
+// SSE lines to streamChan. Uses the same SSE format as OpenAI (data: {...}).
 func (c *client) CompletionsStream(
 	req *types.RequestContext,
 	config *providers.Config,
@@ -75,19 +53,9 @@ func (c *client) CompletionsStream(
 		return fmt.Errorf("API key is required")
 	}
 
-	options := c.parseOptions(config)
-
-	var url string
-	switch options.API {
-	case ResponsesAPI:
-		url = responsesURL
-	default:
-		url = completionsURL
-	}
-
-	httpClient := c.pool.Get(providers.ProviderOpenAI, providers.DefaultHTTPTimeout)
+	httpClient := c.pool.Get(providers.ProviderMistral, providers.DefaultHTTPTimeout)
 	httpReq, err := http.NewRequestWithContext(
-		req.C.Context(), http.MethodPost, url, bytes.NewReader(reqBody),
+		req.C.Context(), http.MethodPost, chatCompletionsURL, bytes.NewReader(reqBody),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request: %w", err)
@@ -95,7 +63,7 @@ func (c *client) CompletionsStream(
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+config.Credentials.ApiKey)
 
-	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is a compile-time constant (completionsURL/responsesURL), not user-controlled
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is compile-time constant
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -112,16 +80,12 @@ func (c *client) CompletionsStream(
 	return providers.StreamSSE(ctx, resp.Body, streamChan)
 }
 
-// ---------------------------------------------------------------------------
-// Raw HTTP POST
-// ---------------------------------------------------------------------------
-
 func (c *client) rawPost(
 	ctx context.Context,
 	url, apiKey string,
 	reqBody []byte,
 ) ([]byte, error) {
-	httpClient := c.pool.Get(providers.ProviderOpenAI, providers.DefaultHTTPTimeout)
+	httpClient := c.pool.Get(providers.ProviderMistral, providers.DefaultHTTPTimeout)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
@@ -130,7 +94,7 @@ func (c *client) rawPost(
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
-	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is a compile-time constant (completionsURL/responsesURL), not user-controlled
+	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is compile-time constant
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -146,20 +110,4 @@ func (c *client) rawPost(
 	}
 
 	return body.Bytes(), nil
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-func (c *client) parseOptions(config *providers.Config) openaiOptions {
-	var options openaiOptions
-	if len(config.Options) > 0 {
-		if err := mapstructure.Decode(config.Options, &options); err != nil {
-			options = openaiOptions{API: CompletionsAPI}
-		}
-	} else {
-		options = openaiOptions{API: CompletionsAPI}
-	}
-	return options
 }
