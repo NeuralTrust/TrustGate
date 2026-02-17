@@ -100,12 +100,18 @@ func (m *MigrationsManager) ApplyPending() error {
 		return fmt.Errorf("ensure migrations table: %w", err)
 	}
 
+	// Acquire a PostgreSQL advisory lock to prevent concurrent migration runs
+	// across multiple server processes sharing the same database.
+	const advisoryLockID = 1234567890
+	if err := m.db.Exec("SELECT pg_advisory_lock(?)", advisoryLockID).Error; err != nil {
+		return fmt.Errorf("acquire migration advisory lock: %w", err)
+	}
+	defer m.db.Exec("SELECT pg_advisory_unlock(?)", advisoryLockID) //nolint:errcheck
+
 	applied, err := m.getAppliedMigrations()
 	if err != nil {
 		return fmt.Errorf("load applied migrations: %w", err)
 	}
-
-	// No need to sort here anymore - migrations are already in chronological order from registration
 
 	for _, id := range migrationsOrder {
 		if _, ok := applied[id]; ok {
