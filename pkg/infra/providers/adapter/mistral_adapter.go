@@ -106,9 +106,10 @@ func mistralID(original string, cache map[string]string) string {
 	h := sha256.Sum256([]byte(original))
 	hexStr := hex.EncodeToString(h[:])
 	var result []byte
-	for _, c := range hexStr {
+	for i := 0; i < len(hexStr); i++ {
+		c := hexStr[i]
 		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
-			result = append(result, byte(c))
+			result = append(result, c)
 			if len(result) == 9 {
 				break
 			}
