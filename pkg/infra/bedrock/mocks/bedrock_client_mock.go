@@ -3,11 +3,10 @@
 package mocks
 
 import (
-	bedrock "github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
-	bedrockruntime "github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
-
 	context "context"
 
+	bedrock "github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
+	bedrockruntime "github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	mock "github.com/stretchr/testify/mock"
 )
 

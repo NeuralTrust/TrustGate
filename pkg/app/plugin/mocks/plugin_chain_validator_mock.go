@@ -8,7 +8,6 @@ import (
 	mock "github.com/stretchr/testify/mock"
 
 	types "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
-
 	uuid "github.com/google/uuid"
 )
 
