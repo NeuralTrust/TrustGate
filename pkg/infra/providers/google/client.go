@@ -6,28 +6,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
-	"golang.org/x/sync/singleflight"
 )
 
 const (
-	httpClientTimeout = 120
-	geminiBaseURL     = "https://generativelanguage.googleapis.com/v1beta/models"
+	geminiBaseURL = "https://generativelanguage.googleapis.com/v1beta/models"
 )
 
 type client struct {
-	httpClientPool *sync.Map
-	sf             singleflight.Group
+	pool *providers.HTTPClientPool
 }
 
 func NewGoogleClient() providers.Client {
 	return &client{
-		httpClientPool: &sync.Map{},
+		pool: providers.NewHTTPClientPool(),
 	}
 }
 
@@ -82,7 +78,7 @@ func (c *client) CompletionsStream(
 
 	url := fmt.Sprintf("%s/%s:streamGenerateContent?alt=sse", geminiBaseURL, model)
 
-	httpClient := c.getOrCreateHTTPClient()
+	httpClient := c.pool.Get(providers.ProviderGoogle, providers.DefaultHTTPTimeout)
 
 	httpReq, err := http.NewRequestWithContext(
 		reqCtx.C.Context(),
@@ -101,7 +97,7 @@ func (c *client) CompletionsStream(
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer providers.DrainBody(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return parseGeminiError(resp)
@@ -129,7 +125,7 @@ func (c *client) rawPost(
 	reqBody []byte,
 ) ([]byte, error) {
 
-	httpClient := c.getOrCreateHTTPClient()
+	httpClient := c.pool.Get(providers.ProviderGoogle, providers.DefaultHTTPTimeout)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
@@ -202,39 +198,4 @@ func parseGeminiError(resp *http.Response) error {
 		resp.StatusCode,
 		body.String(),
 	)
-}
-
-func (c *client) getOrCreateHTTPClient() *http.Client {
-
-	const clientKey = "default"
-
-	if v, ok := c.httpClientPool.Load(clientKey); ok {
-		if cl, ok := v.(*http.Client); ok {
-			return cl
-		}
-	}
-
-	v, err, _ := c.sf.Do(clientKey, func() (any, error) {
-
-		if v2, ok := c.httpClientPool.Load(clientKey); ok {
-			return v2, nil
-		}
-
-		httpClient := &http.Client{
-			Timeout: httpClientTimeout * time.Second,
-		}
-
-		c.httpClientPool.Store(clientKey, httpClient)
-		return httpClient, nil
-	})
-
-	if err != nil {
-		return &http.Client{Timeout: httpClientTimeout * time.Second}
-	}
-
-	if cl, ok := v.(*http.Client); ok {
-		return cl
-	}
-
-	return &http.Client{Timeout: httpClientTimeout * time.Second}
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
@@ -14,21 +13,15 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	pkgTypes "github.com/NeuralTrust/TrustGate/pkg/types"
-	"golang.org/x/sync/singleflight"
-)
-
-const (
-	httpClientTimeout = 120
 )
 
 type client struct {
-	httpClientPool *sync.Map
-	sf             singleflight.Group
+	pool *providers.HTTPClientPool
 }
 
 func NewAzureClient() providers.Client {
 	return &client{
-		httpClientPool: &sync.Map{},
+		pool: providers.NewHTTPClientPool(),
 	}
 }
 
@@ -93,7 +86,7 @@ func (c *client) CompletionsStream(
 
 	url := c.buildURL(config, model)
 
-	httpClient := c.getOrCreateHTTPClient()
+	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
 	httpReq, err := http.NewRequestWithContext(
 		reqCtx.C.Context(), http.MethodPost, url, bytes.NewReader(reqBody),
 	)
@@ -107,7 +100,7 @@ func (c *client) CompletionsStream(
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer providers.DrainBody(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var preview bytes.Buffer
@@ -131,7 +124,7 @@ func (c *client) CompletionsStream(
 // ---------------------------------------------------------------------------
 
 func (c *client) rawPost(ctx context.Context, url, token string, useIdentity bool, reqBody []byte) ([]byte, error) {
-	httpClient := c.getOrCreateHTTPClient()
+	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
@@ -191,32 +184,6 @@ func (c *client) buildURL(config *providers.Config, model string) string {
 	}
 	return fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
 		config.Credentials.Azure.Endpoint, model, apiVersion)
-}
-
-func (c *client) getOrCreateHTTPClient() *http.Client {
-	const clientKey = "default"
-	if v, ok := c.httpClientPool.Load(clientKey); ok {
-		if cl, ok := v.(*http.Client); ok {
-			return cl
-		}
-	}
-	v, err, _ := c.sf.Do(clientKey, func() (any, error) {
-		if v2, ok := c.httpClientPool.Load(clientKey); ok {
-			return v2, nil
-		}
-		httpClient := &http.Client{
-			Timeout: httpClientTimeout * time.Second,
-		}
-		c.httpClientPool.Store(clientKey, httpClient)
-		return httpClient, nil
-	})
-	if err != nil {
-		return &http.Client{Timeout: httpClientTimeout * time.Second}
-	}
-	if cl, ok := v.(*http.Client); ok {
-		return cl
-	}
-	return &http.Client{Timeout: httpClientTimeout * time.Second}
 }
 
 func getAzureADToken(ctx context.Context) (string, error) {
