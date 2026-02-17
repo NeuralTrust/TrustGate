@@ -6,11 +6,9 @@ import (
 	context "context"
 
 	metrics "github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
-	mock "github.com/stretchr/testify/mock"
-
-	pkgtypes "github.com/NeuralTrust/TrustGate/pkg/types"
-
 	pluginiface "github.com/NeuralTrust/TrustGate/pkg/infra/pluginiface"
+	pkgtypes "github.com/NeuralTrust/TrustGate/pkg/types"
+	mock "github.com/stretchr/testify/mock"
 
 	types "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 )
