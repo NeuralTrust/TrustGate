@@ -111,7 +111,6 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 	resp *types.ResponseContext,
 	evtCtx *metrics.EventContext,
 ) (*pluginTypes.PluginResponse, error) {
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -124,133 +123,165 @@ func (p *NeuralTrustJailbreakPlugin) Execute(
 		conf.Mode = pluginTypes.ModeEnforce
 	}
 
-	var inputs []string
-	if len(req.Messages) > 0 {
-		inputs = req.Messages
-	} else {
-		inputBody := req.Body
-		if req.Stage == pluginTypes.PostRequest {
-			inputBody = resp.Body
-		}
-
-		mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
-		if err != nil {
-			p.logger.WithError(err).Error("failed to define request body")
-			return nil, fmt.Errorf("failed to define request body: %w", err)
-		}
-		inputs = []string{mappingContent.Input}
-	}
-
-	totalInputLength := 0
-	for _, input := range inputs {
-		totalInputLength += len(input)
+	inputs, err := p.resolveInputs(req, resp, conf.MappingField)
+	if err != nil {
+		return nil, err
 	}
 
 	evt := &NeuralTrustJailbreakData{
 		Provider:     conf.Provider,
 		MappingField: conf.MappingField,
-		InputLength:  totalInputLength,
+		InputLength:  totalLength(inputs),
 		Scores:       &JailbreakScores{},
-		Blocked:      false,
 		Mode:         conf.Mode,
 	}
 
 	if conf.JailbreakParamBag != nil {
 		evt.JailbreakThreshold = conf.JailbreakParamBag.Threshold
-	}
-
-	if conf.JailbreakParamBag != nil {
-		firewallClient, err := p.firewallFactory.Get(conf.Provider)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve firewall provider: %w", err)
-		}
-
-		credentials := buildFirewallCredentials(conf.Credentials)
-
-		content := firewall.Content{
-			Input: inputs,
-		}
-
-		startTime := time.Now()
-		responses, err := firewallClient.DetectJailbreak(ctx, content, credentials)
-		evt.DetectionLatencyMs = time.Since(startTime).Milliseconds()
-
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				evtCtx.SetExtras(evt)
-				return &pluginTypes.PluginResponse{
-					StatusCode: 200,
-					Message:    "prompt content is safe",
-					Headers: map[string][]string{
-						"Content-Type": {"application/json"},
-					},
-					Body: nil,
-				}, nil
-			}
-			if errors.Is(err, context.DeadlineExceeded) {
-				return nil, fmt.Errorf("firewall request timed out %v", err)
-			}
-			if errors.Is(err, firewall.ErrFailedFirewallCall) {
-				return nil, fmt.Errorf("firewall request failed %v", err)
-			}
-			return nil, fmt.Errorf("failed to call firewall: %w", err)
-		}
-
-		var maxScore float64
-		for _, response := range responses {
-			if response.Scores.MaliciousPrompt > maxScore {
-				maxScore = response.Scores.MaliciousPrompt
-			}
-		}
-
-		evt.Scores.MaliciousPrompt = maxScore
-
-		if maxScore >= conf.JailbreakParamBag.Threshold {
-			evt.Blocked = true
-			violationMsg := fmt.Sprintf(
-				"jailbreak: score %.2f exceeded threshold %.2f",
-				maxScore,
-				conf.JailbreakParamBag.Threshold,
-			)
-			evt.Violation = &ViolationInfo{
-				Type:      "jailbreak",
-				Score:     maxScore,
-				Threshold: conf.JailbreakParamBag.Threshold,
-				Message:   violationMsg,
-			}
-
-			p.notifyGuardrailViolation(ctx, conf)
-
-			violationErr := NewGuardrailViolation(violationMsg)
-			evtCtx.SetError(violationErr)
-			evtCtx.SetExtras(evt)
-			if conf.Mode == pluginTypes.ModeObserve {
-				return &pluginTypes.PluginResponse{
-					StatusCode: 200,
-					Message:    "prompt flagged as jailbreak.",
-					Headers: map[string][]string{
-						"Content-Type": {"application/json"},
-					},
-				}, nil
-			}
-			return nil, &pluginTypes.PluginError{
-				StatusCode: http.StatusForbidden,
-				Message:    violationErr.Error(),
-				Err:        violationErr,
-			}
+		pluginResp, err := p.detectJailbreak(ctx, conf, inputs, evt, evtCtx)
+		if pluginResp != nil || err != nil {
+			return pluginResp, err
 		}
 	}
 
 	evtCtx.SetExtras(evt)
+	return safeResponse(), nil
+}
 
+func (p *NeuralTrustJailbreakPlugin) resolveInputs(
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	mappingField string,
+) ([]string, error) {
+	if len(req.Messages) > 0 {
+		return req.Messages, nil
+	}
+	inputBody := req.Body
+	if req.Stage == pluginTypes.PostRequest {
+		inputBody = resp.Body
+	}
+	content, err := pluginutils.DefineRequestBody(inputBody, mappingField)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to define request body")
+		return nil, fmt.Errorf("failed to define request body: %w", err)
+	}
+	return []string{content.Input}, nil
+}
+
+func totalLength(inputs []string) int {
+	n := 0
+	for _, s := range inputs {
+		n += len(s)
+	}
+	return n
+}
+
+func (p *NeuralTrustJailbreakPlugin) detectJailbreak(
+	ctx context.Context,
+	conf Config,
+	inputs []string,
+	evt *NeuralTrustJailbreakData,
+	evtCtx *metrics.EventContext,
+) (*pluginTypes.PluginResponse, error) {
+	firewallClient, err := p.firewallFactory.Get(conf.Provider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve firewall provider: %w", err)
+	}
+
+	startTime := time.Now()
+	responses, err := firewallClient.DetectJailbreak(
+		ctx,
+		firewall.Content{Input: inputs},
+		buildFirewallCredentials(conf.Credentials),
+	)
+	evt.DetectionLatencyMs = time.Since(startTime).Milliseconds()
+
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			evt.Cancelled = true
+			evtCtx.SetExtras(evt)
+			return safeResponse(), nil
+		}
+		evtCtx.SetExtras(evt)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("firewall request timed out: %w", err)
+		}
+		if errors.Is(err, firewall.ErrFailedFirewallCall) {
+			return nil, fmt.Errorf("firewall request failed: %w", err)
+		}
+		return nil, fmt.Errorf("failed to call firewall: %w", err)
+	}
+
+	maxScore := maxMaliciousScore(responses)
+	evt.Scores.MaliciousPrompt = maxScore
+
+	if maxScore >= conf.JailbreakParamBag.Threshold {
+		return p.handleViolation(ctx, conf, maxScore, evt, evtCtx)
+	}
+
+	return nil, nil
+}
+
+func maxMaliciousScore(responses []firewall.JailbreakResponse) float64 {
+	var m float64
+	for _, r := range responses {
+		if r.Scores.MaliciousPrompt > m {
+			m = r.Scores.MaliciousPrompt
+		}
+	}
+	return m
+}
+
+func (p *NeuralTrustJailbreakPlugin) handleViolation(
+	ctx context.Context,
+	conf Config,
+	score float64,
+	evt *NeuralTrustJailbreakData,
+	evtCtx *metrics.EventContext,
+) (*pluginTypes.PluginResponse, error) {
+	evt.Blocked = true
+	violationMsg := fmt.Sprintf(
+		"jailbreak: score %.2f exceeded threshold %.2f",
+		score,
+		conf.JailbreakParamBag.Threshold,
+	)
+	evt.Violation = &ViolationInfo{
+		Type:      "jailbreak",
+		Score:     score,
+		Threshold: conf.JailbreakParamBag.Threshold,
+		Message:   violationMsg,
+	}
+
+	p.notifyGuardrailViolation(ctx, conf)
+
+	violationErr := NewGuardrailViolation(violationMsg)
+	evtCtx.SetError(violationErr)
+	evtCtx.SetExtras(evt)
+
+	if conf.Mode == pluginTypes.ModeObserve {
+		return &pluginTypes.PluginResponse{
+			StatusCode: 200,
+			Message:    "prompt flagged as jailbreak.",
+			Headers: map[string][]string{
+				"Content-Type": {"application/json"},
+			},
+		}, nil
+	}
+	return nil, &pluginTypes.PluginError{
+		StatusCode: http.StatusForbidden,
+		Message:    violationErr.Error(),
+		Err:        violationErr,
+	}
+}
+
+func safeResponse() *pluginTypes.PluginResponse {
 	return &pluginTypes.PluginResponse{
 		StatusCode: 200,
 		Message:    "prompt content is safe",
 		Headers: map[string][]string{
 			"Content-Type": {"application/json"},
 		},
-		Body: nil,
-	}, nil
+	}
 }
 
 func (p *NeuralTrustJailbreakPlugin) notifyGuardrailViolation(ctx context.Context, conf Config) {

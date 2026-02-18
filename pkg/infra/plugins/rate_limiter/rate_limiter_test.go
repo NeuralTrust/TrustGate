@@ -159,7 +159,8 @@ func TestRateLimiterPlugin_Execute_NoLimitExceeded(t *testing.T) {
 
 	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
-	assert.Nil(t, pluginResponse)
+	assert.NotNil(t, pluginResponse)
+	assert.Equal(t, 200, pluginResponse.StatusCode)
 	assert.NoError(t, err)
 }
 
@@ -205,7 +206,8 @@ func TestRateLimiterPlugin_Execute_PerUser_NoLimitExceeded(t *testing.T) {
 
 	pluginResponse, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
 
-	assert.Nil(t, pluginResponse)
+	assert.NotNil(t, pluginResponse)
+	assert.Equal(t, 200, pluginResponse.StatusCode)
 	assert.NoError(t, err)
 }
 
@@ -310,7 +312,8 @@ func TestRateLimiterPlugin_Execute_PerFingerprint_NoLimitExceeded(t *testing.T) 
 
 	pluginResponse, err := plugin.Execute(ctx, cfg, req, resp, metrics.NewEventContext("", "", nil))
 
-	assert.Nil(t, pluginResponse)
+	assert.NotNil(t, pluginResponse)
+	assert.Equal(t, 200, pluginResponse.StatusCode)
 	assert.NoError(t, err)
 }
 
@@ -369,7 +372,8 @@ func TestRateLimiterPlugin_Execute_PerFingerprint_NoFingerprintInContext(t *test
 
 	pluginResponse, err := plugin.Execute(ctx, cfg, req, resp, metrics.NewEventContext("", "", nil))
 
-	assert.Nil(t, pluginResponse)
+	assert.NotNil(t, pluginResponse)
+	assert.Equal(t, 200, pluginResponse.StatusCode)
 	assert.NoError(t, err)
 }
 

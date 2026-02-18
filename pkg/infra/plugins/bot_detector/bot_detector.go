@@ -132,7 +132,10 @@ func (p *BotDetectorPlugin) Execute(
 		}
 		if decodedData == nil {
 			p.logger.Debug("bot detection data not found in header or body")
-			return nil, nil
+			return &pluginTypes.PluginResponse{
+				StatusCode: http.StatusOK,
+				Message:    "bot detection data not found in header or body",
+			}, nil
 		}
 	}
 

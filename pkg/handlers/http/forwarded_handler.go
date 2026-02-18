@@ -326,14 +326,12 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		respCtx,
 		metricsCollector,
 	); err != nil {
-		var pluginErr *plugintypes.PluginError
-		if errors.As(err, &pluginErr) {
+		if pluginErr, typeErr := errors.AsType[*plugintypes.PluginError](err); typeErr {
 			for k, values := range respCtx.Headers {
 				for _, v := range values {
 					c.Set(k, v)
 				}
 			}
-			// Also copy headers from the pluginErr if present
 			if pluginErr.Headers != nil {
 				for k, values := range pluginErr.Headers {
 					for _, v := range values {
@@ -341,13 +339,14 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 					}
 				}
 			}
+			status := safeStatusCode(pluginErr.StatusCode, http.StatusInternalServerError)
 			h.registryFailedEvent(
 				metricsCollector,
-				pluginErr.StatusCode,
+				status,
 				pluginErr.Err,
 				respCtx,
 			)
-			return h.handleErrorResponse(c, pluginErr.StatusCode, fiber.Map{
+			return h.handleErrorResponse(c, status, fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
@@ -361,7 +360,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 					c.Set(k, v)
 				}
 			}
-			return h.handleSuccessResponse(c, respCtx.StatusCode, respCtx.Body)
+			return h.handleSuccessResponse(c, safeStatusCode(respCtx.StatusCode, http.StatusOK), respCtx.Body)
 		}
 	}
 
@@ -434,16 +433,15 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		respCtx,
 		metricsCollector,
 	); err != nil {
-		var pluginErr *plugintypes.PluginError
-		if errors.As(err, &pluginErr) {
-			// Copy headers from response context
+		if pluginErr, typeErr := errors.AsType[*plugintypes.PluginError](err); typeErr {
 			for k, values := range respCtx.Headers {
 				for _, v := range values {
 					c.Set(k, v)
 				}
 			}
-			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx)
-			return h.handleErrorResponse(c, pluginErr.StatusCode, fiber.Map{
+			status := safeStatusCode(pluginErr.StatusCode, http.StatusInternalServerError)
+			h.registryFailedEvent(metricsCollector, status, pluginErr.Err, respCtx)
+			return h.handleErrorResponse(c, status, fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
@@ -463,9 +461,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		respCtx,
 		metricsCollector,
 	); err != nil {
-		var pluginErr *plugintypes.PluginError
-		if errors.As(err, &pluginErr) {
-			// Copy headers from response context
+		if pluginErr, typeErr := errors.AsType[*plugintypes.PluginError](err); typeErr {
 			h.logger.WithFields(logrus.Fields{
 				"headers": respCtx.Headers,
 			}).Debug("Plugin response headers")
@@ -475,8 +471,9 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 					c.Set(k, v)
 				}
 			}
-			h.registryFailedEvent(metricsCollector, pluginErr.StatusCode, pluginErr.Err, respCtx)
-			return h.handleErrorResponse(c, pluginErr.StatusCode, fiber.Map{
+			status := safeStatusCode(pluginErr.StatusCode, http.StatusInternalServerError)
+			h.registryFailedEvent(metricsCollector, status, pluginErr.Err, respCtx)
+			return h.handleErrorResponse(c, status, fiber.Map{
 				"error":       pluginErr.Message,
 				"retry_after": respCtx.Metadata["retry_after"],
 			})
@@ -484,7 +481,6 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		if !h.cfg.Plugins.IgnoreErrors {
 			return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "Plugin execution failed"})
 		}
-
 	}
 
 	// Copy all headers from response context to client response
@@ -1626,4 +1622,11 @@ func (h *forwardedHandler) registrySuccessEvent(
 		}
 	}
 	collector.Emit(evt)
+}
+
+func safeStatusCode(status, fallback int) int {
+	if status > 0 {
+		return status
+	}
+	return fallback
 }

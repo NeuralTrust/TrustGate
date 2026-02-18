@@ -268,7 +268,10 @@ func (p *RateLimiterPlugin) Execute(
 
 	p.setEventAsSuccess(evtCtx, finalStatus)
 
-	return nil, nil
+	return &pluginTypes.PluginResponse{
+		StatusCode: http.StatusOK,
+		Message:    "all checks passed",
+	}, nil
 }
 
 func (p *RateLimiterPlugin) extractKey(ctx context.Context, req *types.RequestContext, limitType string) string {

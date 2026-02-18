@@ -40,10 +40,9 @@ func (w *PluginWrapper) Execute(
 		if errors.Is(err, context.Canceled) {
 			evtCtx.SetStatusCode(http.StatusOK)
 			evtCtx.Publish()
-			return nil, nil
+			return &pluginTypes.PluginResponse{StatusCode: http.StatusOK}, nil
 		}
-		var pluginErr *pluginTypes.PluginError
-		if errors.As(err, &pluginErr) {
+		if pluginErr, ok := errors.AsType[*pluginTypes.PluginError](err); ok {
 			evtCtx.SetStatusCode(pluginErr.StatusCode)
 		}
 		evtCtx.SetError(err)
@@ -51,12 +50,13 @@ func (w *PluginWrapper) Execute(
 		return nil, err
 	}
 
-	if pluginResp != nil {
-		evtCtx.SetStatusCode(pluginResp.StatusCode)
-	} else {
-		evtCtx.SetStatusCode(http.StatusOK)
+	if pluginResp == nil {
+		pluginResp = &pluginTypes.PluginResponse{
+			StatusCode: http.StatusOK,
+		}
 	}
 
+	evtCtx.SetStatusCode(pluginResp.StatusCode)
 	evtCtx.Publish()
 	return pluginResp, nil
 }

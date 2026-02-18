@@ -192,136 +192,46 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		p.logger.WithError(err).Error("failed to decode config")
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
-
 	if conf.Mode == "" {
 		conf.Mode = pluginTypes.ModeEnforce
 	}
 
-	firewallErrors := make(chan error, 1)
-	var wg sync.WaitGroup
-	var evtMu sync.Mutex
-	var keywords []string
-	var regexRules []*regexp.Regexp
-
-	var inputBytes []byte
-	if len(req.Messages) > 0 {
-		inputBytes = []byte(strings.Join(req.Messages, "\n"))
-	} else {
-		var inputBody []byte
-		switch {
-		case req.Stage == pluginTypes.PostRequest && resp != nil:
-			inputBody = resp.Body
-		default:
-			inputBody = req.Body
-		}
-
-		mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
-		if err != nil {
-			p.logger.WithError(err).Error("failed to define request body")
-			return nil, fmt.Errorf("failed to define request body: %w", err)
-		}
-		inputBytes = []byte(mappingContent.Input)
+	inputBytes, err := p.resolveInput(req, resp, conf.MappingField)
+	if err != nil {
+		return nil, err
 	}
 
 	evt := &NeuralTrustModerationData{
 		MappingField: conf.MappingField,
 		InputLength:  len(inputBytes),
-		Blocked:      false,
 		Mode:         conf.Mode,
 	}
 
-	keyRegFound := false
+	firewallErrors := make(chan error, 1)
+	var wg sync.WaitGroup
+	var evtMu sync.Mutex
+	
 	if conf.KeyRegParamBag != nil && conf.KeyRegParamBag.Enabled {
-		keywords = conf.KeyRegParamBag.Keywords
-		regexRules = make([]*regexp.Regexp, len(conf.KeyRegParamBag.Regex))
-		for i, pattern := range conf.KeyRegParamBag.Regex {
-			regex, err := regexp.Compile(pattern)
-			if err != nil {
-				p.logger.WithError(err).Error("failed to compile regex pattern")
-				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", pattern, err)
-			}
-			regexRules[i] = regex
-		}
-
-		evt.KeyRegModeration = &KeyRegModeration{
-			SimilarityThreshold: conf.KeyRegParamBag.SimilarityThreshold,
-		}
-		if evt.KeyRegModeration.SimilarityThreshold == 0 {
-			evt.KeyRegModeration.SimilarityThreshold = 0.8
-		}
-
-		keyRegFound = p.callKeyRegModeration(
-			ctx,
-			conf.KeyRegParamBag,
-			inputBytes,
-			firewallErrors,
-			evt,
-			keywords,
-			regexRules,
-		)
-
-		if keyRegFound {
-			evt.Blocked = true
-			evt.KeyRegModeration.Blocked = true
-		}
-	}
-
-	// When keyreg detected a violation synchronously, the error is already
-	// buffered in firewallErrors. Drain and handle it now to avoid a race
-	// between the buffered error and the done channel in the select below.
-	if keyRegFound {
-		if err := <-firewallErrors; err != nil {
-			p.notifyGuardrailViolation(ctx, conf)
-			cancel()
-			var moderationViolationError *moderationViolationError
-			if errors.As(err, &moderationViolationError) {
-				evtCtx.SetError(moderationViolationError)
-				evtCtx.SetExtras(evt)
-				if conf.Mode == pluginTypes.ModeObserve {
-					return &pluginTypes.PluginResponse{
-						StatusCode: 200,
-						Message:    "prompt flagged",
-						Headers: map[string][]string{
-							"Content-Type": {"application/json"},
-						},
-					}, nil
-				}
-				return nil, &pluginTypes.PluginError{
-					StatusCode: http.StatusForbidden,
-					Message:    err.Error(),
-					Err:        err,
-				}
-			}
-			evtCtx.SetError(err)
-			evtCtx.SetExtras(evt)
+		found, err := p.executeKeyReg(ctx, conf, inputBytes, firewallErrors, evt)
+		if err != nil {
 			return nil, err
 		}
+		if found {
+			if err := <-firewallErrors; err != nil {
+				return p.handleViolation(ctx, conf, err, evt, evtCtx, cancel)
+			}
+		}
 	}
 
-	if !keyRegFound && conf.NTTopicParamBag != nil && conf.NTTopicParamBag.Enabled {
-		wg.Add(1)
-		go p.callNTTopicModeration(
-			ctx,
-			conf,
-			&wg,
-			inputBytes,
-			firewallErrors,
-			evt,
-			&evtMu,
-		)
-	}
-
-	if !keyRegFound && conf.LLMParamBag != nil && conf.LLMParamBag.Enabled {
-		wg.Add(1)
-		go p.callAIModeration(
-			ctx,
-			conf.LLMParamBag,
-			&wg,
-			inputBytes,
-			firewallErrors,
-			evt,
-			&evtMu,
-		)
+	if !evt.Blocked {
+		if conf.NTTopicParamBag != nil && conf.NTTopicParamBag.Enabled {
+			wg.Add(1)
+			go p.callNTTopicModeration(ctx, conf.NTTopicParamBag, &wg, inputBytes, firewallErrors, evt, &evtMu)
+		}
+		if conf.LLMParamBag != nil && conf.LLMParamBag.Enabled {
+			wg.Add(1)
+			go p.callAIModeration(ctx, conf.LLMParamBag, &wg, inputBytes, firewallErrors, evt, &evtMu)
+		}
 	}
 
 	done := make(chan struct{})
@@ -333,51 +243,117 @@ func (p *NeuralTrustModerationPlugin) Execute(
 
 	select {
 	case err, ok := <-firewallErrors:
-		if !ok {
-			break
-		}
-		if err != nil {
+		if ok && err != nil {
 			evt.Blocked = true
-			p.notifyGuardrailViolation(ctx, conf)
-			cancel()
-			var moderationViolationError *moderationViolationError
-			if errors.As(err, &moderationViolationError) {
-				evtCtx.SetError(moderationViolationError)
-				evtCtx.SetExtras(evt)
-				if conf.Mode == pluginTypes.ModeObserve {
-					return &pluginTypes.PluginResponse{
-						StatusCode: 200,
-						Message:    "prompt flagged",
-						Headers: map[string][]string{
-							"Content-Type": {"application/json"},
-						},
-					}, nil
-				}
-				return nil, &pluginTypes.PluginError{
-					StatusCode: http.StatusForbidden,
-					Message:    err.Error(),
-					Err:        err,
-				}
-			}
-			evtCtx.SetError(err)
-			evtCtx.SetExtras(evt)
-			return nil, err
+			return p.handleViolation(ctx, conf, err, evt, evtCtx, cancel)
 		}
 	case <-done:
 	case <-ctx.Done():
+		evtCtx.SetExtras(evt)
 		return nil, ctx.Err()
 	}
 
 	evtCtx.SetExtras(evt)
+	return safeResponse(), nil
+}
 
+func (p *NeuralTrustModerationPlugin) resolveInput(
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+	mappingField string,
+) ([]byte, error) {
+	if len(req.Messages) > 0 {
+		return []byte(strings.Join(req.Messages, "\n")), nil
+	}
+	var body []byte
+	if req.Stage == pluginTypes.PostRequest && resp != nil {
+		body = resp.Body
+	} else {
+		body = req.Body
+	}
+	content, err := pluginutils.DefineRequestBody(body, mappingField)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to define request body")
+		return nil, fmt.Errorf("failed to define request body: %w", err)
+	}
+	return []byte(content.Input), nil
+}
+
+func (p *NeuralTrustModerationPlugin) executeKeyReg(
+	ctx context.Context,
+	conf Config,
+	inputBytes []byte,
+	firewallErrors chan<- error,
+	evt *NeuralTrustModerationData,
+) (bool, error) {
+	keywords := conf.KeyRegParamBag.Keywords
+	regexRules := make([]*regexp.Regexp, len(conf.KeyRegParamBag.Regex))
+	for i, pattern := range conf.KeyRegParamBag.Regex {
+		regex, err := regexp.Compile(pattern)
+		if err != nil {
+			p.logger.WithError(err).Error("failed to compile regex pattern")
+			return false, fmt.Errorf("failed to compile regex pattern '%s': %v", pattern, err)
+		}
+		regexRules[i] = regex
+	}
+
+	threshold := conf.KeyRegParamBag.SimilarityThreshold
+	if threshold == 0 {
+		threshold = 0.8
+	}
+	evt.KeyRegModeration = &KeyRegModeration{
+		SimilarityThreshold: threshold,
+	}
+
+	found := p.callKeyRegModeration(ctx, conf.KeyRegParamBag, inputBytes, firewallErrors, evt, keywords, regexRules)
+	if found {
+		evt.Blocked = true
+		evt.KeyRegModeration.Blocked = true
+	}
+	return found, nil
+}
+
+func (p *NeuralTrustModerationPlugin) handleViolation(
+	ctx context.Context,
+	conf Config,
+	err error,
+	evt *NeuralTrustModerationData,
+	evtCtx *metrics.EventContext,
+	cancel context.CancelFunc,
+) (*pluginTypes.PluginResponse, error) {
+	p.notifyGuardrailViolation(ctx, conf)
+	cancel()
+	if modErr, ok := errors.AsType[*moderationViolationError](err); ok {
+		evtCtx.SetError(modErr)
+		evtCtx.SetExtras(evt)
+		if conf.Mode == pluginTypes.ModeObserve {
+			return &pluginTypes.PluginResponse{
+				StatusCode: 200,
+				Message:    "prompt flagged",
+				Headers: map[string][]string{
+					"Content-Type": {"application/json"},
+				},
+			}, nil
+		}
+		return nil, &pluginTypes.PluginError{
+			StatusCode: http.StatusForbidden,
+			Message:    err.Error(),
+			Err:        err,
+		}
+	}
+	evtCtx.SetError(err)
+	evtCtx.SetExtras(evt)
+	return nil, err
+}
+
+func safeResponse() *pluginTypes.PluginResponse {
 	return &pluginTypes.PluginResponse{
 		StatusCode: 200,
 		Message:    "prompt content is safe",
 		Headers: map[string][]string{
 			"Content-Type": {"application/json"},
 		},
-		Body: nil,
-	}, nil
+	}
 }
 
 func (p *NeuralTrustModerationPlugin) notifyGuardrailViolation(ctx context.Context, conf Config) {
@@ -463,9 +439,21 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 	}, reqBody)
 	duration := time.Since(start).Seconds()
 	if err != nil {
+		latencyMs := time.Since(start).Milliseconds()
 		if errors.Is(err, context.Canceled) {
+			evtMu.Lock()
+			evt.LLMModeration = &LLMModeration{
+				Cancelled:          true,
+				DetectionLatencyMs: latencyMs,
+			}
+			evtMu.Unlock()
 			return
 		}
+		evtMu.Lock()
+		evt.LLMModeration = &LLMModeration{
+			DetectionLatencyMs: latencyMs,
+		}
+		evtMu.Unlock()
 		p.logger.WithError(err).Error("failed to call llm provider")
 		p.sendError(firewallErrors, err)
 		return
@@ -503,18 +491,14 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		return
 	}
 
-	if evtMu != nil {
-		evtMu.Lock()
-	}
+	evtMu.Lock()
 	evt.LLMModeration = &LLMModeration{
 		Blocked:            resp.Flagged,
 		InstructionMatch:   resp.InstructionMatch,
 		Topic:              resp.Topic,
 		DetectionLatencyMs: int64(duration * 1000),
 	}
-	if evtMu != nil {
-		evtMu.Unlock()
-	}
+	evtMu.Unlock()
 
 	if resp.Flagged {
 		p.sendError(firewallErrors, NewModerationViolation("content blocked"))
@@ -523,7 +507,7 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 
 func (p *NeuralTrustModerationPlugin) callNTTopicModeration(
 	ctx context.Context,
-	cfg Config,
+	cfg *NTTopicParamBag,
 	wg *sync.WaitGroup,
 	inputBody []byte,
 	firewallErrors chan<- error,
@@ -545,32 +529,45 @@ func (p *NeuralTrustModerationPlugin) callNTTopicModeration(
 		return
 	}
 
-	content := firewall.ModerationContent{
+	responses, err := client.DetectModeration(ctx, firewall.ModerationContent{
 		Input:      []string{string(inputBody)},
-		Topics:     cfg.NTTopicParamBag.Topics,
-		Thresholds: cfg.NTTopicParamBag.Thresholds,
-	}
-
-	creds := firewall.Credentials{
+		Topics:     cfg.Topics,
+		Thresholds: cfg.Thresholds,
+	}, firewall.Credentials{
 		NeuralTrustCredentials: firewall.NeuralTrustCredentials{
-			BaseURL: cfg.NTTopicParamBag.Credentials.BaseURL,
-			Token:   cfg.NTTopicParamBag.Credentials.Token,
+			BaseURL: cfg.Credentials.BaseURL,
+			Token:   cfg.Credentials.Token,
 		},
-	}
+	})
+	duration := time.Since(start)
 
-	responses, err := client.DetectModeration(ctx, content, creds)
 	if err != nil {
+		latencyMs := duration.Milliseconds()
 		if errors.Is(err, context.Canceled) {
+			evtMu.Lock()
+			evt.NTTopicModeration = &NTTopicModeration{
+				Cancelled:          true,
+				DetectionLatencyMs: latencyMs,
+			}
+			evtMu.Unlock()
 			return
 		}
+		evtMu.Lock()
+		evt.NTTopicModeration = &NTTopicModeration{
+			DetectionLatencyMs: latencyMs,
+		}
+		evtMu.Unlock()
 		p.logger.WithError(err).Error("failed to call moderation service")
 		p.sendError(firewallErrors, err)
 		return
 	}
 
-	duration := time.Since(start)
-
 	if len(responses) == 0 {
+		evtMu.Lock()
+		evt.NTTopicModeration = &NTTopicModeration{
+			DetectionLatencyMs: duration.Milliseconds(),
+		}
+		evtMu.Unlock()
 		return
 	}
 
@@ -582,7 +579,7 @@ func (p *NeuralTrustModerationPlugin) callNTTopicModeration(
 		"blocked_topics": resp.BlockedTopics,
 	}).Info("NT topic moderation service responded successfully")
 
-	topicScores := make(map[string]NTTopicScore)
+	topicScores := make(map[string]NTTopicScore, len(resp.TopicScores))
 	for topic, score := range resp.TopicScores {
 		topicScores[topic] = NTTopicScore{
 			Topic:       score.Topic,
@@ -591,9 +588,7 @@ func (p *NeuralTrustModerationPlugin) callNTTopicModeration(
 		}
 	}
 
-	if evtMu != nil {
-		evtMu.Lock()
-	}
+	evtMu.Lock()
 	evt.NTTopicModeration = &NTTopicModeration{
 		TopicScores:        topicScores,
 		BlockedTopics:      resp.BlockedTopics,
@@ -601,15 +596,12 @@ func (p *NeuralTrustModerationPlugin) callNTTopicModeration(
 		Blocked:            resp.IsBlocked,
 		DetectionLatencyMs: duration.Milliseconds(),
 	}
-	if evtMu != nil {
-		evtMu.Unlock()
-	}
+	evtMu.Unlock()
 
 	if resp.IsBlocked {
-		blockedTopicsStr := strings.Join(resp.BlockedTopics, ", ")
 		p.sendError(
 			firewallErrors,
-			NewModerationViolation(fmt.Sprintf("content blocked: topics [%s] exceeded threshold", blockedTopicsStr)),
+			NewModerationViolation(fmt.Sprintf("content blocked: topics [%s] exceeded threshold", strings.Join(resp.BlockedTopics, ", "))),
 		)
 	}
 }

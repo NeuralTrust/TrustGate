@@ -9,6 +9,7 @@ type NeuralTrustJailbreakData struct {
 
 	Scores    *JailbreakScores `json:"scores,omitempty"`
 	Blocked   bool             `json:"blocked"`
+	Cancelled bool             `json:"cancelled,omitempty"`
 	Violation *ViolationInfo   `json:"violation,omitempty"`
 
 	DetectionLatencyMs int64 `json:"detection_latency_ms"`
