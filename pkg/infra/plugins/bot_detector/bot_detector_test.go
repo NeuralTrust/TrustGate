@@ -15,7 +15,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/bot_detector"
-	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
+	plugintypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
@@ -47,7 +47,7 @@ func TestBotDetectorPlugin_Stages(t *testing.T) {
 
 	stages := plugin.Stages()
 	assert.Len(t, stages, 1)
-	assert.Equal(t, pluginTypes.PreRequest, stages[0])
+	assert.Equal(t, plugintypes.PreRequest, stages[0])
 }
 
 func TestBotDetectorPlugin_AllowedStages(t *testing.T) {
@@ -57,7 +57,7 @@ func TestBotDetectorPlugin_AllowedStages(t *testing.T) {
 
 	stages := plugin.AllowedStages()
 	assert.Len(t, stages, 1)
-	assert.Equal(t, pluginTypes.PreRequest, stages[0])
+	assert.Equal(t, plugintypes.PreRequest, stages[0])
 }
 
 func TestBotDetectorPlugin_ValidateConfig(t *testing.T) {
@@ -66,7 +66,7 @@ func TestBotDetectorPlugin_ValidateConfig(t *testing.T) {
 	plugin := bot_detector.NewBotDetectorPlugin(logger, fpTracker)
 
 	t.Run("Valid Configuration", func(t *testing.T) {
-		config := pluginTypes.PluginConfig{
+		config := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.5,
 				"action":    "alert_only",
@@ -78,7 +78,7 @@ func TestBotDetectorPlugin_ValidateConfig(t *testing.T) {
 	})
 
 	t.Run("Invalid Threshold - Below 0", func(t *testing.T) {
-		config := pluginTypes.PluginConfig{
+		config := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": -0.1,
 				"action":    "alert_only",
@@ -91,7 +91,7 @@ func TestBotDetectorPlugin_ValidateConfig(t *testing.T) {
 	})
 
 	t.Run("Invalid Threshold - Above 1", func(t *testing.T) {
-		config := pluginTypes.PluginConfig{
+		config := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 1.1,
 				"action":    "alert_only",
@@ -104,7 +104,7 @@ func TestBotDetectorPlugin_ValidateConfig(t *testing.T) {
 	})
 
 	t.Run("Invalid Action", func(t *testing.T) {
-		config := pluginTypes.PluginConfig{
+		config := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.5,
 				"action":    "invalid_action",
@@ -188,7 +188,7 @@ func TestBotDetectorPlugin_CalculateBotScore(t *testing.T) {
 		evtCtx := metrics.NewEventContext("", "", nil)
 
 		// Execute the plugin
-		pluginConfig := pluginTypes.PluginConfig{
+		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.5,
 				"action":    "alert_only",
@@ -263,7 +263,7 @@ func TestBotDetectorPlugin_CalculateBotScore(t *testing.T) {
 		evtCtx := metrics.NewEventContext("", "", nil)
 
 		// Execute the plugin
-		pluginConfig := pluginTypes.PluginConfig{
+		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.5,
 				"action":    "alert_only",
@@ -295,7 +295,7 @@ func TestBotDetectorPlugin_Execute_NoHeader(t *testing.T) {
 		}
 		evtCtx := metrics.NewEventContext("", "", nil)
 
-		pluginConfig := pluginTypes.PluginConfig{
+		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.5,
 				"action":    "alert_only",
@@ -304,7 +304,8 @@ func TestBotDetectorPlugin_Execute_NoHeader(t *testing.T) {
 
 		result, err := plugin.Execute(context.Background(), pluginConfig, req, resp, evtCtx)
 		assert.NoError(t, err)
-		assert.Nil(t, result)
+		assert.NotNil(t, result)
+		assert.Equal(t, 200, result.StatusCode)
 	})
 
 	t.Run("No header but with body data", func(t *testing.T) {
@@ -349,7 +350,7 @@ func TestBotDetectorPlugin_Execute_NoHeader(t *testing.T) {
 		}
 		evtCtx := metrics.NewEventContext("", "", nil)
 
-		pluginConfig := pluginTypes.PluginConfig{
+		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.5,
 				"action":    "alert_only",
@@ -382,7 +383,7 @@ func TestBotDetectorPlugin_Execute_InvalidHeader(t *testing.T) {
 	}
 	evtCtx := metrics.NewEventContext("", "", nil)
 
-	pluginConfig := pluginTypes.PluginConfig{
+	pluginConfig := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"threshold": 0.5,
 			"action":    "alert_only",
@@ -458,7 +459,7 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 		}
 		evtCtx := metrics.NewEventContext("", "", nil)
 
-		pluginConfig := pluginTypes.PluginConfig{
+		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.1, // Low threshold to ensure detection
 				"action":    "alert_only",
@@ -487,7 +488,7 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 		}
 		evtCtx := metrics.NewEventContext("", "", nil)
 
-		pluginConfig := pluginTypes.PluginConfig{
+		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.1, // Low threshold to ensure detection
 				"action":    "throttle",
@@ -531,7 +532,7 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 		}
 		evtCtx := metrics.NewEventContext("", "", nil)
 
-		pluginConfig := pluginTypes.PluginConfig{
+		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold":        0.1, // Low threshold to ensure detection
 				"action":           "block",
@@ -544,7 +545,7 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 		assert.Nil(t, result)
 
 		// Check that it's a PluginError with the correct status code
-		pluginErr, ok := err.(*pluginTypes.PluginError)
+		pluginErr, ok := err.(*plugintypes.PluginError)
 		assert.True(t, ok)
 		assert.Equal(t, http.StatusForbidden, pluginErr.StatusCode)
 		assert.Equal(t, "blocked request due fraudulent activity", pluginErr.Message)
@@ -611,7 +612,7 @@ func TestBotDetectorPlugin_Execute_WithFingerprint(t *testing.T) {
 	}
 	evtCtx := metrics.NewEventContext("", "", nil)
 
-	pluginConfig := pluginTypes.PluginConfig{
+	pluginConfig := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"threshold": 0.5,
 			"action":    "alert_only",

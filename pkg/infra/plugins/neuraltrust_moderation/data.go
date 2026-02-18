@@ -28,6 +28,7 @@ type KeyRegReason struct {
 
 type LLMModeration struct {
 	Blocked            bool   `json:"blocked"`
+	Cancelled          bool   `json:"cancelled,omitempty"`
 	Topic              string `json:"topic,omitempty"`
 	InstructionMatch   string `json:"instruction_match,omitempty"`
 	DetectionLatencyMs int64  `json:"detection_latency_ms"`
@@ -35,6 +36,7 @@ type LLMModeration struct {
 
 type NTTopicModeration struct {
 	Blocked            bool                    `json:"blocked"`
+	Cancelled          bool                    `json:"cancelled,omitempty"`
 	TopicScores        map[string]NTTopicScore `json:"topic_scores,omitempty"`
 	BlockedTopics      []string                `json:"blocked_topics,omitempty"`
 	Warnings           []string                `json:"warnings,omitempty"`
