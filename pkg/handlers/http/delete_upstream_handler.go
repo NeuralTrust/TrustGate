@@ -45,7 +45,7 @@ func (s *deleteUpstreamHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	upstreamID := c.Params("upstream_id")
 
-	if err := s.repo.DeleteUpstream(c.Context(), upstreamID); err != nil {
+	if err := s.repo.DeleteUpstream(c.UserContext(), upstreamID); err != nil {
 		if errors.Is(err, upstream.ErrUpstreamIsBeingUsed) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
@@ -54,7 +54,7 @@ func (s *deleteUpstreamHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	err := s.publisher.Publish(
-		c.Context(),
+		c.UserContext(),
 		event.DeleteUpstreamCacheEvent{
 			GatewayID:  gatewayID,
 			UpstreamID: upstreamID,

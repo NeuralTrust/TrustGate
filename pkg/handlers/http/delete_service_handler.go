@@ -46,7 +46,7 @@ func (s *deleteServiceHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")
 	serviceID := c.Params("service_id")
 
-	if err := s.repo.Delete(c.Context(), serviceID); err != nil {
+	if err := s.repo.Delete(c.UserContext(), serviceID); err != nil {
 		if errors.Is(err, service.ErrServiceIsBeingUsed) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
@@ -55,7 +55,7 @@ func (s *deleteServiceHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	err := s.publisher.Publish(
-		c.Context(),
+		c.UserContext(),
 		event.DeleteServiceCacheEvent{
 			GatewayID: gatewayID,
 			ServiceID: serviceID,

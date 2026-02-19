@@ -40,7 +40,7 @@ func (s *getServiceHandler) Handle(c *fiber.Ctx) error {
 
 	// Try to get from cache first
 	serviceKey := fmt.Sprintf(cache.ServiceKeyPattern, gatewayID, serviceID)
-	if serviceJSON, err := s.cache.Get(c.Context(), serviceKey); err == nil {
+	if serviceJSON, err := s.cache.Get(c.UserContext(), serviceKey); err == nil {
 		var entity service.Service
 		if err := json.Unmarshal([]byte(serviceJSON), &entity); err == nil {
 			return c.Status(fiber.StatusOK).JSON(entity)
@@ -48,13 +48,13 @@ func (s *getServiceHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// If not in cache, get from database
-	entity, err := s.repo.Get(c.Context(), serviceID)
+	entity, err := s.repo.Get(c.UserContext(), serviceID)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "service not found"})
 	}
 
 	// Cache the service
-	if err := s.cache.SaveService(c.Context(), gatewayID, entity); err != nil {
+	if err := s.cache.SaveService(c.UserContext(), gatewayID, entity); err != nil {
 		s.logger.WithError(err).Error("failed to cache service")
 	}
 

@@ -101,7 +101,7 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 		return errors.New("kafka (trustlens) producer is not initialized")
 	}
 
-	if rule, ok := ctx.Value(string(common.MatchedRuleContextKey)).(*types.ForwardingRuleDTO); ok {
+	if rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRuleDTO); ok {
 		if rule.TrustLens == nil {
 			return nil
 		}

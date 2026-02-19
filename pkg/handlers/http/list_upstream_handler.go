@@ -57,7 +57,7 @@ func (s *listUpstreamHandler) Handle(c *fiber.Ctx) error {
 
 	// Try to get from cache first
 	upstreamsKey := fmt.Sprintf(cache.UpstreamsKeyPattern, gatewayID)
-	if upstreamsJSON, err := s.cache.Get(c.Context(), upstreamsKey); err == nil {
+	if upstreamsJSON, err := s.cache.Get(c.UserContext(), upstreamsKey); err == nil {
 		var upstreams []upstream.Upstream
 		if err := json.Unmarshal([]byte(upstreamsJSON), &upstreams); err == nil {
 			return c.Status(fiber.StatusOK).JSON(upstreams)
@@ -65,7 +65,7 @@ func (s *listUpstreamHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// If not in cache, get from database
-	upstreams, err := s.repo.ListUpstreams(c.Context(), gatewayUUID, offset, limit)
+	upstreams, err := s.repo.ListUpstreams(c.UserContext(), gatewayUUID, offset, limit)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to list upstreams")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
@@ -73,7 +73,7 @@ func (s *listUpstreamHandler) Handle(c *fiber.Ctx) error {
 
 	// Cache the results
 	if upstreamsJSON, err := json.Marshal(upstreams); err == nil {
-		if err := s.cache.Set(c.Context(), upstreamsKey, string(upstreamsJSON), 0); err != nil {
+		if err := s.cache.Set(c.UserContext(), upstreamsKey, string(upstreamsJSON), 0); err != nil {
 			s.logger.WithError(err).Error("failed to cache upstreams list")
 		}
 	}

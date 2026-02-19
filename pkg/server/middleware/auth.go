@@ -47,7 +47,7 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 			m.logger.Debug("no api key provided")
 			return m.respondWithError(ctx, fiber.StatusUnauthorized, "API key required")
 		}
-		key, err := m.keyFinder.Find(ctx.Context(), apiKey)
+		key, err := m.keyFinder.Find(ctx.UserContext(), apiKey)
 		if err != nil {
 			m.logger.WithError(err).Error("error retrieving apikey")
 			return m.respondWithError(ctx, fiber.StatusUnauthorized, "invalid API key")
@@ -63,7 +63,7 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 			return m.respondWithError(ctx, fiber.StatusUnauthorized, "invalid API key")
 		}
 
-		gatewayData, err := m.gatewayFinder.Find(ctx.Context(), key.Subject)
+		gatewayData, err := m.gatewayFinder.Find(ctx.UserContext(), key.Subject)
 		if err != nil {
 			m.logger.WithError(err).Error("failed to fetch gateway data.")
 			return m.respondWithError(ctx, fiber.StatusInternalServerError, "failed to fetch gateway data")
@@ -82,7 +82,7 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 
 		if len(pathParams) > 0 {
 			ctx.Locals(common.PathParamsKey, pathParams)
-			c := context.WithValue(ctx.Context(), common.PathParamsKey, pathParams)
+			c := context.WithValue(ctx.UserContext(), common.PathParamsKey, pathParams)
 			ctx.SetUserContext(c)
 		}
 
@@ -114,7 +114,7 @@ func (m *authMiddleware) respondWithError(ctx *fiber.Ctx, status int, message st
 func (m *authMiddleware) setLatencyStart(ctx *fiber.Ctx) {
 	now := time.Now()
 	ctx.Locals(common.LatencyContextKey, now)
-	c := context.WithValue(ctx.Context(), common.LatencyContextKey, now)
+	c := context.WithValue(ctx.UserContext(), common.LatencyContextKey, now)
 	ctx.SetUserContext(c)
 }
 
@@ -137,7 +137,7 @@ func (m *authMiddleware) attachRequestContext(
 	ctx.Locals(string(common.GatewayDataContextKey), gatewayData)
 
 	// User context
-	c := context.WithValue(ctx.Context(), common.ApiKeyContextKey, apiKey)
+	c := context.WithValue(ctx.UserContext(), common.ApiKeyContextKey, apiKey)
 	c = context.WithValue(c, common.MetadataKey, metadata)
 	c = context.WithValue(c, common.ApiKeyIdContextKey, apiKeyID)
 	c = context.WithValue(c, common.GatewayContextKey, gatewayID)
@@ -151,6 +151,6 @@ func (m *authMiddleware) setRuleContext(ctx *fiber.Ctx, rule *types.ForwardingRu
 	ctx.Set(ServiceIDKey, rule.ServiceID)
 
 	ctx.Locals(string(common.MatchedRuleContextKey), rule)
-	c := context.WithValue(ctx.Context(), common.MatchedRuleContextKey, rule)
+	c := context.WithValue(ctx.UserContext(), common.MatchedRuleContextKey, rule)
 	ctx.SetUserContext(c)
 }

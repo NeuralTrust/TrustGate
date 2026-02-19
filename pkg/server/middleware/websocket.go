@@ -48,8 +48,8 @@ func (m *websocketMiddleware) Middleware() fiber.Handler {
 					return fiber.ErrInternalServerError
 				}
 
-				reqCtx := &types.RequestContext{
-					Context:   c.Context(),
+			reqCtx := &types.RequestContext{
+				Context:   c.UserContext(),
 					GatewayID: gatewayID,
 					Headers:   make(map[string][]string),
 					Method:    c.Method(),
@@ -75,7 +75,7 @@ func (m *websocketMiddleware) Middleware() fiber.Handler {
 
 				c.Locals(string(common.WsRequestContextContextKey), reqCtx)
 				//nolint
-				ctx := context.WithValue(c.Context(), string(common.GatewayContextKey), gatewayID)
+				ctx := context.WithValue(c.UserContext(), string(common.GatewayContextKey), gatewayID)
 				c.SetUserContext(ctx)
 
 				return c.Next()

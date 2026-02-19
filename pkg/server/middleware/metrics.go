@@ -112,7 +112,7 @@ func (m *metricsMiddleware) initializeContext(c *fiber.Ctx, gatewayData *types.G
 	c.Locals(common.StreamModeContextKey, streamMode)
 	c.Locals(string(metrics.CollectorKey), collector)
 
-	ctx := context.WithValue(c.Context(), string(metrics.CollectorKey), collector) //nolint
+	ctx := context.WithValue(c.UserContext(), string(metrics.CollectorKey), collector) //nolint
 	ctx = context.WithValue(ctx, common.StreamResponseContextKey, streamResponse)
 	ctx = context.WithValue(ctx, common.StreamModeContextKey, streamMode)
 	ctx = context.WithValue(ctx, common.TraceIdKey, traceID)
@@ -123,7 +123,10 @@ func (m *metricsMiddleware) initializeContext(c *fiber.Ctx, gatewayData *types.G
 }
 
 // createMetricsCollector creates a metrics collector with the appropriate configuration
-func (m *metricsMiddleware) createMetricsCollector(traceID, fingerprintID string, gatewayData *types.GatewayData) *metrics.Collector {
+func (m *metricsMiddleware) createMetricsCollector(
+	traceID, fingerprintID string,
+	gatewayData *types.GatewayData,
+) *metrics.Collector {
 	if traceID == "" {
 		traceID = uuid.New().String()
 	}
@@ -310,7 +313,7 @@ func (m *metricsMiddleware) getSessionID(ctx context.Context) string {
 
 // getMatchedRule retrieves the matched rule from context
 func (m *metricsMiddleware) getMatchedRule(ctx context.Context) *types.ForwardingRuleDTO {
-	rule, ok := ctx.Value(string(common.MatchedRuleContextKey)).(*types.ForwardingRuleDTO)
+	rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRuleDTO)
 	if !ok || rule == nil {
 		m.logger.Error("failed to get matched rule from context")
 		return &types.ForwardingRuleDTO{}

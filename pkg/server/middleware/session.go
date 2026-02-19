@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -90,8 +91,9 @@ func (m *sessionMiddleware) Middleware() fiber.Handler {
 			return ctx.Next()
 		}
 
-		// Use only Fiber context for consistency
 		ctx.Locals(common.SessionContextKey, sessionID)
+		uc := context.WithValue(ctx.UserContext(), common.SessionContextKey, sessionID)
+		ctx.SetUserContext(uc)
 
 		content := m.extractContent(ctx, gatewayData.Gateway.SessionConfig.Mapping, &bodyMap, &bodyParsed, body)
 
@@ -110,7 +112,7 @@ func (m *sessionMiddleware) Middleware() fiber.Handler {
 		sess.CreatedAt = time.Now()
 		sess.ExpiresAt = sess.CreatedAt.Add(ttl)
 
-		if err := m.repository.Save(ctx.Context(), sess); err != nil {
+		if err := m.repository.Save(ctx.UserContext(), sess); err != nil {
 			m.logger.WithError(err).Error("failed to save session")
 		}
 		sessionPool.Put(sess)

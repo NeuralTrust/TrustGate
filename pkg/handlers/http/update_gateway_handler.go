@@ -71,7 +71,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
 	}
 
-	dbGateway, err := h.repo.Get(c.Context(), gatewayUUID)
+	dbGateway, err := h.repo.Get(c.UserContext(), gatewayUUID)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to get gateway")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
@@ -170,14 +170,14 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	if req.TlS != nil {
 		for host := range dbGateway.ClientTLSConfig {
-			if err := h.tlsCertWriter.DeleteCerts(c.Context(), gatewayUUID, host); err != nil {
+			if err := h.tlsCertWriter.DeleteCerts(c.UserContext(), gatewayUUID, host); err != nil {
 				h.logger.WithError(err).WithField("host", host).Warn("failed to delete old TLS certs")
 			}
 		}
 		newTLSConfig := make(map[string]types.ClientTLSConfigDTO, len(req.TlS))
 		for host, tlsReq := range req.TlS {
 			paths, err := h.tlsCertWriter.WriteCerts(
-				c.Context(),
+				c.UserContext(),
 				gatewayUUID,
 				host,
 				tlsReq.CACert,
@@ -206,12 +206,12 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		dbGateway.ClientTLSConfig = newTLSConfig
 	}
 
-	if err := h.repo.Update(c.Context(), dbGateway); err != nil {
+	if err := h.repo.Update(c.UserContext(), dbGateway); err != nil {
 		h.logger.WithError(err).Error("Failed to update gateway")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update gateway"})
 	}
 
-	err = h.publisher.Publish(c.Context(), event.UpdateGatewayCacheEvent{
+	err = h.publisher.Publish(c.UserContext(), event.UpdateGatewayCacheEvent{
 		GatewayID: dbGateway.ID.String(),
 	})
 	if err != nil {

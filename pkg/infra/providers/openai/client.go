@@ -87,7 +87,7 @@ func (c *client) CompletionsStream(
 
 	httpClient := c.pool.Get(providers.ProviderOpenAI, providers.DefaultHTTPTimeout)
 	httpReq, err := http.NewRequestWithContext(
-		req.C.Context(), http.MethodPost, url, bytes.NewReader(reqBody),
+		req.C.UserContext(), http.MethodPost, url, bytes.NewReader(reqBody),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request: %w", err)

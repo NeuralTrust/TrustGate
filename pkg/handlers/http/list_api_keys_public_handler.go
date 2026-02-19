@@ -42,12 +42,12 @@ func (s *listAPIKeysPublicHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid subject_id"})
 	}
 
-	if _, err := s.gatewayRepo.Get(c.Context(), subjectUUID); err != nil {
+	if _, err := s.gatewayRepo.Get(c.UserContext(), subjectUUID); err != nil {
 		s.logger.WithError(err).Error("failed to get gateway")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 	}
 
-	apiKeys, err := s.apiKeyRepo.ListWithSubject(c.Context(), subjectUUID)
+	apiKeys, err := s.apiKeyRepo.ListWithSubject(c.UserContext(), subjectUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to list API keys")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list API keys"})

@@ -60,7 +60,7 @@ func (s *deleteRuleHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_id"})
 	}
-	err = s.repo.Delete(c.Context(), ruleUUID, gatewayUUID)
+	err = s.repo.Delete(c.UserContext(), ruleUUID, gatewayUUID)
 	if err != nil {
 		if errors.Is(err, repository.ErrRuleNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(
@@ -75,7 +75,7 @@ func (s *deleteRuleHandler) Handle(c *fiber.Ctx) error {
 
 	// Invalidate cache after deletion
 	if err := s.publisher.Publish(
-		c.Context(),
+		c.UserContext(),
 		event.DeleteRulesCacheEvent{GatewayID: gatewayID, RuleID: ruleID},
 	); err != nil {
 		s.logger.WithError(err).Error("failed to publish cache invalidation")

@@ -50,7 +50,7 @@ func (s *listServicesHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	services, err := s.repo.List(c.Context(), gatewayUUID, offset, limit)
+	services, err := s.repo.List(c.UserContext(), gatewayUUID, offset, limit)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to list services")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})

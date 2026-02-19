@@ -54,7 +54,7 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	gatewayId, _ := c.Locals(common.GatewayContextKey).(string)
 
-	entity, err := h.creator.Create(c.Context(), &req, gatewayId)
+	entity, err := h.creator.Create(c.UserContext(), &req, gatewayId)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to create gateway")
 		if isValidationError(err) {

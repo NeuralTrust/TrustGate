@@ -28,7 +28,7 @@ func (m *fingerPrintMiddleware) Middleware() fiber.Handler {
 	return func(ctx *fiber.Ctx) error {
 		fingerPrint := m.manager.MakeFingerprint(ctx)
 		ctx.Locals(common.FingerprintIdContextKey, fingerPrint.ID())
-		c := context.WithValue(ctx.Context(), common.FingerprintIdContextKey, fingerPrint.ID())
+		c := context.WithValue(ctx.UserContext(), common.FingerprintIdContextKey, fingerPrint.ID())
 		ctx.SetUserContext(c)
 		return ctx.Next()
 	}

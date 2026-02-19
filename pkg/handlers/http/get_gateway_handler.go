@@ -71,7 +71,7 @@ func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id format"})
 	}
 
-	dbGateway, err := s.repo.Get(c.Context(), gatewayUUID)
+	dbGateway, err := s.repo.Get(c.UserContext(), gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to get gateway")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
@@ -79,7 +79,7 @@ func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	output := s.transformer.Transform(dbGateway)
 
-	if err := s.updateGatewayCache.Update(c.Context(), dbGateway); err != nil {
+	if err := s.updateGatewayCache.Update(c.UserContext(), dbGateway); err != nil {
 		s.logger.WithError(err).Error("failed to cache gateway")
 	}
 

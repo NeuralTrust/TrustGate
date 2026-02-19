@@ -74,7 +74,7 @@ func (h *updateAPIKeyPoliciesHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid key ID"})
 	}
 
-	entity, err := h.apiKeyRepo.GetByID(c.Context(), keyID)
+	entity, err := h.apiKeyRepo.GetByID(c.UserContext(), keyID)
 	if err != nil {
 		h.logger.WithError(err).WithField("key_id", keyID).Error("failed to load api key")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "api key not found"})
@@ -103,7 +103,7 @@ func (h *updateAPIKeyPoliciesHandler) Handle(c *fiber.Ctx) error {
 		validationSubjectID = entity.Subject
 	}
 
-	if err := h.policyValidator.Validate(c.Context(), entity.SubjectType, validationSubjectID, req.Policies); err != nil {
+	if err := h.policyValidator.Validate(c.UserContext(), entity.SubjectType, validationSubjectID, req.Policies); err != nil {
 		switch {
 		case errors.Is(err, domain.ErrInvalidPolicyIDFormat):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -135,12 +135,12 @@ func (h *updateAPIKeyPoliciesHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	entity.Policies = policyUUIDs
-	if err := h.apiKeyRepo.Update(c.Context(), entity); err != nil {
+	if err := h.apiKeyRepo.Update(c.UserContext(), entity); err != nil {
 		h.logger.WithError(err).Error("failed to update api key policies")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update api key"})
 	}
 
-	if err := h.cache.SaveAPIKey(c.Context(), entity); err != nil {
+	if err := h.cache.SaveAPIKey(c.UserContext(), entity); err != nil {
 		h.logger.WithError(err).Warn("failed to cache updated api key")
 	}
 

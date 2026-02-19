@@ -24,7 +24,7 @@ func NewInvalidateCacheHandler(
 func (h *invalidateCacheHandler) Handle(c *fiber.Ctx) error {
 	h.logger.Info("Invalidating cache")
 
-	if err := h.cache.InvalidateAll(c.Context()); err != nil {
+	if err := h.cache.InvalidateAll(c.UserContext()); err != nil {
 		h.logger.WithError(err).Error("Failed to invalidate cache")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to invalidate cache",

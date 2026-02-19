@@ -48,7 +48,7 @@ func (s *deleteGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway_id"})
 	}
 
-	if err := s.deleter.Delete(c.Context(), parsedId); err != nil {
+	if err := s.deleter.Delete(c.UserContext(), parsedId); err != nil {
 		if domain.IsNotFoundError(err) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 		}

@@ -260,7 +260,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "internal server error"})
 	}
 
-	upstreamModel, err := h.getUpstream(c.Context(), matchingRule)
+	upstreamModel, err := h.getUpstream(c.UserContext(), matchingRule)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to get upstream")
 		return h.handleErrorResponse(c, fiber.StatusInternalServerError, fiber.Map{"error": "failed to get upstream"})
@@ -268,7 +268,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	reqCtx := &types.RequestContext{
 		C:         c,
-		Context:   c.Context(),
+		Context:   c.UserContext(),
 		GatewayID: gatewayID,
 		Headers:   make(map[string][]string),
 		Method:    reqData.Method,
@@ -307,7 +307,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	respCtx := &types.ResponseContext{
-		Context:   c.Context(),
+		Context:   c.UserContext(),
 		GatewayID: gatewayID,
 		Headers:   make(map[string][]string),
 		Metadata:  make(map[string]interface{}),
@@ -319,7 +319,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	if _, err := h.pluginManager.ExecuteStage(
-		c.Context(),
+		c.UserContext(),
 		plugintypes.PreRequest,
 		gatewayID,
 		reqCtx,
@@ -426,7 +426,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	// Execute pre-response plugins
 	if _, err := h.pluginManager.ExecuteStage(
-		c.Context(),
+		c.UserContext(),
 		plugintypes.PreResponse,
 		gatewayID,
 		reqCtx,
@@ -454,7 +454,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	// Execute post-response plugins
 	if _, err := h.pluginManager.ExecuteStage(
-		c.Context(),
+		c.UserContext(),
 		plugintypes.PostResponse,
 		gatewayID,
 		reqCtx,
@@ -627,7 +627,7 @@ func (h *forwardedHandler) forwardRequest(
 		}
 
 		response, err := h.doForwardRequest(
-			req.C.Context(),
+			req.C.UserContext(),
 			&forwardedRequestDTO{
 				req:            req,
 				rule:           rule,
@@ -761,7 +761,7 @@ func (h *forwardedHandler) handlerProviderResponse(
 	}
 
 	responseBody, err := providerClient.Completions(
-		req.C.Context(),
+		req.C.UserContext(),
 		&providers.Config{
 			Options:       target.ProviderOptions,
 			AllowedModels: target.Models,
@@ -1212,8 +1212,8 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 		if err != nil {
 			return nil, fmt.Errorf("failed to stream request: %w", err)
 		}
-	case <-req.C.Context().Done():
-		return nil, fmt.Errorf("request cancelled: %w", req.C.Context().Err())
+	case <-req.C.UserContext().Done():
+		return nil, fmt.Errorf("request cancelled: %w", req.C.UserContext().Err())
 	case <-breakChan:
 		break
 	case <-time.After(30 * time.Second):

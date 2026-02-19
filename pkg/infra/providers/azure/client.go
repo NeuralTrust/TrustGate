@@ -79,7 +79,7 @@ func (c *client) CompletionsStream(
 		return fmt.Errorf("model (deployment ID) is required")
 	}
 
-	token, err := c.getToken(reqCtx.C.Context(), config)
+	token, err := c.getToken(reqCtx.C.UserContext(), config)
 	if err != nil {
 		return err
 	}
@@ -88,7 +88,7 @@ func (c *client) CompletionsStream(
 
 	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
 	httpReq, err := http.NewRequestWithContext(
-		reqCtx.C.Context(), http.MethodPost, url, bytes.NewReader(reqBody),
+		reqCtx.C.UserContext(), http.MethodPost, url, bytes.NewReader(reqBody),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request: %w", err)
@@ -111,7 +111,7 @@ func (c *client) CompletionsStream(
 	// Do not forward upstream headers here: CompletionsStream runs in a goroutine and
 	// Fiber's Ctx is not safe to use from another goroutine. The HTTP handler already
 	// sets stream headers (Content-Type: text/event-stream, etc.) before starting the stream.
-	// Do not use reqCtx.C.Context() from this goroutine: Fiber's context can panic on Done().
+	// Do not use reqCtx.C.UserContext() from this goroutine: Fiber's context can panic on Done().
 
 	close(breakChan)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

@@ -60,7 +60,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway uuid"})
 	}
 
-	gw, err := s.gatewayRepo.Get(c.Context(), gatewayUUID)
+	gw, err := s.gatewayRepo.Get(c.UserContext(), gatewayUUID)
 
 	if err != nil {
 		if errors.As(err, &domain.ErrEntityNotFound) {
@@ -70,7 +70,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get gateway"})
 	}
 
-	dbRules, err := s.ruleRepo.ListRules(c.Context(), gatewayUUID)
+	dbRules, err := s.ruleRepo.ListRules(c.UserContext(), gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to get rules from database")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list rules"})
@@ -106,7 +106,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
 		}
 
-		srv, err := s.serviceRepo.Get(c.Context(), rule.ServiceID.String())
+		srv, err := s.serviceRepo.Get(c.UserContext(), rule.ServiceID.String())
 		if err != nil {
 			s.logger.WithError(err).Error("failed to get service from database")
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get service"})
@@ -144,7 +144,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 	rulesJSON, err := json.Marshal(rules)
 	if err == nil {
 		rulesKey := fmt.Sprintf("rules:%s", gatewayID)
-		if err := s.cache.Set(c.Context(), rulesKey, string(rulesJSON), 0); err != nil {
+		if err := s.cache.Set(c.UserContext(), rulesKey, string(rulesJSON), 0); err != nil {
 			s.logger.WithError(err).Warn("failed to cache rules")
 		}
 	}

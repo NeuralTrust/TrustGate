@@ -84,7 +84,7 @@ func (h *updatePluginsHandler) handleGatewayUpdate(c *fiber.Ctx, req *request.Up
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
 	}
 
-	entity, err := h.gatewayRepo.Get(c.Context(), gID)
+	entity, err := h.gatewayRepo.Get(c.UserContext(), gID)
 	if err != nil || entity == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "gateway not found"})
 	}
@@ -116,20 +116,20 @@ func (h *updatePluginsHandler) handleGatewayUpdate(c *fiber.Ctx, req *request.Up
 		}
 	}
 
-	if err := h.pluginChainValidator.Validate(c.Context(), gID, updated); err != nil {
+	if err := h.pluginChainValidator.Validate(c.UserContext(), gID, updated); err != nil {
 		h.logger.WithError(err).Error("failed to validate updated plugin chain")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	entity.RequiredPlugins = updated
 	entity.UpdatedAt = time.Now()
-	if err := h.gatewayRepo.Update(c.Context(), entity); err != nil {
+	if err := h.gatewayRepo.Update(c.UserContext(), entity); err != nil {
 		h.logger.WithError(err).Error("failed to update gateway plugins")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update gateway"})
 	}
 
 	if err := h.publisher.Publish(
-		c.Context(),
+		c.UserContext(),
 		event.UpdateGatewayCacheEvent{GatewayID: entity.ID.String()},
 	); err != nil {
 		h.logger.WithError(err).Error("failed to publish gateway cache update event")
@@ -146,7 +146,7 @@ func (h *updatePluginsHandler) handleRuleUpdate(c *fiber.Ctx, req *request.Updat
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule ID"})
 	}
 
-	rule, err := h.ruleRepo.GetRuleByID(c.Context(), rID)
+	rule, err := h.ruleRepo.GetRuleByID(c.UserContext(), rID)
 	if err != nil || rule == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
 	}
@@ -173,25 +173,25 @@ func (h *updatePluginsHandler) handleRuleUpdate(c *fiber.Ctx, req *request.Updat
 		}
 	}
 
-	if err := h.pluginChainValidator.Validate(c.Context(), rule.GatewayID, updated); err != nil {
+	if err := h.pluginChainValidator.Validate(c.UserContext(), rule.GatewayID, updated); err != nil {
 		h.logger.WithError(err).Error("failed to validate updated plugin chain")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	rule.PluginChain = updated
 	rule.UpdatedAt = time.Now()
-	if err := h.ruleRepo.Update(c.Context(), rule); err != nil {
+	if err := h.ruleRepo.Update(c.UserContext(), rule); err != nil {
 		h.logger.WithError(err).Error("failed to update rule plugins")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update rule"})
 	}
 
 	// Refresh rules cache synchronously to avoid stale reads after update
-	if _, err := h.ruleRepo.ListRules(c.Context(), rule.GatewayID); err != nil {
+	if _, err := h.ruleRepo.ListRules(c.UserContext(), rule.GatewayID); err != nil {
 		h.logger.WithError(err).Warn("failed to refresh rules cache after plugin update")
 	}
 
 	if err := h.publisher.Publish(
-		c.Context(),
+		c.UserContext(),
 		event.DeleteRulesCacheEvent{GatewayID: rule.GatewayID.String()},
 	); err != nil {
 		h.logger.WithError(err).Error("failed to publish rules cache invalidation event")

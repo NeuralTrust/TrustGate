@@ -119,14 +119,14 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// Validate that gateway exists
-	_, err = s.gatewayRepo.Get(c.Context(), gatewayUUID)
+	_, err = s.gatewayRepo.Get(c.UserContext(), gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("GatewayDTO not found")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "GatewayDTO not found"})
 	}
 
 	// Validate that service exists
-	_, err = s.serviceRepo.Get(c.Context(), request.ServiceID)
+	_, err = s.serviceRepo.Get(c.UserContext(), request.ServiceID)
 	if err != nil {
 		s.logger.WithError(err).WithField("service_id", request.ServiceID).Error("Service not found")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Service not found"})
@@ -184,14 +184,14 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	if len(request.PluginChain) > 0 {
-		err = s.pluginChainValidator.Validate(c.Context(), gatewayUUID, request.PluginChain)
+		err = s.pluginChainValidator.Validate(c.UserContext(), gatewayUUID, request.PluginChain)
 		if err != nil {
 			s.logger.WithError(err).Error("failed to validate plugin chain")
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 	}
 
-	rules, err := s.repo.ListRules(c.Context(), gatewayUUID)
+	rules, err := s.repo.ListRules(c.UserContext(), gatewayUUID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to list rules")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to check existing rules"})
@@ -206,7 +206,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	if err := s.repo.Create(c.Context(), dbRule); err != nil {
+	if err := s.repo.Create(c.UserContext(), dbRule); err != nil {
 		s.logger.WithError(err).Error("Failed to create rule")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create rule"})
 	}
@@ -218,7 +218,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	if err := s.publisher.Publish(
-		c.Context(),
+		c.UserContext(),
 		event.DeleteGatewayCacheEvent{GatewayID: gatewayID},
 	); err != nil {
 		s.logger.WithError(err).Error("failed to publish cache invalidation")

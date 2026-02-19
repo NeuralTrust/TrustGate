@@ -32,7 +32,7 @@ func (s *getAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid key_id"})
 	}
 
-	apiKey, err := s.repo.GetByID(c.Context(), keyUUID)
+	apiKey, err := s.repo.GetByID(c.UserContext(), keyUUID)
 	if err != nil {
 		if errors.Is(err, domain.ErrEntityNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "API Key not found"})

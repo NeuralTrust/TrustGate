@@ -97,7 +97,7 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rule_id"})
 	}
 
-	if err := s.updateForwardingRuleDB(c.Context(), ruleUUID, gatewayUUID, *updateReq); err != nil {
+	if err := s.updateForwardingRuleDB(c.UserContext(), ruleUUID, gatewayUUID, *updateReq); err != nil {
 		return s.handleUpdateError(c, err)
 	}
 
@@ -105,7 +105,7 @@ func (s *updateRuleHandler) Handle(c *fiber.Ctx) error {
 		return err
 	}
 
-	s.publishCacheInvalidation(c.Context(), gatewayID)
+	s.publishCacheInvalidation(c.UserContext(), gatewayID)
 
 	s.emitAuditLog(c, ruleID, "", auditlogs.StatusSuccess, "")
 
@@ -328,7 +328,7 @@ func (s *updateRuleHandler) updateRuleInCache(
 	gatewayID, ruleID string,
 	updateReq req.UpdateRuleRequest,
 ) error {
-	rules, err := s.getRulesFromCache(c.Context(), gatewayID)
+	rules, err := s.getRulesFromCache(c.UserContext(), gatewayID)
 	if err != nil {
 		s.logger.WithError(err).Error("failed to get rules from cache")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
@@ -338,7 +338,7 @@ func (s *updateRuleHandler) updateRuleInCache(
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "rule not found"})
 	}
 
-	if err := s.saveRulesToCache(c.Context(), gatewayID, rules); err != nil {
+	if err := s.saveRulesToCache(c.UserContext(), gatewayID, rules); err != nil {
 		s.logger.WithError(err).Error("failed to save rules to cache")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update rule"})
 	}

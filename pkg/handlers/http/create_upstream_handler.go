@@ -81,7 +81,7 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	if _, err := s.gatewayRepo.Get(c.Context(), gatewayUUID); err != nil {
+	if _, err := s.gatewayRepo.Get(c.UserContext(), gatewayUUID); err != nil {
 		s.logger.WithError(err).WithField("gateway_id", gatewayUUID).Error("Gateway not found")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Gateway not found"})
 	}
@@ -91,16 +91,16 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	if err := s.repo.CreateUpstream(c.Context(), entity); err != nil {
+	if err := s.repo.CreateUpstream(c.UserContext(), entity); err != nil {
 		s.logger.WithError(err).Error("failed to create upstream")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	if err := s.cache.SaveUpstream(c.Context(), gatewayUUID.String(), entity); err != nil {
+	if err := s.cache.SaveUpstream(c.UserContext(), gatewayUUID.String(), entity); err != nil {
 		s.logger.WithError(err).Error("failed to cache upstream")
 	}
 
-	if err := s.descriptionEmbeddingCreator.Process(c.Context(), entity); err != nil {
+	if err := s.descriptionEmbeddingCreator.Process(c.UserContext(), entity); err != nil {
 		s.logger.WithError(err).Error("failed to process embeddings for upstream targets")
 	}
 

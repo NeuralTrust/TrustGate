@@ -90,12 +90,12 @@ func (c *client) CompletionsStream(
 
 	reqBody = stripBedrockFields(reqBody)
 
-	bedrockCl, err := c.getOrCreateClient(reqCtx.C.Context(), cfg.Credentials)
+	bedrockCl, err := c.getOrCreateClient(reqCtx.C.UserContext(), cfg.Credentials)
 	if err != nil {
 		return fmt.Errorf("failed to create Bedrock client: %w", err)
 	}
 
-	resp, err := bedrockCl.InvokeModelWithResponseStream(reqCtx.C.Context(), &bedrockruntime.InvokeModelWithResponseStreamInput{
+	resp, err := bedrockCl.InvokeModelWithResponseStream(reqCtx.C.UserContext(), &bedrockruntime.InvokeModelWithResponseStreamInput{
 		ModelId:     aws.String(model),
 		ContentType: aws.String("application/json"),
 		Body:        reqBody,

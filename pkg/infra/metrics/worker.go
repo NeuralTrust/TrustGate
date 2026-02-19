@@ -144,7 +144,7 @@ func (m *worker) registryMetricsToExporters(
 		for _, metricsEvent := range events {
 			clonedEvent := m.cloneEvent(*metricsEvent)
 			//nolint
-			ctx := context.WithValue(context.Background(), string(common.MatchedRuleContextKey), resp.Rule)
+			ctx := context.WithValue(context.Background(), common.MatchedRuleContextKey, resp.Rule)
 			err = exporter.Handle(ctx, m.feedEvent(clonedEvent, req, resp, startTime, endTime))
 			if err != nil {
 				m.logger.WithFields(logrus.Fields{

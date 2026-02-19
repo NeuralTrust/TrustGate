@@ -79,13 +79,13 @@ func (s *createServiceHandler) Handle(c *fiber.Ctx) error {
 		UpdatedAt:   r.UpdatedAt,
 	}
 
-	if err := s.repo.Create(c.Context(), &entity); err != nil {
+	if err := s.repo.Create(c.UserContext(), &entity); err != nil {
 		s.logger.WithError(err).Error("Failed to create service")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	// Cache the service
-	if err := s.cache.SaveService(c.Context(), gatewayID, &entity); err != nil {
+	if err := s.cache.SaveService(c.UserContext(), gatewayID, &entity); err != nil {
 		s.logger.WithError(err).Error("Failed to cache service")
 	}
 

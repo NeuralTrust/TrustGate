@@ -83,7 +83,7 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
 		}
 
-		_, err = s.gatewayRepo.Get(c.Context(), gatewayUUID)
+		_, err = s.gatewayRepo.Get(c.UserContext(), gatewayUUID)
 		if err != nil {
 			s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Gateway not found")
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Gateway not found"})
@@ -120,7 +120,7 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	if err := s.policyValidator.Validate(c.Context(), subjectType, subjectUUID, req.Policies); err != nil {
+	if err := s.policyValidator.Validate(c.UserContext(), subjectType, subjectUUID, req.Policies); err != nil {
 		switch {
 		case errors.Is(err, apikey.ErrInvalidPolicyIDFormat):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -166,12 +166,12 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create API key"})
 	}
 
-	if err := s.apiKeyRepo.Create(c.Context(), apiKey); err != nil {
+	if err := s.apiKeyRepo.Create(c.UserContext(), apiKey); err != nil {
 		s.logger.WithError(err).Error("Failed to create API key")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create API key"})
 	}
 
-	if err := s.cache.SaveAPIKey(c.Context(), apiKey); err != nil {
+	if err := s.cache.SaveAPIKey(c.UserContext(), apiKey); err != nil {
 		s.logger.WithError(err).Error("Failed to cache API key")
 	}
 

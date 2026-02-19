@@ -48,7 +48,7 @@ func (s *getUpstreamHandler) Handle(c *fiber.Ctx) error {
 
 	// Try to get from cache first
 	upstreamKey := fmt.Sprintf(cache.UpstreamKeyPattern, gatewayID, upstreamID)
-	if upstreamJSON, err := s.cache.Get(c.Context(), upstreamKey); err == nil {
+	if upstreamJSON, err := s.cache.Get(c.UserContext(), upstreamKey); err == nil {
 		var entity domain.Upstream
 		if err := json.Unmarshal([]byte(upstreamJSON), &entity); err == nil {
 			return c.Status(fiber.StatusOK).JSON(entity)
@@ -68,13 +68,13 @@ func (s *getUpstreamHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	// If not in cache, get from database
-	entity, err := s.upstreamFinder.Find(c.Context(), gatewayIDUUID, upstreamIDUUID)
+	entity, err := s.upstreamFinder.Find(c.UserContext(), gatewayIDUUID, upstreamIDUUID)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "upstream not found"})
 	}
 
 	// Cache the upstream
-	if err := s.cache.SaveUpstream(c.Context(), gatewayID, entity); err != nil {
+	if err := s.cache.SaveUpstream(c.UserContext(), gatewayID, entity); err != nil {
 		s.logger.WithError(err).Error("failed to cache upstream")
 	}
 

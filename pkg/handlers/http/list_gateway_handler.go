@@ -54,7 +54,7 @@ func (h *listGatewayHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	dbGateways, err := h.repo.List(c.Context(), offset, limit)
+	dbGateways, err := h.repo.List(c.UserContext(), offset, limit)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to list gateways")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list gateways"})

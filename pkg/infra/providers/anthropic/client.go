@@ -61,7 +61,7 @@ func (c *client) CompletionsStream(
 	httpClient := c.pool.Get(providers.ProviderAnthropic, providers.DefaultHTTPTimeout)
 
 	httpReq, err := http.NewRequestWithContext(
-		reqCtx.C.Context(), http.MethodPost, messagesURL, bytes.NewReader(reqBody),
+		reqCtx.C.UserContext(), http.MethodPost, messagesURL, bytes.NewReader(reqBody),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request: %w", err)

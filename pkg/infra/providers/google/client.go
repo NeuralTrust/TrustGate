@@ -81,7 +81,7 @@ func (c *client) CompletionsStream(
 	httpClient := c.pool.Get(providers.ProviderGoogle, providers.DefaultHTTPTimeout)
 
 	httpReq, err := http.NewRequestWithContext(
-		reqCtx.C.Context(),
+		reqCtx.C.UserContext(),
 		http.MethodPost,
 		url,
 		bytes.NewReader(reqBody),
