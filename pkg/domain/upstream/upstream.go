@@ -267,8 +267,10 @@ func (u *Upstream) Validate() error {
 
 	validAlgorithms := map[string]bool{
 		"round-robin":          true,
+		"random":               true,
 		"weighted-round-robin": true,
 		"least-conn":           true,
+		"least-connections":    true,
 		"semantic":             true,
 	}
 
@@ -283,11 +285,13 @@ func (u *Upstream) Validate() error {
 		if u.EmbeddingConfig.Model == "" {
 			return fmt.Errorf("embedding model is required when algorithm is semantic")
 		}
-		if u.EmbeddingConfig.Credentials.HeaderName == "" {
-			return fmt.Errorf("embedding credentials header_name is required when algorithm is semantic")
-		}
-		if u.EmbeddingConfig.Credentials.HeaderValue == "" {
-			return fmt.Errorf("embedding credentials header_value is required when algorithm is semantic")
+		if u.EmbeddingConfig.Credentials.ApiKey == "" {
+			if u.EmbeddingConfig.Credentials.HeaderName == "" {
+				return fmt.Errorf("embedding credentials header_name is required when algorithm is semantic")
+			}
+			if u.EmbeddingConfig.Credentials.HeaderValue == "" {
+				return fmt.Errorf("embedding credentials header_value is required when algorithm is semantic")
+			}
 		}
 	}
 

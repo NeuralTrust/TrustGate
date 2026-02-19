@@ -143,40 +143,38 @@ func (r *UpstreamRequest) Validate() error {
 			if target.Path != "" {
 				return fmt.Errorf("target %d: when target has provider specified, path must be empty", i)
 			}
-
-			// Validate per-target auth when present
-			if target.Auth != nil {
-				if target.Auth.Type != AuthTypeOAuth2 {
-					return fmt.Errorf("target %d: auth.type must be 'oauth2'", i)
+		}
+		if target.Auth != nil {
+			if target.Auth.Type != AuthTypeOAuth2 {
+				return fmt.Errorf("target %d: auth.type must be 'oauth2'", i)
+			}
+			if target.Auth.OAuth == nil {
+				return fmt.Errorf("target %d: auth.oauth is required when auth.type is 'oauth2'", i)
+			}
+			if target.Auth.OAuth.TokenURL == "" {
+				return fmt.Errorf("target %d: auth.oauth.token_url is required", i)
+			}
+			if target.Auth.OAuth.GrantType == "" {
+				return fmt.Errorf("target %d: auth.oauth.grant_type is required", i)
+			}
+			switch target.Auth.OAuth.GrantType {
+			case string(oauth.GrantTypeClientCredentials):
+				if !target.Auth.OAuth.UseBasicAuth && target.Auth.OAuth.ClientID == "" {
+					return fmt.Errorf("target %d: auth.oauth.client_id is required for client_credentials when use_basic_auth is false", i)
 				}
-				if target.Auth.OAuth == nil {
-					return fmt.Errorf("target %d: auth.oauth is required when auth.type is 'oauth2'", i)
+			case string(oauth.GrantTypeAuthorizationCode):
+				if target.Auth.OAuth.Code == "" {
+					return fmt.Errorf("target %d: auth.oauth.code is required for authorization_code", i)
 				}
-				if target.Auth.OAuth.TokenURL == "" {
-					return fmt.Errorf("target %d: auth.oauth.token_url is required", i)
+				if target.Auth.OAuth.RedirectURI == "" {
+					return fmt.Errorf("target %d: auth.oauth.redirect_uri is required for authorization_code", i)
 				}
-				if target.Auth.OAuth.GrantType == "" {
-					return fmt.Errorf("target %d: auth.oauth.grant_type is required", i)
+			case string(oauth.GrantTypePassword):
+				if target.Auth.OAuth.Username == "" || target.Auth.OAuth.Password == "" {
+					return fmt.Errorf("target %d: auth.oauth.username and auth.oauth.password are required for password grant", i)
 				}
-				switch target.Auth.OAuth.GrantType {
-				case string(oauth.GrantTypeClientCredentials):
-					if !target.Auth.OAuth.UseBasicAuth && target.Auth.OAuth.ClientID == "" {
-						return fmt.Errorf("target %d: auth.oauth.client_id is required for client_credentials when use_basic_auth is false", i)
-					}
-				case string(oauth.GrantTypeAuthorizationCode):
-					if target.Auth.OAuth.Code == "" {
-						return fmt.Errorf("target %d: auth.oauth.code is required for authorization_code", i)
-					}
-					if target.Auth.OAuth.RedirectURI == "" {
-						return fmt.Errorf("target %d: auth.oauth.redirect_uri is required for authorization_code", i)
-					}
-				case string(oauth.GrantTypePassword):
-					if target.Auth.OAuth.Username == "" || target.Auth.OAuth.Password == "" {
-						return fmt.Errorf("target %d: auth.oauth.username and auth.oauth.password are required for password grant", i)
-					}
-				default:
-					return fmt.Errorf("target %d: unsupported auth.oauth.grant_type: %s", i, target.Auth.OAuth.GrantType)
-				}
+			default:
+				return fmt.Errorf("target %d: unsupported auth.oauth.grant_type: %s", i, target.Auth.OAuth.GrantType)
 			}
 		}
 		if len(target.ProviderOptions) > 0 && target.Provider == "" {
@@ -203,11 +201,13 @@ func (r *UpstreamRequest) Validate() error {
 		if r.Embedding.Model == "" {
 			return fmt.Errorf("embedding model is required when algorithm is semantic")
 		}
-		if r.Embedding.Credentials.HeaderName == "" {
-			return fmt.Errorf("embedding credentials header_name is required when algorithm is semantic")
-		}
-		if r.Embedding.Credentials.HeaderValue == "" {
-			return fmt.Errorf("embedding credentials header_value is required when algorithm is semantic")
+		if r.Embedding.Credentials.ApiKey == "" {
+			if r.Embedding.Credentials.HeaderName == "" {
+				return fmt.Errorf("embedding credentials header_name is required when algorithm is semantic")
+			}
+			if r.Embedding.Credentials.HeaderValue == "" {
+				return fmt.Errorf("embedding credentials header_value is required when algorithm is semantic")
+			}
 		}
 	}
 	if r.WebhookConfig != nil && r.ProxyConfig != nil {

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"net/http"
 	"sync"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
@@ -16,32 +15,50 @@ import (
 )
 
 type Semantic struct {
-	mu              sync.Mutex
-	embeddingConfig *types.EmbeddingConfigDTO
+	mu              sync.RWMutex
 	targets         []types.UpstreamTargetDTO
-	client          *http.Client
 	embeddingRepo   embedding.Repository
 	serviceLocator  factory.EmbeddingServiceLocator
+	embeddingConfig *embedding.Config
 }
 
 func NewSemantic(
-	embeddingConfig *types.EmbeddingConfigDTO,
+	embeddingCfg *types.EmbeddingConfigDTO,
 	targets []types.UpstreamTargetDTO,
 	embeddingRepo embedding.Repository,
 	serviceLocator factory.EmbeddingServiceLocator,
 ) *Semantic {
-	return &Semantic{
-		embeddingConfig: embeddingConfig,
-		targets:         targets,
-		client:          &http.Client{},
-		embeddingRepo:   embeddingRepo,
-		serviceLocator:  serviceLocator,
+	s := &Semantic{
+		targets:        targets,
+		embeddingRepo:  embeddingRepo,
+		serviceLocator: serviceLocator,
+	}
+	if embeddingCfg != nil {
+		s.embeddingConfig = s.buildEmbeddingConfig(embeddingCfg)
+	}
+	return s
+}
+
+func (s *Semantic) buildEmbeddingConfig(cfg *types.EmbeddingConfigDTO) *embedding.Config {
+	creds := domain.CredentialsJSON{
+		HeaderName:  cfg.Credentials.HeaderName,
+		HeaderValue: cfg.Credentials.HeaderValue,
+	}
+	if cfg.Credentials.ApiKey != "" {
+		creds.ApiKey = cfg.Credentials.ApiKey
+	} else if creds.HeaderValue != "" {
+		creds.ApiKey = creds.HeaderValue
+	}
+	return &embedding.Config{
+		Provider:    cfg.Provider,
+		Model:       cfg.Model,
+		Credentials: creds,
 	}
 }
 
 func (s *Semantic) Next(req *types.RequestContext) *types.UpstreamTargetDTO {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	if len(s.targets) == 0 {
 		return nil
@@ -51,22 +68,21 @@ func (s *Semantic) Next(req *types.RequestContext) *types.UpstreamTargetDTO {
 		return &s.targets[0]
 	}
 
+	if s.embeddingConfig == nil {
+		return &s.targets[0]
+	}
+
 	prompt, err := s.extractPromptFromRequest(req.Body)
 	if err != nil {
 		return &s.targets[0]
 	}
 
-	promptEmbedding, err := s.generateEmbedding(prompt)
+	promptEmbedding, err := s.generateEmbedding(req.Context, prompt)
 	if err != nil {
 		return &s.targets[0]
 	}
 
-	bestTarget, err := s.findSimilarTarget(req.Context, promptEmbedding)
-	if err != nil || bestTarget == nil {
-		return &s.targets[0]
-	}
-
-	return bestTarget
+	return s.findBestTarget(req.Context, promptEmbedding)
 }
 
 func (s *Semantic) Name() string {
@@ -99,31 +115,19 @@ func (s *Semantic) extractPromptFromRequest(body []byte) (string, error) {
 	return "", fmt.Errorf("could not extract prompt from request")
 }
 
-func (s *Semantic) generateEmbedding(text string) ([]float64, error) {
+func (s *Semantic) generateEmbedding(ctx context.Context, text string) ([]float64, error) {
 	embeddingService, err := s.serviceLocator.GetService(factory.OpenAIProvider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get embedding service: %w", err)
 	}
-	if s.embeddingConfig == nil {
-		return nil, fmt.Errorf("embedding config not found")
-	}
-	embeddingConfig := &embedding.Config{
-		Provider: s.embeddingConfig.Provider,
-		Model:    s.embeddingConfig.Model,
-		Credentials: domain.CredentialsJSON{
-			HeaderName:  s.embeddingConfig.Credentials.HeaderName,
-			HeaderValue: s.embeddingConfig.Credentials.HeaderValue,
-		},
-	}
-	emb, err := embeddingService.Generate(context.Background(), text, embeddingConfig.Model, embeddingConfig)
+	emb, err := embeddingService.Generate(ctx, text, s.embeddingConfig.Model, s.embeddingConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate embedding: %w", err)
 	}
-
 	return emb.Value, nil
 }
 
-func (s *Semantic) findSimilarTarget(ctx context.Context, promptEmbedding []float64) (*types.UpstreamTargetDTO, error) {
+func (s *Semantic) findBestTarget(ctx context.Context, promptEmbedding []float64) *types.UpstreamTargetDTO {
 	var bestTarget *types.UpstreamTargetDTO
 	var bestSimilarity float64 = -1
 
@@ -135,19 +139,19 @@ func (s *Semantic) findSimilarTarget(ctx context.Context, promptEmbedding []floa
 		if err != nil {
 			continue
 		}
-		similarity := s.cosineSimilarity(promptEmbedding, targetEmbedding.Value)
+		similarity := cosineSimilarity(promptEmbedding, targetEmbedding.Value)
 		if similarity > bestSimilarity {
 			bestSimilarity = similarity
 			bestTarget = &s.targets[i]
 		}
 	}
 	if bestTarget == nil {
-		return &s.targets[0], nil
+		return &s.targets[0]
 	}
-	return bestTarget, nil
+	return bestTarget
 }
 
-func (s *Semantic) cosineSimilarity(a, b []float64) float64 {
+func cosineSimilarity(a, b []float64) float64 {
 	if len(a) != len(b) {
 		return 0
 	}
