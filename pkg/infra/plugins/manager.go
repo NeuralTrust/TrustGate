@@ -385,7 +385,6 @@ func (m *manager) executeSequential(
 				return err
 			}
 			if pluginResp != nil {
-				m.mu.Lock()
 				resp.StatusCode = pluginResp.StatusCode
 				if pluginResp.Body != nil {
 					resp.Body = pluginResp.Body
@@ -403,7 +402,6 @@ func (m *manager) executeSequential(
 						resp.Metadata[k] = v
 					}
 				}
-				m.mu.Unlock()
 			}
 		}
 	}
@@ -444,6 +442,7 @@ func (m *manager) executeParallel(
 
 		results := make([]pluginResult, 0, len(group))
 		var resultsMu sync.Mutex
+		var respMu sync.Mutex
 
 		g, gctx := errgroup.WithContext(ctx)
 
@@ -462,7 +461,7 @@ func (m *manager) executeParallel(
 						Err:        errors.New("plugin not found: " + cfg.Name),
 						StatusCode: 500,
 					}
-					m.applyPluginErrorToResponse(pe, resp)
+					applyPluginErrorToResponse(pe, resp, &respMu)
 					return pe
 				}
 
@@ -473,25 +472,17 @@ func (m *manager) executeParallel(
 
 				select {
 				case <-gctx.Done():
-					// Context was canceled (likely by another plugin returning an error)
-					// Return nil so the errgroup doesn't treat this as an error
-					// The errgroup already has the first error, so this won't affect g.Wait()
 					return nil
 				default:
 				}
 
 				if err != nil {
-					// Check if the error is due to context cancellation
-					// This handles cases where the plugin executed and encountered
-					// context.Canceled during HTTP call or other operations
 					if errors.Is(err, context.Canceled) {
-						// Context was canceled, return success instead of error
-						// The errgroup already has the first error (from the plugin that triggered cancellation)
 						return nil
 					}
 					var pe *pluginTypes.PluginError
 					if errors.As(err, &pe) {
-						m.applyPluginErrorToResponse(pe, resp)
+						applyPluginErrorToResponse(pe, resp, &respMu)
 						return pe
 					}
 					return err
@@ -511,13 +502,10 @@ func (m *manager) executeParallel(
 			})
 		}
 
-		// Group wait: if it returns an error, it was the first one and we've already set resp (headers/status)
 		if err := g.Wait(); err != nil {
 			return err
 		}
 
-		// If there were no errors, apply all successful results
-		// Deterministic order by plugin name (or any field from cfg you prefer)
 		sort.Slice(results, func(i, j int) bool {
 			return results[i].cfg.Name < results[j].cfg.Name
 		})
@@ -526,7 +514,6 @@ func (m *manager) executeParallel(
 			if r.resp == nil {
 				continue
 			}
-			m.mu.Lock()
 			if r.resp.StatusCode > 0 {
 				resp.StatusCode = r.resp.StatusCode
 			}
@@ -549,16 +536,15 @@ func (m *manager) executeParallel(
 					resp.Metadata[k] = v
 				}
 			}
-			m.mu.Unlock()
 		}
 	}
 
 	return nil
 }
 
-func (m *manager) applyPluginErrorToResponse(pe *pluginTypes.PluginError, resp *types.ResponseContext) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func applyPluginErrorToResponse(pe *pluginTypes.PluginError, resp *types.ResponseContext, mu *sync.Mutex) {
+	mu.Lock()
+	defer mu.Unlock()
 	if pe.StatusCode > 0 {
 		resp.StatusCode = pe.StatusCode
 	} else {
