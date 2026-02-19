@@ -1,9 +1,7 @@
 package neuraltrust_moderation
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +14,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/pluginiface"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
@@ -40,46 +37,42 @@ type LLMResponse struct {
 
 type NeuralTrustModerationPlugin struct {
 	basePlugin         *pluginTypes.BasePlugin
-	client             httpx.Client
 	fingerPrintManager fingerprint.Tracker
 	logger             *logrus.Logger
 	providerLocator    providersFactory.ProviderLocator
 	firewallFactory    firewall.ClientFactory
-	bufferPool         sync.Pool
-	byteSlicePool      sync.Pool
+}
+
+var (
+	regexCacheMu sync.RWMutex
+	regexCache   = make(map[string][]*regexp.Regexp)
+)
+
+type levPair struct {
+	a, b []int
+}
+
+var levPairPool = sync.Pool{
+	New: func() any {
+		return &levPair{
+			a: make([]int, 0, 128),
+			b: make([]int, 0, 128),
+		}
+	},
 }
 
 func NewNeuralTrustModerationPlugin(
 	logger *logrus.Logger,
-	client httpx.Client,
 	fingerPrintManager fingerprint.Tracker,
 	providerLocator providersFactory.ProviderLocator,
 	firewallFactory firewall.ClientFactory,
 ) pluginiface.Plugin {
-	if client == nil {
-		client = &http.Client{ //nolint
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
-			},
-		}
-	}
 	return &NeuralTrustModerationPlugin{
 		basePlugin:         pluginTypes.NewBasePlugin(),
-		client:             client,
 		logger:             logger,
 		fingerPrintManager: fingerPrintManager,
 		providerLocator:    providerLocator,
 		firewallFactory:    firewallFactory,
-		bufferPool: sync.Pool{
-			New: func() any {
-				return new(bytes.Buffer)
-			},
-		},
-		byteSlicePool: sync.Pool{
-			New: func() any {
-				return make([]byte, 4096)
-			},
-		},
 	}
 }
 
@@ -287,14 +280,10 @@ func (p *NeuralTrustModerationPlugin) executeKeyReg(
 	evt *NeuralTrustModerationData,
 ) (bool, error) {
 	keywords := conf.KeyRegParamBag.Keywords
-	regexRules := make([]*regexp.Regexp, len(conf.KeyRegParamBag.Regex))
-	for i, pattern := range conf.KeyRegParamBag.Regex {
-		regex, err := regexp.Compile(pattern)
-		if err != nil {
-			p.logger.WithError(err).Error("failed to compile regex pattern")
-			return false, fmt.Errorf("failed to compile regex pattern '%s': %v", pattern, err)
-		}
-		regexRules[i] = regex
+	regexRules, err := getOrCompileRegex(conf.KeyRegParamBag.Regex)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to compile regex pattern")
+		return false, err
 	}
 
 	threshold := conf.KeyRegParamBag.SimilarityThreshold
@@ -367,9 +356,8 @@ func (p *NeuralTrustModerationPlugin) notifyGuardrailViolation(ctx context.Conte
 		return
 	}
 	if storedFp != nil {
-		ttl := fingerprint.DefaultExpiration
-		if conf.RetentionPeriod == 0 {
-			conf.RetentionPeriod = 60
+		ttl := 60 * time.Second
+		if conf.RetentionPeriod > 0 {
 			ttl = time.Duration(conf.RetentionPeriod) * time.Second
 		}
 		err = p.fingerPrintManager.IncrementMaliciousCount(ctx, fp, ttl)
@@ -466,8 +454,7 @@ func (p *NeuralTrustModerationPlugin) callAIModeration(
 		return
 	}
 
-	p.logger.WithFields(logrus.Fields{"duration": duration, "response_body": string(responseBody)}).
-		Info("LLM provider responded successfully")
+	p.logger.WithField("duration", duration).Debug("LLM provider responded successfully")
 
 	// Parse the provider's raw JSON response to extract the text content.
 	textContent, parseErr := extractTextFromProviderResponse(responseBody)
@@ -688,8 +675,40 @@ func (p *NeuralTrustModerationPlugin) callKeyRegModeration(
 
 // local helpers removed in favor of pluginutils.DefineRequestBody
 
+func getOrCompileRegex(patterns []string) ([]*regexp.Regexp, error) {
+	if len(patterns) == 0 {
+		return nil, nil
+	}
+	key := strings.Join(patterns, "\x00")
+
+	regexCacheMu.RLock()
+	if cached, ok := regexCache[key]; ok {
+		regexCacheMu.RUnlock()
+		return cached, nil
+	}
+	regexCacheMu.RUnlock()
+
+	regexCacheMu.Lock()
+	defer regexCacheMu.Unlock()
+
+	if cached, ok := regexCache[key]; ok {
+		return cached, nil
+	}
+
+	compiled := make([]*regexp.Regexp, len(patterns))
+	for i, pattern := range patterns {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", pattern, err)
+		}
+		compiled[i] = re
+	}
+
+	regexCache[key] = compiled
+	return compiled, nil
+}
+
 func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
-	// Bound input length early to avoid excessive allocations from untrusted data.
 	const maxWordLen = 4096
 	if len(s1) > maxWordLen {
 		s1 = s1[:maxWordLen]
@@ -710,21 +729,29 @@ func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
 		return m
 	}
 
-	// Ensure n <= m to minimize memory usage (only O(n) memory).
 	if n > m {
 		s1, s2 = s2, s1
 		m, n = n, m
 	}
 
-	// Explicitly cap n so the compiler (and static analysis) can verify n+1
-	// will not overflow. n is already bounded by maxWordLen via the truncation
-	// above, but this makes the invariant visible at the allocation site.
 	if n > maxWordLen {
 		n = maxWordLen
 	}
 
-	prev := make([]int, n+1)
-	curr := make([]int, n+1)
+	pair := levPairPool.Get().(*levPair)
+	prev := pair.a
+	curr := pair.b
+	if cap(prev) < n+1 {
+		prev = make([]int, n+1)
+	} else {
+		prev = prev[:n+1]
+	}
+	if cap(curr) < n+1 {
+		curr = make([]int, n+1)
+	} else {
+		curr = curr[:n+1]
+	}
+
 	for j := 0; j <= n; j++ {
 		prev[j] = j
 	}
@@ -737,7 +764,6 @@ func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
 			if c1 == s2[j-1] {
 				cost = 0
 			}
-			// min of: deletion (prev[j]+1), insertion (curr[j-1]+1), substitution (prev[j-1]+cost)
 			deletion := prev[j] + 1
 			insertion := curr[j-1] + 1
 			subst := prev[j-1] + cost
@@ -757,7 +783,12 @@ func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
 		}
 		prev, curr = curr, prev
 	}
-	return prev[n]
+
+	result := prev[n]
+	pair.a = prev
+	pair.b = curr
+	levPairPool.Put(pair)
+	return result
 }
 
 func (p *NeuralTrustModerationPlugin) calculateSimilarity(s1, s2 string) float64 {

@@ -8,7 +8,6 @@ import (
 
 	fingerprintMocks "github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint/mocks"
 	firewallMocks "github.com/NeuralTrust/TrustGate/pkg/infra/firewall/mocks"
-	httpxMocks "github.com/NeuralTrust/TrustGate/pkg/infra/httpx/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/neuraltrust_moderation"
 	plugintypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
@@ -22,13 +21,11 @@ import (
 )
 
 func TestNeuralTrustModerationPlugin_Name(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -38,13 +35,11 @@ func TestNeuralTrustModerationPlugin_Name(t *testing.T) {
 }
 
 func TestNeuralTrustModerationPlugin_RequiredPlugins(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -54,14 +49,12 @@ func TestNeuralTrustModerationPlugin_RequiredPlugins(t *testing.T) {
 }
 
 func TestNeuralTrustModerationPlugin_Stages(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -71,14 +64,12 @@ func TestNeuralTrustModerationPlugin_Stages(t *testing.T) {
 }
 
 func TestNeuralTrustModerationPlugin_AllowedStages(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -88,14 +79,12 @@ func TestNeuralTrustModerationPlugin_AllowedStages(t *testing.T) {
 }
 
 func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -235,14 +224,12 @@ func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
 }
 
 func TestNeuralTrustModerationPlugin_Execute_KeyRegSafe(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -277,14 +264,12 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSafe(t *testing.T) {
 }
 
 func TestNeuralTrustModerationPlugin_Execute_KeyRegKeywordBlocked(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -319,14 +304,12 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegKeywordBlocked(t *testing.T) 
 }
 
 func TestNeuralTrustModerationPlugin_Execute_KeyRegSimilarWordBlocked(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -361,14 +344,12 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegSimilarWordBlocked(t *testing
 }
 
 func TestNeuralTrustModerationPlugin_Execute_KeyRegRegexBlocked(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -403,7 +384,6 @@ func TestNeuralTrustModerationPlugin_Execute_KeyRegRegexBlocked(t *testing.T) {
 }
 
 func TestNeuralTrustModerationPlugin_Execute_LLMModeration(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
@@ -434,7 +414,6 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModeration(t *testing.T) {
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -468,7 +447,6 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModeration(t *testing.T) {
 }
 
 func TestNeuralTrustModerationPlugin_Execute_LLMModerationSafe(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
@@ -499,7 +477,6 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModerationSafe(t *testing.T) {
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -533,14 +510,12 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModerationSafe(t *testing.T) {
 }
 
 func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegSafe(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -576,14 +551,12 @@ func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegSafe(t *testing.
 }
 
 func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegBlocked(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -619,14 +592,12 @@ func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegBlocked(t *testi
 }
 
 func TestNeuralTrustModerationPlugin_Execute_ObserveMode_Returns200(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -663,14 +634,12 @@ func TestNeuralTrustModerationPlugin_Execute_ObserveMode_Returns200(t *testing.T
 }
 
 func TestNeuralTrustModerationPlugin_Execute_EnforceMode_Returns403(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,
@@ -712,7 +681,6 @@ func TestNeuralTrustModerationPlugin_Execute_EnforceMode_Returns403(t *testing.T
 }
 
 func TestNeuralTrustModerationPlugin_Execute_LLMModeration_ObserveMode(t *testing.T) {
-	mockClient := new(httpxMocks.MockHTTPClient)
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
@@ -743,7 +711,6 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModeration_ObserveMode(t *testin
 
 	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		logrus.New(),
-		mockClient,
 		fingerPrintTrackerMock,
 		providerLocatorMock,
 		firewallFactoryMock,

@@ -2,7 +2,6 @@ package plugins
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
@@ -185,11 +184,6 @@ func (m *manager) InitializePlugins() {
 
 	if err := m.RegisterPlugin(neuraltrust_moderation.NewNeuralTrustModerationPlugin(
 		m.logger,
-		&http.Client{ //nolint
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402
-			},
-		},
 		m.fingerprintTracker,
 		m.providerLocator,
 		m.firewallFactory,
