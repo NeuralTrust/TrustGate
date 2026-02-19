@@ -292,7 +292,7 @@ func TestContextualSecurityPlugin(t *testing.T) {
 		},
 		{
 			name:  "IP param changed - Same API KEY - Ok",
-			input: "ok",
+			input: "a good prompt",
 			headers: map[string]string{
 				"X-Forwarded-For": "45.34.89.1",
 				"User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.",
@@ -301,7 +301,7 @@ func TestContextualSecurityPlugin(t *testing.T) {
 		},
 		{
 			name:  "All params changed - OK",
-			input: "ok",
+			input: "a good prompt",
 			headers: map[string]string{
 				"X-Forwarded-For": "45.34.89.1",
 				"User-Agent":      "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",

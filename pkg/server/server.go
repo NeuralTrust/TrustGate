@@ -43,9 +43,9 @@ func NewBaseServer(config *config.Config, logger *logrus.Logger) *BaseServer {
 		StreamRequestBody:     true,
 	})
 
-	r.Server().MaxConnsPerIP = 1024
-	r.Server().ReadBufferSize = 8192
-	r.Server().WriteBufferSize = 8192
+	r.Server().MaxConnsPerIP = 0
+	r.Server().ReadBufferSize = 32768
+	r.Server().WriteBufferSize = 32768
 	r.Server().GetOnly = false
 	r.Server().NoDefaultServerHeader = true
 	r.Server().NoDefaultDate = true
