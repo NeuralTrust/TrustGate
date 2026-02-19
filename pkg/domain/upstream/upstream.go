@@ -269,6 +269,7 @@ func (u *Upstream) Validate() error {
 		"round-robin":          true,
 		"random":               true,
 		"weighted-round-robin": true,
+		"least-conn":           true,
 		"least-connections":    true,
 		"semantic":             true,
 	}
