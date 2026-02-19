@@ -1,7 +1,9 @@
 package dependency_container
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"reflect"
 	"time"
 
@@ -42,7 +44,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
@@ -148,12 +149,20 @@ func NewContainer(di ContainerDI) (*Container, error) {
 
 	fingerprintTracker := fingerprint.NewFingerPrintTracker(cacheInstance)
 
-	firewallHTTPClient := httpx.NewFastHTTPClient(
-		httpx.WithTimeout(10*time.Second),
-		httpx.WithInsecureSkipVerify(true),
-		httpx.WithMaxConnsPerHost(512),
-		httpx.WithMaxIdleConnDuration(90*time.Second),
-	)
+	firewallHTTPClient := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true}, // #nosec G402
+			MaxIdleConns:          512,
+			MaxIdleConnsPerHost:   512,
+			MaxConnsPerHost:       512,
+			IdleConnTimeout:       90 * time.Second,
+			DisableKeepAlives:     false,
+			ResponseHeaderTimeout: 10 * time.Second,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ForceAttemptHTTP2:     true,
+		},
+	}
 	neuralTrustFirewallClient := firewall.NewNeuralTrustFirewallClient(
 		di.Logger,
 		firewall.WithHTTPClient(firewallHTTPClient),

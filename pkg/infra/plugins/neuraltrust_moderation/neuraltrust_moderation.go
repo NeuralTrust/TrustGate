@@ -207,7 +207,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	firewallErrors := make(chan error, 1)
 	var wg sync.WaitGroup
 	var evtMu sync.Mutex
-	
+
 	if conf.KeyRegParamBag != nil && conf.KeyRegParamBag.Enabled {
 		found, err := p.executeKeyReg(ctx, conf, inputBytes, firewallErrors, evt)
 		if err != nil {
