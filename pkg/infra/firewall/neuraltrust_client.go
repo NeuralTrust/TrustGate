@@ -112,12 +112,8 @@ func (c *NeuralTrustFirewallClient) doRequest(
 		_ = resp.Body.Close()
 	}()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
 	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
 		c.logger.WithFields(logrus.Fields{
 			"status_code":   resp.StatusCode,
 			"path":          path,
@@ -126,14 +122,9 @@ func (c *NeuralTrustFirewallClient) doRequest(
 		return fmt.Errorf("%w: status %d", ErrFailedFirewallCall, resp.StatusCode)
 	}
 
-	if err := json.Unmarshal(respBody, result); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
 		return fmt.Errorf("failed to parse response: %w", err)
 	}
-
-	c.logger.WithFields(logrus.Fields{
-		"path":     path,
-		"response": string(respBody),
-	}).Debug("firewall response")
 
 	return nil
 }
