@@ -26,7 +26,8 @@ import (
 )
 
 const (
-	PluginName = "neuraltrust_moderation"
+	PluginName             = "neuraltrust_moderation"
+	maxModerationInputSize = 10 * 1024 * 1024 // 10 MB
 )
 
 type LLMResponse struct {
@@ -192,6 +193,9 @@ func (p *NeuralTrustModerationPlugin) Execute(
 	inputBytes, err := p.resolveInput(req, resp, conf.MappingField)
 	if err != nil {
 		return nil, err
+	}
+	if len(inputBytes) > maxModerationInputSize {
+		inputBytes = inputBytes[:maxModerationInputSize]
 	}
 
 	evt := &NeuralTrustModerationData{
@@ -738,18 +742,25 @@ func (p *NeuralTrustModerationPlugin) levenshteinDistance(s1, s2 string) int {
 		n = maxWordLen
 	}
 
+	// Bounded size visible at allocation site so static analysis can verify
+	// that n+1 cannot overflow. n is guaranteed <= maxWordLen (4096).
+	size := n + 1
+	if size < 0 || size > maxWordLen+1 {
+		return max(m, n)
+	}
+
 	pair := levPairPool.Get().(*levPair)
 	prev := pair.a
 	curr := pair.b
-	if cap(prev) < n+1 {
-		prev = make([]int, n+1)
+	if cap(prev) < size {
+		prev = make([]int, size)
 	} else {
-		prev = prev[:n+1]
+		prev = prev[:size]
 	}
-	if cap(curr) < n+1 {
-		curr = make([]int, n+1)
+	if cap(curr) < size {
+		curr = make([]int, size)
 	} else {
-		curr = curr[:n+1]
+		curr = curr[:size]
 	}
 
 	for j := 0; j <= n; j++ {
