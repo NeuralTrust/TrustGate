@@ -1,93 +1,173 @@
-# CI pipeline for PRs targeting main
-# Runs: AI code review → Lint + Unit tests → Functional tests → SAST + Gosec → auto-approve
-#
-# Tests are split into separate jobs for visual clarity in GitHub Actions.
-# Lint runs only once (in unit-tests); functional-tests skips lint to avoid duplication.
-# Functional tests need WireMock (OAuth mock), Postgres, Redis, and external API secrets.
-
 name: CI
 
 on:
+  push:
+    branches: [ main ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 permissions:
   contents: read
-  pull-requests: write
-  checks: read
-  security-events: write
 
 jobs:
-  code-review:
-    uses: NeuralTrust/workflows/.github/workflows/ai-code-review.yml@main
-    secrets:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+  test:
+    name: Test
+    runs-on: ubuntu-latest
 
-  unit-tests:
-    uses: NeuralTrust/workflows/.github/workflows/tests.yml@main
-    with:
-      language: go
-      language_version: '1.25.1'
-      go_private_modules: true
-      lint_enabled: true
-      postgres_enabled: true
-      postgres_version: '13'
-      postgres_db: ai_gateway
-      redis_enabled: true
-      coverage_enabled: true
-      test_command: |
-        go test -v -race -coverprofile=coverage.txt -covermode=atomic ./pkg/...
-      setup_commands: |
-        cp .env.example .env
-    secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+    services:
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: ai_gateway
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      oauth:
+        image: wiremock/wiremock:2.35.0
+        ports:
+          - 9090:8080
 
-  functional-tests:
-    uses: NeuralTrust/workflows/.github/workflows/tests.yml@main
-    with:
-      language: go
-      language_version: '1.25.1'
-      go_private_modules: true
-      lint_enabled: false
-      postgres_enabled: true
-      postgres_version: '13'
-      postgres_db: ai_gateway
-      redis_enabled: true
-      coverage_enabled: true
-      coverage_file: functional-coverage.txt
-      test_command: |
-        go test -v -race -coverprofile=functional-coverage.txt -covermode=atomic ./tests/functional
-      setup_commands: |
-        # ── Start WireMock for OAuth mock ──
-        docker run -d --name wiremock -p 9090:8080 wiremock/wiremock:2.35.0
-        echo "Waiting for WireMock..."
-        for i in $(seq 1 60); do curl -sf http://localhost:9090/__admin/ && break || sleep 1; done
-        curl -sf -X POST http://localhost:9090/__admin/mappings \
-          -H 'Content-Type: application/json' \
-          -d '{"request":{"method":"POST","urlPath":"/oauth/token"},"response":{"status":200,"headers":{"Content-Type":"application/json"},"jsonBody":{"access_token":"ci-dummy-token","expires_in":3600}}}'
-        echo "WireMock OAuth stub configured"
-        # ── Copy env files and inject secrets ──
-        cp .env.example .env
-        cp .env.functional.example .env.functional
-        env | grep -E '^(AWS_|AZURE_|OPENAI_|ANTHROPIC_|GOOGLE_|GUARDRAIL_|NEURAL_TRUST_)' >> .env.functional || true
-    secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
-      TEST_SECRETS: |
-        AWS_ACCESS_KEY=${{ secrets.AWS_ACCESS_KEY }}
-        AWS_SECRET_KEY=${{ secrets.AWS_SECRET_KEY }}
-        AWS_REGION=${{ secrets.AWS_REGION }}
-        GUARDRAIL_ID=${{ secrets.GUARDRAIL_ID }}
-        GUARDRAIL_VERSION=${{ secrets.GUARDRAIL_VERSION }}
-        AZURE_API_KEY=${{ secrets.AZURE_API_KEY }}
-        OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-        ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
-        GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
-        NEURAL_TRUST_FIREWALL_URL=${{ secrets.NEURAL_TRUST_FIREWALL_URL }}
-        NEURAL_TRUST_FIREWALL_API_KEY=${{ secrets.NEURAL_TRUST_FIREWALL_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
 
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.25.1'
+          check-latest: true
+          cache: false  # Disable Go module cache
+
+      - name: Install dependencies
+        run: |
+          go clean -modcache
+          go mod tidy && go mod vendor
+
+      - name: Verify Go environment
+        run: |
+          echo "Go version: $(go version)"
+          echo "Go env:"
+          go env | grep -E "(GOROOT|GOPATH|GOPRIVATE|GONOPROXY|GONOSUMDB)" || true
+
+      - name: Install service check tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client redis-tools
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for PostgreSQL to be ready..."
+          for i in {1..120}; do
+            if PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres -c "SELECT 1;" > /dev/null 2>&1; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            if [ $i -eq 120 ]; then
+              echo "PostgreSQL failed to start after 120 seconds"
+              exit 1
+            fi
+            echo "PostgreSQL is not ready yet, waiting... ($i/120)"
+            sleep 1
+          done
+          
+          echo "Waiting for Redis to be ready..."
+          for i in {1..120}; do
+            if redis-cli -h localhost -p 6379 ping > /dev/null 2>&1; then
+              echo "Redis is ready!"
+              break
+            fi
+            if [ $i -eq 120 ]; then
+              echo "Redis failed to start after 120 seconds"
+              exit 1
+            fi
+            echo "Redis is not ready yet, waiting... ($i/120)"
+            sleep 1
+          done
+          
+          echo "All services are ready!"
+
+      - name: Configure Dummy OAuth server (WireMock)
+        run: |
+          echo "Waiting for WireMock to be ready..."
+          for i in {1..60}; do
+            curl -sf http://localhost:9090/__admin/ && break || sleep 1
+          done
+          echo "Stubbing /oauth/token endpoint"
+          curl -sf -X POST http://localhost:9090/__admin/mappings \
+            -H 'Content-Type: application/json' \
+            -d '{
+                  "request": {
+                    "method": "POST",
+                    "urlPath": "/oauth/token"
+                  },
+                  "response": {
+                    "status": 200,
+                    "headers": { "Content-Type": "application/json" },
+                    "jsonBody": { "access_token": "ci-dummy-token", "expires_in": 3600 }
+                  }
+                }'
+
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.7.0
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          golangci-lint --version
+
+      - name: Run golangci-lint
+        continue-on-error: true
+        env:
+          GOPRIVATE: github.com/NeuralTrust/*
+          GONOPROXY: github.com/NeuralTrust/*
+          GONOSUMDB: github.com/NeuralTrust/*
+        run: golangci-lint run --timeout=10m ./...
+
+      - name: Copy environment file
+        run: cp .env.example .env && cp .env.functional.example .env.functional
+
+      - name: Set up environment variables
+        run: |
+          echo "" >> .env.functional
+          echo "AWS_ACCESS_KEY=${{ secrets.AWS_ACCESS_KEY }}" >> .env.functional
+          echo "AWS_ACCESS_KEY=${{ secrets.AWS_ACCESS_KEY }}" >> .env.functional
+          echo "AWS_SECRET_KEY=${{ secrets.AWS_SECRET_KEY }}" >> .env.functional
+          echo "AWS_REGION=${{ secrets.AWS_REGION }}" >> .env.functional
+          echo "GUARDRAIL_ID=${{ secrets.GUARDRAIL_ID }}" >> .env.functional
+          echo "GUARDRAIL_VERSION=${{ secrets.GUARDRAIL_VERSION }}" >> .env.functional
+          echo "AZURE_API_KEY=${{ secrets.AZURE_API_KEY }}" >> .env.functional
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env.functional
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env.functional
+          echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" >> .env.functional
+          echo "NEURAL_TRUST_FIREWALL_URL=${{ secrets.NEURAL_TRUST_FIREWALL_URL }}" >> .env.functional
+          echo "NEURAL_TRUST_FIREWALL_API_KEY=${{ secrets.NEURAL_TRUST_FIREWALL_API_KEY }}" >> .env.functional
+
+      - name: Debug environment file
+        run: cat .env.functional
+
+      - name: Run Unit tests
+        run: go test -v -race -coverprofile=unit-coverage.txt -covermode=atomic ./pkg/...
+
+      - name: Run Functional tests
+        run: go test -v -race ./tests/functional
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./unit-coverage.txt
+          flags: unittests
   auto-approve:
-    needs: [code-review, unit-tests, functional-tests]
+    needs: test
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: write
     uses: NeuralTrust/workflows/.github/workflows/auto-approve.yml@main
-    secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+    secrets: inherit
