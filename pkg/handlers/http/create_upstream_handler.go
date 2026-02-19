@@ -60,7 +60,10 @@ func NewCreateUpstreamHandler(deps CreateUpstreamHandlerDeps) Handler {
 // @Success 201 {object} upstream.Upstream "Upstream created successfully"
 // @Router /api/v1/gateways/{gateway_id}/upstreams [post]
 func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
-	gatewayID := c.Params("gateway_id")
+	gatewayUUID, err := uuid.Parse(c.Params("gateway_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway uuid"})
+	}
 
 	var req request.UpstreamRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -71,30 +74,6 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Extra guard for per-target OAuth validation (defensive, mirrors DTO validation)
-	for i, t := range req.Targets {
-		if t.Auth != nil {
-			if t.Auth.Type != request.AuthTypeOAuth2 || t.Auth.OAuth == nil {
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: auth.type must be 'oauth2' and oauth config required", i)})
-			}
-			gt := t.Auth.OAuth.GrantType
-			switch gt {
-			case "client_credentials":
-				if !t.Auth.OAuth.UseBasicAuth && t.Auth.OAuth.ClientID == "" {
-					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: auth.oauth.client_id is required for client_credentials when use_basic_auth is false", i)})
-				}
-			case "authorization_code":
-				if t.Auth.OAuth.Code == "" || t.Auth.OAuth.RedirectURI == "" {
-					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: authorization_code requires code and redirect_uri", i)})
-				}
-			case "password":
-				if t.Auth.OAuth.Username == "" || t.Auth.OAuth.Password == "" {
-					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: password grant requires username and password", i)})
-				}
-			}
-		}
-	}
-
 	if req.Embedding != nil && req.Embedding.Provider != "" {
 		if req.Embedding.Provider != factory.OpenAIProvider {
 			return c.Status(fiber.StatusBadRequest).
@@ -102,24 +81,13 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	// Validate gateway UUID format first
-	gatewayUUID, err := uuid.Parse(gatewayID)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway uuid"})
-	}
-
-	// Validate that gateway exists
-	_, err = s.gatewayRepo.Get(c.Context(), gatewayUUID)
-	if err != nil {
-		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("Gateway not found")
+	if _, err := s.gatewayRepo.Get(c.Context(), gatewayUUID); err != nil {
+		s.logger.WithError(err).WithField("gateway_id", gatewayUUID).Error("Gateway not found")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Gateway not found"})
 	}
 
-	entity, err := s.createUpstreamEntity(req, gatewayID)
+	entity, err := s.buildUpstreamEntity(req, gatewayUUID)
 	if err != nil {
-		if err.Error() == "invalid gateway uuid" {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -128,7 +96,7 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	if err := s.cache.SaveUpstream(c.Context(), gatewayID, entity); err != nil {
+	if err := s.cache.SaveUpstream(c.Context(), gatewayUUID.String(), entity); err != nil {
 		s.logger.WithError(err).Error("failed to cache upstream")
 	}
 
@@ -165,125 +133,137 @@ func (s *createUpstreamHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName,
 	})
 }
 
-func (s *createUpstreamHandler) createUpstreamEntity(
+func (s *createUpstreamHandler) buildUpstreamEntity(
 	req request.UpstreamRequest,
-	gatewayID string,
+	gatewayID uuid.UUID,
 ) (*upstream.Upstream, error) {
-	now := time.Now()
-	var targets []upstream.Target
-	for _, target := range req.Targets {
-		t := upstream.Target{
-			ID:              target.ID,
-			Weight:          target.Weight,
-			Tags:            target.Tags,
-			Headers:         target.Headers,
-			Path:            target.Path,
-			Host:            target.Host,
-			Port:            target.Port,
-			Protocol:        target.Protocol,
-			Provider:        target.Provider,
-			ProviderOptions: target.ProviderOptions,
-			Models:          target.Models,
-			DefaultModel:    target.DefaultModel,
-			Description:     target.Description,
-			Stream:          target.Stream,
-			InsecureSSL:     target.InsecureSSL,
-			Credentials:     target.Credentials,
-		}
-		if target.Auth != nil && target.Auth.Type == request.AuthTypeOAuth2 && target.Auth.OAuth != nil {
-			t.Auth = &upstream.TargetAuth{
-				Type: upstream.AuthTypeOAuth2,
-				OAuth: &upstream.TargetOAuthConfig{
-					TokenURL:     target.Auth.OAuth.TokenURL,
-					GrantType:    target.Auth.OAuth.GrantType,
-					ClientID:     target.Auth.OAuth.ClientID,
-					ClientSecret: target.Auth.OAuth.ClientSecret,
-					UseBasicAuth: target.Auth.OAuth.UseBasicAuth,
-					Scopes:       target.Auth.OAuth.Scopes,
-					Audience:     target.Auth.OAuth.Audience,
-					Code:         target.Auth.OAuth.Code,
-					RedirectURI:  target.Auth.OAuth.RedirectURI,
-					CodeVerifier: target.Auth.OAuth.CodeVerifier,
-					RefreshToken: target.Auth.OAuth.RefreshToken,
-					Username:     target.Auth.OAuth.Username,
-					Password:     target.Auth.OAuth.Password,
-					Extra:        target.Auth.OAuth.Extra,
-				},
-			}
-		}
-		targets = append(targets, t)
-	}
-
-	var healthCheck *upstream.HealthCheck
-	if req.HealthChecks != nil {
-		healthCheck = &upstream.HealthCheck{
-			Passive:   req.HealthChecks.Passive,
-			Path:      req.HealthChecks.Path,
-			Headers:   req.HealthChecks.Headers,
-			Threshold: req.HealthChecks.Threshold,
-			Interval:  req.HealthChecks.Interval,
-		}
-	}
-
-	gatewayUUID, err := uuid.Parse(gatewayID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid gateway uuid")
-	}
-
 	id, err := uuid.NewV6()
 	if err != nil {
 		s.logger.WithError(err).Error("failed to generate UUID")
 		return nil, fmt.Errorf("failed to generate UUID")
 	}
 
-	var embedding *upstream.EmbeddingConfig
-	if req.Embedding != nil {
-		embedding = &upstream.EmbeddingConfig{
-			Provider:    req.Embedding.Provider,
-			Model:       req.Embedding.Model,
-			Credentials: req.Embedding.Credentials,
-		}
-	}
-
-	var proxy *upstream.Proxy
-	if req.ProxyConfig != nil {
-		if req.ProxyConfig.Protocol == "" {
-			req.ProxyConfig.Protocol = "http"
-		}
-		proxy = &upstream.Proxy{
-			Host:     req.ProxyConfig.Host,
-			Port:     req.ProxyConfig.Port,
-			Protocol: req.ProxyConfig.Protocol,
-		}
-	}
-
-	var websocket *upstream.WebsocketConfig
-	if req.WebhookConfig != nil {
-		websocket = &upstream.WebsocketConfig{
-			EnableDirectCommunication: req.WebhookConfig.EnableDirectCommunication,
-			ReturnErrorDetails:        req.WebhookConfig.ReturnErrorDetails,
-			PingPeriod:                req.WebhookConfig.PingPeriod,
-			PongWait:                  req.WebhookConfig.PongWait,
-			HandshakeTimeout:          req.WebhookConfig.HandshakeTimeout,
-			ReadBufferSize:            req.WebhookConfig.ReadBufferSize,
-			WriteBufferSize:           req.WebhookConfig.WriteBufferSize,
-		}
-	}
+	now := time.Now()
 
 	entity := upstream.Upstream{
 		ID:              id,
-		GatewayID:       gatewayUUID,
+		GatewayID:       gatewayID,
 		Name:            req.Name,
 		Algorithm:       req.Algorithm,
-		Targets:         targets,
-		EmbeddingConfig: embedding,
-		HealthChecks:    healthCheck,
-		Websocket:       websocket,
-		Proxy:           proxy,
+		Targets:         s.buildTargets(req.Targets),
+		EmbeddingConfig: s.buildEmbeddingConfig(req.Embedding),
+		HealthChecks:    s.buildHealthCheck(req.HealthChecks),
+		Websocket:       s.buildWebsocketConfig(req.WebhookConfig),
+		Proxy:           s.buildProxy(req.ProxyConfig),
 		Tags:            req.Tags,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
 
 	return &entity, nil
+}
+
+func (s *createUpstreamHandler) buildTargets(targets []request.TargetRequest) []upstream.Target {
+	result := make([]upstream.Target, 0, len(targets))
+	for _, t := range targets {
+		target := upstream.Target{
+			ID:              t.ID,
+			Weight:          t.Weight,
+			Tags:            t.Tags,
+			Headers:         t.Headers,
+			Path:            t.Path,
+			Host:            t.Host,
+			Port:            t.Port,
+			Protocol:        t.Protocol,
+			Provider:        t.Provider,
+			ProviderOptions: t.ProviderOptions,
+			Models:          t.Models,
+			DefaultModel:    t.DefaultModel,
+			Description:     t.Description,
+			Stream:          t.Stream,
+			InsecureSSL:     t.InsecureSSL,
+			Credentials:     t.Credentials,
+		}
+		if t.Auth != nil && t.Auth.Type == request.AuthTypeOAuth2 && t.Auth.OAuth != nil {
+			target.Auth = &upstream.TargetAuth{
+				Type:  upstream.AuthTypeOAuth2,
+				OAuth: s.buildOAuthConfig(t.Auth.OAuth),
+			}
+		}
+		result = append(result, target)
+	}
+	return result
+}
+
+func (s *createUpstreamHandler) buildOAuthConfig(o *request.UpstreamOAuthRequest) *upstream.TargetOAuthConfig {
+	return &upstream.TargetOAuthConfig{
+		TokenURL:     o.TokenURL,
+		GrantType:    o.GrantType,
+		ClientID:     o.ClientID,
+		ClientSecret: o.ClientSecret,
+		UseBasicAuth: o.UseBasicAuth,
+		Scopes:       o.Scopes,
+		Audience:     o.Audience,
+		Code:         o.Code,
+		RedirectURI:  o.RedirectURI,
+		CodeVerifier: o.CodeVerifier,
+		RefreshToken: o.RefreshToken,
+		Username:     o.Username,
+		Password:     o.Password,
+		Extra:        o.Extra,
+	}
+}
+
+func (s *createUpstreamHandler) buildEmbeddingConfig(e *request.EmbeddingRequest) *upstream.EmbeddingConfig {
+	if e == nil {
+		return nil
+	}
+	return &upstream.EmbeddingConfig{
+		Provider:    e.Provider,
+		Model:       e.Model,
+		Credentials: e.Credentials,
+	}
+}
+
+func (s *createUpstreamHandler) buildHealthCheck(h *request.HealthCheckRequest) *upstream.HealthCheck {
+	if h == nil {
+		return nil
+	}
+	return &upstream.HealthCheck{
+		Passive:   h.Passive,
+		Path:      h.Path,
+		Headers:   h.Headers,
+		Threshold: h.Threshold,
+		Interval:  h.Interval,
+	}
+}
+
+func (s *createUpstreamHandler) buildWebsocketConfig(w *request.WebhookConfigRequest) *upstream.WebsocketConfig {
+	if w == nil {
+		return nil
+	}
+	return &upstream.WebsocketConfig{
+		EnableDirectCommunication: w.EnableDirectCommunication,
+		ReturnErrorDetails:        w.ReturnErrorDetails,
+		PingPeriod:                w.PingPeriod,
+		PongWait:                  w.PongWait,
+		HandshakeTimeout:          w.HandshakeTimeout,
+		ReadBufferSize:            w.ReadBufferSize,
+		WriteBufferSize:           w.WriteBufferSize,
+	}
+}
+
+func (s *createUpstreamHandler) buildProxy(p *request.ProxyConfigRequest) *upstream.Proxy {
+	if p == nil {
+		return nil
+	}
+	protocol := p.Protocol
+	if protocol == "" {
+		protocol = "http"
+	}
+	return &upstream.Proxy{
+		Host:     p.Host,
+		Port:     p.Port,
+		Protocol: protocol,
+	}
 }

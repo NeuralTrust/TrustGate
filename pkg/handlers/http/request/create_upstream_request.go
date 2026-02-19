@@ -203,11 +203,13 @@ func (r *UpstreamRequest) Validate() error {
 		if r.Embedding.Model == "" {
 			return fmt.Errorf("embedding model is required when algorithm is semantic")
 		}
-		if r.Embedding.Credentials.HeaderName == "" {
-			return fmt.Errorf("embedding credentials header_name is required when algorithm is semantic")
-		}
-		if r.Embedding.Credentials.HeaderValue == "" {
-			return fmt.Errorf("embedding credentials header_value is required when algorithm is semantic")
+		if r.Embedding.Credentials.ApiKey == "" {
+			if r.Embedding.Credentials.HeaderName == "" {
+				return fmt.Errorf("embedding credentials header_name is required when algorithm is semantic")
+			}
+			if r.Embedding.Credentials.HeaderValue == "" {
+				return fmt.Errorf("embedding credentials header_value is required when algorithm is semantic")
+			}
 		}
 	}
 	if r.WebhookConfig != nil && r.ProxyConfig != nil {
