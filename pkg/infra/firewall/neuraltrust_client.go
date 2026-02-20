@@ -123,6 +123,7 @@ func (c *NeuralTrustFirewallClient) doRequest(
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		c.logger.WithError(err).Error("failed to parse firewall response")
 		return fmt.Errorf("failed to parse response: %w", err)
 	}
 
