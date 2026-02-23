@@ -31,9 +31,9 @@ const (
 type Action string
 
 const (
-	AlertOnly Action = "alert_only"
-	Throttle  Action = "throttle"
-	Block     Action = "block"
+	Observe  Action = "observe"
+	Throttle Action = "throttle"
+	Enforce  Action = "enforce"
 )
 
 type Config struct {
@@ -84,9 +84,9 @@ func (p *BotDetectorPlugin) ValidateConfig(config pluginTypes.PluginConfig) erro
 	}
 
 	switch cfg.Action {
-	case AlertOnly, Throttle, Block:
+	case Observe, Throttle, Enforce:
 	default:
-		return fmt.Errorf("invalid action: %s, must be one of: AlertOnly, Throttle, Block", cfg.Action)
+		return fmt.Errorf("invalid action: %s, must be one of: Observe, Throttle, Enforce", cfg.Action)
 	}
 
 	return nil
@@ -164,7 +164,7 @@ func (p *BotDetectorPlugin) Execute(
 
 	if score >= conf.Threshold {
 		switch conf.Action {
-		case AlertOnly:
+		case Observe:
 			return &pluginTypes.PluginResponse{
 				Message: "request has fraudulent activity",
 				Headers: map[string][]string{
@@ -179,7 +179,7 @@ func (p *BotDetectorPlugin) Execute(
 					"bot_detected": {"true"},
 				},
 			}, nil
-		case Block:
+		case Enforce:
 			p.notifyGuardrailViolation(ctx, conf)
 			return nil, &pluginTypes.PluginError{
 				StatusCode: http.StatusForbidden,
