@@ -62,7 +62,7 @@ func TestBotDetectorPlugin(t *testing.T) {
 				"parallel": true,
 				"settings": map[string]interface{}{
 					"threshold":        0.5,
-					"action":           "block",
+					"action":           "Enforce",
 					"retention_period": 600,
 				},
 			},
