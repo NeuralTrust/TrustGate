@@ -12,9 +12,6 @@ var (
 	DeleteServiceCacheEventType  = "DeleteServiceCacheEvent"
 	DeleteUpstreamCacheEventType = "DeleteUpstreamCacheEvent"
 	DeleteKeyCacheEventType      = "DeleteKeyCacheEvent"
-	UpdateUpstreamCacheEventType = "UpdateUpstreamCacheEvent"
-	UpdateServiceCacheEventType  = "UpdateServiceCacheEvent"
-	UpdateGatewayCacheEventType  = "UpdateGatewayCacheEvent"
 )
 
 var Registry = map[string]reflect.Type{
@@ -23,9 +20,6 @@ var Registry = map[string]reflect.Type{
 	DeleteServiceCacheEventType:  reflect.TypeOf(DeleteServiceCacheEvent{}),
 	DeleteUpstreamCacheEventType: reflect.TypeOf(DeleteUpstreamCacheEvent{}),
 	DeleteKeyCacheEventType:      reflect.TypeOf(DeleteKeyCacheEvent{}),
-	UpdateUpstreamCacheEventType: reflect.TypeOf(UpdateUpstreamCacheEvent{}),
-	UpdateServiceCacheEventType:  reflect.TypeOf(UpdateServiceCacheEvent{}),
-	UpdateGatewayCacheEventType:  reflect.TypeOf(UpdateGatewayCacheEvent{}),
 }
 
 func GetEventsRegistry() map[string]reflect.Type {

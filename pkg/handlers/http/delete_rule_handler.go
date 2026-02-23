@@ -73,7 +73,6 @@ func (s *deleteRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete rule"})
 	}
 
-	// Invalidate cache after deletion
 	if err := s.publisher.Publish(
 		c.Context(),
 		event.DeleteRulesCacheEvent{GatewayID: gatewayID, RuleID: ruleID},

@@ -244,18 +244,12 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	deleteServiceSubscriber := subscriber.NewDeleteServiceCacheEventSubscriber(di.Logger, cacheInstance)
 	deleteUpstreamSubscriber := subscriber.NewDeleteUpstreamCacheEventSubscriber(di.Logger, cacheInstance)
 	deleteApiKeySubscriber := subscriber.NewDeleteApiKeyCacheEventSubscriber(di.Logger, cacheInstance)
-	updateGatewaySubscriber := subscriber.NewUpdateGatewayCacheEventSubscriber(di.Logger, updateGatewayCache, cacheInstance, gatewayRepository)
-	updateUpstreamSubscriber := subscriber.NewUpdateUpstreamCacheEventSubscriber(di.Logger, cacheInstance, upstreamRepository)
-	updateServiceSubscriber := subscriber.NewUpdateServiceCacheEventSubscriber(di.Logger, cacheInstance, serviceRepository)
 
 	cache.RegisterEventSubscriber[event.DeleteGatewayCacheEvent](redisListener, deleteGatewaySubscriber)
 	cache.RegisterEventSubscriber[event.DeleteRulesCacheEvent](redisListener, deleteRulesSubscriber)
 	cache.RegisterEventSubscriber[event.DeleteServiceCacheEvent](redisListener, deleteServiceSubscriber)
 	cache.RegisterEventSubscriber[event.DeleteUpstreamCacheEvent](redisListener, deleteUpstreamSubscriber)
 	cache.RegisterEventSubscriber[event.DeleteKeyCacheEvent](redisListener, deleteApiKeySubscriber)
-	cache.RegisterEventSubscriber[event.UpdateGatewayCacheEvent](redisListener, updateGatewaySubscriber)
-	cache.RegisterEventSubscriber[event.UpdateUpstreamCacheEvent](redisListener, updateUpstreamSubscriber)
-	cache.RegisterEventSubscriber[event.UpdateServiceCacheEvent](redisListener, updateServiceSubscriber)
 
 	lbFactory := di.InitializeLoadBalancerFactory(embeddingRepository, embeddingServiceLocator)
 

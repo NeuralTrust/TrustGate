@@ -28,9 +28,11 @@ func NewDeleteGatewayCacheEventSubscriber(
 func (s DeleteGatewayCacheEventSubscriber) OnEvent(ctx context.Context, evt event.DeleteGatewayCacheEvent) error {
 	s.logger.WithFields(logrus.Fields{
 		"gatewayID": evt.GatewayID,
-	}).Debug("invalidating gateway cache")
+	}).Info("invalidating gateway cache")
 
-	s.memoryCache.Delete(evt.GatewayID)
+	if s.memoryCache != nil {
+		s.memoryCache.Delete(evt.GatewayID)
+	}
 
 	if err := s.cache.DeleteAllByGatewayID(ctx, evt.GatewayID); err != nil {
 		s.logger.WithError(err).Warn("failed to delete gateway from redis cache")

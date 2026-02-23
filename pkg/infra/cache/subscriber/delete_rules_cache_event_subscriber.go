@@ -29,9 +29,11 @@ func NewDeleteRulesEventSubscriber(
 func (s DeleteRulesEventSubscriber) OnEvent(ctx context.Context, evt event.DeleteRulesCacheEvent) error {
 	s.logger.WithFields(logrus.Fields{
 		"gatewayID": evt.GatewayID,
-	}).Debug("invalidating rules cache")
+	}).Info("invalidating rules cache")
 
-	s.memoryCache.Delete(evt.GatewayID)
+	if s.memoryCache != nil {
+		s.memoryCache.Delete(evt.GatewayID)
+	}
 	rulesKey := fmt.Sprintf(cache.RulesKeyPattern, evt.GatewayID)
 
 	if err := s.cache.Delete(ctx, rulesKey); err != nil {

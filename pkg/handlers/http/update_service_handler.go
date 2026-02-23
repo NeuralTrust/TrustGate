@@ -92,10 +92,9 @@ func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Cache the updated service
 	err = s.publisher.Publish(
 		c.Context(),
-		event.UpdateServiceCacheEvent{
+		event.DeleteServiceCacheEvent{
 			ServiceID: entity.ID.String(),
 			GatewayID: entity.GatewayID.String(),
 		},
