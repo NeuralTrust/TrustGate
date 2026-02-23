@@ -32,7 +32,7 @@ func (s DeleteUpstreamCacheEventSubscriber) OnEvent(ctx context.Context, evt eve
 	s.logger.WithFields(logrus.Fields{
 		"upstreamID": evt.UpstreamID,
 		"gatewayID":  evt.GatewayID,
-	}).Debug("invalidating upstream cache")
+	}).Info("invalidating upstream cache")
 
 	if s.memoryCache != nil {
 		s.memoryCache.Delete(evt.UpstreamID)

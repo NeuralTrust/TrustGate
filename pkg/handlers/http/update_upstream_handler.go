@@ -245,7 +245,7 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 
 	err = s.publisher.Publish(
 		c.Context(),
-		event.UpdateUpstreamCacheEvent{
+		event.DeleteUpstreamCacheEvent{
 			UpstreamID: upstreamID,
 			GatewayID:  gatewayID,
 		},

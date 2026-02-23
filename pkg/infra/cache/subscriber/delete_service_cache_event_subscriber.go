@@ -30,9 +30,11 @@ func (s DeleteServiceCacheEventSubscriber) OnEvent(ctx context.Context, evt even
 	s.logger.WithFields(logrus.Fields{
 		"serviceID": evt.ServiceID,
 		"gatewayID": evt.GatewayID,
-	}).Debug("invalidating service cache")
+	}).Info("invalidating service cache")
 
-	s.memoryCache.Delete(evt.ServiceID)
+	if s.memoryCache != nil {
+		s.memoryCache.Delete(evt.ServiceID)
+	}
 
 	if err := s.cache.Delete(ctx, fmt.Sprintf(cache.ServiceKeyPattern, evt.GatewayID, evt.ServiceID)); err != nil {
 		s.logger.WithError(err).Warn("failed to delete service from redis cache")

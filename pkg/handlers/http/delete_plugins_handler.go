@@ -104,7 +104,7 @@ func (h *deletePluginsHandler) handleGatewayDelete(c *fiber.Ctx, req *request.De
 
 	if err := h.publisher.Publish(
 		c.Context(),
-		event.UpdateGatewayCacheEvent{GatewayID: entity.ID.String()},
+		event.DeleteGatewayCacheEvent{GatewayID: entity.ID.String()},
 	); err != nil {
 		h.logger.WithError(err).Error("failed to publish gateway cache update event")
 	}

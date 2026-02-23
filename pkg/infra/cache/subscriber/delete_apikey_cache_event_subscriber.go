@@ -29,10 +29,12 @@ func NewDeleteApiKeyCacheEventSubscriber(
 func (s DeleteApiKeyCacheEventSubscriber) OnEvent(ctx context.Context, evt event.DeleteKeyCacheEvent) error {
 	s.logger.WithFields(logrus.Fields{
 		"apiKey": evt.ApiKey,
-	}).Debug("invalidating apikey cache")
+	}).Info("invalidating apikey cache")
 
-	s.memoryCache.Delete(evt.ApiKeyID)
-	s.memoryCache.Delete(evt.ApiKey)
+	if s.memoryCache != nil {
+		s.memoryCache.Delete(evt.ApiKeyID)
+		s.memoryCache.Delete(evt.ApiKey)
+	}
 
 	if err := s.cache.Delete(ctx, fmt.Sprintf(cache.ApiKeyPattern, evt.ApiKey)); err != nil {
 		s.logger.WithError(err).Warn("failed to delete apikey from redis cache")

@@ -211,7 +211,7 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update gateway"})
 	}
 
-	err = h.publisher.Publish(c.Context(), event.UpdateGatewayCacheEvent{
+	err = h.publisher.Publish(c.Context(), event.DeleteGatewayCacheEvent{
 		GatewayID: dbGateway.ID.String(),
 	})
 	if err != nil {
