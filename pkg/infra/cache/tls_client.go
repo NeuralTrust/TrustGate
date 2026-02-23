@@ -22,7 +22,7 @@ func NewTLSClientCache(logger *logrus.Logger) *TLSClientCache {
 	}
 }
 
-func (c *TLSClientCache) GetOrCreate(key string, cfg *tls.Config, proxyAddr string, proxyProtocol string) *fasthttp.Client {
+func (c *TLSClientCache) Create(cfg *tls.Config, proxyAddr string, proxyProtocol string) *fasthttp.Client {
 	// Create a new client each time - no caching to avoid connection reuse issues
 	client := &fasthttp.Client{
 		TLSConfig:                     cfg,

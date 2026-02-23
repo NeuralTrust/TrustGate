@@ -950,7 +950,6 @@ func (h *forwardedHandler) prepareClient(ctx context.Context, dto *forwardedRequ
 		if dto.target.InsecureSSL {
 			tlsConf.AllowInsecureConnections = true
 		}
-		// Ensure cert files exist, recovering from DB if needed
 		if h.tlsCertWriter != nil && dto.gatewayID != "" {
 			gatewayUUID, err := parseUUID(dto.gatewayID)
 			if err == nil {
@@ -968,17 +967,17 @@ func (h *forwardedHandler) prepareClient(ctx context.Context, dto *forwardedRequ
 		if err != nil {
 			return nil, fmt.Errorf("failed to build TLS config: %w", err)
 		}
-		return h.tlsClientCache.GetOrCreate(dto.target.ID, conf, proxyAddr, proxyProtocol), nil
+		return h.tlsClientCache.Create(conf, proxyAddr, proxyProtocol), nil
 
 	case dto.target.InsecureSSL:
 		conf, err := config.BuildTLSConfigFromClientConfig(types.ClientTLSConfigDTO{AllowInsecureConnections: true})
 		if err != nil {
 			return nil, fmt.Errorf("failed to build insecure TLS config: %w", err)
 		}
-		return h.tlsClientCache.GetOrCreate(dto.target.ID+"-insecure", conf, proxyAddr, proxyProtocol), nil
+		return h.tlsClientCache.Create(conf, proxyAddr, proxyProtocol), nil
 
 	case proxyAddr != "":
-		return h.tlsClientCache.GetOrCreate(dto.target.ID+"-proxy", nil, proxyAddr, proxyProtocol), nil
+		return h.tlsClientCache.Create(nil, proxyAddr, proxyProtocol), nil
 
 	default:
 		return h.client, nil
