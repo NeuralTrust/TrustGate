@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -69,7 +70,7 @@ func TestBotDetectorPlugin_ValidateConfig(t *testing.T) {
 		config := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.5,
-				"action":    "alert_only",
+				"action":    "observe",
 			},
 		}
 
@@ -81,7 +82,7 @@ func TestBotDetectorPlugin_ValidateConfig(t *testing.T) {
 		config := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": -0.1,
-				"action":    "alert_only",
+				"action":    "observe",
 			},
 		}
 
@@ -94,7 +95,7 @@ func TestBotDetectorPlugin_ValidateConfig(t *testing.T) {
 		config := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 1.1,
-				"action":    "alert_only",
+				"action":    "observe",
 			},
 		}
 
@@ -160,7 +161,7 @@ func TestBotDetectorPlugin_CalculateBotScore(t *testing.T) {
 		var cfg bot_detector.Config
 		err := mapstructure.Decode(map[string]interface{}{
 			"threshold": 0.5,
-			"action":    "alert_only",
+			"action":    "observe",
 		}, &cfg)
 		require.NoError(t, err, "Failed to decode config")
 
@@ -191,7 +192,7 @@ func TestBotDetectorPlugin_CalculateBotScore(t *testing.T) {
 		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.5,
-				"action":    "alert_only",
+				"action":    "observe",
 			},
 		}
 
@@ -266,7 +267,7 @@ func TestBotDetectorPlugin_CalculateBotScore(t *testing.T) {
 		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.5,
-				"action":    "alert_only",
+				"action":    "observe",
 			},
 		}
 
@@ -298,7 +299,7 @@ func TestBotDetectorPlugin_Execute_NoHeader(t *testing.T) {
 		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.5,
-				"action":    "alert_only",
+				"action":    "observe",
 			},
 		}
 
@@ -353,7 +354,7 @@ func TestBotDetectorPlugin_Execute_NoHeader(t *testing.T) {
 		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.5,
-				"action":    "alert_only",
+				"action":    "observe",
 			},
 		}
 
@@ -386,7 +387,7 @@ func TestBotDetectorPlugin_Execute_InvalidHeader(t *testing.T) {
 	pluginConfig := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"threshold": 0.5,
-			"action":    "alert_only",
+			"action":    "observe",
 		},
 	}
 
@@ -444,7 +445,7 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 
 	encodedData := base64.StdEncoding.EncodeToString(b.Bytes())
 
-	t.Run("AlertOnly Action", func(t *testing.T) {
+	t.Run("Observe Action", func(t *testing.T) {
 		logger := logrus.New()
 		fpTracker := &mocks.Tracker{}
 		plugin := bot_detector.NewBotDetectorPlugin(logger, fpTracker)
@@ -462,7 +463,7 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold": 0.1, // Low threshold to ensure detection
-				"action":    "alert_only",
+				"action":    "observe",
 			},
 		}
 
@@ -506,7 +507,7 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 		assert.GreaterOrEqual(t, duration.Seconds(), 1.0) // Should have throttled for at least 1 second
 	})
 
-	t.Run("Block Action", func(t *testing.T) {
+	t.Run("Enforce Action", func(t *testing.T) {
 		logger := logrus.New()
 		fpTracker := &mocks.Tracker{}
 		plugin := bot_detector.NewBotDetectorPlugin(logger, fpTracker)
@@ -535,7 +536,7 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 		pluginConfig := plugintypes.PluginConfig{
 			Settings: map[string]interface{}{
 				"threshold":        0.1, // Low threshold to ensure detection
-				"action":           "block",
+				"action":           "enforce",
 				"retention_period": 300,
 			},
 		}
@@ -545,7 +546,8 @@ func TestBotDetectorPlugin_Execute_Actions(t *testing.T) {
 		assert.Nil(t, result)
 
 		// Check that it's a PluginError with the correct status code
-		pluginErr, ok := err.(*plugintypes.PluginError)
+		var pluginErr *plugintypes.PluginError
+		ok := errors.As(err, &pluginErr)
 		assert.True(t, ok)
 		assert.Equal(t, http.StatusForbidden, pluginErr.StatusCode)
 		assert.Equal(t, "blocked request due fraudulent activity", pluginErr.Message)
@@ -615,7 +617,7 @@ func TestBotDetectorPlugin_Execute_WithFingerprint(t *testing.T) {
 	pluginConfig := plugintypes.PluginConfig{
 		Settings: map[string]interface{}{
 			"threshold": 0.5,
-			"action":    "alert_only",
+			"action":    "observe",
 		},
 	}
 
