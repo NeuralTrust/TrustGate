@@ -293,16 +293,3 @@ var AllEntities = map[Entity]bool{
 func IsValid(entity string) bool {
 	return AllEntities[Entity(entity)]
 }
-
-// GetPattern returns the regex pattern for an entity type
-func GetPattern(entity Entity) *regexp.Regexp {
-	return Patterns[entity]
-}
-
-// GetDefaultMask returns the default mask for an entity type
-func GetDefaultMask(entity Entity) string {
-	if mask, ok := DefaultMasks[entity]; ok {
-		return mask
-	}
-	return DefaultMasks[Default]
-}

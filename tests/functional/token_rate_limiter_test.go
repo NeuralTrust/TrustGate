@@ -24,10 +24,10 @@ func TestTokenRateLimiter(t *testing.T) {
 				"stage":    "pre_request",
 				"priority": 1,
 				"settings": map[string]interface{}{
-					"tokens_per_request":  5,
-					"tokens_per_minute":   0,
-					"bucket_size":         5,
-					"requests_per_minute": 10,
+					"tokens_per_request": 5,
+					"tokens_per_minute":  0,
+					"bucket_size":        5,
+					"window_seconds":     60,
 				},
 			},
 		},
@@ -71,14 +71,14 @@ func TestTokenRateLimiter(t *testing.T) {
 	}
 
 	CreateRules(t, gatewayID, rulePayload)
-	// wait a little for propagation
 	time.Sleep(2 * time.Second)
 
 	client := &http.Client{}
 
-	// First request should pass (consume all 5 tokens)
-	{
-		body := bytes.NewBufferString("{\"input\":\"hello\"}")
+	// Non-provider requests should pass through without rate limiting.
+	// The upstream target has no provider set, so req.Provider == "".
+	t.Run("non-provider request passes through", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"input":"hello"}`)
 		req, err := http.NewRequest(http.MethodPost, ProxyUrl+"/tokens", body)
 		assert.NoError(t, err)
 		req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
@@ -91,18 +91,11 @@ func TestTokenRateLimiter(t *testing.T) {
 		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		// Basic headers should be present (set in PostResponse stage)
-		assert.NotEmpty(t, resp.Header.Get("X-Ratelimit-Limit-Requests"))
-		assert.NotEmpty(t, resp.Header.Get("X-Ratelimit-Limit-Tokens"))
-		assert.NotEmpty(t, resp.Header.Get("X-Ratelimit-Remaining-Requests"))
-		assert.NotEmpty(t, resp.Header.Get("X-Ratelimit-Remaining-Tokens"))
-		assert.NotEmpty(t, resp.Header.Get("X-Ratelimit-Reset-Tokens"))
-		assert.NotEmpty(t, resp.Header.Get("X-Tokens-Consumed"))
-	}
+	})
 
-	// Second request should be blocked due to insufficient tokens
-	{
-		body := bytes.NewBufferString("{\"input\":\"hello again\"}")
+	// Second non-provider request should also pass through (no limiting).
+	t.Run("second non-provider request also passes", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"input":"hello again"}`)
 		req, err := http.NewRequest(http.MethodPost, ProxyUrl+"/tokens", body)
 		assert.NoError(t, err)
 		req.Host = fmt.Sprintf("%s.%s", subdomain, BaseDomain)
@@ -114,14 +107,8 @@ func TestTokenRateLimiter(t *testing.T) {
 		assert.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
 
-		assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
-		// PreRequest stage sets headers too when limiting
-		assert.NotEmpty(t, resp.Header.Get("X-Ratelimit-Limit-Requests"))
-		assert.NotEmpty(t, resp.Header.Get("X-Ratelimit-Limit-Tokens"))
-		assert.NotEmpty(t, resp.Header.Get("X-Ratelimit-Remaining-Requests"))
-		assert.NotEmpty(t, resp.Header.Get("X-Ratelimit-Remaining-Tokens"))
-		assert.NotEmpty(t, resp.Header.Get("X-Ratelimit-Reset-Tokens"))
-	}
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
 
 	fmt.Println("\n✅ Token Rate Limiter Functional Test Completed")
 }
