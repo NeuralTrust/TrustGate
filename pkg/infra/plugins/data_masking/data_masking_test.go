@@ -146,7 +146,7 @@ func TestMasking_PhoneNumber(t *testing.T) {
 	// Use a phone number format that won't match the Swift BIC pattern
 	example := "+1 (555) 123-4567" // Changed from "+1234567890"
 	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: +" + pii_entities.DefaultMasks[pii_entities.PhoneNumber]
+	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.PhoneNumber]
 
 	assert.Equal(t, expected, masked, "Phone number masking failed")
 	assert.Equal(t, 1, len(evt))
