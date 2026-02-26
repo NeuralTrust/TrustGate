@@ -92,6 +92,7 @@ type openaiStreamChunk struct {
 	Object  string               `json:"object"`
 	Model   string               `json:"model,omitempty"`
 	Choices []openaiStreamChoice `json:"choices"`
+	Usage   *openaiUsage         `json:"usage,omitempty"`
 }
 
 type openaiStreamChoice struct {
@@ -391,34 +392,38 @@ func (a *OpenAIAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 		return nil, nil // skip non-JSON
 	}
 
-	if len(raw.Choices) == 0 {
-		return nil, nil
-	}
-
-	choice := raw.Choices[0]
-	delta := choice.Delta
 	sc := &CanonicalStreamChunk{
 		ID:    raw.ID,
 		Model: raw.Model,
-		Role:  delta.Role,
-		Delta: delta.Content,
-	}
-	if choice.FinishReason != nil {
-		sc.FinishReason = *choice.FinishReason
 	}
 
-	// Map OpenAI stream tool_calls to canonical tool call deltas.
-	for _, tc := range delta.ToolCalls {
-		sc.ToolCallDeltas = append(sc.ToolCallDeltas, StreamToolCallDelta{
-			Index:          tc.Index,
-			ID:             tc.ID,
-			Name:           tc.Function.Name,
-			ArgumentsDelta: tc.Function.Arguments,
-		})
+	if len(raw.Choices) > 0 {
+		choice := raw.Choices[0]
+		delta := choice.Delta
+		sc.Role = delta.Role
+		sc.Delta = delta.Content
+		if choice.FinishReason != nil {
+			sc.FinishReason = *choice.FinishReason
+		}
+		for _, tc := range delta.ToolCalls {
+			sc.ToolCallDeltas = append(sc.ToolCallDeltas, StreamToolCallDelta{
+				Index:          tc.Index,
+				ID:             tc.ID,
+				Name:           tc.Function.Name,
+				ArgumentsDelta: tc.Function.Arguments,
+			})
+		}
 	}
 
-	// Skip chunks with no content (text, role, finish_reason, or tool_calls).
-	if sc.Delta == "" && sc.Role == "" && sc.FinishReason == "" && len(sc.ToolCallDeltas) == 0 {
+	if raw.Usage != nil {
+		sc.Usage = &CanonicalUsage{
+			PromptTokens:     raw.Usage.PromptTokens,
+			CompletionTokens: raw.Usage.CompletionTokens,
+			TotalTokens:      raw.Usage.TotalTokens,
+		}
+	}
+
+	if sc.Delta == "" && sc.Role == "" && sc.FinishReason == "" && len(sc.ToolCallDeltas) == 0 && sc.Usage == nil {
 		return nil, nil
 	}
 
@@ -460,6 +465,14 @@ func (a *OpenAIAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 		Object:  "chat.completion.chunk",
 		Model:   chunk.Model,
 		Choices: []openaiStreamChoice{choice},
+	}
+
+	if chunk.Usage != nil {
+		out.Usage = &openaiUsage{
+			PromptTokens:     chunk.Usage.PromptTokens,
+			CompletionTokens: chunk.Usage.CompletionTokens,
+			TotalTokens:      chunk.Usage.TotalTokens,
+		}
 	}
 
 	data, err := json.Marshal(out)

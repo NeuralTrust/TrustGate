@@ -9,28 +9,21 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// Message roles for conversation context
-const (
-	RoleUser      = "user"
-	RoleAssistant = "assistant"
-	RoleSystem    = "system"
-)
-
 // RequestContext represents the context for a request
 type RequestContext struct {
-	C         *fiber.Ctx
-	Context   context.Context
-	GatewayID string
-	RuleID    string
-	Headers   map[string][]string
-	Method    string
-	Path      string
-	Query     url.Values
-	Body      []byte
-	Messages  []string
-	Metadata  map[string]interface{}
-	Stage     types.Stage
-	ProcessAt *time.Time
+	C            *fiber.Ctx
+	Context      context.Context
+	GatewayID    string
+	RuleID       string
+	Headers      map[string][]string
+	Method       string
+	Path         string
+	Query        url.Values
+	Body         []byte
+	Messages     []string
+	Metadata     map[string]interface{}
+	Stage        types.Stage
+	ProcessAt    *time.Time
 	IP           string
 	SessionID    string
 	Provider     string

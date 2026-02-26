@@ -100,12 +100,14 @@ type anthropicStreamEvent struct {
 	Delta        json.RawMessage `json:"delta,omitempty"`
 	Index        int             `json:"index,omitempty"`
 	ContentBlock json.RawMessage `json:"content_block,omitempty"`
+	Usage        *anthropicUsage `json:"usage,omitempty"`
 }
 
 type anthropicMessageStart struct {
-	ID    string `json:"id"`
-	Model string `json:"model"`
-	Role  string `json:"role"`
+	ID    string          `json:"id"`
+	Model string          `json:"model"`
+	Role  string          `json:"role"`
+	Usage *anthropicUsage `json:"usage,omitempty"`
 }
 
 type anthropicDelta struct {
@@ -597,17 +599,29 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 		if err := json.Unmarshal(event.Message, &msg); err != nil {
 			return nil, nil
 		}
-		return &CanonicalStreamChunk{
+		sc := &CanonicalStreamChunk{
 			ID:    msg.ID,
 			Model: msg.Model,
 			Role:  "assistant",
-		}, nil
+		}
+		if u := msg.Usage; u != nil {
+			sc.Usage = &CanonicalUsage{
+				PromptTokens:             u.InputTokens,
+				CompletionTokens:         u.OutputTokens,
+				TotalTokens:              u.InputTokens + u.OutputTokens,
+				CacheCreationInputTokens: u.CacheCreationInputTokens,
+				CacheReadInputTokens:     u.CacheReadInputTokens,
+				ServiceTier:              u.ServiceTier,
+			}
+		}
+		return sc, nil
 
 	case "message_delta":
 		var delta anthropicDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil {
 			return nil, nil
 		}
+		sc := &CanonicalStreamChunk{}
 		if delta.StopReason != "" {
 			fr := delta.StopReason
 			switch fr {
@@ -618,9 +632,22 @@ func (a *AnthropicAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChun
 			case "tool_use":
 				fr = "tool_calls"
 			}
-			return &CanonicalStreamChunk{FinishReason: fr}, nil
+			sc.FinishReason = fr
 		}
-		return nil, nil
+		if u := event.Usage; u != nil {
+			sc.Usage = &CanonicalUsage{
+				PromptTokens:             u.InputTokens,
+				CompletionTokens:         u.OutputTokens,
+				TotalTokens:              u.InputTokens + u.OutputTokens,
+				CacheCreationInputTokens: u.CacheCreationInputTokens,
+				CacheReadInputTokens:     u.CacheReadInputTokens,
+				ServiceTier:              u.ServiceTier,
+			}
+		}
+		if sc.FinishReason == "" && sc.Usage == nil {
+			return nil, nil
+		}
+		return sc, nil
 
 	default:
 		return nil, nil // skip ping, message_stop, content_block_start, etc.
@@ -640,6 +667,11 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 	if chunk.Role != "" {
 		var lines [][]byte
 
+		sseUsage := anthropicSSEUsage{}
+		if chunk.Usage != nil {
+			sseUsage.InputTokens = chunk.Usage.PromptTokens
+			sseUsage.OutputTokens = chunk.Usage.CompletionTokens
+		}
 		msgStart := anthropicSSEMessageStartPayload{
 			Type: "message_start",
 			Message: anthropicSSEMessageInfo{
@@ -648,7 +680,7 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 				Role:    "assistant",
 				Content: []interface{}{},
 				Model:   chunk.Model,
-				Usage:   anthropicSSEUsage{InputTokens: 0, OutputTokens: 0},
+				Usage:   sseUsage,
 			},
 		}
 		data, _ := json.Marshal(msgStart)
@@ -768,10 +800,15 @@ func (a *AnthropicAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]b
 		cbStop := anthropicSSEContentBlockStop{Type: "content_block_stop", Index: 0}
 		data, _ := json.Marshal(cbStop)
 		lines = append(lines, SSEEvent("content_block_stop", data)...)
+		deltaUsage := anthropicSSEUsage{}
+		if chunk.Usage != nil {
+			deltaUsage.InputTokens = chunk.Usage.PromptTokens
+			deltaUsage.OutputTokens = chunk.Usage.CompletionTokens
+		}
 		msgDelta := anthropicSSEMessageDelta{
 			Type:  "message_delta",
 			Delta: anthropicSSEMessageDeltaBody{StopReason: sr},
-			Usage: anthropicSSEUsage{OutputTokens: 0},
+			Usage: deltaUsage,
 		}
 		data, _ = json.Marshal(msgDelta)
 		lines = append(lines, SSEEvent("message_delta", data)...)

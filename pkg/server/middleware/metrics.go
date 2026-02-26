@@ -172,8 +172,6 @@ func (m *metricsMiddleware) getStartTime(c *fiber.Ctx) time.Time {
 // buildRequestContext creates a RequestContext from the fiber context
 func (m *metricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) types.RequestContext {
 	userAgentInfo := utils.ParseUserAgent(c.Get("User-Agent"), c.Get("Accept-Language"))
-	now := time.Now()
-
 	reqCtx := types.RequestContext{
 		Context:   context.Background(),
 		GatewayID: gatewayID,
@@ -185,7 +183,7 @@ func (m *metricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 			"user_agent_info": userAgentInfo,
 		},
 		Body:      append([]byte(nil), c.Request().Body()...),
-		ProcessAt: &now,
+		ProcessAt: func() *time.Time { t := time.Now(); return &t }(),
 		IP:        utils.ExtractIP(c),
 	}
 
@@ -211,6 +209,11 @@ func (m *metricsMiddleware) handleStreamResponse(
 	telemetryEnabled bool,
 ) {
 	if !telemetryEnabled {
+		// Always drain the stream channel to prevent blocking the stream writer.
+		go func() {
+			for range state.responseChan {
+			}
+		}()
 		return
 	}
 
@@ -220,6 +223,7 @@ func (m *metricsMiddleware) handleStreamResponse(
 	headers := m.copyHeaders(c.GetRespHeaders())
 	statusCode := c.Response().StatusCode()
 	collector := m.getCollectorFromContext(c)
+	pluginsDone, _ := c.Locals(string(common.PluginsDoneContextKey)).(chan struct{})
 
 	go func() {
 		streamStartTime := time.Now()
@@ -227,8 +231,12 @@ func (m *metricsMiddleware) handleStreamResponse(
 		streamDuration := float64(time.Since(streamStartTime).Microseconds()) / 1000
 
 		m.logger.Debug("stream channel closed")
-		now := time.Now()
 
+		if pluginsDone != nil {
+			<-pluginsDone
+		}
+
+		now := time.Now()
 		m.worker.Process(
 			collector,
 			exporters,
