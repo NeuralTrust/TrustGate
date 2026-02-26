@@ -1,6 +1,7 @@
 package token_rate_limiter
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,16 +21,33 @@ import (
 )
 
 const (
-	PluginName     = "token_rate_limiter"
-	defaultWindow  = 60
-	bucketKeyPrefix = "trl"
+	PluginName       = "token_rate_limiter"
+	counterKeyPrefix = "trl"
 )
 
+type WindowConfig struct {
+	Unit string `mapstructure:"unit"`
+	Max  int    `mapstructure:"max"`
+}
+
 type Config struct {
-	TokensPerRequest int `mapstructure:"tokens_per_request"`
-	TokensPerMinute  int `mapstructure:"tokens_per_minute"`
-	BucketSize       int `mapstructure:"bucket_size"`
-	WindowSeconds    int `mapstructure:"window_seconds"`
+	IdentifierHeader string       `mapstructure:"identifier_header"`
+	Window           WindowConfig `mapstructure:"window"`
+}
+
+func (c *Config) windowSeconds() int {
+	switch strings.ToLower(c.Window.Unit) {
+	case "second":
+		return 1
+	case "minute":
+		return 60
+	case "hour":
+		return 3600
+	case "day":
+		return 86400
+	default:
+		return 60
+	}
 }
 
 type TokenRateLimiterPlugin struct {
@@ -49,11 +67,11 @@ func (p *TokenRateLimiterPlugin) Name() string { return PluginName }
 func (p *TokenRateLimiterPlugin) RequiredPlugins() []string { return nil }
 
 func (p *TokenRateLimiterPlugin) Stages() []pluginTypes.Stage {
-	return []pluginTypes.Stage{pluginTypes.PreRequest, pluginTypes.PreResponse}
+	return []pluginTypes.Stage{pluginTypes.PreRequest, pluginTypes.PostResponse}
 }
 
 func (p *TokenRateLimiterPlugin) AllowedStages() []pluginTypes.Stage {
-	return []pluginTypes.Stage{pluginTypes.PreRequest, pluginTypes.PreResponse}
+	return []pluginTypes.Stage{pluginTypes.PreRequest, pluginTypes.PostResponse}
 }
 
 func (p *TokenRateLimiterPlugin) ValidateConfig(pc pluginTypes.PluginConfig) error {
@@ -66,21 +84,15 @@ func (p *TokenRateLimiterPlugin) ValidateConfig(pc pluginTypes.PluginConfig) err
 		return fmt.Errorf("invalid settings: %w", err)
 	}
 
-	if cfg.TokensPerRequest <= 0 {
-		return fmt.Errorf("tokens_per_request must be > 0")
+	if cfg.Window.Max <= 0 {
+		return fmt.Errorf("window.max must be > 0")
 	}
-	if cfg.BucketSize <= 0 {
-		return fmt.Errorf("bucket_size must be > 0")
+
+	validUnits := map[string]bool{"second": true, "minute": true, "hour": true, "day": true}
+	if !validUnits[strings.ToLower(cfg.Window.Unit)] {
+		return fmt.Errorf("window.unit must be one of: second, minute, hour, day")
 	}
-	if cfg.BucketSize < cfg.TokensPerRequest {
-		return fmt.Errorf("bucket_size must be >= tokens_per_request")
-	}
-	if cfg.TokensPerMinute < 0 {
-		return fmt.Errorf("tokens_per_minute must be >= 0")
-	}
-	if cfg.WindowSeconds < 0 {
-		return fmt.Errorf("window_seconds must be >= 0")
-	}
+
 	return nil
 }
 
@@ -99,19 +111,15 @@ func (p *TokenRateLimiterPlugin) Execute(
 	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
 		return nil, fmt.Errorf("failed to decode config: %w", err)
 	}
-	if config.WindowSeconds <= 0 {
-		config.WindowSeconds = defaultWindow
-	}
 
-	identifier := extractIdentifier(req)
-
-	bucketKey := fmt.Sprintf("%s:%s:%s", bucketKeyPrefix, cfg.ID, identifier)
+	identifier := extractIdentifier(req, config.IdentifierHeader)
+	counterKey := fmt.Sprintf("%s:%s:%s", counterKeyPrefix, cfg.ID, identifier)
 
 	switch req.Stage {
 	case pluginTypes.PreRequest:
-		return p.handlePreRequest(ctx, config, bucketKey, req.Provider, evtCtx)
-	case pluginTypes.PreResponse:
-		return p.handlePreResponse(ctx, config, bucketKey, req, resp, evtCtx)
+		return p.handlePreRequest(ctx, config, counterKey, req.Provider, evtCtx)
+	case pluginTypes.PostResponse:
+		return p.handlePostResponse(ctx, config, counterKey, req, resp, evtCtx)
 	default:
 		return nil, fmt.Errorf("unsupported stage: %s", req.Stage)
 	}
@@ -120,68 +128,65 @@ func (p *TokenRateLimiterPlugin) Execute(
 func (p *TokenRateLimiterPlugin) handlePreRequest(
 	ctx context.Context,
 	config Config,
-	bucketKey string,
+	counterKey string,
 	provider string,
 	evtCtx *metrics.EventContext,
 ) (*pluginTypes.PluginResponse, error) {
-	nowMs := time.Now().UnixMilli()
-	windowMs := int64(config.WindowSeconds) * 1000
-
-	result, err := consumeScript.Run(ctx, p.redis, []string{bucketKey},
-		config.BucketSize,
-		config.TokensPerMinute,
-		windowMs,
-		config.TokensPerRequest,
-		nowMs,
-	).Int64Slice()
-	if err != nil {
-		p.logger.WithError(err).Error("consume script failed")
-		return nil, fmt.Errorf("rate limiter consume failed: %w", err)
+	consumed, err := p.redis.Get(ctx, counterKey).Int64()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		p.logger.WithError(err).Error("failed to read token counter")
+		return nil, fmt.Errorf("rate limiter read failed: %w", err)
 	}
 
-	allowed := result[0] == 1
-	remaining := int(result[1])
+	windowSec := config.windowSeconds()
+	remaining := config.Window.Max - int(consumed)
+	if remaining < 0 {
+		remaining = 0
+	}
 
-	headers := rateLimitHeaders(config.BucketSize, remaining, config.WindowSeconds)
+	ttl, _ := p.redis.TTL(ctx, counterKey).Result()
+	resetSeconds := windowSec
+	if ttl > 0 {
+		resetSeconds = int(ttl / time.Second)
+	}
 
-	if !allowed {
-		evtCtx.SetError(errors.New("token rate limit exceeded"))
+	headers := rateLimitHeaders(config.Window.Max, remaining, resetSeconds)
+
+	if consumed >= int64(config.Window.Max) {
 		evtCtx.SetExtras(TokenRateLimiterData{
 			Stage:           string(pluginTypes.PreRequest),
-			BucketKey:       bucketKey,
+			CounterKey:      counterKey,
 			Provider:        provider,
-			BucketSize:      config.BucketSize,
-			TokensPerMinute: config.TokensPerMinute,
-			TokensReserved:  config.TokensPerRequest,
+			WindowUnit:      config.Window.Unit,
+			WindowMax:       config.Window.Max,
+			TokensConsumed:  int(consumed),
 			TokensRemaining: remaining,
-			TokensConsumed:  0,
 			LimitExceeded:   true,
 		})
 		return nil, &pluginTypes.PluginError{
 			StatusCode: http.StatusTooManyRequests,
-			Message:    fmt.Sprintf("Rate limit exceeded. Required: %d, Available: %d", config.TokensPerRequest, remaining),
+			Message:    fmt.Sprintf("Token rate limit exceeded. Consumed: %d, Limit: %d", consumed, config.Window.Max),
 			Headers:    headers,
 		}
 	}
 
 	evtCtx.SetExtras(TokenRateLimiterData{
 		Stage:           string(pluginTypes.PreRequest),
-		BucketKey:       bucketKey,
+		CounterKey:      counterKey,
 		Provider:        provider,
-		BucketSize:      config.BucketSize,
-		TokensPerMinute: config.TokensPerMinute,
-		TokensReserved:  config.TokensPerRequest,
+		WindowUnit:      config.Window.Unit,
+		WindowMax:       config.Window.Max,
+		TokensConsumed:  int(consumed),
 		TokensRemaining: remaining,
-		TokensConsumed:  config.TokensPerRequest,
 		LimitExceeded:   false,
 	})
 	return &pluginTypes.PluginResponse{Headers: headers}, nil
 }
 
-func (p *TokenRateLimiterPlugin) handlePreResponse(
+func (p *TokenRateLimiterPlugin) handlePostResponse(
 	ctx context.Context,
 	config Config,
-	bucketKey string,
+	counterKey string,
 	req *types.RequestContext,
 	resp *types.ResponseContext,
 	evtCtx *metrics.EventContext,
@@ -191,63 +196,76 @@ func (p *TokenRateLimiterPlugin) handlePreResponse(
 	}
 
 	providerFormat := adapter.Format(req.Provider)
-	canonical, err := adapter.DecodeResponseFor(resp.Body, providerFormat)
-	if err != nil {
-		p.logger.WithError(err).WithField("provider", req.Provider).
-			Warn("could not decode provider response for token counting, skipping adjustment")
-		return &pluginTypes.PluginResponse{}, nil
-	}
-
 	actualTokens := 0
-	if canonical.Usage != nil {
-		actualTokens = canonical.Usage.TotalTokens
+
+	if resp.Streaming {
+		actualTokens = p.extractStreamUsage(resp.Body, providerFormat)
+	} else {
+		canonical, err := adapter.DecodeResponseFor(resp.Body, providerFormat)
+		if err != nil {
+			p.logger.WithError(err).WithField("provider", req.Provider).
+				Warn("could not decode provider response for token counting, skipping")
+			return &pluginTypes.PluginResponse{}, nil
+		}
+		if canonical.Usage != nil {
+			actualTokens = canonical.Usage.TotalTokens
+		}
 	}
 
 	if actualTokens == 0 {
 		return &pluginTypes.PluginResponse{}, nil
 	}
 
-	delta := actualTokens - config.TokensPerRequest
-	remaining := 0
+	windowSec := config.windowSeconds()
 
-	if delta != 0 {
-		res, err := adjustScript.Run(ctx, p.redis, []string{bucketKey},
-			delta,
-			config.BucketSize,
-		).Int64Slice()
-		if err != nil {
-			p.logger.WithError(err).Error("adjust script failed")
-			return nil, fmt.Errorf("rate limiter adjust failed: %w", err)
-		}
-		remaining = int(res[0])
+	newTotal, err := recordScript.Run(ctx, p.redis, []string{counterKey},
+		actualTokens,
+		windowSec,
+	).Int64()
+	if err != nil {
+		p.logger.WithError(err).Error("record script failed")
+		return nil, fmt.Errorf("rate limiter record failed: %w", err)
 	}
 
-	headers := rateLimitHeaders(config.BucketSize, remaining, config.WindowSeconds)
+	remaining := config.Window.Max - int(newTotal)
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	ttl, _ := p.redis.TTL(ctx, counterKey).Result()
+	resetSeconds := windowSec
+	if ttl > 0 {
+		resetSeconds = int(ttl / time.Second)
+	}
+
+	headers := rateLimitHeaders(config.Window.Max, remaining, resetSeconds)
 	headers["X-Tokens-Consumed"] = []string{strconv.Itoa(actualTokens)}
 
 	evtCtx.SetExtras(TokenRateLimiterData{
-		Stage:           string(pluginTypes.PreResponse),
-		BucketKey:       bucketKey,
+		Stage:           string(pluginTypes.PostResponse),
+		CounterKey:      counterKey,
 		Provider:        req.Provider,
-		BucketSize:      config.BucketSize,
-		TokensPerMinute: config.TokensPerMinute,
-		TokensReserved:  config.TokensPerRequest,
+		WindowUnit:      config.Window.Unit,
+		WindowMax:       config.Window.Max,
+		TokensConsumed:  int(newTotal),
 		TokensActual:    actualTokens,
-		Delta:           delta,
 		TokensRemaining: remaining,
-		TokensConsumed:  actualTokens,
 		LimitExceeded:   false,
 	})
 	return &pluginTypes.PluginResponse{Headers: headers}, nil
 }
 
-func extractIdentifier(req *types.RequestContext) string {
-	if values, ok := req.Headers["Authorization"]; ok && len(values) > 0 {
-		v := values[0]
-		if strings.HasPrefix(v, "Bearer ") {
-			return v[7:]
+func extractIdentifier(req *types.RequestContext, headerName string) string {
+	if headerName != "" {
+		if values, ok := req.Headers[headerName]; ok && len(values) > 0 && values[0] != "" {
+			return values[0]
 		}
-		return v
+		canonical := strings.ToLower(headerName)
+		for k, values := range req.Headers {
+			if strings.ToLower(k) == canonical && len(values) > 0 && values[0] != "" {
+				return values[0]
+			}
+		}
 	}
 	if req.IP != "" {
 		return req.IP
@@ -255,10 +273,28 @@ func extractIdentifier(req *types.RequestContext) string {
 	return "_global"
 }
 
-func rateLimitHeaders(bucketSize, remaining, windowSeconds int) map[string][]string {
+func rateLimitHeaders(limit, remaining, resetSeconds int) map[string][]string {
 	return map[string][]string{
-		"X-Ratelimit-Limit-Tokens":     {strconv.Itoa(bucketSize)},
+		"X-Ratelimit-Limit-Tokens":     {strconv.Itoa(limit)},
 		"X-Ratelimit-Remaining-Tokens": {strconv.Itoa(remaining)},
-		"X-Ratelimit-Reset-Tokens":     {strconv.Itoa(windowSeconds) + "s"},
+		"X-Ratelimit-Reset-Tokens":     {strconv.Itoa(resetSeconds) + "s"},
 	}
+}
+
+func (p *TokenRateLimiterPlugin) extractStreamUsage(body []byte, providerFormat adapter.Format) int {
+	lines := bytes.Split(body, []byte("\n"))
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := bytes.TrimSpace(lines[i])
+		if len(line) == 0 {
+			continue
+		}
+		chunk, err := adapter.DecodeStreamChunkFor(line, providerFormat)
+		if err != nil || chunk == nil {
+			continue
+		}
+		if chunk.Usage != nil && chunk.Usage.TotalTokens > 0 {
+			return chunk.Usage.TotalTokens
+		}
+	}
+	return 0
 }

@@ -1,19 +1,14 @@
 package http
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -364,6 +359,12 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	// Create plugin channels before forwarding so the stream writers can pick them up.
+	streamPluginData := make(chan []byte, 512)
+	pluginsDone := make(chan struct{})
+	c.Locals(string(common.StreamDoneContextKey), streamPluginData)
+	c.Locals(string(common.PluginsDoneContextKey), pluginsDone)
+
 	// Forward the request
 	upstreamStartTime := time.Now()
 	response, err := h.forwardRequest(
@@ -377,6 +378,8 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to forward request")
 		h.registryFailedEvent(metricsCollector, fiber.StatusInternalServerError, err, respCtx)
+		close(streamPluginData)
+		close(pluginsDone)
 		return h.handleErrorResponse(c, fiber.StatusBadGateway, fiber.Map{
 			"error":   "failed to forward request",
 			"message": err.Error(),
@@ -405,9 +408,34 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	if response.Streaming {
 		respCtx.Streaming = true
-		h.registrySuccessEvent(metricsCollector, respCtx)
+
+		go func() {
+			defer close(pluginsDone)
+			var buf bytes.Buffer
+			for chunk := range streamPluginData {
+				if len(chunk) > 0 {
+					buf.Write(chunk)
+					buf.WriteByte('\n')
+				}
+			}
+			if buf.Len() > 0 {
+				respCtx.Body = buf.Bytes()
+				if _, err := h.pluginManager.ExecuteStage(
+					context.Background(), plugintypes.PostResponse,
+					gatewayID, reqCtx, respCtx, metricsCollector,
+				); err != nil {
+					h.logger.WithError(err).Warn("post-stream PostResponse plugin error")
+				}
+			}
+			h.registrySuccessEvent(metricsCollector, respCtx)
+		}()
+
 		return nil
 	}
+
+	// Non-streaming: no plugin goroutine needed, clean up channels immediately.
+	close(streamPluginData)
+	close(pluginsDone)
 
 	if response.StatusCode >= http.StatusBadRequest {
 		for k, values := range respCtx.Headers {
@@ -620,6 +648,11 @@ func (h *forwardedHandler) forwardRequest(
 			return nil, fmt.Errorf("failed to obtain oauth token: %w", err)
 		}
 
+		// Drain any stale value from a previous attempt before sending the current one.
+		select {
+		case <-streamMode:
+		default:
+		}
 		select {
 		case streamMode <- target.Stream:
 		default:
@@ -1067,6 +1100,27 @@ func (h *forwardedHandler) handleStreamingRequest(dto *forwardedRequestDTO, clie
 	return h.handleStreamingResponse(dto, client)
 }
 
+func (h *forwardedHandler) handleStreamingResponse(dto *forwardedRequestDTO, client *http.Client) (*types.ResponseContext, error) {
+	req := dto.req
+	target := dto.target
+
+	pathParams := h.getPathParamsFromContext(req.Context)
+	upstreamURL := h.buildUpstreamTargetUrl(target, pathParams)
+
+	if len(req.Query) > 0 {
+		queryString := req.Query.Encode()
+		if queryString != "" {
+			if strings.Contains(upstreamURL, "?") {
+				upstreamURL += "&" + queryString
+			} else {
+				upstreamURL += "?" + queryString
+			}
+		}
+	}
+
+	return infrahttpx.HandleHTTPStream(h.logger, client, upstreamURL, req, target, dto.streamResponse)
+}
+
 func (h *forwardedHandler) buildUpstreamTargetUrl(target *types.UpstreamTargetDTO, pathParams map[string]string) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("%s://%s", target.Protocol, target.Host))
@@ -1103,457 +1157,12 @@ func (h *forwardedHandler) getPathParamsFromContext(ctx context.Context) map[str
 	return nil
 }
 
-// injectStreamTrue sets "stream": true in a JSON request body so that upstreams
-// using OpenAI-style API (openai, azure) actually use streaming when the agent
-// format (e.g. Gemini) does not include stream in the body. Returns body unchanged on parse error.
-func injectStreamTrue(body []byte) []byte {
-	var m map[string]interface{}
-	if err := json.Unmarshal(body, &m); err != nil {
-		return body
-	}
-	m["stream"] = true
-	out, err := json.Marshal(m)
-	if err != nil {
-		return body
-	}
-	return out
-}
-
 func (h *forwardedHandler) handleStreamingResponseByProvider(
 	req *types.RequestContext,
 	target *types.UpstreamTargetDTO,
 	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
-
-	providerClient, err := h.providerLocator.Get(target.Provider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get streaming provider client: %w", err)
-	}
-
-	sourceFormat := adapter.Format(req.SourceFormat)
-	targetFormat := adapter.Format(target.Provider)
-	needsAdapt := !adapter.IsSameWireFormat(sourceFormat, targetFormat)
-
-	// Adapt request if cross-provider.
-	body := req.Body
-	if needsAdapt {
-		body, err = adapter.AdaptRequest(req.Body, sourceFormat, targetFormat)
-		if err != nil {
-			return nil, fmt.Errorf("failed to adapt stream request (%s->%s): %w", sourceFormat, targetFormat, err)
-		}
-	}
-
-	// Normalize OpenAI-compatible bodies: some SDKs (e.g. Mistral) omit
-	// required fields like tool_calls[].type that OpenAI strictly requires.
-	if adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) {
-		body = adapter.NormalizeOpenAIRequest(body)
-	}
-
-	// Validate/replace model.
-	body, _, err = adapter.ValidateModel(body, target.Models, target.DefaultModel)
-	if err != nil {
-		h.logger.WithError(err).Warn("model validation failed, proceeding with original body")
-		body = req.Body
-	}
-
-	// Upstreams that require "stream": true in the body (OpenAI, Azure, Anthropic)
-	// for streaming. When the agent format (e.g. Gemini) does not send stream in
-	// the body, the adapted body may lack it; force it so the upstream actually streams.
-	// - Azure: already covered (normalizeFormat maps it to OpenAI).
-	// - Bedrock: does not use body for streaming (uses InvokeModelWithResponseStream); adapter strips "stream".
-	if adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) || targetFormat == adapter.FormatAnthropic || targetFormat == adapter.FormatMistral {
-		body = injectStreamTrue(body)
-	}
-
-	streamChan := make(chan []byte)
-	errChan := make(chan error, 1)
-	breakChan := make(chan struct{}, 1)
-
-	req.C.Set("Content-Type", "text/event-stream")
-	req.C.Set("Cache-Control", "no-cache")
-	req.C.Set("Connection", "keep-alive")
-	req.C.Set("X-Accel-Buffering", "no")
-	req.C.Set("X-Selected-Provider", target.Provider)
-
-	go func() {
-		defer close(streamChan)
-		err := providerClient.CompletionsStream(
-			req,
-			&providers.Config{
-				Options:       target.ProviderOptions,
-				AllowedModels: target.Models,
-				DefaultModel:  target.DefaultModel,
-				Credentials: providers.Credentials{
-					ApiKey: target.Credentials.ApiKey,
-					AwsBedrock: &providers.AwsBedrock{
-						Region:       target.Credentials.AWSRegion,
-						SecretKey:    target.Credentials.AWSSecretAccessKey,
-						AccessKey:    target.Credentials.AWSAccessKeyID,
-						SessionToken: target.Credentials.AWSSessionToken,
-						UseRole:      target.Credentials.AWSUseRole,
-						RoleARN:      target.Credentials.AWSRole,
-					},
-				},
-			},
-			body,
-			streamChan,
-			breakChan,
-		)
-		if err != nil {
-			h.logger.WithError(err).Error("failed to stream request")
-			errChan <- err
-			return
-		}
-		close(errChan)
-	}()
-
-	select {
-	case err := <-errChan:
-		if err != nil {
-			return nil, fmt.Errorf("failed to stream request: %w", err)
-		}
-	case <-req.C.Context().Done():
-		return nil, fmt.Errorf("request cancelled: %w", req.C.Context().Err())
-	case <-breakChan:
-		break
-	case <-time.After(30 * time.Second):
-		break
-	}
-
-	// Optional: save the response stream to a file for debugging (compare upstream_agent combos).
-	var streamFile *os.File
-	if os.Getenv("TG_SAVE_STREAM_DEBUG") != "" {
-		dir := "streams"
-		_ = os.MkdirAll(dir, 0750)
-		upstreamName := string(targetFormat)
-		agentName := string(sourceFormat)
-		ts := time.Now().Format("20060102-150405")
-		name := fmt.Sprintf("%s_%s_%s.sse", upstreamName, agentName, ts)
-		path := filepath.Join(dir, name)
-		f, err := os.Create(path) // #nosec G304 -- path is from format names and timestamp, not user input
-		if err != nil {
-			h.logger.WithError(err).Warn("could not create stream debug file")
-		} else {
-			streamFile = f
-			h.logger.WithField("path", path).Info("saving stream response to file")
-		}
-	}
-
-	req.C.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-		defer close(streamResponse)
-		if streamFile != nil {
-			defer func() { _ = streamFile.Close() }()
-		}
-		writeLine := func(line []byte) {
-			_, _ = w.Write(line)
-			_, _ = w.Write([]byte("\n"))
-			if streamFile != nil {
-				_, _ = streamFile.Write(line)
-				_, _ = streamFile.Write([]byte("\n"))
-			}
-		}
-		writeAdaptedLines := func(lines [][]byte) {
-			for _, line := range lines {
-				writeLine(line)
-			}
-			_ = w.Flush()
-			for _, line := range lines {
-				if bytes.HasPrefix(line, []byte("data:")) {
-					mp := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-					if len(mp) > 0 {
-						streamResponse <- mp
-					}
-				}
-			}
-		}
-		// When agent is Gemini and upstream streams tool_calls (e.g. OpenAI), we accumulate
-		// arguments per tool call and emit Gemini-style functionCall parts on finish.
-		var toolCallAcc map[int]*struct {
-			ID   string
-			Name string
-			Args string
-		}
-		for msg := range streamChan {
-			// -----------------------------------------------------------------
-			// Cross-provider adaptation: the encoder produces full SSE lines
-			// (event:, data:, empty separators) — write them directly and skip
-			// the original upstream line.
-			// -----------------------------------------------------------------
-			if needsAdapt {
-				if !bytes.HasPrefix(msg, []byte("data:")) {
-					continue // skip upstream event:, empty, comment lines
-				}
-				payload := bytes.TrimSpace(bytes.TrimPrefix(msg, []byte("data:")))
-				if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
-					continue // [DONE] is OpenAI-specific; Anthropic/Gemini end naturally
-				}
-
-				// Agent Gemini + upstream with incremental tool_calls (OpenAI/Azure, Anthropic, or Mistral): decode, accumulate, then encode.
-				if sourceFormat == adapter.FormatGemini && (adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) || targetFormat == adapter.FormatAnthropic || targetFormat == adapter.FormatMistral) {
-					canonical, decErr := adapter.DecodeStreamChunkFor(payload, targetFormat)
-					if decErr != nil {
-						preview := payload
-						if len(preview) > 200 {
-							preview = preview[:200]
-						}
-						h.logger.WithError(decErr).WithField("payload_preview", string(preview)).Warn("stream decode chunk failed")
-						continue
-					}
-					if canonical == nil {
-						continue
-					}
-					// Merge tool call deltas by index.
-					for i := range canonical.ToolCallDeltas {
-						tc := &canonical.ToolCallDeltas[i]
-						if toolCallAcc == nil {
-							toolCallAcc = make(map[int]*struct{ ID, Name, Args string })
-						}
-						cur := toolCallAcc[tc.Index]
-						if cur == nil {
-							cur = &struct{ ID, Name, Args string }{ID: tc.ID, Name: tc.Name}
-							toolCallAcc[tc.Index] = cur
-						}
-						if tc.Name != "" {
-							cur.Name = tc.Name
-						}
-						if tc.ID != "" {
-							cur.ID = tc.ID
-						}
-						cur.Args += tc.ArgumentsDelta
-					}
-					// Emit role chunk (first chunk from upstream often has role only).
-					if canonical.Role != "" {
-						roleChunk := &adapter.CanonicalStreamChunk{Role: canonical.Role}
-						lines, encErr := adapter.EncodeStreamChunkFor(roleChunk, sourceFormat)
-						if encErr == nil && len(lines) > 0 {
-							writeAdaptedLines(lines)
-						}
-					}
-					// Emit text delta.
-					if canonical.Delta != "" {
-						deltaChunk := &adapter.CanonicalStreamChunk{Delta: canonical.Delta}
-						lines, encErr := adapter.EncodeStreamChunkFor(deltaChunk, sourceFormat)
-						if encErr == nil && len(lines) > 0 {
-							writeAdaptedLines(lines)
-						}
-					}
-					// On finish: emit accumulated tool calls as Gemini functionCall parts, then finish chunk.
-					if canonical.FinishReason != "" && len(toolCallAcc) > 0 {
-						indices := make([]int, 0, len(toolCallAcc))
-						for idx := range toolCallAcc {
-							indices = append(indices, idx)
-						}
-						sort.Ints(indices)
-						var deltas []adapter.StreamToolCallDelta
-						for _, idx := range indices {
-							cur := toolCallAcc[idx]
-							if cur == nil {
-								continue
-							}
-							deltas = append(deltas, adapter.StreamToolCallDelta{
-								Index:          idx,
-								ID:             cur.ID,
-								Name:           cur.Name,
-								ArgumentsDelta: cur.Args,
-							})
-						}
-						tcChunk := &adapter.CanonicalStreamChunk{ToolCallDeltas: deltas}
-						lines, encErr := adapter.EncodeStreamChunkFor(tcChunk, sourceFormat)
-						if encErr == nil && len(lines) > 0 {
-							writeAdaptedLines(lines)
-						}
-						toolCallAcc = nil
-					}
-					if canonical.FinishReason != "" {
-						finishChunk := &adapter.CanonicalStreamChunk{FinishReason: canonical.FinishReason}
-						lines, encErr := adapter.EncodeStreamChunkFor(finishChunk, sourceFormat)
-						if encErr == nil && len(lines) > 0 {
-							writeAdaptedLines(lines)
-						}
-					}
-					continue
-				}
-
-				adaptedLines, adaptErr := adapter.AdaptStreamChunk(payload, sourceFormat, targetFormat)
-				if adaptErr != nil {
-					preview := payload
-					if len(preview) > 200 {
-						preview = preview[:200]
-					}
-					h.logger.WithError(adaptErr).WithField("payload_preview", string(preview)).Warn("stream adapt chunk failed")
-					continue
-				}
-				if len(adaptedLines) == 0 {
-					// Decoder returned nil (skip) or encoder produced nothing; log at debug for openai→anthropic diagnostics
-					if h.logger.GetLevel() == logrus.DebugLevel {
-						preview := payload
-						if len(preview) > 200 {
-							preview = preview[:200]
-						}
-						h.logger.WithField("payload_preview", string(preview)).WithField("source", sourceFormat).WithField("target", targetFormat).Debug("stream chunk skipped (empty adapted result)")
-					}
-					continue
-				}
-				writeAdaptedLines(adaptedLines)
-				continue
-			}
-
-			// -----------------------------------------------------------------
-			// Pass-through mode (same format): write the upstream line as-is.
-			// -----------------------------------------------------------------
-			isDataLine := bytes.HasPrefix(msg, []byte("data:"))
-			if isDataLine {
-				payload := bytes.TrimSpace(bytes.TrimPrefix(msg, []byte("data:")))
-				isDone := bytes.Equal(payload, []byte("[DONE]"))
-				// Forward payload to metrics collector (skip empty / [DONE]).
-				if len(payload) > 0 && !isDone {
-					streamResponse <- payload
-				}
-			}
-
-			writeLine(msg)
-			_ = w.Flush()
-		}
-	})
-
-	return &types.ResponseContext{
-		StatusCode: http.StatusOK,
-		Streaming:  true,
-		Metadata:   req.Metadata,
-		Target:     target,
-	}, nil
-}
-
-func (h *forwardedHandler) handleStreamingResponse(dto *forwardedRequestDTO, client *http.Client) (*types.ResponseContext, error) {
-	req := dto.req
-	target := dto.target
-	streamResponse := dto.streamResponse
-
-	pathParams := h.getPathParamsFromContext(req.Context)
-	upstreamURL := h.buildUpstreamTargetUrl(target, pathParams)
-
-	if len(req.Query) > 0 {
-		queryString := req.Query.Encode()
-		if queryString != "" {
-			if strings.Contains(upstreamURL, "?") {
-				upstreamURL += "&" + queryString
-			} else {
-				upstreamURL += "?" + queryString
-			}
-		}
-	}
-
-	httpReq, err := http.NewRequestWithContext(req.Context, req.Method, upstreamURL, bytes.NewReader(req.Body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	for k, values := range req.Headers {
-		if k != "Host" {
-			for _, v := range values {
-				httpReq.Header.Add(k, v)
-			}
-		}
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	httpReq.Header.Set("Cache-Control", "no-cache")
-	httpReq.Header.Set("Connection", "keep-alive")
-
-	if target.Credentials.HeaderValue != "" {
-		httpReq.Header.Set(target.Credentials.HeaderName, target.Credentials.HeaderValue)
-	}
-	for k, v := range target.Headers {
-		httpReq.Header.Set(k, v)
-	}
-
-	resp, err := client.Do(httpReq) // #nosec G704 -- URL is built from admin-configured upstream target (protocol/host/port/path), not user-controlled
-	if err != nil {
-		return nil, fmt.Errorf("failed to make streaming request: %w", err)
-	}
-
-	if resp.StatusCode > 299 {
-		defer func() { _ = resp.Body.Close() }()
-		errorMsg := fmt.Sprintf("failed to make streaming request: %s", resp.Status)
-		if resp.Body != nil {
-			bodyBytes, readErr := io.ReadAll(resp.Body)
-			if readErr == nil && len(bodyBytes) > 0 {
-				errorMsg += fmt.Sprintf(" - body: %s", string(bodyBytes))
-			}
-		}
-		return nil, errors.New(errorMsg)
-	}
-
-	responseHeaders := make(map[string][]string)
-
-	for key, values := range resp.Header {
-		responseHeaders[key] = values
-		for _, v := range values {
-			req.C.Set(key, v)
-		}
-	}
-
-	if rateLimitHeaders, ok := req.Metadata["rate_limit_headers"].(map[string][]string); ok {
-		for k, v := range rateLimitHeaders {
-			responseHeaders[k] = v
-		}
-	}
-
-	req.C.Set("Content-Type", "text/event-stream")
-	req.C.Set("Cache-Control", "no-cache")
-	req.C.Set("Connection", "keep-alive")
-	req.C.Set("X-Accel-Buffering", "no")
-
-	req.C.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-		defer func() { _ = resp.Body.Close() }()
-		defer close(streamResponse)
-		reader := bufio.NewReader(resp.Body)
-		for {
-			line, err := reader.ReadBytes('\n')
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				h.logger.WithError(err).Error("error reading streaming response")
-				break
-			}
-
-			if bytes.HasPrefix(line, []byte("data: ")) {
-				line = bytes.TrimPrefix(line, []byte("data: "))
-			}
-
-			if len(line) > 1 {
-				var parsed map[string]interface{}
-				var buffer bytes.Buffer
-
-				if err := json.Unmarshal(line, &parsed); err != nil {
-					streamResponse <- line
-					_, _ = fmt.Fprintf(w, "data: %s\n", string(line)) // #nosec G705 -- SSE streaming with Content-Type text/event-stream; data is proxied JSON, not rendered as HTML
-					_ = w.Flush()
-				} else {
-					encoder := json.NewEncoder(&buffer)
-					encoder.SetEscapeHTML(false)
-
-					if err := encoder.Encode(parsed); err != nil {
-						fmt.Println("Error encoding:", err)
-						return
-					}
-					streamResponse <- buffer.Bytes()
-					_, _ = fmt.Fprintf(w, "data: %s\n", buffer.String())
-					_ = w.Flush()
-				}
-			}
-		}
-	})
-
-	return &types.ResponseContext{
-		StatusCode: resp.StatusCode,
-		Headers:    responseHeaders,
-		Streaming:  true,
-		Metadata:   req.Metadata,
-		Target:     target,
-	}, nil
+	return infrahttpx.HandleProviderStream(h.logger, h.providerLocator, req, target, streamResponse)
 }
 
 func (h *forwardedHandler) getQueryParams(c *fiber.Ctx) url.Values {

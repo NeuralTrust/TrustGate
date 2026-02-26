@@ -2,14 +2,12 @@ package token_rate_limiter
 
 type TokenRateLimiterData struct {
 	Stage           string `json:"stage"`
-	BucketKey       string `json:"bucket_key"`
+	CounterKey      string `json:"counter_key"`
 	Provider        string `json:"provider,omitempty"`
-	BucketSize      int    `json:"bucket_size"`
-	TokensPerMinute int    `json:"tokens_per_minute"`
-	TokensReserved  int    `json:"tokens_reserved"`
-	TokensActual    int    `json:"tokens_actual,omitempty"`
-	Delta           int    `json:"delta,omitempty"`
-	TokensRemaining int    `json:"tokens_remaining"`
+	WindowUnit      string `json:"window_unit"`
+	WindowMax       int    `json:"window_max"`
 	TokensConsumed  int    `json:"tokens_consumed"`
+	TokensActual    int    `json:"tokens_actual,omitempty"`
+	TokensRemaining int    `json:"tokens_remaining"`
 	LimitExceeded   bool   `json:"limit_exceeded"`
 }
