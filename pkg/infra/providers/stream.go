@@ -35,7 +35,7 @@ func StreamSSE(ctx context.Context, r io.Reader, out chan<- []byte) error {
 	sc.Buffer(buf, 2*1024*1024)
 
 	var rawFile *os.File
-	if os.Getenv("TG_SAVE_STREAM_RAW") != "" {
+	if os.Getenv("TG_SAVE_STREAM_RAW") == "true" {
 		dir := "streams"
 		_ = os.MkdirAll(dir, 0750)
 		ts := time.Now().Format("20060102-150405")

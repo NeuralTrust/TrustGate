@@ -438,52 +438,59 @@ func (a *GeminiAdapter) DecodeStreamChunk(chunk []byte) (*CanonicalStreamChunk, 
 		return nil, nil
 	}
 
-	if len(resp.Candidates) == 0 {
-		return nil, nil
-	}
-
-	cand := resp.Candidates[0]
-	content := cand.Content
 	sc := &CanonicalStreamChunk{}
 
-	// Role: Gemini "model" → canonical "assistant"
-	if content.Role != "" {
-		sc.Role = content.Role
-		if sc.Role == "model" {
-			sc.Role = "assistant"
+	if len(resp.Candidates) > 0 {
+		cand := resp.Candidates[0]
+		content := cand.Content
+
+		if content.Role != "" {
+			sc.Role = content.Role
+			if sc.Role == "model" {
+				sc.Role = "assistant"
+			}
+		}
+
+		var text string
+		for i, p := range content.Parts {
+			text += p.Text
+			if p.FunctionCall != nil {
+				argsBytes, _ := json.Marshal(p.FunctionCall.Args)
+				sc.ToolCallDeltas = append(sc.ToolCallDeltas, StreamToolCallDelta{
+					Index:          i,
+					ID:             p.FunctionCall.Name,
+					Name:           p.FunctionCall.Name,
+					ArgumentsDelta: string(argsBytes),
+				})
+			}
+		}
+		sc.Delta = text
+
+		switch cand.FinishReason {
+		case "STOP":
+			sc.FinishReason = "stop"
+		case "MAX_TOKENS":
+			sc.FinishReason = "length"
+		default:
+			if cand.FinishReason != "" {
+				sc.FinishReason = cand.FinishReason
+			}
 		}
 	}
 
-	// Text and functionCall parts
-	var text string
-	for i, p := range content.Parts {
-		text += p.Text
-		if p.FunctionCall != nil {
-			argsBytes, _ := json.Marshal(p.FunctionCall.Args)
-			sc.ToolCallDeltas = append(sc.ToolCallDeltas, StreamToolCallDelta{
-				Index:          i,
-				ID:            p.FunctionCall.Name, // Gemini often uses name as id
-				Name:          p.FunctionCall.Name,
-				ArgumentsDelta: string(argsBytes),
-			})
+	if u := resp.UsageMetadata; u != nil {
+		tt := u.TotalTokenCount
+		if tt == 0 {
+			tt = u.PromptTokenCount + u.CandidatesTokenCount
 		}
-	}
-	sc.Delta = text
-
-	// FinishReason: Gemini STOP/MAX_TOKENS/OTHER → canonical stop/length
-	switch cand.FinishReason {
-	case "STOP":
-		sc.FinishReason = "stop"
-	case "MAX_TOKENS":
-		sc.FinishReason = "length"
-	default:
-		if cand.FinishReason != "" {
-			sc.FinishReason = cand.FinishReason
+		sc.Usage = &CanonicalUsage{
+			PromptTokens:     u.PromptTokenCount,
+			CompletionTokens: u.CandidatesTokenCount,
+			TotalTokens:      tt,
 		}
 	}
 
-	// Skip chunks with no content (so we don't emit empty OpenAI chunks from ping-like events).
-	if sc.Delta == "" && sc.Role == "" && sc.FinishReason == "" && len(sc.ToolCallDeltas) == 0 {
+	if sc.Delta == "" && sc.Role == "" && sc.FinishReason == "" && len(sc.ToolCallDeltas) == 0 && sc.Usage == nil {
 		return nil, nil
 	}
 
@@ -540,6 +547,14 @@ func (a *GeminiAdapter) EncodeStreamChunk(chunk *CanonicalStreamChunk) ([][]byte
 			Content:      geminiContent{Role: role, Parts: parts},
 			FinishReason: finishReason,
 		}},
+	}
+
+	if chunk.Usage != nil {
+		out.UsageMetadata = &geminiUsage{
+			PromptTokenCount:     chunk.Usage.PromptTokens,
+			CandidatesTokenCount: chunk.Usage.CompletionTokens,
+			TotalTokenCount:      chunk.Usage.TotalTokens,
+		}
 	}
 
 	data, err := json.Marshal(out)

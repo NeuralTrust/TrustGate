@@ -109,4 +109,5 @@ type CanonicalStreamChunk struct {
 	Delta          string                `json:"delta,omitempty"`  // text content delta
 	FinishReason   string                `json:"finish_reason,omitempty"`
 	ToolCallDeltas []StreamToolCallDelta `json:"tool_call_deltas,omitempty"`
+	Usage          *CanonicalUsage       `json:"usage,omitempty"` // present in the final chunk of some providers
 }

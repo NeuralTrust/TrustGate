@@ -17,6 +17,8 @@ const (
 	WsRequestContextContextKey contextKey = "__req_context"
 	StreamResponseContextKey   contextKey = "__stream_response"
 	StreamModeContextKey       contextKey = "__stream_mode"
+	StreamDoneContextKey       contextKey = "__stream_done"
+	PluginsDoneContextKey      contextKey = "__plugins_done"
 	SessionContextKey          contextKey = "session_id"
 	PathParamsKey              contextKey = "path_params"
 	TeamIDContextKey           contextKey = "team_id"

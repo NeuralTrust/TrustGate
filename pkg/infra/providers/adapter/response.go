@@ -2,6 +2,16 @@ package adapter
 
 import "fmt"
 
+// DecodeResponseFor decodes a raw provider response into the canonical model.
+// It is the response counterpart of DecodeStreamChunkFor.
+func DecodeResponseFor(body []byte, providerFormat Format) (*CanonicalResponse, error) {
+	a, err := getAdapter(providerFormat)
+	if err != nil {
+		return nil, fmt.Errorf("adapter response: %w", err)
+	}
+	return a.DecodeResponse(body)
+}
+
 // AdaptResponse transforms a provider response from targetFormat back to
 // sourceFormat via the canonical model: target.DecodeResponse → canonical →
 // source.EncodeResponse.
