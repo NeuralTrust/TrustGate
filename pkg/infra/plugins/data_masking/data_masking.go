@@ -496,39 +496,28 @@ func (p *DataMaskingPlugin) maskPlainTextWithRules(
 		return maskedContent, events
 	}
 
-	for _, entityType := range pii_entities.DetectionOrder {
-		pattern, exists := pii_entities.Patterns[entityType]
-		if !exists {
-			continue
-		}
+	enabledEntities := buildEnabledMap(config)
+	matches := pii_entities.DetectAll(content, enabledEntities)
 
-		entityEnabled := false
-		for _, entity := range config.PredefinedEntities {
-			if entity.Entity == string(entityType) && entity.Enabled {
-				entityEnabled = true
-				break
-			}
-		}
-		if !entityEnabled && !config.ApplyAll {
-			continue
-		}
-
-		maskValue := pii_entities.DefaultMasks[entityType]
+	for _, m := range matches {
+		maskValue := pii_entities.GetDefaultMask(m.Entity)
 		if config.ApplyAll {
 			maskValue = pii_entities.DefaultMasks[pii_entities.Default]
 		}
+		events = append(events, MaskingEvent{
+			Entity:        string(m.Entity),
+			OriginalValue: m.Value,
+			MaskedWith:    maskValue,
+		})
+	}
 
-		matches := pattern.FindAllString(maskedContent, -1)
-		if len(matches) > 0 {
-			for _, match := range matches {
-				events = append(events, MaskingEvent{
-					Entity:        string(entityType),
-					OriginalValue: match,
-					MaskedWith:    maskValue,
-				})
-				maskedContent = strings.ReplaceAll(maskedContent, match, maskValue)
-			}
+	for i := len(matches) - 1; i >= 0; i-- {
+		m := matches[i]
+		maskValue := pii_entities.GetDefaultMask(m.Entity)
+		if config.ApplyAll {
+			maskValue = pii_entities.DefaultMasks[pii_entities.Default]
 		}
+		maskedContent = maskedContent[:m.Start] + maskValue + maskedContent[m.End:]
 	}
 
 	for pattern, regex := range regexRules {
@@ -686,4 +675,20 @@ func max2(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func buildEnabledMap(config Config) map[pii_entities.Entity]bool {
+	enabled := make(map[pii_entities.Entity]bool)
+	if config.ApplyAll {
+		for entity := range pii_entities.Entities {
+			enabled[entity] = true
+		}
+	} else {
+		for _, ec := range config.PredefinedEntities {
+			if ec.Enabled {
+				enabled[pii_entities.Entity(ec.Entity)] = true
+			}
+		}
+	}
+	return enabled
 }
