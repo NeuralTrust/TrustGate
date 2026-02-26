@@ -194,7 +194,7 @@ func HandleProviderStream(
 
 // openDebugFile creates a debug SSE file when TG_SAVE_STREAM_DEBUG is set.
 func openDebugFile(logger *logrus.Logger, source, target adapter.Format) *os.File {
-	if os.Getenv("TG_SAVE_STREAM_DEBUG") == "true" {
+	if os.Getenv("TG_SAVE_STREAM_DEBUG") != "true" {
 		return nil
 	}
 	dir := "streams"
