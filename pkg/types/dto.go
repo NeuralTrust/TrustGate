@@ -51,7 +51,7 @@ func (c *CredentialsDTO) Scan(value interface{}) error {
 }
 
 func (c CredentialsDTO) Value() (driver.Value, error) {
-	return json.Marshal(c)
+	return json.Marshal(c) // #nosec G117 -- Serializing upstream API key config to DB, not a credential leak
 }
 
 type GatewayData struct {

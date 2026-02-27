@@ -52,7 +52,7 @@ func NewWorker(
 	logger *logrus.Logger,
 	providersBuilder appTelemetry.ExportersBuilder,
 ) Worker {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) // #nosec G118 -- cancel is stored in the struct and called in Shutdown()
 	m := &worker{
 		logger:           logger,
 		providersBuilder: providersBuilder,

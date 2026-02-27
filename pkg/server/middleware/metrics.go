@@ -225,6 +225,8 @@ func (m *metricsMiddleware) handleStreamResponse(
 	collector := m.getCollectorFromContext(c)
 	pluginsDone, _ := c.Locals(string(common.PluginsDoneContextKey)).(chan struct{})
 
+	// #nosec G118 -- Goroutine intentionally outlives the request to collect stream
+	// data; the request-scoped context is already canceled by the time we process.
 	go func() {
 		streamStartTime := time.Now()
 		responseBody, lastLine := state.collectStreamData(m.logger)
@@ -242,7 +244,7 @@ func (m *metricsMiddleware) handleStreamResponse(
 			exporters,
 			inputRequest,
 			types.ResponseContext{
-				Context:   context.Background(),
+				Context:   context.Background(), // #nosec G118
 				GatewayID: gatewayID,
 				Headers:   headers,
 				Metadata: map[string]interface{}{
