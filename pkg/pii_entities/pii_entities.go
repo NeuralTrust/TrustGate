@@ -275,7 +275,7 @@ var Entities = map[Entity]EntityInfo{
 		DefaultMask: "[MASKED_DATE]",
 	},
 	SwiftBIC: {
-		Pattern:     regexp.MustCompile(`(?i:\b[A-Z]{6}[A-Z0-9]{2}[A-Z0-9]{3}\b)|\b[A-Z]{6}[A-Z0-9]{2}\b`),
+		Pattern:     regexp.MustCompile(`(?i)\b[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b`),
 		Validate:    validateSwiftBIC,
 		Tier:        Tier2,
 		DefaultMask: "[MASKED_BIC]",
