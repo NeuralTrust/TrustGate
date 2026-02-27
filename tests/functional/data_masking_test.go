@@ -92,7 +92,7 @@ func TestDataMasking(t *testing.T) {
 		{
 			name: "Masking Test",
 			input: `{
-				"credit_card": "this is a credit card 4111-2222-3333-4444",
+				"credit_card": "this is a credit card 4111-1111-1111-1111",
 				"email": "test@example.com",
 				"iban": "DE89370400440532013000",
 				"swift_bic": "DEUTDEFF500",
@@ -202,7 +202,7 @@ func TestDataMaskingApplyAll(t *testing.T) {
 		{
 			name: "Masking Test",
 			input: `{
-				"credit_card": "this is a credit card 4111-2222-3333-4444",
+				"credit_card": "this is a credit card 4111-1111-1111-1111",
 				"email": "test@example.com",
 				"iban": "DE89370400440532013000",
 				"swift_bic": "DEUTDEFF500",
@@ -339,12 +339,12 @@ func TestDataMaskingReversibleHash(t *testing.T) {
 		{
 			name: "Reversible Hashing Test",
 			input: `{
-				"credit_card": "4111-2222-3333-4444",
+				"credit_card": "4111-1111-1111-1111",
 				"email": "test@example.com",
 				"secret_key": "this_is_secret"
 			}`,
 			// In the response, we expect the original values to be restored
-			expected:   `{"body":"{\"credit_card\":\"4111-2222-3333-4444\",\"email\":\"test@example.com\",\"secret_key\":\"this_is_secret\"}"}`,
+			expected:   `{"body":"{\"credit_card\":\"4111-1111-1111-1111\",\"email\":\"test@example.com\",\"secret_key\":\"this_is_secret\"}"}`,
 			expectCode: http.StatusOK,
 		},
 	}
@@ -463,7 +463,7 @@ func TestDataMaskingPostResponse(t *testing.T) {
 		{
 			name: "Post Response Masking Test",
 			input: `{
-				"credit_card": "this is a credit card 4111-2222-3333-4444",
+				"credit_card": "this is a credit card 4111-1111-1111-1111",
 				"email": "test@example.com",
 				"iban": "DE89370400440532013000",
 				"swift_bic": "DEUTDEFF500",
@@ -589,7 +589,7 @@ func TestDataMaskingPreResponse(t *testing.T) {
 		{
 			name: "Pre Response Masking Test",
 			input: `{
-				"credit_card": "this is a credit card 4111-2222-3333-4444",
+				"credit_card": "this is a credit card 4111-1111-1111-1111",
 				"email": "test@example.com",
 				"iban": "DE89370400440532013000",
 				"swift_bic": "DEUTDEFF500",
