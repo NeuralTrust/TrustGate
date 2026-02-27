@@ -183,7 +183,7 @@ func (m *metricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 			"user_agent_info": userAgentInfo,
 		},
 		Body:      append([]byte(nil), c.Request().Body()...),
-		ProcessAt: func() *time.Time { t := time.Now(); return &t }(),
+		ProcessAt: new(time.Now()),
 		IP:        utils.ExtractIP(c),
 	}
 
