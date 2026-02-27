@@ -1,0 +1,182 @@
+- d2565f9 Merge pull request #310 from NeuralTrust/improve_pii_entities
+- 8dc58f6 fix: keep new(time.Now())
+- 2c46e51 fix: credit card number used after Luhn check
+- 63e12a3 Merge branch 'main' into improve_pii_entities
+- 2bf14f5 feat: pii_detection redesign
+- 9442903 Merge pull request #309 from NeuralTrust/refactor/token-rate-limit
+- 3a7c6ad refactor(token-rate-limit): token rate limit refactored
+- cbbb7a3 refactor(token-rate-limit): token rate limit refactored
+- 6cf5d0c Merge pull request #308 from NeuralTrust/improve_pii_entities
+- 63baef5 refactor(token-rate-limit): token rate limit refactored
+- 0ed1f05 refactor(token-rate-limit): token rate limit refactored
+- 621d87b feat: improve PII regex
+- 322cd0b refactor token rate limit
+- 1c12ce8 Merge pull request #306 from NeuralTrust/refactor/upstream-cache
+- 05609d2 fix/normalize-bot-detection-mods
+- 29c2e38 fix/normalize-bot-detection-mods
+- f2b34f8 fix/normalize-bot-detection-mods
+- 5bd228a fix/normalize-bot-detection-mods
+- bc2cde3 Merge pull request #305 from NeuralTrust/refactor/upstream-cache
+- 94b09b8 refactor(cache): refactor upstream cache
+- f7a2f68 refactor(cache): refactor upstream cache
+- b2e997a Merge pull request #304 from NeuralTrust/refactor/guardrail-plugin
+- 24fece7 fix/remove stdout prints
+- 7939eda fix/remove stdout prints
+- b48615a Merge pull request #303 from NeuralTrust/refactor/guardrail-plugin
+- 3904aa9 revert fastHttp client to http client
+- c2ee33c revert fastHttp client to http client
+- e610a36 Merge pull request #302 from NeuralTrust/refactor/guardrail-plugin
+- 8294375 refactor(guardrail): refactor jailbreak protection
+- b070460 refactor(guardrail): refactor jailbreak protection
+- 2c38d0a refactor(guardrail): refactor jailbreak protection
+- 5d5d19f refactor(guardrail): refactor jailbreak protection
+- fa35496 Merge pull request #292 from NeuralTrust/ci/reusable-workflows-and-versioning
+- 6bbefc1 rollback pipeline
+- 1f5918c rollback pipeline
+- bd791d2 rollback pipeline
+- 681e887 feat(ci): add auto-release workflow for main branch with AI version bumping
+- 47a0758 feat(router): update health endpoints to include application version and status
+- a880876 ci: migrate to reusable workflows, add Dependabot, and expose version in health endpoints
+- 8595b27 Merge pull request #301 from NeuralTrust/refactor/semantic-balancer
+- 6186fe1 refactor(semantic): refactored semantic load balancer
+- fa63666 refactor(semantic): refactored semantic load balancer
+- 8957c65 refactor(semantic): refactored semantic load balancer
+- 0ecf599 Merge pull request #300 from NeuralTrust/fix/handling-response-statuses
+- 3e07760 fix(integration): fix contextual security integration tests
+- 55c9e74 fix(integration): fix contextual security integration tests
+- 5711e55 Merge pull request #298 from NeuralTrust/fix/handling-response-statuses
+- 4e78732 fix(trustgate): handling response statuses
+- 807552c fix(trustgate): handling response statuses
+- 9fab9d0 fix(trustgate): handling response statuses
+- fed19c1 Merge pull request #297 from NeuralTrust/fix-database-migrations-simultaneously
+- a74b41b add postresql lock to prevent concurrent migrations processes
+- 7df4f53 Merge pull request #296 from NeuralTrust/bump-go-version-to-1-26
+- 589bd26 recreate mocks to be compatible to 1.26
+- e330829 recreate mocks to be compatible to 1.26
+- d0ea307 recreate mocks to be compatible to 1.26
+- 065ac9e bump golang version to 1.26
+- ffa0d88 Merge pull request #295 from NeuralTrust/feat/mistral-integration
+- 2b2d77a feat(trustgate): added mistral integration
+- 9264f96 feat(trustgate): added mistral integration
+- fac5bd5 feat(trustgate): added mistral integration
+- ef47d90 feat(trustgate): added mistral integration
+- 74ad4c8 Merge pull request #294 from NeuralTrust/ai-gateway
+- 34ce5dd testes ai gateway stream
+- 8c771e6 Merge pull request #293 from NeuralTrust/ai-gateway
+- db9bca9 tested ai gateway non stream
+- ba58868 feat(trustgate): AI Gateway enhanced
+- a47c5a6 feat(trustgate): AI Gateway enhanced
+- bd789c0 Potential fix for code scanning alert no. 37: Workflow does not contain permissions
+- 22ac6bb feat(trustgate): AI Gateway enhanced
+- dc52775 feat(trustgate): AI Gateway enhanced
+- 8778228 feat(trustgate): AI Gateway enhanced
+- 03a7ad2 feat(trustgate): AI Gateway enhanced
+- 97c4538 feat(trustgate): AI Gateway enhanced
+- afe964c feat(trustgate): AI Gateway enhanced
+- b3bb297 feat(trustgate): AI Gateway enhanced
+- ec1cf42 feat(trustgate): AI Gateway enhanced
+- a7abc9a Merge pull request #291 from NeuralTrust/feat/enchance-gateway-delete
+- 0c23120 feat(gw): enhance gateway deletion
+- 33da675 Merge pull request #290 from NeuralTrust/test-ci-auto
+- f70db64 fix: add checkout to auto-approve job
+- 69f6cf8 feat: add standalone PR automation workflow for public repo
+- dc2807c feat(ai-review): ai pr review integrated
+- cd44909 trigger: re-run workflows
+- bdcc430 feat(ai-review): ai pr review integrated
+- 8df393f Merge pull request #289 from NeuralTrust/bugfix-url-trailing-slash
+- 2842273 fix: remove trailing slash when path params match exactly
+- f7798b1 Merge pull request #288 from NeuralTrust/common-fashttp-client
+- 89a3dbb make common fasthttp client
+- dea93d3 make common fasthttp client
+- 586e813 make common fasthttp client
+- 8ad7519 Merge pull request #287 from NeuralTrust/redis-events
+- 41cd0ac refactoring proxy TLS
+- 7f9a3d9 refactoring proxy TLS
+- 045324d added logs
+- c0939d2 fix-redis-events
+- f8f8cdd Merge pull request #286 from NeuralTrust/revert-http-client-conf
+- ebfcdc8 revert http client conf
+- b7bfc7e revert http client conf
+- 7e06ae1 redis fixes && telemetry fixes
+- 5b32520 redis fixes && telemetry fixes
+- 00fd9f6 redis fixes && telemetry fixes
+- 6dfb4ab Merge pull request #284 from NeuralTrust/skip-ssl-streaming
+- e2c19fa allow enable stream with proxy
+- f397171 allow enable stream with proxy
+- 2f61120 proxy in streaming
+- 6388bd3 Merge pull request #283 from NeuralTrust/skip-ssl-streaming
+- 27a37ea proxy in streaming
+- b235ce7 Merge pull request #282 from NeuralTrust/skip-ssl-streaming
+- 3f659c8 enable insecure requests streaming
+- 11d8905 enable insecure requests streaming
+- dd3d150 Merge pull request #281 from NeuralTrust/refactor-pii
+- 7ac7f28 refactor pii
+- cd5f590 refactor pii
+- 954e071 Merge pull request #280 from NeuralTrust/feat/change-redis-index-creations
+- 2adfc1e change redis vector index creations
+- 05f1091 change redis vector index creations
+- d920aac Merge pull request #279 from NeuralTrust/feat/observe-mode
+- c862e0b adding default mode
+- f4a4c85 adding default mode
+- 8445cb9 Merge pull request #278 from NeuralTrust/feat/observe-mode
+- 3907757 observe mode integrated in modules jailbreak & moderation
+- 367c0ac observe mode integrated in modules jailbreak & moderation
+- c08120e Merge pull request #277 from NeuralTrust/feat/generate-user-id-by-fingerprint
+- f29c931 modify moderation plugin trace schema
+- 0668800 Merge pull request #276 from NeuralTrust/feat/generate-user-id-by-fingerprint
+- 9729d33 feat(metrics): add fingerprint-based user ID resolution and embedded params support
+- 731dc2e feat(metrics): add fingerprint-based user ID resolution and embedded params support
+- acc5a33 Merge pull request #275 from NeuralTrust/moderation-v2
+- bfcfa06 integration topic nt moderation model
+- 5a9697a integration topic nt moderation model
+- eea8f31 integration topic nt moderation model
+- d1b84ea Merge pull request #274 from NeuralTrust/enhance-sanitization-events
+- b883964 enhance sanitization events
+- 54a6637 enhance sanitization events
+- d0c4988 Merge pull request #273 from NeuralTrust/enhance-sanitization-events
+- 879a58e enhance sanitization events
+- 66b9db5 Merge pull request #272 from NeuralTrust/conversation-checks
+- c1bb1d9 fixes
+- b35dfd7 accepting conversations
+- 3e8e338 accepting conversations
+- b3595df Merge pull request #271 from NeuralTrust/change-trustlens-exporter
+- 897cb87 normalize trustlens metric exporter
+- b561f42 Merge pull request #270 from NeuralTrust/update-deps
+- 3058c23 fix code sanitization traces
+- e7b23eb fix code sanitization traces
+- fe3f4de Merge pull request #269 from NeuralTrust/update-deps
+- 1d95c50 [ski-ci] update audit sdk
+- f6ae188 Merge pull request #268 from NeuralTrust/redis-connection-verbosity
+- 83b7402 fixing unit tests
+- 8f23460 fixing unit tests
+- ba0f421 Merge pull request #267 from NeuralTrust/redis-connection-verbosity
+- 07f4cd0 adding logs on redis connection
+- 4b1258d adding logs on redis connection
+- aac8bb0 Merge pull request #266 from NeuralTrust/metadata-metrics-events
+- 554f0ef added metadata in metric events
+- 0d9162b added metadata in metric events
+- e3b25ea added metadata in metric events
+- 40725d7 Merge pull request #265 from NeuralTrust/parallelize-patterns
+- b10e192 parallelize patterns
+- 34ea2b6 parallelize patterns
+- 91c9f3b parallelize patterns
+- a80323f Merge pull request #264 from NeuralTrust/feat/audit-traces
+- 8f1a5d0 added audit logs
+- 05450d2 added audit logs
+- 8cb454a Merge pull request #263 from NeuralTrust/fix-toxicity
+- 4ed2c0c fix toxicity plugin
+- aec5b1e fix toxicity plugin
+- 4a69a52 Merge pull request #262 from NeuralTrust/feat/adding-jwt-payload
+- 22e9a2f adding jwt payload
+- e6ac916 adding jwt payload
+- cf12440 Merge pull request #261 from NeuralTrust/feat/tls
+- 7d78846 no write certs in control plane
+- 9b953f2 no write certs in control plane
+- 113892c Merge pull request #260 from NeuralTrust/feat/tls
+- d274ef9 adding verbosity when create certs
+- 7dbf863 fix dockerfile
+- 82142d8 Merge pull request #259 from NeuralTrust/feat/tls
+- 791bdbb remove ee config
+- c4755ff tls certs
+- bd8b03d tls certs
+- f6708b7 improve config & tls configutation
