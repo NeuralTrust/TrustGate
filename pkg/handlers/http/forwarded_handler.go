@@ -359,6 +359,16 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	if respCtx.StopProcessing {
+		for k, values := range respCtx.Headers {
+			for _, v := range values {
+				c.Set(k, v)
+			}
+		}
+		h.registrySuccessEvent(metricsCollector, respCtx)
+		return h.handleSuccessResponse(c, safeStatusCode(respCtx.StatusCode, http.StatusOK), respCtx.Body)
+	}
+
 	// Create plugin channels before forwarding so the stream writers can pick them up.
 	streamPluginData := make(chan []byte, 512)
 	pluginsDone := make(chan struct{})
