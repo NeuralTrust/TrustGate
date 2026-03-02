@@ -9,9 +9,8 @@ type UpdateGatewayRequest struct {
 	Status          *string                           `json:"status,omitempty"`
 	RequiredPlugins []types.PluginConfig              `json:"required_plugins,omitempty"`
 	Telemetry       *TelemetryRequest                 `json:"telemetry"`
-	TlS             map[string]ClientTLSConfigRequest `json:"client_tls"`
-	SecurityConfig  *SecurityConfigRequest            `json:"security_config"`
-	SessionConfig   *SessionConfigRequest             `json:"session_config"`
+	TlS            map[string]ClientTLSConfigRequest `json:"client_tls"`
+	SecurityConfig *SecurityConfigRequest            `json:"security_config"`
 }
 
 func (r *UpdateGatewayRequest) Validate() error {

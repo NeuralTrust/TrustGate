@@ -34,7 +34,6 @@ import (
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
-	domainSession "github.com/NeuralTrust/TrustGate/pkg/domain/session"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	wsHandlers "github.com/NeuralTrust/TrustGate/pkg/handlers/websocket"
@@ -64,6 +63,7 @@ type Container struct {
 	RedisPublisher              cache.EventPublisher
 	PanicRecoverMiddleware      middleware.Middleware
 	AuthMiddleware              middleware.Middleware
+	SessionMiddleware           middleware.Middleware
 	CORSGlobalMiddleware        middleware.Middleware
 	AdminAuthMiddleware         middleware.Middleware
 	MetricsMiddleware           middleware.Middleware
@@ -71,10 +71,8 @@ type Container struct {
 	FingerPrintMiddleware       middleware.Middleware
 	SecurityMiddleware          middleware.Middleware
 	WebSocketMiddleware         middleware.Middleware
-	SessionMiddleware           middleware.Middleware
 	ApiKeyRepository            domainApikey.Repository
 	EmbeddingRepository         domainEmbedding.Repository
-	SessionRepository           domainSession.Repository
 	FingerprintTracker          fingerprint.Tracker
 	PluginChainValidator        plugin.ValidatePluginChain
 	MetricsWorker               metrics.Worker
@@ -187,7 +185,6 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	apiKeyRepository := repository.NewApiKeyRepository(di.DB.DB)
 	gatewayRepository := repository.NewGatewayRepository(di.DB.DB)
 	ruleRepository := repository.NewForwardedRuleRepository(di.DB.DB, di.Logger, cacheInstance)
-	sessionRepository := repository.NewSessionRepository(cacheInstance)
 
 	// service
 	upstreamFinder := appUpstream.NewFinder(upstreamRepository, cacheInstance, di.Logger)
@@ -449,16 +446,15 @@ func NewContainer(di ContainerDI) (*Container, error) {
 			"12h",
 		),
 		AuthMiddleware:              middleware.NewAuthMiddleware(di.Logger, apiKeyFinder, gatewayDataFinder, ruleMatcher),
+		SessionMiddleware:           middleware.NewSessionMiddleware(di.Logger),
 		AdminAuthMiddleware:         middleware.NewAdminAuthMiddleware(di.Logger, jwtManager),
 		MetricsMiddleware:           middleware.NewMetricsMiddleware(di.Logger, metricsWorker),
 		PluginMiddleware:            middleware.NewPluginChainMiddleware(pluginManager, di.Logger),
 		FingerPrintMiddleware:       middleware.NewFingerPrintMiddleware(di.Logger, fingerprintTracker),
 		SecurityMiddleware:          middleware.NewSecurityMiddleware(di.Logger),
 		WebSocketMiddleware:         middleware.NewWebsocketMiddleware(di.Cfg, di.Logger),
-		SessionMiddleware:           middleware.NewSessionMiddleware(di.Logger, sessionRepository),
 		ApiKeyRepository:            apiKeyRepository,
 		EmbeddingRepository:         embeddingRepository,
-		SessionRepository:           sessionRepository,
 		PluginManager:               pluginManager,
 		BedrockClient:               bedrockClient,
 		FingerprintTracker:          fingerprintTracker,

@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/NeuralTrust/TrustGate/pkg/common"
-	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -25,13 +23,13 @@ func NewSecurityMiddleware(
 
 func (m *securityMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		gatewayID, ok := c.Locals(common.GatewayContextKey).(string)
-		if !ok || gatewayID == "" {
+		gatewayID, ok := GetGatewayID(c)
+		if !ok {
 			m.logger.Error("gateway ID not found in context")
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "gateway ID not found in context"})
 		}
 
-		gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
+		gatewayData, ok := GetGatewayData(c)
 		if !ok {
 			m.logger.
 				WithField("gatewayID", gatewayID).

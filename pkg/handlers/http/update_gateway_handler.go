@@ -157,17 +157,6 @@ func (h *updateGatewayHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
-	if req.SessionConfig != nil {
-		if dbGateway.SessionConfig == nil {
-			dbGateway.SessionConfig = &domainGateway.SessionConfig{}
-		}
-		dbGateway.SessionConfig.Enabled = req.SessionConfig.Enabled
-		dbGateway.SessionConfig.HeaderName = req.SessionConfig.HeaderName
-		dbGateway.SessionConfig.BodyParamName = req.SessionConfig.BodyParamName
-		dbGateway.SessionConfig.Mapping = req.SessionConfig.Mapping
-		dbGateway.SessionConfig.TTL = req.SessionConfig.TTL
-	}
-
 	if req.TlS != nil {
 		for host := range dbGateway.ClientTLSConfig {
 			if err := h.tlsCertWriter.DeleteCerts(c.Context(), gatewayUUID, host); err != nil {

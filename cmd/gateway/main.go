@@ -92,12 +92,12 @@ func main() {
 		container.PanicRecoverMiddleware,
 		container.CORSGlobalMiddleware,
 		container.AuthMiddleware,
+		container.SessionMiddleware,
 		container.FingerPrintMiddleware,
 		container.MetricsMiddleware,
 		container.PluginMiddleware,
 		container.SecurityMiddleware,
 		container.WebSocketMiddleware,
-		container.SessionMiddleware,
 	)
 
 	//routers

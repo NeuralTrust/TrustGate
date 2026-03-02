@@ -86,6 +86,13 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 				Type:   rule.TrustLens.Type,
 			}
 		}
+		var sessionConfigDTO *types.SessionConfigDTO
+		if rule.SessionConfig != nil {
+			sessionConfigDTO = &types.SessionConfigDTO{
+				HeaderName:    rule.SessionConfig.HeaderName,
+				BodyParamName: rule.SessionConfig.BodyParamName,
+			}
+		}
 		rules[i] = types.ForwardingRuleDTO{
 			ID:            rule.ID.String(),
 			Name:          rule.Name,
@@ -102,6 +109,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			Active:        rule.Active,
 			Public:        rule.Public,
 			TrustLens:     trustLensConfig,
+			SessionConfig: sessionConfigDTO,
 			CreatedAt:     rule.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
 		}
@@ -136,6 +144,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			PluginChain:   rule.PluginChain,
 			Active:        rule.Active,
 			TrustLens:     rule.TrustLens,
+			SessionConfig: rule.SessionConfig,
 			CreatedAt:     rule.CreatedAt,
 			UpdatedAt:     rule.UpdatedAt,
 		}

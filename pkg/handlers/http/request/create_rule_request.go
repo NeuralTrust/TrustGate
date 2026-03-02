@@ -17,4 +17,5 @@ type CreateRuleRequest struct {
 	RetryAttempts *int                       `json:"retry_attempts"`
 	PluginChain   []pluginTypes.PluginConfig `json:"plugin_chain"`
 	TrustLens     *types.TrustLensConfigDTO  `json:"trustlens,omitempty"`
+	SessionConfig *types.SessionConfigDTO   `json:"session_config,omitempty"`
 }

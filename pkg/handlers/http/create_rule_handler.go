@@ -163,6 +163,14 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	var sessionConfig *forwarding_rule.SessionConfig
+	if request.SessionConfig != nil {
+		sessionConfig = &forwarding_rule.SessionConfig{
+			HeaderName:    request.SessionConfig.HeaderName,
+			BodyParamName: request.SessionConfig.BodyParamName,
+		}
+	}
+
 	dbRule := &forwarding_rule.ForwardingRule{
 		ID:            id,
 		Name:          request.Name,
@@ -179,6 +187,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		Active:        true,
 		Public:        false,
 		TrustLens:     trustLensConfig,
+		SessionConfig: sessionConfig,
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
 	}
@@ -283,6 +292,14 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		}
 	}
 
+	var sessionConfigDTO *types.SessionConfigDTO
+	if rule.SessionConfig != nil {
+		sessionConfigDTO = &types.SessionConfigDTO{
+			HeaderName:    rule.SessionConfig.HeaderName,
+			BodyParamName: rule.SessionConfig.BodyParamName,
+		}
+	}
+
 	return types.ForwardingRuleDTO{
 		ID:            rule.ID.String(),
 		Name:          rule.Name,
@@ -299,6 +316,7 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		Active:        rule.Active,
 		Public:        rule.Public,
 		TrustLens:     trustLensConfig,
+		SessionConfig: sessionConfigDTO,
 		CreatedAt:     rule.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
 	}, nil

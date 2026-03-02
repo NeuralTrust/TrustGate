@@ -3,7 +3,6 @@ package middleware
 import (
 	"fmt"
 
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -28,7 +27,7 @@ func NewPluginChainMiddleware(
 
 func (m *pluginMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
+		gatewayData, ok := GetGatewayData(c)
 		if !ok {
 			m.logger.Error("gateway data not found in context")
 			return c.Status(fiber.StatusInternalServerError).JSON(
