@@ -46,8 +46,6 @@ func TestSessionMiddleware_RuleWithoutSessionConfig_PassesThrough(t *testing.T) 
 	app := fiber.New()
 	app.Get("/", func(c *fiber.Ctx) error {
 		c.Locals(string(common.MatchedRuleContextKey), rule)
-		ctx := context.WithValue(c.Context(), common.MatchedRuleContextKey, rule)
-		c.SetUserContext(ctx)
 		return c.Next()
 	}, m.Middleware(), func(c *fiber.Ctx) error {
 		sessionID := c.Locals(common.SessionContextKey)

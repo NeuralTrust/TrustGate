@@ -11,7 +11,7 @@ import (
 )
 
 func GetMatchedRule(ctx context.Context, logger *logrus.Logger) *types.ForwardingRuleDTO {
-	rule, ok := ctx.Value(common.MatchedRuleContextKey).(*types.ForwardingRuleDTO)
+	rule, ok := ctx.Value(string(common.MatchedRuleContextKey)).(*types.ForwardingRuleDTO)
 	if !ok || rule == nil {
 		logger.Error("failed to get matched rule from context")
 		return &types.ForwardingRuleDTO{}
