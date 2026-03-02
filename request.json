@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.15.0\n\nCommits since last release:\n- 489b7f6 Merge pull request #313 from NeuralTrust/feat-ssl-root-cert\n- 819899c feat: support tls cert\n- af60e7b feat: support ssl root cert database\n"
+      "content": "Current version: 1.16.0\n\nCommits since last release:\n- bf1d94b Merge pull request #314 from NeuralTrust/fix-stop-processing-flag\n- b45e29d fix: stop processing flag\n- f996a74 fix: stop processing flag\n"
     }
   ],
   "max_tokens": 200,
