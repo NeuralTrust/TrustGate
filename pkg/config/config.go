@@ -117,7 +117,7 @@ func Load() (*Config, error) {
 	databasePassword := getEnv("DATABASE_PASSWORD", "")
 	databaseName := getEnv("DATABASE_NAME", "trustgate")
 	databaseSSLMode := getEnv("DATABASE_SSL_MODE", "disable")
-	databaseSSLRootCert := getEnv("DATABASE_SSL_ROOT_CERT", "")
+	databaseSSLCert := getEnv("DATABASE_SSL_CERT", "")
 
 	// Redis configuration
 	redisHost := getEnv("REDIS_HOST", "localhost")
@@ -176,7 +176,7 @@ func Load() (*Config, error) {
 			Password:    databasePassword,
 			DBName:      databaseName,
 			SSLMode:     databaseSSLMode,
-			SSLRootCert: databaseSSLRootCert,
+			SSLRootCert: databaseSSLCert,
 		},
 		Redis: RedisConfig{
 			Host:          redisHost,
