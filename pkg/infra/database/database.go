@@ -18,12 +18,13 @@ type DB struct {
 }
 
 type Config struct {
-	Host     string
-	Port     int
-	User     string
-	Password string // #nosec G117 -- Config field for database password
-	DBName   string
-	SSLMode  string
+	Host        string
+	Port        int
+	User        string
+	Password    string // #nosec G117 -- Config field for database password
+	DBName      string
+	SSLMode     string
+	SSLRootCert string // Path to CA certificate (.pem) for verifying server; optional
 }
 
 func NewDB(logger *logrus.Logger, cfg *Config) (*DB, error) {
@@ -38,6 +39,9 @@ func NewDB(logger *logrus.Logger, cfg *Config) (*DB, error) {
 
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode)
+	if cfg.SSLRootCert != "" {
+		dsn += fmt.Sprintf(" sslrootcert=%s", cfg.SSLRootCert)
+	}
 
 	gormDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: gormLogger.Default.LogMode(gormLogger.Silent),
