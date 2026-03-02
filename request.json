@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.14.2\n\nCommits since last release:\n- 3087ffb Merge pull request #311 from NeuralTrust/simplify-swift-bic\n- b15ff10 fix: security scan FP\n- 911a8b4 fix: simplify SwiftBIC\n- 0d0410d chore: bump version to v2.1.0 [skip ci]\n"
+      "content": "Current version: 1.14.3\n\nCommits since last release:\n- b87f65d Merge pull request #312 from NeuralTrust/feat/sessions\n- 7a53063 feat(sessions): enable sessions\n- b437c6b feat(sessions): enable sessions\n- 887860f feat(sessions): enable sessions\n- 5b9236e feat(sessions): enable sessions\n"
     }
   ],
   "max_tokens": 200,
