@@ -52,12 +52,13 @@ func main() {
 
 	// Initialize database
 	db, err := database.NewDB(logger, &database.Config{
-		Host:     cfg.Database.Host,
-		Port:     cfg.Database.Port,
-		User:     cfg.Database.User,
-		Password: cfg.Database.Password,
-		DBName:   cfg.Database.DBName,
-		SSLMode:  cfg.Database.SSLMode,
+		Host:        cfg.Database.Host,
+		Port:        cfg.Database.Port,
+		User:        cfg.Database.User,
+		Password:    cfg.Database.Password,
+		DBName:      cfg.Database.DBName,
+		SSLMode:     cfg.Database.SSLMode,
+		SSLRootCert: cfg.Database.SSLRootCert,
 	})
 	if err != nil {
 		logger.Fatalf("Failed to initialize database: %v", err)

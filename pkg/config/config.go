@@ -39,12 +39,13 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	Host     string
-	Port     int
-	User     string
-	Password string // #nosec G117 -- Config field for database password
-	DBName   string
-	SSLMode  string
+	Host        string
+	Port        int
+	User        string
+	Password    string // #nosec G117 -- Config field for database password
+	DBName      string
+	SSLMode     string
+	SSLRootCert string // Path to CA certificate (.pem) for verifying server; optional
 }
 
 type RedisConfig struct {
@@ -116,6 +117,7 @@ func Load() (*Config, error) {
 	databasePassword := getEnv("DATABASE_PASSWORD", "")
 	databaseName := getEnv("DATABASE_NAME", "trustgate")
 	databaseSSLMode := getEnv("DATABASE_SSL_MODE", "disable")
+	databaseSSLCert := getEnv("DATABASE_SSL_CERT", "")
 
 	// Redis configuration
 	redisHost := getEnv("REDIS_HOST", "localhost")
@@ -168,12 +170,13 @@ func Load() (*Config, error) {
 			EnablePerRoute:    metricsEnablePerRoute,
 		},
 		Database: DatabaseConfig{
-			Host:     databaseHost,
-			Port:     databasePort,
-			User:     databaseUser,
-			Password: databasePassword,
-			DBName:   databaseName,
-			SSLMode:  databaseSSLMode,
+			Host:        databaseHost,
+			Port:        databasePort,
+			User:        databaseUser,
+			Password:    databasePassword,
+			DBName:      databaseName,
+			SSLMode:     databaseSSLMode,
+			SSLRootCert: databaseSSLCert,
 		},
 		Redis: RedisConfig{
 			Host:          redisHost,
