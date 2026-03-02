@@ -1,6 +1,8 @@
 package forwarding_rule
 
 import (
+	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -32,8 +34,26 @@ type ForwardingRule struct {
 	Public        bool                   `gorm:"default:false"`
 	RetryAttempts int                    `gorm:"default:1"`
 	TrustLens     *domain.TrustLensJSON  `gorm:"type:jsonb"`
+	SessionConfig *SessionConfig         `json:"session_config,omitempty" gorm:"type:jsonb"`
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+type SessionConfig struct {
+	HeaderName    string `json:"header_name"`
+	BodyParamName string `json:"body_param_name"`
+}
+
+func (t SessionConfig) Value() (driver.Value, error) {
+	return json.Marshal(t)
+}
+
+func (t *SessionConfig) Scan(value interface{}) error {
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("could not convert value %v to []byte", value)
+	}
+	return json.Unmarshal(bytes, t)
 }
 
 func (r *ForwardingRule) Validate() error {
@@ -57,6 +77,15 @@ func (r *ForwardingRule) Validate() error {
 	for _, method := range r.Methods {
 		if !validMethods[method] {
 			return fmt.Errorf("invalid HTTP method: %s", method)
+		}
+	}
+
+	if r.SessionConfig != nil {
+		if r.SessionConfig.HeaderName != "" && r.SessionConfig.BodyParamName != "" {
+			return fmt.Errorf("session_config: header_name and body_param_name are mutually exclusive")
+		}
+		if r.SessionConfig.HeaderName == "" && r.SessionConfig.BodyParamName == "" {
+			r.SessionConfig.HeaderName = "X-TG-SESSION-ID"
 		}
 	}
 

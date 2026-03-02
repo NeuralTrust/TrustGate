@@ -3,7 +3,6 @@ package middleware
 import (
 	"bytes"
 	"context"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -83,14 +82,13 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 	}
 }
 
-// extractGatewayContext retrieves gateway ID and data from the fiber context
 func (m *metricsMiddleware) extractGatewayContext(c *fiber.Ctx) (string, *types.GatewayData, error) {
-	gatewayID, ok := c.Locals(common.GatewayContextKey).(string)
-	if !ok || gatewayID == "" {
+	gatewayID, ok := GetGatewayID(c)
+	if !ok {
 		m.logger.Error("gatewayDTO ID not found in context")
 		return "", nil, fiber.ErrNotFound
 	}
-	gatewayData, ok := c.Locals(string(common.GatewayDataContextKey)).(*types.GatewayData)
+	gatewayData, ok := GetGatewayData(c)
 	if !ok {
 		m.logger.WithField("gatewayID", gatewayID).Error("gateway data not found in context (metrics middleware)")
 		return "", nil, fiber.ErrNotFound
@@ -178,7 +176,7 @@ func (m *metricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) 
 		Headers:   m.copyHeaders(c.GetReqHeaders()),
 		Method:    c.Method(),
 		Path:      string([]byte(c.Path())), // clone to avoid mutation
-		Query:     m.getQueryParams(c),
+		Query:     GetQueryParams(c),
 		Metadata: map[string]interface{}{
 			"user_agent_info": userAgentInfo,
 		},
@@ -219,7 +217,7 @@ func (m *metricsMiddleware) handleStreamResponse(
 
 	inputRequest.SessionID = m.getSessionID(ctx)
 	exporters := gatewayData.Gateway.Telemetry.Exporters
-	rule := m.getMatchedRule(ctx)
+	rule := GetMatchedRule(ctx, m.logger)
 	headers := m.copyHeaders(c.GetRespHeaders())
 	statusCode := c.Response().StatusCode()
 	collector := m.getCollectorFromContext(c)
@@ -273,7 +271,7 @@ func (m *metricsMiddleware) handleNonStreamResponse(
 	startTime time.Time,
 ) {
 	inputRequest.SessionID = m.getSessionID(ctx)
-	rule := m.getMatchedRule(ctx)
+	rule := GetMatchedRule(ctx, m.logger)
 	collector := m.getCollectorFromContext(c)
 
 	outputResponse := m.buildResponseContext(c, gatewayID, rule)
@@ -295,7 +293,6 @@ func (m *metricsMiddleware) buildResponseContext(
 	gatewayID string,
 	rule *types.ForwardingRuleDTO,
 ) types.ResponseContext {
-	now := time.Now()
 	return types.ResponseContext{
 		Context:    context.Background(),
 		GatewayID:  gatewayID,
@@ -304,7 +301,7 @@ func (m *metricsMiddleware) buildResponseContext(
 		Body:       append([]byte(nil), c.Response().Body()...),
 		StatusCode: c.Response().StatusCode(),
 		Rule:       rule,
-		ProcessAt:  &now,
+		ProcessAt:  new(time.Now()),
 	}
 }
 
@@ -316,16 +313,6 @@ func (m *metricsMiddleware) getSessionID(ctx context.Context) string {
 		return ""
 	}
 	return sessionID
-}
-
-// getMatchedRule retrieves the matched rule from context
-func (m *metricsMiddleware) getMatchedRule(ctx context.Context) *types.ForwardingRuleDTO {
-	rule, ok := ctx.Value(string(common.MatchedRuleContextKey)).(*types.ForwardingRuleDTO)
-	if !ok || rule == nil {
-		m.logger.Error("failed to get matched rule from context")
-		return &types.ForwardingRuleDTO{}
-	}
-	return rule
 }
 
 // getCollectorFromContext retrieves the metrics collector from fiber context
@@ -343,15 +330,6 @@ func (m *metricsMiddleware) copyHeaders(headers map[string][]string) map[string]
 		result[key] = copyValues
 	}
 	return result
-}
-
-// getQueryParams extracts query parameters from the request
-func (m *metricsMiddleware) getQueryParams(c *fiber.Ctx) url.Values {
-	queryParams := make(url.Values)
-	c.Request().URI().QueryArgs().VisitAll(func(k, v []byte) {
-		queryParams.Set(string(k), string(v))
-	})
-	return queryParams
 }
 
 // setTelemetryHeaders sets conversation and interaction ID headers from request

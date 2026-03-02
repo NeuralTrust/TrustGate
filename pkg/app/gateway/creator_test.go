@@ -233,50 +233,6 @@ func TestCreator_Create_WithTelemetry(t *testing.T) {
 	telemetryValidator.AssertExpectations(t)
 }
 
-func TestCreator_Create_WithSessionConfig(t *testing.T) {
-	repo := new(gatewayMocks.Repository)
-	updateCache := new(mockUpdateGatewayCache)
-	pluginValidator := pluginmocks.NewValidatePluginChain(t)
-	telemetryValidator := new(mockTelemetryExportersValidator)
-
-	creator := setupCreator(t, repo, updateCache, pluginValidator, telemetryValidator, nil)
-
-	req := &request.CreateGatewayRequest{
-		Name:   "Test GatewayDTO",
-		Status: "active",
-		SessionConfig: &request.SessionConfigRequest{
-			Enabled:       true,
-			HeaderName:    "X-Session-ID",
-			BodyParamName: "session_id",
-			Mapping:       "user_id",
-			TTL:           3600,
-		},
-		RequiredPlugins: []pluginTypes.PluginConfig{},
-	}
-
-	ctx := context.Background()
-
-	pluginValidator.On("Validate", ctx, mock.AnythingOfType("uuid.UUID"), req.RequiredPlugins).Return(nil)
-	repo.On("Save", ctx, mock.MatchedBy(func(g *domainGateway.Gateway) bool {
-		return g.SessionConfig != nil &&
-			g.SessionConfig.Enabled == true &&
-			g.SessionConfig.HeaderName == "X-Session-ID" &&
-			g.SessionConfig.TTL == 3600
-	})).Return(nil)
-	updateCache.On("Update", ctx, mock.AnythingOfType("*gateway.Gateway")).Return(nil)
-
-	result, err := creator.Create(ctx, req, "")
-
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.NotNil(t, result.SessionConfig)
-	assert.Equal(t, true, result.SessionConfig.Enabled)
-	assert.Equal(t, "X-Session-ID", result.SessionConfig.HeaderName)
-	repo.AssertExpectations(t)
-	updateCache.AssertExpectations(t)
-	pluginValidator.AssertExpectations(t)
-}
-
 func TestCreator_Create_WithClientTLSConfig(t *testing.T) {
 	repo := new(gatewayMocks.Repository)
 	updateCache := new(mockUpdateGatewayCache)

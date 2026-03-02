@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/utils"
 	"github.com/go-redis/redis/v8"
@@ -25,6 +26,7 @@ const (
 	fingerPrintByT0kenKey     = "fp_by_token:%s"
 	fingerPrintByUserKey      = "fp_by_user:%s"
 	fingerPrintByUserAgentKey = "fp_by_ua:%s"
+	fingerPrintBySessionKey   = "fp_by_session:%s"
 )
 
 //go:generate mockery --name=Tracker --dir=. --output=./mocks --filename=fingerprint_tracker_mock.go --case=underscore --with-expecter
@@ -85,6 +87,7 @@ func (p *tracker) MakeFingerprint(ctx *fiber.Ctx) Fingerprint {
 		Token:     strings.ToLower(strings.TrimSpace(p.getAuthToken(ctx))),
 		IP:        p.getByIp(ctx),
 		UserAgent: strings.ToLower(strings.TrimSpace(p.getUserAgent(ctx))),
+		SessionID: strings.ToLower(strings.TrimSpace(p.getSessionID(ctx))),
 	}
 }
 
@@ -193,6 +196,11 @@ func (p *tracker) Store(
 		pipe.SAdd(ctx, key, id)
 		pipe.Expire(ctx, key, ttl)
 	}
+	if fp.SessionID != "" {
+		key := fmt.Sprintf(fingerPrintBySessionKey, fp.SessionID)
+		pipe.SAdd(ctx, key, id)
+		pipe.Expire(ctx, key, ttl)
+	}
 
 	_, err = pipe.Exec(ctx)
 	return err
@@ -215,6 +223,9 @@ func (p *tracker) FindSimilarFingerprints(
 	}
 	if fp.UserAgent != "" {
 		keys = append(keys, fmt.Sprintf(fingerPrintByUserAgentKey, fp.UserAgent))
+	}
+	if fp.SessionID != "" {
+		keys = append(keys, fmt.Sprintf(fingerPrintBySessionKey, fp.SessionID))
 	}
 
 	if len(keys) < 2 {
@@ -248,6 +259,9 @@ func (p *tracker) FindSimilarFingerprints(
 				matchCount++
 			}
 			if fp.UserAgent != "" && utils.LevenshteinDistance(fp.UserAgent, other.UserAgent) <= 2 {
+				matchCount++
+			}
+			if fp.SessionID != "" && fp.SessionID == other.SessionID {
 				matchCount++
 			}
 			if matchCount >= 2 {
@@ -390,4 +404,18 @@ func (p *tracker) getByIp(ctx *fiber.Ctx) string {
 
 func (p *tracker) getUserAgent(ctx *fiber.Ctx) string {
 	return ctx.Get("User-Agent")
+}
+
+func (p *tracker) getSessionID(ctx *fiber.Ctx) string {
+	if v := ctx.Locals(common.SessionContextKey); v != nil {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	if v := ctx.Context().Value(common.SessionContextKey); v != nil {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
 }

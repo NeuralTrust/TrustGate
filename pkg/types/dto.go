@@ -67,9 +67,8 @@ type GatewayDTO struct {
 	RequiredPlugins []plugintypes.PluginConfig    `json:"required_plugins"`
 	Telemetry       *TelemetryDTO                 `json:"telemetry"`
 	SecurityConfig  *SecurityConfigDTO            `json:"security_config"`
-	TlS             map[string]ClientTLSConfigDTO `json:"tls"`
-	SessionConfig   *SessionConfigDTO             `json:"session_config,omitempty"`
-	CreatedAt       string                        `json:"created_at"`
+	TlS       map[string]ClientTLSConfigDTO `json:"tls"`
+	CreatedAt string                        `json:"created_at"`
 	UpdatedAt       string                        `json:"updated_at"`
 }
 
@@ -120,12 +119,8 @@ type ClientTLSCertDTO struct {
 }
 
 type SessionConfigDTO struct {
-	Enabled        bool   `json:"enabled"`
-	HeaderName     string `json:"header_name"`
-	BodyParamName  string `json:"body_param_name"`
-	QueryParamName string `json:"query_param_name"`
-	Mapping        string `json:"mapping"`
-	TTL            int    `json:"ttl"`
+	HeaderName    string `json:"header_name"`
+	BodyParamName string `json:"body_param_name"`
 }
 
 // ForwardingRuleDTO represents a rule for forwarding requests
@@ -144,8 +139,9 @@ type ForwardingRuleDTO struct {
 	PluginChain   []plugintypes.PluginConfig `json:"plugin_chain"`
 	Active        bool                       `json:"active"`
 	Public        bool                       `json:"public"`
-	TrustLens     *TrustLensConfigDTO        `json:"trustlens,omitempty"`
-	CreatedAt     string                     `json:"created_at"`
+	TrustLens     *TrustLensConfigDTO `json:"trustlens,omitempty"`
+	SessionConfig *SessionConfigDTO   `json:"session_config,omitempty"`
+	CreatedAt     string              `json:"created_at"`
 	UpdatedAt     string                     `json:"updated_at"`
 }
 

@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"context"
-	"net/url"
 	"strings"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
@@ -42,8 +41,8 @@ func (m *websocketMiddleware) Middleware() fiber.Handler {
 				}
 				c.Locals("ws_semaphore", m.semaphore)
 
-				gatewayID, ok := c.Locals(common.GatewayContextKey).(string)
-				if !ok || gatewayID == "" {
+				gatewayID, ok := GetGatewayID(c)
+				if !ok {
 					m.logger.Error("missing or invalid gateway in context ID")
 					return fiber.ErrInternalServerError
 				}
@@ -54,7 +53,7 @@ func (m *websocketMiddleware) Middleware() fiber.Handler {
 					Headers:   make(map[string][]string),
 					Method:    c.Method(),
 					Path:      c.Path(),
-					Query:     m.getQueryParams(c),
+					Query:     GetQueryParams(c),
 					Body:      c.Body(),
 				}
 				for key, values := range c.GetReqHeaders() {
@@ -84,12 +83,4 @@ func (m *websocketMiddleware) Middleware() fiber.Handler {
 		}
 		return c.Next()
 	}
-}
-
-func (m *websocketMiddleware) getQueryParams(c *fiber.Ctx) url.Values {
-	queryParams := make(url.Values)
-	c.Request().URI().QueryArgs().VisitAll(func(k, v []byte) {
-		queryParams.Set(string(k), string(v))
-	})
-	return queryParams
 }

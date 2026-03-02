@@ -1,6 +1,7 @@
 package fingerprint_test
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
@@ -44,8 +45,9 @@ func TestFromID_InvalidBase64(t *testing.T) {
 }
 
 func TestFromID_WrongFormat(t *testing.T) {
-	encoded := fingerprint.Fingerprint{UserID: "onlyonefield"}.ID()
-	encoded = encoded[:len(encoded)-4]
+	// Encode a string with only 3 parts (need at least 4)
+	raw := "part1|part2|part3"
+	encoded := base64.StdEncoding.EncodeToString([]byte(raw))
 	_, err := fingerprint.NewFromID(encoded)
 	if err == nil {
 		t.Error("expected error due to wrong field count, got nil")

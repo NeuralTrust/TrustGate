@@ -129,7 +129,6 @@ func (r *redisEmbeddingRepository) Search(
 		"PARAMS", "2", "BLOB", blob,
 		"DIALECT", "2",
 		"RETURN", "3", "data", "gateway_id", "score",
-		"SORTBY", "score",
 	}
 
 	result := r.cache.RedisClient().Do(ctx, args...)

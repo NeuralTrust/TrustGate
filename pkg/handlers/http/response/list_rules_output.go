@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 )
 
@@ -34,9 +35,10 @@ type ForwardingRuleOutput struct {
 	PreserveHost  bool                   `json:"preserve_host"`
 	RetryAttempts int                    `json:"retry_attempts"`
 	PluginChain   domain.PluginChainJSON `json:"plugin_chain,omitempty"`
-	Active        bool                   `json:"active"`
-	TrustLens     *domain.TrustLensJSON  `json:"trustlens"`
-	CreatedAt     time.Time              `json:"created_at"`
+	Active        bool                           `json:"active"`
+	TrustLens     *domain.TrustLensJSON          `json:"trustlens"`
+	SessionConfig *forwarding_rule.SessionConfig `json:"session_config,omitempty"`
+	CreatedAt     time.Time                      `json:"created_at"`
 	UpdatedAt     time.Time              `json:"updated_at"`
 }
 

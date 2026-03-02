@@ -281,6 +281,13 @@ func (s *updateRuleHandler) applyRequestToDBRule(
 	if updateReq.PluginChain != nil {
 		forwardingRule.PluginChain = s.buildPluginChain(updateReq.PluginChain)
 	}
+
+	if updateReq.SessionConfig != nil {
+		forwardingRule.SessionConfig = &forwarding_rule.SessionConfig{
+			HeaderName:    updateReq.SessionConfig.HeaderName,
+			BodyParamName: updateReq.SessionConfig.BodyParamName,
+		}
+	}
 }
 
 func (s *updateRuleHandler) buildTrustLensConfig(trustLens *types.TrustLensConfigDTO) *domain.TrustLensJSON {
@@ -430,6 +437,10 @@ func (s *updateRuleHandler) updateCacheRuleFields(
 
 	if updateReq.TrustLens != nil {
 		rule.TrustLens = updateReq.TrustLens
+	}
+
+	if updateReq.SessionConfig != nil {
+		rule.SessionConfig = updateReq.SessionConfig
 	}
 }
 

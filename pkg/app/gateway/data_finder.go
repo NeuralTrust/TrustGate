@@ -124,6 +124,14 @@ func (f *dataFinder) convertModelToTypesRules(rules []forwarding_rule.Forwarding
 			}
 		}
 
+		var sessionConfigDTO *types.SessionConfigDTO
+		if r.SessionConfig != nil {
+			sessionConfigDTO = &types.SessionConfigDTO{
+				HeaderName:    r.SessionConfig.HeaderName,
+				BodyParamName: r.SessionConfig.BodyParamName,
+			}
+		}
+
 		result = append(result, types.ForwardingRuleDTO{
 			ID:            r.ID.String(),
 			GatewayID:     r.GatewayID.String(),
@@ -139,6 +147,7 @@ func (f *dataFinder) convertModelToTypesRules(rules []forwarding_rule.Forwarding
 			Active:        r.Active,
 			Public:        r.Public,
 			TrustLens:     trustLensConfig,
+			SessionConfig: sessionConfigDTO,
 			CreatedAt:     r.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:     r.UpdatedAt.Format(time.RFC3339),
 		})
