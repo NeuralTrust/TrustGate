@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.14.3\n\nCommits since last release:\n- b87f65d Merge pull request #312 from NeuralTrust/feat/sessions\n- 7a53063 feat(sessions): enable sessions\n- b437c6b feat(sessions): enable sessions\n- 887860f feat(sessions): enable sessions\n- 5b9236e feat(sessions): enable sessions\n"
+      "content": "Current version: 1.15.0\n\nCommits since last release:\n- 489b7f6 Merge pull request #313 from NeuralTrust/feat-ssl-root-cert\n- 819899c feat: support tls cert\n- af60e7b feat: support ssl root cert database\n"
     }
   ],
   "max_tokens": 200,

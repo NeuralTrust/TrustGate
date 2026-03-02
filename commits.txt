@@ -1,5 +1,3 @@
-- b87f65d Merge pull request #312 from NeuralTrust/feat/sessions
-- 7a53063 feat(sessions): enable sessions
-- b437c6b feat(sessions): enable sessions
-- 887860f feat(sessions): enable sessions
-- 5b9236e feat(sessions): enable sessions
+- 489b7f6 Merge pull request #313 from NeuralTrust/feat-ssl-root-cert
+- 819899c feat: support tls cert
+- af60e7b feat: support ssl root cert database
