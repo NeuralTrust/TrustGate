@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
@@ -81,8 +80,6 @@ func TestSessionMiddleware_ExtractsFromHeader(t *testing.T) {
 	app := fiber.New()
 	app.Get("/", func(c *fiber.Ctx) error {
 		c.Locals(string(common.MatchedRuleContextKey), rule)
-		ctx := context.WithValue(c.Context(), common.MatchedRuleContextKey, rule)
-		c.SetUserContext(ctx)
 		return c.Next()
 	}, m.Middleware(), func(c *fiber.Ctx) error {
 		sessionID := c.Locals(common.SessionContextKey)
@@ -118,8 +115,6 @@ func TestSessionMiddleware_ExtractsFromBody(t *testing.T) {
 	app := fiber.New()
 	app.Post("/", func(c *fiber.Ctx) error {
 		c.Locals(string(common.MatchedRuleContextKey), rule)
-		ctx := context.WithValue(c.Context(), common.MatchedRuleContextKey, rule)
-		c.SetUserContext(ctx)
 		return c.Next()
 	}, m.Middleware(), func(c *fiber.Ctx) error {
 		sessionID := c.Locals(common.SessionContextKey)
@@ -158,8 +153,6 @@ func TestSessionMiddleware_HeaderTakesPrecedenceOverBody(t *testing.T) {
 	app := fiber.New()
 	app.Post("/", func(c *fiber.Ctx) error {
 		c.Locals(string(common.MatchedRuleContextKey), rule)
-		ctx := context.WithValue(c.Context(), common.MatchedRuleContextKey, rule)
-		c.SetUserContext(ctx)
 		return c.Next()
 	}, m.Middleware(), func(c *fiber.Ctx) error {
 		sessionID := c.Locals(common.SessionContextKey)
@@ -199,8 +192,6 @@ func TestSessionMiddleware_InvalidJSONBody_NoSessionSet(t *testing.T) {
 	app := fiber.New()
 	app.Post("/", func(c *fiber.Ctx) error {
 		c.Locals(string(common.MatchedRuleContextKey), rule)
-		ctx := context.WithValue(c.Context(), common.MatchedRuleContextKey, rule)
-		c.SetUserContext(ctx)
 		return c.Next()
 	}, m.Middleware(), func(c *fiber.Ctx) error {
 		sessionID := c.Locals(common.SessionContextKey)
@@ -236,11 +227,8 @@ func TestSessionMiddleware_SetsSessionInContext(t *testing.T) {
 	app := fiber.New()
 	app.Get("/", func(c *fiber.Ctx) error {
 		c.Locals(string(common.MatchedRuleContextKey), rule)
-		ctx := context.WithValue(c.Context(), common.MatchedRuleContextKey, rule)
-		c.SetUserContext(ctx)
 		return c.Next()
 	}, m.Middleware(), func(c *fiber.Ctx) error {
-		// Metrics middleware reads from context
 		sessionID, ok := c.Context().Value(common.SessionContextKey).(string)
 		if !ok || sessionID != "ctx-sess-1" {
 			t.Errorf("expected session in context 'ctx-sess-1', got ok=%v sessionID=%v", ok, sessionID)
