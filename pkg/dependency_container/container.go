@@ -14,6 +14,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
 	middleware "github.com/NeuralTrust/TrustGate/pkg/server/middleware"
@@ -168,6 +169,8 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	openAIFirewallClient := firewall.NewOpenAIFirewallClient(di.Logger)
 	firewallFactory := firewall.NewClientFactory(neuralTrustFirewallClient, openAIFirewallClient)
 
+	adapterRegistry := adapter.NewRegistry()
+
 	pluginManager := plugins.NewManager(
 		di.Logger,
 		cacheInstance,
@@ -177,6 +180,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		plugins.WithServiceLocator(embeddingServiceLocator),
 		plugins.WithProviderLocator(providerFactory),
 		plugins.WithFirewallFactory(firewallFactory),
+		plugins.WithAdapterRegistry(adapterRegistry),
 	)
 
 	// repository
@@ -299,6 +303,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 			TokenClient:         oauthTokenClient,
 			RuleMatcher:         ruleMatcher,
 			TLSCertWriter:       tlsCertWriter,
+			AdapterRegistry:     adapterRegistry,
 		}),
 		// Gateway
 		CreateGatewayHandler: handlers.NewCreateGatewayHandler(

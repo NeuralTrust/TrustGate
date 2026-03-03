@@ -11,6 +11,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/token_rate_limiter"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
@@ -23,7 +24,7 @@ func setup(t *testing.T) (*token_rate_limiter.TokenRateLimiterPlugin, *miniredis
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	p := token_rate_limiter.NewTokenRateLimiterPlugin(logrus.New(), rc).(*token_rate_limiter.TokenRateLimiterPlugin)
+	p := token_rate_limiter.NewTokenRateLimiterPlugin(logrus.New(), rc, adapter.NewRegistry()).(*token_rate_limiter.TokenRateLimiterPlugin)
 	return p, mr
 }
 

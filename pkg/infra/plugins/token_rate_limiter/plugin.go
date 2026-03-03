@@ -51,14 +51,16 @@ func (c *Config) windowSeconds() int {
 }
 
 type TokenRateLimiterPlugin struct {
-	logger *logrus.Logger
-	redis  *redis.Client
+	logger          *logrus.Logger
+	redis           *redis.Client
+	adapterRegistry *adapter.Registry
 }
 
-func NewTokenRateLimiterPlugin(logger *logrus.Logger, redisClient *redis.Client) pluginiface.Plugin {
+func NewTokenRateLimiterPlugin(logger *logrus.Logger, redisClient *redis.Client, adapterRegistry *adapter.Registry) pluginiface.Plugin {
 	return &TokenRateLimiterPlugin{
-		logger: logger,
-		redis:  redisClient,
+		logger:          logger,
+		redis:           redisClient,
+		adapterRegistry: adapterRegistry,
 	}
 }
 
@@ -201,7 +203,7 @@ func (p *TokenRateLimiterPlugin) handlePostResponse(
 	if resp.Streaming {
 		actualTokens = p.extractStreamUsage(resp.Body, providerFormat)
 	} else {
-		canonical, err := adapter.DecodeResponseFor(resp.Body, providerFormat)
+		canonical, err := p.adapterRegistry.DecodeResponseFor(resp.Body, providerFormat)
 		if err != nil {
 			p.logger.WithError(err).WithField("provider", req.Provider).
 				Warn("could not decode provider response for token counting, skipping")
@@ -288,7 +290,7 @@ func (p *TokenRateLimiterPlugin) extractStreamUsage(body []byte, providerFormat 
 		if len(line) == 0 {
 			continue
 		}
-		chunk, err := adapter.DecodeStreamChunkFor(line, providerFormat)
+		chunk, err := p.adapterRegistry.DecodeStreamChunkFor(line, providerFormat)
 		if err != nil || chunk == nil {
 			continue
 		}

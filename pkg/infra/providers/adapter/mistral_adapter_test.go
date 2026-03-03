@@ -290,7 +290,7 @@ func TestAdaptRequest_OpenAIToMistral(t *testing.T) {
 		]
 	}`
 
-	out, err := AdaptRequest([]byte(input), FormatOpenAI, FormatMistral)
+	out, err := testRegistry().AdaptRequest([]byte(input), FormatOpenAI, FormatMistral)
 	require.NoError(t, err)
 
 	var result map[string]interface{}
@@ -321,7 +321,7 @@ func TestAdaptRequest_OpenAIToMistral(t *testing.T) {
 
 func TestAdaptRequest_MistralToOpenAI(t *testing.T) {
 	input := `{"model":"mistral-large","messages":[{"role":"user","content":"hi"}]}`
-	out, err := AdaptRequest([]byte(input), FormatMistral, FormatOpenAI)
+	out, err := testRegistry().AdaptRequest([]byte(input), FormatMistral, FormatOpenAI)
 	require.NoError(t, err)
 
 	// Mistral and OpenAI are NOT wire-compatible (different adapters), so
@@ -351,7 +351,7 @@ func TestAdaptRequest_AnthropicToMistral(t *testing.T) {
 		]
 	}`
 
-	out, err := AdaptRequest([]byte(input), FormatAnthropic, FormatMistral)
+	out, err := testRegistry().AdaptRequest([]byte(input), FormatAnthropic, FormatMistral)
 	require.NoError(t, err)
 
 	var result map[string]interface{}
@@ -378,7 +378,7 @@ func TestAdaptRequest_GeminiToMistral(t *testing.T) {
 		"generationConfig": {"maxOutputTokens": 50}
 	}`
 
-	out, err := AdaptRequest([]byte(input), FormatGemini, FormatMistral)
+	out, err := testRegistry().AdaptRequest([]byte(input), FormatGemini, FormatMistral)
 	require.NoError(t, err)
 
 	var result map[string]interface{}
@@ -461,7 +461,7 @@ func TestMistralAdapter_EncodeStreamChunk(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegistry_MistralAdapterRegistered(t *testing.T) {
-	a, err := getAdapter(FormatMistral)
+	a, err := testRegistry().GetAdapter(FormatMistral)
 	require.NoError(t, err)
 	assert.IsType(t, &MistralAdapter{}, a)
 }

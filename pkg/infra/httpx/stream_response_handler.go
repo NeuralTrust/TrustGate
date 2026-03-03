@@ -39,6 +39,7 @@ func injectStreamTrue(body []byte) []byte {
 func HandleProviderStream(
 	logger *logrus.Logger,
 	providerLocator factory.ProviderLocator,
+	adapterRegistry *adapter.Registry,
 	req *types.RequestContext,
 	target *types.UpstreamTargetDTO,
 	streamResponse chan []byte,
@@ -55,7 +56,7 @@ func HandleProviderStream(
 
 	body := req.Body
 	if needsAdapt {
-		body, err = adapter.AdaptRequest(req.Body, sourceFormat, targetFormat)
+		body, err = adapterRegistry.AdaptRequest(req.Body, sourceFormat, targetFormat)
 		if err != nil {
 			return nil, fmt.Errorf("failed to adapt stream request (%s->%s): %w", sourceFormat, targetFormat, err)
 		}
@@ -169,7 +170,7 @@ func HandleProviderStream(
 		var acc toolCallAccumulator
 		for msg := range streamChan {
 			if needsAdapt {
-				processAdaptedChunk(logger, msg, sourceFormat, targetFormat, fwd, &acc, writeAdaptedLines)
+				processAdaptedChunk(logger, adapterRegistry, msg, sourceFormat, targetFormat, fwd, &acc, writeAdaptedLines)
 				continue
 			}
 
@@ -215,6 +216,7 @@ func openDebugFile(logger *logrus.Logger, source, target adapter.Format) *os.Fil
 // format adaptation before being written to the client.
 func processAdaptedChunk(
 	logger *logrus.Logger,
+	registry *adapter.Registry,
 	msg []byte,
 	sourceFormat, targetFormat adapter.Format,
 	fwd *payloadForwarder,
@@ -236,11 +238,11 @@ func processAdaptedChunk(
 		(adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) ||
 			targetFormat == adapter.FormatAnthropic ||
 			targetFormat == adapter.FormatMistral) {
-		processGeminiToolCallAdaptation(logger, payload, sourceFormat, targetFormat, acc, writeAdaptedLines)
+		processGeminiToolCallAdaptation(logger, registry, payload, sourceFormat, targetFormat, acc, writeAdaptedLines)
 		return
 	}
 
-	adaptedLines, adaptErr := adapter.AdaptStreamChunk(payload, sourceFormat, targetFormat)
+	adaptedLines, adaptErr := registry.AdaptStreamChunk(payload, sourceFormat, targetFormat)
 	if adaptErr != nil {
 		logger.WithError(adaptErr).
 			WithField("payload_preview", string(truncatePreview(payload))).
@@ -264,12 +266,13 @@ func processAdaptedChunk(
 // deltas, and encodes them in Gemini format when finished.
 func processGeminiToolCallAdaptation(
 	logger *logrus.Logger,
+	registry *adapter.Registry,
 	payload []byte,
 	sourceFormat, targetFormat adapter.Format,
 	acc *toolCallAccumulator,
 	writeAdaptedLines func([][]byte),
 ) {
-	canonical, decErr := adapter.DecodeStreamChunkFor(payload, targetFormat)
+	canonical, decErr := registry.DecodeStreamChunkFor(payload, targetFormat)
 	if decErr != nil {
 		logger.WithError(decErr).
 			WithField("payload_preview", string(truncatePreview(payload))).
@@ -283,21 +286,21 @@ func processGeminiToolCallAdaptation(
 	acc.Merge(canonical.ToolCallDeltas)
 
 	if canonical.Role != "" {
-		encodeAndWrite(&adapter.CanonicalStreamChunk{Role: canonical.Role}, sourceFormat, writeAdaptedLines)
+		encodeAndWrite(registry, &adapter.CanonicalStreamChunk{Role: canonical.Role}, sourceFormat, writeAdaptedLines)
 	}
 	if canonical.Delta != "" {
-		encodeAndWrite(&adapter.CanonicalStreamChunk{Delta: canonical.Delta}, sourceFormat, writeAdaptedLines)
+		encodeAndWrite(registry, &adapter.CanonicalStreamChunk{Delta: canonical.Delta}, sourceFormat, writeAdaptedLines)
 	}
 	if canonical.FinishReason != "" && len(*acc) > 0 {
-		encodeAndWrite(&adapter.CanonicalStreamChunk{ToolCallDeltas: acc.Flush()}, sourceFormat, writeAdaptedLines)
+		encodeAndWrite(registry, &adapter.CanonicalStreamChunk{ToolCallDeltas: acc.Flush()}, sourceFormat, writeAdaptedLines)
 	}
 	if canonical.FinishReason != "" {
-		encodeAndWrite(&adapter.CanonicalStreamChunk{FinishReason: canonical.FinishReason}, sourceFormat, writeAdaptedLines)
+		encodeAndWrite(registry, &adapter.CanonicalStreamChunk{FinishReason: canonical.FinishReason}, sourceFormat, writeAdaptedLines)
 	}
 }
 
-func encodeAndWrite(chunk *adapter.CanonicalStreamChunk, format adapter.Format, write func([][]byte)) {
-	lines, err := adapter.EncodeStreamChunkFor(chunk, format)
+func encodeAndWrite(registry *adapter.Registry, chunk *adapter.CanonicalStreamChunk, format adapter.Format, write func([][]byte)) {
+	lines, err := registry.EncodeStreamChunkFor(chunk, format)
 	if err == nil && len(lines) > 0 {
 		write(lines)
 	}

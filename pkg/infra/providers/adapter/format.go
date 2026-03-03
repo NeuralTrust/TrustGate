@@ -6,12 +6,13 @@ import "encoding/json"
 type Format string
 
 const (
-	FormatOpenAI    Format = "openai"
-	FormatAnthropic Format = "anthropic"
-	FormatGemini    Format = "google"
-	FormatBedrock   Format = "bedrock"
-	FormatAzure     Format = "azure" // wire-compatible with OpenAI
-	FormatMistral   Format = "mistral"
+	FormatOpenAI          Format = "openai"
+	FormatOpenAIResponses Format = "openai_responses"
+	FormatAnthropic       Format = "anthropic"
+	FormatGemini          Format = "google"
+	FormatBedrock         Format = "bedrock"
+	FormatAzure           Format = "azure" // wire-compatible with OpenAI
+	FormatMistral         Format = "mistral"
 )
 
 // DetectFormat inspects the raw JSON body and returns the most likely source
@@ -34,6 +35,7 @@ func DetectFormat(body []byte) Format {
 		AnthropicVersion json.RawMessage `json:"anthropic_version"`
 		System           json.RawMessage `json:"system"`
 		Messages         json.RawMessage `json:"messages"`
+		Input            json.RawMessage `json:"input"`
 		InputText        json.RawMessage `json:"inputText"`
 		Prompt           json.RawMessage `json:"prompt"`
 	}
@@ -55,25 +57,28 @@ func DetectFormat(body []byte) Format {
 	// OpenAI never has a top-level "system" – system prompts live inside the
 	// messages array.
 	if probe.System != nil && probe.Messages != nil {
-		// Make sure "system" is a string (not an object/array) to avoid
-		// false positives.
 		var s string
 		if json.Unmarshal(probe.System, &s) == nil {
 			return FormatAnthropic
 		}
 	}
 
-	// 4. Bedrock Titan uses "inputText".
+	// 4. OpenAI Responses API uses "input" without "messages".
+	if probe.Input != nil && probe.Messages == nil {
+		return FormatOpenAIResponses
+	}
+
+	// 5. Bedrock Titan uses "inputText".
 	if probe.InputText != nil {
 		return FormatBedrock
 	}
 
-	// 5. Bedrock legacy Claude v2 uses "prompt" without "messages".
+	// 6. Bedrock legacy Claude v2 uses "prompt" without "messages".
 	if probe.Prompt != nil && probe.Messages == nil {
 		return FormatBedrock
 	}
 
-	// 6. Default: OpenAI chat-completion format.
+	// 7. Default: OpenAI chat-completion format.
 	return FormatOpenAI
 }
 
