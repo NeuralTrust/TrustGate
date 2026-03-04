@@ -256,10 +256,6 @@ func (r *UpstreamRequest) validateProviderOptions(
 			if apiStr != openai.CompletionsAPI && apiStr != openai.ResponsesAPI {
 				return fmt.Errorf("target %d: openai provider_options 'api' field must be 'completions' or 'responses'", targetIndex)
 			}
-
-			if apiStr == openai.ResponsesAPI && currentTargets > 1 {
-				return fmt.Errorf("cannot perform load balancing: OpenAI Responses API supports only a single target")
-			}
 		}
 	} else if target.Provider != "" {
 		if len(target.ProviderOptions) > 0 {

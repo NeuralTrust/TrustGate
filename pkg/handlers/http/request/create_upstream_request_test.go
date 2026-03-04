@@ -31,7 +31,7 @@ func TestUpstreamRequest_ValidateProviderOptions(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "OpenAI Responses API with multiple targets should fail",
+			name: "OpenAI Responses API with multiple targets should succeed",
 			request: UpstreamRequest{
 				Name:      "Test Upstream",
 				Algorithm: "round-robin",
@@ -52,8 +52,7 @@ func TestUpstreamRequest_ValidateProviderOptions(t *testing.T) {
 					},
 				},
 			},
-			wantErr: true,
-			errMsg:  "cannot perform load balancing: OpenAI Responses API supports only a single target",
+			wantErr: false,
 		},
 		{
 			name: "OpenAI Completions API with multiple targets should succeed",
@@ -80,7 +79,7 @@ func TestUpstreamRequest_ValidateProviderOptions(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "OpenAI Responses API mixed with Completions API should fail",
+			name: "OpenAI Responses API mixed with Completions API should succeed",
 			request: UpstreamRequest{
 				Name:      "Test Upstream",
 				Algorithm: "round-robin",
@@ -101,8 +100,7 @@ func TestUpstreamRequest_ValidateProviderOptions(t *testing.T) {
 					},
 				},
 			},
-			wantErr: true,
-			errMsg:  "cannot perform load balancing: OpenAI Responses API supports only a single target",
+			wantErr: false,
 		},
 		{
 			name: "OpenAI provider without api option with multiple targets should succeed",

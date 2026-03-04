@@ -386,27 +386,31 @@ func TestCreateUpstream(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
-	t.Run("it should fail when OpenAI Responses API is used with multiple targets", func(t *testing.T) {
+	t.Run("it should succeed when OpenAI Responses API is used with multiple targets", func(t *testing.T) {
 		upstreamPayload := map[string]interface{}{
 			"name":      "OpenAI Responses API Multiple Targets Upstream",
 			"algorithm": "round-robin",
 			"targets": []map[string]interface{}{
 				{
-					"host":     "api1.openai.com",
-					"port":     443,
-					"protocol": "https",
-					"weight":   1,
-					"provider": "openai",
+					"credentials": map[string]interface{}{
+						"api_key": "SK1111111",
+					},
+					"default_model": "gpt-4o-mini",
+					"models":        []string{"gpt-4", "gpt-4o-mini"},
+					"weight":        1,
+					"provider":      "openai",
 					"provider_options": map[string]interface{}{
 						"api": "responses",
 					},
 				},
 				{
-					"host":     "api2.openai.com",
-					"port":     443,
-					"protocol": "https",
-					"weight":   1,
-					"provider": "openai",
+					"credentials": map[string]interface{}{
+						"api_key": "SK2222222",
+					},
+					"default_model": "gpt-4o-mini",
+					"models":        []string{"gpt-4", "gpt-4o-mini"},
+					"weight":        1,
+					"provider":      "openai",
 					"provider_options": map[string]interface{}{
 						"api": "responses",
 					},
@@ -414,10 +418,12 @@ func TestCreateUpstream(t *testing.T) {
 			},
 		}
 
-		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
+		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, upstreamPayload)
-		assert.Equal(t, http.StatusBadRequest, status)
+		assert.Equal(t, http.StatusCreated, status)
+		assert.NotEmpty(t, response["id"])
+		assert.Equal(t, "OpenAI Responses API Multiple Targets Upstream", response["name"])
 	})
 
 	t.Run("it should succeed when OpenAI Responses API is used with single target", func(t *testing.T) {
@@ -454,15 +460,25 @@ func TestCreateUpstream(t *testing.T) {
 			"algorithm": "round-robin",
 			"targets": []map[string]interface{}{
 				{
-					"weight":   1,
-					"provider": "openai",
+					"credentials": map[string]interface{}{
+						"api_key": "SK3333333",
+					},
+					"default_model": "gpt-4o-mini",
+					"models":        []string{"gpt-4", "gpt-4o-mini"},
+					"weight":        1,
+					"provider":      "openai",
 					"provider_options": map[string]interface{}{
-						"api": "responses",
+						"api": "completions",
 					},
 				},
 				{
-					"weight":   1,
-					"provider": "openai",
+					"credentials": map[string]interface{}{
+						"api_key": "SK4444444",
+					},
+					"default_model": "gpt-4o-mini",
+					"models":        []string{"gpt-4", "gpt-4o-mini"},
+					"weight":        1,
+					"provider":      "openai",
 					"provider_options": map[string]interface{}{
 						"api": "completions",
 					},
@@ -473,9 +489,9 @@ func TestCreateUpstream(t *testing.T) {
 		status, response := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/upstreams", AdminUrl, gatewayID), map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
 		}, upstreamPayload)
-		assert.Equal(t, http.StatusBadRequest, status)
-		assert.NotEmpty(t, response["error"])
-		assert.Equal(t, "cannot perform load balancing: OpenAI Responses API supports only a single target", response["error"])
+		assert.Equal(t, http.StatusCreated, status)
+		assert.NotEmpty(t, response["id"])
+		assert.Equal(t, "OpenAI Completions API Multiple Targets Upstream", response["name"])
 	})
 
 	t.Run("target oauth2 client_credentials minimal", func(t *testing.T) {
