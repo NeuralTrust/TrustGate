@@ -30,6 +30,23 @@ func ExtractUserInputGeneric(body []byte) string {
 		if json.Unmarshal(raw, &s) == nil && s != "" {
 			return s
 		}
+		// Responses API: input can be an array of items with role/content or type/text
+		var items []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+			Type    string `json:"type"`
+			Text    string `json:"text"`
+		}
+		if json.Unmarshal(raw, &items) == nil {
+			for i := len(items) - 1; i >= 0; i-- {
+				if items[i].Role == "user" && items[i].Content != "" {
+					return items[i].Content
+				}
+				if items[i].Type == "input_text" && items[i].Text != "" {
+					return items[i].Text
+				}
+			}
+		}
 	}
 
 	if raw, ok := root["prompt"]; ok {
@@ -73,6 +90,25 @@ func ExtractAssistantOutputGeneric(body []byte) string {
 		var s string
 		if json.Unmarshal(raw, &s) == nil && s != "" {
 			return s
+		}
+		// Responses API: output is an array of typed items
+		var items []struct {
+			Type    string `json:"type"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if json.Unmarshal(raw, &items) == nil {
+			for _, item := range items {
+				if item.Type == "message" {
+					for _, c := range item.Content {
+						if c.Type == "output_text" && c.Text != "" {
+							return c.Text
+						}
+					}
+				}
+			}
 		}
 	}
 

@@ -15,6 +15,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/pluginiface"
@@ -85,6 +86,7 @@ type manager struct {
 	configurations     map[string][][]pluginTypes.PluginConfig
 	providerLocator    providersFactory.ProviderLocator
 	firewallFactory    firewall.ClientFactory
+	adapterRegistry    *adapter.Registry
 }
 
 // NewManager creates a new plugin Manager.
@@ -121,7 +123,7 @@ func (m *manager) InitializePlugins() {
 		m.logger.WithError(err).Error("Failed to register external API plugin")
 	}
 
-	if err := m.RegisterPlugin(token_rate_limiter.NewTokenRateLimiterPlugin(m.logger, m.cache.RedisClient())); err != nil {
+	if err := m.RegisterPlugin(token_rate_limiter.NewTokenRateLimiterPlugin(m.logger, m.cache.RedisClient(), m.adapterRegistry)); err != nil {
 		m.logger.WithError(err).Error("Failed to register token rate limiter plugin")
 	}
 

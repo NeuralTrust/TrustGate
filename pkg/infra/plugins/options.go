@@ -6,6 +6,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 )
 
@@ -51,6 +52,13 @@ func WithProviderLocator(p providersFactory.ProviderLocator) Option {
 func WithFirewallFactory(f firewall.ClientFactory) Option {
 	return func(m *manager) {
 		m.firewallFactory = f
+	}
+}
+
+// WithAdapterRegistry sets the provider adapter registry.
+func WithAdapterRegistry(r *adapter.Registry) Option {
+	return func(m *manager) {
+		m.adapterRegistry = r
 	}
 }
 

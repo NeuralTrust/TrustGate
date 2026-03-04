@@ -73,6 +73,7 @@ type forwardedHandler struct {
 	tokenClient         oauth.TokenClient
 	ruleMatcher         routing.RuleMatcher
 	tlsCertWriter       infraTLS.CertWriter
+	adapterRegistry     *adapter.Registry
 }
 
 // ForwardedHandlerDeps contains all dependencies for ForwardedHandler.
@@ -88,6 +89,7 @@ type ForwardedHandlerDeps struct {
 	TokenClient         oauth.TokenClient
 	RuleMatcher         routing.RuleMatcher
 	TLSCertWriter       infraTLS.CertWriter
+	AdapterRegistry     *adapter.Registry
 }
 
 func NewForwardedHandler(deps ForwardedHandlerDeps) Handler {
@@ -119,6 +121,7 @@ func NewForwardedHandler(deps ForwardedHandlerDeps) Handler {
 		tokenClient:         deps.TokenClient,
 		ruleMatcher:         deps.RuleMatcher,
 		tlsCertWriter:       deps.TLSCertWriter,
+		adapterRegistry:     deps.AdapterRegistry,
 	}
 }
 
@@ -782,12 +785,12 @@ func (h *forwardedHandler) handlerProviderResponse(
 	}
 
 	sourceFormat := adapter.Format(req.SourceFormat)
-	targetFormat := adapter.Format(target.Provider)
+	targetFormat := adapter.ResolveTargetFormat(target.Provider, target.ProviderOptions)
 
 	// Adapt request if cross-provider.
 	body := req.Body
 	if !adapter.IsSameWireFormat(sourceFormat, targetFormat) {
-		body, err = adapter.AdaptRequest(req.Body, sourceFormat, targetFormat)
+		body, err = h.adapterRegistry.AdaptRequest(req.Body, sourceFormat, targetFormat)
 		if err != nil {
 			return nil, fmt.Errorf("failed to adapt request (%s->%s): %w", sourceFormat, targetFormat, err)
 		}
@@ -834,7 +837,7 @@ func (h *forwardedHandler) handlerProviderResponse(
 
 	// Adapt response back to source format if cross-provider.
 	if !adapter.IsSameWireFormat(sourceFormat, targetFormat) {
-		responseBody, err = adapter.AdaptResponse(responseBody, sourceFormat, targetFormat)
+		responseBody, err = h.adapterRegistry.AdaptResponse(responseBody, sourceFormat, targetFormat)
 		if err != nil {
 			h.logger.WithError(err).Warn("failed to adapt response, returning raw")
 		}
@@ -1172,7 +1175,7 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 	target *types.UpstreamTargetDTO,
 	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
-	return infrahttpx.HandleProviderStream(h.logger, h.providerLocator, req, target, streamResponse)
+	return infrahttpx.HandleProviderStream(h.logger, h.providerLocator, h.adapterRegistry, req, target, streamResponse)
 }
 
 func (h *forwardedHandler) getQueryParams(c *fiber.Ctx) url.Values {
