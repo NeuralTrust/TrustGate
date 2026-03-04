@@ -51,7 +51,7 @@ func HandleProviderStream(
 	}
 
 	sourceFormat := adapter.Format(req.SourceFormat)
-	targetFormat := adapter.Format(target.Provider)
+	targetFormat := adapter.ResolveTargetFormat(target.Provider, target.ProviderOptions)
 	needsAdapt := !adapter.IsSameWireFormat(sourceFormat, targetFormat)
 
 	body := req.Body
@@ -73,6 +73,7 @@ func HandleProviderStream(
 	}
 
 	if adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) ||
+		targetFormat == adapter.FormatOpenAIResponses ||
 		targetFormat == adapter.FormatAnthropic ||
 		targetFormat == adapter.FormatMistral {
 		body = injectStreamTrue(body)
@@ -236,6 +237,7 @@ func processAdaptedChunk(
 	// Gemini agent + upstream with incremental tool_calls: decode, accumulate, encode.
 	if sourceFormat == adapter.FormatGemini &&
 		(adapter.IsSameWireFormat(targetFormat, adapter.FormatOpenAI) ||
+			targetFormat == adapter.FormatOpenAIResponses ||
 			targetFormat == adapter.FormatAnthropic ||
 			targetFormat == adapter.FormatMistral) {
 		processGeminiToolCallAdaptation(logger, registry, payload, sourceFormat, targetFormat, acc, writeAdaptedLines)

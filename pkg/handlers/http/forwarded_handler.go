@@ -785,7 +785,7 @@ func (h *forwardedHandler) handlerProviderResponse(
 	}
 
 	sourceFormat := adapter.Format(req.SourceFormat)
-	targetFormat := adapter.Format(target.Provider)
+	targetFormat := adapter.ResolveTargetFormat(target.Provider, target.ProviderOptions)
 
 	// Adapt request if cross-provider.
 	body := req.Body

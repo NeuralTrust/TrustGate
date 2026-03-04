@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -26,10 +27,16 @@ type openaiTextFormat struct {
 }
 
 type openaiResponsesInputItem struct {
-	Role    string          `json:"role,omitempty"`
-	Content json.RawMessage `json:"content,omitempty"` // string or []contentPart
-	Type    string          `json:"type,omitempty"`     // "input_text", etc.
-	Text    string          `json:"text,omitempty"`
+	Role      string          `json:"role,omitempty"`
+	Content   json.RawMessage `json:"content,omitempty"` // string or []contentPart
+	Type      string          `json:"type,omitempty"`     // "input_text", "function_call", "function_call_output"
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	CallID    string          `json:"call_id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Arguments string          `json:"arguments,omitempty"`
+	Output    string          `json:"output,omitempty"`
+	Status    string          `json:"status,omitempty"`
 }
 
 type openaiResponsesTool struct {
@@ -123,6 +130,27 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 			if json.Unmarshal(req.Input, &items) == nil {
 				for _, item := range items {
 					switch {
+					case item.Type == "function_call":
+						callID := item.CallID
+						if callID == "" {
+							callID = item.ID
+						}
+						cr.Messages = append(cr.Messages, CanonicalMessage{
+							Role: "assistant",
+							ToolCalls: []CanonicalToolCall{{
+								ID:        callID,
+								Name:      item.Name,
+								Arguments: item.Arguments,
+							}},
+						})
+
+					case item.Type == "function_call_output":
+						cr.Messages = append(cr.Messages, CanonicalMessage{
+							Role:       "tool",
+							Content:    item.Output,
+							ToolCallID: item.CallID,
+						})
+
 					case item.Role != "":
 						content := contentToString(item.Content)
 						if item.Role == "system" || item.Role == "developer" {
@@ -136,6 +164,7 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 								Content: content,
 							})
 						}
+
 					case item.Type == "input_text":
 						cr.Messages = append(cr.Messages, CanonicalMessage{
 							Role:    "user",
@@ -251,14 +280,27 @@ func decodeResponsesStreamChunk(chunk []byte) (*CanonicalStreamChunk, error) {
 	case "response.output_item.added":
 		if event.Item != nil {
 			var item struct {
-				Type string `json:"type"`
-				Role string `json:"role"`
-				ID   string `json:"id"`
+				Type   string `json:"type"`
+				Role   string `json:"role"`
+				ID     string `json:"id"`
+				CallID string `json:"call_id"`
+				Name   string `json:"name"`
 			}
-			if json.Unmarshal(event.Item, &item) == nil && item.Type == "message" {
-				return &CanonicalStreamChunk{
-					Role: item.Role,
-				}, nil
+			if json.Unmarshal(event.Item, &item) == nil {
+				switch item.Type {
+				case "message":
+					return &CanonicalStreamChunk{
+						Role: item.Role,
+					}, nil
+				case "function_call":
+					return &CanonicalStreamChunk{
+						ToolCallDeltas: []StreamToolCallDelta{{
+							Index: event.OutputIndex,
+							ID:    item.CallID,
+							Name:  item.Name,
+						}},
+					}, nil
+				}
 			}
 		}
 		return nil, nil
@@ -323,14 +365,93 @@ func encodeResponsesRequest(req *CanonicalRequest) ([]byte, error) {
 		}
 	}
 
-	var inputItems []openaiResponsesInputItem
-	for _, m := range req.Messages {
-		inputItems = append(inputItems, openaiResponsesInputItem{
-			Role:    m.Role,
-			Content: stringToContent(m.Content),
-		})
+	// Pre-pass: ensure every tool call has a stable call_id so that
+	// function_call and function_call_output items can be linked even when
+	// the source format (e.g. Gemini) does not provide IDs.
+	idMap := make(map[string]string) // original (possibly empty) ID → generated call_id
+	tcCounter := 0
+	for mi := range req.Messages {
+		m := &req.Messages[mi]
+		for ti := range m.ToolCalls {
+			tc := &m.ToolCalls[ti]
+			if tc.ID == "" {
+				tc.ID = fmt.Sprintf("call_%s_%d", tc.Name, tcCounter)
+				tcCounter++
+			}
+			idMap[tc.ID] = tc.ID
+		}
 	}
-	if len(inputItems) > 0 {
+	for mi := range req.Messages {
+		m := &req.Messages[mi]
+		if m.Role == "tool" && m.ToolCallID == "" {
+			// Match by position: find the Nth unmatched tool call
+			for _, msg := range req.Messages {
+				for _, tc := range msg.ToolCalls {
+					if _, used := idMap[tc.ID]; used {
+						m.ToolCallID = tc.ID
+						delete(idMap, tc.ID)
+						break
+					}
+				}
+				if m.ToolCallID != "" {
+					break
+				}
+			}
+		}
+	}
+
+	if len(req.Messages) == 1 && req.Messages[0].Role == "user" && len(req.Messages[0].ToolCalls) == 0 {
+		out.Input, _ = json.Marshal(req.Messages[0].Content)
+	} else if len(req.Messages) > 0 {
+		var inputItems []json.RawMessage
+		for _, m := range req.Messages {
+			switch {
+			case m.Role == "tool":
+				item := map[string]string{
+					"type":    "function_call_output",
+					"call_id": m.ToolCallID,
+					"output":  m.Content,
+				}
+				raw, _ := json.Marshal(item)
+				inputItems = append(inputItems, raw)
+
+			case m.Role == "assistant" && len(m.ToolCalls) > 0:
+				for _, tc := range m.ToolCalls {
+					name := tc.Name
+					if name == "" {
+						name = tc.ID
+					}
+					fcID := tc.ID
+					if !strings.HasPrefix(fcID, "fc_") {
+						fcID = "fc_" + fcID
+					}
+					item := map[string]string{
+						"type":      "function_call",
+						"id":        fcID,
+						"call_id":   tc.ID,
+						"name":      name,
+						"arguments": tc.Arguments,
+						"status":    "completed",
+					}
+					raw, _ := json.Marshal(item)
+					inputItems = append(inputItems, raw)
+				}
+
+			case m.Role == "system" || m.Role == "developer":
+				if out.Instructions != "" {
+					out.Instructions += "\n"
+				}
+				out.Instructions += m.Content
+
+			default:
+				item := map[string]interface{}{
+					"role":    m.Role,
+					"content": m.Content,
+				}
+				raw, _ := json.Marshal(item)
+				inputItems = append(inputItems, raw)
+			}
+		}
 		out.Input, _ = json.Marshal(inputItems)
 	}
 
@@ -474,6 +595,8 @@ func encodeResponsesStreamChunk(chunk *CanonicalStreamChunk) ([][]byte, error) {
 
 		respObj := map[string]interface{}{
 			"status": status,
+			"object": "response",
+			"output": []interface{}{},
 		}
 		if chunk.ID != "" {
 			respObj["id"] = chunk.ID

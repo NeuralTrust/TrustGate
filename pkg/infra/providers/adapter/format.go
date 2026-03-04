@@ -82,6 +82,22 @@ func DetectFormat(body []byte) Format {
 	return FormatOpenAI
 }
 
+// ResolveTargetFormat returns the effective adapter Format for an upstream
+// target by combining its Provider name with ProviderOptions. For example,
+// provider "openai" with provider_options {"api": "responses"} resolves to
+// FormatOpenAIResponses instead of FormatOpenAI.
+func ResolveTargetFormat(provider string, providerOptions map[string]any) Format {
+	f := Format(provider)
+	if f == FormatOpenAI || f == FormatAzure {
+		if api, ok := providerOptions["api"]; ok {
+			if s, ok := api.(string); ok && s == "responses" {
+				return FormatOpenAIResponses
+			}
+		}
+	}
+	return f
+}
+
 // IsSameWireFormat returns true when two formats are wire-compatible and
 // no request/response transformation is necessary.
 func IsSameWireFormat(a, b Format) bool {
