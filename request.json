@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.16.0\n\nCommits since last release:\n- bf1d94b Merge pull request #314 from NeuralTrust/fix-stop-processing-flag\n- b45e29d fix: stop processing flag\n- f996a74 fix: stop processing flag\n"
+      "content": "Current version: 1.16.1\n\nCommits since last release:\n- 450df6a Merge pull request #315 from NeuralTrust/feat-openai-responses-compatible\n- cb1a5a1 feat: openai responses compatible\n- 20d10e8 feat: openai responses compatible\n- bf28b8d feat: openai responses api adapter\n"
     }
   ],
   "max_tokens": 200,
