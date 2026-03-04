@@ -1,4 +1,4 @@
-- 450df6a Merge pull request #315 from NeuralTrust/feat-openai-responses-compatible
-- cb1a5a1 feat: openai responses compatible
-- 20d10e8 feat: openai responses compatible
-- bf28b8d feat: openai responses api adapter
+- 0549e91 Merge pull request #316 from NeuralTrust/feat-openai-responses-compatible
+- 0b3d105 fix: remove responses api multi upstream validation
+- 96a62f8 fix: remove responses api multi upstream validation
+- e188d7d fix: remove responses api multi upstream validation

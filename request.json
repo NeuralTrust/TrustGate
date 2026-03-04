@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.16.1\n\nCommits since last release:\n- 450df6a Merge pull request #315 from NeuralTrust/feat-openai-responses-compatible\n- cb1a5a1 feat: openai responses compatible\n- 20d10e8 feat: openai responses compatible\n- bf28b8d feat: openai responses api adapter\n"
+      "content": "Current version: 1.17.0\n\nCommits since last release:\n- 0549e91 Merge pull request #316 from NeuralTrust/feat-openai-responses-compatible\n- 0b3d105 fix: remove responses api multi upstream validation\n- 96a62f8 fix: remove responses api multi upstream validation\n- e188d7d fix: remove responses api multi upstream validation\n"
     }
   ],
   "max_tokens": 200,
