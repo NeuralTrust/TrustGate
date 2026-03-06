@@ -268,7 +268,7 @@ func (p *NeuralTrustModerationPlugin) resolveInput(
 	} else {
 		body = req.Body
 	}
-	content, err := pluginutils.DefineRequestBody(body, mappingField)
+	content, err := pluginutils.DefineRequestBody(body, mappingField, false)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)

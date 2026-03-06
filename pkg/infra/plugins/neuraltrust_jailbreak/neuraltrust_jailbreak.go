@@ -154,13 +154,13 @@ func (p *NeuralTrustJailbreakPlugin) resolveInputs(
 	mappingField string,
 ) ([]string, error) {
 	if len(req.Messages) > 0 {
-		return req.Messages, nil
+		return pluginutils.CleanInputs(req.Messages), nil
 	}
 	inputBody := req.Body
 	if req.Stage == pluginTypes.PostRequest {
 		inputBody = resp.Body
 	}
-	content, err := pluginutils.DefineRequestBody(inputBody, mappingField)
+	content, err := pluginutils.DefineRequestBody(inputBody, mappingField, true)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
