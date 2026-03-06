@@ -142,7 +142,7 @@ func (p *NeuralTrustToxicity) Execute(
 			inputBody = resp.Body
 		}
 
-		mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField)
+		mappingContent, err := pluginutils.DefineRequestBody(inputBody, conf.MappingField, false)
 		if err != nil {
 			p.logger.WithError(err).Error("failed to define request body")
 			return nil, fmt.Errorf("failed to define request body: %w", err)
