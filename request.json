@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.17.1\n\nCommits since last release:\n- 6671538 Merge pull request #317 from NeuralTrust/fix/append-session-id-to-request-context\n- 7289b5b fix: append session id to request context\n"
+      "content": "Current version: 1.17.2\n\nCommits since last release:\n- 7d5e3f2 Merge pull request #318 from NeuralTrust/fix-prompt-guard-clean-inputs\n- 3d5d789 fix: prompt guard clean inputs\n"
     }
   ],
   "max_tokens": 200,

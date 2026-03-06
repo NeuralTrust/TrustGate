@@ -1,2 +1,2 @@
-- 6671538 Merge pull request #317 from NeuralTrust/fix/append-session-id-to-request-context
-- 7289b5b fix: append session id to request context
+- 7d5e3f2 Merge pull request #318 from NeuralTrust/fix-prompt-guard-clean-inputs
+- 3d5d789 fix: prompt guard clean inputs
