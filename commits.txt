@@ -1,4 +1,2 @@
-- 0549e91 Merge pull request #316 from NeuralTrust/feat-openai-responses-compatible
-- 0b3d105 fix: remove responses api multi upstream validation
-- 96a62f8 fix: remove responses api multi upstream validation
-- e188d7d fix: remove responses api multi upstream validation
+- 6671538 Merge pull request #317 from NeuralTrust/fix/append-session-id-to-request-context
+- 7289b5b fix: append session id to request context

@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.17.0\n\nCommits since last release:\n- 0549e91 Merge pull request #316 from NeuralTrust/feat-openai-responses-compatible\n- 0b3d105 fix: remove responses api multi upstream validation\n- 96a62f8 fix: remove responses api multi upstream validation\n- e188d7d fix: remove responses api multi upstream validation\n"
+      "content": "Current version: 1.17.1\n\nCommits since last release:\n- 6671538 Merge pull request #317 from NeuralTrust/fix/append-session-id-to-request-context\n- 7289b5b fix: append session id to request context\n"
     }
   ],
   "max_tokens": 200,
