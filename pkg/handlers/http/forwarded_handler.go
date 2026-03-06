@@ -277,6 +277,10 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		RuleID:    matchingRule.ID,
 	}
 
+	if sessionID, ok := c.Locals(common.SessionContextKey).(string); ok && sessionID != "" {
+		reqCtx.SessionID = sessionID
+	}
+
 	lb, err := h.getOrCreateLoadBalancer(upstreamModel)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to get load balancer")
