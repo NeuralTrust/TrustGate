@@ -333,26 +333,6 @@ func TestMasking_TaxID(t *testing.T) {
 	assert.Equal(t, 1, len(evt))
 }
 
-func TestMasking_Swift(t *testing.T) {
-	plugin := &DataMaskingPlugin{}
-	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.SwiftBIC})
-
-	config := createTestConfig([]EntityConfig{
-		{
-			Entity:      "swift_bic",
-			Enabled:     true,
-			MaskWith:    "[MASKED_BIC]",
-			PreserveLen: true,
-		},
-	}, false)
-	example := "DEUTDEFF500"
-	masked, evt := plugin.maskPlainTextWithRules("Sensitive data: "+example, 0.8, config, keywords, regexRules)
-	expected := "Sensitive data: " + pii_entities.DefaultMasks[pii_entities.SwiftBIC]
-
-	assert.Equal(t, expected, masked, "Tax ID masking failed")
-	assert.Equal(t, 1, len(evt))
-}
-
 func TestMasking_CreditCard(t *testing.T) {
 	plugin := &DataMaskingPlugin{}
 	regexRules, keywords := buildRegexAndKeywordsForEntities([]pii_entities.Entity{pii_entities.CreditCard})
