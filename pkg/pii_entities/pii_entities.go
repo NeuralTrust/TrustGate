@@ -25,7 +25,6 @@ const (
 	APIKey         Entity = "api_key"
 	AccessToken    Entity = "access_token"
 	IBAN           Entity = "iban"
-	SwiftBIC       Entity = "swift_bic"
 	CryptoWallet   Entity = "crypto_wallet"
 	TaxID          Entity = "tax_id"
 	RoutingNumber  Entity = "routing_number"
@@ -274,12 +273,6 @@ var Entities = map[Entity]EntityInfo{
 		Tier:        Tier2,
 		DefaultMask: "[MASKED_DATE]",
 	},
-	SwiftBIC: {
-		Pattern:     regexp.MustCompile(`(?i)\b[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b`),
-		Validate:    validateSwiftBIC,
-		Tier:        Tier2,
-		DefaultMask: "[MASKED_BIC]",
-	},
 	Address: {
 		Pattern:     regexp.MustCompile(`\b\d+\s+[A-Za-z\s]+,\s+[A-Za-z\s]+,\s+[A-Z]{2}\s+\d{5}\b`),
 		Tier:        Tier2,
@@ -371,7 +364,7 @@ var (
 		CreditCard,
 		SpanishDNI, SpanishNIE, SpanishCIF, SpanishNSS, SpanishPhone,
 		GermanID, MexicanRFC, ChileanRUT,
-		Date, SwiftBIC, Address,
+		Date, Address,
 	}
 	tier3Entities = []Entity{
 		DeviceIMEI, BankAccount, ColombianCC, TaxID, RoutingNumber,
