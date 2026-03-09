@@ -1,2 +1,3 @@
-- 7d5e3f2 Merge pull request #318 from NeuralTrust/fix-prompt-guard-clean-inputs
-- 3d5d789 fix: prompt guard clean inputs
+- 420986f Merge pull request #319 from NeuralTrust/fix/remove-swift-bic-pattern
+- 0ccd474 fix: remove swift bic pattern
+- 0c8dbef fix: remove swift bic pattern
