@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.17.3\n\nCommits since last release:\n- 420986f Merge pull request #319 from NeuralTrust/fix/remove-swift-bic-pattern\n- 0ccd474 fix: remove swift bic pattern\n- 0c8dbef fix: remove swift bic pattern\n"
+      "content": "Current version: 1.17.4\n\nCommits since last release:\n- df13751 Merge pull request #320 from NeuralTrust/fix/remove-swift-bic-pattern\n- ae316f7 fix: revert swift bic pattern\n"
     }
   ],
   "max_tokens": 200,

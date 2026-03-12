@@ -1,3 +1,2 @@
-- 420986f Merge pull request #319 from NeuralTrust/fix/remove-swift-bic-pattern
-- 0ccd474 fix: remove swift bic pattern
-- 0c8dbef fix: remove swift bic pattern
+- df13751 Merge pull request #320 from NeuralTrust/fix/remove-swift-bic-pattern
+- ae316f7 fix: revert swift bic pattern
