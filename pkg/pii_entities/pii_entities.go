@@ -25,6 +25,7 @@ const (
 	APIKey         Entity = "api_key"
 	AccessToken    Entity = "access_token"
 	IBAN           Entity = "iban"
+	SwiftBIC       Entity = "swift_bic"
 	CryptoWallet   Entity = "crypto_wallet"
 	TaxID          Entity = "tax_id"
 	RoutingNumber  Entity = "routing_number"
@@ -220,7 +221,7 @@ var Entities = map[Entity]EntityInfo{
 		DefaultMask: "[MASKED_BR_CPF]",
 	},
 	CreditCard: {
-		Pattern:     regexp.MustCompile(`\b(?:\d[ ./-]*?){13,19}\b`),
+		Pattern:     regexp.MustCompile(`\b(?:4(?:[\s-]?\d){12}(?:(?:[\s-]?\d){3})?|(?:5[1-5]\d{2}|222[1-9]|22[3-9]\d|2[3-6]\d{2}|27[01]\d|2720)(?:[\s-]?\d){12}|3[47](?:[\s-]?\d){13}|3(?:0[0-5]|[68]\d)(?:[\s-]?\d){11}|6(?:011|5\d{2})(?:[\s-]?\d){12}|(?:2131|1800|35\d{3})(?:[\s-]?\d){11})\b`),
 		Validate:    validateLuhn,
 		Tier:        Tier2,
 		DefaultMask: "[MASKED_CC]",
@@ -272,6 +273,12 @@ var Entities = map[Entity]EntityInfo{
 		Pattern:     regexp.MustCompile(`\b(\d{4}[-/.]\d{2}[-/.]\d{2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{1,2}\s(?:de\s)?[a-zA-Z]+\s(?:de\s)?\d{4}|\d{1,2}(?:st|nd|rd|th)?\s[a-zA-Z]+\s\d{4}|[a-zA-Z]+\s\d{1,2}(?:st|nd|rd|th)?\s\d{4})\b`),
 		Tier:        Tier2,
 		DefaultMask: "[MASKED_DATE]",
+	},
+	SwiftBIC: {
+		Pattern:     regexp.MustCompile(`(?i)\b[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b`),
+		Validate:    validateSwiftBIC,
+		Tier:        Tier2,
+		DefaultMask: "[MASKED_BIC]",
 	},
 	Address: {
 		Pattern:     regexp.MustCompile(`\b\d+\s+[A-Za-z\s]+,\s+[A-Za-z\s]+,\s+[A-Z]{2}\s+\d{5}\b`),
@@ -364,7 +371,7 @@ var (
 		CreditCard,
 		SpanishDNI, SpanishNIE, SpanishCIF, SpanishNSS, SpanishPhone,
 		GermanID, MexicanRFC, ChileanRUT,
-		Date, Address,
+		Date, SwiftBIC, Address,
 	}
 	tier3Entities = []Entity{
 		DeviceIMEI, BankAccount, ColombianCC, TaxID, RoutingNumber,
