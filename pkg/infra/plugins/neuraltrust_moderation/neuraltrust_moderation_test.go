@@ -60,7 +60,7 @@ func TestNeuralTrustModerationPlugin_Stages(t *testing.T) {
 		firewallFactoryMock,
 	)
 
-	assert.Equal(t, []plugintypes.Stage{plugintypes.PreRequest, plugintypes.PreResponse}, plugin.Stages())
+	assert.Equal(t, []plugintypes.Stage{}, plugin.Stages())
 }
 
 func TestNeuralTrustModerationPlugin_AllowedStages(t *testing.T) {

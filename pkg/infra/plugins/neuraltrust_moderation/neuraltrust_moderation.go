@@ -87,7 +87,7 @@ func (p *NeuralTrustModerationPlugin) RequiredPlugins() []string {
 }
 
 func (p *NeuralTrustModerationPlugin) Stages() []pluginTypes.Stage {
-	return []pluginTypes.Stage{pluginTypes.PreRequest, pluginTypes.PreResponse}
+	return []pluginTypes.Stage{}
 }
 
 func (p *NeuralTrustModerationPlugin) AllowedStages() []pluginTypes.Stage {
