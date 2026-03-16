@@ -1,2 +1,4 @@
-- 468e0c2 Merge pull request #322 from NeuralTrust/fix/data-masking-fixes
-- aa36412 fix: data masking issues
+- c01740a Merge pull request #323 from NeuralTrust/fix/enable-response-moderation
+- 2852c4d fix: enable response moderations
+- 1e6fc43 fix: enable response moderations
+- 644b1b6 fix: enable response moderations
