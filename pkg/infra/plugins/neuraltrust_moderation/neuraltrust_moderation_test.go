@@ -60,7 +60,7 @@ func TestNeuralTrustModerationPlugin_Stages(t *testing.T) {
 		firewallFactoryMock,
 	)
 
-	assert.Equal(t, []plugintypes.Stage{plugintypes.PreRequest}, plugin.Stages())
+	assert.Equal(t, []plugintypes.Stage{plugintypes.PreRequest, plugintypes.PreResponse}, plugin.Stages())
 }
 
 func TestNeuralTrustModerationPlugin_AllowedStages(t *testing.T) {
@@ -75,7 +75,7 @@ func TestNeuralTrustModerationPlugin_AllowedStages(t *testing.T) {
 		firewallFactoryMock,
 	)
 
-	assert.Equal(t, []plugintypes.Stage{plugintypes.PreRequest}, plugin.AllowedStages())
+	assert.Equal(t, []plugintypes.Stage{plugintypes.PreRequest, plugintypes.PreResponse}, plugin.AllowedStages())
 }
 
 func TestNeuralTrustModerationPlugin_ValidateConfig(t *testing.T) {
@@ -509,7 +509,7 @@ func TestNeuralTrustModerationPlugin_Execute_LLMModerationSafe(t *testing.T) {
 	assert.Equal(t, 200, pluginResp.StatusCode)
 }
 
-func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegSafe(t *testing.T) {
+func TestNeuralTrustModerationPlugin_Execute_PreRequest_InputMapping_Safe(t *testing.T) {
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
@@ -522,6 +522,7 @@ func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegSafe(t *testing.
 	)
 
 	cfg := plugintypes.PluginConfig{
+		Stage: plugintypes.PreRequest,
 		Settings: map[string]interface{}{
 			"keyreg_moderation": map[string]interface{}{
 				"enabled":              true,
@@ -532,14 +533,14 @@ func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegSafe(t *testing.
 					"message": "Content contains sensitive information",
 				},
 			},
+			"input_mapping_field": "input.text",
 		},
 	}
 
-	// Messages should be used instead of Body
 	req := &types.RequestContext{
-		Body:      []byte(`password secret api_key`), // This would be blocked if used
-		Messages:  []string{"safe message 1", "safe message 2"},
+		Body:      []byte(`{"input":{"text":"I like cats"}}`),
 		GatewayID: "test-gateway",
+		Stage:     plugintypes.PreRequest,
 	}
 	res := &types.ResponseContext{}
 
@@ -550,7 +551,7 @@ func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegSafe(t *testing.
 	assert.Equal(t, 200, pluginResp.StatusCode)
 }
 
-func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegBlocked(t *testing.T) {
+func TestNeuralTrustModerationPlugin_Execute_PreRequest_InputMapping_Blocked(t *testing.T) {
 	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
 	providerLocatorMock := new(providerMocks.ProviderLocator)
 	firewallFactoryMock := new(firewallMocks.ClientFactory)
@@ -563,6 +564,135 @@ func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegBlocked(t *testi
 	)
 
 	cfg := plugintypes.PluginConfig{
+		Stage: plugintypes.PreRequest,
+		Settings: map[string]interface{}{
+			"keyreg_moderation": map[string]interface{}{
+				"enabled":              true,
+				"similarity_threshold": 0.8,
+				"keywords":             []string{"password", "secret"},
+				"actions": map[string]interface{}{
+					"type":    "block",
+					"message": "Content contains sensitive information",
+				},
+			},
+			"input_mapping_field": "input.text",
+		},
+	}
+
+	req := &types.RequestContext{
+		Body:      []byte(`{"input":{"text":"my password is 12345"}}`),
+		GatewayID: "test-gateway",
+		Stage:     plugintypes.PreRequest,
+	}
+	res := &types.ResponseContext{}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	assert.Error(t, err)
+	assert.Nil(t, pluginResp)
+	assert.Contains(t, err.Error(), "content blocked")
+}
+
+func TestNeuralTrustModerationPlugin_Execute_PreResponse_OutputMapping_Safe(t *testing.T) {
+	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
+	firewallFactoryMock := new(firewallMocks.ClientFactory)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		fingerPrintTrackerMock,
+		providerLocatorMock,
+		firewallFactoryMock,
+	)
+
+	cfg := plugintypes.PluginConfig{
+		Stage: plugintypes.PreResponse,
+		Settings: map[string]interface{}{
+			"keyreg_moderation": map[string]interface{}{
+				"enabled":              true,
+				"similarity_threshold": 0.8,
+				"keywords":             []string{"password", "secret"},
+				"actions": map[string]interface{}{
+					"type":    "block",
+					"message": "Content contains sensitive information",
+				},
+			},
+			"output_mapping_field": "output.text",
+		},
+	}
+
+	req := &types.RequestContext{
+		GatewayID: "test-gateway",
+		Stage:     plugintypes.PreResponse,
+	}
+	res := &types.ResponseContext{
+		Body: []byte(`{"output":{"text":"safe response content"}}`),
+	}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	assert.NoError(t, err)
+	assert.NotNil(t, pluginResp)
+	assert.Equal(t, 200, pluginResp.StatusCode)
+}
+
+func TestNeuralTrustModerationPlugin_Execute_PreResponse_OutputMapping_Blocked(t *testing.T) {
+	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
+	firewallFactoryMock := new(firewallMocks.ClientFactory)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		fingerPrintTrackerMock,
+		providerLocatorMock,
+		firewallFactoryMock,
+	)
+
+	cfg := plugintypes.PluginConfig{
+		Stage: plugintypes.PreResponse,
+		Settings: map[string]interface{}{
+			"keyreg_moderation": map[string]interface{}{
+				"enabled":              true,
+				"similarity_threshold": 0.8,
+				"keywords":             []string{"password", "secret"},
+				"actions": map[string]interface{}{
+					"type":    "block",
+					"message": "Content contains sensitive information",
+				},
+			},
+			"output_mapping_field": "output.text",
+		},
+	}
+
+	req := &types.RequestContext{
+		GatewayID: "test-gateway",
+		Stage:     plugintypes.PreResponse,
+	}
+	res := &types.ResponseContext{
+		Body: []byte(`{"output":{"text":"the password is leaked here"}}`),
+	}
+
+	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
+
+	assert.Error(t, err)
+	assert.Nil(t, pluginResp)
+	assert.Contains(t, err.Error(), "content blocked")
+}
+
+func TestNeuralTrustModerationPlugin_Execute_PreResponse_NoMapping_Blocked(t *testing.T) {
+	fingerPrintTrackerMock := new(fingerprintMocks.Tracker)
+	providerLocatorMock := new(providerMocks.ProviderLocator)
+	firewallFactoryMock := new(firewallMocks.ClientFactory)
+
+	plugin := neuraltrust_moderation.NewNeuralTrustModerationPlugin(
+		logrus.New(),
+		fingerPrintTrackerMock,
+		providerLocatorMock,
+		firewallFactoryMock,
+	)
+
+	cfg := plugintypes.PluginConfig{
+		Stage: plugintypes.PreResponse,
 		Settings: map[string]interface{}{
 			"keyreg_moderation": map[string]interface{}{
 				"enabled":              true,
@@ -576,13 +706,13 @@ func TestNeuralTrustModerationPlugin_Execute_WithMessages_KeyRegBlocked(t *testi
 		},
 	}
 
-	// Messages contain blocked keyword
 	req := &types.RequestContext{
-		Body:      []byte(`safe content`), // This is safe but should be ignored
-		Messages:  []string{"my password is 12345"},
 		GatewayID: "test-gateway",
+		Stage:     plugintypes.PreResponse,
 	}
-	res := &types.ResponseContext{}
+	res := &types.ResponseContext{
+		Body: []byte(`my secret is 12345`),
+	}
 
 	pluginResp, err := plugin.Execute(context.Background(), cfg, req, res, metrics.NewEventContext("", "", nil))
 

@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/sirupsen/logrus"
 )
 
 const (
+	neuralTrustClientTimeout = 30 * time.Second
+
 	jailbreakPath  = "/v1/jailbreak"
 	toxicityPath   = "/v1/toxicity"
 	moderationPath = "/v1/prompt-moderation"
@@ -28,7 +31,7 @@ type NeuralTrustFirewallClient struct {
 
 func NewNeuralTrustFirewallClient(logger *logrus.Logger, opts ...NeuralTrustFirewallClientOption) Client {
 	c := &NeuralTrustFirewallClient{
-		client: &http.Client{},
+		client: &http.Client{Timeout: neuralTrustClientTimeout},
 		logger: logger,
 	}
 	for _, opt := range opts {
