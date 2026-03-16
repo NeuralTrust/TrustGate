@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.17.5\n\nCommits since last release:\n- c34c89f Merge pull request #321 from NeuralTrust/fix/data-masking-fixes\n- f67293c fix: data masking fixes\n"
+      "content": "Current version: 1.17.6\n\nCommits since last release:\n- 468e0c2 Merge pull request #322 from NeuralTrust/fix/data-masking-fixes\n- aa36412 fix: data masking issues\n"
     }
   ],
   "max_tokens": 200,
