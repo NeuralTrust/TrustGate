@@ -177,6 +177,24 @@ func TestDetectAll_ValidCreditCard(t *testing.T) {
 	}
 }
 
+func TestDetectAll_DateNotDetectedAsPhone(t *testing.T) {
+	dates := []string{
+		"2024-07-18",
+		"2026-08-14",
+		"18/07/2024",
+		"14.08.2026",
+		"01-12-2025",
+	}
+	for _, d := range dates {
+		t.Run(d, func(t *testing.T) {
+			matches := DetectAll("given at "+d, enableOnly(PhoneNumber, Date))
+			if phoneMatch := findMatch(matches, PhoneNumber); phoneMatch != nil {
+				t.Errorf("date %q was detected as phone_number (value=%q)", d, phoneMatch.Value)
+			}
+		})
+	}
+}
+
 func TestDetectAll_SpanishIBAN_BeforeGenericIBAN(t *testing.T) {
 	content := "ES9121000418450200051332"
 	matches := DetectAll(content, enableOnly(SpanishIBAN, IBAN))

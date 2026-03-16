@@ -330,6 +330,7 @@ var Entities = map[Entity]EntityInfo{
 	},
 	PhoneNumber: {
 		Pattern:     regexp.MustCompile(`(?:\+\d{1,4}[\s-]?|\(|\b)(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{2,4}[\s-]?\d{2,4}\b`),
+		Validate:    validatePhoneNumber,
 		Tier:        Tier3,
 		DefaultMask: "[MASKED_PHONE]",
 	},

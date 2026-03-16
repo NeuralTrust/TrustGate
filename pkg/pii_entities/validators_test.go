@@ -232,6 +232,32 @@ func TestValidateIMEI(t *testing.T) {
 	}
 }
 
+func TestValidatePhoneNumber(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"international with plus", "+1 555-123-4567", true},
+		{"international compact", "+34612345678", true},
+		{"local US", "555-123-4567", true},
+		{"with parens", "(555) 123-4567", true},
+		{"date YYYY-MM-DD", "2024-07-18", false},
+		{"date YYYY/MM/DD", "2026/08/14", false},
+		{"date DD.MM.YYYY", "18.07.2024", false},
+		{"date DD-MM-YYYY", "18-07-2024", false},
+		{"too few digits", "12-34-56", false},
+		{"too few digits short", "123-456", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validatePhoneNumber(tt.input); got != tt.want {
+				t.Errorf("validatePhoneNumber(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLuhnCheckDigits(t *testing.T) {
 	tests := []struct {
 		name   string

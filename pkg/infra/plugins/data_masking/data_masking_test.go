@@ -850,3 +850,16 @@ func TestReversibleHashingWorkflow(t *testing.T) {
 	assert.Equal(t, "test@example.com", restoredUserMap["email"], "Email should match the response body")
 	assert.Equal(t, "4111 1111 1111 1111", restoredUserMap["card"], "Card should match the response body")
 }
+
+func TestMasking_MultiplePIIEntitiesNoSlicePanic(t *testing.T) {
+	plugin := &DataMaskingPlugin{}
+	regexRules, keywords := buildAllRegexAndKeywords()
+	config := createTestConfig(nil, true)
+
+	input := "Call me at +1 555-123-4567. My bank account is 2100 0418 45 02 0005 1332. given at 2026-08-14"
+	assert.NotPanics(t, func() {
+		masked, events := plugin.maskPlainTextWithRules(input, 0.8, config, keywords, regexRules)
+		assert.NotEmpty(t, events, "should detect at least one entity")
+		assert.NotEqual(t, input, masked, "content should be masked")
+	})
+}

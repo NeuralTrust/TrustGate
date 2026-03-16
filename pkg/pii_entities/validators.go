@@ -1,6 +1,7 @@
 package pii_entities
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -318,6 +319,19 @@ func validateSwiftBIC(s string) bool {
 		return false
 	}
 	return !swiftBICBlocklist[upper]
+}
+
+var dateLikePattern = regexp.MustCompile(`^\+?\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$`)
+
+const minPhoneDigits = 7
+
+// validatePhoneNumber rejects matches with fewer than 7 digits or that look
+// like a date (e.g. 2024-07-18, 18/07/2024).
+func validatePhoneNumber(s string) bool {
+	if len(extractDigits(s)) < minPhoneDigits {
+		return false
+	}
+	return !dateLikePattern.MatchString(strings.TrimSpace(s))
 }
 
 // validISO3166Alpha2 contains all ISO 3166-1 alpha-2 country codes.

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -498,6 +499,10 @@ func (p *DataMaskingPlugin) maskPlainTextWithRules(
 
 	enabledEntities := buildEnabledMap(config)
 	matches := pii_entities.DetectAll(content, enabledEntities)
+
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].Start < matches[j].Start
+	})
 
 	for _, m := range matches {
 		maskValue := pii_entities.GetDefaultMask(m.Entity)
