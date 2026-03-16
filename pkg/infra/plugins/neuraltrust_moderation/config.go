@@ -1,12 +1,13 @@
 package neuraltrust_moderation
 
 type Config struct {
-	KeyRegParamBag  *KeyRegParamBag  `mapstructure:"keyreg_moderation"`
-	LLMParamBag     *LLMModParamBag  `mapstructure:"llm_moderation"`
-	NTTopicParamBag *NTTopicParamBag `mapstructure:"nt_topic_moderation"`
-	RetentionPeriod int              `mapstructure:"retention_period"`
-	MappingField    string           `mapstructure:"mapping_field"`
-	Mode            string           `mapstructure:"mode"`
+	KeyRegParamBag     *KeyRegParamBag  `mapstructure:"keyreg_moderation"`
+	LLMParamBag        *LLMModParamBag  `mapstructure:"llm_moderation"`
+	NTTopicParamBag    *NTTopicParamBag `mapstructure:"nt_topic_moderation"`
+	RetentionPeriod    int              `mapstructure:"retention_period"`
+	InputMappingField  string           `mapstructure:"input_mapping_field"`
+	OutputMappingField string           `mapstructure:"output_mapping_field"`
+	Mode               string           `mapstructure:"mode"`
 }
 
 type NeuralTrustCreds struct {

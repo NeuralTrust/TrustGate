@@ -87,11 +87,11 @@ func (p *NeuralTrustModerationPlugin) RequiredPlugins() []string {
 }
 
 func (p *NeuralTrustModerationPlugin) Stages() []pluginTypes.Stage {
-	return []pluginTypes.Stage{pluginTypes.PreRequest}
+	return []pluginTypes.Stage{}
 }
 
 func (p *NeuralTrustModerationPlugin) AllowedStages() []pluginTypes.Stage {
-	return []pluginTypes.Stage{pluginTypes.PreRequest}
+	return []pluginTypes.Stage{pluginTypes.PreRequest, pluginTypes.PreResponse}
 }
 
 func (p *NeuralTrustModerationPlugin) ValidateConfig(config pluginTypes.PluginConfig) error {
@@ -190,7 +190,7 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		conf.Mode = pluginTypes.ModeEnforce
 	}
 
-	inputBytes, err := p.resolveInput(req, resp, conf.MappingField)
+	inputBytes, err := p.resolveInput(req, resp, conf)
 	if err != nil {
 		return nil, err
 	}
@@ -198,8 +198,13 @@ func (p *NeuralTrustModerationPlugin) Execute(
 		inputBytes = inputBytes[:maxModerationInputSize]
 	}
 
+	mappingField := conf.InputMappingField
+	if req.Stage == pluginTypes.PreResponse {
+		mappingField = conf.OutputMappingField
+	}
+
 	evt := &NeuralTrustModerationData{
-		MappingField: conf.MappingField,
+		MappingField: mappingField,
 		InputLength:  len(inputBytes),
 		Mode:         conf.Mode,
 	}
@@ -257,21 +262,86 @@ func (p *NeuralTrustModerationPlugin) Execute(
 func (p *NeuralTrustModerationPlugin) resolveInput(
 	req *types.RequestContext,
 	resp *types.ResponseContext,
-	mappingField string,
+	conf Config,
 ) ([]byte, error) {
-	if len(req.Messages) > 0 {
-		return []byte(strings.Join(req.Messages, "\n")), nil
+	isResponse := req.Stage == pluginTypes.PreResponse
+
+	if req.Provider != "" {
+		if isResponse {
+			return p.resolveFromCanonicalResponse(resp)
+		}
+		return p.resolveFromCanonicalRequest(req)
 	}
+
+	mappingField := conf.InputMappingField
 	var body []byte
-	if req.Stage == pluginTypes.PostRequest && resp != nil {
+	if isResponse && resp != nil {
+		mappingField = conf.OutputMappingField
 		body = resp.Body
 	} else {
 		body = req.Body
 	}
+
 	content, err := pluginutils.DefineRequestBody(body, mappingField, false)
 	if err != nil {
 		p.logger.WithError(err).Error("failed to define request body")
 		return nil, fmt.Errorf("failed to define request body: %w", err)
+	}
+	return []byte(content.Input), nil
+}
+
+func (p *NeuralTrustModerationPlugin) resolveFromCanonicalRequest(
+	req *types.RequestContext,
+) ([]byte, error) {
+	canonical, err := req.CanonicalRequest()
+	if err != nil {
+		p.logger.WithError(err).Warn("failed to decode canonical request, falling back to body")
+		return p.fallbackResolve(req.Body)
+	}
+	if canonical == nil {
+		return p.fallbackResolve(req.Body)
+	}
+
+	var parts []string
+	for _, msg := range canonical.Messages {
+		if msg.Content != "" {
+			parts = append(parts, msg.Content)
+		}
+	}
+	if canonical.System != "" {
+		parts = append(parts, canonical.System)
+	}
+	if len(parts) == 0 {
+		return p.fallbackResolve(req.Body)
+	}
+	return []byte(strings.Join(parts, "\n")), nil
+}
+
+func (p *NeuralTrustModerationPlugin) resolveFromCanonicalResponse(
+	resp *types.ResponseContext,
+) ([]byte, error) {
+	if resp == nil {
+		return nil, nil
+	}
+	canonical, err := resp.CanonicalResponse()
+	if err != nil {
+		p.logger.WithError(err).Warn("failed to decode canonical response, falling back to body")
+		return p.fallbackResolve(resp.Body)
+	}
+	if canonical == nil {
+		return p.fallbackResolve(resp.Body)
+	}
+	if canonical.Content == "" {
+		return nil, nil
+	}
+	return []byte(canonical.Content), nil
+}
+
+func (p *NeuralTrustModerationPlugin) fallbackResolve(body []byte) ([]byte, error) {
+	content, err := pluginutils.DefineRequestBody(body, "", false)
+	if err != nil {
+		p.logger.WithError(err).Error("failed to define body")
+		return nil, fmt.Errorf("failed to define body: %w", err)
 	}
 	return []byte(content.Input), nil
 }
