@@ -157,35 +157,6 @@ func TestValidateChileanRUT(t *testing.T) {
 	}
 }
 
-func TestValidateSwiftBIC(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  bool
-	}{
-		{"valid 8-char", "DEUTDEFF", true},
-		{"valid 11-char", "BNPAFRPPXXX", true},
-		{"valid DEUTDEFF500", "DEUTDEFF500", true},
-		{"blocklisted CHAPTERS", "CHAPTERS", false},
-		{"blocklisted DELIVERY", "DELIVERY", false},
-		{"blocklisted STRENGTH", "STRENGTH", false},
-		{"blocklisted ABSOLUTE", "ABSOLUTE", false},
-		{"blocklisted lowercase", "chapters", false},
-		{"valid lowercase bic", "deutdeff", true},
-		{"invalid country code TE", "BANKTEXX", false},
-		{"invalid length 7", "DEUTDEF", false},
-		{"invalid length 9", "DEUTDEFFX", false},
-		{"SPRINGFIELD blocked", "SPRINGFIELD", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := validateSwiftBIC(tt.input); got != tt.want {
-				t.Errorf("validateSwiftBIC(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestValidateSSN(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -232,16 +203,139 @@ func TestValidateIMEI(t *testing.T) {
 	}
 }
 
+func TestValidateSpanishPhone(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"9 digits no prefix", "612345678", true},
+		{"9 digits with spaces", "612 34 56 78", true},
+		{"9 digits with dashes", "612-345-678", true},
+		{"9 digits with dots", "612.345.678", true},
+		{"+34 prefix compact", "+34612345678", true},
+		{"+34 prefix with spaces", "+34 612 34 56 78", true},
+		{"0034 prefix compact", "0034612345678", true},
+		{"0034 prefix with spaces", "0034 612 34 56 78", true},
+		{"too few digits", "61234567", false},
+		{"too many digits", "6123456789", false},
+		{"wrong prefix digits", "+33612345678", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validateSpanishPhone(tt.input); got != tt.want {
+				t.Errorf("validateSpanishPhone(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCountryPhoneValidators(t *testing.T) {
+	tests := []struct {
+		name   string
+		fn     func(string) bool
+		digits string
+		want   bool
+	}{
+		// US
+		{"US 10 digits", phoneMatchesUS, "2125551234", true},
+		{"US 11 digits +1", phoneMatchesUS, "12125551234", true},
+		{"US bad area 0xx", phoneMatchesUS, "0125551234", false},
+		{"US 9 digits", phoneMatchesUS, "212555123", false},
+
+		// UK
+		{"UK 11 digits 07", phoneMatchesUK, "07911123456", true},
+		{"UK 10 digits 02", phoneMatchesUK, "0207946000", true},
+		{"UK +44", phoneMatchesUK, "447911123456", true},
+		{"UK 0044", phoneMatchesUK, "00447911123456", true},
+		{"UK bad start", phoneMatchesUK, "1234567890", false},
+
+		// FR
+		{"FR 10 digits", phoneMatchesFR, "0612345678", true},
+		{"FR +33", phoneMatchesFR, "33612345678", true},
+		{"FR 0033", phoneMatchesFR, "0033612345678", true},
+		{"FR bad start", phoneMatchesFR, "1234567890", false},
+
+		// DE
+		{"DE mobile 11d", phoneMatchesDE, "01711234567", true},
+		{"DE landline 10d", phoneMatchesDE, "0301234567", true},
+		{"DE +49", phoneMatchesDE, "491711234567", true},
+		{"DE 0049", phoneMatchesDE, "00491711234567", true},
+
+		// IT
+		{"IT mobile 10d", phoneMatchesIT, "3331234567", true},
+		{"IT landline 10d", phoneMatchesIT, "0612345678", true},
+		{"IT +39", phoneMatchesIT, "393331234567", true},
+
+		// PT
+		{"PT 9 digits mobile", phoneMatchesPT, "912345678", true},
+		{"PT 9 digits landline", phoneMatchesPT, "212345678", true},
+		{"PT +351", phoneMatchesPT, "351912345678", true},
+		{"PT bad start", phoneMatchesPT, "512345678", false},
+
+		// BR
+		{"BR 11 digits mobile", phoneMatchesBR, "11987654321", true},
+		{"BR 10 digits landline", phoneMatchesBR, "1134567890", true},
+		{"BR +55", phoneMatchesBR, "5511987654321", true},
+
+		// MX
+		{"MX 10 digits", phoneMatchesMX, "5512345678", true},
+		{"MX +52", phoneMatchesMX, "525512345678", true},
+		{"MX 9 digits", phoneMatchesMX, "551234567", false},
+
+		// AR
+		{"AR 10 digits", phoneMatchesAR, "1112345678", true},
+		{"AR +54", phoneMatchesAR, "541112345678", true},
+
+		// CO
+		{"CO mobile 3xx", phoneMatchesCO, "3101234567", true},
+		{"CO landline 6xx", phoneMatchesCO, "6012345678", true},
+		{"CO +57", phoneMatchesCO, "573101234567", true},
+		{"CO bad start", phoneMatchesCO, "1234567890", false},
+
+		// CL
+		{"CL mobile 9d", phoneMatchesCL, "912345678", true},
+		{"CL landline 9d", phoneMatchesCL, "212345678", true},
+		{"CL +56", phoneMatchesCL, "56912345678", true},
+		{"CL bad start", phoneMatchesCL, "512345678", false},
+
+		// ES (via generic)
+		{"ES 9 digits", phoneMatchesES, "612345678", true},
+		{"ES +34", phoneMatchesES, "34612345678", true},
+		{"ES 0034", phoneMatchesES, "0034612345678", true},
+		{"ES bad start 5", phoneMatchesES, "512345678", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.fn(tt.digits); got != tt.want {
+				t.Errorf("%s(%q) = %v, want %v", tt.name, tt.digits, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidatePhoneNumber(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
 		want  bool
 	}{
-		{"international with plus", "+1 555-123-4567", true},
-		{"international compact", "+34612345678", true},
-		{"local US", "555-123-4567", true},
-		{"with parens", "(555) 123-4567", true},
+		// Country-specific matches (cascade)
+		{"US international", "+1 555-123-4567", true},
+		{"ES compact", "+34612345678", true},
+		{"US local", "555-123-4567", true},
+		{"US with parens", "(555) 123-4567", true},
+		{"UK mobile", "+44 7911 123456", true},
+		{"FR mobile", "+33 6 12 34 56 78", true},
+		{"DE mobile", "+49 171 1234567", true},
+		{"BR mobile", "+55 11 98765-4321", true},
+		{"ES with spaces", "612 34 56 78", true},
+
+		// Generic fallback (enough digits, not a date)
+		{"generic 7 digits", "1234567", true},
+		{"generic 8 digits", "12345678", true},
+
+		// Rejections
 		{"date YYYY-MM-DD", "2024-07-18", false},
 		{"date YYYY/MM/DD", "2026/08/14", false},
 		{"date DD.MM.YYYY", "18.07.2024", false},

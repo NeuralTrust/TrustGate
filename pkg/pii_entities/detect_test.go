@@ -195,6 +195,72 @@ func TestDetectAll_DateNotDetectedAsPhone(t *testing.T) {
 	}
 }
 
+func TestDetectAll_SpanishPhoneWithSpaces(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"compact", "llama al 612345678 ahora", "612345678"},
+		{"spaces 3-2-2-2", "llama al 612 34 56 78 ahora", "612 34 56 78"},
+		{"spaces 3-3-3", "llama al 612 345 678 ahora", "612 345 678"},
+		{"dashes", "llama al 612-34-56-78 ahora", "612-34-56-78"},
+		{"with +34", "llama al +34 612 34 56 78 ahora", "+34 612 34 56 78"},
+		{"with 0034", "llama al 0034 612 34 56 78 ahora", "0034 612 34 56 78"},
+		{"in markdown bold", "**612 34 56 78**", "612 34 56 78"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matches := DetectAll(tt.content, enableOnly(SpanishPhone))
+			m := findMatch(matches, SpanishPhone)
+			if m == nil {
+				t.Fatalf("expected SpanishPhone match for %q", tt.content)
+			}
+			if m.Value != tt.want {
+				t.Errorf("SpanishPhone value = %q, want %q", m.Value, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectAll_PhoneNumberMultiGroup(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"US with dashes", "call 555-123-4567", "555-123-4567"},
+		{"US with parens", "call (212) 555-1234", "(212) 555-1234"},
+		{"intl with spaces", "call +1 555 123 4567", "+1 555 123 4567"},
+		{"four groups", "call 612 34 56 78", "612 34 56 78"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matches := DetectAll(tt.content, enableOnly(PhoneNumber))
+			m := findMatch(matches, PhoneNumber)
+			if m == nil {
+				t.Fatalf("expected PhoneNumber match for %q", tt.content)
+			}
+			if m.Value != tt.want {
+				t.Errorf("PhoneNumber value = %q, want %q", m.Value, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectAll_SpanishPhone_BeforeGenericPhone(t *testing.T) {
+	content := "llama al 612 34 56 78 ahora"
+	matches := DetectAll(content, enableOnly(SpanishPhone, PhoneNumber))
+	esMatch := findMatch(matches, SpanishPhone)
+	genMatch := findMatch(matches, PhoneNumber)
+	if esMatch == nil {
+		t.Error("expected SpanishPhone to claim the number (Tier 2 before Tier 3)")
+	}
+	if genMatch != nil {
+		t.Error("generic PhoneNumber should not match when SpanishPhone already claimed the region")
+	}
+}
+
 func TestDetectAll_SpanishIBAN_BeforeGenericIBAN(t *testing.T) {
 	content := "ES9121000418450200051332"
 	matches := DetectAll(content, enableOnly(SpanishIBAN, IBAN))

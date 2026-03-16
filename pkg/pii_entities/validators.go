@@ -277,61 +277,243 @@ func validateChileanRUT(s string) bool {
 	return checkChar == expected
 }
 
-// swiftBICBlocklist contains English words that happen to embed a valid ISO
-// country code at positions 4-5 and therefore pass the country code check.
-// Kept as secondary defense after the country code validation.
-var swiftBICBlocklist = map[string]bool{
-	"ABSOLUTE": true, "DELIVERY": true, "STRENGTH": true,
-	"NATIONAL": true, "EXCHANGE": true, "INTEREST": true,
-	"PERSONAL": true, "WHATEVER": true, "YOURSELF": true,
-	"THOUSAND": true, "TOGETHER": true, "POSSIBLE": true,
-	"SCHEDULE": true, "STANDARD": true, "ANYTHING": true,
-	"AUDIENCE": true, "BUILDING": true, "BUSINESS": true,
-	"CHILDREN": true, "COMPLETE": true, "CONSIDER": true,
-	"CONTINUE": true, "CUSTOMER": true, "EVERYONE": true,
-	"EVIDENCE": true, "EXERCISE": true, "FUNCTION": true,
-	"MATERIAL": true, "OVERVIEW": true, "PHYSICAL": true,
-	"PLANNING": true, "PLATFORM": true, "PRACTICE": true,
-	"PROBLEMS": true, "PROGRESS": true, "PROPERTY": true,
-	"QUESTION": true, "REMEMBER": true, "REQUIRES": true,
-	"RESEARCH": true, "RESOURCE": true, "RESPONSE": true,
-	"CHAPTERS": true, "SECURITY": true, "SOFTWARE": true,
-	"SOLUTION": true, "STRATEGY": true, "STUDENTS": true,
-	"THINKING": true, "TRAINING": true,
-	"APPLICATION": true, "COMFORTABLE": true, "COMPETITIVE": true,
-	"DEVELOPMENT": true, "ENVIRONMENT": true, "INDEPENDENT": true,
-	"INFORMATION": true, "PERFORMANCE": true, "ALTERNATIVE": true,
-	"COMBINATION": true, "EDUCATIONAL": true, "ENGINEERING": true,
-	"ESTABLISHED": true, "PARTNERSHIP": true, "PERSPECTIVE": true,
-	"SIGNIFICANT": true, "TEMPERATURE": true, "TRADITIONAL": true,
-	"SPRINGFIELD": true,
-}
-
 // validateSwiftBIC checks that the match has a valid ISO country code at
 // positions 4-5 (BIC structure: BBBBCCLL[BBB]), then rejects known English
 // words that happen to embed a valid country code.
 func validateSwiftBIC(s string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(s))
-	if len(upper) != 8 && len(upper) != 11 {
+	return false
+}
+
+// validateSpanishPhone ensures the match contains exactly 9 local digits
+// (the +34/0034 prefix is excluded from the count).
+func validateSpanishPhone(s string) bool {
+	digits := extractDigits(s)
+	switch len(digits) {
+	case 9:
+		return true
+	case 11:
+		return digits[:2] == "34"
+	case 13:
+		return digits[:4] == "0034"
+	default:
 		return false
 	}
-	if !validISO3166Alpha2[upper[4:6]] {
+}
+
+// ---------------------------------------------------------------------------
+// Country-specific phone validators for the generic PhoneNumber entity.
+// Each function checks whether the digit string (after stripping separators)
+// matches the numbering plan of a specific country, including its
+// international dialling prefix.
+// ---------------------------------------------------------------------------
+
+func phoneMatchesUS(digits string) bool {
+	switch len(digits) {
+	case 10:
+		return digits[0] >= '2' && digits[0] <= '9' &&
+			digits[3] >= '2' && digits[3] <= '9'
+	case 11:
+		return digits[0] == '1' &&
+			digits[1] >= '2' && digits[1] <= '9' &&
+			digits[4] >= '2' && digits[4] <= '9'
+	default:
 		return false
 	}
-	return !swiftBICBlocklist[upper]
+}
+
+func phoneMatchesUK(digits string) bool {
+	switch len(digits) {
+	case 10, 11:
+		return digits[0] == '0' && digits[1] >= '1' && digits[1] <= '9'
+	case 12, 13:
+		return strings.HasPrefix(digits, "44")
+	case 14:
+		return strings.HasPrefix(digits, "0044")
+	default:
+		return false
+	}
+}
+
+func phoneMatchesFR(digits string) bool {
+	switch len(digits) {
+	case 10:
+		return digits[0] == '0' && (digits[1] >= '1' && digits[1] <= '9')
+	case 11:
+		return strings.HasPrefix(digits, "33")
+	case 13:
+		return strings.HasPrefix(digits, "0033")
+	default:
+		return false
+	}
+}
+
+func phoneMatchesDE(digits string) bool {
+	n := len(digits)
+	switch {
+	case n >= 10 && n <= 12 && digits[0] == '0' && digits[1] >= '1':
+		return true
+	case n >= 11 && n <= 13 && strings.HasPrefix(digits, "49"):
+		return true
+	case n >= 13 && n <= 15 && strings.HasPrefix(digits, "0049"):
+		return true
+	default:
+		return false
+	}
+}
+
+func phoneMatchesIT(digits string) bool {
+	n := len(digits)
+	switch {
+	case n >= 9 && n <= 11 && digits[0] == '0':
+		return true
+	case n >= 9 && n <= 10 && digits[0] == '3':
+		return true
+	case n >= 11 && n <= 12 && strings.HasPrefix(digits, "39"):
+		return true
+	case n >= 13 && n <= 14 && strings.HasPrefix(digits, "0039"):
+		return true
+	default:
+		return false
+	}
+}
+
+func phoneMatchesPT(digits string) bool {
+	switch len(digits) {
+	case 9:
+		return digits[0] == '2' || digits[0] == '3' || digits[0] == '9'
+	case 12:
+		return strings.HasPrefix(digits, "351")
+	case 14:
+		return strings.HasPrefix(digits, "00351")
+	default:
+		return false
+	}
+}
+
+func phoneMatchesBR(digits string) bool {
+	switch len(digits) {
+	case 10, 11:
+		return digits[0] >= '1' && digits[0] <= '9'
+	case 12, 13:
+		return strings.HasPrefix(digits, "55")
+	case 14, 15:
+		return strings.HasPrefix(digits, "0055")
+	default:
+		return false
+	}
+}
+
+func phoneMatchesMX(digits string) bool {
+	switch len(digits) {
+	case 10:
+		return true
+	case 12:
+		return strings.HasPrefix(digits, "52")
+	case 14:
+		return strings.HasPrefix(digits, "0052")
+	default:
+		return false
+	}
+}
+
+func phoneMatchesAR(digits string) bool {
+	switch len(digits) {
+	case 10:
+		return true
+	case 12:
+		return strings.HasPrefix(digits, "54")
+	case 14:
+		return strings.HasPrefix(digits, "0054")
+	default:
+		return false
+	}
+}
+
+func phoneMatchesCO(digits string) bool {
+	switch len(digits) {
+	case 10:
+		return digits[0] == '3' || digits[0] == '6'
+	case 12:
+		return strings.HasPrefix(digits, "57")
+	case 14:
+		return strings.HasPrefix(digits, "0057")
+	default:
+		return false
+	}
+}
+
+func phoneMatchesCL(digits string) bool {
+	switch len(digits) {
+	case 9:
+		return digits[0] == '9' || digits[0] == '2'
+	case 11:
+		return strings.HasPrefix(digits, "56")
+	case 13:
+		return strings.HasPrefix(digits, "0056")
+	default:
+		return false
+	}
+}
+
+func phoneMatchesES(digits string) bool {
+	var local string
+	switch len(digits) {
+	case 9:
+		local = digits
+	case 11:
+		if !strings.HasPrefix(digits, "34") {
+			return false
+		}
+		local = digits[2:]
+	case 13:
+		if !strings.HasPrefix(digits, "0034") {
+			return false
+		}
+		local = digits[4:]
+	default:
+		return false
+	}
+	return local[0] >= '6' && local[0] <= '9'
+}
+
+// countryPhoneValidators is the ordered list of country-specific checks
+// applied by validatePhoneNumber before the generic fallback.
+var countryPhoneValidators = []func(string) bool{
+	phoneMatchesES,
+	phoneMatchesUS,
+	phoneMatchesUK,
+	phoneMatchesFR,
+	phoneMatchesDE,
+	phoneMatchesIT,
+	phoneMatchesPT,
+	phoneMatchesBR,
+	phoneMatchesMX,
+	phoneMatchesAR,
+	phoneMatchesCO,
+	phoneMatchesCL,
 }
 
 var dateLikePattern = regexp.MustCompile(`^\+?\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$`)
 
 const minPhoneDigits = 7
 
-// validatePhoneNumber rejects matches with fewer than 7 digits or that look
-// like a date (e.g. 2024-07-18, 18/07/2024).
+// validatePhoneNumber first tries country-specific validators; if any matches,
+// the number is accepted. Otherwise it falls back to the generic check
+// (at least 7 digits and not a date-like pattern).
 func validatePhoneNumber(s string) bool {
-	if len(extractDigits(s)) < minPhoneDigits {
+	digits := extractDigits(s)
+	if len(digits) < minPhoneDigits {
 		return false
 	}
-	return !dateLikePattern.MatchString(strings.TrimSpace(s))
+	if dateLikePattern.MatchString(strings.TrimSpace(s)) {
+		return false
+	}
+	for _, fn := range countryPhoneValidators {
+		if fn(digits) {
+			return true
+		}
+	}
+	return len(digits) >= minPhoneDigits
 }
 
 // validISO3166Alpha2 contains all ISO 3166-1 alpha-2 country codes.

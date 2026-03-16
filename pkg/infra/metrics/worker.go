@@ -31,8 +31,8 @@ type Worker interface {
 	Process(
 		metricsCollector *Collector,
 		exporters []types.ExporterDTO,
-		req types.RequestContext,
-		resp types.ResponseContext,
+		req *types.RequestContext,
+		resp *types.ResponseContext,
 		startTime time.Time,
 		endTime time.Time,
 	)
@@ -88,8 +88,8 @@ func (m *worker) Shutdown() {
 func (m *worker) Process(
 	metricsCollector *Collector,
 	exporters []types.ExporterDTO,
-	req types.RequestContext,
-	resp types.ResponseContext,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
 	startTime,
 	endTime time.Time,
 ) {
@@ -105,8 +105,8 @@ func (m *worker) Process(
 func (m *worker) registryMetricsToExporters(
 	collector *Collector,
 	exporters []types.ExporterDTO,
-	req types.RequestContext,
-	resp types.ResponseContext,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
 	startTime,
 	endTime time.Time,
 ) {
@@ -223,8 +223,8 @@ func (m *worker) cloneEvent(evt metric_events.Event) metric_events.Event {
 
 func (m *worker) feedEvent(
 	evt metric_events.Event,
-	req types.RequestContext,
-	resp types.ResponseContext,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
 	startTime, endTime time.Time,
 ) metric_events.Event {
 	elapsedTime := endTime.Sub(startTime)

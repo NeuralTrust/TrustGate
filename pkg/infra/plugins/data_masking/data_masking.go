@@ -17,11 +17,11 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/pluginiface"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/pluginutils"
 	"github.com/NeuralTrust/TrustGate/pkg/pii_entities"
+	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
-
-	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
 const (
@@ -50,6 +50,7 @@ type Config struct {
 	ApplyAll            bool                    `mapstructure:"apply_all"`
 	MaxEditDistance     int                     `mapstructure:"max_edit_distance"`
 	NormalizeInput      bool                    `mapstructure:"normalize_input"`
+	MappingField        string                  `mapstructure:"mapping_field"`
 }
 
 type EntityConfig struct {
@@ -129,6 +130,16 @@ func (p *DataMaskingPlugin) ValidateConfig(config pluginTypes.PluginConfig) erro
 	return nil
 }
 
+// executionContext holds shared state for a single Execute call, avoiding
+// repeated parameter passing across the three execution paths.
+type executionContext struct {
+	ctx    context.Context
+	cfg    pluginTypes.PluginConfig
+	config Config
+	rules  maskingRules
+	events []MaskingEvent
+}
+
 func (p *DataMaskingPlugin) Execute(
 	ctx context.Context,
 	cfg pluginTypes.PluginConfig,
@@ -152,16 +163,373 @@ func (p *DataMaskingPlugin) Execute(
 		p.memoryCache = cache.NewTTLMap(10 * time.Minute)
 	}
 
-	if config.ReversibleHashing.Enabled {
-		traceId, ok := ctx.Value(common.TraceIdKey).(string)
-		if ok && cfg.Stage == pluginTypes.PreRequest {
-			if p.memoryCache != nil {
-				p.memoryCache.Set(traceId, make(hashToOriginalMap))
+	ec := &executionContext{
+		ctx:    ctx,
+		cfg:    cfg,
+		config: config,
+		rules:  p.buildRules(config),
+	}
+
+	p.initHashMapIfNeeded(ec)
+
+	var err error
+	switch {
+	case req.Provider != "":
+		err = p.executeProvider(ec, req, resp)
+	case config.MappingField != "":
+		err = p.executeWithMapping(ec, req, resp)
+	default:
+		err = p.executeFullBody(ec, req, resp)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	evtCtx.SetExtras(DataMaskingData{
+		Masked: len(ec.events) > 0,
+		Events: ec.events,
+	})
+	return &pluginTypes.PluginResponse{
+		StatusCode: 200,
+		Message:    "Content masked successfully",
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+func (p *DataMaskingPlugin) initHashMapIfNeeded(ec *executionContext) {
+	if ec.config.ReversibleHashing.Enabled && ec.cfg.Stage == pluginTypes.PreRequest {
+		if traceId, ok := ec.ctx.Value(common.TraceIdKey).(string); ok && p.memoryCache != nil {
+			p.memoryCache.Set(traceId, make(hashToOriginalMap))
+		}
+	}
+}
+
+// maskText is the single entry point for masking a plain-text string using the
+// current execution's rules. It returns the masked text and any masking events.
+func (p *DataMaskingPlugin) maskText(ec *executionContext, text string) (string, []MaskingEvent) {
+	return p.maskPlainTextWithRules(
+		text,
+		ec.config.SimilarityThreshold, ec.config,
+		ec.rules.keywords, ec.rules.regexRules,
+	)
+}
+
+// applyReversibleHashing replaces mask placeholders with HMAC hashes in the
+// masked text and accumulates the hash→original mapping. Returns the updated
+// text with hashes instead of mask placeholders.
+func applyReversibleHashing(config Config, masked string, events []MaskingEvent, hashMap hashToOriginalMap) string {
+	for i := range events {
+		hash := generateReversibleHash(config.ReversibleHashing.Secret, events[i].OriginalValue)
+		events[i].ReversibleKey = hash
+		hashMap[hash] = events[i].OriginalValue
+		masked = strings.ReplaceAll(masked, events[i].MaskedWith, hash)
+	}
+	return masked
+}
+
+func (p *DataMaskingPlugin) storeHashMap(ec *executionContext, hashMap hashToOriginalMap) {
+	if len(hashMap) == 0 {
+		return
+	}
+	if traceId, ok := ec.ctx.Value(common.TraceIdKey).(string); ok && p.memoryCache != nil {
+		p.memoryCache.Set(traceId, hashMap)
+	}
+}
+
+func (p *DataMaskingPlugin) loadHashMap(ctx context.Context) hashToOriginalMap {
+	traceId, ok := ctx.Value(common.TraceIdKey).(string)
+	if !ok || p.memoryCache == nil {
+		return nil
+	}
+	if value, exists := p.memoryCache.Get(traceId); exists {
+		if hm, ok := value.(hashToOriginalMap); ok {
+			return hm
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Provider path
+// ---------------------------------------------------------------------------
+
+func (p *DataMaskingPlugin) executeProvider(
+	ec *executionContext,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+) error {
+	switch ec.cfg.Stage {
+	case pluginTypes.PreRequest:
+		canonical, err := req.CanonicalRequest()
+		if err != nil {
+			p.logger.WithError(err).Warn("failed to decode canonical request, falling back to full body")
+			return p.executeFullBody(ec, req, resp)
+		}
+		if canonical == nil {
+			return p.executeFullBody(ec, req, resp)
+		}
+
+		hashMap := make(hashToOriginalMap)
+		for i := range canonical.Messages {
+			if canonical.Messages[i].Content == "" {
+				continue
 			}
+			masked, events := p.maskText(ec, canonical.Messages[i].Content)
+			if ec.config.ReversibleHashing.Enabled {
+				masked = applyReversibleHashing(ec.config, masked, events, hashMap)
+			}
+			canonical.Messages[i].Content = masked
+			ec.events = append(ec.events, events...)
+		}
+
+		if canonical.System != "" {
+			masked, events := p.maskText(ec, canonical.System)
+			if ec.config.ReversibleHashing.Enabled {
+				masked = applyReversibleHashing(ec.config, masked, events, hashMap)
+			}
+			canonical.System = masked
+			ec.events = append(ec.events, events...)
+		}
+
+		if ec.config.ReversibleHashing.Enabled {
+			p.storeHashMap(ec, hashMap)
+		}
+
+		a, err := req.SourceAdapter()
+		if err != nil || a == nil {
+			return fmt.Errorf("failed to resolve source adapter: %w", err)
+		}
+		newBody, err := a.EncodeRequest(canonical)
+		if err != nil {
+			return fmt.Errorf("failed to re-encode masked request: %w", err)
+		}
+		req.Body = newBody
+
+	case pluginTypes.PreResponse:
+		canonical, err := resp.CanonicalResponse()
+		if err != nil {
+			p.logger.WithError(err).Warn("failed to decode canonical response, falling back to full body")
+			return p.executeFullBody(ec, req, resp)
+		}
+		if canonical == nil {
+			return p.executeFullBody(ec, req, resp)
+		}
+
+		if canonical.Content != "" {
+			masked, events := p.maskText(ec, canonical.Content)
+			canonical.Content = masked
+			ec.events = append(ec.events, events...)
+		}
+
+		a, err := req.SourceAdapter()
+		if err != nil || a == nil {
+			return fmt.Errorf("failed to resolve source adapter: %w", err)
+		}
+		newBody, err := a.EncodeResponse(canonical)
+		if err != nil {
+			return fmt.Errorf("failed to re-encode masked response: %w", err)
+		}
+		resp.Body = newBody
+
+	case pluginTypes.PostResponse:
+		if !ec.config.ReversibleHashing.Enabled {
+			return nil
+		}
+		hashMap := p.loadHashMap(ec.ctx)
+		if len(hashMap) == 0 {
+			return nil
+		}
+		canonical, err := resp.CanonicalResponse()
+		if err != nil || canonical == nil {
+			return p.executeFullBody(ec, req, resp)
+		}
+		if canonical.Content != "" {
+			for hash, original := range hashMap {
+				canonical.Content = strings.ReplaceAll(canonical.Content, hash, original)
+			}
+		}
+		a, err := req.SourceAdapter()
+		if err != nil || a == nil {
+			return fmt.Errorf("failed to resolve source adapter: %w", err)
+		}
+		newBody, err := a.EncodeResponse(canonical)
+		if err != nil {
+			return fmt.Errorf("failed to re-encode restored response: %w", err)
+		}
+		resp.Body = newBody
+	}
+
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Mapping-field path
+// ---------------------------------------------------------------------------
+
+func (p *DataMaskingPlugin) executeWithMapping(
+	ec *executionContext,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+) error {
+	maskExtracted := func(body []byte) ([]byte, []MaskingEvent, error) {
+		content, err := pluginutils.DefineRequestBody(body, ec.config.MappingField, true)
+		if err != nil || content.Input == "" {
+			return body, nil, nil
+		}
+		masked, events := p.maskText(ec, content.Input)
+		if masked == content.Input {
+			return body, events, nil
+		}
+		result := strings.Replace(string(body), content.Input, masked, 1)
+		return []byte(result), events, nil
+	}
+
+	if req != nil && len(req.Body) > 0 && ec.cfg.Stage == pluginTypes.PreRequest {
+		maskedBody, events, err := maskExtracted(req.Body)
+		if err != nil {
+			return err
+		}
+		if ec.config.ReversibleHashing.Enabled {
+			hashMap := make(hashToOriginalMap)
+			for i := range events {
+				hash := generateReversibleHash(ec.config.ReversibleHashing.Secret, events[i].OriginalValue)
+				events[i].ReversibleKey = hash
+				hashMap[hash] = events[i].OriginalValue
+			}
+			p.storeHashMap(ec, hashMap)
+		}
+		req.Body = maskedBody
+		ec.events = append(ec.events, events...)
+	}
+
+	if resp != nil && len(resp.Body) > 0 && (ec.cfg.Stage == pluginTypes.PreResponse || ec.cfg.Stage == pluginTypes.PostResponse) {
+		if ec.config.ReversibleHashing.Enabled && ec.cfg.Stage == pluginTypes.PostResponse {
+			hashMap := p.loadHashMap(ec.ctx)
+			if len(hashMap) > 0 {
+				content := string(resp.Body)
+				for hash, original := range hashMap {
+					content = strings.ReplaceAll(content, hash, original)
+				}
+				resp.Body = []byte(content)
+			}
+		} else {
+			maskedBody, events, err := maskExtracted(resp.Body)
+			if err != nil {
+				return err
+			}
+			resp.Body = maskedBody
+			ec.events = append(ec.events, events...)
 		}
 	}
 
-	// Build per-execution rule maps to avoid shared mutable state across goroutines
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Full-body path (original recursive masking)
+// ---------------------------------------------------------------------------
+
+func (p *DataMaskingPlugin) executeFullBody(
+	ec *executionContext,
+	req *types.RequestContext,
+	resp *types.ResponseContext,
+) error {
+	hashMap := make(hashToOriginalMap)
+	secret := ec.config.ReversibleHashing.Secret
+
+	if ec.config.ReversibleHashing.Enabled && ec.cfg.Stage == pluginTypes.PostResponse {
+		hashMap = p.loadHashMap(ec.ctx)
+	}
+
+	processBody := func(body []byte, isRequest bool) ([]byte, error) {
+		var jsonData interface{}
+		if err := json.Unmarshal(body, &jsonData); err == nil {
+			var maskedData interface{}
+			var events []MaskingEvent
+
+			if !isRequest && ec.cfg.Stage == pluginTypes.PostResponse && ec.config.ReversibleHashing.Enabled {
+				maskedData = restoreFromHashes(jsonData, hashMap)
+			} else {
+				maskedData, events = p.maskJSONDataWithRules(jsonData, ec.config.SimilarityThreshold, ec.config, ec.rules.keywords, ec.rules.regexRules)
+
+				if ec.config.ReversibleHashing.Enabled && isRequest && ec.cfg.Stage == pluginTypes.PreRequest {
+					for i := range events {
+						hash := generateReversibleHash(secret, events[i].OriginalValue)
+						events[i].ReversibleKey = hash
+						hashMap[hash] = events[i].OriginalValue
+					}
+					maskedData = replaceWithHashes(maskedData, events)
+					p.storeHashMap(ec, hashMap)
+				}
+			}
+
+			maskedJSON, err := json.Marshal(maskedData)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal masked JSON: %v", err)
+			}
+			ec.events = append(ec.events, events...)
+			return maskedJSON, nil
+		}
+
+		content := string(body)
+		var maskedContent string
+		var events []MaskingEvent
+
+		if !isRequest && ec.cfg.Stage == pluginTypes.PostResponse && ec.config.ReversibleHashing.Enabled {
+			maskedContent = content
+			for hash, original := range hashMap {
+				maskedContent = strings.ReplaceAll(maskedContent, hash, original)
+			}
+		} else {
+			maskedContent, events = p.maskText(ec, content)
+
+			if ec.config.ReversibleHashing.Enabled && isRequest && ec.cfg.Stage == pluginTypes.PreRequest {
+				for i := range events {
+					hash := generateReversibleHash(secret, events[i].OriginalValue)
+					events[i].ReversibleKey = hash
+					hashMap[hash] = events[i].OriginalValue
+					maskedContent = strings.ReplaceAll(maskedContent, events[i].MaskedWith, hash)
+				}
+				p.storeHashMap(ec, hashMap)
+			}
+		}
+
+		ec.events = append(ec.events, events...)
+		return []byte(maskedContent), nil
+	}
+
+	if req != nil && len(req.Body) > 0 {
+		maskedBody, err := processBody(req.Body, true)
+		if err != nil {
+			return err
+		}
+		req.Body = maskedBody
+	}
+
+	if resp != nil && len(resp.Body) > 0 {
+		maskedBody, err := processBody(resp.Body, false)
+		if err != nil {
+			return err
+		}
+		resp.Body = maskedBody
+	}
+
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Rule building & helpers
+// ---------------------------------------------------------------------------
+
+type maskingRules struct {
+	keywords   map[string]string
+	regexRules map[string]*regexp.Regexp
+}
+
+func (p *DataMaskingPlugin) buildRules(config Config) maskingRules {
 	keywords := make(map[string]string)
 	regexRules := make(map[string]*regexp.Regexp)
 
@@ -204,119 +572,14 @@ func (p *DataMaskingPlugin) Execute(
 		case "regex":
 			regex, err := regexp.Compile(rule.Pattern)
 			if err != nil {
-				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", rule.Pattern, err)
+				continue
 			}
 			regexRules[rule.Pattern] = regex
 			keywords[rule.Pattern] = maskValue
 		}
 	}
 
-	var allEvents []MaskingEvent
-	hashMap := make(hashToOriginalMap)
-	secret := config.ReversibleHashing.Secret
-
-	if config.ReversibleHashing.Enabled && cfg.Stage == pluginTypes.PostResponse {
-		traceId, ok := ctx.Value(common.TraceIdKey).(string)
-		if ok && p.memoryCache != nil {
-			if value, exists := p.memoryCache.Get(traceId); exists {
-				if hm, ok := value.(hashToOriginalMap); ok {
-					hashMap = hm
-				}
-			}
-		}
-	}
-
-	processBody := func(body []byte, isRequest bool) ([]byte, error) {
-		var jsonData interface{}
-		if err := json.Unmarshal(body, &jsonData); err == nil {
-			var maskedData interface{}
-			var events []MaskingEvent
-
-			if !isRequest && cfg.Stage == pluginTypes.PostResponse && config.ReversibleHashing.Enabled {
-				maskedData = restoreFromHashes(jsonData, hashMap)
-			} else {
-				maskedData, events = p.maskJSONDataWithRules(jsonData, config.SimilarityThreshold, config, keywords, regexRules)
-
-				if config.ReversibleHashing.Enabled && isRequest && cfg.Stage == pluginTypes.PreRequest {
-					for i := range events {
-						hash := generateReversibleHash(secret, events[i].OriginalValue)
-						events[i].ReversibleKey = hash
-						hashMap[hash] = events[i].OriginalValue
-					}
-
-					maskedData = replaceWithHashes(maskedData, events)
-
-					traceId, ok := ctx.Value(common.TraceIdKey).(string)
-					if ok && p.memoryCache != nil {
-						p.memoryCache.Set(traceId, hashMap)
-					}
-				}
-			}
-
-			maskedJSON, err := json.Marshal(maskedData)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal masked JSON: %v", err)
-			}
-			allEvents = append(allEvents, events...)
-			return maskedJSON, nil
-		}
-
-		content := string(body)
-		var maskedContent string
-		var events []MaskingEvent
-
-		if !isRequest && cfg.Stage == pluginTypes.PostResponse && config.ReversibleHashing.Enabled {
-			maskedContent = content
-			for hash, original := range hashMap {
-				maskedContent = strings.ReplaceAll(maskedContent, hash, original)
-			}
-		} else {
-			maskedContent, events = p.maskPlainTextWithRules(content, config.SimilarityThreshold, config, keywords, regexRules)
-
-			if config.ReversibleHashing.Enabled && isRequest && cfg.Stage == pluginTypes.PreRequest {
-				for i := range events {
-					hash := generateReversibleHash(secret, events[i].OriginalValue)
-					events[i].ReversibleKey = hash
-					hashMap[hash] = events[i].OriginalValue
-					maskedContent = strings.ReplaceAll(maskedContent, events[i].MaskedWith, hash)
-				}
-
-				traceId, ok := ctx.Value(common.TraceIdKey).(string)
-				if ok && p.memoryCache != nil {
-					p.memoryCache.Set(traceId, hashMap)
-				}
-			}
-		}
-
-		allEvents = append(allEvents, events...)
-		return []byte(maskedContent), nil
-	}
-
-	if req != nil && len(req.Body) > 0 {
-		maskedBody, err := processBody(req.Body, true)
-		if err != nil {
-			return nil, err
-		}
-		req.Body = maskedBody
-	}
-
-	if resp != nil && len(resp.Body) > 0 {
-		maskedBody, err := processBody(resp.Body, false)
-		if err != nil {
-			return nil, err
-		}
-		resp.Body = maskedBody
-	}
-
-	evtCtx.SetExtras(DataMaskingData{
-		Masked: len(allEvents) > 0,
-		Events: allEvents,
-	})
-
-	return &pluginTypes.PluginResponse{
-		StatusCode: 200,
-		Message:    "Content masked successfully",
-	}, nil
+	return maskingRules{keywords: keywords, regexRules: regexRules}
 }
 
 func generateReversibleHash(secret, value string) string {
