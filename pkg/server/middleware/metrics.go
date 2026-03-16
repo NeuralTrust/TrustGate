@@ -50,7 +50,7 @@ func (m *metricsMiddleware) Middleware() fiber.Handler {
 		telemetryEnabled := m.isTelemetryEnabled(gatewayData)
 
 		var (
-			inputRequest types.RequestContext
+			inputRequest *types.RequestContext
 			startTime    time.Time
 		)
 
@@ -168,9 +168,9 @@ func (m *metricsMiddleware) getStartTime(c *fiber.Ctx) time.Time {
 }
 
 // buildRequestContext creates a RequestContext from the fiber context
-func (m *metricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) types.RequestContext {
+func (m *metricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) *types.RequestContext {
 	userAgentInfo := utils.ParseUserAgent(c.Get("User-Agent"), c.Get("Accept-Language"))
-	reqCtx := types.RequestContext{
+	reqCtx := &types.RequestContext{
 		Context:   context.Background(),
 		GatewayID: gatewayID,
 		Headers:   m.copyHeaders(c.GetReqHeaders()),
@@ -200,7 +200,7 @@ func (m *metricsMiddleware) handleStreamResponse(
 	ctx context.Context,
 	gatewayID string,
 	gatewayData *types.GatewayData,
-	inputRequest types.RequestContext,
+	inputRequest *types.RequestContext,
 	c *fiber.Ctx,
 	startTime time.Time,
 	state *streamState,
@@ -236,12 +236,11 @@ func (m *metricsMiddleware) handleStreamResponse(
 			<-pluginsDone
 		}
 
-		now := time.Now()
 		m.worker.Process(
 			collector,
 			exporters,
 			inputRequest,
-			types.ResponseContext{
+			&types.ResponseContext{
 				Context:   context.Background(), // #nosec G118
 				GatewayID: gatewayID,
 				Headers:   headers,
@@ -250,7 +249,7 @@ func (m *metricsMiddleware) handleStreamResponse(
 				},
 				Body:          responseBody,
 				StatusCode:    statusCode,
-				ProcessAt:     &now,
+				ProcessAt:     new(time.Now()),
 				Rule:          rule,
 				TargetLatency: streamDuration,
 				Streaming:     true,
@@ -266,22 +265,20 @@ func (m *metricsMiddleware) handleNonStreamResponse(
 	ctx context.Context,
 	gatewayID string,
 	gatewayData *types.GatewayData,
-	inputRequest types.RequestContext,
+	inputRequest *types.RequestContext,
 	c *fiber.Ctx,
 	startTime time.Time,
 ) {
 	inputRequest.SessionID = m.getSessionID(ctx)
 	rule := GetMatchedRule(ctx, m.logger)
 	collector := m.getCollectorFromContext(c)
-
-	outputResponse := m.buildResponseContext(c, gatewayID, rule)
-
+	resp := m.buildResponseContext(c, gatewayID, rule)
 	m.logger.Debug("processing metrics as non stream mode")
 	m.worker.Process(
 		collector,
 		gatewayData.Gateway.Telemetry.Exporters,
 		inputRequest,
-		outputResponse,
+		&resp,
 		startTime,
 		time.Now(),
 	)

@@ -12,6 +12,7 @@ import (
 	cacheMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/pii_entities"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
@@ -862,4 +863,153 @@ func TestMasking_MultiplePIIEntitiesNoSlicePanic(t *testing.T) {
 		assert.NotEmpty(t, events, "should detect at least one entity")
 		assert.NotEqual(t, input, masked, "content should be masked")
 	})
+}
+
+func TestProviderPath_PreRequest_MasksOnlyMessageContent(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	reg := adapter.NewRegistry()
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	cfg := pluginTypes.PluginConfig{
+		Stage: pluginTypes.PreRequest,
+		Settings: map[string]interface{}{
+			"predefined_entities": []map[string]interface{}{
+				{"entity": "email", "enabled": true},
+			},
+		},
+	}
+
+	openAIBody := `{"model":"gpt-4","messages":[{"role":"user","content":"Contact me at test@example.com"}],"temperature":0.7}`
+
+	req := &types.RequestContext{
+		Body:         []byte(openAIBody),
+		Provider:     "openai",
+		SourceFormat: "openai",
+	}
+	req.SetAdapterRegistry(reg)
+	resp := &types.ResponseContext{}
+
+	_, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+	assert.NoError(t, err)
+
+	var result map[string]interface{}
+	err = json.Unmarshal(req.Body, &result)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "gpt-4", result["model"], "model field should not be masked")
+	assert.Equal(t, 0.7, result["temperature"], "temperature should not be masked")
+
+	msgs, ok := result["messages"].([]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, 1, len(msgs))
+	msg, ok := msgs[0].(map[string]interface{})
+	assert.True(t, ok)
+	assert.NotContains(t, msg["content"], "test@example.com", "email in message content should be masked")
+	assert.Contains(t, msg["content"].(string), pii_entities.DefaultMasks[pii_entities.Email])
+}
+
+func TestProviderPath_PreResponse_MasksOnlyResponseContent(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	reg := adapter.NewRegistry()
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	cfg := pluginTypes.PluginConfig{
+		Stage: pluginTypes.PreResponse,
+		Settings: map[string]interface{}{
+			"predefined_entities": []map[string]interface{}{
+				{"entity": "email", "enabled": true},
+			},
+		},
+	}
+
+	openAIResp := `{"id":"chatcmpl-123","model":"gpt-4","choices":[{"index":0,"message":{"role":"assistant","content":"Sure, I found test@example.com in our records."},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}`
+
+	req := &types.RequestContext{
+		Provider:     "openai",
+		SourceFormat: "openai",
+		Body:         []byte(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`),
+	}
+	req.SetAdapterRegistry(reg)
+	resp := &types.ResponseContext{
+		Body:         []byte(openAIResp),
+		SourceFormat: "openai",
+	}
+	resp.SetAdapterRegistry(reg)
+
+	_, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+	assert.NoError(t, err)
+
+	var result map[string]interface{}
+	err = json.Unmarshal(resp.Body, &result)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "gpt-4", result["model"], "model field should not be masked")
+
+	choices, ok := result["choices"].([]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, 1, len(choices))
+	choice, ok := choices[0].(map[string]interface{})
+	assert.True(t, ok)
+	msg, ok := choice["message"].(map[string]interface{})
+	assert.True(t, ok)
+	assert.NotContains(t, msg["content"], "test@example.com", "email in response content should be masked")
+}
+
+func TestNonProvider_MappingField(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	cfg := pluginTypes.PluginConfig{
+		Stage: pluginTypes.PreRequest,
+		Settings: map[string]interface{}{
+			"mapping_field": "data.text",
+			"predefined_entities": []map[string]interface{}{
+				{"entity": "email", "enabled": true},
+			},
+		},
+	}
+
+	body := `{"data":{"text":"Contact test@example.com for info","id":123},"meta":"keep"}`
+
+	req := &types.RequestContext{Body: []byte(body)}
+	resp := &types.ResponseContext{}
+
+	_, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+	assert.NoError(t, err)
+
+	assert.NotContains(t, string(req.Body), "test@example.com", "email should be masked via mapping_field")
+	assert.Contains(t, string(req.Body), `"meta":"keep"`, "non-mapped fields should be untouched")
+	assert.Contains(t, string(req.Body), `"id":123`, "sibling fields should be untouched")
+}
+
+func TestNonProvider_NoMappingField_FallsBackToFullBody(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	cfg := pluginTypes.PluginConfig{
+		Stage: pluginTypes.PreRequest,
+		Settings: map[string]interface{}{
+			"predefined_entities": []map[string]interface{}{
+				{"entity": "email", "enabled": true},
+			},
+		},
+	}
+
+	body := `{"user":"test@example.com","note":"hello"}`
+
+	req := &types.RequestContext{Body: []byte(body)}
+	resp := &types.ResponseContext{}
+
+	_, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+	assert.NoError(t, err)
+
+	assert.NotContains(t, string(req.Body), "test@example.com", "email should be masked in full body mode")
 }

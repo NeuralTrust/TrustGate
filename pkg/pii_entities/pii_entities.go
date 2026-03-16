@@ -249,9 +249,10 @@ var Entities = map[Entity]EntityInfo{
 		DefaultMask: "[MASKED_NSS]",
 	},
 	SpanishPhone: {
-		Pattern:     regexp.MustCompile(`(?:(?:\+34|0034)[.\s-]?[6-9]\d{2}[.\s-]?\d{3}[.\s-]?\d{3}|\b[6-9]\d{8})\b`),
+		Pattern:     regexp.MustCompile(`(?:(?:\+34|0034)[.\s-]?)?[6-9](?:[.\s-]?\d){8}\b`),
+		Validate:    validateSpanishPhone,
 		Tier:        Tier2,
-		DefaultMask: "[MASKED_ES_PHONE]",
+		DefaultMask: "[MASKED_PHONE]",
 	},
 	GermanID: {
 		Pattern:     regexp.MustCompile(`(?i)\b[A-Z]{2}\d[A-Z0-9]{6}[0-9]\b`),
@@ -329,7 +330,7 @@ var Entities = map[Entity]EntityInfo{
 		DefaultMask: "[MASKED_ZIP]",
 	},
 	PhoneNumber: {
-		Pattern:     regexp.MustCompile(`(?:\+\d{1,4}[\s-]?|\(|\b)(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{2,4}[\s-]?\d{2,4}\b`),
+		Pattern:     regexp.MustCompile(`(?:\+\d{1,4}[\s-]?|\(|\b)(?:\(?\d{2,4}\)?[\s-]?)?\d{2,4}(?:[\s-]\d{2,4}){1,4}\b|(?:\+\d{1,4}[\s-]?|\(|\b)(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{2,4}[\s-]?\d{2,4}\b`),
 		Validate:    validatePhoneNumber,
 		Tier:        Tier3,
 		DefaultMask: "[MASKED_PHONE]",

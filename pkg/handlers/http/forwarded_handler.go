@@ -295,6 +295,9 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 
 	if preselectedTarget != nil && preselectedTarget.Provider != "" {
 		reqCtx.Provider = preselectedTarget.Provider
+		reqCtx.SourceFormat = string(adapter.DetectFormat(reqCtx.Body))
+		reqCtx.TargetFormat = string(adapter.ResolveTargetFormat(preselectedTarget.Provider, preselectedTarget.ProviderOptions))
+		reqCtx.SetAdapterRegistry(h.adapterRegistry)
 	}
 
 	for key, values := range c.GetReqHeaders() {
@@ -422,6 +425,11 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		respCtx.Headers[k] = v
 	}
 	respCtx.TargetLatency = upstreamLatency
+
+	if reqCtx.Provider != "" {
+		respCtx.SourceFormat = reqCtx.SourceFormat
+		respCtx.SetAdapterRegistry(h.adapterRegistry)
+	}
 
 	if response.Streaming {
 		respCtx.Streaming = true
