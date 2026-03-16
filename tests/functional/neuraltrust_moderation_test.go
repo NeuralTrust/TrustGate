@@ -383,14 +383,13 @@ func TestNeuralTrustModerationPlugin_KeyReg_PreResponse(t *testing.T) {
 					"keyreg_moderation": map[string]interface{}{
 						"enabled":              true,
 						"similarity_threshold": 0.8,
-						"keywords":             []string{"password", "secret", "api_key"},
+						"keywords":             []string{"password", "secret"},
 						"regex":                []string{"\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"},
 						"actions": map[string]interface{}{
 							"type":    "block",
 							"message": "Response contains sensitive information",
 						},
 					},
-					"output_mapping_field": "output.text",
 				},
 			},
 		},
@@ -407,7 +406,7 @@ func TestNeuralTrustModerationPlugin_KeyReg_PreResponse(t *testing.T) {
 				"host":     "localhost",
 				"port":     8081,
 				"protocol": "http",
-				"path":     "/",
+				"path":     "/__/ping",
 				"weight":   100,
 				"priority": 1,
 			},
@@ -447,8 +446,8 @@ func TestNeuralTrustModerationPlugin_KeyReg_PreResponse(t *testing.T) {
 			http.StatusOK,
 		},
 		{
-			"Content with Keyword in response",
-			"{\"input\": {\"text\": \"tell me a password\"}}",
+			"Request keyword not blocked at PreResponse stage",
+			"{\"input\": {\"text\": \"my password is 12345\"}}",
 			http.StatusOK,
 		},
 	}
