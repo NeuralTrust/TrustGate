@@ -1,4 +1,4 @@
-- c01740a Merge pull request #323 from NeuralTrust/fix/enable-response-moderation
-- 2852c4d fix: enable response moderations
-- 1e6fc43 fix: enable response moderations
-- 644b1b6 fix: enable response moderations
+- ba40bdd Merge pull request #324 from NeuralTrust/refactor/move-neuraltrust-firewalls
+- 4b6443a refator: move plugins
+- e91e3af refator: move plugins
+- 286bafd refator: move plugins

@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.17.7\n\nCommits since last release:\n- c01740a Merge pull request #323 from NeuralTrust/fix/enable-response-moderation\n- 2852c4d fix: enable response moderations\n- 1e6fc43 fix: enable response moderations\n- 644b1b6 fix: enable response moderations\n"
+      "content": "Current version: 1.17.8\n\nCommits since last release:\n- ba40bdd Merge pull request #324 from NeuralTrust/refactor/move-neuraltrust-firewalls\n- 4b6443a refator: move plugins\n- e91e3af refator: move plugins\n- 286bafd refator: move plugins\n"
     }
   ],
   "max_tokens": 200,
