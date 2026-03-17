@@ -1,9 +1,7 @@
 package dependency_container
 
 import (
-	"crypto/tls"
 	"fmt"
-	"net/http"
 	"reflect"
 	"time"
 
@@ -12,7 +10,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
@@ -83,7 +80,6 @@ type Container struct {
 	GatewayRepository           domainGateway.Repository
 	UpstreamRepository          domainUpstream.Repository
 	ServiceRepository           domainService.Repository
-	FirewallFactory             firewall.ClientFactory
 	TelemetryExporterLocator    *infraTelemetry.ExporterLocator
 	TelemetryExporterValidator  telemetry.ExportersValidator
 	GatewayCreator              gateway.Creator
@@ -148,27 +144,6 @@ func NewContainer(di ContainerDI) (*Container, error) {
 
 	fingerprintTracker := fingerprint.NewFingerPrintTracker(cacheInstance)
 
-	firewallHTTPClient := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true}, // #nosec G402
-			MaxIdleConns:          512,
-			MaxIdleConnsPerHost:   512,
-			MaxConnsPerHost:       512,
-			IdleConnTimeout:       90 * time.Second,
-			DisableKeepAlives:     false,
-			ResponseHeaderTimeout: 10 * time.Second,
-			TLSHandshakeTimeout:   5 * time.Second,
-			ForceAttemptHTTP2:     true,
-		},
-	}
-	neuralTrustFirewallClient := firewall.NewNeuralTrustFirewallClient(
-		di.Logger,
-		firewall.WithHTTPClient(firewallHTTPClient),
-	)
-	openAIFirewallClient := firewall.NewOpenAIFirewallClient(di.Logger)
-	firewallFactory := firewall.NewClientFactory(neuralTrustFirewallClient, openAIFirewallClient)
-
 	adapterRegistry := adapter.NewRegistry()
 
 	pluginManager := plugins.NewManager(
@@ -179,7 +154,6 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		plugins.WithEmbeddingRepo(embeddingRepository),
 		plugins.WithServiceLocator(embeddingServiceLocator),
 		plugins.WithProviderLocator(providerFactory),
-		plugins.WithFirewallFactory(firewallFactory),
 		plugins.WithAdapterRegistry(adapterRegistry),
 	)
 
@@ -471,7 +445,6 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		GatewayRepository:           gatewayRepository,
 		UpstreamRepository:          upstreamRepository,
 		ServiceRepository:           serviceRepository,
-		FirewallFactory:             firewallFactory,
 		TelemetryExporterLocator:    providerLocator,
 		TelemetryExporterValidator:  telemetryValidator,
 		GatewayCreator:              gatewayCreator,

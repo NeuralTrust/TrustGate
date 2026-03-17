@@ -10,8 +10,91 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Test
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.26'
+          check-latest: true
+          cache: false
+
+      - name: Install dependencies
+        run: |
+          go clean -modcache
+          go mod tidy && go mod vendor
+
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.9.0
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+          golangci-lint --version
+
+      - name: Run golangci-lint
+        continue-on-error: true
+        env:
+          GOPRIVATE: github.com/NeuralTrust/*
+          GONOPROXY: github.com/NeuralTrust/*
+          GONOSUMDB: github.com/NeuralTrust/*
+        run: golangci-lint run --timeout=10m ./...
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: ai_gateway
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.26'
+          check-latest: true
+          cache: false
+
+      - name: Install dependencies
+        run: |
+          go clean -modcache
+          go mod tidy && go mod vendor
+
+      - name: Copy environment file
+        run: cp .env.example .env
+
+      - name: Run Unit tests
+        run: go test -v -race -coverprofile=unit-coverage.txt -covermode=atomic ./pkg/...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./unit-coverage.txt
+          flags: unittests
+
+  functional-tests:
+    name: Functional Tests
     runs-on: ubuntu-latest
 
     services:
@@ -45,18 +128,12 @@ jobs:
         with:
           go-version: '1.26'
           check-latest: true
-          cache: false  # Disable Go module cache
+          cache: false
 
       - name: Install dependencies
         run: |
           go clean -modcache
           go mod tidy && go mod vendor
-
-      - name: Verify Go environment
-        run: |
-          echo "Go version: $(go version)"
-          echo "Go env:"
-          go env | grep -E "(GOROOT|GOPATH|GOPRIVATE|GONOPROXY|GONOSUMDB)" || true
 
       - name: Install service check tools
         run: |
@@ -116,20 +193,6 @@ jobs:
                   }
                 }'
 
-      - name: Install golangci-lint
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.9.0
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-          golangci-lint --version
-
-      - name: Run golangci-lint
-        continue-on-error: true
-        env:
-          GOPRIVATE: github.com/NeuralTrust/*
-          GONOPROXY: github.com/NeuralTrust/*
-          GONOSUMDB: github.com/NeuralTrust/*
-        run: golangci-lint run --timeout=10m ./...
-
       - name: Copy environment file
         run: cp .env.example .env && cp .env.functional.example .env.functional
 
@@ -149,22 +212,11 @@ jobs:
           echo "NEURAL_TRUST_FIREWALL_URL=${{ secrets.NEURAL_TRUST_FIREWALL_URL }}" >> .env.functional
           echo "NEURAL_TRUST_FIREWALL_API_KEY=${{ secrets.NEURAL_TRUST_FIREWALL_API_KEY }}" >> .env.functional
 
-      - name: Debug environment file
-        run: cat .env.functional
-
-      - name: Run Unit tests
-        run: go test -v -race -coverprofile=unit-coverage.txt -covermode=atomic ./pkg/...
-
       - name: Run Functional tests
         run: go test -v -race ./tests/functional
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./unit-coverage.txt
-          flags: unittests
   auto-approve:
-    needs: test
+    needs: [ lint, unit-tests, functional-tests ]
     permissions:
       contents: read
       checks: read
