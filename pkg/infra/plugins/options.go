@@ -5,7 +5,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 )
@@ -45,13 +44,6 @@ func WithServiceLocator(s factory.EmbeddingServiceLocator) Option {
 func WithProviderLocator(p providersFactory.ProviderLocator) Option {
 	return func(m *manager) {
 		m.providerLocator = p
-	}
-}
-
-// WithFirewallFactory sets the firewall client factory.
-func WithFirewallFactory(f firewall.ClientFactory) Option {
-	return func(m *manager) {
-		m.firewallFactory = f
 	}
 }
 

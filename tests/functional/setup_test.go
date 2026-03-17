@@ -1,14 +1,16 @@
 package functional_test
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,14 +25,15 @@ import (
 )
 
 var (
-	GlobalConfig *config.Config
-	redisDB      *redis.Client
-	proxyCmd     *exec.Cmd
-	adminCmd     *exec.Cmd
-	AdminUrl     = getEnv("ADMIN_URL", "")
-	ProxyUrl     = getEnv("PROXY_URL", "")
-	BaseDomain   = getEnv("BASE_DOMAIN", "")
-	AdminToken   = getEnv("ADMIN_TOKEN", "")
+	GlobalConfig      *config.Config
+	redisDB           *redis.Client
+	proxyCmd          *exec.Cmd
+	adminCmd          *exec.Cmd
+	gatewayBinaryPath string
+	AdminUrl          = getEnv("ADMIN_URL", "")
+	ProxyUrl          = getEnv("PROXY_URL", "")
+	BaseDomain        = getEnv("BASE_DOMAIN", "")
+	AdminToken        = getEnv("ADMIN_TOKEN", "")
 )
 
 const (
@@ -46,13 +49,10 @@ func TestMain(m *testing.M) {
 	fmt.Println("🔨 Creating Test Environment...")
 	setupTestEnvironment()
 
-	// Initialize test reporter
 	GlobalReporter = NewTestReporter()
 
-	// Run all tests
 	code := m.Run()
 
-	// Print test report
 	if GlobalReporter != nil {
 		GlobalReporter.PrintReportWithExitCode(code)
 	}
@@ -68,8 +68,16 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func setupTestEnvironment() {
+func buildCmdEnv() []string {
+	env := os.Environ()
+	env = append(env,
+		"ENV_FILE=../../.env.functional",
+		"TLS_CERTS_BASE_PATH=/tmp/certs",
+	)
+	return env
+}
 
+func setupTestEnvironment() {
 	err := godotenv.Load("../../.env.functional")
 	if err != nil {
 		log.Println("no .env file found, using system environment variables")
@@ -81,13 +89,10 @@ func setupTestEnvironment() {
 	}
 	GlobalConfig = cfg
 
-	killProcessesOnPorts([]int{8080, 8081})
-
 	AdminUrl = getEnv("ADMIN_URL", "http://localhost:8080/api/v1")
 	ProxyUrl = getEnv("PROXY_URL", "http://localhost:8081")
 	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
 
-	// Set TLS_CERTS_BASE_PATH for the test process (must match proxy/admin)
 	_ = os.Setenv("TLS_CERTS_BASE_PATH", "/tmp/certs")
 
 	jwtManager := jwt.NewJwtManager(&GlobalConfig.Server)
@@ -97,185 +102,116 @@ func setupTestEnvironment() {
 	}
 	AdminToken = tkn
 
+	killProcessesOnPorts([]int{8080, 8081})
+
 	createTestDB(dbName)
 	redisDB = redis.NewClient(&redis.Options{
 		Addr: redisAddr,
 		DB:   9,
 	})
 
-	// Get the current working directory and set it for the commands
-	wd, err := os.Getwd()
-	if err != nil {
-		log.Fatalf("Failed to get working directory: %v", err)
-	}
-	fmt.Printf("📁 Current working directory: %s\n", wd)
+	cmdEnv := buildCmdEnv()
+	gatewayBinaryPath = buildGatewayBinary(cmdEnv)
 
-	// Create proxy command
-	proxyCmd = exec.Command("go", "run", "../../cmd/gateway/main.go", "proxy")
-	proxyCmd.Dir = wd
-	proxyCmd.Env = append(os.Environ(),
-		"ENV_FILE=../../.env.functional",
-		"TLS_CERTS_BASE_PATH=/tmp/certs",
-	)
-	proxyCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	proxyCmd = startServer("PROXY", "proxy", cmdEnv)
+	time.Sleep(3 * time.Second)
+	adminCmd = startServer("ADMIN", "admin", cmdEnv)
 
-	// Capture proxy server output
-	proxyStdout, err := proxyCmd.StdoutPipe()
-	if err != nil {
-		log.Fatalf("Failed to create proxy stdout pipe: %v", err)
-	}
-	proxyStderr, err := proxyCmd.StderrPipe()
-	if err != nil {
-		log.Fatalf("Failed to create proxy stderr pipe: %v", err)
-	}
-
-	// Start goroutines to capture and log proxy server output
-	go func() {
-		scanner := bufio.NewScanner(proxyStdout)
-		for scanner.Scan() {
-			fmt.Printf("[PROXY] %s\n", scanner.Text())
-		}
-	}()
-	go func() {
-		scanner := bufio.NewScanner(proxyStderr)
-		for scanner.Scan() {
-			fmt.Printf("[PROXY] %s\n", scanner.Text())
-		}
-	}()
-
-	// Create admin command
-	adminCmd = exec.Command("go", "run", "../../cmd/gateway/main.go", "admin")
-	adminCmd.Dir = wd
-	adminCmd.Env = append(os.Environ(),
-		"ENV_FILE=../../.env.functional",
-		"TLS_CERTS_BASE_PATH=/tmp/certs",
-	)
-	adminCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	// Capture admin server output
-	adminStdout, err := adminCmd.StdoutPipe()
-	if err != nil {
-		log.Fatalf("Failed to create admin stdout pipe: %v", err)
-	}
-	adminStderr, err := adminCmd.StderrPipe()
-	if err != nil {
-		log.Fatalf("Failed to create admin stderr pipe: %v", err)
-	}
-
-	// Start goroutines to capture and log admin server output
-	go func() {
-		scanner := bufio.NewScanner(adminStdout)
-		for scanner.Scan() {
-			fmt.Printf("[ADMIN] %s\n", scanner.Text())
-		}
-	}()
-	go func() {
-		scanner := bufio.NewScanner(adminStderr)
-		for scanner.Scan() {
-			fmt.Printf("[ADMIN] %s\n", scanner.Text())
-		}
-	}()
-
-	fmt.Println("✨ Starting ProxyConfig Server:", proxyCmd.String())
-	fmt.Printf("   Command: %s\n", proxyCmd.String())
-	fmt.Printf("   Working directory: %s\n", proxyCmd.Dir)
-	if err := proxyCmd.Start(); err != nil {
-		log.Fatalf("Failed to start proxy: %v", err)
-	}
-	fmt.Printf("   Proxy server started with PID: %d\n", proxyCmd.Process.Pid)
-
-	// Monitor process exit in background
-	exitChan := make(chan bool, 1)
-	go func() {
-		if err := proxyCmd.Wait(); err != nil {
-			fmt.Printf("[PROXY EXIT] Process exited with error: %v\n", err)
-		} else {
-			fmt.Printf("[PROXY EXIT] Process exited successfully\n")
-		}
-		if state := proxyCmd.ProcessState; state != nil {
-			fmt.Printf("[PROXY EXIT] Exit code: %d\n", state.ExitCode())
-		}
-		exitChan <- true
-	}()
-
-	// Wait a bit and check if process exited immediately
-	select {
-	case <-exitChan:
-		log.Printf("❌ Proxy server exited immediately! Check logs above for errors.")
-		time.Sleep(2 * time.Second) // Give time for logs to be captured
-	case <-time.After(2 * time.Second):
-		fmt.Printf("✅ Proxy server still running after 2 seconds\n")
-	}
-
-	time.Sleep(3 * time.Second) // Additional wait for server to start
-
-	// Check if proxy process is still running
-	if proxyCmd.Process != nil {
-		if err := proxyCmd.Process.Signal(syscall.Signal(0)); err != nil {
-			log.Printf("⚠ Warning: Proxy server process may have exited: %v", err)
-		} else {
-			fmt.Printf("✅ Proxy server process is still running (PID: %d)\n", proxyCmd.Process.Pid)
-		}
-		// Check if port is listening
-		checkPortListening(8081, "proxy")
-	} else {
-		log.Printf("❌ Proxy server process is nil")
-	}
-
-	fmt.Println("✨ Starting Admin Server:", adminCmd.String())
-	fmt.Printf("   Command: %s\n", adminCmd.String())
-	fmt.Printf("   Working directory: %s\n", adminCmd.Dir)
-	if err := adminCmd.Start(); err != nil {
-		log.Fatalf("Failed to start admin: %v", err)
-	}
-	fmt.Printf("   Admin server started with PID: %d\n", adminCmd.Process.Pid)
-
-	// Monitor process exit in background
-	adminExitChan := make(chan bool, 1)
-	go func() {
-		if err := adminCmd.Wait(); err != nil {
-			fmt.Printf("[ADMIN EXIT] Process exited with error: %v\n", err)
-		} else {
-			fmt.Printf("[ADMIN EXIT] Process exited successfully\n")
-		}
-		if state := adminCmd.ProcessState; state != nil {
-			fmt.Printf("[ADMIN EXIT] Exit code: %d\n", state.ExitCode())
-		}
-		adminExitChan <- true
-	}()
-
-	// Wait a bit and check if process exited immediately
-	select {
-	case <-adminExitChan:
-		log.Printf("❌ Admin server exited immediately! Check logs above for errors.")
-		time.Sleep(2 * time.Second) // Give time for logs to be captured
-	case <-time.After(2 * time.Second):
-		fmt.Printf("✅ Admin server still running after 2 seconds\n")
-	}
-
-	time.Sleep(3 * time.Second) // Additional wait for server to start
-
-	// Check if admin process is still running
-	if adminCmd.Process != nil {
-		if err := adminCmd.Process.Signal(syscall.Signal(0)); err != nil {
-			log.Printf("⚠ Warning: Admin server process may have exited: %v", err)
-		} else {
-			fmt.Printf("✅ Admin server process is still running (PID: %d)\n", adminCmd.Process.Pid)
-		}
-		// Check if port is listening
-		checkPortListening(8080, "admin")
-	} else {
-		log.Printf("❌ Admin server process is nil")
-	}
-
-	// Wait for servers to be ready
-	waitForServerReady("http://localhost:8081/__/health", "proxy server")
-	waitForServerReady("http://localhost:8080/version", "admin server")
+	waitForServerReady("http://localhost:8081/__/health", "proxy server", 8081)
+	waitForServerReady("http://localhost:8080/version", "admin server", 8080)
 
 	fmt.Println("🚀 Test Environment Ready")
 }
 
-func waitForServerReady(url, serverName string) {
+func buildGatewayBinary(env []string) string {
+	tmpDir, err := os.MkdirTemp("", "gateway-test-*")
+	if err != nil {
+		log.Fatalf("Failed to create temp dir for gateway binary: %v", err)
+	}
+	binaryPath := filepath.Join(tmpDir, "gateway")
+
+	fmt.Println("🔨 Pre-building gateway binary...")
+	start := time.Now()
+	cmd := exec.Command("go", "build", "-o", binaryPath, "../../cmd/gateway") //nolint:gosec // paths are controlled in test environment
+	cmd.Env = env
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		log.Fatalf("❌ Failed to build gateway binary: %v", err)
+	}
+	fmt.Printf("✅ Gateway binary built in %s\n", time.Since(start).Round(time.Millisecond))
+	return binaryPath
+}
+
+type prefixWriter struct {
+	prefix string
+	w      io.Writer
+	buf    []byte
+}
+
+func (pw *prefixWriter) Write(p []byte) (n int, err error) {
+	pw.buf = append(pw.buf, p...)
+	for {
+		idx := bytes.IndexByte(pw.buf, '\n')
+		if idx < 0 {
+			break
+		}
+		_, _ = fmt.Fprintf(pw.w, "%s%s\n", pw.prefix, string(pw.buf[:idx]))
+		pw.buf = pw.buf[idx+1:]
+	}
+	return len(p), nil
+}
+
+func (pw *prefixWriter) Flush() {
+	if len(pw.buf) > 0 {
+		_, _ = fmt.Fprintf(pw.w, "%s%s\n", pw.prefix, string(pw.buf))
+		pw.buf = nil
+	}
+}
+
+func startServer(label, mode string, env []string) *exec.Cmd {
+	cmd := exec.Command(gatewayBinaryPath, mode) //nolint:gosec // binary path is controlled in test environment
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	stdoutWriter := &prefixWriter{prefix: fmt.Sprintf("[%s] ", label), w: os.Stdout}
+	stderrWriter := &prefixWriter{prefix: fmt.Sprintf("[%s ERR] ", label), w: os.Stderr}
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
+
+	fmt.Printf("✨ Starting %s Server: %s %s\n", label, gatewayBinaryPath, mode)
+	if err := cmd.Start(); err != nil {
+		log.Fatalf("Failed to start %s: %v", label, err)
+	}
+	fmt.Printf("   %s server started with PID: %d\n", label, cmd.Process.Pid)
+
+	exitChan := make(chan struct{}, 1)
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			fmt.Printf("[%s EXIT] Process exited with error: %v\n", label, err)
+		} else {
+			fmt.Printf("[%s EXIT] Process exited successfully\n", label)
+		}
+		stdoutWriter.Flush()
+		stderrWriter.Flush()
+		if state := cmd.ProcessState; state != nil {
+			fmt.Printf("[%s EXIT] Exit code: %d\n", label, state.ExitCode())
+		}
+		close(exitChan)
+	}()
+
+	select {
+	case <-exitChan:
+		log.Fatalf("❌ %s server exited immediately! Check [%s] logs above for errors.", label, label)
+	case <-time.After(5 * time.Second):
+		fmt.Printf("✅ %s server still running after 5 seconds\n", label)
+	}
+
+	return cmd
+}
+
+func waitForServerReady(url, serverName string, port int) {
 	maxRetries := 30
 	retryInterval := time.Second
 
@@ -287,13 +223,14 @@ func waitForServerReady(url, serverName string) {
 			return
 		}
 		if resp != nil {
-			fmt.Printf("   Response status: %d\n", resp.StatusCode)
+			fmt.Printf("   %s response status: %d\n", serverName, resp.StatusCode)
 			_ = resp.Body.Close()
 		} else if err != nil {
-			fmt.Printf("   Connection error: %v\n", err)
+			fmt.Printf("   %s connection error: %v\n", serverName, err)
 		}
 
 		if i == maxRetries-1 {
+			checkPortListening(port, serverName)
 			log.Fatalf("❌ %s failed to become ready after %d seconds. Last error: %v", serverName, maxRetries, err)
 		}
 
@@ -317,7 +254,7 @@ func createTestDB(name string) {
 		if err.Error() == "pq: database \"functional_test\" already exists" {
 			return
 		}
-		log.Fatalf("Error creating databaase: %v", err)
+		log.Fatalf("Error creating database: %v", err)
 	}
 	fmt.Printf("✅ Database %s created\n", name)
 }
@@ -336,11 +273,14 @@ func teardownTestEnvironment() {
 		}
 	}
 	fmt.Printf("🗑 Servers Stopped\n")
+	if gatewayBinaryPath != "" {
+		_ = os.RemoveAll(filepath.Dir(gatewayBinaryPath))
+		fmt.Println("🗑 Gateway binary removed")
+	}
 	defer func() { _ = redisDB.Close() }()
 	dropTestDB(dbName)
 	redisDB.FlushDB(context.Background())
 	fmt.Printf("🗑 Redis flushed\n")
-
 }
 
 func dropTestDB(name string) {
@@ -365,19 +305,18 @@ func checkPortListening(port int, serverName string) {
 	cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port)) //nolint:gosec // port is controlled from hardcoded list
 	output, err := cmd.Output()
 	if err != nil {
-		fmt.Printf("⚠ Port %d is not listening (no process found) for %s server\n", port, serverName)
+		fmt.Printf("⚠ Port %d is NOT listening (no process found) for %s\n", port, serverName)
 		return
 	}
 	pidLines := strings.TrimSpace(string(output))
 	if pidLines == "" {
-		fmt.Printf("⚠ Port %d is not listening (no process found) for %s server\n", port, serverName)
+		fmt.Printf("⚠ Port %d is NOT listening (no process found) for %s\n", port, serverName)
 		return
 	}
-	pids := strings.Split(pidLines, "\n")
-	for _, pidStr := range pids {
+	for _, pidStr := range strings.Split(pidLines, "\n") {
 		pidStr = strings.TrimSpace(pidStr)
 		if pidStr != "" {
-			fmt.Printf("✅ Port %d is listening (PID: %s) for %s server\n", port, pidStr, serverName)
+			fmt.Printf("✅ Port %d is listening (PID: %s) for %s\n", port, pidStr, serverName)
 		}
 	}
 }

@@ -14,29 +14,24 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/firewall"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/bedrock_guardrail"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/bot_detector"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/code_sanitation"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/contextual_security"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/data_masking"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/external_api"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/injection_protection"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/ip_whitelist"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/neuraltrust_jailbreak"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/neuraltrust_moderation"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/neuraltrust_toxicity"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/request_size_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/token_rate_limiter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/toxicity_azure"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/toxicity_openai"
 	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
@@ -85,7 +80,6 @@ type manager struct {
 	plugins            map[string]pluginiface.Plugin
 	configurations     map[string][][]pluginTypes.PluginConfig
 	providerLocator    providersFactory.ProviderLocator
-	firewallFactory    firewall.ClientFactory
 	adapterRegistry    *adapter.Registry
 }
 
@@ -155,42 +149,10 @@ func (m *manager) InitializePlugins() {
 		m.logger.WithError(err).Error("Failed to register code sanitation plugin")
 	}
 
-	if err := m.RegisterPlugin(neuraltrust_jailbreak.NewNeuralTrustJailbreakPlugin(
-		m.logger,
-		m.firewallFactory,
-		m.fingerprintTracker,
-	)); err != nil {
-		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
-	}
-
-	if err := m.RegisterPlugin(contextual_security.NewContextualSecurityPlugin(
-		m.fingerprintTracker,
-		m.logger,
-	)); err != nil {
-		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
-	}
-
 	if err := m.RegisterPlugin(cors.NewCorsPlugin(
 		m.logger,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
-	}
-
-	if err := m.RegisterPlugin(neuraltrust_toxicity.NewNeuralTrustToxicity(
-		m.logger,
-		m.fingerprintTracker,
-		m.firewallFactory,
-	)); err != nil {
-		m.logger.WithError(err).Error("Failed to register toxicity neuraltrust plugin")
-	}
-
-	if err := m.RegisterPlugin(neuraltrust_moderation.NewNeuralTrustModerationPlugin(
-		m.logger,
-		m.fingerprintTracker,
-		m.providerLocator,
-		m.firewallFactory,
-	)); err != nil {
-		m.logger.WithError(err).Error("Failed to register neuraltrust moderation plugin")
 	}
 
 	if err := m.RegisterPlugin(bot_detector.NewBotDetectorPlugin(
