@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.17.8\n\nCommits since last release:\n- ba40bdd Merge pull request #324 from NeuralTrust/refactor/move-neuraltrust-firewalls\n- 4b6443a refator: move plugins\n- e91e3af refator: move plugins\n- 286bafd refator: move plugins\n"
+      "content": "Current version: 1.17.9\n\nCommits since last release:\n- fc2fed2 Merge pull request #325 from NeuralTrust/bump/upgrade-versions\n- a4d7e2a bump: upgrade versions\n"
     }
   ],
   "max_tokens": 200,

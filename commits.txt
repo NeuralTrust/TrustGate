@@ -1,4 +1,2 @@
-- ba40bdd Merge pull request #324 from NeuralTrust/refactor/move-neuraltrust-firewalls
-- 4b6443a refator: move plugins
-- e91e3af refator: move plugins
-- 286bafd refator: move plugins
+- fc2fed2 Merge pull request #325 from NeuralTrust/bump/upgrade-versions
+- a4d7e2a bump: upgrade versions
