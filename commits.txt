@@ -1,2 +1,2 @@
-- fc2fed2 Merge pull request #325 from NeuralTrust/bump/upgrade-versions
-- a4d7e2a bump: upgrade versions
+- 5c8fd14 Merge pull request #326 from NeuralTrust/fix/validate-plugin-ids
+- 1ebde01 feat: validate plugin ids

@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.17.9\n\nCommits since last release:\n- fc2fed2 Merge pull request #325 from NeuralTrust/bump/upgrade-versions\n- a4d7e2a bump: upgrade versions\n"
+      "content": "Current version: 1.17.10\n\nCommits since last release:\n- 5c8fd14 Merge pull request #326 from NeuralTrust/fix/validate-plugin-ids\n- 1ebde01 feat: validate plugin ids\n"
     }
   ],
   "max_tokens": 200,
