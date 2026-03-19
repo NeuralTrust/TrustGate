@@ -139,6 +139,7 @@ func TestCreateRule(t *testing.T) {
 			"methods":    []string{"GET"},
 			"plugin_chain": []map[string]interface{}{
 				{
+					"id":       "550e8400-e29b-41d4-a716-446655440001",
 					"name":     "rate_limiter",
 					"enabled":  true,
 					"priority": 1,

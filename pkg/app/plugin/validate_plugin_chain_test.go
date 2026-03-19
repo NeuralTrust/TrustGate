@@ -30,19 +30,19 @@ func TestValidate_Success(t *testing.T) {
 
 	pluginsConfig := []types.PluginConfig{
 		{
+			ID:      "550e8400-e29b-41d4-a716-446655440001",
 			Name:    "context_security",
 			Enabled: true,
-			// Level removed
-			Stage:    types.PreRequest,
+			Stage:   types.PreRequest,
 			Priority: 1,
 			Parallel: false,
 			Settings: map[string]interface{}{},
 		},
 		{
+			ID:      "550e8400-e29b-41d4-a716-446655440002",
 			Name:    "neuraltrust_jailbreak",
 			Enabled: true,
-			// Level removed
-			Stage:    types.PreRequest,
+			Stage:   types.PreRequest,
 			Priority: 1,
 			Parallel: false,
 			Settings: map[string]interface{}{},
@@ -51,6 +51,55 @@ func TestValidate_Success(t *testing.T) {
 	validator := plugin.NewValidatePluginChain(pluginManagerMock, gatewayRepositoryMock)
 	err := validator.Validate(context.Background(), uuid.New(), pluginsConfig)
 	assert.NoError(t, err)
+}
+
+func TestValidate_EmptyPluginIDAllowedOnCreate(t *testing.T) {
+	pluginMock := new(pluginifaceMocks.Plugin)
+	pluginMock.On("RequiredPlugins").Return([]string{})
+	pluginMock.On("Name").Return("context_security")
+	pluginMock.On("Stages").Return([]types.Stage{types.PreRequest})
+
+	pluginManagerMock := new(pluginsMocks.Manager)
+	pluginManagerMock.On("ValidatePlugin", mock.Anything, mock.Anything).Return(nil)
+	pluginManagerMock.On("GetPlugin", mock.Anything).Return(pluginMock)
+
+	gatewayRepositoryMock := new(gatewayMocks.Repository)
+
+	pluginsConfig := []types.PluginConfig{
+		{
+			ID:      "", // empty id allowed on create
+			Name:    "context_security",
+			Enabled: true,
+			Stage:   types.PreRequest,
+			Priority: 1,
+			Parallel: false,
+			Settings: map[string]interface{}{},
+		},
+	}
+	validator := plugin.NewValidatePluginChain(pluginManagerMock, gatewayRepositoryMock)
+	err := validator.Validate(context.Background(), uuid.New(), pluginsConfig)
+	assert.NoError(t, err)
+}
+
+func TestValidate_PluginIDMustBeValidUUID(t *testing.T) {
+	pluginManagerMock := new(pluginsMocks.Manager)
+	gatewayRepositoryMock := new(gatewayMocks.Repository)
+
+	pluginsConfig := []types.PluginConfig{
+		{
+			ID:      "not-a-valid-uuid",
+			Name:    "context_security",
+			Enabled: true,
+			Stage:   types.PreRequest,
+			Priority: 1,
+			Parallel: false,
+			Settings: map[string]interface{}{},
+		},
+	}
+	validator := plugin.NewValidatePluginChain(pluginManagerMock, gatewayRepositoryMock)
+	err := validator.Validate(context.Background(), uuid.New(), pluginsConfig)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "valid UUID")
 }
 
 func TestValidate_MissingRequiredPlugin(t *testing.T) {
@@ -75,10 +124,10 @@ func TestValidate_MissingRequiredPlugin(t *testing.T) {
 	)
 	pluginsConfig := []types.PluginConfig{
 		{
+			ID:      "550e8400-e29b-41d4-a716-446655440001",
 			Name:    "context_security",
 			Enabled: true,
-			// Level removed
-			Stage:    types.PreRequest,
+			Stage:   types.PreRequest,
 			Priority: 1,
 			Parallel: false,
 			Settings: map[string]interface{}{},
@@ -107,9 +156,10 @@ func TestValidate_SuccessPluginInGateway(t *testing.T) {
 			ID: uuid.New(),
 			RequiredPlugins: []types.PluginConfig{
 				{
-					Name:     "neuraltrust_jailbreak",
-					Enabled:  true,
-					Stage:    types.PreRequest,
+					ID:      "550e8400-e29b-41d4-a716-446655440002",
+					Name:    "neuraltrust_jailbreak",
+					Enabled: true,
+					Stage:   types.PreRequest,
 					Priority: 1,
 					Parallel: false,
 					Settings: map[string]interface{}{},
@@ -121,10 +171,10 @@ func TestValidate_SuccessPluginInGateway(t *testing.T) {
 
 	pluginsConfig := []types.PluginConfig{
 		{
+			ID:      "550e8400-e29b-41d4-a716-446655440001",
 			Name:    "context_security",
 			Enabled: true,
-			// Level removed
-			Stage:    types.PreRequest,
+			Stage:   types.PreRequest,
 			Priority: 1,
 			Parallel: false,
 			Settings: map[string]interface{}{},
@@ -152,9 +202,10 @@ func TestValidate_FailedPluginInChain_NotSameStage(t *testing.T) {
 			ID: uuid.New(),
 			RequiredPlugins: []types.PluginConfig{
 				{
-					Name:     "neuraltrust_jailbreak",
-					Enabled:  true,
-					Stage:    types.PostResponse,
+					ID:      "550e8400-e29b-41d4-a716-446655440002",
+					Name:    "neuraltrust_jailbreak",
+					Enabled: true,
+					Stage:   types.PostResponse,
 					Priority: 1,
 					Parallel: false,
 					Settings: map[string]interface{}{},
@@ -166,9 +217,10 @@ func TestValidate_FailedPluginInChain_NotSameStage(t *testing.T) {
 
 	pluginsConfig := []types.PluginConfig{
 		{
-			Name:     "context_security",
-			Enabled:  true,
-			Stage:    types.PreRequest,
+			ID:      "550e8400-e29b-41d4-a716-446655440001",
+			Name:    "context_security",
+			Enabled: true,
+			Stage:   types.PreRequest,
 			Priority: 1,
 			Parallel: false,
 			Settings: map[string]interface{}{},

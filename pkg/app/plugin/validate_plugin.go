@@ -5,6 +5,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
+	"github.com/google/uuid"
 )
 
 type ValidatePlugin struct {
@@ -19,6 +20,10 @@ func NewValidatePlugin(manager plugins.Manager) *ValidatePlugin {
 
 func (s *ValidatePlugin) Validate(plugin types.PluginConfig) error {
 	// Validate required fields
+	if err := ValidatePluginID(plugin.ID); err != nil {
+		return err
+	}
+
 	if plugin.Name == "" {
 		return fmt.Errorf("plugin name is required")
 	}
@@ -50,6 +55,16 @@ func (s *ValidatePlugin) Validate(plugin types.PluginConfig) error {
 
 	if err := s.manager.ValidatePlugin(plugin.Name, plugin); err != nil {
 		return err
+	}
+	return nil
+}
+
+func ValidatePluginID(id string) error {
+	if id == "" {
+		return fmt.Errorf("plugin id is required")
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return fmt.Errorf("plugin id must be a valid UUID: %w", err)
 	}
 	return nil
 }
