@@ -89,7 +89,6 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
-	p.logger.Debug(string(data))
 	deliveryChan := make(chan kafka.Event)
 	err = p.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &p.cfg.Topic, Partition: kafka.PartitionAny},
@@ -98,6 +97,8 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to produce message: %w", err)
 	}
+	p.logger.Info("trace delivered")
+	p.logger.Info(string(data))
 	e := <-deliveryChan
 	m, ok := e.(*kafka.Message)
 	if !ok {

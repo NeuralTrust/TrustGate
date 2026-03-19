@@ -34,6 +34,14 @@ func (v *validatePluginChain) Validate(ctx context.Context, gatewayID uuid.UUID,
 		return nil
 	}
 
+	for i, plugin := range pluginConfigs {
+		if plugin.ID != "" {
+			if err := ValidatePluginID(plugin.ID); err != nil {
+				return fmt.Errorf("plugin_chain[%d]: %w", i, err)
+			}
+		}
+	}
+
 	pluginMap := make(map[string]types.PluginConfig, len(pluginConfigs))
 	for _, plugin := range pluginConfigs {
 		pluginMap[plugin.Name] = plugin

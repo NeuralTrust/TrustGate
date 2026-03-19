@@ -55,6 +55,7 @@ func TestBotDetectorPlugin(t *testing.T) {
 		"active":     true,
 		"plugin_chain": []map[string]interface{}{
 			{
+				"id":       "550e8400-e29b-41d4-a716-446655440002",
 				"name":     "bot_detector",
 				"enabled":  true,
 				"priority": 0,
