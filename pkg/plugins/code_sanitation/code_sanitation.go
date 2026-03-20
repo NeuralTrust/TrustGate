@@ -515,6 +515,8 @@ func (p *CodeSanitationPlugin) sanitizeJSON(data interface{}, patterns map[Langu
 	contentType ContentType
 }, config Config) (interface{}, error) {
 	switch v := data.(type) {
+	case nil:
+		return nil, nil
 	case string:
 		sanitized := v
 		for lang, pattern := range patterns {
