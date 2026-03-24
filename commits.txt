@@ -1,2 +1,2 @@
-- 5c8fd14 Merge pull request #326 from NeuralTrust/fix/validate-plugin-ids
-- 1ebde01 feat: validate plugin ids
+- f6bcf44 Merge pull request #327 from NeuralTrust/fix/api-key-fallback
+- f600fe1 fic: api key fallback function
