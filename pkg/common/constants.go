@@ -17,3 +17,9 @@ const (
 
 	SemanticStrategyName = "semantic"
 )
+
+var FallbackAPIKeyHeaders = []string{
+	"x-goog-api-key",
+	"x-api-key",
+	"Authorization",
+}

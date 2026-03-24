@@ -104,7 +104,15 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 }
 
 func (m *authMiddleware) getAPIKeyHeader(ctx *fiber.Ctx) string {
-	return ctx.Get(common.TrustgateAuthHeader)
+	if v := ctx.Get(common.TrustgateAuthHeader); v != "" {
+		return v
+	}
+	for _, h := range common.FallbackAPIKeyHeaders {
+		if v := ctx.Get(h); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (m *authMiddleware) respondWithError(ctx *fiber.Ctx, status int, message string) error {
