@@ -37,6 +37,11 @@ func TestDetectFormat(t *testing.T) {
 			expect: FormatAnthropic,
 		},
 		{
+			name:   "anthropic with system array (cache_control)",
+			body:   `{"model":"claude-3","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}],"system":[{"type":"text","text":"you are helpful","cache_control":{"type":"ephemeral"}}],"max_tokens":4096}`,
+			expect: FormatAnthropic,
+		},
+		{
 			name:   "gemini with contents",
 			body:   `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`,
 			expect: FormatGemini,

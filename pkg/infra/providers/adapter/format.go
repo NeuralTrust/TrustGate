@@ -22,7 +22,7 @@ const (
 // Heuristics (evaluated in order):
 //  1. Has "contents" key                        → Gemini
 //  2. Has "anthropic_version" key               → Anthropic
-//  3. Has top-level "system" string AND "messages" → Anthropic
+//  3. Has top-level "system" (string or array) AND "messages" → Anthropic
 //  4. Has "inputText" key                       → Bedrock (Titan)
 //  5. Has "prompt" key without "messages"        → Bedrock (legacy Claude v2)
 //  6. Default (has "messages")                  → OpenAI
@@ -53,12 +53,16 @@ func DetectFormat(body []byte) Format {
 		return FormatAnthropic
 	}
 
-	// 3. Anthropic uses a top-level "system" string alongside "messages".
-	// OpenAI never has a top-level "system" – system prompts live inside the
-	// messages array.
+	// 3. Anthropic uses a top-level "system" alongside "messages".
+	// It can be a plain string or an array of content blocks (newer format
+	// with cache_control support). OpenAI never has a top-level "system".
 	if probe.System != nil && probe.Messages != nil {
 		var s string
 		if json.Unmarshal(probe.System, &s) == nil {
+			return FormatAnthropic
+		}
+		var arr []json.RawMessage
+		if json.Unmarshal(probe.System, &arr) == nil && len(arr) > 0 {
 			return FormatAnthropic
 		}
 	}
