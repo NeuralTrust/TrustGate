@@ -104,6 +104,12 @@ func (m *authMiddleware) Middleware() fiber.Handler {
 }
 
 func (m *authMiddleware) getAPIKeyHeader(ctx *fiber.Ctx) string {
+	headers := make(map[string]string)
+	ctx.Request().Header.VisitAll(func(key, value []byte) {
+		headers[string(key)] = string(value)
+	})
+	m.logger.WithField("headers", headers).Debug("incoming request headers")
+
 	if v := ctx.Get(common.TrustgateAuthHeader); v != "" {
 		return v
 	}
