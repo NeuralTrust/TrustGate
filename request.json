@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.18.0\n\nCommits since last release:\n- f6bcf44 Merge pull request #327 from NeuralTrust/fix/api-key-fallback\n- f600fe1 fic: api key fallback function\n"
+      "content": "Current version: 1.18.1\n\nCommits since last release:\n- cd289f6 Merge pull request #328 from NeuralTrust/fix/disable-tracing-logs\n- dd81918 fix: disabling traces logs\n"
     }
   ],
   "max_tokens": 200,
