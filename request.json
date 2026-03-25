@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.18.2\n\nCommits since last release:\n- 713c0d5 Merge pull request #329 from NeuralTrust/fix/anthropic-adapter-newest-version\n- 9f7bae8 fix: anthropic adapter newest version\n"
+      "content": "Current version: 1.18.3\n\nCommits since last release:\n- 72d5197 Merge pull request #330 from NeuralTrust/fix/anthropic-adapter-newest-version\n- ba71194 fix: add headers log\n"
     }
   ],
   "max_tokens": 200,

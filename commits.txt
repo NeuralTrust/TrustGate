@@ -1,2 +1,2 @@
-- 713c0d5 Merge pull request #329 from NeuralTrust/fix/anthropic-adapter-newest-version
-- 9f7bae8 fix: anthropic adapter newest version
+- 72d5197 Merge pull request #330 from NeuralTrust/fix/anthropic-adapter-newest-version
+- ba71194 fix: add headers log
