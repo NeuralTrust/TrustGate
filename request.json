@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.18.1\n\nCommits since last release:\n- cd289f6 Merge pull request #328 from NeuralTrust/fix/disable-tracing-logs\n- dd81918 fix: disabling traces logs\n"
+      "content": "Current version: 1.18.2\n\nCommits since last release:\n- 713c0d5 Merge pull request #329 from NeuralTrust/fix/anthropic-adapter-newest-version\n- 9f7bae8 fix: anthropic adapter newest version\n"
     }
   ],
   "max_tokens": 200,

@@ -1,2 +1,2 @@
-- cd289f6 Merge pull request #328 from NeuralTrust/fix/disable-tracing-logs
-- dd81918 fix: disabling traces logs
+- 713c0d5 Merge pull request #329 from NeuralTrust/fix/anthropic-adapter-newest-version
+- 9f7bae8 fix: anthropic adapter newest version
