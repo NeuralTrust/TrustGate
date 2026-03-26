@@ -414,6 +414,9 @@ func (s *streamState) collectStreamData(logger *logrus.Logger) []byte {
 
 	for line := range s.responseChan {
 		if len(line) > 0 {
+			if buffer.Len() > 0 {
+				buffer.WriteByte('\n')
+			}
 			if _, err := buffer.Write(line); err != nil {
 				logger.WithError(err).Error("error writing to stream buffer")
 			}
