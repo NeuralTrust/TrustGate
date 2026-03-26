@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.18.4\n\nCommits since last release:\n- 2577f03 Merge pull request #331 from NeuralTrust/fix/anthropic-adapter-newest-version\n- 79b4b10 fix: trustlens exporter\n- 3f56c4b fix: trustlens exporter\n- b28d8b1 fix: trustlens exporter\n- b308655 fix: trustlens exporter\n- 0d4bd2c fix: trustlens exporter\n- 769f0a6 fix: trustlens exporter\n"
+      "content": "Current version: 1.18.5\n\nCommits since last release:\n- 4915421 Merge pull request #332 from NeuralTrust/fix/anthropic-adapter-newest-version\n- b9c65b3 fix: stream output lines\n"
     }
   ],
   "max_tokens": 200,

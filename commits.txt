@@ -1,7 +1,2 @@
-- 2577f03 Merge pull request #331 from NeuralTrust/fix/anthropic-adapter-newest-version
-- 79b4b10 fix: trustlens exporter
-- 3f56c4b fix: trustlens exporter
-- b28d8b1 fix: trustlens exporter
-- b308655 fix: trustlens exporter
-- 0d4bd2c fix: trustlens exporter
-- 769f0a6 fix: trustlens exporter
+- 4915421 Merge pull request #332 from NeuralTrust/fix/anthropic-adapter-newest-version
+- b9c65b3 fix: stream output lines
