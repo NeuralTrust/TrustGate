@@ -41,8 +41,6 @@ type Event struct {
 	ResponseHeaders map[string][]string `json:"response_headers,omitempty"`
 	StatusCode      int                 `json:"status_code"`
 
-	LastStreamLine []byte `json:"-"`
-
 	TeamID string `json:"team_id,omitempty"`
 	AppID  string `json:"app_id,omitempty"`
 
