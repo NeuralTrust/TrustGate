@@ -108,11 +108,6 @@ func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 		p.cfg.Mapping = p.buildMappingWithDefaults(rule.TrustLens.Mapping)
 	}
 
-	if evt.LastStreamLine != nil {
-		if p.isValidJSON(evt.LastStreamLine) {
-			evt.Output = string(evt.LastStreamLine)
-		}
-	}
 	// Apply mapping transformations to the event and get extracted fields
 	extractedFields, err := p.applyMappingTransformations(&evt)
 	if err != nil {
