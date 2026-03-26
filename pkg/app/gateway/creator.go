@@ -68,7 +68,7 @@ func (c *creator) Create(
 			return nil, fmt.Errorf("failed to parse gateway id: %w", err)
 		}
 	} else {
-		id, err = uuid.NewV6()
+		id, err = uuid.NewV7()
 		if err != nil {
 			c.logger.WithError(err).Error("failed to generate UUID")
 			return nil, fmt.Errorf("failed to generate UUID: %w", err)

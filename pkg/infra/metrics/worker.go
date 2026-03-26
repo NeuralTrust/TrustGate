@@ -285,11 +285,6 @@ func (m *worker) feedEvent(
 				evt.Upstream.Target.Latency = int64(resp.TargetLatency)
 			}
 		}
-		if lastLine, ok := resp.Metadata["lastOutputLine"]; ok {
-			if lastLineBytes, ok := lastLine.([]byte); ok {
-				evt.LastStreamLine = lastLineBytes
-			}
-		}
 	}
 
 	return evt

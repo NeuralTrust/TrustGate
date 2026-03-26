@@ -227,7 +227,7 @@ func (m *metricsMiddleware) handleStreamResponse(
 	// data; the request-scoped context is already canceled by the time we process.
 	go func() {
 		streamStartTime := time.Now()
-		responseBody, lastLine := state.collectStreamData(m.logger)
+		responseBody := state.collectStreamData(m.logger)
 		streamDuration := float64(time.Since(streamStartTime).Microseconds()) / 1000
 
 		m.logger.Debug("stream channel closed")
@@ -241,12 +241,9 @@ func (m *metricsMiddleware) handleStreamResponse(
 			exporters,
 			inputRequest,
 			&types.ResponseContext{
-				Context:   context.Background(), // #nosec G118
-				GatewayID: gatewayID,
-				Headers:   headers,
-				Metadata: map[string]interface{}{
-					"lastOutputLine": lastLine,
-				},
+				Context:       context.Background(), // #nosec G118
+				GatewayID:     gatewayID,
+				Headers:       headers,
 				Body:          responseBody,
 				StatusCode:    statusCode,
 				ProcessAt:     new(time.Now()),
@@ -412,18 +409,16 @@ func (s *streamState) cleanup() {
 	close(s.modeChan)
 }
 
-func (s *streamState) collectStreamData(logger *logrus.Logger) ([]byte, []byte) {
+func (s *streamState) collectStreamData(logger *logrus.Logger) []byte {
 	var buffer bytes.Buffer
-	var lastLine []byte
 
 	for line := range s.responseChan {
 		if len(line) > 0 {
-			lastLine = line
 			if _, err := buffer.Write(line); err != nil {
 				logger.WithError(err).Error("error writing to stream buffer")
 			}
 		}
 	}
 
-	return buffer.Bytes(), lastLine
+	return buffer.Bytes()
 }

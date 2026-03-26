@@ -95,7 +95,7 @@ func (s *createAPIKeyHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	id, err := uuid.NewV6()
+	id, err := uuid.NewV7()
 	if err != nil {
 		s.logger.WithError(err).Error("failed to generate UUID")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
