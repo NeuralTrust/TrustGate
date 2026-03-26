@@ -137,7 +137,7 @@ func (s *createUpstreamHandler) buildUpstreamEntity(
 	req request.UpstreamRequest,
 	gatewayID uuid.UUID,
 ) (*upstream.Upstream, error) {
-	id, err := uuid.NewV6()
+	id, err := uuid.NewV7()
 	if err != nil {
 		s.logger.WithError(err).Error("failed to generate UUID")
 		return nil, fmt.Errorf("failed to generate UUID")
