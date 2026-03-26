@@ -241,10 +241,10 @@ func (m *metricsMiddleware) handleStreamResponse(
 			exporters,
 			inputRequest,
 			&types.ResponseContext{
-				Context:   context.Background(), // #nosec G118
-				GatewayID: gatewayID,
-				Headers:   headers,
-				Body:      responseBody,
+				Context:       context.Background(), // #nosec G118
+				GatewayID:     gatewayID,
+				Headers:       headers,
+				Body:          responseBody,
 				StatusCode:    statusCode,
 				ProcessAt:     new(time.Now()),
 				Rule:          rule,
