@@ -1,0 +1,16 @@
+{
+  "model": "gpt-4o-mini",
+  "response_format": { "type": "json_object" },
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a semver expert. Given a list of git commits, determine the appropriate version bump according to https://semver.org/\n\nRules:\n- MAJOR: incompatible API changes, breaking changes (look for: 'BREAKING CHANGE', 'breaking:', major refactors that change interfaces)\n- MINOR: new features, new endpoints, new capabilities added in a backward-compatible manner (look for: 'feat:', 'feature:', 'add:', new functionality)\n- PATCH: bug fixes, documentation, refactoring, dependency updates, CI changes, tests (look for: 'fix:', 'docs:', 'refactor:', 'chore:', 'ci:', 'test:')\n\nWhen in doubt, prefer PATCH over MINOR, and MINOR over MAJOR.\n\nRespond with ONLY a JSON object:\n{\"bump\": \"major|minor|patch\", \"reason\": \"one sentence explanation\"}"
+    },
+    {
+      "role": "user",
+      "content": "Current version: 1.18.4\n\nCommits since last release:\n- 2577f03 Merge pull request #331 from NeuralTrust/fix/anthropic-adapter-newest-version\n- 79b4b10 fix: trustlens exporter\n- 3f56c4b fix: trustlens exporter\n- b28d8b1 fix: trustlens exporter\n- b308655 fix: trustlens exporter\n- 0d4bd2c fix: trustlens exporter\n- 769f0a6 fix: trustlens exporter\n"
+    }
+  ],
+  "max_tokens": 200,
+  "temperature": 0
+}
