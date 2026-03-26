@@ -163,11 +163,6 @@ func (p *Exporter) Close() {
 	}
 }
 
-func (p *Exporter) isValidJSON(data []byte) bool {
-	var js interface{}
-	return json.Unmarshal(data, &js) == nil
-}
-
 func (p *Exporter) applyMappingTransformations(evt *metric_events.Event) (map[string]interface{}, error) {
 	extractedFields := make(map[string]interface{})
 
