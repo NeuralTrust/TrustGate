@@ -11,6 +11,12 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+type Attachment struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
+
 // RequestContext represents the context for a request
 type RequestContext struct {
 	C            *fiber.Ctx
@@ -23,6 +29,7 @@ type RequestContext struct {
 	Query        url.Values
 	Body         []byte
 	Messages     []string
+	Attachments  []Attachment
 	Metadata     map[string]interface{}
 	Stage        pluginTypes.Stage
 	ProcessAt    *time.Time
