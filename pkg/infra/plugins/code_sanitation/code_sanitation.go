@@ -65,40 +65,30 @@ const (
 var suspiciousChars = []byte{'<', '>', '(', ')', '{', '}', '[', ']', ';', '|', '&', '$', '`', '\\', '/', '\'', '"', '%', '='}
 
 // Predefined regex patterns for common code patterns - compiled once at package init
-// Matches dangerous function/method names. For functions that require (), we match the name only
-// (without the parenthesis) so sanitization preserves parameters for debugging: eval('x') -> ****('x')
+// Matches dangerous function/method names. Sanitization strips the dangerous wrapper:
+// function calls are unwrapped (eval('x') -> x), HTML tags are stripped, keywords are removed.
 var predefinedCodePatterns = map[Language]*regexp.Regexp{
-	// JavaScript pattern matches both literal < and JSON-escaped \u003c for script tags (including closing)
 	JavaScript: regexp.MustCompile(`(?i)(\beval\b|\bnew\s+Function\b|\bsetTimeout\b|\bsetInterval\b|` +
-		`\bdocument\.write\b|(<|\\u003[cC])\s*/?\s*script|\bwindow\.|\bdocument\.|\blocation\.|\bhistory\.|` +
-		`\blocalStorage\.|\bsessionStorage\.|\bXMLHttpRequest\b|\bfetch\b|\bwebsocket\b|\bpostMessage\b|\baddEventListener\b|` +
-		`\binnerHTML\b|\bouterHTML\b|\binsertAdjacentHTML\b|\bexecScript\b|\bcrypto\.subtle)`),
+		`\bdocument\.write\b|(<|\\u003[cC])\s*/?\s*script|\bexecScript\b)`),
 
-	Python: regexp.MustCompile(`(?i)(\bexec\b|\beval\b|\bcompile\b|\b__import__\b|\bsubprocess\.|\bos\.|\bsys\.|` +
-		`\bpickle\.|\bshelve\.|\bpty\.|\bcommands\.|\bimport\s+|\bfrom\s+\w+\s+import|\bopen\b|` +
-		`\bexecfile\b|\bmarshal\.loads\b|\byaml\.load\b|\bgetattr\b|\bsetattr\b|\bdelattr\b|\bhasattr\b|` +
-		`\bglobals\b|\blocals\b)`),
+	Python: regexp.MustCompile(`(?i)(\bexec\b|\beval\b|\b__import__\b|\bsubprocess\.|` +
+		`\bos\.system\b|\bos\.popen\b|\bexecfile\b)`),
 
-	PHP: regexp.MustCompile(`(?i)(\beval\b|\bassert\b|\bsystem\b|\bexec\b|\bpassthru\b|` +
-		`\bshell_exec\b|\bphpinfo\b|\binclude\b|\brequire\b|\binclude_once\b|` +
-		`\brequire_once\b|\bproc_open\b|\bpopen\b|\bcurl_exec\b|\bfopen\b|` +
-		`\bfile_get_contents\b|\bfile_put_contents\b|\bunserialize\b|\bcreate_function\b|` +
-		`\bpreg_replace\b|\bextract\b|\bparse_str\b|\bheader\b|\bmb_ereg_replace\b)`),
+	PHP: regexp.MustCompile(`(?i)(\beval\b|\bpassthru\b|\bshell_exec\b|\bphpinfo\b|` +
+		`\binclude_once\b|\brequire_once\b|\bproc_open\b|\bpopen\b|` +
+		`\bunserialize\b|\bcreate_function\b)`),
 
 	SQL: regexp.MustCompile(`(?i)(\bSELECT\s+.*\s+FROM|\bINSERT\s+INTO|\bUPDATE\s+.*\s+SET|\bDELETE\s+FROM|` +
 		`\bDROP\s+TABLE|\bALTER\s+TABLE|\bUNION\s+SELECT|\bUNION\s+ALL\s+SELECT|\bEXEC\s+sp_|\bEXECUTE\s+sp_|` +
 		`\bBULK\s+INSERT|\bMERGE\s+INTO|\bTRUNCATE\s+TABLE|\bCREATE\s+TABLE|\bCREATE\s+DATABASE|\bCREATE\s+INDEX|` +
-		`\bCREATE\s+PROCEDURE|\bCREATE\s+TRIGGER|\bGRANT\s+|\bREVOKE\s+|\bINTO\s+OUTFILE|\bINTO\s+DUMPFILE|` +
-		`\bLOAD\s+DATA|\bSELECT\s+INTO|\bWAITFOR\s+DELAY|\bBENCHMARK\b)`),
+		`\bCREATE\s+PROCEDURE|\bCREATE\s+TRIGGER|\bINTO\s+OUTFILE|\bINTO\s+DUMPFILE|` +
+		`\bLOAD\s+DATA|\bSELECT\s+INTO|\bWAITFOR\s+DELAY)`),
 
 	Shell: regexp.MustCompile(`(?i)(` +
-		`\bsh\s+-c|\bbash\s+-c|/bin/sh|/bin/bash|\bcurl\s+|\bwget\s+|` +
-		`\bnc\s+|\bnetcat\s+|\btelnet\s+|\bchmod\s+|\bchown\s+|\brm\s+-rf|` +
-		`\bmkdir\s+|\btouch\s+|\bcat\s+|\becho\s+|\bsudo\s+|\bsu\s+-|` +
-		`\bssh\s+|\bscp\s+|\brsync\s+|\bnmap\s+|\biptables\s+|\benv\s+|` +
-		`\bperl\s+-e|\bpython\s+-c|\bruby\s+-e|\bawk\s+|\bsed\s+|\bgrep\s+|\bxargs\s+|` +
+		`\bsh\s+-c|\bbash\s+-c|/bin/sh|/bin/bash|` +
+		`\brm\s+-rf|` +
+		`\bperl\s+-e|\bpython\s+-c|\bruby\s+-e|` +
 		`\(\)\s*\{\s*:\s*;\s*\}\s*;|` +
-		`\x60[^\x60]*\x60|` +
 		`\|\s*/usr/bin/id|` +
 		`\|\s*/bin/ls|` +
 		`;\s*/usr/bin/id|` +
@@ -121,40 +111,26 @@ var predefinedCodePatterns = map[Language]*regexp.Regexp{
 		`%0A.*?cat%20/etc|` +
 		`%0A.*?/usr/bin/id)`),
 
-	Java: regexp.MustCompile(`(?i)(\bRuntime\.getRuntime\(\)\.exec\b|\bProcessBuilder\b|\bSystem\.exit\b|` +
-		`\bClass\.forName\b|\.getMethod\b|\.invoke\b|\.newInstance\b|\bURLClassLoader\b|\bObjectInputStream\b|` +
-		`\bSecurityManager\b|\bSystem\.load\b|\bSystem\.loadLibrary\b|\.getConstructor\b|\.getDeclaredMethod\b|` +
-		`\.getDeclaredField\b|\.setAccessible\(true\)|\bjavax\.script\.|\bScriptEngine\b|\.defineClass\b|` +
-		`\.getRuntime\b|\.exec\b|\.deserialize\b)`),
+	Java: regexp.MustCompile(`(?i)(\bRuntime\.getRuntime\(\)\.exec\b|\bProcessBuilder\b|` +
+		`\bClass\.forName\b|\bURLClassLoader\b|\bObjectInputStream\b|` +
+		`\bSystem\.load\b|\bSystem\.loadLibrary\b|` +
+		`\.setAccessible\(true\)|\bjavax\.script\.|\bScriptEngine\b|\.defineClass\b|` +
+		`\.deserialize\b)`),
 
 	CSharp: regexp.MustCompile(`(?i)(\bSystem\.Diagnostics\.Process\.Start\b|\bnew\s+Process\b|` +
-		`\.StartInfo\.FileName|\.StandardOutput|\.StandardError|\bSystem\.Reflection\.Assembly\.Load\b|` +
-		`\bType\.GetType\b|\.InvokeMember\b|\bConvert\.FromBase64String\b|\bSystem\.Runtime\.Serialization|` +
-		`\bBinaryFormatter\b|\bObjectStateFormatter\b|\bLosFormatter\b|\bSystem\.Management|\bSystem\.CodeDom\.Compiler|` +
-		`\bCSharpCodeProvider\b|\bSystem\.Data\.SqlClient|\bSystem\.DirectoryServices|\bSystem\.IO\.File|` +
-		`\bSystem\.Net\.WebClient|\bSystem\.Net\.Sockets|\bSystem\.Xml\.XmlDocument|\bXmlReader\.Create\b)`),
+		`\bSystem\.Reflection\.Assembly\.Load\b|` +
+		`\bBinaryFormatter\b|\bObjectStateFormatter\b|\bLosFormatter\b|` +
+		`\bSystem\.CodeDom\.Compiler|\bCSharpCodeProvider\b|\bSystem\.Management)`),
 
-	Ruby: regexp.MustCompile(`(?i)(\beval\b|\bsystem\b|\bexec\b|` + "`" + `.*` + "`" + `|\%x\{|\bsend\b|` +
-		`\.constantize|\.classify|\.to_sym|\bKernel\.|\bProcess\.|\bIO\.|\bFile\.|\bDir\.|\bPathname\.|` +
-		`\bMarshal\.load\b|\bYAML\.load\b|\bCSV\.load\b|\bJSON\.load\b|\bERB\.new\b|\bTempfile\.|\bStringIO\.|\bURI\.|` +
-		`\bNet::HTTP|\bOpen3\.|\bShellwords\.|\binstance_eval\b|\bclass_eval\b|\bmodule_eval\b|\bdefine_method\b)`),
+	Ruby: regexp.MustCompile(`(?i)(\beval\b|\%x\{|\bOpen3\.|` +
+		`\bMarshal\.load\b|\bYAML\.load\b|\bERB\.new\b|` +
+		`\binstance_eval\b|\bclass_eval\b|\bmodule_eval\b|\bdefine_method\b|` +
+		`\.constantize\b)`),
 
-	// HTML pattern matches both literal < and JSON-escaped \u003c variants, including closing tags
-	// Note: CSS attribute selectors are matched only for dangerous patterns (on* events, style with expressions)
-	// to avoid false positives with Markdown links like [text](url)
-	HTML: regexp.MustCompile(`(?i)((<|\\u003[cC])\s*/?\s*script|(<|\\u003[cC])\s*/?\s*iframe|(<|\\u003[cC])\s*/?\s*object|` +
-		`(<|\\u003[cC])\s*/?\s*embed|(<|\\u003[cC])\s*/?\s*applet|(<|\\u003[cC])\s*/?\s*meta|` +
-		`(<|\\u003[cC])\s*/?\s*link|(<|\\u003[cC])\s*/?\s*style|(<|\\u003[cC])\s*/?\s*form|(<|\\u003[cC])\s*/?\s*input|` +
-		`(<|\\u003[cC])\s*/?\s*button|(<|\\u003[cC])\s*img[^>]+\bon\w+\s*=|\bon\w+\s*=|` +
-		`\bjavascript:|\bvbscript:|\bdata:\s*text/html|\bdata:\s*application/javascript|` +
-		`\bdata:\s*application/x-javascript|\bdata:\s*text/javascript|\bbase64\b|\bexpression\b|\burl\s*\(|` +
-		`@import|\bdocument\.|\bwindow\.|\[on\w+\s*=|\[style\s*=|-moz-binding|` +
-		`\bbehavior:|@charset|(<|\\u003[cC])\s*/?\s*svg|(<|\\u003[cC])\s*/?\s*animate|(<|\\u003[cC])\s*/?\s*set|` +
-		`(<|\\u003[cC])\s*/?\s*handler|(<|\\u003[cC])\s*/?\s*listener|(<|\\u003[cC])\s*/?\s*tbreak|` +
-		`(<|\\u003[cC])\s*/?\s*tcopy|(<|\\u003[cC])\s*/?\s*tref|(<|\\u003[cC])\s*/?\s*video|(<|\\u003[cC])\s*/?\s*audio|` +
-		`(<|\\u003[cC])\s*/?\s*source|(<|\\u003[cC])\s*/?\s*html|(<|\\u003[cC])\s*/?\s*body|(<|\\u003[cC])\s*/?\s*head|` +
-		`(<|\\u003[cC])\s*/?\s*title|(<|\\u003[cC])\s*/?\s*base|(<|\\u003[cC])\s*/?\s*frameset|(<|\\u003[cC])\s*/?\s*frame|` +
-		`(<|\\u003[cC])\s*/?\s*marquee)`),
+	HTML: regexp.MustCompile(`(?i)((<|\\u003[cC])\s*/?\s*script|(<|\\u003[cC])\s*/?\s*iframe|` +
+		`(<|\\u003[cC])\s*/?\s*object|(<|\\u003[cC])\s*/?\s*embed|(<|\\u003[cC])\s*/?\s*applet|` +
+		`\bon\w+\s*=|\bjavascript:|\bvbscript:|` +
+		`\bdata:\s*text/html|\bdata:\s*text/javascript|\bdata:\s*application/javascript)`),
 }
 
 // compiledConfigCache caches compiled configurations to avoid recompiling on every request
@@ -171,7 +147,6 @@ type compiledConfig struct {
 	action           Action
 	statusCode       int
 	errorMessage     string
-	sanitizeChar     string
 	checkHeaders     bool
 	checkPathQuery   bool
 	checkBody        bool
@@ -192,7 +167,6 @@ type Config struct {
 	Action            Action           `mapstructure:"action"`
 	StatusCode        int              `mapstructure:"status_code"`
 	ErrorMessage      string           `mapstructure:"error_message"`
-	SanitizeChar      string           `mapstructure:"sanitize_char"`
 }
 
 // LanguageConfig represents configuration for a language
@@ -277,10 +251,6 @@ func (p *CodeSanitationPlugin) ValidateConfig(config pluginTypes.PluginConfig) e
 	if cfg.ErrorMessage == "" {
 		cfg.ErrorMessage = "Potential code injection detected"
 	}
-	if cfg.SanitizeChar == "" {
-		cfg.SanitizeChar = "X"
-	}
-
 	return nil
 }
 
@@ -343,7 +313,6 @@ func (p *CodeSanitationPlugin) compileConfig(config *Config) (*compiledConfig, e
 		action:           config.Action,
 		statusCode:       config.StatusCode,
 		errorMessage:     config.ErrorMessage,
-		sanitizeChar:     config.SanitizeChar,
 	}
 
 	if compiled.statusCode == 0 {
@@ -351,9 +320,6 @@ func (p *CodeSanitationPlugin) compileConfig(config *Config) (*compiledConfig, e
 	}
 	if compiled.errorMessage == "" {
 		compiled.errorMessage = "Potential code injection detected"
-	}
-	if compiled.sanitizeChar == "" {
-		compiled.sanitizeChar = "*"
 	}
 
 	for _, contentType := range config.ContentToCheck {
@@ -533,7 +499,7 @@ func (p *CodeSanitationPlugin) checkHeaders(
 						PatternName: string(lang),
 						Match:       match,
 					})
-					sanitized = p.sanitizeCode(sanitized, pattern, compiled.sanitizeChar)
+					sanitized = p.sanitizeCode(sanitized, pattern)
 					detected = true
 				}
 			}
@@ -547,7 +513,7 @@ func (p *CodeSanitationPlugin) checkHeaders(
 							PatternName: name,
 							Match:       match,
 						})
-						sanitized = p.sanitizeCode(sanitized, cp.pattern, compiled.sanitizeChar)
+						sanitized = p.sanitizeCode(sanitized, cp.pattern)
 						detected = true
 					}
 				}
@@ -585,7 +551,7 @@ func (p *CodeSanitationPlugin) checkPathAndQuery(
 						PatternName: string(lang),
 						Match:       match,
 					})
-					path = p.sanitizeCode(path, pattern, compiled.sanitizeChar)
+					path = p.sanitizeCode(path, pattern)
 				}
 			}
 		}
@@ -616,7 +582,7 @@ func (p *CodeSanitationPlugin) checkPathAndQuery(
 						PatternName: string(lang),
 						Match:       match,
 					})
-					sanitized = p.sanitizeCode(sanitized, pattern, compiled.sanitizeChar)
+					sanitized = p.sanitizeCode(sanitized, pattern)
 				}
 			}
 			req.Query[key][i] = sanitized
@@ -654,7 +620,7 @@ func (p *CodeSanitationPlugin) checkBody(
 					PatternName: string(lang),
 					Match:       match,
 				})
-				sanitized = p.sanitizeCode(sanitized, pattern, compiled.sanitizeChar)
+				sanitized = p.sanitizeCode(sanitized, pattern)
 			}
 		}
 		req.Body = []byte(sanitized)
@@ -697,7 +663,7 @@ func (p *CodeSanitationPlugin) sanitizeJSON(data interface{}, compiled *compiled
 					PatternName: string(lang),
 					Match:       match,
 				})
-				sanitized = p.sanitizeCode(sanitized, pattern, compiled.sanitizeChar)
+				sanitized = p.sanitizeCode(sanitized, pattern)
 			}
 		}
 		return sanitized, events
@@ -728,14 +694,128 @@ func (p *CodeSanitationPlugin) sanitizeJSON(data interface{}, compiled *compiled
 	}
 }
 
-func (p *CodeSanitationPlugin) sanitizeCode(
-	input string,
-	pattern *regexp.Regexp,
-	sanitizeChar string,
-) string {
-	return pattern.ReplaceAllStringFunc(input, func(match string) string {
-		return strings.Repeat(sanitizeChar, len(match))
-	})
+func (p *CodeSanitationPlugin) sanitizeCode(input string, pattern *regexp.Regexp) string {
+	locs := pattern.FindAllStringIndex(input, -1)
+	if len(locs) == 0 {
+		return input
+	}
+
+	var result strings.Builder
+	lastEnd := 0
+
+	for _, loc := range locs {
+		start, end := loc[0], loc[1]
+
+		if start < lastEnd {
+			continue
+		}
+
+		result.WriteString(input[lastEnd:start])
+		matchStr := input[start:end]
+
+		if isHTMLTagMatch(matchStr) {
+			tagName := extractHTMLTagName(matchStr)
+			if tagName == "" {
+				lastEnd = end
+				continue
+			}
+			pairPattern := `(?i)(<|\\u003[cC])\s*` + regexp.QuoteMeta(tagName) +
+				`[^>]*>([\s\S]*?)(<|\\u003[cC])\s*/\s*` + regexp.QuoteMeta(tagName) + `\s*>`
+			if pairRe, err := regexp.Compile(pairPattern); err == nil {
+				if pairLoc := pairRe.FindStringIndex(input[start:]); pairLoc != nil && pairLoc[0] == 0 {
+					if sub := pairRe.FindStringSubmatch(input[start:]); sub != nil {
+						result.WriteString(sub[2])
+						lastEnd = start + pairLoc[1]
+						continue
+					}
+				}
+			}
+			tagEnd := end
+			for tagEnd < len(input) && input[tagEnd] != '>' {
+				tagEnd++
+			}
+			if tagEnd < len(input) {
+				tagEnd++
+			}
+			lastEnd = tagEnd
+		} else if content, callEnd := unwrapFunctionCall(input, end); callEnd > 0 {
+			result.WriteString(content)
+			lastEnd = callEnd
+		} else {
+			lastEnd = end
+		}
+	}
+
+	result.WriteString(input[lastEnd:])
+	return result.String()
+}
+
+func isHTMLTagMatch(match string) bool {
+	m := strings.TrimSpace(match)
+	return strings.HasPrefix(m, "<") || strings.HasPrefix(strings.ToLower(m), "\\u003")
+}
+
+func extractHTMLTagName(match string) string {
+	m := strings.TrimSpace(match)
+	lower := strings.ToLower(m)
+	if strings.HasPrefix(lower, "\\u003c") {
+		m = m[6:]
+	} else if len(m) > 0 && m[0] == '<' {
+		m = m[1:]
+	} else {
+		return ""
+	}
+	m = strings.TrimSpace(m)
+	if len(m) > 0 && m[0] == '/' {
+		m = strings.TrimSpace(m[1:])
+	}
+	var name strings.Builder
+	for _, c := range m {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			name.WriteRune(c)
+		} else {
+			break
+		}
+	}
+	return name.String()
+}
+
+func unwrapFunctionCall(input string, matchEnd int) (string, int) {
+	i := matchEnd
+	for i < len(input) && (input[i] == ' ' || input[i] == '\t') {
+		i++
+	}
+	if i >= len(input) || input[i] != '(' {
+		return "", -1
+	}
+
+	depth := 1
+	contentStart := i + 1
+	i++
+	for i < len(input) && depth > 0 {
+		switch input[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		}
+		i++
+	}
+	if depth != 0 {
+		return "", -1
+	}
+
+	callEnd := i
+	content := strings.TrimSpace(input[contentStart : callEnd-1])
+
+	if len(content) >= 2 {
+		first, last := content[0], content[len(content)-1]
+		if (first == '\'' || first == '"' || first == '`') && first == last {
+			content = content[1 : len(content)-1]
+		}
+	}
+
+	return content, callEnd
 }
 
 func getConfigHash(config *Config) string {
