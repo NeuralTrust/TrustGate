@@ -1,2 +1,3 @@
-- 4915421 Merge pull request #332 from NeuralTrust/fix/anthropic-adapter-newest-version
-- b9c65b3 fix: stream output lines
+- ef3cb0f Merge pull request #333 from NeuralTrust/refactor/fasttp-client
+- 26712dc fix: rebuild code santitization
+- e4c91ba refactor: http client
