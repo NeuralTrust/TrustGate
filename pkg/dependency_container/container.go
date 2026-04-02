@@ -13,10 +13,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
 	middleware "github.com/NeuralTrust/TrustGate/pkg/server/middleware"
 	audit "github.com/NeuralTrust/audit-sdk-go"
-	"github.com/valyala/fasthttp"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
@@ -100,17 +100,16 @@ type ContainerDI struct {
 }
 
 func NewContainer(di ContainerDI) (*Container, error) {
-	httpClient := &fasthttp.Client{
-		ReadTimeout:                   10 * time.Second,
-		WriteTimeout:                  10 * time.Second,
-		MaxConnsPerHost:               16384,
-		MaxIdleConnDuration:           120 * time.Second,
-		ReadBufferSize:                32768,
-		WriteBufferSize:               32768,
-		NoDefaultUserAgentHeader:      true,
-		DisableHeaderNamesNormalizing: true,
-		DisablePathNormalizing:        true,
-	}
+	httpClient := httpx.NewFastHTTPClient(
+		httpx.WithTimeout(10*time.Second),
+		httpx.WithMaxConnsPerHost(16384),
+		httpx.WithMaxIdleConnDuration(120*time.Second),
+		httpx.WithReadBufferSize(32768),
+		httpx.WithWriteBufferSize(32768),
+		httpx.WithNoDefaultUserAgentHeader(true),
+		httpx.WithDisableHeaderNamesNormalizing(true),
+		httpx.WithDisablePathNormalizing(true),
+	)
 
 	cacheConfig := cache.Config{
 		Host:     di.Cfg.Redis.Host,
@@ -138,7 +137,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	embeddingRepository := repository.NewRedisEmbeddingRepository(cacheInstance)
 	descriptionEmbeddingCreator := appUpstream.NewDescriptionEmbeddingCreator(embeddingServiceLocator, embeddingRepository, di.Logger)
 
-	providerFactory := providersFactory.NewProviderLocator(httpClient)
+	providerFactory := providersFactory.NewProviderLocator()
 
 	oauthTokenClient := oauth.NewTokenClient()
 

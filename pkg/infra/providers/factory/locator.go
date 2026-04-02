@@ -10,7 +10,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/google"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/mistral"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
-	"github.com/valyala/fasthttp"
 )
 
 // Provider name constants — aliased from the providers package so existing
@@ -29,14 +28,10 @@ const (
 type ProviderLocator interface {
 	Get(provider string) (providers.Client, error)
 }
-type providerLocator struct {
-	httpClient *fasthttp.Client
-}
+type providerLocator struct{}
 
-func NewProviderLocator(httpClient *fasthttp.Client) ProviderLocator {
-	return &providerLocator{
-		httpClient: httpClient,
-	}
+func NewProviderLocator() ProviderLocator {
+	return &providerLocator{}
 }
 
 func (f *providerLocator) Get(provider string) (providers.Client, error) {

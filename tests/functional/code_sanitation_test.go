@@ -15,8 +15,8 @@ import (
 )
 
 // TestCodeSanitation_SanitizeMode tests the code_sanitation plugin in sanitize mode.
-// When code injection patterns are detected, they are sanitized (replaced with *)
-// instead of blocking the request.
+// When code injection patterns are detected, dangerous wrappers are stripped
+// (e.g. eval('x') -> x) instead of blocking the request.
 func TestCodeSanitation_SanitizeMode(t *testing.T) {
 	defer RunTest(t, "CodeSanitation", time.Now())()
 	subdomain := fmt.Sprintf("code-sanitize-%d", time.Now().Unix())
@@ -117,12 +117,12 @@ func TestCodeSanitation_SanitizeMode(t *testing.T) {
 			description:    "exec should be sanitized but request should pass",
 		},
 		{
-			name:           "PHP system",
-			body:           map[string]interface{}{"cmd": "system('whoami')"},
+			name:           "PHP shell_exec",
+			body:           map[string]interface{}{"cmd": "shell_exec('whoami')"},
 			expectedStatus: 200,
 			checkField:     "cmd",
-			shouldNotHave:  "system",
-			description:    "system should be sanitized but request should pass",
+			shouldNotHave:  "shell_exec",
+			description:    "shell_exec should be sanitized but request should pass",
 		},
 		{
 			name:           "Script tag",
