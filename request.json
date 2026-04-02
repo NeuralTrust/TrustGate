@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.18.6\n\nCommits since last release:\n- ef3cb0f Merge pull request #333 from NeuralTrust/refactor/fasttp-client\n- 26712dc fix: rebuild code santitization\n- e4c91ba refactor: http client\n"
+      "content": "Current version: 1.18.7\n\nCommits since last release:\n- 174777d Merge pull request #334 from NeuralTrust/refactor/fasttp-client\n- f2728ff fix: add attachments on reqCtx\n"
     }
   ],
   "max_tokens": 200,
