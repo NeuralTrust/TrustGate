@@ -5,8 +5,8 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/openai"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/sirupsen/logrus"
-	"github.com/valyala/fasthttp"
 )
 
 const (
@@ -20,10 +20,10 @@ type EmbeddingServiceLocator interface {
 
 type embeddingServiceLocator struct {
 	logger     *logrus.Logger
-	httpClient *fasthttp.Client
+	httpClient *httpx.FastHTTPClient
 }
 
-func NewServiceLocator(logger *logrus.Logger, httpClient *fasthttp.Client) EmbeddingServiceLocator {
+func NewServiceLocator(logger *logrus.Logger, httpClient *httpx.FastHTTPClient) EmbeddingServiceLocator {
 	return &embeddingServiceLocator{
 		logger:     logger,
 		httpClient: httpClient,
@@ -33,7 +33,7 @@ func NewServiceLocator(logger *logrus.Logger, httpClient *fasthttp.Client) Embed
 func (l *embeddingServiceLocator) GetService(provider string) (embedding.Creator, error) {
 	switch provider {
 	case OpenAIProvider:
-		return openai.NewOpenAIEmbeddingService(l.httpClient, l.logger), nil
+		return openai.NewOpenAIEmbeddingService(l.httpClient.Underlying(), l.logger), nil
 	default:
 		return nil, fmt.Errorf("unsupported embedding provider: %s", provider)
 	}

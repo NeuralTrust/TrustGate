@@ -17,10 +17,15 @@ const (
 )
 
 type FastHTTPClientOptions struct {
-	Timeout             time.Duration
-	InsecureSkipVerify  bool
-	MaxConnsPerHost     int
-	MaxIdleConnDuration time.Duration
+	Timeout                       time.Duration
+	InsecureSkipVerify            bool
+	MaxConnsPerHost               int
+	MaxIdleConnDuration           time.Duration
+	NoDefaultUserAgentHeader      bool
+	DisableHeaderNamesNormalizing bool
+	DisablePathNormalizing        bool
+	ReadBufferSize                int
+	WriteBufferSize               int
 }
 
 type FastHTTPClientOption func(*FastHTTPClientOptions)
@@ -49,24 +54,65 @@ func WithMaxIdleConnDuration(duration time.Duration) FastHTTPClientOption {
 	}
 }
 
+func WithNoDefaultUserAgentHeader(v bool) FastHTTPClientOption {
+	return func(o *FastHTTPClientOptions) {
+		o.NoDefaultUserAgentHeader = v
+	}
+}
+
+func WithDisableHeaderNamesNormalizing(v bool) FastHTTPClientOption {
+	return func(o *FastHTTPClientOptions) {
+		o.DisableHeaderNamesNormalizing = v
+	}
+}
+
+func WithDisablePathNormalizing(v bool) FastHTTPClientOption {
+	return func(o *FastHTTPClientOptions) {
+		o.DisablePathNormalizing = v
+	}
+}
+
+func WithReadBufferSize(size int) FastHTTPClientOption {
+	return func(o *FastHTTPClientOptions) {
+		o.ReadBufferSize = size
+	}
+}
+
+func WithWriteBufferSize(size int) FastHTTPClientOption {
+	return func(o *FastHTTPClientOptions) {
+		o.WriteBufferSize = size
+	}
+}
+
 type FastHTTPClient struct {
 	client *fasthttp.Client
 }
 
-func NewFastHTTPClient(opts ...FastHTTPClientOption) Client {
-	options := &FastHTTPClientOptions{
+func defaultFastHTTPClientOptions() *FastHTTPClientOptions {
+	return &FastHTTPClientOptions{
 		Timeout:             DefaultTimeout,
 		MaxConnsPerHost:     DefaultMaxConnsPerHost,
 		MaxIdleConnDuration: DefaultMaxIdleConnDuration,
 	}
+}
 
+func applyFastHTTPClientOptions(opts ...FastHTTPClientOption) *FastHTTPClientOptions {
+	options := defaultFastHTTPClientOptions()
 	for _, opt := range opts {
 		opt(options)
 	}
+	return options
+}
 
+func newFastHTTPClientFromOptions(options *FastHTTPClientOptions) *fasthttp.Client {
 	client := &fasthttp.Client{
-		MaxConnsPerHost:     options.MaxConnsPerHost,
-		MaxIdleConnDuration: options.MaxIdleConnDuration,
+		MaxConnsPerHost:               options.MaxConnsPerHost,
+		MaxIdleConnDuration:           options.MaxIdleConnDuration,
+		NoDefaultUserAgentHeader:      options.NoDefaultUserAgentHeader,
+		DisableHeaderNamesNormalizing: options.DisableHeaderNamesNormalizing,
+		DisablePathNormalizing:        options.DisablePathNormalizing,
+		ReadBufferSize:                options.ReadBufferSize,
+		WriteBufferSize:               options.WriteBufferSize,
 	}
 
 	if options.Timeout > 0 {
@@ -80,8 +126,18 @@ func NewFastHTTPClient(opts ...FastHTTPClientOption) Client {
 		}
 	}
 
-	return &FastHTTPClient{client: client}
+	return client
 }
+
+func NewFastHTTPClient(opts ...FastHTTPClientOption) *FastHTTPClient {
+	return &FastHTTPClient{client: newFastHTTPClientFromOptions(applyFastHTTPClientOptions(opts...))}
+}
+
+func (c *FastHTTPClient) Underlying() *fasthttp.Client {
+	return c.client
+}
+
+var _ Client = (*FastHTTPClient)(nil)
 
 func (c *FastHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	fastReq := fasthttp.AcquireRequest()
