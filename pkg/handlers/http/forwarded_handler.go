@@ -723,7 +723,7 @@ func (h *forwardedHandler) forwardRequest(
 	default:
 		close(streamResponse)
 	}
-	return nil, fmt.Errorf("%v", reqErr)
+	return nil, fmt.Errorf("%w", reqErr)
 }
 
 func (h *forwardedHandler) applyTargetOAuth(
