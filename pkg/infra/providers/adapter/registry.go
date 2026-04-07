@@ -1,6 +1,38 @@
 package adapter
 
-import "fmt"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+)
+
+// RequestDecodeError signals that the incoming request body could not be
+// parsed into the expected provider format.  The handler should surface this
+// as an HTTP 400 instead of a 502.
+type RequestDecodeError struct {
+	Format Format
+	Cause  error
+}
+
+func (e *RequestDecodeError) Error() string {
+	return fmt.Sprintf("invalid request body for format %q: the payload could not be parsed as a valid %s API request", e.Format, e.Format)
+}
+
+func (e *RequestDecodeError) Unwrap() error { return e.Cause }
+
+// IsRequestDecodeError returns true when err (or any error in its chain) is a
+// RequestDecodeError, i.e. the caller sent a body that does not match the
+// expected provider format.
+func IsRequestDecodeError(err error) bool {
+	var target *RequestDecodeError
+	return errors.As(err, &target)
+}
+
+func isJSONError(err error) bool {
+	var synErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	return errors.As(err, &synErr) || errors.As(err, &typeErr)
+}
 
 // RequestAdapter converts between a provider's native request format and the
 // canonical internal model.
@@ -82,7 +114,14 @@ func (r *Registry) DecodeRequestFor(body []byte, providerFormat Format) (*Canoni
 	if err != nil {
 		return nil, fmt.Errorf("adapter request: %w", err)
 	}
-	return a.DecodeRequest(body)
+	cr, decErr := a.DecodeRequest(body)
+	if decErr != nil {
+		if isJSONError(decErr) {
+			return nil, &RequestDecodeError{Format: providerFormat, Cause: decErr}
+		}
+		return nil, decErr
+	}
+	return cr, nil
 }
 
 // AdaptRequest transforms a request body from source format to target format
@@ -105,6 +144,9 @@ func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, err
 
 	canonical, err := srcAdapter.DecodeRequest(body)
 	if err != nil {
+		if isJSONError(err) {
+			return nil, &RequestDecodeError{Format: source, Cause: err}
+		}
 		return nil, fmt.Errorf("adapter request decode (%s): %w", source, err)
 	}
 

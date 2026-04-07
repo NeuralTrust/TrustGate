@@ -396,10 +396,19 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		lb,
 	)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to forward request")
-		h.registryFailedEvent(metricsCollector, fiber.StatusInternalServerError, err, respCtx)
 		close(streamPluginData)
 		close(pluginsDone)
+
+		if adapter.IsRequestDecodeError(err) {
+			h.logger.WithError(err).Warn("Invalid request body")
+			h.registryFailedEvent(metricsCollector, fiber.StatusBadRequest, err, respCtx)
+			return h.handleErrorResponse(c, fiber.StatusBadRequest, fiber.Map{
+				"error": "invalid request body: the payload does not match the expected API format for the configured upstream",
+			})
+		}
+
+		h.logger.WithError(err).Error("Failed to forward request")
+		h.registryFailedEvent(metricsCollector, fiber.StatusInternalServerError, err, respCtx)
 		return h.handleErrorResponse(c, fiber.StatusBadGateway, fiber.Map{
 			"error":   "failed to forward request",
 			"message": err.Error(),
@@ -714,7 +723,7 @@ func (h *forwardedHandler) forwardRequest(
 	default:
 		close(streamResponse)
 	}
-	return nil, fmt.Errorf("%v", reqErr)
+	return nil, fmt.Errorf("%w", reqErr)
 }
 
 func (h *forwardedHandler) applyTargetOAuth(
@@ -1126,24 +1135,8 @@ func (h *forwardedHandler) handleStreamingRequest(dto *forwardedRequestDTO, clie
 }
 
 func (h *forwardedHandler) handleStreamingResponse(dto *forwardedRequestDTO, client *http.Client) (*types.ResponseContext, error) {
-	req := dto.req
-	target := dto.target
-
-	pathParams := h.getPathParamsFromContext(req.Context)
-	upstreamURL := h.buildUpstreamTargetUrl(target, pathParams)
-
-	if len(req.Query) > 0 {
-		queryString := req.Query.Encode()
-		if queryString != "" {
-			if strings.Contains(upstreamURL, "?") {
-				upstreamURL += "&" + queryString
-			} else {
-				upstreamURL += "?" + queryString
-			}
-		}
-	}
-
-	return infrahttpx.HandleHTTPStream(h.logger, client, upstreamURL, req, target, dto.streamResponse)
+	upstreamURL := h.rewriteTargetURL(dto)
+	return infrahttpx.HandleHTTPStream(h.logger, client, upstreamURL, dto.req, dto.target, dto.streamResponse)
 }
 
 func (h *forwardedHandler) buildUpstreamTargetUrl(target *types.UpstreamTargetDTO, pathParams map[string]string) string {

@@ -3,7 +3,6 @@ package httpx
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -38,8 +37,12 @@ func HandleHTTPStream(
 		}
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
+	if httpReq.Header.Get("Content-Type") == "" {
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
+	if httpReq.Header.Get("Accept") == "" {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	}
 	httpReq.Header.Set("Cache-Control", "no-cache")
 	httpReq.Header.Set("Connection", "keep-alive")
 
@@ -97,6 +100,10 @@ func HandleHTTPStream(
 		reader := bufio.NewReader(resp.Body)
 		for {
 			line, err := reader.ReadBytes('\n')
+			if len(line) > 0 {
+				_, _ = w.Write(line)
+				_ = w.Flush()
+			}
 			if err != nil {
 				if err != io.EOF {
 					logger.WithError(err).Error("error reading streaming response")
@@ -104,33 +111,12 @@ func HandleHTTPStream(
 				break
 			}
 
-			if bytes.HasPrefix(line, []byte("data: ")) {
-				line = bytes.TrimPrefix(line, []byte("data: "))
+			if bytes.HasPrefix(line, sseDataPrefix) {
+				payload := bytes.TrimSpace(bytes.TrimPrefix(line, sseDataPrefix))
+				if len(payload) > 0 && !bytes.Equal(payload, sseDoneMarker) {
+					fwd.Send(payload)
+				}
 			}
-
-			if len(line) <= 1 {
-				continue
-			}
-
-			var parsed map[string]interface{}
-			if err := json.Unmarshal(line, &parsed); err != nil {
-				fwd.Send(line)
-				_, _ = fmt.Fprintf(w, "data: %s\n", string(line)) // #nosec G705
-				_ = w.Flush()
-				continue
-			}
-
-			var buffer bytes.Buffer
-			encoder := json.NewEncoder(&buffer)
-			encoder.SetEscapeHTML(false)
-
-			if err := encoder.Encode(parsed); err != nil {
-				logger.WithError(err).Error("error encoding stream payload")
-				return
-			}
-			fwd.Send(buffer.Bytes())
-			_, _ = fmt.Fprintf(w, "data: %s\n", buffer.String())
-			_ = w.Flush()
 		}
 	})
 
