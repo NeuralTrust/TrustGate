@@ -3,6 +3,7 @@ package metrics
 import (
 	"sync"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/google/uuid"
 )
@@ -60,7 +61,7 @@ func (rc *Collector) Emit(evt *metric_events.Event) {
 	}
 
 	evt.TraceID = rc.traceID
-	evt.FingerprintID = rc.fingerprintID
+	evt.FingerprintID = fingerprint.CompactID(rc.fingerprintID)
 	evt.Params = rc.cfg.ExtraParams
 
 	for _, ep := range rc.embeddedParams {

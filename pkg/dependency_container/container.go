@@ -11,6 +11,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/policy"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
@@ -137,6 +138,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	embeddingRepository := repository.NewRedisEmbeddingRepository(cacheInstance)
 	descriptionEmbeddingCreator := appUpstream.NewDescriptionEmbeddingCreator(embeddingServiceLocator, embeddingRepository, di.Logger)
 
+	providers.SetDefaultHTTPTimeout(di.Cfg.Upstream.ProviderTimeout)
 	providerFactory := providersFactory.NewProviderLocator()
 
 	oauthTokenClient := oauth.NewTokenClient()

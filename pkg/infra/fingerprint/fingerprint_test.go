@@ -2,6 +2,7 @@ package fingerprint_test
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
@@ -45,7 +46,6 @@ func TestFromID_InvalidBase64(t *testing.T) {
 }
 
 func TestFromID_WrongFormat(t *testing.T) {
-	// Encode a string with only 3 parts (need at least 4)
 	raw := "part1|part2|part3"
 	encoded := base64.StdEncoding.EncodeToString([]byte(raw))
 	_, err := fingerprint.NewFromID(encoded)
@@ -80,5 +80,66 @@ func TestFingerprint_WithEmptyFields(t *testing.T) {
 	}
 	if restored.UserAgent != fp.UserAgent {
 		t.Errorf("expected UserAgent %q, got %q", fp.UserAgent, restored.UserAgent)
+	}
+}
+
+func TestCompactID_ShortFingerprint(t *testing.T) {
+	fp := fingerprint.Fingerprint{
+		UserID:    "user123",
+		Token:     "short-token",
+		IP:        "10.0.0.1",
+		UserAgent: "Mozilla/5.0",
+		SessionID: "sess-1",
+	}
+	id := fp.ID()
+	compacted := fingerprint.CompactID(id)
+
+	if compacted != id {
+		t.Errorf("CompactID should not modify short fingerprints, got %q want %q", compacted, id)
+	}
+}
+
+func TestCompactID_LongToken(t *testing.T) {
+	longToken := strings.Repeat("a", 800)
+	fp := fingerprint.Fingerprint{
+		UserID:    "user456",
+		Token:     longToken,
+		IP:        "10.3.0.4",
+		UserAgent: "google-genai-sdk/1.37.0",
+		SessionID: "",
+	}
+	id := fp.ID()
+	compacted := fingerprint.CompactID(id)
+
+	if len(compacted) >= len(id) {
+		t.Errorf("CompactID should shrink oversized fingerprint: original=%d compacted=%d", len(id), len(compacted))
+	}
+
+	decoded, err := fingerprint.NewFromID(compacted)
+	if err != nil {
+		t.Fatalf("CompactID result should be decodable: %v", err)
+	}
+	if decoded.UserID != fp.UserID {
+		t.Errorf("CompactID should preserve UserID: got %q want %q", decoded.UserID, fp.UserID)
+	}
+	if decoded.IP != fp.IP {
+		t.Errorf("CompactID should preserve IP: got %q want %q", decoded.IP, fp.IP)
+	}
+}
+
+func TestCompactID_Deterministic(t *testing.T) {
+	fp := fingerprint.Fingerprint{
+		UserID:    "user789",
+		Token:     strings.Repeat("x", 500),
+		IP:        "192.168.1.1",
+		UserAgent: strings.Repeat("z", 400),
+	}
+	id := fp.ID()
+
+	first := fingerprint.CompactID(id)
+	second := fingerprint.CompactID(id)
+
+	if first != second {
+		t.Error("CompactID must be deterministic for the same input")
 	}
 }

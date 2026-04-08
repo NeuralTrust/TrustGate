@@ -1,9 +1,17 @@
 package fingerprint
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"strings"
+)
+
+const (
+	maxTokenLen     = 128
+	maxUserAgentLen = 256
+	maxIDLen        = 512
 )
 
 type Fingerprint struct {
@@ -38,4 +46,29 @@ func NewFromID(id string) (*Fingerprint, error) {
 func (f Fingerprint) ID() string {
 	raw := f.UserID + "|" + f.Token + "|" + f.IP + "|" + f.UserAgent + "|" + f.SessionID
 	return base64.StdEncoding.EncodeToString([]byte(raw))
+}
+
+func hashField(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+func compactField(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return hashField(s)
+}
+
+func CompactID(id string) string {
+	if len(id) <= maxIDLen {
+		return id
+	}
+	fp, err := NewFromID(id)
+	if err != nil {
+		return hashField(id)
+	}
+	fp.Token = compactField(fp.Token, maxTokenLen)
+	fp.UserAgent = compactField(fp.UserAgent, maxUserAgentLen)
+	return fp.ID()
 }
