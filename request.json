@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.18.8\n\nCommits since last release:\n- 22b4cb2 Merge pull request #335 from NeuralTrust/fix/streaming-outside-providers\n- 14d4466 streaming outside provider\n- 1c9179d streaming outside provider\n"
+      "content": "Current version: 1.18.9\n\nCommits since last release:\n- 80282c0 Merge pull request #336 from NeuralTrust/fix/streaming-outside-providers\n- bf07137 fix: compact oversized fingerprint IDs and make upstream timeouts configurable\n"
     }
   ],
   "max_tokens": 200,
