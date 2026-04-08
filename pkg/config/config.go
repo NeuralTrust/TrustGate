@@ -4,6 +4,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 )
@@ -26,6 +27,14 @@ type Config struct {
 	WebSocket WebSocketConfig
 	TLS       TLSConfig
 	AuditLogs AuditLogsConfig
+	Upstream  UpstreamConfig
+}
+
+type UpstreamConfig struct {
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
+	StreamTimeout   time.Duration
+	ProviderTimeout time.Duration
 }
 
 type ServerConfig struct {
@@ -148,6 +157,11 @@ func Load() (*Config, error) {
 	tlsCurvePreferences := parseUint16Slice(getEnv("TLS_CURVE_PREFERENCES", "23,24,25"))
 	tlsCertsBasePath := getEnv("TLS_CERTS_BASE_PATH", "/tmp/certs")
 
+	upstreamReadTimeout := getEnvDuration("UPSTREAM_READ_TIMEOUT", 60*time.Second)
+	upstreamWriteTimeout := getEnvDuration("UPSTREAM_WRITE_TIMEOUT", 60*time.Second)
+	upstreamStreamTimeout := getEnvDuration("UPSTREAM_STREAM_TIMEOUT", 60*time.Second)
+	upstreamProviderTimeout := getEnvDuration("UPSTREAM_PROVIDER_TIMEOUT", 120*time.Second)
+
 	auditLogsEnabled := getEnvBool("ENABLE_AUDIT_LOGS", false)
 	auditLogsKafkaBrokers := getEnvSlice("AUDIT_LOGS_KAFKA_BROKERS", []string{})
 	auditLogsEventsTopic := getEnv("AUDIT_LOGS_EVENTS_TOPIC", "")
@@ -216,6 +230,12 @@ func Load() (*Config, error) {
 			AuditLogsIngestTopic: auditLogsIngestTopic,
 			TopicAutoCreate:      auditLogsTopicAutoCreate,
 		},
+		Upstream: UpstreamConfig{
+			ReadTimeout:     upstreamReadTimeout,
+			WriteTimeout:    upstreamWriteTimeout,
+			StreamTimeout:   upstreamStreamTimeout,
+			ProviderTimeout: upstreamProviderTimeout,
+		},
 	}
 
 	globalConfig = config
@@ -277,6 +297,21 @@ func parseUint16Slice(s string) []uint16 {
 		result = append(result, uint16(v))
 	}
 	return result
+}
+
+func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	if secs, err := strconv.Atoi(value); err == nil {
+		return time.Duration(secs) * time.Second
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return defaultValue
+	}
+	return d
 }
 
 func GetConfig() *Config {

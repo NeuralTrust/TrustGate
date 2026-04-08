@@ -10,8 +10,15 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// DefaultHTTPTimeout is the default timeout used by all provider HTTP clients.
-const DefaultHTTPTimeout = 120 * time.Second
+// DefaultHTTPTimeout is the timeout used by all provider HTTP clients.
+// Override with SetDefaultHTTPTimeout during initialization.
+var DefaultHTTPTimeout = 120 * time.Second
+
+func SetDefaultHTTPTimeout(d time.Duration) {
+	if d > 0 {
+		DefaultHTTPTimeout = d
+	}
+}
 
 // HTTPClientPool manages a pool of *http.Client instances keyed by provider
 // name. It uses singleflight to ensure only one client is created per key

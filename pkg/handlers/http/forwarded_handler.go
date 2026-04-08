@@ -93,9 +93,12 @@ type ForwardedHandlerDeps struct {
 }
 
 func NewForwardedHandler(deps ForwardedHandlerDeps) Handler {
+	readTimeout := deps.Cfg.Upstream.ReadTimeout
+	writeTimeout := deps.Cfg.Upstream.WriteTimeout
+
 	client := &fasthttp.Client{
-		ReadTimeout:                   60 * time.Second,
-		WriteTimeout:                  60 * time.Second,
+		ReadTimeout:                   readTimeout,
+		WriteTimeout:                  writeTimeout,
 		MaxConnsPerHost:               16384,
 		MaxIdleConnDuration:           120 * time.Second,
 		ReadBufferSize:                32768,
@@ -1092,7 +1095,7 @@ func (h *forwardedHandler) prepareHTTPClient(dto *forwardedRequestDTO) (*http.Cl
 	}
 
 	return &http.Client{
-		Timeout:   60 * time.Second,
+		Timeout:   h.cfg.Upstream.StreamTimeout,
 		Transport: transport,
 	}, nil
 }
