@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.18.9\n\nCommits since last release:\n- 80282c0 Merge pull request #336 from NeuralTrust/fix/streaming-outside-providers\n- bf07137 fix: compact oversized fingerprint IDs and make upstream timeouts configurable\n"
+      "content": "Current version: 1.18.10\n\nCommits since last release:\n- 764094a Merge pull request #337 from NeuralTrust/fix/normalize-modes\n- 0ff364f fix: normalize modes\n- f3481cd fix: normalize modes\n"
     }
   ],
   "max_tokens": 200,

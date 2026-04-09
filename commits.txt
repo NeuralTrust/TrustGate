@@ -1,2 +1,3 @@
-- 80282c0 Merge pull request #336 from NeuralTrust/fix/streaming-outside-providers
-- bf07137 fix: compact oversized fingerprint IDs and make upstream timeouts configurable
+- 764094a Merge pull request #337 from NeuralTrust/fix/normalize-modes
+- 0ff364f fix: normalize modes
+- f3481cd fix: normalize modes
