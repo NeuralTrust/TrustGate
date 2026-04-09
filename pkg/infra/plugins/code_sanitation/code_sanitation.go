@@ -135,7 +135,7 @@ type compiledConfig struct {
 	combinedPattern  *regexp.Regexp
 	languagePatterns map[Language]*regexp.Regexp
 	customPatterns   map[string]*compiledCustomPattern
-	action           pluginTypes.Option
+	mode             pluginTypes.Option
 	statusCode       int
 	errorMessage     string
 	checkHeaders     bool
@@ -155,7 +155,7 @@ type Config struct {
 	Languages         []LanguageConfig   `mapstructure:"languages"`
 	CustomPatterns    []PatternConfig    `mapstructure:"custom_patterns"`
 	ContentToCheck    []ContentType      `mapstructure:"content_to_check"`
-	Action            pluginTypes.Option `mapstructure:"action"`
+	Mode              pluginTypes.Option `mapstructure:"mode"`
 	StatusCode        int                `mapstructure:"status_code"`
 	ErrorMessage      string             `mapstructure:"error_message"`
 }
@@ -218,13 +218,13 @@ func (p *CodeSanitationPlugin) ValidateConfig(config pluginTypes.PluginConfig) e
 		}
 	}
 
-	if cfg.Action != OptionSanitize {
-		if err := pluginTypes.ValidateOptionAllowed(&cfg.Action, pluginTypes.OptionEnforce, pluginTypes.OptionObserve); err != nil {
+	if cfg.Mode != OptionSanitize {
+		if err := pluginTypes.ValidateOptionAllowed(&cfg.Mode, pluginTypes.OptionEnforce, pluginTypes.OptionObserve); err != nil {
 			return err
 		}
 	}
 
-	if cfg.Action == pluginTypes.OptionEnforce && (cfg.StatusCode < 100 || cfg.StatusCode > 599) {
+	if cfg.Mode == pluginTypes.OptionEnforce && (cfg.StatusCode < 100 || cfg.StatusCode > 599) {
 		return fmt.Errorf("invalid status code: %d", cfg.StatusCode)
 	}
 
@@ -303,7 +303,7 @@ func (p *CodeSanitationPlugin) compileConfig(config *Config) (*compiledConfig, e
 	compiled := &compiledConfig{
 		languagePatterns: make(map[Language]*regexp.Regexp),
 		customPatterns:   make(map[string]*compiledCustomPattern),
-		action:           config.Action,
+		mode:             config.Mode,
 		statusCode:       config.StatusCode,
 		errorMessage:     config.ErrorMessage,
 	}
@@ -441,13 +441,13 @@ func (p *CodeSanitationPlugin) executeParallel(
 	_ = g.Wait()
 
 	sanitized := len(allEvents) > 0
-	evtCtx.SetMode(compiled.action)
+	evtCtx.SetMode(compiled.mode)
 	evtCtx.SetExtras(CodeSanitationData{
 		Sanitized: sanitized,
 		Events:    allEvents,
 	})
 
-	if compiled.action == pluginTypes.OptionEnforce && len(allEvents) > 0 {
+	if compiled.mode == pluginTypes.OptionEnforce && len(allEvents) > 0 {
 		evtCtx.SetDecision(pluginTypes.DecisionBlock)
 		evtCtx.SetError(errors.New(compiled.errorMessage))
 		return nil, &pluginTypes.PluginError{
