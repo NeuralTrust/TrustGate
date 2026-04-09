@@ -24,7 +24,8 @@ import (
 )
 
 const (
-	PluginName = "code_sanitation"
+	PluginName     = "code_sanitation"
+	OptionSanitize = pluginTypes.Option("sanitize")
 )
 
 // Language represents a programming language to detect
@@ -50,14 +51,6 @@ const (
 	PathAndQuery ContentType = "path_and_query"
 	Body         ContentType = "body"
 	AllContent   ContentType = "all"
-)
-
-// Action represents what to do when code is detected
-type Action string
-
-const (
-	Block    Action = "block"
-	Sanitize Action = "sanitize"
 )
 
 // suspiciousChars contains characters that might indicate code injection
@@ -133,18 +126,16 @@ var predefinedCodePatterns = map[Language]*regexp.Regexp{
 		`\bdata:\s*text/html|\bdata:\s*text/javascript|\bdata:\s*application/javascript)`),
 }
 
-// compiledConfigCache caches compiled configurations to avoid recompiling on every request
 var (
 	configCache      = make(map[string]*compiledConfig)
 	configCacheMutex sync.RWMutex
 )
 
-// compiledConfig holds pre-compiled patterns and settings for a specific configuration
 type compiledConfig struct {
 	combinedPattern  *regexp.Regexp
 	languagePatterns map[Language]*regexp.Regexp
 	customPatterns   map[string]*compiledCustomPattern
-	action           Action
+	action           pluginTypes.Option
 	statusCode       int
 	errorMessage     string
 	checkHeaders     bool
@@ -160,13 +151,13 @@ type compiledCustomPattern struct {
 
 // Config represents the configuration for the code sanitation plugin
 type Config struct {
-	ApplyAllLanguages bool             `mapstructure:"apply_all_languages"`
-	Languages         []LanguageConfig `mapstructure:"languages"`
-	CustomPatterns    []PatternConfig  `mapstructure:"custom_patterns"`
-	ContentToCheck    []ContentType    `mapstructure:"content_to_check"`
-	Action            Action           `mapstructure:"action"`
-	StatusCode        int              `mapstructure:"status_code"`
-	ErrorMessage      string           `mapstructure:"error_message"`
+	ApplyAllLanguages bool               `mapstructure:"apply_all_languages"`
+	Languages         []LanguageConfig   `mapstructure:"languages"`
+	CustomPatterns    []PatternConfig    `mapstructure:"custom_patterns"`
+	ContentToCheck    []ContentType      `mapstructure:"content_to_check"`
+	Action            pluginTypes.Option `mapstructure:"action"`
+	StatusCode        int                `mapstructure:"status_code"`
+	ErrorMessage      string             `mapstructure:"error_message"`
 }
 
 // LanguageConfig represents configuration for a language
@@ -227,11 +218,13 @@ func (p *CodeSanitationPlugin) ValidateConfig(config pluginTypes.PluginConfig) e
 		}
 	}
 
-	if cfg.Action != Block && cfg.Action != Sanitize {
-		return fmt.Errorf("invalid action: %s", cfg.Action)
+	if cfg.Action != OptionSanitize {
+		if err := pluginTypes.ValidateOption(&cfg.Action); err != nil {
+			return err
+		}
 	}
 
-	if cfg.Action == Block && (cfg.StatusCode < 100 || cfg.StatusCode > 599) {
+	if cfg.Action == pluginTypes.OptionEnforce && (cfg.StatusCode < 100 || cfg.StatusCode > 599) {
 		return fmt.Errorf("invalid status code: %d", cfg.StatusCode)
 	}
 
@@ -448,18 +441,24 @@ func (p *CodeSanitationPlugin) executeParallel(
 	_ = g.Wait()
 
 	sanitized := len(allEvents) > 0
+	evtCtx.SetMode(compiled.action)
 	evtCtx.SetExtras(CodeSanitationData{
 		Sanitized: sanitized,
 		Events:    allEvents,
 	})
 
-	if compiled.action == Block && len(allEvents) > 0 {
+	if compiled.action == pluginTypes.OptionEnforce && len(allEvents) > 0 {
+		evtCtx.SetDecision(pluginTypes.DecisionBlock)
 		evtCtx.SetError(errors.New(compiled.errorMessage))
 		return nil, &pluginTypes.PluginError{
 			StatusCode: compiled.statusCode,
 			Message:    compiled.errorMessage,
 			Err:        fmt.Errorf("code injection detected in %d location(s)", len(allEvents)),
 		}
+	}
+
+	if sanitized {
+		evtCtx.SetDecision(pluginTypes.DecisionBlock)
 	}
 
 	return &pluginTypes.PluginResponse{

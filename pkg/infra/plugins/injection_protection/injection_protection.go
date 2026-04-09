@@ -3,7 +3,6 @@ package injection_protection
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -50,11 +49,6 @@ const (
 	AllContent   ContentType = "all"
 )
 
-type Action string
-
-const (
-	Block Action = "block"
-)
 
 var (
 	urlPatternForFP      = regexp.MustCompile(`(?i)(https?|ftp|file)://|/[a-z0-9_\-\.]+(?:/[a-z0-9_\-\.]+)*`)
@@ -219,7 +213,7 @@ type Config struct {
 		ContentToCheck ContentType `mapstructure:"content_to_check"`
 	} `mapstructure:"custom_injections"`
 	ContentToCheck []ContentType `mapstructure:"content_to_check"`
-	Action         Action        `mapstructure:"action"`
+	Action         pluginTypes.Option `mapstructure:"action"`
 	StatusCode     int           `mapstructure:"status_code"`
 	ErrorMessage   string        `mapstructure:"error_message"`
 }
@@ -267,8 +261,8 @@ func (p *InjectionProtectionPlugin) ValidateConfig(config pluginTypes.PluginConf
 		}
 	}
 
-	if cfg.Action != Block {
-		return fmt.Errorf("invalid action: %s", cfg.Action)
+	if err := pluginTypes.ValidateOption(&cfg.Action); err != nil {
+		return err
 	}
 
 	if cfg.StatusCode < 100 || cfg.StatusCode > 599 {
@@ -307,8 +301,11 @@ func (p *InjectionProtectionPlugin) Execute(
 	}
 
 	if cfg.Action == "" {
-		cfg.Action = Block
+		cfg.Action = pluginTypes.OptionEnforce
 	}
+
+	evtCtx.SetMode(cfg.Action)
+
 	if cfg.StatusCode == 0 {
 		cfg.StatusCode = 403
 	}
@@ -357,6 +354,26 @@ func (p *InjectionProtectionPlugin) Execute(
 	var firstResp *pluginTypes.PluginResponse
 	var firstErr error
 
+	captureResult := func(resp *pluginTypes.PluginResponse, err error) error {
+		if err != nil {
+			respMu.Lock()
+			if firstErr == nil {
+				firstResp = resp
+				firstErr = err
+			}
+			respMu.Unlock()
+			return err
+		}
+		if resp != nil {
+			respMu.Lock()
+			if firstResp == nil {
+				firstResp = resp
+			}
+			respMu.Unlock()
+		}
+		return nil
+	}
+
 	if contentTypeMap[Headers] || contentTypeMap[AllContent] {
 		g.Go(func() error {
 			select {
@@ -364,17 +381,7 @@ func (p *InjectionProtectionPlugin) Execute(
 				return nil
 			default:
 			}
-			resp, err := p.checkHeaders(req.Headers, patterns, customPatterns, cfg, evtCtx)
-			if err != nil {
-				respMu.Lock()
-				if firstErr == nil {
-					firstResp = resp
-					firstErr = err
-				}
-				respMu.Unlock()
-				return err
-			}
-			return nil
+			return captureResult(p.checkHeaders(req.Headers, patterns, customPatterns, cfg, evtCtx))
 		})
 	}
 
@@ -385,17 +392,7 @@ func (p *InjectionProtectionPlugin) Execute(
 				return nil
 			default:
 			}
-			resp, err := p.checkPathAndQuery(req, patterns, customPatterns, cfg, evtCtx)
-			if err != nil {
-				respMu.Lock()
-				if firstErr == nil {
-					firstResp = resp
-					firstErr = err
-				}
-				respMu.Unlock()
-				return err
-			}
-			return nil
+			return captureResult(p.checkPathAndQuery(req, patterns, customPatterns, cfg, evtCtx))
 		})
 	}
 
@@ -406,17 +403,7 @@ func (p *InjectionProtectionPlugin) Execute(
 				return nil
 			default:
 			}
-			resp, err := p.checkBody(req.Body, patterns, customPatterns, cfg, evtCtx)
-			if err != nil {
-				respMu.Lock()
-				if firstErr == nil {
-					firstResp = resp
-					firstErr = err
-				}
-				respMu.Unlock()
-				return err
-			}
-			return nil
+			return captureResult(p.checkBody(req.Body, patterns, customPatterns, cfg, evtCtx))
 		})
 	}
 
@@ -424,6 +411,10 @@ func (p *InjectionProtectionPlugin) Execute(
 
 	if firstErr != nil {
 		return firstResp, firstErr
+	}
+
+	if firstResp != nil {
+		return firstResp, nil
 	}
 
 	evtCtx.SetExtras(InjectionProtectionData{
@@ -632,7 +623,7 @@ func (p *InjectionProtectionPlugin) reportInjection(
 		truncatedMatch = truncatedMatch[:97] + "..."
 	}
 
-	evtCtx.SetError(errors.New("injection detected"))
+	evtCtx.SetDecision(pluginTypes.DecisionBlock)
 	evtCtx.SetExtras(InjectionProtectionData{
 		Blocked: true,
 		Event: &InjectionEvent{
@@ -641,6 +632,14 @@ func (p *InjectionProtectionPlugin) reportInjection(
 			Match:  truncatedMatch,
 		},
 	})
+
+	if cfg.Action == pluginTypes.OptionObserve {
+		return &pluginTypes.PluginResponse{
+			StatusCode: 200,
+			Message:    fmt.Sprintf("injection detected: %s (observe mode)", injectionType),
+		}, nil
+	}
+
 	return p.handleInjectionDetected(cfg, injectionType, match, source, field)
 }
 

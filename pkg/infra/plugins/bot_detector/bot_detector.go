@@ -28,18 +28,10 @@ const (
 	MinRetentionPeriod  = 300 // 5 minutes in seconds
 )
 
-type Action string
-
-const (
-	Observe  Action = "observe"
-	Throttle Action = "throttle"
-	Enforce  Action = "enforce"
-)
-
 type Config struct {
-	Threshold       float64 `mapstructure:"threshold"`
-	Action          Action  `mapstructure:"action"`
-	RetentionPeriod int     `mapstructure:"retention_period"`
+	Threshold       float64            `mapstructure:"threshold"`
+	Action          pluginTypes.Option `mapstructure:"action"`
+	RetentionPeriod int                `mapstructure:"retention_period"`
 }
 
 type BotDetectorPlugin struct {
@@ -83,10 +75,8 @@ func (p *BotDetectorPlugin) ValidateConfig(config pluginTypes.PluginConfig) erro
 		return fmt.Errorf("threshold must be between 0 and 1")
 	}
 
-	switch cfg.Action {
-	case Observe, Throttle, Enforce:
-	default:
-		return fmt.Errorf("invalid action: %s, must be one of: Observe, Throttle, Enforce", cfg.Action)
+	if err := pluginTypes.ValidateOption(&cfg.Action); err != nil {
+		return err
 	}
 
 	return nil
@@ -162,24 +152,33 @@ func (p *BotDetectorPlugin) Execute(
 		Threshold:   conf.Threshold,
 	})
 
+	evtCtx.SetMode(conf.Action)
+
 	if score >= conf.Threshold {
 		switch conf.Action {
-		case Observe:
+		case pluginTypes.OptionObserve:
+			evtCtx.SetDecision(pluginTypes.DecisionBlock)
 			return &pluginTypes.PluginResponse{
 				Message: "request has fraudulent activity",
 				Headers: map[string][]string{
 					"bot_detected": {"true"},
 				},
 			}, nil
-		case Throttle:
-			time.Sleep(5 * time.Second)
+		case pluginTypes.OptionThrottle:
+			evtCtx.SetDecision(pluginTypes.DecisionThrottle)
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 			return &pluginTypes.PluginResponse{
 				Message: "request has fraudulent activity",
 				Headers: map[string][]string{
 					"bot_detected": {"true"},
 				},
 			}, nil
-		case Enforce:
+		case pluginTypes.OptionEnforce:
+			evtCtx.SetDecision(pluginTypes.DecisionBlock)
 			p.notifyGuardrailViolation(ctx, conf)
 			return nil, &pluginTypes.PluginError{
 				StatusCode: http.StatusForbidden,

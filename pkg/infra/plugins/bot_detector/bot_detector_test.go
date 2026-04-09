@@ -114,7 +114,7 @@ func TestBotDetectorPlugin_ValidateConfig(t *testing.T) {
 
 		err := plugin.ValidateConfig(config)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid action")
+		assert.Contains(t, err.Error(), "option must be one of")
 	})
 }
 

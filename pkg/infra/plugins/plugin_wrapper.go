@@ -32,6 +32,12 @@ func (w *PluginWrapper) Execute(
 ) (*pluginTypes.PluginResponse, error) {
 	evtCtx := metrics.NewEventContext(cfg.Name, string(req.Stage), w.MetricsCollector)
 
+	if modeVal, ok := cfg.Settings["mode"]; ok {
+		if modeStr, ok := modeVal.(string); ok {
+			evtCtx.SetMode(pluginTypes.Option(modeStr))
+		}
+	}
+
 	start := time.Now()
 	pluginResp, err := w.Plugin.Execute(ctx, cfg, req, resp, evtCtx)
 	latency := time.Since(start)
@@ -44,6 +50,9 @@ func (w *PluginWrapper) Execute(
 		}
 		if pluginErr, ok := errors.AsType[*pluginTypes.PluginError](err); ok {
 			evtCtx.SetStatusCode(pluginErr.StatusCode)
+		}
+		if !evtCtx.HasDecision() {
+			evtCtx.SetDecision(pluginTypes.DecisionBlock)
 		}
 		evtCtx.SetError(err)
 		evtCtx.Publish()
