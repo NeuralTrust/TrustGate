@@ -65,7 +65,7 @@ func NewCreateRuleHandler(deps CreateRuleHandlerDeps) Handler {
 // @Produce json
 // @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "GatewayDTO ID"
-// @Param rule body request.CreateRuleRequest true "Rule request body"
+// @Param rule body req.CreateRuleRequest true "Rule request body"
 // @Success 201 {object} forwarding_rule.ForwardingRule "Rule created successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Internal server error"

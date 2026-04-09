@@ -5,6 +5,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
+	domain "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
@@ -37,7 +38,7 @@ func NewCreateGatewayHandler(
 // @Produce      json
 // @Param        Authorization header string true "Authorization token"
 // @Param        gateway body request.CreateGatewayRequest true "GatewayDTO data"
-// @Success      201 {object} gateway.Gateway "GatewayDTO created successfully"
+// @Success      201 {object} domain.Gateway "GatewayDTO created successfully"
 // @Failure      400 {object} map[string]interface{} "Invalid request data"
 // @Router       /api/v1/gateways [post]
 func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
@@ -54,6 +55,7 @@ func (h *createGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	gatewayId, _ := c.Locals(common.GatewayContextKey).(string)
 
+	var entity *domain.Gateway
 	entity, err := h.creator.Create(c.Context(), &req, gatewayId)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to create gateway")

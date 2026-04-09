@@ -24,7 +24,7 @@ type createServiceHandler struct {
 // @Produce json
 // @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
-// @Param service body request.ServiceRequest true "Service request body"
+// @Param service body req.ServiceRequest true "Service request body"
 // @Success 201 {object} service.Service "Service created successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Internal server error"

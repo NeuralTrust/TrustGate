@@ -40,7 +40,7 @@ func NewGetUpstreamHandler(
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
 // @Param upstream_id path string true "Upstream ID"
-// @Success 200 {object} upstream.Upstream "Upstream details"
+// @Success 200 {object} domain.Upstream "Upstream details"
 // @Router /api/v1/gateways/{gateway_id}/upstreams/{upstream_id} [get]
 func (s *getUpstreamHandler) Handle(c *fiber.Ctx) error {
 	gatewayID := c.Params("gateway_id")

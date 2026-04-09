@@ -54,7 +54,7 @@ func NewUpdateAPIKeyPoliciesHandler(deps UpdateAPIKeyPoliciesHandlerDeps) Handle
 // @Param gateway_id path string true "Gateway ID"
 // @Param key_id path string true "API Key ID"
 // @Param update body updateAPIKeyPoliciesRequest true "Policies update payload"
-// @Success 200 {object} apikey.APIKey "API Key updated successfully"
+// @Success 200 {object} domain.APIKey "API Key updated successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 404 {object} map[string]interface{} "API key not found"
 // @Failure 500 {object} map[string]interface{} "Internal server error"

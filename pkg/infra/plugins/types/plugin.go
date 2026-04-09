@@ -64,6 +64,9 @@ func NewBasePlugin() *BasePlugin {
 	return &BasePlugin{}
 }
 
-func (p *BasePlugin) ValidateMode(mode *Option) error {
-	return ValidateOption(mode)
+func (p *BasePlugin) ValidateMode(mode *Option, allowed ...Option) error {
+	if len(allowed) == 0 {
+		return ValidateOption(mode)
+	}
+	return ValidateOptionAllowed(mode, allowed...)
 }

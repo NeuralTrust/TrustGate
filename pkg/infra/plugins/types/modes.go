@@ -1,6 +1,9 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type Option string
 
@@ -18,13 +21,21 @@ const (
 )
 
 func ValidateOption(option *Option) error {
+	return ValidateOptionAllowed(option, OptionEnforce, OptionObserve, OptionThrottle)
+}
+
+func ValidateOptionAllowed(option *Option, allowed ...Option) error {
 	if option == nil || *option == "" {
 		return nil
 	}
-	switch *option {
-	case OptionEnforce, OptionObserve, OptionThrottle:
-		return nil
-	default:
-		return fmt.Errorf("option must be one of: %s, %s, %s", OptionEnforce, OptionObserve, OptionThrottle)
+	for _, a := range allowed {
+		if *option == a {
+			return nil
+		}
 	}
+	names := make([]string, len(allowed))
+	for i, a := range allowed {
+		names[i] = string(a)
+	}
+	return fmt.Errorf("option must be one of: %s", strings.Join(names, ", "))
 }

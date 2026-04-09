@@ -35,7 +35,7 @@
                                 "schema": {
                                     "type": "array",
                                     "items": {
-                                        "$ref": "#/components/schemas/gateway.Gateway"
+                                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Gateway"
                                     }
                                 }
                             }
@@ -74,20 +74,20 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.CreateGatewayRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateGatewayRequest"
                             }
                         }
                     },
-                    "description": "Gateway data",
+                    "description": "GatewayDTO data",
                     "required": true
                 },
                 "responses": {
                     "201": {
-                        "description": "Gateway created successfully",
+                        "description": "GatewayDTO created successfully",
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/gateway.Gateway"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Gateway"
                                 }
                             }
                         }
@@ -138,7 +138,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/gateway.Gateway"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Gateway"
                                 }
                             }
                         }
@@ -172,7 +172,7 @@
                         }
                     },
                     {
-                        "description": "Gateway ID",
+                        "description": "GatewayDTO ID",
                         "name": "gateway_id",
                         "in": "path",
                         "required": true,
@@ -185,7 +185,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.UpdateGatewayRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdateGatewayRequest"
                             }
                         }
                     },
@@ -194,7 +194,7 @@
                 },
                 "responses": {
                     "204": {
-                        "description": "Gateway updated successfully"
+                        "description": "GatewayDTO updated successfully"
                     },
                     "400": {
                         "description": "Invalid request data",
@@ -269,7 +269,7 @@
                         }
                     },
                     {
-                        "description": "Gateway ID",
+                        "description": "GatewayDTO ID",
                         "name": "gateway_id",
                         "in": "path",
                         "required": true,
@@ -284,13 +284,13 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/response.ListRulesOutput"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.ListRulesOutput"
                                 }
                             }
                         }
                     },
                     "404": {
-                        "description": "Gateway not found",
+                        "description": "GatewayDTO not found",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -318,7 +318,7 @@
                         }
                     },
                     {
-                        "description": "Gateway ID",
+                        "description": "GatewayDTO ID",
                         "name": "gateway_id",
                         "in": "path",
                         "required": true,
@@ -331,7 +331,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.CreateRuleRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateRuleRequest"
                             }
                         }
                     },
@@ -344,7 +344,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/forwarding_rule.ForwardingRule"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.ForwardingRule"
                                 }
                             }
                         }
@@ -391,7 +391,7 @@
                         }
                     },
                     {
-                        "description": "Gateway ID",
+                        "description": "GatewayDTO ID",
                         "name": "gateway_id",
                         "in": "path",
                         "required": true,
@@ -413,7 +413,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.UpdateRuleRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdateRuleRequest"
                             }
                         }
                     },
@@ -534,7 +534,7 @@
                                 "schema": {
                                     "type": "array",
                                     "items": {
-                                        "$ref": "#/components/schemas/service.Service"
+                                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service"
                                     }
                                 }
                             }
@@ -582,7 +582,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.ServiceRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ServiceRequest"
                             }
                         }
                     },
@@ -595,7 +595,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/service.Service"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service"
                                 }
                             }
                         }
@@ -666,7 +666,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/service.Service"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service"
                                 }
                             }
                         }
@@ -722,7 +722,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.ServiceRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ServiceRequest"
                             }
                         }
                     },
@@ -735,7 +735,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/service.Service"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service"
                                 }
                             }
                         }
@@ -850,7 +850,7 @@
                                 "schema": {
                                     "type": "array",
                                     "items": {
-                                        "$ref": "#/components/schemas/upstream.Upstream"
+                                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream"
                                     }
                                 }
                             }
@@ -887,7 +887,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.UpstreamRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamRequest"
                             }
                         }
                     },
@@ -900,7 +900,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/upstream.Upstream"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream"
                                 }
                             }
                         }
@@ -949,7 +949,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/upstream.Upstream"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream"
                                 }
                             }
                         }
@@ -994,7 +994,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.UpstreamRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamRequest"
                             }
                         }
                     },
@@ -1007,7 +1007,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/upstream.Upstream"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream"
                                 }
                             }
                         }
@@ -1085,7 +1085,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.CreateAPIKeyRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateAPIKeyRequest"
                             }
                         }
                     },
@@ -1098,7 +1098,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/apikey.APIKey"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.APIKey"
                                 }
                             }
                         }
@@ -1162,7 +1162,7 @@
                                 "schema": {
                                     "type": "array",
                                     "items": {
-                                        "$ref": "#/components/schemas/apikey.APIKey"
+                                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.APIKey"
                                     }
                                 }
                             }
@@ -1288,7 +1288,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/http.updateAPIKeyPoliciesRequest"
+                                "$ref": "#/components/schemas/pkg_handlers_http.updateAPIKeyPoliciesRequest"
                             }
                         }
                     },
@@ -1301,7 +1301,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/apikey.APIKey"
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.APIKey"
                                 }
                             }
                         }
@@ -1363,7 +1363,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.UpdatePluginsRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdatePluginsRequest"
                             }
                         }
                     },
@@ -1418,7 +1418,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.AddPluginsRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.AddPluginsRequest"
                             }
                         }
                     },
@@ -1473,7 +1473,7 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "$ref": "#/components/schemas/request.DeletePluginsRequest"
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.DeletePluginsRequest"
                             }
                         }
                     },
@@ -1533,59 +1533,13 @@
     },
     "components": {
         "schemas": {
-            "apikey.APIKey": {
-                "type": "object",
-                "properties": {
-                    "active": {
-                        "type": "boolean"
-                    },
-                    "created_at": {
-                        "type": "string"
-                    },
-                    "expires_at": {
-                        "type": "string"
-                    },
-                    "id": {
-                        "type": "string"
-                    },
-                    "key": {
-                        "type": "string"
-                    },
-                    "name": {
-                        "type": "string"
-                    },
-                    "policies": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "subject": {
-                        "type": "string"
-                    },
-                    "subject_type": {
-                        "$ref": "#/components/schemas/apikey.SubjectType"
-                    }
-                }
-            },
-            "apikey.SubjectType": {
-                "type": "string",
-                "enum": [
-                    "engine",
-                    "gateway"
-                ],
-                "x-enum-varnames": [
-                    "EngineType",
-                    "GatewayType"
-                ]
-            },
-            "domain.ClientTLSConfig": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain.ClientTLSConfig": {
                 "type": "object",
                 "additionalProperties": {
-                    "$ref": "#/components/schemas/types.ClientTLSConfig"
+                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.ClientTLSConfigDTO"
                 }
             },
-            "domain.CredentialsJSON": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain.CredentialsJSON": {
                 "type": "object",
                 "properties": {
                     "api_key": {
@@ -1620,15 +1574,15 @@
                     "azure_endpoint": {
                         "type": "string"
                     },
-                    "azure_eversion": {
-                        "type": "string"
-                    },
                     "azure_tenant_id": {
                         "type": "string"
                     },
                     "azure_use_managed_identity": {
                         "description": "Azure auth",
                         "type": "boolean"
+                    },
+                    "azure_version": {
+                        "type": "string"
                     },
                     "gcp_service_account_json": {
                         "type": "string"
@@ -1657,13 +1611,13 @@
                     }
                 }
             },
-            "domain.HeadersJSON": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON": {
                 "type": "object",
                 "additionalProperties": {
                     "type": "string"
                 }
             },
-            "domain.SecurityConfigJSON": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain.SecurityConfigJSON": {
                 "type": "object",
                 "properties": {
                     "allowed_hosts": {
@@ -1716,14 +1670,11 @@
                     }
                 }
             },
-            "domain.TrustLensJSON": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain.TrustLensJSON": {
                 "type": "object",
                 "properties": {
-                    "app_id": {
-                        "type": "string"
-                    },
                     "mapping": {
-                        "$ref": "#/components/schemas/types.TrustLensMapping"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDTO"
                     },
                     "team_id": {
                         "type": "string"
@@ -1733,7 +1684,7 @@
                     }
                 }
             },
-            "forwarding_rule.ForwardingRule": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.ForwardingRule": {
                 "type": "object",
                 "properties": {
                     "active": {
@@ -1746,7 +1697,7 @@
                         "type": "string"
                     },
                     "headers": {
-                        "$ref": "#/components/schemas/domain.HeadersJSON"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON"
                     },
                     "id": {
                         "type": "string"
@@ -1766,7 +1717,7 @@
                     "pluginChain": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/types.PluginConfig"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig"
                         }
                     },
                     "preserveHost": {
@@ -1781,25 +1732,50 @@
                     "serviceID": {
                         "type": "string"
                     },
+                    "session_config": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.SessionConfig"
+                    },
                     "stripPath": {
                         "type": "boolean"
                     },
                     "trustLens": {
-                        "$ref": "#/components/schemas/domain.TrustLensJSON"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.TrustLensJSON"
                     },
                     "type": {
-                        "type": "string"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.Type"
                     },
                     "updatedAt": {
                         "type": "string"
                     }
                 }
             },
-            "gateway.Gateway": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.SessionConfig": {
+                "type": "object",
+                "properties": {
+                    "body_param_name": {
+                        "type": "string"
+                    },
+                    "header_name": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.Type": {
+                "type": "string",
+                "enum": [
+                    "agent",
+                    "endpoint"
+                ],
+                "x-enum-varnames": [
+                    "AgentRuleType",
+                    "EndpointRuleType"
+                ]
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Gateway": {
                 "type": "object",
                 "properties": {
                     "client_tls": {
-                        "$ref": "#/components/schemas/domain.ClientTLSConfig"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.ClientTLSConfig"
                     },
                     "created_at": {
                         "type": "string"
@@ -1813,75 +1789,176 @@
                     "required_plugins": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/types.PluginConfig"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig"
                         }
                     },
                     "security_config": {
-                        "$ref": "#/components/schemas/domain.SecurityConfigJSON"
-                    },
-                    "session_config": {
-                        "$ref": "#/components/schemas/gateway.SessionConfig"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.SecurityConfigJSON"
                     },
                     "status": {
                         "type": "string"
                     },
                     "telemetry": {
-                        "$ref": "#/components/schemas/telemetry.Telemetry"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry"
                     },
                     "updated_at": {
                         "type": "string"
                     }
                 }
             },
-            "gateway.SessionConfig": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.APIKey": {
                 "type": "object",
                 "properties": {
-                    "body_param_name": {
-                        "type": "string"
-                    },
-                    "enabled": {
+                    "active": {
                         "type": "boolean"
                     },
-                    "header_name": {
+                    "created_at": {
                         "type": "string"
                     },
-                    "mapping_field": {
+                    "expires_at": {
                         "type": "string"
                     },
-                    "ttl": {
-                        "type": "integer"
-                    }
-                }
-            },
-            "http.updateAPIKeyPoliciesRequest": {
-                "type": "object",
-                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "key": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
                     "policies": {
                         "type": "array",
                         "items": {
                             "type": "string"
                         }
+                    },
+                    "subject": {
+                        "type": "string"
+                    },
+                    "subject_type": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.SubjectType"
                     }
                 }
             },
-            "request.AddPluginsRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.SubjectType": {
+                "type": "string",
+                "enum": [
+                    "engine",
+                    "gateway",
+                    "sentinel"
+                ],
+                "x-enum-varnames": [
+                    "EngineType",
+                    "GatewayType",
+                    "SentinelType"
+                ]
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_service.Service": {
                 "type": "object",
                 "properties": {
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "credentials": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.CredentialsJSON"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "gateway_id": {
+                        "type": "string"
+                    },
+                    "headers": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON"
+                    },
+                    "host": {
+                        "description": "Direct configuration (used when type is \"direct\")",
+                        "type": "string"
+                    },
                     "id": {
                         "type": "string"
                     },
-                    "plugins": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "path": {
+                        "type": "string"
+                    },
+                    "port": {
+                        "type": "integer"
+                    },
+                    "protocol": {
+                        "type": "string"
+                    },
+                    "stream": {
+                        "description": "Common settings",
+                        "type": "boolean"
+                    },
+                    "tags": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/types.PluginConfig"
+                            "type": "string"
                         }
                     },
                     "type": {
+                        "description": "\"upstream\" or \"endpoint\"",
+                        "type": "string"
+                    },
+                    "updated_at": {
+                        "type": "string"
+                    },
+                    "upstream": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream"
+                    },
+                    "upstream_id": {
+                        "description": "Upstream configuration (used when type is \"upstream\")",
                         "type": "string"
                     }
                 }
             },
-            "request.AuthType": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "settings": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry": {
+                "type": "object",
+                "properties": {
+                    "enable_plugin_traces": {
+                        "type": "boolean"
+                    },
+                    "enable_request_traces": {
+                        "type": "boolean"
+                    },
+                    "exporters": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig"
+                        }
+                    },
+                    "extra_params": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
+                    },
+                    "header_mapping": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.AuthType": {
                 "type": "string",
                 "enum": [
                     "oauth2"
@@ -1890,18 +1967,298 @@
                     "AuthTypeOAuth2"
                 ]
             },
-            "request.ClientTLSCertRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.EmbeddingConfig": {
+                "type": "object",
+                "properties": {
+                    "credentials": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.CredentialsJSON"
+                    },
+                    "model": {
+                        "type": "string"
+                    },
+                    "provider": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.HealthCheck": {
+                "type": "object",
+                "properties": {
+                    "headers": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON"
+                    },
+                    "interval": {
+                        "description": "Time in seconds before resetting failure count",
+                        "type": "integer"
+                    },
+                    "passive": {
+                        "type": "boolean"
+                    },
+                    "path": {
+                        "type": "string"
+                    },
+                    "threshold": {
+                        "description": "Number of failures before marking as unhealthy",
+                        "type": "integer"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Proxy": {
+                "type": "object",
+                "properties": {
+                    "host": {
+                        "type": "string"
+                    },
+                    "port": {
+                        "type": "string"
+                    },
+                    "protocol": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Target": {
+                "type": "object",
+                "properties": {
+                    "auth": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.TargetAuth"
+                    },
+                    "credentials": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.CredentialsJSON"
+                    },
+                    "default_model": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "headers": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON"
+                    },
+                    "host": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "insecure_ssl": {
+                        "type": "boolean"
+                    },
+                    "models": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "path": {
+                        "type": "string"
+                    },
+                    "port": {
+                        "type": "integer"
+                    },
+                    "protocol": {
+                        "type": "string"
+                    },
+                    "provider": {
+                        "type": "string"
+                    },
+                    "provider_options": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    },
+                    "stream": {
+                        "type": "boolean"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "weight": {
+                        "type": "integer"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.TargetAuth": {
+                "type": "object",
+                "properties": {
+                    "oauth": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.TargetOAuthConfig"
+                    },
+                    "type": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.AuthType"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.TargetOAuthConfig": {
+                "type": "object",
+                "properties": {
+                    "audience": {
+                        "type": "string"
+                    },
+                    "client_id": {
+                        "type": "string"
+                    },
+                    "client_secret": {
+                        "description": "#nosec G117 -- OAuth domain field for client credentials flow",
+                        "type": "string"
+                    },
+                    "code": {
+                        "type": "string"
+                    },
+                    "code_verifier": {
+                        "type": "string"
+                    },
+                    "extra": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
+                    },
+                    "grant_type": {
+                        "type": "string"
+                    },
+                    "password": {
+                        "description": "#nosec G117 -- OAuth domain field for password grant flow",
+                        "type": "string"
+                    },
+                    "redirect_uri": {
+                        "type": "string"
+                    },
+                    "refresh_token": {
+                        "description": "#nosec G117 -- OAuth domain field for token refresh flow",
+                        "type": "string"
+                    },
+                    "scopes": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "token_url": {
+                        "type": "string"
+                    },
+                    "use_basic_auth": {
+                        "type": "boolean"
+                    },
+                    "username": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream": {
+                "type": "object",
+                "properties": {
+                    "algorithm": {
+                        "type": "string"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "embedding_config": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.EmbeddingConfig"
+                    },
+                    "gateway_id": {
+                        "type": "string"
+                    },
+                    "health_checks": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.HealthCheck"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "proxy": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Proxy"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "targets": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Target"
+                        }
+                    },
+                    "updated_at": {
+                        "type": "string"
+                    },
+                    "websocket_config": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.WebsocketConfig"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.WebsocketConfig": {
+                "type": "object",
+                "properties": {
+                    "enable_direct_communication": {
+                        "type": "boolean"
+                    },
+                    "handshake_timeout": {
+                        "type": "string"
+                    },
+                    "ping_period": {
+                        "type": "string"
+                    },
+                    "pong_wait": {
+                        "type": "string"
+                    },
+                    "read_buffer_size": {
+                        "type": "integer"
+                    },
+                    "return_error_details": {
+                        "type": "boolean"
+                    },
+                    "write_buffer_size": {
+                        "type": "integer"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.AddPluginsRequest": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "plugins": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig"
+                        }
+                    },
+                    "type": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.AuthType": {
+                "type": "string",
+                "enum": [
+                    "oauth2"
+                ],
+                "x-enum-varnames": [
+                    "AuthTypeOAuth2"
+                ]
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ClientTLSCertRequest": {
                 "type": "object",
                 "properties": {
                     "certificate": {
                         "type": "string"
                     },
                     "private_key": {
+                        "description": "#nosec G117 -- TLS certificate request DTO field for private key data",
                         "type": "string"
                     }
                 }
             },
-            "request.ClientTLSConfigRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ClientTLSConfigRequest": {
                 "type": "object",
                 "properties": {
                     "allow_insecure_connections": {
@@ -1917,7 +2274,7 @@
                         }
                     },
                     "client_certs": {
-                        "$ref": "#/components/schemas/request.ClientTLSCertRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ClientTLSCertRequest"
                     },
                     "curve_preferences": {
                         "type": "array",
@@ -1936,7 +2293,7 @@
                     }
                 }
             },
-            "request.CreateAPIKeyRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateAPIKeyRequest": {
                 "type": "object",
                 "required": [
                     "name"
@@ -1962,13 +2319,13 @@
                     }
                 }
             },
-            "request.CreateGatewayRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateGatewayRequest": {
                 "type": "object",
                 "properties": {
                     "client_tls": {
                         "type": "object",
                         "additionalProperties": {
-                            "$ref": "#/components/schemas/request.ClientTLSConfigRequest"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ClientTLSConfigRequest"
                         }
                     },
                     "created_at": {
@@ -1981,27 +2338,24 @@
                     "required_plugins": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/types.PluginConfig"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig"
                         }
                     },
                     "security_config": {
-                        "$ref": "#/components/schemas/request.SecurityConfigRequest"
-                    },
-                    "session_config": {
-                        "$ref": "#/components/schemas/request.SessionConfigRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.SecurityConfigRequest"
                     },
                     "status": {
                         "type": "string"
                     },
                     "telemetry": {
-                        "$ref": "#/components/schemas/request.TelemetryRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TelemetryRequest"
                     },
                     "updated_at": {
                         "type": "string"
                     }
                 }
             },
-            "request.CreateRuleRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateRuleRequest": {
                 "type": "object",
                 "required": [
                     "name",
@@ -2030,7 +2384,7 @@
                     "plugin_chain": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/types.PluginConfig"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig"
                         }
                     },
                     "preserve_host": {
@@ -2039,21 +2393,24 @@
                     "retry_attempts": {
                         "type": "integer"
                     },
-                    "rule_type": {
-                        "type": "string"
-                    },
                     "service_id": {
                         "type": "string"
+                    },
+                    "session_config": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.SessionConfigDTO"
                     },
                     "strip_path": {
                         "type": "boolean"
                     },
                     "trustlens": {
-                        "$ref": "#/components/schemas/types.TrustLensConfig"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensConfigDTO"
+                    },
+                    "type": {
+                        "type": "string"
                     }
                 }
             },
-            "request.DeletePluginsRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.DeletePluginsRequest": {
                 "type": "object",
                 "properties": {
                     "id": {
@@ -2070,11 +2427,11 @@
                     }
                 }
             },
-            "request.EmbeddingRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.EmbeddingRequest": {
                 "type": "object",
                 "properties": {
                     "credentials": {
-                        "$ref": "#/components/schemas/types.Credentials"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.CredentialsDTO"
                     },
                     "model": {
                         "type": "string"
@@ -2084,7 +2441,7 @@
                     }
                 }
             },
-            "request.ExporterRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ExporterRequest": {
                 "type": "object",
                 "properties": {
                     "name": {
@@ -2096,7 +2453,7 @@
                     }
                 }
             },
-            "request.HealthCheckRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.HealthCheckRequest": {
                 "type": "object",
                 "properties": {
                     "headers": {
@@ -2121,7 +2478,7 @@
                     }
                 }
             },
-            "request.ProxyConfigRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ProxyConfigRequest": {
                 "type": "object",
                 "properties": {
                     "host": {
@@ -2135,7 +2492,7 @@
                     }
                 }
             },
-            "request.SecurityConfigRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.SecurityConfigRequest": {
                 "type": "object",
                 "properties": {
                     "allowed_hosts": {
@@ -2188,7 +2545,7 @@
                     }
                 }
             },
-            "request.ServiceRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ServiceRequest": {
                 "type": "object",
                 "properties": {
                     "CreatedAt": {
@@ -2198,7 +2555,7 @@
                         "type": "string"
                     },
                     "credentials": {
-                        "$ref": "#/components/schemas/types.Credentials"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.CredentialsDTO"
                     },
                     "description": {
                         "type": "string"
@@ -2247,45 +2604,25 @@
                     }
                 }
             },
-            "request.SessionConfigRequest": {
-                "type": "object",
-                "properties": {
-                    "body_param_name": {
-                        "type": "string"
-                    },
-                    "enabled": {
-                        "type": "boolean"
-                    },
-                    "header_name": {
-                        "type": "string"
-                    },
-                    "mapping_field": {
-                        "type": "string"
-                    },
-                    "ttl": {
-                        "type": "integer"
-                    }
-                }
-            },
-            "request.TargetAuthRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TargetAuthRequest": {
                 "type": "object",
                 "properties": {
                     "oauth": {
-                        "$ref": "#/components/schemas/request.UpstreamOAuthRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamOAuthRequest"
                     },
                     "type": {
-                        "$ref": "#/components/schemas/request.AuthType"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.AuthType"
                     }
                 }
             },
-            "request.TargetRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TargetRequest": {
                 "type": "object",
                 "properties": {
                     "auth": {
-                        "$ref": "#/components/schemas/request.TargetAuthRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TargetAuthRequest"
                     },
                     "credentials": {
-                        "$ref": "#/components/schemas/types.Credentials"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.CredentialsDTO"
                     },
                     "default_model": {
                         "type": "string"
@@ -2344,7 +2681,7 @@
                     }
                 }
             },
-            "request.TelemetryRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TelemetryRequest": {
                 "type": "object",
                 "properties": {
                     "enable_plugin_traces": {
@@ -2356,7 +2693,7 @@
                     "exporters": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/request.ExporterRequest"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ExporterRequest"
                         }
                     },
                     "extra_params": {
@@ -2373,13 +2710,13 @@
                     }
                 }
             },
-            "request.UpdateGatewayRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdateGatewayRequest": {
                 "type": "object",
                 "properties": {
                     "client_tls": {
                         "type": "object",
                         "additionalProperties": {
-                            "$ref": "#/components/schemas/request.ClientTLSConfigRequest"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ClientTLSConfigRequest"
                         }
                     },
                     "name": {
@@ -2388,24 +2725,21 @@
                     "required_plugins": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/types.PluginConfig"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig"
                         }
                     },
                     "security_config": {
-                        "$ref": "#/components/schemas/request.SecurityConfigRequest"
-                    },
-                    "session_config": {
-                        "$ref": "#/components/schemas/request.SessionConfigRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.SecurityConfigRequest"
                     },
                     "status": {
                         "type": "string"
                     },
                     "telemetry": {
-                        "$ref": "#/components/schemas/request.TelemetryRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TelemetryRequest"
                     }
                 }
             },
-            "request.UpdatePluginsRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdatePluginsRequest": {
                 "type": "object",
                 "properties": {
                     "id": {
@@ -2423,7 +2757,7 @@
                     }
                 }
             },
-            "request.UpdateRuleRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdateRuleRequest": {
                 "type": "object",
                 "properties": {
                     "active": {
@@ -2450,7 +2784,7 @@
                     "plugin_chain": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/types.PluginConfig"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig"
                         }
                     },
                     "preserve_host": {
@@ -2459,32 +2793,35 @@
                     "retry_attempts": {
                         "type": "integer"
                     },
-                    "rule_type": {
-                        "type": "string"
-                    },
                     "service_id": {
                         "type": "string"
+                    },
+                    "session_config": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.SessionConfigDTO"
                     },
                     "strip_path": {
                         "type": "boolean"
                     },
                     "trustlens": {
-                        "$ref": "#/components/schemas/types.TrustLensConfig"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensConfigDTO"
+                    },
+                    "type": {
+                        "type": "string"
                     }
                 }
             },
-            "request.UpstreamAuthRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamAuthRequest": {
                 "type": "object",
                 "properties": {
                     "oauth": {
-                        "$ref": "#/components/schemas/request.UpstreamOAuthRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamOAuthRequest"
                     },
                     "type": {
-                        "$ref": "#/components/schemas/request.AuthType"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.AuthType"
                     }
                 }
             },
-            "request.UpstreamOAuthRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamOAuthRequest": {
                 "type": "object",
                 "properties": {
                     "audience": {
@@ -2494,6 +2831,7 @@
                         "type": "string"
                     },
                     "client_secret": {
+                        "description": "#nosec G117 -- OAuth DTO field for client credentials flow",
                         "type": "string"
                     },
                     "code": {
@@ -2512,12 +2850,14 @@
                         "type": "string"
                     },
                     "password": {
+                        "description": "#nosec G117 -- OAuth DTO field for password grant flow",
                         "type": "string"
                     },
                     "redirect_uri": {
                         "type": "string"
                     },
                     "refresh_token": {
+                        "description": "#nosec G117 -- OAuth DTO field for token refresh flow",
                         "type": "string"
                     },
                     "scopes": {
@@ -2537,23 +2877,23 @@
                     }
                 }
             },
-            "request.UpstreamRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamRequest": {
                 "type": "object",
                 "properties": {
                     "algorithm": {
                         "type": "string"
                     },
                     "auth": {
-                        "$ref": "#/components/schemas/request.UpstreamAuthRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamAuthRequest"
                     },
                     "embedding": {
-                        "$ref": "#/components/schemas/request.EmbeddingRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.EmbeddingRequest"
                     },
                     "gateway_id": {
                         "type": "string"
                     },
                     "health_checks": {
-                        "$ref": "#/components/schemas/request.HealthCheckRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.HealthCheckRequest"
                     },
                     "id": {
                         "type": "string"
@@ -2562,7 +2902,7 @@
                         "type": "string"
                     },
                     "proxy_config": {
-                        "$ref": "#/components/schemas/request.ProxyConfigRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ProxyConfigRequest"
                     },
                     "tags": {
                         "type": "array",
@@ -2573,15 +2913,15 @@
                     "targets": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/request.TargetRequest"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TargetRequest"
                         }
                     },
                     "websocket_config": {
-                        "$ref": "#/components/schemas/request.WebhookConfigRequest"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.WebhookConfigRequest"
                     }
                 }
             },
-            "request.WebhookConfigRequest": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.WebhookConfigRequest": {
                 "type": "object",
                 "properties": {
                     "enable_direct_communication": {
@@ -2607,7 +2947,7 @@
                     }
                 }
             },
-            "response.ForwardingRuleOutput": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.ForwardingRuleOutput": {
                 "type": "object",
                 "properties": {
                     "active": {
@@ -2617,7 +2957,7 @@
                         "type": "string"
                     },
                     "headers": {
-                        "$ref": "#/components/schemas/domain.HeadersJSON"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON"
                     },
                     "id": {
                         "type": "string"
@@ -2637,7 +2977,7 @@
                     "plugin_chain": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/types.PluginConfig"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig"
                         }
                     },
                     "preserve_host": {
@@ -2649,11 +2989,14 @@
                     "service_id": {
                         "type": "string"
                     },
+                    "session_config": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.SessionConfig"
+                    },
                     "strip_path": {
                         "type": "boolean"
                     },
                     "trustlens": {
-                        "$ref": "#/components/schemas/domain.TrustLensJSON"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.TrustLensJSON"
                     },
                     "type": {
                         "type": "string"
@@ -2662,11 +3005,11 @@
                         "type": "string"
                     },
                     "upstream": {
-                        "$ref": "#/components/schemas/response.UpstreamOutput"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.UpstreamOutput"
                     }
                 }
             },
-            "response.GatewayOutput": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.GatewayOutput": {
                 "type": "object",
                 "properties": {
                     "created_at": {
@@ -2681,7 +3024,7 @@
                     "plugin_chain": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/types.PluginConfig"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig"
                         }
                     },
                     "status": {
@@ -2692,21 +3035,21 @@
                     }
                 }
             },
-            "response.ListRulesOutput": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.ListRulesOutput": {
                 "type": "object",
                 "properties": {
                     "gateway": {
-                        "$ref": "#/components/schemas/response.GatewayOutput"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.GatewayOutput"
                     },
                     "rules": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/response.ForwardingRuleOutput"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.ForwardingRuleOutput"
                         }
                     }
                 }
             },
-            "response.UpstreamOutput": {
+            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.UpstreamOutput": {
                 "type": "object",
                 "properties": {
                     "algorithm": {
@@ -2718,127 +3061,68 @@
                     "targets": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/components/schemas/upstream.Target"
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Target"
                         }
                     }
                 }
             },
-            "service.Service": {
+            "github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig": {
                 "type": "object",
                 "properties": {
-                    "created_at": {
-                        "type": "string"
-                    },
-                    "credentials": {
-                        "$ref": "#/components/schemas/types.Credentials"
-                    },
-                    "description": {
-                        "type": "string"
-                    },
-                    "gateway_id": {
-                        "type": "string"
-                    },
-                    "headers": {
-                        "$ref": "#/components/schemas/domain.HeadersJSON"
-                    },
-                    "host": {
-                        "description": "Direct configuration (used when type is \"direct\")",
-                        "type": "string"
-                    },
-                    "id": {
-                        "type": "string"
-                    },
-                    "name": {
-                        "type": "string"
-                    },
-                    "path": {
-                        "type": "string"
-                    },
-                    "port": {
-                        "type": "integer"
-                    },
-                    "protocol": {
-                        "type": "string"
-                    },
-                    "stream": {
-                        "description": "Common settings",
+                    "enabled": {
                         "type": "boolean"
                     },
-                    "tags": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "type": {
-                        "description": "\"upstream\" or \"endpoint\"",
+                    "id": {
+                        "description": "ID of the gateway or rule this plugin belongs to",
                         "type": "string"
                     },
-                    "updated_at": {
-                        "type": "string"
-                    },
-                    "upstream": {
-                        "$ref": "#/components/schemas/upstream.Upstream"
-                    },
-                    "upstream_id": {
-                        "description": "Upstream configuration (used when type is \"upstream\")",
-                        "type": "string"
-                    }
-                }
-            },
-            "telemetry.ExporterConfig": {
-                "type": "object",
-                "properties": {
                     "name": {
                         "type": "string"
+                    },
+                    "parallel": {
+                        "description": "Whether this plugin can run in parallel",
+                        "type": "boolean"
+                    },
+                    "priority": {
+                        "type": "integer"
                     },
                     "settings": {
                         "type": "object",
                         "additionalProperties": true
+                    },
+                    "stage": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.Stage"
                     }
                 }
             },
-            "telemetry.Telemetry": {
-                "type": "object",
-                "properties": {
-                    "enable_plugin_traces": {
-                        "type": "boolean"
-                    },
-                    "enable_request_traces": {
-                        "type": "boolean"
-                    },
-                    "exporters": {
-                        "type": "array",
-                        "items": {
-                            "$ref": "#/components/schemas/telemetry.ExporterConfig"
-                        }
-                    },
-                    "extra_params": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "string"
-                        }
-                    },
-                    "header_mapping": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "string"
-                        }
-                    }
-                }
+            "github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.Stage": {
+                "type": "string",
+                "enum": [
+                    "pre_request",
+                    "post_request",
+                    "pre_response",
+                    "post_response"
+                ],
+                "x-enum-varnames": [
+                    "PreRequest",
+                    "PostRequest",
+                    "PreResponse",
+                    "PostResponse"
+                ]
             },
-            "types.ClientTLSCert": {
+            "github_com_NeuralTrust_TrustGate_pkg_types.ClientTLSCertDTO": {
                 "type": "object",
                 "properties": {
                     "certificate": {
                         "type": "string"
                     },
                     "private_key": {
+                        "description": "#nosec G117 -- TLS certificate DTO field for private key data",
                         "type": "string"
                     }
                 }
             },
-            "types.ClientTLSConfig": {
+            "github_com_NeuralTrust_TrustGate_pkg_types.ClientTLSConfigDTO": {
                 "type": "object",
                 "properties": {
                     "allow_insecure_connections": {
@@ -2854,7 +3138,7 @@
                         }
                     },
                     "client_certs": {
-                        "$ref": "#/components/schemas/types.ClientTLSCert"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.ClientTLSCertDTO"
                     },
                     "curve_preferences": {
                         "type": "array",
@@ -2873,7 +3157,7 @@
                     }
                 }
             },
-            "types.Credentials": {
+            "github_com_NeuralTrust_TrustGate_pkg_types.CredentialsDTO": {
                 "type": "object",
                 "properties": {
                     "api_key": {
@@ -2908,15 +3192,15 @@
                     "azure_endpoint": {
                         "type": "string"
                     },
-                    "azure_eversion": {
-                        "type": "string"
-                    },
                     "azure_tenant_id": {
                         "type": "string"
                     },
                     "azure_use_managed_identity": {
                         "description": "Azure auth",
                         "type": "boolean"
+                    },
+                    "azure_version": {
+                        "type": "string"
                     },
                     "gcp_service_account_json": {
                         "type": "string"
@@ -2945,58 +3229,22 @@
                     }
                 }
             },
-            "types.PluginConfig": {
+            "github_com_NeuralTrust_TrustGate_pkg_types.SessionConfigDTO": {
                 "type": "object",
                 "properties": {
-                    "enabled": {
-                        "type": "boolean"
-                    },
-                    "id": {
-                        "description": "ID of the gateway or rule this plugin belongs to",
+                    "body_param_name": {
                         "type": "string"
                     },
-                    "name": {
+                    "header_name": {
                         "type": "string"
-                    },
-                    "parallel": {
-                        "description": "Whether this plugin can run in parallel",
-                        "type": "boolean"
-                    },
-                    "priority": {
-                        "type": "integer"
-                    },
-                    "settings": {
-                        "type": "object",
-                        "additionalProperties": true
-                    },
-                    "stage": {
-                        "$ref": "#/components/schemas/types.Stage"
                     }
                 }
             },
-            "types.Stage": {
-                "type": "string",
-                "enum": [
-                    "pre_request",
-                    "post_request",
-                    "pre_response",
-                    "post_response"
-                ],
-                "x-enum-varnames": [
-                    "PreRequest",
-                    "PostRequest",
-                    "PreResponse",
-                    "PostResponse"
-                ]
-            },
-            "types.TrustLensConfig": {
+            "github_com_NeuralTrust_TrustGate_pkg_types.TrustLensConfigDTO": {
                 "type": "object",
                 "properties": {
-                    "app_id": {
-                        "type": "string"
-                    },
                     "mapping": {
-                        "$ref": "#/components/schemas/types.TrustLensMapping"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDTO"
                     },
                     "team_id": {
                         "type": "string"
@@ -3006,18 +3254,18 @@
                     }
                 }
             },
-            "types.TrustLensMapping": {
+            "github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDTO": {
                 "type": "object",
                 "properties": {
                     "input": {
-                        "$ref": "#/components/schemas/types.TrustLensMappingData"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDataDTO"
                     },
                     "output": {
-                        "$ref": "#/components/schemas/types.TrustLensMappingData"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDataDTO"
                     }
                 }
             },
-            "types.TrustLensMappingData": {
+            "github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDataDTO": {
                 "type": "object",
                 "properties": {
                     "data_projection": {
@@ -3034,262 +3282,14 @@
                     }
                 }
             },
-            "upstream.AuthType": {
-                "type": "string",
-                "enum": [
-                    "oauth2"
-                ],
-                "x-enum-varnames": [
-                    "AuthTypeOAuth2"
-                ]
-            },
-            "upstream.EmbeddingConfig": {
+            "pkg_handlers_http.updateAPIKeyPoliciesRequest": {
                 "type": "object",
                 "properties": {
-                    "credentials": {
-                        "$ref": "#/components/schemas/domain.CredentialsJSON"
-                    },
-                    "model": {
-                        "type": "string"
-                    },
-                    "provider": {
-                        "type": "string"
-                    }
-                }
-            },
-            "upstream.HealthCheck": {
-                "type": "object",
-                "properties": {
-                    "headers": {
-                        "$ref": "#/components/schemas/domain.HeadersJSON"
-                    },
-                    "interval": {
-                        "description": "Time in seconds before resetting failure count",
-                        "type": "integer"
-                    },
-                    "passive": {
-                        "type": "boolean"
-                    },
-                    "path": {
-                        "type": "string"
-                    },
-                    "threshold": {
-                        "description": "Number of failures before marking as unhealthy",
-                        "type": "integer"
-                    }
-                }
-            },
-            "upstream.Proxy": {
-                "type": "object",
-                "properties": {
-                    "host": {
-                        "type": "string"
-                    },
-                    "port": {
-                        "type": "string"
-                    },
-                    "protocol": {
-                        "type": "string"
-                    }
-                }
-            },
-            "upstream.Target": {
-                "type": "object",
-                "properties": {
-                    "auth": {
-                        "$ref": "#/components/schemas/upstream.TargetAuth"
-                    },
-                    "credentials": {
-                        "$ref": "#/components/schemas/domain.CredentialsJSON"
-                    },
-                    "default_model": {
-                        "type": "string"
-                    },
-                    "description": {
-                        "type": "string"
-                    },
-                    "headers": {
-                        "$ref": "#/components/schemas/domain.HeadersJSON"
-                    },
-                    "host": {
-                        "type": "string"
-                    },
-                    "id": {
-                        "type": "string"
-                    },
-                    "insecure_ssl": {
-                        "type": "boolean"
-                    },
-                    "models": {
+                    "policies": {
                         "type": "array",
                         "items": {
                             "type": "string"
                         }
-                    },
-                    "path": {
-                        "type": "string"
-                    },
-                    "port": {
-                        "type": "integer"
-                    },
-                    "protocol": {
-                        "type": "string"
-                    },
-                    "provider": {
-                        "type": "string"
-                    },
-                    "provider_options": {
-                        "type": "object",
-                        "additionalProperties": {}
-                    },
-                    "stream": {
-                        "type": "boolean"
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "weight": {
-                        "type": "integer"
-                    }
-                }
-            },
-            "upstream.TargetAuth": {
-                "type": "object",
-                "properties": {
-                    "oauth": {
-                        "$ref": "#/components/schemas/upstream.TargetOAuthConfig"
-                    },
-                    "type": {
-                        "$ref": "#/components/schemas/upstream.AuthType"
-                    }
-                }
-            },
-            "upstream.TargetOAuthConfig": {
-                "type": "object",
-                "properties": {
-                    "audience": {
-                        "type": "string"
-                    },
-                    "client_id": {
-                        "type": "string"
-                    },
-                    "client_secret": {
-                        "type": "string"
-                    },
-                    "code": {
-                        "type": "string"
-                    },
-                    "code_verifier": {
-                        "type": "string"
-                    },
-                    "extra": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "string"
-                        }
-                    },
-                    "grant_type": {
-                        "type": "string"
-                    },
-                    "password": {
-                        "type": "string"
-                    },
-                    "redirect_uri": {
-                        "type": "string"
-                    },
-                    "refresh_token": {
-                        "type": "string"
-                    },
-                    "scopes": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "token_url": {
-                        "type": "string"
-                    },
-                    "use_basic_auth": {
-                        "type": "boolean"
-                    },
-                    "username": {
-                        "type": "string"
-                    }
-                }
-            },
-            "upstream.Upstream": {
-                "type": "object",
-                "properties": {
-                    "algorithm": {
-                        "type": "string"
-                    },
-                    "created_at": {
-                        "type": "string"
-                    },
-                    "embedding_config": {
-                        "$ref": "#/components/schemas/upstream.EmbeddingConfig"
-                    },
-                    "gateway_id": {
-                        "type": "string"
-                    },
-                    "health_checks": {
-                        "$ref": "#/components/schemas/upstream.HealthCheck"
-                    },
-                    "id": {
-                        "type": "string"
-                    },
-                    "name": {
-                        "type": "string"
-                    },
-                    "proxy": {
-                        "$ref": "#/components/schemas/upstream.Proxy"
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "targets": {
-                        "type": "array",
-                        "items": {
-                            "$ref": "#/components/schemas/upstream.Target"
-                        }
-                    },
-                    "updated_at": {
-                        "type": "string"
-                    },
-                    "websocket_config": {
-                        "$ref": "#/components/schemas/upstream.WebsocketConfig"
-                    }
-                }
-            },
-            "upstream.WebsocketConfig": {
-                "type": "object",
-                "properties": {
-                    "enable_direct_communication": {
-                        "type": "boolean"
-                    },
-                    "handshake_timeout": {
-                        "type": "string"
-                    },
-                    "ping_period": {
-                        "type": "string"
-                    },
-                    "pong_wait": {
-                        "type": "string"
-                    },
-                    "read_buffer_size": {
-                        "type": "integer"
-                    },
-                    "return_error_details": {
-                        "type": "boolean"
-                    },
-                    "write_buffer_size": {
-                        "type": "integer"
                     }
                 }
             }

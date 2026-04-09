@@ -38,7 +38,7 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 	router.Static("/swagger.json", "./docs/swagger.json")
 
 	router.Get("/docs/*", swagger.New(swagger.Config{
-		URL: "http://localhost:8080/swagger.json",
+		URL: "/swagger.json",
 	}))
 
 	router.Get("/version", handlerTransport.GetVersionHandler.Handle)

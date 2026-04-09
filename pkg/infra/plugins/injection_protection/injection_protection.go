@@ -261,7 +261,7 @@ func (p *InjectionProtectionPlugin) ValidateConfig(config pluginTypes.PluginConf
 		}
 	}
 
-	if err := pluginTypes.ValidateOption(&cfg.Action); err != nil {
+	if err := pluginTypes.ValidateOptionAllowed(&cfg.Action, pluginTypes.OptionEnforce, pluginTypes.OptionObserve); err != nil {
 		return err
 	}
 

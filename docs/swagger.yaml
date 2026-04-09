@@ -1,40 +1,9 @@
 definitions:
-  apikey.APIKey:
-    properties:
-      active:
-        type: boolean
-      created_at:
-        type: string
-      expires_at:
-        type: string
-      id:
-        type: string
-      key:
-        type: string
-      name:
-        type: string
-      policies:
-        items:
-          type: string
-        type: array
-      subject:
-        type: string
-      subject_type:
-        $ref: '#/definitions/apikey.SubjectType'
-    type: object
-  apikey.SubjectType:
-    enum:
-    - engine
-    - gateway
-    type: string
-    x-enum-varnames:
-    - EngineType
-    - GatewayType
-  domain.ClientTLSConfig:
+  github_com_NeuralTrust_TrustGate_pkg_domain.ClientTLSConfig:
     additionalProperties:
-      $ref: '#/definitions/types.ClientTLSConfig'
+      $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.ClientTLSConfigDTO'
     type: object
-  domain.CredentialsJSON:
+  github_com_NeuralTrust_TrustGate_pkg_domain.CredentialsJSON:
     properties:
       api_key:
         description: Api Key
@@ -58,13 +27,13 @@ definitions:
         type: string
       azure_endpoint:
         type: string
-      azure_eversion:
-        type: string
       azure_tenant_id:
         type: string
       azure_use_managed_identity:
         description: Azure auth
         type: boolean
+      azure_version:
+        type: string
       gcp_service_account_json:
         type: string
       gcp_use_service_account:
@@ -84,11 +53,11 @@ definitions:
       param_value:
         type: string
     type: object
-  domain.HeadersJSON:
+  github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON:
     additionalProperties:
       type: string
     type: object
-  domain.SecurityConfigJSON:
+  github_com_NeuralTrust_TrustGate_pkg_domain.SecurityConfigJSON:
     properties:
       allowed_hosts:
         items:
@@ -123,18 +92,16 @@ definitions:
       sts_seconds:
         type: integer
     type: object
-  domain.TrustLensJSON:
+  github_com_NeuralTrust_TrustGate_pkg_domain.TrustLensJSON:
     properties:
-      app_id:
-        type: string
       mapping:
-        $ref: '#/definitions/types.TrustLensMapping'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDTO'
       team_id:
         type: string
       type:
         type: string
     type: object
-  forwarding_rule.ForwardingRule:
+  github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.ForwardingRule:
     properties:
       active:
         type: boolean
@@ -143,7 +110,7 @@ definitions:
       gatewayID:
         type: string
       headers:
-        $ref: '#/definitions/domain.HeadersJSON'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON'
       id:
         type: string
       methods:
@@ -156,7 +123,7 @@ definitions:
         type: string
       pluginChain:
         items:
-          $ref: '#/definitions/types.PluginConfig'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig'
         type: array
       preserveHost:
         type: boolean
@@ -166,19 +133,36 @@ definitions:
         type: integer
       serviceID:
         type: string
+      session_config:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.SessionConfig'
       stripPath:
         type: boolean
       trustLens:
-        $ref: '#/definitions/domain.TrustLensJSON'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.TrustLensJSON'
       type:
-        type: string
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.Type'
       updatedAt:
         type: string
     type: object
-  gateway.Gateway:
+  github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.SessionConfig:
+    properties:
+      body_param_name:
+        type: string
+      header_name:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.Type:
+    enum:
+    - agent
+    - endpoint
+    type: string
+    x-enum-varnames:
+    - AgentRuleType
+    - EndpointRuleType
+  github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Gateway:
     properties:
       client_tls:
-        $ref: '#/definitions/domain.ClientTLSConfig'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.ClientTLSConfig'
       created_at:
         type: string
       id:
@@ -187,64 +171,321 @@ definitions:
         type: string
       required_plugins:
         items:
-          $ref: '#/definitions/types.PluginConfig'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig'
         type: array
       security_config:
-        $ref: '#/definitions/domain.SecurityConfigJSON'
-      session_config:
-        $ref: '#/definitions/gateway.SessionConfig'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.SecurityConfigJSON'
       status:
         type: string
       telemetry:
-        $ref: '#/definitions/telemetry.Telemetry'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry'
       updated_at:
         type: string
     type: object
-  gateway.SessionConfig:
+  github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.APIKey:
     properties:
-      body_param_name:
-        type: string
-      enabled:
+      active:
         type: boolean
-      header_name:
+      created_at:
         type: string
-      mapping_field:
+      expires_at:
         type: string
-      ttl:
-        type: integer
-    type: object
-  http.updateAPIKeyPoliciesRequest:
-    properties:
+      id:
+        type: string
+      key:
+        type: string
+      name:
+        type: string
       policies:
         items:
           type: string
         type: array
+      subject:
+        type: string
+      subject_type:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.SubjectType'
     type: object
-  request.AddPluginsRequest:
+  github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.SubjectType:
+    enum:
+    - engine
+    - gateway
+    - sentinel
+    type: string
+    x-enum-varnames:
+    - EngineType
+    - GatewayType
+    - SentinelType
+  github_com_NeuralTrust_TrustGate_pkg_domain_service.Service:
     properties:
+      created_at:
+        type: string
+      credentials:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.CredentialsJSON'
+      description:
+        type: string
+      gateway_id:
+        type: string
+      headers:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON'
+      host:
+        description: Direct configuration (used when type is "direct")
+        type: string
       id:
         type: string
-      plugins:
+      name:
+        type: string
+      path:
+        type: string
+      port:
+        type: integer
+      protocol:
+        type: string
+      stream:
+        description: Common settings
+        type: boolean
+      tags:
         items:
-          $ref: '#/definitions/types.PluginConfig'
+          type: string
         type: array
       type:
+        description: '"upstream" or "endpoint"'
+        type: string
+      updated_at:
+        type: string
+      upstream:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream'
+      upstream_id:
+        description: Upstream configuration (used when type is "upstream")
         type: string
     type: object
-  request.AuthType:
+  github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig:
+    properties:
+      name:
+        type: string
+      settings:
+        additionalProperties: true
+        type: object
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.Telemetry:
+    properties:
+      enable_plugin_traces:
+        type: boolean
+      enable_request_traces:
+        type: boolean
+      exporters:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig'
+        type: array
+      extra_params:
+        additionalProperties:
+          type: string
+        type: object
+      header_mapping:
+        additionalProperties:
+          type: string
+        type: object
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_upstream.AuthType:
     enum:
     - oauth2
     type: string
     x-enum-varnames:
     - AuthTypeOAuth2
-  request.ClientTLSCertRequest:
+  github_com_NeuralTrust_TrustGate_pkg_domain_upstream.EmbeddingConfig:
+    properties:
+      credentials:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.CredentialsJSON'
+      model:
+        type: string
+      provider:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_upstream.HealthCheck:
+    properties:
+      headers:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON'
+      interval:
+        description: Time in seconds before resetting failure count
+        type: integer
+      passive:
+        type: boolean
+      path:
+        type: string
+      threshold:
+        description: Number of failures before marking as unhealthy
+        type: integer
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Proxy:
+    properties:
+      host:
+        type: string
+      port:
+        type: string
+      protocol:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Target:
+    properties:
+      auth:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.TargetAuth'
+      credentials:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.CredentialsJSON'
+      default_model:
+        type: string
+      description:
+        type: string
+      headers:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON'
+      host:
+        type: string
+      id:
+        type: string
+      insecure_ssl:
+        type: boolean
+      models:
+        items:
+          type: string
+        type: array
+      path:
+        type: string
+      port:
+        type: integer
+      protocol:
+        type: string
+      provider:
+        type: string
+      provider_options:
+        additionalProperties: {}
+        type: object
+      stream:
+        type: boolean
+      tags:
+        items:
+          type: string
+        type: array
+      weight:
+        type: integer
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_upstream.TargetAuth:
+    properties:
+      oauth:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.TargetOAuthConfig'
+      type:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.AuthType'
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_upstream.TargetOAuthConfig:
+    properties:
+      audience:
+        type: string
+      client_id:
+        type: string
+      client_secret:
+        description: '#nosec G117 -- OAuth domain field for client credentials flow'
+        type: string
+      code:
+        type: string
+      code_verifier:
+        type: string
+      extra:
+        additionalProperties:
+          type: string
+        type: object
+      grant_type:
+        type: string
+      password:
+        description: '#nosec G117 -- OAuth domain field for password grant flow'
+        type: string
+      redirect_uri:
+        type: string
+      refresh_token:
+        description: '#nosec G117 -- OAuth domain field for token refresh flow'
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token_url:
+        type: string
+      use_basic_auth:
+        type: boolean
+      username:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream:
+    properties:
+      algorithm:
+        type: string
+      created_at:
+        type: string
+      embedding_config:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.EmbeddingConfig'
+      gateway_id:
+        type: string
+      health_checks:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.HealthCheck'
+      id:
+        type: string
+      name:
+        type: string
+      proxy:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Proxy'
+      tags:
+        items:
+          type: string
+        type: array
+      targets:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Target'
+        type: array
+      updated_at:
+        type: string
+      websocket_config:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.WebsocketConfig'
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_domain_upstream.WebsocketConfig:
+    properties:
+      enable_direct_communication:
+        type: boolean
+      handshake_timeout:
+        type: string
+      ping_period:
+        type: string
+      pong_wait:
+        type: string
+      read_buffer_size:
+        type: integer
+      return_error_details:
+        type: boolean
+      write_buffer_size:
+        type: integer
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.AddPluginsRequest:
+    properties:
+      id:
+        type: string
+      plugins:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig'
+        type: array
+      type:
+        type: string
+    type: object
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.AuthType:
+    enum:
+    - oauth2
+    type: string
+    x-enum-varnames:
+    - AuthTypeOAuth2
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ClientTLSCertRequest:
     properties:
       certificate:
         type: string
       private_key:
+        description: '#nosec G117 -- TLS certificate request DTO field for private
+          key data'
         type: string
     type: object
-  request.ClientTLSConfigRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ClientTLSConfigRequest:
     properties:
       allow_insecure_connections:
         type: boolean
@@ -255,7 +496,7 @@ definitions:
           type: integer
         type: array
       client_certs:
-        $ref: '#/definitions/request.ClientTLSCertRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ClientTLSCertRequest'
       curve_preferences:
         items:
           type: integer
@@ -267,7 +508,7 @@ definitions:
       min_version:
         type: string
     type: object
-  request.CreateAPIKeyRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateAPIKeyRequest:
     properties:
       expires_at:
         type: string
@@ -284,11 +525,11 @@ definitions:
     required:
     - name
     type: object
-  request.CreateGatewayRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateGatewayRequest:
     properties:
       client_tls:
         additionalProperties:
-          $ref: '#/definitions/request.ClientTLSConfigRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ClientTLSConfigRequest'
         type: object
       created_at:
         type: string
@@ -297,20 +538,18 @@ definitions:
         type: string
       required_plugins:
         items:
-          $ref: '#/definitions/types.PluginConfig'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig'
         type: array
       security_config:
-        $ref: '#/definitions/request.SecurityConfigRequest'
-      session_config:
-        $ref: '#/definitions/request.SessionConfigRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.SecurityConfigRequest'
       status:
         type: string
       telemetry:
-        $ref: '#/definitions/request.TelemetryRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TelemetryRequest'
       updated_at:
         type: string
     type: object
-  request.CreateRuleRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateRuleRequest:
     properties:
       headers:
         additionalProperties:
@@ -326,26 +565,28 @@ definitions:
         type: string
       plugin_chain:
         items:
-          $ref: '#/definitions/types.PluginConfig'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig'
         type: array
       preserve_host:
         type: boolean
       retry_attempts:
         type: integer
-      rule_type:
-        type: string
       service_id:
         type: string
+      session_config:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.SessionConfigDTO'
       strip_path:
         type: boolean
       trustlens:
-        $ref: '#/definitions/types.TrustLensConfig'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensConfigDTO'
+      type:
+        type: string
     required:
     - name
     - path
     - service_id
     type: object
-  request.DeletePluginsRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.DeletePluginsRequest:
     properties:
       id:
         type: string
@@ -356,16 +597,16 @@ definitions:
       type:
         type: string
     type: object
-  request.EmbeddingRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.EmbeddingRequest:
     properties:
       credentials:
-        $ref: '#/definitions/types.Credentials'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.CredentialsDTO'
       model:
         type: string
       provider:
         type: string
     type: object
-  request.ExporterRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ExporterRequest:
     properties:
       name:
         type: string
@@ -373,7 +614,7 @@ definitions:
         additionalProperties: true
         type: object
     type: object
-  request.HealthCheckRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.HealthCheckRequest:
     properties:
       headers:
         additionalProperties:
@@ -390,7 +631,7 @@ definitions:
         description: Number of failures before marking as unhealthy
         type: integer
     type: object
-  request.ProxyConfigRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ProxyConfigRequest:
     properties:
       host:
         type: string
@@ -399,7 +640,7 @@ definitions:
       protocol:
         type: string
     type: object
-  request.SecurityConfigRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.SecurityConfigRequest:
     properties:
       allowed_hosts:
         items:
@@ -434,14 +675,14 @@ definitions:
       sts_seconds:
         type: integer
     type: object
-  request.ServiceRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ServiceRequest:
     properties:
       CreatedAt:
         type: string
       UpdatedAt:
         type: string
       credentials:
-        $ref: '#/definitions/types.Credentials'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.CredentialsDTO'
       description:
         type: string
       gateway_id:
@@ -473,32 +714,19 @@ definitions:
       upstream_id:
         type: string
     type: object
-  request.SessionConfigRequest:
-    properties:
-      body_param_name:
-        type: string
-      enabled:
-        type: boolean
-      header_name:
-        type: string
-      mapping_field:
-        type: string
-      ttl:
-        type: integer
-    type: object
-  request.TargetAuthRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TargetAuthRequest:
     properties:
       oauth:
-        $ref: '#/definitions/request.UpstreamOAuthRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamOAuthRequest'
       type:
-        $ref: '#/definitions/request.AuthType'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.AuthType'
     type: object
-  request.TargetRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TargetRequest:
     properties:
       auth:
-        $ref: '#/definitions/request.TargetAuthRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TargetAuthRequest'
       credentials:
-        $ref: '#/definitions/types.Credentials'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.CredentialsDTO'
       default_model:
         type: string
       description:
@@ -537,7 +765,7 @@ definitions:
       weight:
         type: integer
     type: object
-  request.TelemetryRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TelemetryRequest:
     properties:
       enable_plugin_traces:
         type: boolean
@@ -545,7 +773,7 @@ definitions:
         type: boolean
       exporters:
         items:
-          $ref: '#/definitions/request.ExporterRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ExporterRequest'
         type: array
       extra_params:
         additionalProperties:
@@ -556,28 +784,26 @@ definitions:
           type: string
         type: object
     type: object
-  request.UpdateGatewayRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdateGatewayRequest:
     properties:
       client_tls:
         additionalProperties:
-          $ref: '#/definitions/request.ClientTLSConfigRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ClientTLSConfigRequest'
         type: object
       name:
         type: string
       required_plugins:
         items:
-          $ref: '#/definitions/types.PluginConfig'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig'
         type: array
       security_config:
-        $ref: '#/definitions/request.SecurityConfigRequest'
-      session_config:
-        $ref: '#/definitions/request.SessionConfigRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.SecurityConfigRequest'
       status:
         type: string
       telemetry:
-        $ref: '#/definitions/request.TelemetryRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TelemetryRequest'
     type: object
-  request.UpdatePluginsRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdatePluginsRequest:
     properties:
       id:
         type: string
@@ -589,7 +815,7 @@ definitions:
       type:
         type: string
     type: object
-  request.UpdateRuleRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdateRuleRequest:
     properties:
       active:
         type: boolean
@@ -607,35 +833,38 @@ definitions:
         type: string
       plugin_chain:
         items:
-          $ref: '#/definitions/types.PluginConfig'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig'
         type: array
       preserve_host:
         type: boolean
       retry_attempts:
         type: integer
-      rule_type:
-        type: string
       service_id:
         type: string
+      session_config:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.SessionConfigDTO'
       strip_path:
         type: boolean
       trustlens:
-        $ref: '#/definitions/types.TrustLensConfig'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensConfigDTO'
+      type:
+        type: string
     type: object
-  request.UpstreamAuthRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamAuthRequest:
     properties:
       oauth:
-        $ref: '#/definitions/request.UpstreamOAuthRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamOAuthRequest'
       type:
-        $ref: '#/definitions/request.AuthType'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.AuthType'
     type: object
-  request.UpstreamOAuthRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamOAuthRequest:
     properties:
       audience:
         type: string
       client_id:
         type: string
       client_secret:
+        description: '#nosec G117 -- OAuth DTO field for client credentials flow'
         type: string
       code:
         type: string
@@ -648,10 +877,12 @@ definitions:
       grant_type:
         type: string
       password:
+        description: '#nosec G117 -- OAuth DTO field for password grant flow'
         type: string
       redirect_uri:
         type: string
       refresh_token:
+        description: '#nosec G117 -- OAuth DTO field for token refresh flow'
         type: string
       scopes:
         items:
@@ -664,36 +895,36 @@ definitions:
       username:
         type: string
     type: object
-  request.UpstreamRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamRequest:
     properties:
       algorithm:
         type: string
       auth:
-        $ref: '#/definitions/request.UpstreamAuthRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamAuthRequest'
       embedding:
-        $ref: '#/definitions/request.EmbeddingRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.EmbeddingRequest'
       gateway_id:
         type: string
       health_checks:
-        $ref: '#/definitions/request.HealthCheckRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.HealthCheckRequest'
       id:
         type: string
       name:
         type: string
       proxy_config:
-        $ref: '#/definitions/request.ProxyConfigRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ProxyConfigRequest'
       tags:
         items:
           type: string
         type: array
       targets:
         items:
-          $ref: '#/definitions/request.TargetRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TargetRequest'
         type: array
       websocket_config:
-        $ref: '#/definitions/request.WebhookConfigRequest'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.WebhookConfigRequest'
     type: object
-  request.WebhookConfigRequest:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.WebhookConfigRequest:
     properties:
       enable_direct_communication:
         type: boolean
@@ -710,14 +941,14 @@ definitions:
       write_buffer_size:
         type: integer
     type: object
-  response.ForwardingRuleOutput:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.ForwardingRuleOutput:
     properties:
       active:
         type: boolean
       created_at:
         type: string
       headers:
-        $ref: '#/definitions/domain.HeadersJSON'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON'
       id:
         type: string
       methods:
@@ -730,7 +961,7 @@ definitions:
         type: string
       plugin_chain:
         items:
-          $ref: '#/definitions/types.PluginConfig'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig'
         type: array
       preserve_host:
         type: boolean
@@ -738,18 +969,20 @@ definitions:
         type: integer
       service_id:
         type: string
+      session_config:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.SessionConfig'
       strip_path:
         type: boolean
       trustlens:
-        $ref: '#/definitions/domain.TrustLensJSON'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain.TrustLensJSON'
       type:
         type: string
       updated_at:
         type: string
       upstream:
-        $ref: '#/definitions/response.UpstreamOutput'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.UpstreamOutput'
     type: object
-  response.GatewayOutput:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.GatewayOutput:
     properties:
       created_at:
         type: string
@@ -759,23 +992,23 @@ definitions:
         type: string
       plugin_chain:
         items:
-          $ref: '#/definitions/types.PluginConfig'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig'
         type: array
       status:
         type: string
       updated_at:
         type: string
     type: object
-  response.ListRulesOutput:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.ListRulesOutput:
     properties:
       gateway:
-        $ref: '#/definitions/response.GatewayOutput'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.GatewayOutput'
       rules:
         items:
-          $ref: '#/definitions/response.ForwardingRuleOutput'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.ForwardingRuleOutput'
         type: array
     type: object
-  response.UpstreamOutput:
+  github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.UpstreamOutput:
     properties:
       algorithm:
         type: string
@@ -783,87 +1016,50 @@ definitions:
         type: string
       targets:
         items:
-          $ref: '#/definitions/upstream.Target'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Target'
         type: array
     type: object
-  service.Service:
+  github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.PluginConfig:
     properties:
-      created_at:
-        type: string
-      credentials:
-        $ref: '#/definitions/types.Credentials'
-      description:
-        type: string
-      gateway_id:
-        type: string
-      headers:
-        $ref: '#/definitions/domain.HeadersJSON'
-      host:
-        description: Direct configuration (used when type is "direct")
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-      path:
-        type: string
-      port:
-        type: integer
-      protocol:
-        type: string
-      stream:
-        description: Common settings
+      enabled:
         type: boolean
-      tags:
-        items:
-          type: string
-        type: array
-      type:
-        description: '"upstream" or "endpoint"'
+      id:
+        description: ID of the gateway or rule this plugin belongs to
         type: string
-      updated_at:
-        type: string
-      upstream:
-        $ref: '#/definitions/upstream.Upstream'
-      upstream_id:
-        description: Upstream configuration (used when type is "upstream")
-        type: string
-    type: object
-  telemetry.ExporterConfig:
-    properties:
       name:
         type: string
+      parallel:
+        description: Whether this plugin can run in parallel
+        type: boolean
+      priority:
+        type: integer
       settings:
         additionalProperties: true
         type: object
+      stage:
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.Stage'
     type: object
-  telemetry.Telemetry:
-    properties:
-      enable_plugin_traces:
-        type: boolean
-      enable_request_traces:
-        type: boolean
-      exporters:
-        items:
-          $ref: '#/definitions/telemetry.ExporterConfig'
-        type: array
-      extra_params:
-        additionalProperties:
-          type: string
-        type: object
-      header_mapping:
-        additionalProperties:
-          type: string
-        type: object
-    type: object
-  types.ClientTLSCert:
+  github_com_NeuralTrust_TrustGate_pkg_infra_plugins_types.Stage:
+    enum:
+    - pre_request
+    - post_request
+    - pre_response
+    - post_response
+    type: string
+    x-enum-varnames:
+    - PreRequest
+    - PostRequest
+    - PreResponse
+    - PostResponse
+  github_com_NeuralTrust_TrustGate_pkg_types.ClientTLSCertDTO:
     properties:
       certificate:
         type: string
       private_key:
+        description: '#nosec G117 -- TLS certificate DTO field for private key data'
         type: string
     type: object
-  types.ClientTLSConfig:
+  github_com_NeuralTrust_TrustGate_pkg_types.ClientTLSConfigDTO:
     properties:
       allow_insecure_connections:
         type: boolean
@@ -874,7 +1070,7 @@ definitions:
           type: integer
         type: array
       client_certs:
-        $ref: '#/definitions/types.ClientTLSCert'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.ClientTLSCertDTO'
       curve_preferences:
         items:
           type: integer
@@ -886,7 +1082,7 @@ definitions:
       min_version:
         type: string
     type: object
-  types.Credentials:
+  github_com_NeuralTrust_TrustGate_pkg_types.CredentialsDTO:
     properties:
       api_key:
         description: Api Key
@@ -910,13 +1106,13 @@ definitions:
         type: string
       azure_endpoint:
         type: string
-      azure_eversion:
-        type: string
       azure_tenant_id:
         type: string
       azure_use_managed_identity:
         description: Azure auth
         type: boolean
+      azure_version:
+        type: string
       gcp_service_account_json:
         type: string
       gcp_use_service_account:
@@ -936,57 +1132,30 @@ definitions:
       param_value:
         type: string
     type: object
-  types.PluginConfig:
+  github_com_NeuralTrust_TrustGate_pkg_types.SessionConfigDTO:
     properties:
-      enabled:
-        type: boolean
-      id:
-        description: ID of the gateway or rule this plugin belongs to
+      body_param_name:
         type: string
-      name:
+      header_name:
         type: string
-      parallel:
-        description: Whether this plugin can run in parallel
-        type: boolean
-      priority:
-        type: integer
-      settings:
-        additionalProperties: true
-        type: object
-      stage:
-        $ref: '#/definitions/types.Stage'
     type: object
-  types.Stage:
-    enum:
-    - pre_request
-    - post_request
-    - pre_response
-    - post_response
-    type: string
-    x-enum-varnames:
-    - PreRequest
-    - PostRequest
-    - PreResponse
-    - PostResponse
-  types.TrustLensConfig:
+  github_com_NeuralTrust_TrustGate_pkg_types.TrustLensConfigDTO:
     properties:
-      app_id:
-        type: string
       mapping:
-        $ref: '#/definitions/types.TrustLensMapping'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDTO'
       team_id:
         type: string
       type:
         type: string
     type: object
-  types.TrustLensMapping:
+  github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDTO:
     properties:
       input:
-        $ref: '#/definitions/types.TrustLensMappingData'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDataDTO'
       output:
-        $ref: '#/definitions/types.TrustLensMappingData'
+        $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDataDTO'
     type: object
-  types.TrustLensMappingData:
+  github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDataDTO:
     properties:
       data_projection:
         additionalProperties:
@@ -997,176 +1166,12 @@ definitions:
           type: string
         type: object
     type: object
-  upstream.AuthType:
-    enum:
-    - oauth2
-    type: string
-    x-enum-varnames:
-    - AuthTypeOAuth2
-  upstream.EmbeddingConfig:
+  pkg_handlers_http.updateAPIKeyPoliciesRequest:
     properties:
-      credentials:
-        $ref: '#/definitions/domain.CredentialsJSON'
-      model:
-        type: string
-      provider:
-        type: string
-    type: object
-  upstream.HealthCheck:
-    properties:
-      headers:
-        $ref: '#/definitions/domain.HeadersJSON'
-      interval:
-        description: Time in seconds before resetting failure count
-        type: integer
-      passive:
-        type: boolean
-      path:
-        type: string
-      threshold:
-        description: Number of failures before marking as unhealthy
-        type: integer
-    type: object
-  upstream.Proxy:
-    properties:
-      host:
-        type: string
-      port:
-        type: string
-      protocol:
-        type: string
-    type: object
-  upstream.Target:
-    properties:
-      auth:
-        $ref: '#/definitions/upstream.TargetAuth'
-      credentials:
-        $ref: '#/definitions/domain.CredentialsJSON'
-      default_model:
-        type: string
-      description:
-        type: string
-      headers:
-        $ref: '#/definitions/domain.HeadersJSON'
-      host:
-        type: string
-      id:
-        type: string
-      insecure_ssl:
-        type: boolean
-      models:
+      policies:
         items:
           type: string
         type: array
-      path:
-        type: string
-      port:
-        type: integer
-      protocol:
-        type: string
-      provider:
-        type: string
-      provider_options:
-        additionalProperties: {}
-        type: object
-      stream:
-        type: boolean
-      tags:
-        items:
-          type: string
-        type: array
-      weight:
-        type: integer
-    type: object
-  upstream.TargetAuth:
-    properties:
-      oauth:
-        $ref: '#/definitions/upstream.TargetOAuthConfig'
-      type:
-        $ref: '#/definitions/upstream.AuthType'
-    type: object
-  upstream.TargetOAuthConfig:
-    properties:
-      audience:
-        type: string
-      client_id:
-        type: string
-      client_secret:
-        type: string
-      code:
-        type: string
-      code_verifier:
-        type: string
-      extra:
-        additionalProperties:
-          type: string
-        type: object
-      grant_type:
-        type: string
-      password:
-        type: string
-      redirect_uri:
-        type: string
-      refresh_token:
-        type: string
-      scopes:
-        items:
-          type: string
-        type: array
-      token_url:
-        type: string
-      use_basic_auth:
-        type: boolean
-      username:
-        type: string
-    type: object
-  upstream.Upstream:
-    properties:
-      algorithm:
-        type: string
-      created_at:
-        type: string
-      embedding_config:
-        $ref: '#/definitions/upstream.EmbeddingConfig'
-      gateway_id:
-        type: string
-      health_checks:
-        $ref: '#/definitions/upstream.HealthCheck'
-      id:
-        type: string
-      name:
-        type: string
-      proxy:
-        $ref: '#/definitions/upstream.Proxy'
-      tags:
-        items:
-          type: string
-        type: array
-      targets:
-        items:
-          $ref: '#/definitions/upstream.Target'
-        type: array
-      updated_at:
-        type: string
-      websocket_config:
-        $ref: '#/definitions/upstream.WebsocketConfig'
-    type: object
-  upstream.WebsocketConfig:
-    properties:
-      enable_direct_communication:
-        type: boolean
-      handshake_timeout:
-        type: string
-      ping_period:
-        type: string
-      pong_wait:
-        type: string
-      read_buffer_size:
-        type: integer
-      return_error_details:
-        type: boolean
-      write_buffer_size:
-        type: integer
     type: object
 info:
   contact:
@@ -1192,7 +1197,7 @@ paths:
           description: List of gateways
           schema:
             items:
-              $ref: '#/definitions/gateway.Gateway'
+              $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Gateway'
             type: array
         "500":
           description: Internal server error
@@ -1211,19 +1216,19 @@ paths:
         name: Authorization
         required: true
         type: string
-      - description: Gateway data
+      - description: GatewayDTO data
         in: body
         name: gateway
         required: true
         schema:
-          $ref: '#/definitions/request.CreateGatewayRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateGatewayRequest'
       produces:
       - application/json
       responses:
         "201":
-          description: Gateway created successfully
+          description: GatewayDTO created successfully
           schema:
-            $ref: '#/definitions/gateway.Gateway'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Gateway'
         "400":
           description: Invalid request data
           schema:
@@ -1274,7 +1279,7 @@ paths:
         "200":
           description: Gateway
           schema:
-            $ref: '#/definitions/gateway.Gateway'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_gateway.Gateway'
         "404":
           description: Gateway not found
           schema:
@@ -1292,7 +1297,7 @@ paths:
         name: Authorization
         required: true
         type: string
-      - description: Gateway ID
+      - description: GatewayDTO ID
         in: path
         name: gateway_id
         required: true
@@ -1302,12 +1307,12 @@ paths:
         name: gateway
         required: true
         schema:
-          $ref: '#/definitions/request.UpdateGatewayRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdateGatewayRequest'
       produces:
       - application/json
       responses:
         "204":
-          description: Gateway updated successfully
+          description: GatewayDTO updated successfully
         "400":
           description: Invalid request data
           schema:
@@ -1324,7 +1329,7 @@ paths:
         name: Authorization
         required: true
         type: string
-      - description: Gateway ID
+      - description: GatewayDTO ID
         in: path
         name: gateway_id
         required: true
@@ -1335,9 +1340,9 @@ paths:
         "200":
           description: List of rules
           schema:
-            $ref: '#/definitions/response.ListRulesOutput'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.ListRulesOutput'
         "404":
-          description: Gateway not found
+          description: GatewayDTO not found
           schema:
             additionalProperties: true
             type: object
@@ -1353,7 +1358,7 @@ paths:
         name: Authorization
         required: true
         type: string
-      - description: Gateway ID
+      - description: GatewayDTO ID
         in: path
         name: gateway_id
         required: true
@@ -1363,14 +1368,14 @@ paths:
         name: rule
         required: true
         schema:
-          $ref: '#/definitions/request.CreateRuleRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateRuleRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Rule created successfully
           schema:
-            $ref: '#/definitions/forwarding_rule.ForwardingRule'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.ForwardingRule'
         "400":
           description: Invalid request data
           schema:
@@ -1422,7 +1427,7 @@ paths:
         name: Authorization
         required: true
         type: string
-      - description: Gateway ID
+      - description: GatewayDTO ID
         in: path
         name: gateway_id
         required: true
@@ -1437,7 +1442,7 @@ paths:
         name: rule
         required: true
         schema:
-          $ref: '#/definitions/request.UpdateRuleRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdateRuleRequest'
       produces:
       - application/json
       responses:
@@ -1476,7 +1481,7 @@ paths:
           description: List of services
           schema:
             items:
-              $ref: '#/definitions/service.Service'
+              $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service'
             type: array
         "404":
           description: Gateway not found
@@ -1505,14 +1510,14 @@ paths:
         name: service
         required: true
         schema:
-          $ref: '#/definitions/request.ServiceRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ServiceRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Service created successfully
           schema:
-            $ref: '#/definitions/service.Service'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service'
         "400":
           description: Invalid request data
           schema:
@@ -1578,7 +1583,7 @@ paths:
         "200":
           description: Service details
           schema:
-            $ref: '#/definitions/service.Service'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service'
         "404":
           description: Service not found
           schema:
@@ -1611,14 +1616,14 @@ paths:
         name: service
         required: true
         schema:
-          $ref: '#/definitions/request.ServiceRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ServiceRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Service updated successfully
           schema:
-            $ref: '#/definitions/service.Service'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service'
         "400":
           description: Invalid request data
           schema:
@@ -1652,7 +1657,7 @@ paths:
           description: List of upstreams
           schema:
             items:
-              $ref: '#/definitions/upstream.Upstream'
+              $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream'
             type: array
       tags:
       - Upstreams
@@ -1676,14 +1681,14 @@ paths:
         name: upstream
         required: true
         schema:
-          $ref: '#/definitions/request.UpstreamRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Upstream created successfully
           schema:
-            $ref: '#/definitions/upstream.Upstream'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream'
       tags:
       - Upstreams
   /api/v1/gateways/{gateway_id}/upstreams/{upstream_id}:
@@ -1734,7 +1739,7 @@ paths:
         "200":
           description: Upstream details
           schema:
-            $ref: '#/definitions/upstream.Upstream'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream'
       tags:
       - Upstreams
     put:
@@ -1762,14 +1767,14 @@ paths:
         name: upstream
         required: true
         schema:
-          $ref: '#/definitions/request.UpstreamRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Upstream updated successfully
           schema:
-            $ref: '#/definitions/upstream.Upstream'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream'
       tags:
       - Upstreams
   /api/v1/iam/api-key:
@@ -1793,14 +1798,14 @@ paths:
         name: api_key
         required: true
         schema:
-          $ref: '#/definitions/request.CreateAPIKeyRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.CreateAPIKeyRequest'
       produces:
       - application/json
       responses:
         "201":
           description: API Key created successfully
           schema:
-            $ref: '#/definitions/apikey.APIKey'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.APIKey'
         "400":
           description: Invalid request data
           schema:
@@ -1875,14 +1880,14 @@ paths:
         name: update
         required: true
         schema:
-          $ref: '#/definitions/http.updateAPIKeyPoliciesRequest'
+          $ref: '#/definitions/pkg_handlers_http.updateAPIKeyPoliciesRequest'
       produces:
       - application/json
       responses:
         "200":
           description: API Key updated successfully
           schema:
-            $ref: '#/definitions/apikey.APIKey'
+            $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.APIKey'
         "400":
           description: Invalid request data
           schema:
@@ -1922,7 +1927,7 @@ paths:
           description: List of API Keys with obfuscated keys
           schema:
             items:
-              $ref: '#/definitions/apikey.APIKey'
+              $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_domain_iam_apikey.APIKey'
             type: array
         "404":
           description: Gateway not found
@@ -1948,7 +1953,7 @@ paths:
         name: payload
         required: true
         schema:
-          $ref: '#/definitions/request.DeletePluginsRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.DeletePluginsRequest'
       produces:
       - application/json
       responses:
@@ -1982,7 +1987,7 @@ paths:
         name: payload
         required: true
         schema:
-          $ref: '#/definitions/request.AddPluginsRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.AddPluginsRequest'
       produces:
       - application/json
       responses:
@@ -2016,7 +2021,7 @@ paths:
         name: payload
         required: true
         schema:
-          $ref: '#/definitions/request.UpdatePluginsRequest'
+          $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpdatePluginsRequest'
       produces:
       - application/json
       responses:
