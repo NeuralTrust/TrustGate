@@ -1,9 +1,6 @@
 package types
 
-import (
-	"errors"
-	"fmt"
-)
+import "errors"
 
 var (
 	ErrRequiredPluginNotFound     = errors.New("plugin is required")
@@ -21,9 +18,6 @@ const (
 	PostRequest  Stage = "post_request"
 	PreResponse  Stage = "pre_response"
 	PostResponse Stage = "post_response"
-
-	ModeObserve string = "observe"
-	ModeEnforce string = "enforce"
 )
 
 // PluginConfig represents the configuration for a plugin
@@ -70,13 +64,6 @@ func NewBasePlugin() *BasePlugin {
 	return &BasePlugin{}
 }
 
-func (p *BasePlugin) ValidateMode(mode string) error {
-	if mode == "" {
-		// Empty mode is valid, default will be applied in Execute
-		return nil
-	}
-	if mode != ModeObserve && mode != ModeEnforce {
-		return fmt.Errorf("mode must be either observe or enforce")
-	}
-	return nil
+func (p *BasePlugin) ValidateMode(mode *Option) error {
+	return ValidateOption(mode)
 }

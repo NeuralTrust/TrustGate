@@ -40,7 +40,7 @@ func TestCodeSanitationPlugin_ValidateConfig_Valid(t *testing.T) {
 				Settings: map[string]interface{}{
 					"apply_all_languages": true,
 					"content_to_check":    []interface{}{"body"},
-					"action":              "block",
+					"action":              "enforce",
 					"status_code":         400,
 				},
 			},
@@ -64,7 +64,7 @@ func TestCodeSanitationPlugin_ValidateConfig_Valid(t *testing.T) {
 						map[string]interface{}{"language": "sql", "enabled": true},
 					},
 					"content_to_check": []interface{}{"body"},
-					"action":           "block",
+					"action":           "enforce",
 					"status_code":      403,
 				},
 			},
@@ -75,7 +75,7 @@ func TestCodeSanitationPlugin_ValidateConfig_Valid(t *testing.T) {
 				Settings: map[string]interface{}{
 					"apply_all_languages": true,
 					"content_to_check":    []interface{}{"all"},
-					"action":              "block",
+					"action":              "enforce",
 					"status_code":         400,
 					"custom_patterns": []interface{}{
 						map[string]interface{}{
@@ -110,7 +110,7 @@ func TestCodeSanitationPlugin_ValidateConfig_Invalid(t *testing.T) {
 			config: plugintypes.PluginConfig{
 				Settings: map[string]interface{}{
 					"apply_all_languages": true,
-					"action":              "block",
+					"action":              "enforce",
 				},
 			},
 			expectedErr: "at least one content type must be specified",
@@ -121,7 +121,7 @@ func TestCodeSanitationPlugin_ValidateConfig_Invalid(t *testing.T) {
 				Settings: map[string]interface{}{
 					"apply_all_languages": true,
 					"content_to_check":    []interface{}{"invalid_type"},
-					"action":              "block",
+					"action":              "enforce",
 				},
 			},
 			expectedErr: "invalid content type",
@@ -135,7 +135,7 @@ func TestCodeSanitationPlugin_ValidateConfig_Invalid(t *testing.T) {
 					"action":              "invalid_action",
 				},
 			},
-			expectedErr: "invalid action",
+			expectedErr: "option must be one of",
 		},
 		{
 			name: "invalid status code",
@@ -143,7 +143,7 @@ func TestCodeSanitationPlugin_ValidateConfig_Invalid(t *testing.T) {
 				Settings: map[string]interface{}{
 					"apply_all_languages": true,
 					"content_to_check":    []interface{}{"body"},
-					"action":              "block",
+					"action":              "enforce",
 					"status_code":         99, // Invalid: < 100
 				},
 			},
@@ -155,7 +155,7 @@ func TestCodeSanitationPlugin_ValidateConfig_Invalid(t *testing.T) {
 				Settings: map[string]interface{}{
 					"apply_all_languages": true,
 					"content_to_check":    []interface{}{"body"},
-					"action":              "block",
+					"action":              "enforce",
 					"status_code":         400,
 					"custom_patterns": []interface{}{
 						map[string]interface{}{
@@ -329,7 +329,7 @@ func TestCodeSanitationPlugin_Execute_SQL_Injection(t *testing.T) {
 				map[string]interface{}{"language": "sql", "enabled": true},
 			},
 			"content_to_check": []interface{}{"body"},
-			"action":           "block",
+			"action":           "enforce",
 			"status_code":      403,
 			"error_message":    "SQL injection detected",
 		},
@@ -398,7 +398,7 @@ func TestCodeSanitationPlugin_Execute_Shell_Command(t *testing.T) {
 				map[string]interface{}{"language": "shell", "enabled": true},
 			},
 			"content_to_check": []interface{}{"body"},
-			"action":           "block",
+			"action":           "enforce",
 			"status_code":      400,
 		},
 	}
@@ -430,7 +430,7 @@ func TestCodeSanitationPlugin_Execute_Shell_ReverseShell(t *testing.T) {
 				map[string]interface{}{"language": "shell", "enabled": true},
 			},
 			"content_to_check": []interface{}{"body"},
-			"action":           "block",
+			"action":           "enforce",
 			"status_code":      400,
 		},
 	}
@@ -495,7 +495,7 @@ func TestCodeSanitationPlugin_Execute_BlockMode(t *testing.T) {
 		Settings: map[string]interface{}{
 			"apply_all_languages": true,
 			"content_to_check":    []interface{}{"body"},
-			"action":              "block",
+			"action":              "enforce",
 			"status_code":         403,
 			"error_message":       "Code injection blocked",
 		},
@@ -673,7 +673,7 @@ func TestCodeSanitationPlugin_Execute_SafeContent(t *testing.T) {
 		Settings: map[string]interface{}{
 			"apply_all_languages": true,
 			"content_to_check":    []interface{}{"body"},
-			"action":              "block",
+			"action":              "enforce",
 			"status_code":         400,
 		},
 	}
@@ -870,7 +870,7 @@ func TestCodeSanitationPlugin_Execute_EmptyBody(t *testing.T) {
 		Settings: map[string]interface{}{
 			"apply_all_languages": true,
 			"content_to_check":    []interface{}{"body"},
-			"action":              "block",
+			"action":              "enforce",
 			"status_code":         400,
 		},
 	}
@@ -1032,7 +1032,7 @@ func TestCodeSanitationPlugin_Execute_Java_Runtime(t *testing.T) {
 				map[string]interface{}{"language": "java", "enabled": true},
 			},
 			"content_to_check": []interface{}{"body"},
-			"action":           "block",
+			"action":           "enforce",
 			"status_code":      400,
 		},
 	}
@@ -1104,7 +1104,7 @@ func TestCodeSanitationPlugin_Execute_CSharp_Process(t *testing.T) {
 				map[string]interface{}{"language": "csharp", "enabled": true},
 			},
 			"content_to_check": []interface{}{"body"},
-			"action":           "block",
+			"action":           "enforce",
 			"status_code":      400,
 		},
 	}
@@ -1139,7 +1139,7 @@ func TestCodeSanitationPlugin_Execute_MarkdownLinks_NoFalsePositive(t *testing.T
 		Settings: map[string]interface{}{
 			"apply_all_languages": true,
 			"content_to_check":    []interface{}{"body"},
-			"action":              "block",
+			"action":              "enforce",
 			"status_code":         400,
 		},
 	}
@@ -1198,7 +1198,7 @@ func TestCodeSanitationPlugin_Execute_CSS_AttributeSelector_Detection(t *testing
 				map[string]interface{}{"language": "html", "enabled": true},
 			},
 			"content_to_check": []interface{}{"body"},
-			"action":           "block",
+			"action":           "enforce",
 			"status_code":      400,
 		},
 	}
@@ -1251,7 +1251,7 @@ func TestCodeSanitationPlugin_NoFalsePositives(t *testing.T) {
 		Settings: map[string]interface{}{
 			"apply_all_languages": true,
 			"content_to_check":    []interface{}{"body"},
-			"action":              "block",
+			"action":              "enforce",
 			"status_code":         400,
 		},
 	}
@@ -1387,7 +1387,7 @@ func TestCodeSanitationPlugin_DetectionCoverage_Block(t *testing.T) {
 		Settings: map[string]interface{}{
 			"apply_all_languages": true,
 			"content_to_check":    []interface{}{"body"},
-			"action":              "block",
+			"action":              "enforce",
 			"status_code":         400,
 		},
 	}
