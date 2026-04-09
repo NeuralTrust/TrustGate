@@ -74,6 +74,8 @@ type TargetEvent struct {
 type PluginDataEvent struct {
 	PluginName   string      `json:"plugin_name"`
 	Stage        string      `json:"stage"`
+	Mode         string      `json:"mode,omitempty"`
+	Decision     string      `json:"decision,omitempty"`
 	Error        bool        `json:"error"`
 	ErrorMessage string      `json:"error_message,omitempty"`
 	Extras       interface{} `json:"extras,omitempty"`

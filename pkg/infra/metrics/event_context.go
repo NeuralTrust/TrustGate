@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"encoding/json"
 	"sync"
 	"time"
 
@@ -78,38 +77,9 @@ func (e *EventContext) HasDecision() bool {
 func (e *EventContext) Publish() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.mode != "" || e.decision != "" {
-		e.data.Extras = e.enrichExtras()
-	}
+	e.data.Mode = e.mode
+	e.data.Decision = e.decision
 	evt := metric_events.NewPluginEvent()
 	evt.Plugin = e.data
 	e.collector.Emit(evt)
-}
-
-// enrichExtras merges mode/decision into the existing extras payload.
-// Must be called while holding e.mu.
-func (e *EventContext) enrichExtras() interface{} {
-	var m map[string]interface{}
-	switch v := e.data.Extras.(type) {
-	case nil:
-		m = make(map[string]interface{})
-	case map[string]interface{}:
-		m = v
-	default:
-		b, err := json.Marshal(v)
-		if err != nil {
-			m = make(map[string]interface{})
-		} else {
-			if err := json.Unmarshal(b, &m); err != nil {
-				m = make(map[string]interface{})
-			}
-		}
-	}
-	if e.mode != "" {
-		m["mode"] = e.mode
-	}
-	if e.decision != "" {
-		m["decision"] = e.decision
-	}
-	return m
 }
