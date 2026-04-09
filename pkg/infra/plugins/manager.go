@@ -18,7 +18,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics/metric_events"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/pluginiface"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/bedrock_guardrail"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/bot_detector"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/code_sanitation"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/cors"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/data_masking"
@@ -153,13 +152,6 @@ func (m *manager) InitializePlugins() {
 		m.logger,
 	)); err != nil {
 		m.logger.WithError(err).Error("Failed to register trustgate guardrail plugin")
-	}
-
-	if err := m.RegisterPlugin(bot_detector.NewBotDetectorPlugin(
-		m.logger,
-		m.fingerprintTracker,
-	)); err != nil {
-		m.logger.WithError(err).Error("Failed to register bot detector plugin")
 	}
 
 }

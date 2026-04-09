@@ -213,7 +213,7 @@ type Config struct {
 		ContentToCheck ContentType `mapstructure:"content_to_check"`
 	} `mapstructure:"custom_injections"`
 	ContentToCheck []ContentType `mapstructure:"content_to_check"`
-	Action         pluginTypes.Option `mapstructure:"action"`
+	Mode           pluginTypes.Option `mapstructure:"mode"`
 	StatusCode     int           `mapstructure:"status_code"`
 	ErrorMessage   string        `mapstructure:"error_message"`
 }
@@ -261,7 +261,7 @@ func (p *InjectionProtectionPlugin) ValidateConfig(config pluginTypes.PluginConf
 		}
 	}
 
-	if err := pluginTypes.ValidateOptionAllowed(&cfg.Action, pluginTypes.OptionEnforce, pluginTypes.OptionObserve); err != nil {
+	if err := pluginTypes.ValidateOptionAllowed(&cfg.Mode, pluginTypes.OptionEnforce, pluginTypes.OptionObserve); err != nil {
 		return err
 	}
 
@@ -300,11 +300,11 @@ func (p *InjectionProtectionPlugin) Execute(
 		return nil, fmt.Errorf("failed to decode config: %v", err)
 	}
 
-	if cfg.Action == "" {
-		cfg.Action = pluginTypes.OptionEnforce
+	if cfg.Mode == "" {
+		cfg.Mode = pluginTypes.OptionEnforce
 	}
 
-	evtCtx.SetMode(cfg.Action)
+	evtCtx.SetMode(cfg.Mode)
 
 	if cfg.StatusCode == 0 {
 		cfg.StatusCode = 403
@@ -633,7 +633,7 @@ func (p *InjectionProtectionPlugin) reportInjection(
 		},
 	})
 
-	if cfg.Action == pluginTypes.OptionObserve {
+	if cfg.Mode == pluginTypes.OptionObserve {
 		return &pluginTypes.PluginResponse{
 			StatusCode: 200,
 			Message:    fmt.Sprintf("injection detected: %s (observe mode)", injectionType),
@@ -704,7 +704,7 @@ func (p *InjectionProtectionPlugin) handleInjectionDetected(
 
 	logFields := logrus.Fields{
 		"injection_type": injectionType,
-		"action":         config.Action,
+		"mode":           config.Mode,
 		"location":       location,
 		"value":          truncatedValue,
 	}
