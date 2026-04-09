@@ -240,7 +240,7 @@ func TestCodeSanitation_BlockMode(t *testing.T) {
 				"settings": map[string]interface{}{
 					"apply_all_languages": true,
 					"content_to_check":    []string{"body"},
-					"action":              "block",
+					"action":              "enforce",
 					"status_code":         400,
 					"error_message":       "Code injection detected",
 				},
@@ -414,7 +414,7 @@ func TestCodeSanitation_SpecificLanguages(t *testing.T) {
 						{"language": "sql", "enabled": true},
 					},
 					"content_to_check": []string{"body"},
-					"action":           "block",
+					"action":           "enforce",
 					"status_code":      400,
 					"error_message":    "Code injection detected",
 				},
@@ -550,7 +550,7 @@ func TestCodeSanitation_ContentTypes(t *testing.T) {
 				"settings": map[string]interface{}{
 					"apply_all_languages": true,
 					"content_to_check":    []string{"headers", "path_and_query", "body"},
-					"action":              "block",
+					"action":              "enforce",
 					"status_code":         400,
 					"error_message":       "Code injection detected",
 				},
@@ -699,7 +699,7 @@ func TestCodeSanitation_NestedJSON(t *testing.T) {
 				"settings": map[string]interface{}{
 					"apply_all_languages": true,
 					"content_to_check":    []string{"body"},
-					"action":              "block",
+					"action":              "enforce",
 					"status_code":         400,
 					"error_message":       "Code injection detected",
 				},
@@ -856,7 +856,7 @@ func TestCodeSanitation_PlainTextBody(t *testing.T) {
 				"settings": map[string]interface{}{
 					"apply_all_languages": true,
 					"content_to_check":    []string{"body"},
-					"action":              "block",
+					"action":              "enforce",
 					"status_code":         400,
 					"error_message":       "Code injection detected",
 				},
