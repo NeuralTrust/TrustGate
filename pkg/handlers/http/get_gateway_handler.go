@@ -37,7 +37,7 @@ func NewGetGatewayHandler(
 // @Param Authorization header string true "Authorization token"
 // @Produce json
 // @Param gateway_id path string true "Gateway ID"
-// @Success      200 {object} gateway.Gateway "Gateway"
+// @Success      200 {object} domain.Gateway "Gateway"
 // @Failure 404 {object} map[string]interface{} "Gateway not found"
 // @Router /api/v1/gateways/{gateway_id} [get]
 func (s *getGatewayHandler) Handle(c *fiber.Ctx) error {

@@ -25,11 +25,11 @@ lint:  ; $(info $(M) Running linter ...)	@
 
 .PHONY: swagger
 swagger:  ; $(info $(M) Generate Swagger file ...)	@
-	swag init -g cmd/gateway/main.go
+	swag init -g cmd/gateway/main.go --parseDependency
 
 .PHONY: openapi
 openapi:  ; $(info $(M) Generate OpenAPI file ...)	@
-	swag init -g cmd/gateway/main.go
+	swag init -g cmd/gateway/main.go --parseDependency
 	swagger2openapi docs/swagger.json -o docs/openapi.json
 
 .PHONY: create-kafka-topic

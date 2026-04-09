@@ -36,7 +36,7 @@ func NewListGatewayHandler(
 // @Tags         Gateways
 // @Param        Authorization header string true "Authorization token"
 // @Produce      json
-// @Success      200 {array} gateway.Gateway "List of gateways"
+// @Success      200 {array} domain.Gateway "List of gateways"
 // @Failure      500 {object} map[string]interface{} "Internal server error"
 // @Router       /api/v1/gateways [get]
 func (h *listGatewayHandler) Handle(c *fiber.Ctx) error {

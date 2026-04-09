@@ -63,7 +63,7 @@ func NewUpdateRuleHandler(deps UpdateRuleHandlerDeps) Handler {
 // @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "GatewayDTO ID"
 // @Param rule_id path string true "Rule ID"
-// @Param rule body request.UpdateRuleRequest true "Updated rule data"
+// @Param rule body req.UpdateRuleRequest true "Updated rule data"
 // @Success 204 "Rule updated successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 404 {object} map[string]interface{} "Rule not found"

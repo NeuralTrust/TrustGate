@@ -35,7 +35,7 @@ func NewUpdateServiceHandler(logger *logrus.Logger, repo service.Repository, pub
 // @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param service_id path string true "Service ID"
-// @Param service body request.ServiceRequest true "Updated service data"
+// @Param service body req.ServiceRequest true "Updated service data"
 // @Success 200 {object} service.Service "Service updated successfully"
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 404 {object} map[string]interface{} "Service not found"

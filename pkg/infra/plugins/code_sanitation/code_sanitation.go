@@ -219,7 +219,7 @@ func (p *CodeSanitationPlugin) ValidateConfig(config pluginTypes.PluginConfig) e
 	}
 
 	if cfg.Action != OptionSanitize {
-		if err := pluginTypes.ValidateOption(&cfg.Action); err != nil {
+		if err := pluginTypes.ValidateOptionAllowed(&cfg.Action, pluginTypes.OptionEnforce, pluginTypes.OptionObserve); err != nil {
 			return err
 		}
 	}
