@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.18.12\n\nCommits since last release:\n- be111bf Merge pull request #339 from NeuralTrust/fix/normalize-modes\n- 29ab360 fix: fixes\n"
+      "content": "Current version: 1.18.13\n\nCommits since last release:\n- f56904b Merge pull request #340 from NeuralTrust/fix/normalize-modes\n- f6edd84 fix: fixes\n"
     }
   ],
   "max_tokens": 200,
