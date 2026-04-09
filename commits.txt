@@ -1,3 +1,2 @@
-- b757c91 Merge pull request #338 from NeuralTrust/fix/normalize-modes
-- 7217bc4 fix: fixes
-- 919d493 fix: fixes
+- be111bf Merge pull request #339 from NeuralTrust/fix/normalize-modes
+- 29ab360 fix: fixes
