@@ -718,6 +718,18 @@ func (h *forwardedHandler) forwardRequest(
 			return response, nil
 		}
 
+		if ue, ok := domainUpstream.IsUpstreamError(err); ok && h.cfg.Upstream.ErrorPassthrough {
+			if !target.Stream {
+				close(streamResponse)
+			}
+			return &types.ResponseContext{
+				StatusCode: ue.StatusCode,
+				Body:       ue.Body,
+				Headers:    map[string][]string{"Content-Type": {"application/json"}},
+				Target:     target,
+			}, nil
+		}
+
 		lb.ReportFailure(target, err)
 	}
 
@@ -856,6 +868,13 @@ func (h *forwardedHandler) handlerProviderResponse(
 		body,
 	)
 	if err != nil {
+		if ue, ok := domainUpstream.IsUpstreamError(err); ok && h.cfg.Upstream.ErrorPassthrough {
+			return &types.ResponseContext{
+				StatusCode: ue.StatusCode,
+				Body:       ue.Body,
+				Headers:    map[string][]string{"Content-Type": {"application/json"}},
+			}, nil
+		}
 		return nil, fmt.Errorf("failed to get completions: %w", err)
 	}
 
@@ -1183,7 +1202,7 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 	target *types.UpstreamTargetDTO,
 	streamResponse chan []byte,
 ) (*types.ResponseContext, error) {
-	return infrahttpx.HandleProviderStream(h.logger, h.providerLocator, h.adapterRegistry, req, target, streamResponse)
+	return infrahttpx.HandleProviderStream(h.logger, h.providerLocator, h.adapterRegistry, req, target, streamResponse, h.cfg.Upstream.ErrorPassthrough)
 }
 
 func (h *forwardedHandler) getQueryParams(c *fiber.Ctx) url.Values {

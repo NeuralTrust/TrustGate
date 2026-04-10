@@ -3,11 +3,11 @@ package httpx
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 
+	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
 )
@@ -58,16 +58,13 @@ func HandleHTTPStream(
 		return nil, fmt.Errorf("failed to make streaming request: %w", err)
 	}
 
-	if resp.StatusCode > 299 {
+	if domainUpstream.IsHTTPError(resp.StatusCode) {
 		defer func() { _ = resp.Body.Close() }()
-		errorMsg := fmt.Sprintf("failed to make streaming request: %s", resp.Status)
+		var body []byte
 		if resp.Body != nil {
-			bodyBytes, readErr := io.ReadAll(resp.Body)
-			if readErr == nil && len(bodyBytes) > 0 {
-				errorMsg += fmt.Sprintf(" - body: %s", string(bodyBytes))
-			}
+			body, _ = io.ReadAll(resp.Body)
 		}
-		return nil, errors.New(errorMsg)
+		return nil, domainUpstream.NewUpstreamError(resp.StatusCode, body)
 	}
 
 	responseHeaders := make(map[string][]string)

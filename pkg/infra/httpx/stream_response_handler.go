@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
@@ -43,6 +44,7 @@ func HandleProviderStream(
 	req *types.RequestContext,
 	target *types.UpstreamTargetDTO,
 	streamResponse chan []byte,
+	errorPassthrough bool,
 ) (*types.ResponseContext, error) {
 
 	providerClient, err := providerLocator.Get(target.Provider)
@@ -124,6 +126,14 @@ func HandleProviderStream(
 	select {
 	case err := <-errChan:
 		if err != nil {
+			if ue, ok := domainUpstream.IsUpstreamError(err); ok && errorPassthrough {
+				return &types.ResponseContext{
+					StatusCode: ue.StatusCode,
+					Body:       ue.Body,
+					Headers:    map[string][]string{"Content-Type": {"application/json"}},
+					Target:     target,
+				}, nil
+			}
 			return nil, fmt.Errorf("failed to stream request: %w", err)
 		}
 	case <-req.C.Context().Done():

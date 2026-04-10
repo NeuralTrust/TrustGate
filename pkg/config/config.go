@@ -31,10 +31,11 @@ type Config struct {
 }
 
 type UpstreamConfig struct {
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	StreamTimeout   time.Duration
-	ProviderTimeout time.Duration
+	ReadTimeout      time.Duration
+	WriteTimeout     time.Duration
+	StreamTimeout    time.Duration
+	ProviderTimeout  time.Duration
+	ErrorPassthrough bool
 }
 
 type ServerConfig struct {
@@ -161,6 +162,7 @@ func Load() (*Config, error) {
 	upstreamWriteTimeout := getEnvDuration("UPSTREAM_WRITE_TIMEOUT", 60*time.Second)
 	upstreamStreamTimeout := getEnvDuration("UPSTREAM_STREAM_TIMEOUT", 60*time.Second)
 	upstreamProviderTimeout := getEnvDuration("UPSTREAM_PROVIDER_TIMEOUT", 120*time.Second)
+	upstreamErrorPassthrough := getEnvBool("UPSTREAM_ERROR_PASSTHROUGH", false)
 
 	auditLogsEnabled := getEnvBool("ENABLE_AUDIT_LOGS", false)
 	auditLogsKafkaBrokers := getEnvSlice("AUDIT_LOGS_KAFKA_BROKERS", []string{})
@@ -231,10 +233,11 @@ func Load() (*Config, error) {
 			TopicAutoCreate:      auditLogsTopicAutoCreate,
 		},
 		Upstream: UpstreamConfig{
-			ReadTimeout:     upstreamReadTimeout,
-			WriteTimeout:    upstreamWriteTimeout,
-			StreamTimeout:   upstreamStreamTimeout,
-			ProviderTimeout: upstreamProviderTimeout,
+			ReadTimeout:      upstreamReadTimeout,
+			WriteTimeout:     upstreamWriteTimeout,
+			StreamTimeout:    upstreamStreamTimeout,
+			ProviderTimeout:  upstreamProviderTimeout,
+			ErrorPassthrough: upstreamErrorPassthrough,
 		},
 	}
 
