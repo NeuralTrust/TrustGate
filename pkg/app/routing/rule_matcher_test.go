@@ -283,6 +283,176 @@ func TestRuleMatcher_MatchRule(t *testing.T) {
 	}
 }
 
+func TestRuleMatcher_MatchRule_MultiPath(t *testing.T) {
+	matcher := NewRuleMatcher()
+
+	tests := []struct {
+		name            string
+		path            string
+		method          string
+		rules           []types.ForwardingRuleDTO
+		wantRuleID      string
+		wantParams      map[string]string
+		wantMatchedPath string
+		wantNil         bool
+	}{
+		{
+			name:   "backward compat - single path only",
+			path:   "/api/v1/users/123",
+			method: "GET",
+			rules: []types.ForwardingRuleDTO{
+				{
+					ID:      "rule1",
+					Path:    "/api/v1/users/{id}",
+					Methods: []string{"GET"},
+					Active:  true,
+				},
+			},
+			wantRuleID:      "rule1",
+			wantParams:      map[string]string{"id": "123"},
+			wantMatchedPath: "/api/v1/users/{id}",
+		},
+		{
+			name:   "matches primary path in multi-path rule",
+			path:   "/v1/projects/myproj/locations/us/publishers/google/models/gemini:gen",
+			method: "POST",
+			rules: []types.ForwardingRuleDTO{
+				{
+					ID:   "vertex",
+					Path: "/v1/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}",
+					Paths: []string{
+						"/v1/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}",
+						"/v1beta1/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}",
+					},
+					Methods: []string{"POST"},
+					Active:  true,
+				},
+			},
+			wantRuleID:      "vertex",
+			wantParams:      map[string]string{"project": "myproj", "location": "us", "publisher": "google", "model_action": "gemini:gen"},
+			wantMatchedPath: "/v1/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}",
+		},
+		{
+			name:   "matches secondary path in multi-path rule",
+			path:   "/v1beta1/projects/myproj/locations/us/publishers/google/models/gemini:predict",
+			method: "POST",
+			rules: []types.ForwardingRuleDTO{
+				{
+					ID:   "vertex",
+					Path: "/v1/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}",
+					Paths: []string{
+						"/v1/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}",
+						"/v1beta1/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}",
+					},
+					Methods: []string{"POST"},
+					Active:  true,
+				},
+			},
+			wantRuleID:      "vertex",
+			wantParams:      map[string]string{"project": "myproj", "location": "us", "publisher": "google", "model_action": "gemini:predict"},
+			wantMatchedPath: "/v1beta1/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}",
+		},
+		{
+			name:   "no match on unregistered path",
+			path:   "/v2/projects/myproj/locations/us/publishers/google/models/gemini:gen",
+			method: "POST",
+			rules: []types.ForwardingRuleDTO{
+				{
+					ID:   "vertex",
+					Path: "/v1/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}",
+					Paths: []string{
+						"/v1/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}",
+						"/v1beta1/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}",
+					},
+					Methods: []string{"POST"},
+					Active:  true,
+				},
+			},
+			wantNil: true,
+		},
+		{
+			name:   "multi-path rule with multiple rules selects correct one",
+			path:   "/api/v2/items/42",
+			method: "GET",
+			rules: []types.ForwardingRuleDTO{
+				{
+					ID:      "rule-users",
+					Path:    "/api/v1/users/{id}",
+					Methods: []string{"GET"},
+					Active:  true,
+				},
+				{
+					ID:   "rule-items",
+					Path: "/api/v1/items/{id}",
+					Paths: []string{
+						"/api/v1/items/{id}",
+						"/api/v2/items/{id}",
+					},
+					Methods: []string{"GET"},
+					Active:  true,
+				},
+			},
+			wantRuleID:      "rule-items",
+			wantParams:      map[string]string{"id": "42"},
+			wantMatchedPath: "/api/v2/items/{id}",
+		},
+		{
+			name:   "MatchedPath not leaked across calls",
+			path:   "/api/v1/users/1",
+			method: "GET",
+			rules: []types.ForwardingRuleDTO{
+				{
+					ID:      "rule1",
+					Path:    "/api/v1/users/{id}",
+					Methods: []string{"GET"},
+					Active:  true,
+				},
+			},
+			wantRuleID:      "rule1",
+			wantParams:      map[string]string{"id": "1"},
+			wantMatchedPath: "/api/v1/users/{id}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rule, params := matcher.MatchRule(tt.path, tt.method, tt.rules)
+			if tt.wantNil {
+				assert.Nil(t, rule)
+				assert.Nil(t, params)
+				return
+			}
+			require.NotNil(t, rule)
+			assert.Equal(t, tt.wantRuleID, rule.ID)
+			assert.Equal(t, tt.wantParams, params)
+			assert.Equal(t, tt.wantMatchedPath, rule.MatchedPath)
+		})
+	}
+}
+
+func TestRuleMatcher_MultiPath_DoesNotMutateOriginal(t *testing.T) {
+	matcher := NewRuleMatcher()
+
+	rules := []types.ForwardingRuleDTO{
+		{
+			ID:   "rule1",
+			Path: "/v1/foo/{id}",
+			Paths: []string{
+				"/v1/foo/{id}",
+				"/v2/foo/{id}",
+			},
+			Methods: []string{"GET"},
+			Active:  true,
+		},
+	}
+
+	rule, _ := matcher.MatchRule("/v2/foo/42", "GET", rules)
+	require.NotNil(t, rule)
+	assert.Equal(t, "/v2/foo/{id}", rule.MatchedPath)
+
+	assert.Empty(t, rules[0].MatchedPath, "original slice element must not be mutated")
+}
+
 func TestRuleMatcher_ExtractPathAfterMatch(t *testing.T) {
 	matcher := NewRuleMatcher()
 

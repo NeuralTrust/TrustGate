@@ -165,6 +165,7 @@ func (r *forwardedRuleRepository) UpdateRulesCache(
 			ID:            rule.ID.String(),
 			GatewayID:     rule.GatewayID.String(),
 			Path:          rule.Path,
+			Paths:         rule.Paths,
 			ServiceID:     rule.ServiceID.String(),
 			Methods:       rule.Methods,
 			Headers:       rule.Headers,

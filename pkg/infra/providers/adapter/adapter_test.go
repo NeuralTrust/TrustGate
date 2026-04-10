@@ -81,6 +81,14 @@ func TestIsSameWireFormat(t *testing.T) {
 	assert.True(t, IsSameWireFormat(FormatOpenAI, FormatOpenAI))
 	assert.False(t, IsSameWireFormat(FormatOpenAI, FormatAnthropic))
 	assert.False(t, IsSameWireFormat(FormatGemini, FormatAnthropic))
+	assert.True(t, IsSameWireFormat("vertex", FormatGemini), "vertex should be wire-compatible with google/gemini")
+	assert.True(t, IsSameWireFormat(FormatGemini, "vertex"), "google/gemini should be wire-compatible with vertex")
+}
+
+func TestResolveTargetFormat_Vertex(t *testing.T) {
+	f := ResolveTargetFormat("vertex", nil)
+	assert.Equal(t, Format("vertex"), f, "ResolveTargetFormat returns the raw format string")
+	assert.True(t, IsSameWireFormat(f, FormatGemini), "vertex normalizes to gemini for adapter lookup")
 }
 
 // ---------------------------------------------------------------------------

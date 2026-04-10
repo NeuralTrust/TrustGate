@@ -11,6 +11,7 @@ import (
 const (
 	ProviderOpenAI    = "openai"
 	ProviderGoogle    = "google"
+	ProviderVertex    = "vertex"
 	ProviderAnthropic = "anthropic"
 	ProviderBedrock   = "bedrock"
 	ProviderAzure     = "azure"

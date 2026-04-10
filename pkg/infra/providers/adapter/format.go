@@ -12,6 +12,7 @@ const (
 	FormatGemini          Format = "google"
 	FormatBedrock         Format = "bedrock"
 	FormatAzure           Format = "azure" // wire-compatible with OpenAI
+	FormatVertex          Format = "vertex"
 	FormatMistral         Format = "mistral"
 )
 
@@ -115,6 +116,8 @@ func normalizeFormat(f Format) Format {
 	switch f {
 	case FormatAzure:
 		return FormatOpenAI
+	case FormatVertex:
+		return FormatGemini
 	default:
 		return f
 	}

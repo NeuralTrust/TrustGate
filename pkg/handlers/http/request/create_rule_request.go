@@ -6,7 +6,7 @@ import (
 )
 
 type CreateRuleRequest struct {
-	Path          string                     `json:"path" binding:"required"`
+	Path          types.FlexiblePath             `json:"path" binding:"required"`
 	Name          string                     `json:"name" binding:"required"`
 	ServiceID     string                     `json:"service_id" binding:"required"`
 	Type          *string                    `json:"type,omitempty"`

@@ -11,6 +11,7 @@ import (
 
 type (
 	MethodsJSON        []string
+	PathsJSON          []string
 	HeadersJSON        map[string]string
 	PluginChainJSON    []plugintypes.PluginConfig
 	CredentialsJSON    = types.CredentialsDTO
@@ -81,6 +82,25 @@ func (m *MethodsJSON) Scan(value interface{}) error {
 		return fmt.Errorf("expected []byte, got %T", value)
 	}
 	return json.Unmarshal(bytes, m)
+}
+
+func (p PathsJSON) Value() (driver.Value, error) {
+	if p == nil {
+		return nil, nil
+	}
+	return json.Marshal(p)
+}
+
+func (p *PathsJSON) Scan(value interface{}) error {
+	if value == nil {
+		*p = nil
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("expected []byte, got %T", value)
+	}
+	return json.Unmarshal(bytes, p)
 }
 
 func (h HeadersJSON) Value() (driver.Value, error) {

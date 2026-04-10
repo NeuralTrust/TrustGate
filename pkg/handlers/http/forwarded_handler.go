@@ -942,7 +942,11 @@ func (h *forwardedHandler) rewriteTargetURL(dto *forwardedRequestDTO) string {
 	pathParams := h.getPathParamsFromContext(dto.req.Context)
 	l := h.buildUpstreamTargetUrl(dto.target, pathParams)
 	if dto.rule != nil && dto.rule.StripPath {
-		remainingPath := h.ruleMatcher.ExtractPathAfterMatch(dto.req.Path, dto.rule.Path)
+		matchedPath := dto.rule.MatchedPath
+		if matchedPath == "" {
+			matchedPath = dto.rule.Path
+		}
+		remainingPath := h.ruleMatcher.ExtractPathAfterMatch(dto.req.Path, matchedPath)
 		if remainingPath != dto.req.Path {
 			l = strings.TrimSuffix(l, "/") + remainingPath
 		}

@@ -171,11 +171,17 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		}
 	}
 
+	var pathsDB domain.PathsJSON
+	if request.Path.IsMultiPath() {
+		pathsDB = domain.PathsJSON(request.Path.All)
+	}
+
 	dbRule := &forwarding_rule.ForwardingRule{
 		ID:            id,
 		Name:          request.Name,
 		GatewayID:     gatewayUUID,
-		Path:          request.Path,
+		Path:          request.Path.Primary,
+		Paths:         pathsDB,
 		Type:          ruleType,
 		ServiceID:     serviceUUID,
 		Methods:       request.Methods,
@@ -206,12 +212,19 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to check existing rules"})
 	}
 
-	normalizedRequestPath := s.ruleMatcher.NormalizePath(request.Path)
+	newPaths := dbRule.AllPaths()
 	for _, rule := range rules {
-		normalizedRulePath := s.ruleMatcher.NormalizePath(rule.Path)
-		if normalizedRulePath == normalizedRequestPath && rule.GatewayID == gatewayUUID {
-			s.logger.WithField("path", request.Path).Error("rule with this path already exists for this service")
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": domain.ErrRuleAlreadyExists.Error()})
+		if rule.GatewayID != gatewayUUID {
+			continue
+		}
+		for _, np := range newPaths {
+			normalizedNew := s.ruleMatcher.NormalizePath(np)
+			for _, ep := range rule.AllPaths() {
+				if s.ruleMatcher.NormalizePath(ep) == normalizedNew {
+					s.logger.WithField("path", np).Error("rule with this path already exists for this service")
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": domain.ErrRuleAlreadyExists.Error()})
+				}
+			}
 		}
 	}
 
@@ -305,6 +318,7 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 		Name:          rule.Name,
 		GatewayID:     rule.GatewayID.String(),
 		Path:          rule.Path,
+		Paths:         rule.Paths,
 		Type:          string(rule.Type),
 		ServiceID:     rule.ServiceID.String(),
 		Methods:       rule.Methods,
@@ -324,8 +338,16 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 
 func (s *createRuleHandler) validate(rule *req.CreateRuleRequest) error {
 
-	if rule.Path == "" {
+	if rule.Path.Primary == "" {
 		return fmt.Errorf("path is required")
+	}
+
+	if rule.Path.IsMultiPath() {
+		for i, p := range rule.Path.All {
+			if p == "" {
+				return fmt.Errorf("paths[%d] must not be empty", i)
+			}
+		}
 	}
 
 	if len(rule.Methods) == 0 {

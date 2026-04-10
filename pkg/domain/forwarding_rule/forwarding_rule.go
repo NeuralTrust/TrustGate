@@ -24,6 +24,7 @@ type ForwardingRule struct {
 	GatewayID     uuid.UUID              `gorm:"type:uuid;not null"`
 	ServiceID     uuid.UUID              `gorm:"type:uuid;not null"`
 	Path          string                 `gorm:"not null"`
+	Paths         domain.PathsJSON       `gorm:"type:jsonb"`
 	Type          Type                   `gorm:"column:rule_type;type:rule_type;default:'endpoint';not null"`
 	Methods       domain.MethodsJSON     `gorm:"type:jsonb"`
 	Headers       domain.HeadersJSON     `gorm:"type:jsonb"`
@@ -56,9 +57,24 @@ func (t *SessionConfig) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, t)
 }
 
+func (r *ForwardingRule) AllPaths() []string {
+	if len(r.Paths) > 0 {
+		return r.Paths
+	}
+	return []string{r.Path}
+}
+
 func (r *ForwardingRule) Validate() error {
 	if r.Path == "" {
 		return fmt.Errorf("path is required")
+	}
+
+	if len(r.Paths) > 0 {
+		for i, p := range r.Paths {
+			if p == "" {
+				return fmt.Errorf("paths[%d] must not be empty", i)
+			}
+		}
 	}
 
 	if r.ServiceID == uuid.Nil {

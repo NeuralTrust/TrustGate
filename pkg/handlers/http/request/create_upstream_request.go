@@ -8,6 +8,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/vertex"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
@@ -257,18 +258,55 @@ func (r *UpstreamRequest) validateProviderOptions(
 				return fmt.Errorf("target %d: openai provider_options 'api' field must be 'completions' or 'responses'", targetIndex)
 			}
 		}
+	} else if target.Provider == factory.ProviderVertex {
+		if err := r.validateVertexOptions(targetIndex, target.ProviderOptions); err != nil {
+			return err
+		}
 	} else if target.Provider != "" {
 		if len(target.ProviderOptions) > 0 {
-			return fmt.Errorf("target %d: provider_options must be empty for non-openai providers", targetIndex)
+			return fmt.Errorf("target %d: provider_options must be empty for provider %q", targetIndex, target.Provider)
 		}
 	}
 
 	return nil
 }
 
+func (r *UpstreamRequest) validateVertexOptions(targetIndex int, opts map[string]any) error {
+	if len(opts) == 0 {
+		return fmt.Errorf("target %d: vertex provider requires provider_options with '%s' and '%s'",
+			targetIndex, vertex.OptKeyProject, vertex.OptKeyLocation)
+	}
+	project, _ := opts[vertex.OptKeyProject].(string)
+	if project == "" {
+		return fmt.Errorf("target %d: vertex provider_options.%s is required", targetIndex, vertex.OptKeyProject)
+	}
+	location, _ := opts[vertex.OptKeyLocation].(string)
+	if location == "" {
+		return fmt.Errorf("target %d: vertex provider_options.%s is required", targetIndex, vertex.OptKeyLocation)
+	}
+	if v, ok := opts[vertex.OptKeyVersion]; ok {
+		if _, ok := v.(string); !ok {
+			return fmt.Errorf("target %d: vertex provider_options.%s must be a string", targetIndex, vertex.OptKeyVersion)
+		}
+	}
+	allowedKeys := map[string]bool{
+		vertex.OptKeyProject:  true,
+		vertex.OptKeyLocation: true,
+		vertex.OptKeyVersion:  true,
+	}
+	for k := range opts {
+		if !allowedKeys[k] {
+			return fmt.Errorf("target %d: vertex provider_options contains unknown key %q (allowed: %s, %s, %s)",
+				targetIndex, k, vertex.OptKeyProject, vertex.OptKeyLocation, vertex.OptKeyVersion)
+		}
+	}
+	return nil
+}
+
 func (r *UpstreamRequest) isValidProvider(provider string) bool {
 	return provider == factory.ProviderOpenAI ||
 		provider == factory.ProviderGoogle ||
+		provider == factory.ProviderVertex ||
 		provider == factory.ProviderAnthropic ||
 		provider == factory.ProviderBedrock ||
 		provider == factory.ProviderAzure ||
