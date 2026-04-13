@@ -119,7 +119,7 @@ func (s *serviceAccountService) ResolveSAFromEnv() (string, error) {
 
 func (s *serviceAccountService) EncryptSA(base64Encoded string) (string, error) {
 	if s.crypto == nil {
-		return "", fmt.Errorf("encryption service not configured: set ENCRYPTION_KEY")
+		return "", fmt.Errorf("encryption service not configured: set SERVER_SECRET_KEY")
 	}
 	encrypted, err := s.crypto.Encrypt([]byte(base64Encoded))
 	if err != nil {
@@ -135,7 +135,7 @@ func (s *serviceAccountService) DecryptSA(upstreamID, targetID, encrypted string
 	}
 
 	if s.crypto == nil {
-		return nil, fmt.Errorf("encryption service not configured: set ENCRYPTION_KEY")
+		return nil, fmt.Errorf("encryption service not configured: set SERVER_SECRET_KEY")
 	}
 
 	ciphertext, err := base64.StdEncoding.DecodeString(encrypted)

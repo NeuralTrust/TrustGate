@@ -1,6 +1,8 @@
 package dependency_container
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"reflect"
 	"time"
@@ -145,9 +147,13 @@ func NewContainer(di ContainerDI) (*Container, error) {
 
 	oauthTokenClient := oauth.NewTokenClient()
 
-	cryptoService, err := infraCrypto.NewEncryptionService(di.Cfg.Security.EncryptionKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize encryption service: %v", err)
+	var cryptoService infraCrypto.EncryptionService
+	if di.Cfg.Server.SecretKey != "" {
+		hash := sha256.Sum256([]byte(di.Cfg.Server.SecretKey))
+		cryptoService, err = infraCrypto.NewEncryptionService(hex.EncodeToString(hash[:]))
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize encryption service: %v", err)
+		}
 	}
 	saService := gcp.NewServiceAccountService(cryptoService)
 
