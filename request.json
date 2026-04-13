@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.18.14\n\nCommits since last release:\n- ce1ef33 Merge pull request #341 from NeuralTrust/fix/global-response\n- 62f1b81 fix: upstream error passtrough\n"
+      "content": "Current version: 1.18.15\n\nCommits since last release:\n- d94cf92 Merge pull request #342 from NeuralTrust/fix/global-response\n- e2a20e6 fix: change upstream response\n- c66fc79 fix: change upstream response\n"
     }
   ],
   "max_tokens": 200,

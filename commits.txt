@@ -1,2 +1,3 @@
-- ce1ef33 Merge pull request #341 from NeuralTrust/fix/global-response
-- 62f1b81 fix: upstream error passtrough
+- d94cf92 Merge pull request #342 from NeuralTrust/fix/global-response
+- e2a20e6 fix: change upstream response
+- c66fc79 fix: change upstream response
