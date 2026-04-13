@@ -1,2 +1,2 @@
-- f56904b Merge pull request #340 from NeuralTrust/fix/normalize-modes
-- f6edd84 fix: fixes
+- ce1ef33 Merge pull request #341 from NeuralTrust/fix/global-response
+- 62f1b81 fix: upstream error passtrough
