@@ -9,6 +9,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/gcp"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -26,6 +27,7 @@ type UpdateUpstreamHandlerDeps struct {
 	DescriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
 	Cfg                         *config.Config
 	AuditService                auditlogs.Service
+	SAService                   gcp.ServiceAccountService
 }
 
 type updateUpstreamHandler struct {
@@ -36,6 +38,7 @@ type updateUpstreamHandler struct {
 	cache                       cache.Client
 	cfg                         *config.Config
 	auditService                auditlogs.Service
+	saService                   gcp.ServiceAccountService
 }
 
 func NewUpdateUpstreamHandler(deps UpdateUpstreamHandlerDeps) Handler {
@@ -47,6 +50,7 @@ func NewUpdateUpstreamHandler(deps UpdateUpstreamHandlerDeps) Handler {
 		cache:                       deps.Cache,
 		cfg:                         deps.Cfg,
 		auditService:                deps.AuditService,
+		saService:                   deps.SAService,
 	}
 }
 
@@ -74,25 +78,30 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Defensive per-target auth validation mirroring DTO rules
 	for i, t := range req.Targets {
 		if t.Auth != nil {
-			if t.Auth.Type != request.AuthTypeOAuth2 || t.Auth.OAuth == nil {
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: auth.type must be 'oauth2' and oauth config required", i)})
-			}
-			switch t.Auth.OAuth.GrantType {
-			case string(oauth.GrantTypeClientCredentials):
-				if !t.Auth.OAuth.UseBasicAuth && t.Auth.OAuth.ClientID == "" {
-					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: auth.oauth.client_id is required for client_credentials when use_basic_auth is false", i)})
+			switch t.Auth.Type {
+			case request.AuthTypeOAuth2:
+				if t.Auth.OAuth == nil {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: auth.oauth is required for oauth2", i)})
 				}
-			case string(oauth.GrantTypeAuthorizationCode):
-				if t.Auth.OAuth.Code == "" || t.Auth.OAuth.RedirectURI == "" {
-					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: authorization_code requires code and redirect_uri", i)})
+				switch t.Auth.OAuth.GrantType {
+				case string(oauth.GrantTypeClientCredentials):
+					if !t.Auth.OAuth.UseBasicAuth && t.Auth.OAuth.ClientID == "" {
+						return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: auth.oauth.client_id is required for client_credentials when use_basic_auth is false", i)})
+					}
+				case string(oauth.GrantTypeAuthorizationCode):
+					if t.Auth.OAuth.Code == "" || t.Auth.OAuth.RedirectURI == "" {
+						return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: authorization_code requires code and redirect_uri", i)})
+					}
+				case string(oauth.GrantTypePassword):
+					if t.Auth.OAuth.Username == "" || t.Auth.OAuth.Password == "" {
+						return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: password grant requires username and password", i)})
+					}
 				}
-			case string(oauth.GrantTypePassword):
-				if t.Auth.OAuth.Username == "" || t.Auth.OAuth.Password == "" {
-					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: password grant requires username and password", i)})
-				}
+			case request.AuthTypeGCPServiceAccount:
+			default:
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: unsupported auth.type: %s", i, t.Auth.Type)})
 			}
 		}
 	}
@@ -116,7 +125,7 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	var targets []upstream.Target
-	for _, target := range req.Targets {
+	for i, target := range req.Targets {
 		t := upstream.Target{
 			ID:              target.ID,
 			Weight:          target.Weight,
@@ -135,25 +144,54 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 			InsecureSSL:     target.InsecureSSL,
 			Credentials:     domain.CredentialsJSON(target.Credentials),
 		}
-		if target.Auth != nil && target.Auth.Type == request.AuthTypeOAuth2 && target.Auth.OAuth != nil {
-			t.Auth = &upstream.TargetAuth{
-				Type: upstream.AuthTypeOAuth2,
-				OAuth: &upstream.TargetOAuthConfig{
-					TokenURL:     target.Auth.OAuth.TokenURL,
-					GrantType:    target.Auth.OAuth.GrantType,
-					ClientID:     target.Auth.OAuth.ClientID,
-					ClientSecret: target.Auth.OAuth.ClientSecret,
-					UseBasicAuth: target.Auth.OAuth.UseBasicAuth,
-					Scopes:       target.Auth.OAuth.Scopes,
-					Audience:     target.Auth.OAuth.Audience,
-					Code:         target.Auth.OAuth.Code,
-					RedirectURI:  target.Auth.OAuth.RedirectURI,
-					CodeVerifier: target.Auth.OAuth.CodeVerifier,
-					RefreshToken: target.Auth.OAuth.RefreshToken,
-					Username:     target.Auth.OAuth.Username,
-					Password:     target.Auth.OAuth.Password,
-					Extra:        target.Auth.OAuth.Extra,
-				},
+		if target.Auth != nil {
+			switch target.Auth.Type {
+			case request.AuthTypeOAuth2:
+				if target.Auth.OAuth != nil {
+					t.Auth = &upstream.TargetAuth{
+						Type: upstream.AuthTypeOAuth2,
+						OAuth: &upstream.TargetOAuthConfig{
+							TokenURL:     target.Auth.OAuth.TokenURL,
+							GrantType:    target.Auth.OAuth.GrantType,
+							ClientID:     target.Auth.OAuth.ClientID,
+							ClientSecret: target.Auth.OAuth.ClientSecret,
+							UseBasicAuth: target.Auth.OAuth.UseBasicAuth,
+							Scopes:       target.Auth.OAuth.Scopes,
+							Audience:     target.Auth.OAuth.Audience,
+							Code:         target.Auth.OAuth.Code,
+							RedirectURI:  target.Auth.OAuth.RedirectURI,
+							CodeVerifier: target.Auth.OAuth.CodeVerifier,
+							RefreshToken: target.Auth.OAuth.RefreshToken,
+							Username:     target.Auth.OAuth.Username,
+							Password:     target.Auth.OAuth.Password,
+							Extra:        target.Auth.OAuth.Extra,
+						},
+					}
+				}
+			case request.AuthTypeGCPServiceAccount:
+				saBase64 := ""
+				if target.Auth.GCPServiceAccount != nil {
+					saBase64 = *target.Auth.GCPServiceAccount
+				}
+				if saBase64 == "" {
+					resolved, resolveErr := s.saService.ResolveSAFromEnv()
+					if resolveErr != nil {
+						return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: gcp_service_account not provided and fallback failed: %v", i, resolveErr)})
+					}
+					saBase64 = resolved
+				}
+				if validateErr := s.saService.ValidateSA(saBase64); validateErr != nil {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: invalid service account: %v", i, validateErr)})
+				}
+				encrypted, encryptErr := s.saService.EncryptSA(saBase64)
+				if encryptErr != nil {
+					return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("target %d: failed to encrypt service account: %v", i, encryptErr)})
+				}
+				s.saService.InvalidateSACache(upstreamID, target.ID)
+				t.Auth = &upstream.TargetAuth{
+					Type:              upstream.AuthTypeGCPServiceAccount,
+					GCPServiceAccount: &encrypted,
+				}
 			}
 		}
 		targets = append(targets, t)

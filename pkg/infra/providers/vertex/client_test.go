@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -291,48 +292,38 @@ func TestResolveAction(t *testing.T) {
 	}
 }
 
-func TestCheckStatus(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		resp := &http.Response{
-			StatusCode: 200,
-			Body:       io.NopCloser(strings.NewReader("")),
-		}
-		assert.NoError(t, checkStatus(resp))
-	})
-
-	t.Run("error delegates to parseVertexError", func(t *testing.T) {
+func TestReadUpstreamError(t *testing.T) {
+	t.Run("returns UpstreamError with status and body", func(t *testing.T) {
 		body := `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED"}}`
 		resp := &http.Response{
 			StatusCode: 429,
 			Body:       io.NopCloser(strings.NewReader(body)),
 		}
-		err := checkStatus(resp)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "Quota exceeded")
-	})
-}
-
-func TestParseVertexError(t *testing.T) {
-	t.Run("structured error", func(t *testing.T) {
-		body := `{"error":{"code":403,"message":"Permission denied","status":"PERMISSION_DENIED"}}`
-		resp := &http.Response{
-			StatusCode: 403,
-			Body:       io.NopCloser(strings.NewReader(body)),
-		}
-		err := parseVertexError(resp)
-		assert.Contains(t, err.Error(), "Permission denied")
-		assert.Contains(t, err.Error(), "403")
+		ue := readUpstreamError(resp)
+		assert.Equal(t, 429, ue.StatusCode)
+		assert.Contains(t, string(ue.Body), "Quota exceeded")
 	})
 
-	t.Run("unstructured error", func(t *testing.T) {
+	t.Run("preserves raw body for passthrough", func(t *testing.T) {
 		body := `some raw error text`
 		resp := &http.Response{
 			StatusCode: 500,
 			Body:       io.NopCloser(strings.NewReader(body)),
 		}
-		err := parseVertexError(resp)
-		assert.Contains(t, err.Error(), "500")
-		assert.Contains(t, err.Error(), "some raw error text")
+		ue := readUpstreamError(resp)
+		assert.Equal(t, 500, ue.StatusCode)
+		assert.Equal(t, body, string(ue.Body))
+	})
+
+	t.Run("satisfies IsUpstreamError", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode: 400,
+			Body:       io.NopCloser(strings.NewReader(`{"error":"bad"}`)),
+		}
+		var err error = readUpstreamError(resp)
+		ue, ok := domainUpstream.IsUpstreamError(err)
+		require.True(t, ok)
+		assert.Equal(t, 400, ue.StatusCode)
 	})
 }
 

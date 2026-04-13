@@ -8,6 +8,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/helpers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/sirupsen/logrus"
@@ -142,15 +143,11 @@ func (s *stubTokenClient) GetToken(_ context.Context, _ oauth.TokenRequestDTO) (
 	return s.token, s.expiresAt, s.err
 }
 
-func TestApplyTargetOAuth_InjectsBearer(t *testing.T) {
-	logger := logrus.New()
-	logger.SetLevel(logrus.PanicLevel)
-
+func TestApplyTargetAuth_InjectsBearer(t *testing.T) {
 	fakeToken := "test-oauth-token" // #nosec G101 -- test stub, not a real credential
 
-	h := &forwardedHandler{
-		logger: logger,
-		tokenClient: &stubTokenClient{
+	deps := helpers.AuthDeps{
+		TokenClient: &stubTokenClient{
 			token:     fakeToken,
 			expiresAt: time.Now().Add(time.Hour),
 		},
@@ -184,20 +181,16 @@ func TestApplyTargetOAuth_InjectsBearer(t *testing.T) {
 		},
 	}
 
-	err := h.applyTargetOAuth(req, target, upstreamModel)
+	err := helpers.ApplyTargetAuth(deps, req, target, upstreamModel)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"Bearer " + fakeToken}, req.Headers["Authorization"])
 	assert.Equal(t, "Bearer "+fakeToken, target.Headers["Authorization"])
 }
 
-func TestApplyTargetOAuth_NoAuth_NoHeaders(t *testing.T) {
-	logger := logrus.New()
-	logger.SetLevel(logrus.PanicLevel)
-
-	h := &forwardedHandler{
-		logger:      logger,
-		tokenClient: &stubTokenClient{},
+func TestApplyTargetAuth_NoAuth_NoHeaders(t *testing.T) {
+	deps := helpers.AuthDeps{
+		TokenClient: &stubTokenClient{},
 	}
 
 	req := &types.RequestContext{Context: context.Background()}
@@ -209,7 +202,7 @@ func TestApplyTargetOAuth_NoAuth_NoHeaders(t *testing.T) {
 		},
 	}
 
-	err := h.applyTargetOAuth(req, target, upstreamModel)
+	err := helpers.ApplyTargetAuth(deps, req, target, upstreamModel)
 	require.NoError(t, err)
 	assert.Nil(t, req.Headers)
 	assert.Nil(t, target.Headers)

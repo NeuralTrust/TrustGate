@@ -10,6 +10,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/gcp"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/gofiber/fiber/v2"
@@ -25,6 +26,7 @@ type CreateUpstreamHandlerDeps struct {
 	DescriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
 	Cfg                         *config.Config
 	AuditService                auditlogs.Service
+	SAService                   gcp.ServiceAccountService
 }
 
 type createUpstreamHandler struct {
@@ -35,6 +37,7 @@ type createUpstreamHandler struct {
 	gatewayRepo                 gateway.Repository
 	cfg                         *config.Config
 	auditService                auditlogs.Service
+	saService                   gcp.ServiceAccountService
 }
 
 func NewCreateUpstreamHandler(deps CreateUpstreamHandlerDeps) Handler {
@@ -46,6 +49,7 @@ func NewCreateUpstreamHandler(deps CreateUpstreamHandlerDeps) Handler {
 		descriptionEmbeddingCreator: deps.DescriptionEmbeddingCreator,
 		cfg:                         deps.Cfg,
 		auditService:                deps.AuditService,
+		saService:                   deps.SAService,
 	}
 }
 
@@ -86,9 +90,9 @@ func (s *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Gateway not found"})
 	}
 
-	entity, err := s.buildUpstreamEntity(req, gatewayUUID)
+	entity, statusCode, err := s.buildUpstreamEntity(req, gatewayUUID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(statusCode).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	if err := s.repo.CreateUpstream(c.Context(), entity); err != nil {
@@ -136,11 +140,16 @@ func (s *createUpstreamHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName,
 func (s *createUpstreamHandler) buildUpstreamEntity(
 	req request.UpstreamRequest,
 	gatewayID uuid.UUID,
-) (*upstream.Upstream, error) {
+) (*upstream.Upstream, int, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
 		s.logger.WithError(err).Error("failed to generate UUID")
-		return nil, fmt.Errorf("failed to generate UUID")
+		return nil, fiber.StatusInternalServerError, fmt.Errorf("failed to generate UUID")
+	}
+
+	targets, statusCode, err := s.buildTargets(req.Targets)
+	if err != nil {
+		return nil, statusCode, err
 	}
 
 	now := time.Now()
@@ -150,7 +159,7 @@ func (s *createUpstreamHandler) buildUpstreamEntity(
 		GatewayID:       gatewayID,
 		Name:            req.Name,
 		Algorithm:       req.Algorithm,
-		Targets:         s.buildTargets(req.Targets),
+		Targets:         targets,
 		EmbeddingConfig: s.buildEmbeddingConfig(req.Embedding),
 		HealthChecks:    s.buildHealthCheck(req.HealthChecks),
 		Websocket:       s.buildWebsocketConfig(req.WebhookConfig),
@@ -160,12 +169,12 @@ func (s *createUpstreamHandler) buildUpstreamEntity(
 		UpdatedAt:       now,
 	}
 
-	return &entity, nil
+	return &entity, 0, nil
 }
 
-func (s *createUpstreamHandler) buildTargets(targets []request.TargetRequest) []upstream.Target {
+func (s *createUpstreamHandler) buildTargets(targets []request.TargetRequest) ([]upstream.Target, int, error) {
 	result := make([]upstream.Target, 0, len(targets))
-	for _, t := range targets {
+	for i, t := range targets {
 		target := upstream.Target{
 			ID:              t.ID,
 			Weight:          t.Weight,
@@ -184,15 +193,54 @@ func (s *createUpstreamHandler) buildTargets(targets []request.TargetRequest) []
 			InsecureSSL:     t.InsecureSSL,
 			Credentials:     t.Credentials,
 		}
-		if t.Auth != nil && t.Auth.Type == request.AuthTypeOAuth2 && t.Auth.OAuth != nil {
-			target.Auth = &upstream.TargetAuth{
-				Type:  upstream.AuthTypeOAuth2,
-				OAuth: s.buildOAuthConfig(t.Auth.OAuth),
+		if t.Auth != nil {
+			auth, statusCode, err := s.buildTargetAuth(i, t.Auth)
+			if err != nil {
+				return nil, statusCode, err
 			}
+			target.Auth = auth
 		}
 		result = append(result, target)
 	}
-	return result
+	return result, 0, nil
+}
+
+func (s *createUpstreamHandler) buildTargetAuth(idx int, auth *request.TargetAuthRequest) (*upstream.TargetAuth, int, error) {
+	switch auth.Type {
+	case request.AuthTypeOAuth2:
+		if auth.OAuth == nil {
+			return nil, fiber.StatusBadRequest, fmt.Errorf("target %d: auth.oauth is required", idx)
+		}
+		return &upstream.TargetAuth{
+			Type:  upstream.AuthTypeOAuth2,
+			OAuth: s.buildOAuthConfig(auth.OAuth),
+		}, 0, nil
+	case request.AuthTypeGCPServiceAccount:
+		saBase64 := ""
+		if auth.GCPServiceAccount != nil {
+			saBase64 = *auth.GCPServiceAccount
+		}
+		if saBase64 == "" {
+			resolved, err := s.saService.ResolveSAFromEnv()
+			if err != nil {
+				return nil, fiber.StatusBadRequest, fmt.Errorf("target %d: gcp_service_account not provided and fallback failed: %w", idx, err)
+			}
+			saBase64 = resolved
+		}
+		if err := s.saService.ValidateSA(saBase64); err != nil {
+			return nil, fiber.StatusBadRequest, fmt.Errorf("target %d: invalid service account: %w", idx, err)
+		}
+		encrypted, err := s.saService.EncryptSA(saBase64)
+		if err != nil {
+			return nil, fiber.StatusInternalServerError, fmt.Errorf("target %d: failed to encrypt service account: %w", idx, err)
+		}
+		return &upstream.TargetAuth{
+			Type:              upstream.AuthTypeGCPServiceAccount,
+			GCPServiceAccount: &encrypted,
+		}, 0, nil
+	default:
+		return nil, fiber.StatusBadRequest, fmt.Errorf("target %d: unsupported auth.type: %s", idx, auth.Type)
+	}
 }
 
 func (s *createUpstreamHandler) buildOAuthConfig(o *request.UpstreamOAuthRequest) *upstream.TargetOAuthConfig {

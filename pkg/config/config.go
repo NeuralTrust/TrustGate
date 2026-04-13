@@ -28,6 +28,11 @@ type Config struct {
 	TLS       TLSConfig
 	AuditLogs AuditLogsConfig
 	Upstream  UpstreamConfig
+	Security  SecurityConfig
+}
+
+type SecurityConfig struct {
+	EncryptionKey string
 }
 
 type UpstreamConfig struct {
@@ -164,6 +169,8 @@ func Load() (*Config, error) {
 	upstreamProviderTimeout := getEnvDuration("UPSTREAM_PROVIDER_TIMEOUT", 120*time.Second)
 	upstreamErrorPassthrough := getEnvBool("UPSTREAM_ERROR_PASSTHROUGH", false)
 
+	encryptionKey := getEnv("ENCRYPTION_KEY", "")
+
 	auditLogsEnabled := getEnvBool("ENABLE_AUDIT_LOGS", false)
 	auditLogsKafkaBrokers := getEnvSlice("AUDIT_LOGS_KAFKA_BROKERS", []string{})
 	auditLogsEventsTopic := getEnv("AUDIT_LOGS_EVENTS_TOPIC", "")
@@ -238,6 +245,9 @@ func Load() (*Config, error) {
 			StreamTimeout:    upstreamStreamTimeout,
 			ProviderTimeout:  upstreamProviderTimeout,
 			ErrorPassthrough: upstreamErrorPassthrough,
+		},
+		Security: SecurityConfig{
+			EncryptionKey: encryptionKey,
 		},
 	}
 

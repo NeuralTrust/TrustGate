@@ -3,12 +3,12 @@ package vertex
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -61,8 +61,8 @@ func (c *client) Completions(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if err := checkStatus(resp); err != nil {
-		return nil, err
+	if domainUpstream.IsHTTPError(resp.StatusCode) {
+		return nil, readUpstreamError(resp)
 	}
 
 	var buf bytes.Buffer
@@ -95,8 +95,8 @@ func (c *client) CompletionsStream(
 	}
 	defer providers.DrainBody(resp.Body)
 
-	if err := checkStatus(resp); err != nil {
-		return err
+	if domainUpstream.IsHTTPError(resp.StatusCode) {
+		return readUpstreamError(resp)
 	}
 
 	close(breakChan)
@@ -230,32 +230,8 @@ func buildVertexURL(opts vertexOptions, model, action string) string {
 	return sb.String()
 }
 
-func checkStatus(resp *http.Response) error {
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
-	}
-	return parseVertexError(resp)
-}
-
-func parseVertexError(resp *http.Response) error {
+func readUpstreamError(resp *http.Response) *domainUpstream.UpstreamError {
 	var body bytes.Buffer
 	_, _ = body.ReadFrom(resp.Body)
-
-	var vErr struct {
-		Error struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Status  string `json:"status"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(body.Bytes(), &vErr); err == nil && vErr.Error.Message != "" {
-		return fmt.Errorf("vertex error (%d - %s): %s",
-			vErr.Error.Code,
-			vErr.Error.Status,
-			vErr.Error.Message,
-		)
-	}
-
-	return fmt.Errorf("vertex API error (%d): %s", resp.StatusCode, body.String())
+	return domainUpstream.NewUpstreamError(resp.StatusCode, body.Bytes())
 }
