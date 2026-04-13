@@ -163,10 +163,16 @@ func TestInvalidRequestBody_Returns400(t *testing.T) {
 		require.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
 
-		assert.NotEqual(t, http.StatusBadRequest, resp.StatusCode,
-			"valid body should NOT return 400; got %d (may be 401/502 with fake key, but not 400)",
-		)
+		respBytes, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
 
-		t.Logf("valid body returned status %d (expected anything except 400)", resp.StatusCode)
+		if resp.StatusCode == http.StatusBadRequest {
+			body := string(respBytes)
+			assert.NotContains(t, body, "invalid request body",
+				"gateway must not reject a valid body; 400 from upstream passthrough is acceptable",
+			)
+		}
+
+		t.Logf("valid body returned status %d, body: %s", resp.StatusCode, string(respBytes))
 	})
 }
