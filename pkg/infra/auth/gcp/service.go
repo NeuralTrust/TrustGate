@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -101,7 +102,11 @@ func (s *serviceAccountService) ResolveSAFromEnv() (string, error) {
 	if filePath == "" {
 		return "", fmt.Errorf("GOOGLE_APPLICATION_CREDENTIALS is not set")
 	}
-	data, err := os.ReadFile(filePath) // #nosec G304 -- path comes from GOOGLE_APPLICATION_CREDENTIALS env var
+	filePath = filepath.Clean(filePath)
+	if !filepath.IsAbs(filePath) {
+		return "", fmt.Errorf("GOOGLE_APPLICATION_CREDENTIALS must be an absolute path, got %q", filePath)
+	}
+	data, err := os.ReadFile(filePath) // #nosec G304 -- path sanitized above, sourced from env var
 	if err != nil {
 		return "", fmt.Errorf("failed to read service account file %q: %w", filePath, err)
 	}
