@@ -279,6 +279,7 @@ func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule
 	return response.ForwardingRuleOutput{
 		ID:            rule.ID.String(),
 		Name:          rule.Name,
+		GatewayID:     rule.GatewayID.String(),
 		ServiceID:     rule.ServiceID.String(),
 		Path:          outputPath,
 		Type:          string(rule.Type),
