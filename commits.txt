@@ -1,7 +1,2 @@
-- 45c362c Merge pull request #343 from NeuralTrust/feat/multipath-vertex
-- ef1d0ef feat: implemented vertex && SA OAUTH
-- a04f3ed feat: implemented vertex && SA OAUTH
-- f585ea2 feat: implemented vertex && SA OAUTH
-- a46017d feat: implemented vertex && SA OAUTH
-- f4790fc feat: vertex
-- bb1da4d feat: multipath & vertex
+- 1e2170e Merge pull request #344 from NeuralTrust/feat/multipath-vertex
+- bdaf84e feat: implemented vertex && SA OAUTH

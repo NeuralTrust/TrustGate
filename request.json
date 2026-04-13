@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.18.16\n\nCommits since last release:\n- 45c362c Merge pull request #343 from NeuralTrust/feat/multipath-vertex\n- ef1d0ef feat: implemented vertex && SA OAUTH\n- a04f3ed feat: implemented vertex && SA OAUTH\n- f585ea2 feat: implemented vertex && SA OAUTH\n- a46017d feat: implemented vertex && SA OAUTH\n- f4790fc feat: vertex\n- bb1da4d feat: multipath & vertex\n"
+      "content": "Current version: 1.19.0\n\nCommits since last release:\n- 1e2170e Merge pull request #344 from NeuralTrust/feat/multipath-vertex\n- bdaf84e feat: implemented vertex && SA OAUTH\n"
     }
   ],
   "max_tokens": 200,
