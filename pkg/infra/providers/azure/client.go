@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	pkgTypes "github.com/NeuralTrust/TrustGate/pkg/types"
@@ -102,10 +103,10 @@ func (c *client) CompletionsStream(
 	}
 	defer providers.DrainBody(resp.Body)
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if domainUpstream.IsHTTPError(resp.StatusCode) {
 		var preview bytes.Buffer
 		_, _ = io.CopyN(&preview, resp.Body, 64*1024)
-		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, preview.String())
+		return domainUpstream.NewUpstreamError(resp.StatusCode, preview.Bytes())
 	}
 
 	// Do not forward upstream headers here: CompletionsStream runs in a goroutine and
@@ -144,8 +145,8 @@ func (c *client) rawPost(ctx context.Context, url, token string, useIdentity boo
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, body.String())
+	if domainUpstream.IsHTTPError(resp.StatusCode) {
+		return nil, domainUpstream.NewUpstreamError(resp.StatusCode, body.Bytes())
 	}
 
 	return body.Bytes(), nil

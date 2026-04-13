@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
 	"github.com/stretchr/testify/assert"
@@ -41,10 +42,11 @@ func TestCompletionsAPI_CompletionsAPI(t *testing.T) {
 		]
 	}`)
 
-	// This will fail due to invalid API key hitting the real endpoint.
 	_, err := client.Completions(context.Background(), config, reqBody)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "API request failed with status")
+	ue, ok := upstream.IsUpstreamError(err)
+	assert.True(t, ok, "error should be an UpstreamError")
+	assert.Equal(t, 401, ue.StatusCode)
 }
 
 func TestCompletionsAPI_ResponsesAPI(t *testing.T) {
@@ -68,7 +70,9 @@ func TestCompletionsAPI_ResponsesAPI(t *testing.T) {
 
 	_, err := client.Completions(context.Background(), config, reqBody)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "API request failed with status")
+	ue, ok := upstream.IsUpstreamError(err)
+	assert.True(t, ok, "error should be an UpstreamError")
+	assert.Equal(t, 401, ue.StatusCode)
 }
 
 func TestCompletionsAPI_DefaultAPI(t *testing.T) {
@@ -90,5 +94,7 @@ func TestCompletionsAPI_DefaultAPI(t *testing.T) {
 
 	_, err := client.Completions(context.Background(), config, reqBody)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "API request failed with status")
+	ue, ok := upstream.IsUpstreamError(err)
+	assert.True(t, ok, "error should be an UpstreamError")
+	assert.Equal(t, 401, ue.StatusCode)
 }

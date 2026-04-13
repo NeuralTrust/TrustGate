@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	pkgTypes "github.com/NeuralTrust/TrustGate/pkg/types"
 )
@@ -74,10 +75,10 @@ func (c *client) CompletionsStream(
 	}
 	defer providers.DrainBody(resp.Body)
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if domainUpstream.IsHTTPError(resp.StatusCode) {
 		var preview bytes.Buffer
 		_, _ = io.CopyN(&preview, resp.Body, 64*1024)
-		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, preview.String())
+		return domainUpstream.NewUpstreamError(resp.StatusCode, preview.Bytes())
 	}
 
 	// Do not forward upstream headers or use reqCtx.C from this goroutine:
@@ -113,8 +114,8 @@ func (c *client) rawPost(ctx context.Context, apiKey string, reqBody []byte) ([]
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, body.String())
+	if domainUpstream.IsHTTPError(resp.StatusCode) {
+		return nil, domainUpstream.NewUpstreamError(resp.StatusCode, body.Bytes())
 	}
 
 	return body.Bytes(), nil

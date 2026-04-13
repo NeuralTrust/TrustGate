@@ -3,11 +3,11 @@ package google
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
+	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -99,8 +99,8 @@ func (c *client) CompletionsStream(
 	}
 	defer providers.DrainBody(resp.Body)
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return parseGeminiError(resp)
+	if domainUpstream.IsHTTPError(resp.StatusCode) {
+		return readUpstreamError(resp)
 	}
 
 	// Do not forward upstream headers or use reqCtx.C from this goroutine:
@@ -141,8 +141,8 @@ func (c *client) rawPost(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, parseGeminiError(resp)
+	if domainUpstream.IsHTTPError(resp.StatusCode) {
+		return nil, readUpstreamError(resp)
 	}
 
 	var body bytes.Buffer
@@ -173,29 +173,8 @@ func (c *client) extractModel(reqBody []byte) (string, error) {
 	return model, nil
 }
 
-func parseGeminiError(resp *http.Response) error {
-
+func readUpstreamError(resp *http.Response) *domainUpstream.UpstreamError {
 	var body bytes.Buffer
 	_, _ = body.ReadFrom(resp.Body)
-
-	var gemErr struct {
-		Error struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Status  string `json:"status"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(body.Bytes(), &gemErr); err == nil && gemErr.Error.Message != "" {
-		return fmt.Errorf("gemini error (%d - %s): %s",
-			gemErr.Error.Code,
-			gemErr.Error.Status,
-			gemErr.Error.Message,
-		)
-	}
-
-	return fmt.Errorf("gemini API error (%d): %s",
-		resp.StatusCode,
-		body.String(),
-	)
+	return domainUpstream.NewUpstreamError(resp.StatusCode, body.Bytes())
 }
