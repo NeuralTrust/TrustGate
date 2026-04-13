@@ -780,6 +780,7 @@ func (h *forwardedHandler) applyTargetOAuth(
 	if err != nil {
 		return err
 	}
+	target.Credentials.ApiKey = accessToken
 	if req.Headers == nil {
 		req.Headers = make(map[string][]string)
 	}

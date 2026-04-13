@@ -1,7 +1,6 @@
 package http
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -13,10 +12,10 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
+	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/response"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
-	pluginTypes "github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -233,11 +232,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create rule"})
 	}
 
-	response, err := s.getRuleResponse(dbRule)
-	if err != nil {
-		s.logger.WithError(err).Error("Failed to get rule response")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process rule"})
-	}
+	ruleOutput := s.getRuleResponse(dbRule)
 
 	if err := s.publisher.Publish(
 		c.Context(),
@@ -248,7 +243,7 @@ func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
 
 	s.emitAuditLog(c, dbRule.ID.String(), dbRule.Name, auditlogs.StatusSuccess, "")
 
-	return c.Status(fiber.StatusCreated).JSON(response)
+	return c.Status(fiber.StatusCreated).JSON(ruleOutput)
 }
 
 func (s *createRuleHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
@@ -275,65 +270,30 @@ func (s *createRuleHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, sta
 	})
 }
 
-func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule) (types.ForwardingRuleDTO, error) {
-	var pluginChain []pluginTypes.PluginConfig
-	if rule.PluginChain != nil {
-		chainJSON, err := json.Marshal(rule.PluginChain)
-		if err != nil {
-			return types.ForwardingRuleDTO{}, fmt.Errorf("failed to marshal plugin chain: %w", err)
-		}
-		if err := json.Unmarshal(chainJSON, &pluginChain); err != nil {
-			return types.ForwardingRuleDTO{}, fmt.Errorf("failed to unmarshal plugin chain: %w", err)
-		}
+func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule) response.ForwardingRuleOutput {
+	outputPath := types.FlexiblePath{Primary: rule.Path}
+	if len(rule.Paths) > 0 {
+		outputPath.All = rule.Paths
 	}
 
-	headers := make(map[string]string)
-	for _, h := range rule.Headers {
-		parts := strings.SplitN(h, ":", 2)
-		if len(parts) == 2 {
-			headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-		}
-	}
-
-	var trustLensConfig *types.TrustLensConfigDTO
-	if rule.TrustLens != nil {
-		tl := types.TrustLensConfigDTO(*rule.TrustLens)
-		trustLensConfig = &types.TrustLensConfigDTO{
-			TeamID:  tl.TeamID,
-			Type:    tl.Type,
-			Mapping: tl.Mapping,
-		}
-	}
-
-	var sessionConfigDTO *types.SessionConfigDTO
-	if rule.SessionConfig != nil {
-		sessionConfigDTO = &types.SessionConfigDTO{
-			HeaderName:    rule.SessionConfig.HeaderName,
-			BodyParamName: rule.SessionConfig.BodyParamName,
-		}
-	}
-
-	return types.ForwardingRuleDTO{
+	return response.ForwardingRuleOutput{
 		ID:            rule.ID.String(),
 		Name:          rule.Name,
-		GatewayID:     rule.GatewayID.String(),
-		Path:          rule.Path,
-		Paths:         rule.Paths,
-		Type:          string(rule.Type),
 		ServiceID:     rule.ServiceID.String(),
+		Path:          outputPath,
+		Type:          string(rule.Type),
 		Methods:       rule.Methods,
-		Headers:       headers,
+		Headers:       rule.Headers,
 		StripPath:     rule.StripPath,
 		PreserveHost:  rule.PreserveHost,
 		RetryAttempts: rule.RetryAttempts,
-		PluginChain:   pluginChain,
+		PluginChain:   rule.PluginChain,
 		Active:        rule.Active,
-		Public:        rule.Public,
-		TrustLens:     trustLensConfig,
-		SessionConfig: sessionConfigDTO,
-		CreatedAt:     rule.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
-	}, nil
+		TrustLens:     rule.TrustLens,
+		SessionConfig: rule.SessionConfig,
+		CreatedAt:     rule.CreatedAt,
+		UpdatedAt:     rule.UpdatedAt,
+	}
 }
 
 func (s *createRuleHandler) validate(rule *req.CreateRuleRequest) error {
