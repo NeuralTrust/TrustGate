@@ -6,6 +6,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
+	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
 type ListRulesOutput struct {
@@ -25,9 +26,10 @@ type GatewayOutput struct {
 type ForwardingRuleOutput struct {
 	ID            string                 `json:"id"`
 	Name          string                 `json:"name"`
+	GatewayID     string                 `json:"gateway_id"`
 	Upstream      *UpstreamOutput        `json:"upstream"`
 	ServiceID     string                 `json:"service_id"`
-	Path          string                 `json:"path"`
+	Path          types.FlexiblePath     `json:"path"`
 	Type          string                 `json:"type"`
 	Methods       domain.MethodsJSON     `json:"methods"`
 	Headers       domain.HeadersJSON     `json:"headers"`

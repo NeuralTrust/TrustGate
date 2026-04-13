@@ -6,7 +6,7 @@ import (
 )
 
 type UpdateRuleRequest struct {
-	Path          string                     `json:"path"`
+	Path          *types.FlexiblePath        `json:"path,omitempty"`
 	Name          string                     `json:"name"`
 	ServiceID     string                     `json:"service_id"`
 	Type          *string                    `json:"type,omitempty"`
@@ -18,5 +18,5 @@ type UpdateRuleRequest struct {
 	Active        *bool                      `json:"active"`
 	PluginChain   []pluginTypes.PluginConfig `json:"plugin_chain"`
 	TrustLens     *types.TrustLensConfigDTO  `json:"trustlens,omitempty"`
-	SessionConfig *types.SessionConfigDTO   `json:"session_config,omitempty"`
+	SessionConfig *types.SessionConfigDTO    `json:"session_config,omitempty"`
 }

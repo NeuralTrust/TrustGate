@@ -98,6 +98,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			Name:          rule.Name,
 			GatewayID:     rule.GatewayID.String(),
 			Path:          rule.Path,
+			Paths:         rule.Paths,
 			Type:          string(rule.Type),
 			ServiceID:     rule.ServiceID.String(),
 			Methods:       rule.Methods,
@@ -129,12 +130,17 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 				}
 			}
 		}
+		outputPath := types.FlexiblePath{Primary: rule.Path}
+		if len(rule.Paths) > 0 {
+			outputPath.All = rule.Paths
+		}
 		rulesOutput[i] = response.ForwardingRuleOutput{
 			ID:            rule.ID.String(),
 			Name:          rule.Name,
+			GatewayID:     rule.GatewayID.String(),
 			Upstream:      upstreamOutput,
 			ServiceID:     rule.ServiceID.String(),
-			Path:          rule.Path,
+			Path:          outputPath,
 			Type:          string(rule.Type),
 			Methods:       rule.Methods,
 			Headers:       rule.Headers,

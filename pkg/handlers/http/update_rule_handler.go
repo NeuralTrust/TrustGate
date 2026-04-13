@@ -207,7 +207,7 @@ func (s *updateRuleHandler) validateRuleUniqueness(
 	updateReq req.UpdateRuleRequest,
 	serviceUUID uuid.UUID,
 ) error {
-	if updateReq.Path == "" || serviceUUID == uuid.Nil {
+	if updateReq.Path == nil || serviceUUID == uuid.Nil {
 		return nil
 	}
 
@@ -217,16 +217,25 @@ func (s *updateRuleHandler) validateRuleUniqueness(
 		return fmt.Errorf("failed to check existing rules: %w", err)
 	}
 
-	normalizedUpdatePath := s.ruleMatcher.NormalizePath(updateReq.Path)
+	var updatePaths []string
+	if updateReq.Path.IsMultiPath() {
+		updatePaths = updateReq.Path.All
+	} else {
+		updatePaths = []string{updateReq.Path.Primary}
+	}
+
 	for _, rule := range rules {
 		if rule.ID == ruleUUID {
 			continue
 		}
-
-		normalizedRulePath := s.ruleMatcher.NormalizePath(rule.Path)
-		if normalizedRulePath == normalizedUpdatePath && rule.ServiceID == serviceUUID {
-			s.logger.WithField("path", updateReq.Path).Error("rule with this path already exists for this service")
-			return domain.ErrRuleAlreadyExists
+		for _, np := range updatePaths {
+			normalizedNew := s.ruleMatcher.NormalizePath(np)
+			for _, ep := range rule.AllPaths() {
+				if s.ruleMatcher.NormalizePath(ep) == normalizedNew && rule.ServiceID == serviceUUID {
+					s.logger.WithField("path", np).Error("rule with this path already exists for this service")
+					return domain.ErrRuleAlreadyExists
+				}
+			}
 		}
 	}
 
@@ -241,8 +250,13 @@ func (s *updateRuleHandler) applyRequestToDBRule(
 		forwardingRule.Name = updateReq.Name
 	}
 
-	if updateReq.Path != "" {
-		forwardingRule.Path = updateReq.Path
+	if updateReq.Path != nil {
+		forwardingRule.Path = updateReq.Path.Primary
+		if updateReq.Path.IsMultiPath() {
+			forwardingRule.Paths = updateReq.Path.All
+		} else {
+			forwardingRule.Paths = nil
+		}
 	}
 
 	if updateReq.Type != nil {
@@ -395,8 +409,13 @@ func (s *updateRuleHandler) updateCacheRuleFields(
 		rule.Name = updateReq.Name
 	}
 
-	if updateReq.Path != "" {
-		rule.Path = updateReq.Path
+	if updateReq.Path != nil {
+		rule.Path = updateReq.Path.Primary
+		if updateReq.Path.IsMultiPath() {
+			rule.Paths = updateReq.Path.All
+		} else {
+			rule.Paths = nil
+		}
 	}
 
 	if updateReq.ServiceID != "" {

@@ -39,9 +39,12 @@ func (m *ruleMatcher) MatchRule(path string, method string, rules []types.Forwar
 		if !m.methodAllowed(method, rule.Methods) {
 			continue
 		}
-		matchResult := m.MatchPath(path, rule.Path)
-		if matchResult.Matched {
-			return &rule, matchResult.Params
+		for _, rulePath := range rule.AllPaths() {
+			matchResult := m.MatchPath(path, rulePath)
+			if matchResult.Matched {
+				rule.MatchedPath = rulePath
+				return &rule, matchResult.Params
+			}
 		}
 	}
 	return nil, nil

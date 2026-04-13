@@ -189,3 +189,128 @@ func TestUpstreamRequest_ValidateProviderOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestUpstreamRequest_ValidateVertexProviderOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		request UpstreamRequest
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "Vertex with valid options should succeed",
+			request: UpstreamRequest{
+				Algorithm: "round-robin",
+				Targets: []TargetRequest{
+					{
+						ID:       "t1",
+						Provider: factory.ProviderVertex,
+						ProviderOptions: map[string]any{
+							"project":  "my-project",
+							"location": "us-central1",
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Vertex with version option should succeed",
+			request: UpstreamRequest{
+				Algorithm: "round-robin",
+				Targets: []TargetRequest{
+					{
+						ID:       "t1",
+						Provider: factory.ProviderVertex,
+						ProviderOptions: map[string]any{
+							"project":  "my-project",
+							"location": "us-central1",
+							"version":  "v1beta1",
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Vertex missing provider_options should fail",
+			request: UpstreamRequest{
+				Algorithm: "round-robin",
+				Targets: []TargetRequest{
+					{
+						ID:       "t1",
+						Provider: factory.ProviderVertex,
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "target 0: vertex provider requires provider_options with 'project' and 'location'",
+		},
+		{
+			name: "Vertex missing project should fail",
+			request: UpstreamRequest{
+				Algorithm: "round-robin",
+				Targets: []TargetRequest{
+					{
+						ID:       "t1",
+						Provider: factory.ProviderVertex,
+						ProviderOptions: map[string]any{
+							"location": "us-central1",
+						},
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "target 0: vertex provider_options.project is required",
+		},
+		{
+			name: "Vertex missing location should fail",
+			request: UpstreamRequest{
+				Algorithm: "round-robin",
+				Targets: []TargetRequest{
+					{
+						ID:       "t1",
+						Provider: factory.ProviderVertex,
+						ProviderOptions: map[string]any{
+							"project": "p",
+						},
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "target 0: vertex provider_options.location is required",
+		},
+		{
+			name: "Vertex unknown option key should fail",
+			request: UpstreamRequest{
+				Algorithm: "round-robin",
+				Targets: []TargetRequest{
+					{
+						ID:       "t1",
+						Provider: factory.ProviderVertex,
+						ProviderOptions: map[string]any{
+							"project":  "p",
+							"location": "l",
+							"unknown":  "x",
+						},
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  `target 0: vertex provider_options contains unknown key "unknown" (allowed: project, location, version)`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.request.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && err.Error() != tt.errMsg {
+				t.Errorf("Validate() error = %q, want %q", err.Error(), tt.errMsg)
+			}
+		})
+	}
+}

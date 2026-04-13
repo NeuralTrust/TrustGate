@@ -67,8 +67,8 @@ type GatewayDTO struct {
 	RequiredPlugins []plugintypes.PluginConfig    `json:"required_plugins"`
 	Telemetry       *TelemetryDTO                 `json:"telemetry"`
 	SecurityConfig  *SecurityConfigDTO            `json:"security_config"`
-	TlS       map[string]ClientTLSConfigDTO `json:"tls"`
-	CreatedAt string                        `json:"created_at"`
+	TlS             map[string]ClientTLSConfigDTO `json:"tls"`
+	CreatedAt       string                        `json:"created_at"`
 	UpdatedAt       string                        `json:"updated_at"`
 }
 
@@ -129,6 +129,8 @@ type ForwardingRuleDTO struct {
 	Name          string                     `json:"name"`
 	GatewayID     string                     `json:"gateway_id"`
 	Path          string                     `json:"path"`
+	Paths         []string                   `json:"paths,omitempty"`
+	MatchedPath   string                     `json:"-"`
 	Type          string                     `json:"type"`
 	ServiceID     string                     `json:"service_id"`
 	Methods       []string                   `json:"methods"`
@@ -139,10 +141,17 @@ type ForwardingRuleDTO struct {
 	PluginChain   []plugintypes.PluginConfig `json:"plugin_chain"`
 	Active        bool                       `json:"active"`
 	Public        bool                       `json:"public"`
-	TrustLens     *TrustLensConfigDTO `json:"trustlens,omitempty"`
-	SessionConfig *SessionConfigDTO   `json:"session_config,omitempty"`
-	CreatedAt     string              `json:"created_at"`
+	TrustLens     *TrustLensConfigDTO        `json:"trustlens,omitempty"`
+	SessionConfig *SessionConfigDTO          `json:"session_config,omitempty"`
+	CreatedAt     string                     `json:"created_at"`
 	UpdatedAt     string                     `json:"updated_at"`
+}
+
+func (r *ForwardingRuleDTO) AllPaths() []string {
+	if len(r.Paths) > 0 {
+		return r.Paths
+	}
+	return []string{r.Path}
 }
 
 type TrustLensConfigDTO struct {

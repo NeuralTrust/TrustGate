@@ -36,7 +36,9 @@ import (
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	wsHandlers "github.com/NeuralTrust/TrustGate/pkg/handlers/websocket"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/gcp"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
+	infraCrypto "github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
@@ -142,6 +144,12 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	providerFactory := providersFactory.NewProviderLocator()
 
 	oauthTokenClient := oauth.NewTokenClient()
+
+	cryptoService, err := infraCrypto.NewEncryptionService(di.Cfg.Security.EncryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize encryption service: %v", err)
+	}
+	saService := gcp.NewServiceAccountService(cryptoService)
 
 	fingerprintTracker := fingerprint.NewFingerPrintTracker(cacheInstance)
 
@@ -276,6 +284,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 			Cfg:                 di.Cfg,
 			ProviderLocator:     providerFactory,
 			TokenClient:         oauthTokenClient,
+			SAService:           saService,
 			RuleMatcher:         ruleMatcher,
 			TLSCertWriter:       tlsCertWriter,
 			AdapterRegistry:     adapterRegistry,
@@ -307,6 +316,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 			DescriptionEmbeddingCreator: descriptionEmbeddingCreator,
 			Cfg:                         di.Cfg,
 			AuditService:                auditLogsService,
+			SAService:                   saService,
 		}),
 		ListUpstreamHandler: handlers.NewListUpstreamHandler(di.Logger, upstreamRepository, cacheInstance),
 		GetUpstreamHandler:  handlers.NewGetUpstreamHandler(di.Logger, upstreamRepository, cacheInstance, upstreamFinder),
@@ -318,6 +328,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 			DescriptionEmbeddingCreator: descriptionEmbeddingCreator,
 			Cfg:                         di.Cfg,
 			AuditService:                auditLogsService,
+			SAService:                   saService,
 		}),
 		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(di.Logger, upstreamRepository, redisPublisher, auditLogsService),
 		// Service

@@ -32,7 +32,8 @@ type Upstream struct {
 type AuthType string
 
 const (
-	AuthTypeOAuth2 AuthType = "oauth2"
+	AuthTypeOAuth2             AuthType = "oauth2"
+	AuthTypeGCPServiceAccount  AuthType = "gcp_service_account"
 )
 
 type TargetOAuthConfig struct {
@@ -53,8 +54,9 @@ type TargetOAuthConfig struct {
 }
 
 type TargetAuth struct {
-	Type  AuthType           `json:"type"`
-	OAuth *TargetOAuthConfig `json:"oauth,omitempty"`
+	Type              AuthType           `json:"type"`
+	OAuth             *TargetOAuthConfig `json:"oauth,omitempty"`
+	GCPServiceAccount *string            `json:"gcp_service_account,omitempty"`
 }
 
 type EmbeddingConfig struct {
@@ -213,8 +215,9 @@ func (t *Target) Validate() error {
 			return fmt.Errorf("provider-type target cannot have host/port configuration")
 		}
 		var emptyCredentials domain.CredentialsJSON
-		if t.Credentials == emptyCredentials {
-			return fmt.Errorf("provider-type target requires credentials")
+		hasAuth := t.Auth != nil && (t.Auth.Type == AuthTypeOAuth2 || t.Auth.Type == AuthTypeGCPServiceAccount)
+		if t.Credentials == emptyCredentials && !hasAuth {
+			return fmt.Errorf("provider-type target requires credentials or auth configuration")
 		}
 		if len(t.Models) == 0 {
 			return fmt.Errorf("provider-type target requires at least one model")

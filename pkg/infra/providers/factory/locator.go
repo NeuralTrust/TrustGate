@@ -10,6 +10,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/google"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/mistral"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/openai"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/vertex"
 )
 
 // Provider name constants — aliased from the providers package so existing
@@ -17,6 +18,7 @@ import (
 const (
 	ProviderOpenAI    = providers.ProviderOpenAI
 	ProviderGoogle    = providers.ProviderGoogle
+	ProviderVertex    = providers.ProviderVertex
 	ProviderAnthropic = providers.ProviderAnthropic
 	ProviderBedrock   = providers.ProviderBedrock
 	ProviderAzure     = providers.ProviderAzure
@@ -48,6 +50,8 @@ func (f *providerLocator) Get(provider string) (providers.Client, error) {
 		return azure.NewAzureClient(), nil
 	case ProviderMistral:
 		return mistral.NewMistralClient(), nil
+	case ProviderVertex:
+		return vertex.NewVertexClient(), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}
