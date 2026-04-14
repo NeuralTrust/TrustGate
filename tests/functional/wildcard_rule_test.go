@@ -143,9 +143,9 @@ func TestWildcardRules(t *testing.T) {
 		assert.Equal(t, "rule already exists", resp["error"])
 	})
 
-	t.Run("wildcard proxying with strip_path", func(t *testing.T) {
+	t.Run("wildcard proxying through real proxy", func(t *testing.T) {
 		wcUpstreamID := CreateUpstream(t, gatewayID, map[string]interface{}{
-			"name":      "Wildcard Strip Upstream",
+			"name":      "Wildcard Proxy Upstream",
 			"algorithm": "round-robin",
 			"targets": []map[string]interface{}{
 				{
@@ -159,7 +159,7 @@ func TestWildcardRules(t *testing.T) {
 		})
 
 		wcServiceID := CreateService(t, gatewayID, map[string]interface{}{
-			"name":        "Wildcard Strip Service",
+			"name":        "Wildcard Proxy Service",
 			"type":        "upstream",
 			"upstream_id": wcUpstreamID,
 		})
@@ -173,10 +173,9 @@ func TestWildcardRules(t *testing.T) {
 			},
 			map[string]interface{}{
 				"path":       "/proxy-wc/*",
-				"name":       fmt.Sprintf("wc-strip-%d", time.Now().UnixNano()),
+				"name":       fmt.Sprintf("wc-proxy-%d", time.Now().UnixNano()),
 				"service_id": wcServiceID,
 				"methods":    []string{"GET", "POST"},
-				"strip_path": true,
 			},
 		)
 		assert.Equal(t, http.StatusCreated, status)
