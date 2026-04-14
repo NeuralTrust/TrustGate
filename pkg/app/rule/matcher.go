@@ -1,4 +1,4 @@
-package routing
+package rule
 
 import (
 	"regexp"
@@ -8,8 +8,8 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 )
 
-//go:generate mockery --name=RuleMatcher --dir=. --output=./mocks --filename=rule_matcher_mock.go --case=underscore --with-expecter
-type RuleMatcher interface {
+//go:generate mockery --name=Matcher --dir=. --output=./mocks --filename=rule_matcher_mock.go --case=underscore --with-expecter
+type Matcher interface {
 	MatchRule(path string, method string, rules []types.ForwardingRuleDTO) (*types.ForwardingRuleDTO, map[string]string)
 	MatchPath(requestPath string, rulePath string) MatchResult
 	ExtractPathAfterMatch(requestPath string, rulePath string) string
@@ -23,7 +23,7 @@ type ruleMatcher struct {
 	normalizeRegex    *regexp.Regexp
 }
 
-func NewRuleMatcher() RuleMatcher {
+func NewRuleMatcher() Matcher {
 	return &ruleMatcher{
 		paramExtractRegex: regexp.MustCompile(`\{([^}]+)\}`),
 		paramReplaceRegex: regexp.MustCompile(`\\\{([^}]+)\\\}`),
@@ -31,7 +31,11 @@ func NewRuleMatcher() RuleMatcher {
 	}
 }
 
-func (m *ruleMatcher) MatchRule(path string, method string, rules []types.ForwardingRuleDTO) (*types.ForwardingRuleDTO, map[string]string) {
+func (m *ruleMatcher) MatchRule(
+	path string,
+	method string,
+	rules []types.ForwardingRuleDTO,
+) (*types.ForwardingRuleDTO, map[string]string) {
 	for _, rule := range rules {
 		if !rule.Active {
 			continue
@@ -51,7 +55,10 @@ func (m *ruleMatcher) MatchRule(path string, method string, rules []types.Forwar
 }
 
 func (m *ruleMatcher) MatchPath(requestPath string, rulePath string) MatchResult {
-	if !strings.Contains(rulePath, "{") {
+	hasParams := strings.Contains(rulePath, "{")
+	hasWildcard := strings.HasSuffix(rulePath, "/*")
+
+	if !hasParams && !hasWildcard {
 		if requestPath == rulePath {
 			return MatchResult{
 				Matched: true,
@@ -80,6 +87,13 @@ func (m *ruleMatcher) MatchPath(requestPath string, rulePath string) MatchResult
 		}
 	}
 
+	if hasWildcard {
+		wildcardIndex := len(paramNames) + 1
+		if wildcardIndex < len(matches) {
+			params["*"] = matches[wildcardIndex]
+		}
+	}
+
 	return MatchResult{
 		Matched: true,
 		Params:  params,
@@ -87,6 +101,19 @@ func (m *ruleMatcher) MatchPath(requestPath string, rulePath string) MatchResult
 }
 
 func (m *ruleMatcher) ExtractPathAfterMatch(requestPath string, rulePath string) string {
+	if strings.HasSuffix(rulePath, "/*") {
+		result := m.MatchPath(requestPath, rulePath)
+		if result.Matched {
+			if wildcard, ok := result.Params["*"]; ok {
+				if strings.HasPrefix(wildcard, "/") {
+					return wildcard
+				}
+				return "/" + wildcard
+			}
+		}
+		return requestPath
+	}
+
 	matchResult := m.MatchPath(requestPath, rulePath)
 	if !matchResult.Matched {
 		return requestPath
@@ -130,6 +157,12 @@ func (m *ruleMatcher) getOrCompileRegex(rulePath string) *regexp.Regexp {
 }
 
 func (m *ruleMatcher) convertPatternToRegex(pattern string) string {
+	if strings.HasSuffix(pattern, "/*") {
+		prefix := pattern[:len(pattern)-2]
+		escaped := regexp.QuoteMeta(prefix)
+		escaped = m.paramReplaceRegex.ReplaceAllString(escaped, `([^/]+)`)
+		return "^" + escaped + "/(.+)$"
+	}
 	escaped := regexp.QuoteMeta(pattern)
 	escaped = m.paramReplaceRegex.ReplaceAllString(escaped, `([^/]+)`)
 	return "^" + escaped + "$"

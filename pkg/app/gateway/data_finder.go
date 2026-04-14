@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -81,13 +82,15 @@ func (f *dataFinder) getGatewayDataFromDB(ctx context.Context, gatewayID uuid.UU
 		return nil, fmt.Errorf("failed to get rules from database: %w", err)
 	}
 
+	typesGateway := f.convertModelToTypesGateway(entity)
+	typesRules := f.convertModelToTypesRules(rules)
+
 	gatewayData := &types.GatewayData{
-		Gateway: f.convertModelToTypesGateway(entity),
-		Rules:   f.convertModelToTypesRules(rules),
+		Gateway: typesGateway,
+		Rules:   typesRules,
 	}
 
-	// Cache the results
-	if err := f.cacheGatewayData(ctx, gatewayID.String(), entity, rules); err != nil {
+	if err := f.cacheGatewayData(ctx, gatewayID.String(), typesGateway, typesRules); err != nil {
 		f.logger.WithError(err).Warn("Failed to cache gateway data")
 	}
 
@@ -153,17 +156,17 @@ func (f *dataFinder) convertModelToTypesRules(rules []forwarding_rule.Forwarding
 			UpdatedAt:     r.UpdatedAt.Format(time.RFC3339),
 		})
 	}
+	rule.SortBySpecificity(result)
 	return result
 }
 
 func (f *dataFinder) cacheGatewayData(
 	ctx context.Context,
 	gatewayID string,
-	gateway *gateway.Gateway,
-	rules []forwarding_rule.ForwardingRule,
+	gw *types.GatewayDTO,
+	rules []types.ForwardingRuleDTO,
 ) error {
-	// Cache gateway
-	gatewayJSON, err := json.Marshal(gateway)
+	gatewayJSON, err := json.Marshal(gw)
 	if err != nil {
 		return fmt.Errorf("failed to marshal gateway: %w", err)
 	}
@@ -172,9 +175,7 @@ func (f *dataFinder) cacheGatewayData(
 		return fmt.Errorf("failed to cache gateway: %w", err)
 	}
 
-	// Convert and cache rules as types
-	typesRules := f.convertModelToTypesRules(rules)
-	rulesJSON, err := json.Marshal(typesRules)
+	rulesJSON, err := json.Marshal(rules)
 	if err != nil {
 		return fmt.Errorf("failed to marshal rules: %w", err)
 	}
@@ -183,13 +184,10 @@ func (f *dataFinder) cacheGatewayData(
 		return fmt.Errorf("failed to cache rules: %w", err)
 	}
 
-	// Cache in memory
-	gatewayData := &types.GatewayData{
-		Gateway: f.convertModelToTypesGateway(gateway),
-		Rules:   typesRules,
-	}
-
-	f.memoryCache.Set(gatewayID, gatewayData)
+	f.memoryCache.Set(gatewayID, &types.GatewayData{
+		Gateway: gw,
+		Rules:   rules,
+	})
 
 	return nil
 }

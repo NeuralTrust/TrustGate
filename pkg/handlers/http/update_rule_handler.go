@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
-	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
@@ -29,7 +29,7 @@ type UpdateRuleHandlerDeps struct {
 	Cache                 cache.Client
 	ValidatePlugin        *plugin.ValidatePlugin
 	InvalidationPublisher cache.EventPublisher
-	RuleMatcher           routing.RuleMatcher
+	RuleMatcher           rule.Matcher
 	AuditService          auditlogs.Service
 }
 
@@ -39,7 +39,7 @@ type updateRuleHandler struct {
 	cache                 cache.Client
 	validatePlugin        *plugin.ValidatePlugin
 	invalidationPublisher cache.EventPublisher
-	ruleMatcher           routing.RuleMatcher
+	ruleMatcher           rule.Matcher
 	auditService          auditlogs.Service
 }
 
@@ -496,6 +496,8 @@ func (s *updateRuleHandler) saveRulesToCache(
 	gatewayID string,
 	rules []types.ForwardingRuleDTO,
 ) error {
+	rule.SortBySpecificity(rules)
+
 	rulesKey := fmt.Sprintf("rules:%s", gatewayID)
 	updatedJSON, err := json.Marshal(rules)
 	if err != nil {
@@ -537,6 +539,18 @@ func (s *updateRuleHandler) validate(rule *req.UpdateRuleRequest) error {
 
 	if err := s.validateRuleType(rule.Type); err != nil {
 		return err
+	}
+
+	if rule.Path != nil {
+		allPaths := []string{rule.Path.Primary}
+		if rule.Path.IsMultiPath() {
+			allPaths = rule.Path.All
+		}
+		for _, p := range allPaths {
+			if err := validateWildcardPath(p); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil

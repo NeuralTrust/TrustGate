@@ -1,4 +1,4 @@
-package routing
+package rule
 
 type MatchResult struct {
 	Matched bool

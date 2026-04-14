@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
@@ -77,6 +78,12 @@ func (r *ForwardingRule) Validate() error {
 		}
 	}
 
+	for _, p := range r.AllPaths() {
+		if err := validateWildcard(p); err != nil {
+			return err
+		}
+	}
+
 	if r.ServiceID == uuid.Nil {
 		return fmt.Errorf("service_id is required")
 	}
@@ -143,4 +150,17 @@ func (r *ForwardingRule) BeforeUpdate(tx *gorm.DB) error {
 
 func (r *ForwardingRule) TableName() string {
 	return "forwarding_rules"
+}
+
+func validateWildcard(path string) error {
+	if !strings.Contains(path, "*") {
+		return nil
+	}
+	if strings.Count(path, "*") > 1 {
+		return fmt.Errorf("only one wildcard (*) is allowed per path")
+	}
+	if !strings.HasSuffix(path, "/*") {
+		return fmt.Errorf("wildcard (*) is only allowed at the end of a path (e.g. /v1/*)")
+	}
+	return nil
 }

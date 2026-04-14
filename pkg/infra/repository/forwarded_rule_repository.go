@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -185,7 +186,8 @@ func (r *forwardedRuleRepository) UpdateRulesCache(
 		}
 	}
 
-	// Marshal rules to JSON
+	rule.SortBySpecificity(apiRules)
+
 	rulesJSON, err := json.Marshal(apiRules)
 	if err != nil {
 		return fmt.Errorf("failed to marshal rules: %w", err)

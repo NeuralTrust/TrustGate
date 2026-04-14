@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/helpers"
@@ -19,7 +19,7 @@ import (
 
 func TestRewriteTargetURL_VertexPassthrough(t *testing.T) {
 	h := &forwardedHandler{
-		ruleMatcher: routing.NewRuleMatcher(),
+		ruleMatcher: rule.NewRuleMatcher(),
 	}
 
 	vertexPathPattern := "/{version}/projects/{project}/locations/{location}/publishers/{publisher}/models/{model_action}"
@@ -88,6 +88,95 @@ func TestRewriteTargetURL_VertexPassthrough(t *testing.T) {
 				target: &types.UpstreamTargetDTO{
 					Host:     "us-central1-aiplatform.googleapis.com",
 					Port:     443,
+					Protocol: "https",
+					Path:     tt.targetPath,
+				},
+			}
+
+			got := h.rewriteTargetURL(dto)
+			assert.Equal(t, tt.wantURL, got)
+		})
+	}
+}
+
+func TestRewriteTargetURL_WildcardStripPath(t *testing.T) {
+	h := &forwardedHandler{
+		ruleMatcher: rule.NewRuleMatcher(),
+	}
+
+	tests := []struct {
+		name        string
+		rulePath    string
+		requestPath string
+		pathParams  map[string]string
+		stripPath   bool
+		targetPath  string
+		wantURL     string
+	}{
+		{
+			name:        "wildcard strip single segment",
+			rulePath:    "/v1/*",
+			requestPath: "/v1/users/123",
+			pathParams:  map[string]string{"*": "users/123"},
+			stripPath:   true,
+			targetPath:  "/api",
+			wantURL:     "https://backend:8080/api/users/123",
+		},
+		{
+			name:        "wildcard no strip keeps base URL",
+			rulePath:    "/v1/*",
+			requestPath: "/v1/users/123",
+			pathParams:  map[string]string{"*": "users/123"},
+			stripPath:   false,
+			targetPath:  "/api",
+			wantURL:     "https://backend:8080/api",
+		},
+		{
+			name:        "deeper wildcard prefix strips correctly",
+			rulePath:    "/v1/api/*",
+			requestPath: "/v1/api/users",
+			pathParams:  map[string]string{"*": "users"},
+			stripPath:   true,
+			targetPath:  "/backend",
+			wantURL:     "https://backend:8080/backend/users",
+		},
+		{
+			name:        "wildcard with param before it",
+			rulePath:    "/v1/{id}/*",
+			requestPath: "/v1/123/posts/456",
+			pathParams:  map[string]string{"id": "123", "*": "posts/456"},
+			stripPath:   true,
+			targetPath:  "/api",
+			wantURL:     "https://backend:8080/api/posts/456",
+		},
+		{
+			name:        "wildcard deep multi-segment path",
+			rulePath:    "/v1/*",
+			requestPath: "/v1/a/b/c/d",
+			pathParams:  map[string]string{"*": "a/b/c/d"},
+			stripPath:   true,
+			targetPath:  "",
+			wantURL:     "https://backend:8080/a/b/c/d",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.WithValue(context.Background(), common.PathParamsKey, tt.pathParams)
+
+			dto := &forwardedRequestDTO{
+				req: &types.RequestContext{
+					Context: ctx,
+					Path:    tt.requestPath,
+				},
+				rule: &types.ForwardingRuleDTO{
+					Path:        tt.rulePath,
+					MatchedPath: tt.rulePath,
+					StripPath:   tt.stripPath,
+				},
+				target: &types.UpstreamTargetDTO{
+					Host:     "backend",
+					Port:     8080,
 					Protocol: "https",
 					Path:     tt.targetPath,
 				},

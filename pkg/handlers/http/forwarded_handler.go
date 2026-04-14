@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
@@ -71,7 +71,7 @@ type forwardedHandler struct {
 	tlsClientCache      *cache.TLSClientCache
 	providerLocator     factory.ProviderLocator
 	authDeps            helpers.AuthDeps
-	ruleMatcher         routing.RuleMatcher
+	ruleMatcher         rule.Matcher
 	tlsCertWriter       infraTLS.CertWriter
 	adapterRegistry     *adapter.Registry
 }
@@ -88,7 +88,7 @@ type ForwardedHandlerDeps struct {
 	ProviderLocator     factory.ProviderLocator
 	TokenClient         oauth.TokenClient
 	SAService           gcp.ServiceAccountService
-	RuleMatcher         routing.RuleMatcher
+	RuleMatcher         rule.Matcher
 	TLSCertWriter       infraTLS.CertWriter
 	AdapterRegistry     *adapter.Registry
 }
@@ -121,14 +121,14 @@ func NewForwardedHandler(deps ForwardedHandlerDeps) Handler {
 		loadBalancerFactory: deps.LoadBalancerFactory,
 		cfg:                 deps.Cfg,
 		tlsClientCache:      cache.NewTLSClientCache(deps.Logger),
-		providerLocator: deps.ProviderLocator,
+		providerLocator:     deps.ProviderLocator,
 		authDeps: helpers.AuthDeps{
 			TokenClient: deps.TokenClient,
 			SAService:   deps.SAService,
 		},
-		ruleMatcher: deps.RuleMatcher,
-		tlsCertWriter:       deps.TLSCertWriter,
-		adapterRegistry:     deps.AdapterRegistry,
+		ruleMatcher:     deps.RuleMatcher,
+		tlsCertWriter:   deps.TLSCertWriter,
+		adapterRegistry: deps.AdapterRegistry,
 	}
 }
 
@@ -993,8 +993,6 @@ func (h *forwardedHandler) handleStreamingResponse(dto *forwardedRequestDTO, cli
 	return infrahttpx.HandleHTTPStream(h.logger, client, upstreamURL, dto.req, dto.target, dto.streamResponse)
 }
 
-
-
 func (h *forwardedHandler) handleStreamingResponseByProvider(
 	req *types.RequestContext,
 	target *types.UpstreamTargetDTO,
@@ -1002,7 +1000,6 @@ func (h *forwardedHandler) handleStreamingResponseByProvider(
 ) (*types.ResponseContext, error) {
 	return infrahttpx.HandleProviderStream(h.logger, h.providerLocator, h.adapterRegistry, req, target, streamResponse, h.cfg.Upstream.ErrorPassthrough)
 }
-
 
 func (h *forwardedHandler) createResponse(resp *fasthttp.Response, body []byte) *types.ResponseContext {
 	response := &types.ResponseContext{
