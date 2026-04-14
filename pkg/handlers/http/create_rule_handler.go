@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
-	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
@@ -29,7 +29,7 @@ type CreateRuleHandlerDeps struct {
 	ServiceRepo          service.Repository
 	PluginChainValidator plugin.ValidatePluginChain
 	Publisher            infraCache.EventPublisher
-	RuleMatcher          routing.RuleMatcher
+	RuleMatcher          rule.Matcher
 	AuditService         auditlogs.Service
 }
 
@@ -40,7 +40,7 @@ type createRuleHandler struct {
 	serviceRepo          service.Repository
 	pluginChainValidator plugin.ValidatePluginChain
 	publisher            infraCache.EventPublisher
-	ruleMatcher          routing.RuleMatcher
+	ruleMatcher          rule.Matcher
 	auditService         auditlogs.Service
 }
 
@@ -311,6 +311,16 @@ func (s *createRuleHandler) validate(rule *req.CreateRuleRequest) error {
 		}
 	}
 
+	allPaths := []string{rule.Path.Primary}
+	if rule.Path.IsMultiPath() {
+		allPaths = rule.Path.All
+	}
+	for _, p := range allPaths {
+		if err := validateWildcardPath(p); err != nil {
+			return err
+		}
+	}
+
 	if len(rule.Methods) == 0 {
 		return fmt.Errorf("at least one method is required")
 	}
@@ -385,5 +395,18 @@ func (s *createRuleHandler) validate(rule *req.CreateRuleRequest) error {
 		return fmt.Errorf("name is required")
 	}
 
+	return nil
+}
+
+func validateWildcardPath(path string) error {
+	if !strings.Contains(path, "*") {
+		return nil
+	}
+	if strings.Count(path, "*") > 1 {
+		return fmt.Errorf("only one wildcard (*) is allowed per path")
+	}
+	if !strings.HasSuffix(path, "/*") {
+		return fmt.Errorf("wildcard (*) is only allowed at the end of a path (e.g. /v1/*)")
+	}
 	return nil
 }

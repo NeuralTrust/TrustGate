@@ -7,7 +7,7 @@ import (
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
@@ -22,14 +22,14 @@ type authMiddleware struct {
 	logger        *logrus.Logger
 	keyFinder     apikey.Finder
 	gatewayFinder gateway.DataFinder
-	ruleMatcher   routing.RuleMatcher
+	ruleMatcher   rule.Matcher
 }
 
 func NewAuthMiddleware(
 	logger *logrus.Logger,
 	keyFinder apikey.Finder,
 	gatewayFinder gateway.DataFinder,
-	ruleMatcher routing.RuleMatcher,
+	ruleMatcher rule.Matcher,
 ) Middleware {
 	return &authMiddleware{
 		logger:        logger,

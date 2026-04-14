@@ -24,7 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
-	"github.com/NeuralTrust/TrustGate/pkg/app/routing"
+	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
@@ -187,7 +187,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
 	validatePlugin := plugin.NewValidatePlugin(pluginManager)
 	gatewayDataFinder := gateway.NewDataFinder(gatewayRepository, ruleRepository, cacheInstance, di.Logger)
-	ruleMatcher := routing.NewRuleMatcher()
+	ruleMatcher := rule.NewRuleMatcher()
 	pluginChainValidator := plugin.NewValidatePluginChain(pluginManager, gatewayRepository)
 
 	//policy

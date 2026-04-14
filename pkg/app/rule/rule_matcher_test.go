@@ -1,4 +1,4 @@
-package routing
+package rule
 
 import (
 	"sync"
@@ -116,6 +116,62 @@ func TestRuleMatcher_MatchPath(t *testing.T) {
 			rulePath:    "/{x}/{y}/{z}",
 			wantMatch:   true,
 			wantParams:  map[string]string{"x": "a", "y": "b", "z": "c"},
+		},
+		{
+			name:        "wildcard matches single segment",
+			requestPath: "/v1/users",
+			rulePath:    "/v1/*",
+			wantMatch:   true,
+			wantParams:  map[string]string{"*": "users"},
+		},
+		{
+			name:        "wildcard matches multi segment",
+			requestPath: "/v1/users/123",
+			rulePath:    "/v1/*",
+			wantMatch:   true,
+			wantParams:  map[string]string{"*": "users/123"},
+		},
+		{
+			name:        "wildcard matches deep path",
+			requestPath: "/v1/users/123/posts/456",
+			rulePath:    "/v1/*",
+			wantMatch:   true,
+			wantParams:  map[string]string{"*": "users/123/posts/456"},
+		},
+		{
+			name:        "wildcard no match - trailing slash only",
+			requestPath: "/v1/",
+			rulePath:    "/v1/*",
+			wantMatch:   false,
+			wantParams:  nil,
+		},
+		{
+			name:        "wildcard no match - no trailing content",
+			requestPath: "/v1",
+			rulePath:    "/v1/*",
+			wantMatch:   false,
+			wantParams:  nil,
+		},
+		{
+			name:        "wildcard no match - wrong prefix",
+			requestPath: "/v2/users",
+			rulePath:    "/v1/*",
+			wantMatch:   false,
+			wantParams:  nil,
+		},
+		{
+			name:        "wildcard with deeper prefix",
+			requestPath: "/v1/test/foo",
+			rulePath:    "/v1/test/*",
+			wantMatch:   true,
+			wantParams:  map[string]string{"*": "foo"},
+		},
+		{
+			name:        "wildcard with param before wildcard",
+			requestPath: "/v1/users/123/posts",
+			rulePath:    "/v1/users/{id}/*",
+			wantMatch:   true,
+			wantParams:  map[string]string{"id": "123", "*": "posts"},
 		},
 	}
 
@@ -430,6 +486,88 @@ func TestRuleMatcher_MatchRule_MultiPath(t *testing.T) {
 	}
 }
 
+func TestRuleMatcher_MatchRule_Wildcard(t *testing.T) {
+	matcher := NewRuleMatcher()
+
+	tests := []struct {
+		name       string
+		path       string
+		method     string
+		rules      []types.ForwardingRuleDTO
+		wantRuleID string
+		wantParams map[string]string
+		wantNil    bool
+	}{
+		{
+			name:   "deeper wildcard wins over shallow wildcard",
+			path:   "/v1/test/foo",
+			method: "GET",
+			rules: []types.ForwardingRuleDTO{
+				{ID: "v1-test-wc", Path: "/v1/test/*", Methods: []string{"GET"}, Active: true},
+				{ID: "v1-wc", Path: "/v1/*", Methods: []string{"GET"}, Active: true},
+			},
+			wantRuleID: "v1-test-wc",
+			wantParams: map[string]string{"*": "foo"},
+		},
+		{
+			name:   "param rule wins over wildcard",
+			path:   "/v1/users/123",
+			method: "GET",
+			rules: []types.ForwardingRuleDTO{
+				{ID: "v1-param", Path: "/v1/users/{id}", Methods: []string{"GET"}, Active: true},
+				{ID: "v1-wc", Path: "/v1/*", Methods: []string{"GET"}, Active: true},
+			},
+			wantRuleID: "v1-param",
+			wantParams: map[string]string{"id": "123"},
+		},
+		{
+			name:   "exact rule wins over wildcard",
+			path:   "/v1/users",
+			method: "GET",
+			rules: []types.ForwardingRuleDTO{
+				{ID: "v1-exact", Path: "/v1/users", Methods: []string{"GET"}, Active: true},
+				{ID: "v1-wc", Path: "/v1/*", Methods: []string{"GET"}, Active: true},
+			},
+			wantRuleID: "v1-exact",
+			wantParams: map[string]string{},
+		},
+		{
+			name:   "wildcard matches when no better rule",
+			path:   "/v1/anything",
+			method: "GET",
+			rules: []types.ForwardingRuleDTO{
+				{ID: "v1-wc", Path: "/v1/*", Methods: []string{"GET"}, Active: true},
+			},
+			wantRuleID: "v1-wc",
+			wantParams: map[string]string{"*": "anything"},
+		},
+		{
+			name:   "wildcard does not match unrelated path",
+			path:   "/v2/something",
+			method: "GET",
+			rules: []types.ForwardingRuleDTO{
+				{ID: "v1-wc", Path: "/v1/*", Methods: []string{"GET"}, Active: true},
+			},
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			SortBySpecificity(tt.rules)
+			rule, params := matcher.MatchRule(tt.path, tt.method, tt.rules)
+			if tt.wantNil {
+				assert.Nil(t, rule)
+				assert.Nil(t, params)
+				return
+			}
+			require.NotNil(t, rule)
+			assert.Equal(t, tt.wantRuleID, rule.ID)
+			assert.Equal(t, tt.wantParams, params)
+		})
+	}
+}
+
 func TestRuleMatcher_MultiPath_DoesNotMutateOriginal(t *testing.T) {
 	matcher := NewRuleMatcher()
 
@@ -532,6 +670,49 @@ func TestRuleMatcher_ExtractPathAfterMatch(t *testing.T) {
 	}
 }
 
+func TestRuleMatcher_ExtractPathAfterMatch_Wildcard(t *testing.T) {
+	matcher := NewRuleMatcher()
+
+	tests := []struct {
+		name        string
+		requestPath string
+		rulePath    string
+		wantResult  string
+	}{
+		{
+			name:        "wildcard extracts remaining path",
+			requestPath: "/v1/users/123/posts",
+			rulePath:    "/v1/*",
+			wantResult:  "/users/123/posts",
+		},
+		{
+			name:        "deeper wildcard extracts single segment",
+			requestPath: "/v1/test/foo",
+			rulePath:    "/v1/test/*",
+			wantResult:  "/foo",
+		},
+		{
+			name:        "wildcard with param extracts after param",
+			requestPath: "/v1/users/123/posts",
+			rulePath:    "/v1/users/{id}/*",
+			wantResult:  "/posts",
+		},
+		{
+			name:        "wildcard no match returns original",
+			requestPath: "/v2/users",
+			rulePath:    "/v1/*",
+			wantResult:  "/v2/users",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matcher.ExtractPathAfterMatch(tt.requestPath, tt.rulePath)
+			assert.Equal(t, tt.wantResult, result)
+		})
+	}
+}
+
 func TestRuleMatcher_NormalizePath(t *testing.T) {
 	matcher := NewRuleMatcher()
 
@@ -584,6 +765,16 @@ func TestRuleMatcher_NormalizePath(t *testing.T) {
 			name: "long param name",
 			path: "/api/v1/{veryLongParameterName}/test",
 			want: "/api/v1/{}/test",
+		},
+		{
+			name: "wildcard path unchanged",
+			path: "/v1/*",
+			want: "/v1/*",
+		},
+		{
+			name: "param before wildcard normalized",
+			path: "/v1/users/{id}/*",
+			want: "/v1/users/{}/*",
 		},
 	}
 
@@ -745,5 +936,150 @@ func TestRuleMatcher_MethodAllowed(t *testing.T) {
 		assert.Nil(t, rule, "PUT should not match")
 		rule, _ = matcher.MatchRule("/api/v1/test", "DELETE", rules)
 		assert.Nil(t, rule, "DELETE should not match")
+	})
+}
+
+func TestMatchRule_WildcardSpecificityFullPipeline(t *testing.T) {
+	rules := []types.ForwardingRuleDTO{
+		{ID: "catch-all", Path: "/*", Methods: []string{"GET"}, Active: true},
+		{ID: "v1-wildcard", Path: "/v1/*", Methods: []string{"GET"}, Active: true},
+		{ID: "v1-test-wildcard", Path: "/v1/test/*", Methods: []string{"GET"}, Active: true},
+		{ID: "v1-test-exact", Path: "/v1/test/users", Methods: []string{"GET"}, Active: true},
+		{ID: "v1-param", Path: "/v1/users/{id}", Methods: []string{"GET"}, Active: true},
+	}
+
+	SortBySpecificity(rules)
+	matcher := NewRuleMatcher()
+
+	t.Run("exact match wins over all wildcards", func(t *testing.T) {
+		rule, _ := matcher.MatchRule("/v1/test/users", "GET", rules)
+		require.NotNil(t, rule)
+		assert.Equal(t, "v1-test-exact", rule.ID)
+	})
+
+	t.Run("param rule wins over wildcard", func(t *testing.T) {
+		rule, params := matcher.MatchRule("/v1/users/123", "GET", rules)
+		require.NotNil(t, rule)
+		assert.Equal(t, "v1-param", rule.ID)
+		assert.Equal(t, "123", params["id"])
+	})
+
+	t.Run("deeper wildcard wins over shallow wildcard", func(t *testing.T) {
+		rule, params := matcher.MatchRule("/v1/test/foo", "GET", rules)
+		require.NotNil(t, rule)
+		assert.Equal(t, "v1-test-wildcard", rule.ID)
+		assert.Equal(t, "foo", params["*"])
+	})
+
+	t.Run("v1 wildcard wins over catch-all", func(t *testing.T) {
+		rule, params := matcher.MatchRule("/v1/other", "GET", rules)
+		require.NotNil(t, rule)
+		assert.Equal(t, "v1-wildcard", rule.ID)
+		assert.Equal(t, "other", params["*"])
+	})
+
+	t.Run("catch-all matches unrelated paths", func(t *testing.T) {
+		rule, params := matcher.MatchRule("/anything", "GET", rules)
+		require.NotNil(t, rule)
+		assert.Equal(t, "catch-all", rule.ID)
+		assert.Equal(t, "anything", params["*"])
+	})
+
+	t.Run("no match for wrong method", func(t *testing.T) {
+		rule, _ := matcher.MatchRule("/v1/test/foo", "DELETE", rules)
+		assert.Nil(t, rule)
+	})
+}
+
+func TestRuleMatcher_Concurrency_Wildcard(t *testing.T) {
+	matcher := NewRuleMatcher()
+
+	rules := []types.ForwardingRuleDTO{
+		{ID: "exact", Path: "/api/v1/users", Methods: []string{"GET"}, Active: true},
+		{ID: "param", Path: "/api/v1/users/{id}", Methods: []string{"GET"}, Active: true},
+		{ID: "deep-wc", Path: "/api/v1/*", Methods: []string{"GET"}, Active: true},
+		{ID: "shallow-wc", Path: "/api/*", Methods: []string{"GET"}, Active: true},
+		{ID: "catch-all", Path: "/*", Methods: []string{"GET"}, Active: true},
+	}
+	SortBySpecificity(rules)
+
+	var wg sync.WaitGroup
+	numGoroutines := 200
+
+	type result struct {
+		ruleID string
+		params map[string]string
+	}
+	results := make([]result, numGoroutines)
+
+	paths := []struct {
+		path       string
+		wantRuleID string
+	}{
+		{"/api/v1/users", "exact"},
+		{"/api/v1/users/42", "param"},
+		{"/api/v1/posts/99", "deep-wc"},
+		{"/api/other", "shallow-wc"},
+		{"/something", "catch-all"},
+	}
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			tc := paths[index%len(paths)]
+			rule, params := matcher.MatchRule(tc.path, "GET", rules)
+			if rule != nil {
+				results[index] = result{ruleID: rule.ID, params: params}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	for i, res := range results {
+		tc := paths[i%len(paths)]
+		assert.Equal(t, tc.wantRuleID, res.ruleID,
+			"goroutine %d: path %s should match rule %s", i, tc.path, tc.wantRuleID)
+	}
+}
+
+func TestRuleMatcher_MultiPath_Wildcard(t *testing.T) {
+	matcher := NewRuleMatcher()
+
+	rules := []types.ForwardingRuleDTO{
+		{
+			ID:      "multi-wc",
+			Path:    "/v1/*",
+			Paths:   []string{"/v1/*", "/v2/*"},
+			Methods: []string{"GET"},
+			Active:  true,
+		},
+	}
+	SortBySpecificity(rules)
+
+	t.Run("matches first wildcard path", func(t *testing.T) {
+		rule, params := matcher.MatchRule("/v1/users/123", "GET", rules)
+		require.NotNil(t, rule)
+		assert.Equal(t, "multi-wc", rule.ID)
+		assert.Equal(t, "/v1/*", rule.MatchedPath)
+		assert.Equal(t, "users/123", params["*"])
+	})
+
+	t.Run("matches second wildcard path", func(t *testing.T) {
+		rule, params := matcher.MatchRule("/v2/posts/456", "GET", rules)
+		require.NotNil(t, rule)
+		assert.Equal(t, "multi-wc", rule.ID)
+		assert.Equal(t, "/v2/*", rule.MatchedPath)
+		assert.Equal(t, "posts/456", params["*"])
+	})
+
+	t.Run("no match for unregistered prefix", func(t *testing.T) {
+		rule, _ := matcher.MatchRule("/v3/anything", "GET", rules)
+		assert.Nil(t, rule)
+	})
+
+	t.Run("MatchedPath not leaked across calls", func(t *testing.T) {
+		assert.Empty(t, rules[0].MatchedPath, "original slice element must not be mutated")
 	})
 }
