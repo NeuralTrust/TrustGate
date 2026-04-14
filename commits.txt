@@ -1,2 +1,3 @@
-- 1e2170e Merge pull request #344 from NeuralTrust/feat/multipath-vertex
-- bdaf84e feat: implemented vertex && SA OAUTH
+- 4f4127e Merge pull request #345 from NeuralTrust/feat/wildcard-paths
+- e2bfc1d feat: wildcard paths
+- 2d2c432 feat: wildcard paths
