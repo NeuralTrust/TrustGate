@@ -384,6 +384,10 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	if response.Streaming {
 		respCtx.Streaming = true
 
+		if traceID, ok := c.Locals(common.TraceIdKey).(string); ok && traceID != "" {
+			c.Set(common.TraceIDHeader, traceID)
+		}
+
 		go func() {
 			defer close(pluginsDone)
 			var buf bytes.Buffer

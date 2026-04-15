@@ -22,7 +22,7 @@ func PrepareResponse(c *fiber.Ctx, logger *logrus.Logger) error {
 	}
 
 	if traceId, ok := c.Locals(common.TraceIdKey).(string); ok && traceId != "" {
-		c.Set("X-Trace-ID", traceId)
+		c.Set(common.TraceIDHeader, traceId)
 	}
 	return nil
 }

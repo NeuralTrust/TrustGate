@@ -2,6 +2,8 @@ package common
 
 type contextKey string
 
+const TraceIDHeader = "X-Trace-ID"
+
 const (
 	TraceIdKey                 contextKey = "trace_id"
 	MetadataKey                contextKey = "metadata"
