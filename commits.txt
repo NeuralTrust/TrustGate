@@ -1,3 +1,2 @@
-- 4f4127e Merge pull request #345 from NeuralTrust/feat/wildcard-paths
-- e2bfc1d feat: wildcard paths
-- 2d2c432 feat: wildcard paths
+- ac5f8b9 Merge pull request #346 from NeuralTrust/fix/return-trace-id-on-stream
+- 52e55a3 fix: return trace id on streaming
