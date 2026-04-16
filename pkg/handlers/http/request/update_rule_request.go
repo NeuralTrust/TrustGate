@@ -20,3 +20,31 @@ type UpdateRuleRequest struct {
 	TrustLens     *types.TrustLensConfigDTO  `json:"trustlens,omitempty"`
 	SessionConfig *types.SessionConfigDTO    `json:"session_config,omitempty"`
 }
+
+func (r *UpdateRuleRequest) Validate() error {
+	if err := validateHTTPMethods(r.Methods); err != nil {
+		return err
+	}
+	if r.Type != nil {
+		if err := validateRuleType(*r.Type); err != nil {
+			return err
+		}
+	}
+	if r.Path != nil {
+		allPaths := []string{r.Path.Primary}
+		if r.Path.IsMultiPath() {
+			allPaths = r.Path.All
+		}
+		for _, p := range allPaths {
+			if err := validateWildcardPath(p); err != nil {
+				return err
+			}
+		}
+	}
+	if r.TrustLens != nil {
+		if err := validateTrustLens(r.TrustLens); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -5,35 +5,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/NeuralTrust/TrustGate/pkg/config"
+	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream/mocks"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/gcp"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	cacheMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
+	cacheMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
-
-func getTestConfig() *config.Config {
-	cfg, _ := config.Load()
-	if cfg == nil {
-		cfg = &config.Config{
-			Redis: config.RedisConfig{
-				Host: "localhost",
-				Port: 6379,
-			},
-		}
-	}
-	return cfg
-}
 
 func buildMockCache(t *testing.T) cache.Client {
 	c := cacheMocks.NewClient(t)
@@ -53,22 +40,27 @@ func (n *noopDescEmbedding) Process(ctx context.Context, _ *upstream.Upstream) e
 
 func newFiber() *fiber.App { return fiber.New() }
 
+func buildTestUpdater(repo upstream.Repository, pub *noopPublisher, cacheInstance cache.Client) appUpstream.Updater {
+	logger := logrus.New()
+	saService := gcp.NewServiceAccountService(nil)
+	desc := &noopDescEmbedding{}
+	return appUpstream.NewUpdater(
+		logger,
+		repo,
+		pub,
+		cacheInstance,
+		desc,
+		saService,
+	)
+}
+
 func TestUpdateUpstream_OAuthValidation_ClientCredentialsMissingClientID(t *testing.T) {
 	repo := new(mocks.Repository)
 	pub := &noopPublisher{}
-	cfg := getTestConfig()
 	cacheInstance := buildMockCache(t)
-	desc := &noopDescEmbedding{}
 	logger := logrus.New()
-	h := NewUpdateUpstreamHandler(UpdateUpstreamHandlerDeps{
-		Logger:                      logger,
-		Repo:                        repo,
-		Publisher:                   pub,
-		Cache:                       cacheInstance,
-		DescriptionEmbeddingCreator: desc,
-		Cfg:                         cfg,
-		AuditService:                nil,
-	})
+	updater := buildTestUpdater(repo, pub, cacheInstance)
+	h := NewUpdateUpstreamHandler(logger, updater, nil)
 
 	app := newFiber()
 	app.Put("/api/v1/gateways/:gateway_id/upstreams/:upstream_id", h.Handle)
@@ -112,19 +104,10 @@ func TestUpdateUpstream_OAuthValidation_ClientCredentialsMissingClientID(t *test
 func TestUpdateUpstream_Success_Minimal(t *testing.T) {
 	repo := new(mocks.Repository)
 	pub := &noopPublisher{}
-	cfg := getTestConfig()
 	cacheInstance := buildMockCache(t)
-	desc := &noopDescEmbedding{}
 	logger := logrus.New()
-	h := NewUpdateUpstreamHandler(UpdateUpstreamHandlerDeps{
-		Logger:                      logger,
-		Repo:                        repo,
-		Publisher:                   pub,
-		Cache:                       cacheInstance,
-		DescriptionEmbeddingCreator: desc,
-		Cfg:                         cfg,
-		AuditService:                nil,
-	})
+	updater := buildTestUpdater(repo, pub, cacheInstance)
+	h := NewUpdateUpstreamHandler(logger, updater, nil)
 
 	app := newFiber()
 	app.Put("/api/v1/gateways/:gateway_id/upstreams/:upstream_id", h.Handle)
@@ -156,6 +139,3 @@ func TestUpdateUpstream_Success_Minimal(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 }
-
-// keep io import used
-var _ io.Reader

@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
+//go:generate mockery --name=Repository --dir=. --output=./mocks --filename=service_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
 	Get(ctx context.Context, id string) (*Service, error)
 	Create(ctx context.Context, service *Service) error

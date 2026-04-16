@@ -1,56 +1,28 @@
 package http
 
 import (
-	"fmt"
+	"errors"
 
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
-	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/gcp"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
-type UpdateUpstreamHandlerDeps struct {
-	Logger                      *logrus.Logger
-	Repo                        upstream.Repository
-	Publisher                   cache.EventPublisher
-	Cache                       cache.Client
-	DescriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
-	Cfg                         *config.Config
-	AuditService                auditlogs.Service
-	SAService                   gcp.ServiceAccountService
-}
-
 type updateUpstreamHandler struct {
-	logger                      *logrus.Logger
-	repo                        upstream.Repository
-	publisher                   cache.EventPublisher
-	descriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
-	cache                       cache.Client
-	cfg                         *config.Config
-	auditService                auditlogs.Service
-	saService                   gcp.ServiceAccountService
+	logger       *logrus.Logger
+	updater      appUpstream.Updater
+	auditService auditlogs.Service
 }
 
-func NewUpdateUpstreamHandler(deps UpdateUpstreamHandlerDeps) Handler {
+func NewUpdateUpstreamHandler(logger *logrus.Logger, updater appUpstream.Updater, auditService auditlogs.Service) Handler {
 	return &updateUpstreamHandler{
-		logger:                      deps.Logger,
-		repo:                        deps.Repo,
-		publisher:                   deps.Publisher,
-		descriptionEmbeddingCreator: deps.DescriptionEmbeddingCreator,
-		cache:                       deps.Cache,
-		cfg:                         deps.Cfg,
-		auditService:                deps.AuditService,
-		saService:                   deps.SAService,
+		logger:       logger,
+		updater:      updater,
+		auditService: auditService,
 	}
 }
 
@@ -65,9 +37,16 @@ func NewUpdateUpstreamHandler(deps UpdateUpstreamHandlerDeps) Handler {
 // @Param upstream body request.UpstreamRequest true "Updated upstream data"
 // @Success 200 {object} upstream.Upstream "Upstream updated successfully"
 // @Router /api/v1/gateways/{gateway_id}/upstreams/{upstream_id} [put]
-func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
-	gatewayID := c.Params("gateway_id")
-	upstreamID := c.Params("upstream_id")
+func (h *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
+	gatewayUUID, err := uuid.Parse(c.Params("gateway_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
+	}
+
+	upstreamUUID, err := uuid.Parse(c.Params("upstream_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid upstream ID"})
+	}
 
 	var req request.UpstreamRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -78,233 +57,28 @@ func (s *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	for i, t := range req.Targets {
-		if t.Auth != nil {
-			switch t.Auth.Type {
-			case request.AuthTypeOAuth2:
-				if t.Auth.OAuth == nil {
-					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: auth.oauth is required for oauth2", i)})
-				}
-				switch t.Auth.OAuth.GrantType {
-				case string(oauth.GrantTypeClientCredentials):
-					if !t.Auth.OAuth.UseBasicAuth && t.Auth.OAuth.ClientID == "" {
-						return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: auth.oauth.client_id is required for client_credentials when use_basic_auth is false", i)})
-					}
-				case string(oauth.GrantTypeAuthorizationCode):
-					if t.Auth.OAuth.Code == "" || t.Auth.OAuth.RedirectURI == "" {
-						return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: authorization_code requires code and redirect_uri", i)})
-					}
-				case string(oauth.GrantTypePassword):
-					if t.Auth.OAuth.Username == "" || t.Auth.OAuth.Password == "" {
-						return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: password grant requires username and password", i)})
-					}
-				}
-			case request.AuthTypeGCPServiceAccount:
-			default:
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: unsupported auth.type: %s", i, t.Auth.Type)})
-			}
-		}
-	}
-
-	if req.Embedding != nil && req.Embedding.Provider != "" {
-		if req.Embedding.Provider != factory.OpenAIProvider {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("embedding provider '%s' is not allowed", req.Embedding.Provider)})
-		}
-	}
-
-	id, err := uuid.Parse(upstreamID)
+	u, err := h.updater.Update(c.Context(), gatewayUUID, upstreamUUID, &req)
 	if err != nil {
-		s.logger.WithError(err).Error("failed to parse upstream ID")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid upstream ID"})
-	}
-
-	gatewayUUID, err := uuid.Parse(gatewayID)
-	if err != nil {
-		s.logger.WithError(err).Error("failed to parse gateway ID")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
-	}
-
-	var targets []upstream.Target
-	for i, target := range req.Targets {
-		t := upstream.Target{
-			ID:              target.ID,
-			Weight:          target.Weight,
-			Tags:            target.Tags,
-			Headers:         target.Headers,
-			Path:            target.Path,
-			Host:            target.Host,
-			Port:            target.Port,
-			Protocol:        target.Protocol,
-			Provider:        target.Provider,
-			ProviderOptions: target.ProviderOptions,
-			Models:          target.Models,
-			DefaultModel:    target.DefaultModel,
-			Description:     target.Description,
-			Stream:          target.Stream,
-			InsecureSSL:     target.InsecureSSL,
-			Credentials:     domain.CredentialsJSON(target.Credentials),
+		if errors.Is(err, domain.ErrUpstreamNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "upstream not found"})
 		}
-		if target.Auth != nil {
-			switch target.Auth.Type {
-			case request.AuthTypeOAuth2:
-				if target.Auth.OAuth != nil {
-					t.Auth = &upstream.TargetAuth{
-						Type: upstream.AuthTypeOAuth2,
-						OAuth: &upstream.TargetOAuthConfig{
-							TokenURL:     target.Auth.OAuth.TokenURL,
-							GrantType:    target.Auth.OAuth.GrantType,
-							ClientID:     target.Auth.OAuth.ClientID,
-							ClientSecret: target.Auth.OAuth.ClientSecret,
-							UseBasicAuth: target.Auth.OAuth.UseBasicAuth,
-							Scopes:       target.Auth.OAuth.Scopes,
-							Audience:     target.Auth.OAuth.Audience,
-							Code:         target.Auth.OAuth.Code,
-							RedirectURI:  target.Auth.OAuth.RedirectURI,
-							CodeVerifier: target.Auth.OAuth.CodeVerifier,
-							RefreshToken: target.Auth.OAuth.RefreshToken,
-							Username:     target.Auth.OAuth.Username,
-							Password:     target.Auth.OAuth.Password,
-							Extra:        target.Auth.OAuth.Extra,
-						},
-					}
-				}
-			case request.AuthTypeGCPServiceAccount:
-				saBase64 := ""
-				if target.Auth.GCPServiceAccount != nil {
-					saBase64 = *target.Auth.GCPServiceAccount
-				}
-				if saBase64 == "" {
-					resolved, resolveErr := s.saService.ResolveSAFromEnv()
-					if resolveErr != nil {
-						return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: gcp_service_account not provided and fallback failed: %v", i, resolveErr)})
-					}
-					saBase64 = resolved
-				}
-				if validateErr := s.saService.ValidateSA(saBase64); validateErr != nil {
-					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("target %d: invalid service account: %v", i, validateErr)})
-				}
-				encrypted, encryptErr := s.saService.EncryptSA(saBase64)
-				if encryptErr != nil {
-					return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("target %d: failed to encrypt service account: %v", i, encryptErr)})
-				}
-				s.saService.InvalidateSACache(upstreamID, target.ID)
-				t.Auth = &upstream.TargetAuth{
-					Type:              upstream.AuthTypeGCPServiceAccount,
-					GCPServiceAccount: &encrypted,
-				}
-			}
+		if errors.Is(err, domain.ErrInvalidEmbeddingProvider) || errors.Is(err, domain.ErrValidation) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		targets = append(targets, t)
-	}
-
-	var healthCheck *upstream.HealthCheck
-	if req.HealthChecks != nil {
-		healthCheck = &upstream.HealthCheck{
-			Passive:   req.HealthChecks.Passive,
-			Path:      req.HealthChecks.Path,
-			Headers:   req.HealthChecks.Headers,
-			Threshold: req.HealthChecks.Threshold,
-			Interval:  req.HealthChecks.Interval,
-		}
-	}
-
-	var embedding *upstream.EmbeddingConfig
-	if req.Embedding != nil {
-		embedding = &upstream.EmbeddingConfig{
-			Provider:    req.Embedding.Provider,
-			Model:       req.Embedding.Model,
-			Credentials: domain.CredentialsJSON(req.Embedding.Credentials),
-		}
-	}
-
-	var proxy *upstream.Proxy
-	if req.ProxyConfig != nil {
-		if req.ProxyConfig.Protocol == "" {
-			req.ProxyConfig.Protocol = "http"
-		}
-		proxy = &upstream.Proxy{
-			Host:     req.ProxyConfig.Host,
-			Port:     req.ProxyConfig.Port,
-			Protocol: req.ProxyConfig.Protocol,
-		}
-	}
-
-	var websocket *upstream.WebsocketConfig
-	if req.WebhookConfig != nil {
-		websocket = &upstream.WebsocketConfig{
-			EnableDirectCommunication: req.WebhookConfig.EnableDirectCommunication,
-			ReturnErrorDetails:        req.WebhookConfig.ReturnErrorDetails,
-			PingPeriod:                req.WebhookConfig.PingPeriod,
-			PongWait:                  req.WebhookConfig.PongWait,
-			HandshakeTimeout:          req.WebhookConfig.HandshakeTimeout,
-			ReadBufferSize:            req.WebhookConfig.ReadBufferSize,
-			WriteBufferSize:           req.WebhookConfig.WriteBufferSize,
-		}
-	}
-
-	// Fetch the existing upstream first to preserve metadata
-	existingUpstream, err := s.repo.GetUpstream(c.Context(), id)
-	if err != nil {
-		s.logger.WithError(err).Error("failed to get existing upstream")
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "upstream not found"})
-	}
-
-	// Ownership check - ensure upstream belongs to the specified gateway
-	if existingUpstream.GatewayID != gatewayUUID {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "upstream not found"})
-	}
-
-	// Update the fields with new values while preserving existing metadata
-	existingUpstream.Name = req.Name
-	existingUpstream.Algorithm = req.Algorithm
-	existingUpstream.Targets = targets
-	existingUpstream.EmbeddingConfig = embedding
-	existingUpstream.HealthChecks = healthCheck
-	existingUpstream.Websocket = websocket
-	existingUpstream.Proxy = proxy
-	existingUpstream.Tags = req.Tags
-
-	if err := s.repo.UpdateUpstream(c.Context(), existingUpstream); err != nil {
-		s.logger.WithError(err).Error("failed to update upstream")
+		h.logger.WithError(err).Error("failed to update upstream")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Re-fetch the upstream from database to ensure we return what's actually persisted
-	updatedUpstream, err := s.repo.GetUpstream(c.Context(), id)
-	if err != nil {
-		s.logger.WithError(err).Error("failed to get updated upstream")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to retrieve updated upstream"})
-	}
+	h.emitAuditLog(c, u.ID.String(), u.Name, auditlogs.StatusSuccess, "")
 
-	// Immediately update the cache to ensure consistency with GET requests
-	if err := s.cache.SaveUpstream(c.Context(), gatewayID, updatedUpstream); err != nil {
-		s.logger.WithError(err).Error("failed to update cache after upstream update")
-	}
-
-	err = s.publisher.Publish(
-		c.Context(),
-		event.DeleteUpstreamCacheEvent{
-			UpstreamID: upstreamID,
-			GatewayID:  gatewayID,
-		},
-	)
-	if err != nil {
-		s.logger.WithError(err).Error("failed to publish update upstream event")
-	}
-	if err := s.descriptionEmbeddingCreator.Process(c.Context(), updatedUpstream); err != nil {
-		s.logger.WithError(err).Error("Failed to process embeddings for upstream targets")
-	}
-
-	s.emitAuditLog(c, updatedUpstream.ID.String(), updatedUpstream.Name, auditlogs.StatusSuccess, "")
-
-	return c.Status(fiber.StatusOK).JSON(updatedUpstream)
+	return c.Status(fiber.StatusOK).JSON(u)
 }
 
-func (s *updateUpstreamHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
-	if s.auditService == nil {
+func (h *updateUpstreamHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if h.auditService == nil {
 		return
 	}
-	s.auditService.Emit(c, auditlogs.Event{
+	h.auditService.Emit(c, auditlogs.Event{
 		Event: auditlogs.EventInfo{
 			Type:         auditlogs.EventTypeUpstreamUpdated,
 			Category:     auditlogs.CategoryRunTimeSecurity,

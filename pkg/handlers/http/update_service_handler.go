@@ -1,11 +1,10 @@
 package http
 
 import (
-	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
+	appService "github.com/NeuralTrust/TrustGate/pkg/app/service"
+	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -13,16 +12,14 @@ import (
 
 type updateServiceHandler struct {
 	logger       *logrus.Logger
-	repo         service.Repository
-	publisher    infraCache.EventPublisher
+	updater      appService.Updater
 	auditService auditlogs.Service
 }
 
-func NewUpdateServiceHandler(logger *logrus.Logger, repo service.Repository, publisher infraCache.EventPublisher, auditService auditlogs.Service) Handler {
+func NewUpdateServiceHandler(logger *logrus.Logger, updater appService.Updater, auditService auditlogs.Service) Handler {
 	return &updateServiceHandler{
 		logger:       logger,
-		repo:         repo,
-		publisher:    publisher,
+		updater:      updater,
 		auditService: auditService,
 	}
 }
@@ -40,79 +37,45 @@ func NewUpdateServiceHandler(logger *logrus.Logger, repo service.Repository, pub
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 404 {object} map[string]interface{} "Service not found"
 // @Router /api/v1/gateways/{gateway_id}/services/{service_id} [put]
-func (s *updateServiceHandler) Handle(c *fiber.Ctx) error {
-	gatewayID := c.Params("gateway_id")
-	serviceID := c.Params("service_id")
-
-	var req req.ServiceRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
-	}
-	id, err := uuid.Parse(serviceID)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service ID"})
-	}
-	upstreamId, err := uuid.Parse(req.UpstreamID)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid upstream ID"})
-	}
-	gatewayUUID, err := uuid.Parse(gatewayID)
+func (h *updateServiceHandler) Handle(c *fiber.Ctx) error {
+	gatewayUUID, err := uuid.Parse(c.Params("gateway_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
 	}
-	// First get the existing service to preserve CreatedAt
-	existingService, err := s.repo.Get(c.Context(), serviceID)
+
+	serviceUUID, err := uuid.Parse(c.Params("service_id"))
 	if err != nil {
-		s.logger.WithError(err).Error("failed to get existing service")
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "service not found"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service ID"})
 	}
 
-	// Update the entity with new values while preserving CreatedAt
-	// UpdatedAt will be handled automatically by the BeforeUpdate hook
-	entity := service.Service{
-		ID:          id,
-		GatewayID:   gatewayUUID,
-		Name:        req.Name,
-		Type:        req.Type,
-		Description: req.Description,
-		Tags:        req.Tags,
-		UpstreamID:  upstreamId,
-		Host:        req.Host,
-		Port:        req.Port,
-		Protocol:    req.Protocol,
-		Path:        req.Path,
-		Headers:     req.Headers,
-		Credentials: req.Credentials,
-		CreatedAt:   existingService.CreatedAt, // Preserve original CreatedAt
-		// UpdatedAt will be set by BeforeUpdate hook
+	var r req.ServiceRequest
+	if err := c.BodyParser(&r); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
-	if err := s.repo.Update(c.Context(), &entity); err != nil {
-		s.logger.WithError(err).Error("failed to update service")
+	if err := r.Validate(); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	s, err := h.updater.Update(c.Context(), gatewayUUID, serviceUUID, &r)
+	if err != nil {
+		if domain.IsNotFoundError(err) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "service not found"})
+		}
+		h.logger.WithError(err).Error("failed to update service")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	err = s.publisher.Publish(
-		c.Context(),
-		event.DeleteServiceCacheEvent{
-			ServiceID: entity.ID.String(),
-			GatewayID: entity.GatewayID.String(),
-		},
-	)
-	if err != nil {
-		s.logger.WithError(err).Error("failed to publish update service cache event")
-	}
+	h.emitAuditLog(c, s.ID.String(), s.Name, auditlogs.StatusSuccess, "")
 
-	s.emitAuditLog(c, entity.ID.String(), entity.Name, auditlogs.StatusSuccess, "")
-
-	return c.Status(fiber.StatusOK).JSON(entity)
+	return c.Status(fiber.StatusOK).JSON(s)
 }
 
-func (s *updateServiceHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
-	if s.auditService == nil {
+func (h *updateServiceHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if h.auditService == nil {
 		return
 	}
-	s.auditService.Emit(c, auditlogs.Event{
+	h.auditService.Emit(c, auditlogs.Event{
 		Event: auditlogs.EventInfo{
 			Type:         auditlogs.EventTypeServiceUpdated,
 			Category:     auditlogs.CategoryRunTimeSecurity,

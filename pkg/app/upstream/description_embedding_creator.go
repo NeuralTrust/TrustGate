@@ -11,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+//go:generate mockery --name=DescriptionEmbeddingCreator --dir=. --output=./mocks --filename=description_embedding_creator_mock.go --case=underscore --with-expecter
 type DescriptionEmbeddingCreator interface {
 	Process(ctx context.Context, upstream *upstream.Upstream) error
 }

@@ -1,59 +1,31 @@
 package http
 
 import (
-	"fmt"
-	"strings"
-	"time"
+	"errors"
 
-	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	req "github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/response"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auditlogs"
-	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
-type CreateRuleHandlerDeps struct {
-	Logger               *logrus.Logger
-	Repo                 forwarding_rule.Repository
-	GatewayRepo          gateway.Repository
-	ServiceRepo          service.Repository
-	PluginChainValidator plugin.ValidatePluginChain
-	Publisher            infraCache.EventPublisher
-	RuleMatcher          rule.Matcher
-	AuditService         auditlogs.Service
-}
-
 type createRuleHandler struct {
-	logger               *logrus.Logger
-	repo                 forwarding_rule.Repository
-	gatewayRepo          gateway.Repository
-	serviceRepo          service.Repository
-	pluginChainValidator plugin.ValidatePluginChain
-	publisher            infraCache.EventPublisher
-	ruleMatcher          rule.Matcher
-	auditService         auditlogs.Service
+	logger       *logrus.Logger
+	creator      rule.Creator
+	auditService auditlogs.Service
 }
 
-func NewCreateRuleHandler(deps CreateRuleHandlerDeps) Handler {
+func NewCreateRuleHandler(logger *logrus.Logger, creator rule.Creator, auditService auditlogs.Service) Handler {
 	return &createRuleHandler{
-		logger:               deps.Logger,
-		repo:                 deps.Repo,
-		gatewayRepo:          deps.GatewayRepo,
-		serviceRepo:          deps.ServiceRepo,
-		pluginChainValidator: deps.PluginChainValidator,
-		publisher:            deps.Publisher,
-		ruleMatcher:          deps.RuleMatcher,
-		auditService:         deps.AuditService,
+		logger:       logger,
+		creator:      creator,
+		auditService: auditService,
 	}
 }
 
@@ -69,188 +41,52 @@ func NewCreateRuleHandler(deps CreateRuleHandlerDeps) Handler {
 // @Failure 400 {object} map[string]interface{} "Invalid request data"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
 // @Router /api/v1/gateways/{gateway_id}/rules [post]
-func (s *createRuleHandler) Handle(c *fiber.Ctx) error {
-	gatewayID := c.Params("gateway_id")
+func (h *createRuleHandler) Handle(c *fiber.Ctx) error {
+	gatewayUUID, err := uuid.Parse(c.Params("gateway_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid gateway ID"})
+	}
 
 	var request req.CreateRuleRequest
-
 	if err := c.BodyParser(&request); err != nil {
-		s.logger.WithError(err).Error("Failed to bind request")
+		h.logger.WithError(err).Error("failed to bind request")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": ErrInvalidJsonPayload})
 	}
 
-	// Validate the rule request
-	if err := s.validate(&request); err != nil {
-		s.logger.WithError(err).Error("Failed to validate rule")
+	if err := request.Validate(); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Convert headers to map[string]string format
-	headers := make(map[string]string)
-	for k, v := range request.Headers {
-		headers[k] = v
-	}
-
-	// Set default values for optional fields
-	stripPath := false
-	if request.StripPath != nil {
-		stripPath = *request.StripPath
-	}
-
-	preserveHost := false
-	if request.PreserveHost != nil {
-		preserveHost = *request.PreserveHost
-	}
-
-	retryAttempts := 0
-	if request.RetryAttempts != nil {
-		retryAttempts = *request.RetryAttempts
-	}
-
-	gatewayUUID, err := uuid.Parse(gatewayID)
+	r, err := h.creator.Create(c.Context(), gatewayUUID, &request)
 	if err != nil {
-		return fmt.Errorf("failed to parse gateway ID: %v", err)
-	}
-
-	serviceUUID, err := uuid.Parse(request.ServiceID)
-	if err != nil {
-		return fmt.Errorf("failed to parse service ID: %v", err)
-	}
-
-	// Validate that gateway exists
-	_, err = s.gatewayRepo.Get(c.Context(), gatewayUUID)
-	if err != nil {
-		s.logger.WithError(err).WithField("gateway_id", gatewayID).Error("GatewayDTO not found")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "GatewayDTO not found"})
-	}
-
-	// Validate that service exists
-	_, err = s.serviceRepo.Get(c.Context(), request.ServiceID)
-	if err != nil {
-		s.logger.WithError(err).WithField("service_id", request.ServiceID).Error("Service not found")
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Service not found"})
-	}
-
-	id, err := uuid.NewV7()
-	if err != nil {
-		s.logger.WithError(err).Error("failed to generate UUID")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to generate UUID"})
-	}
-
-	var trustLensConfig *domain.TrustLensJSON
-	if request.TrustLens != nil {
-		if request.TrustLens.TeamID == "" {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "trust lens team id is required"})
+		if errors.Is(err, domain.ErrGatewayNotFound) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Gateway not found"})
 		}
-		trustLensConfig = &domain.TrustLensJSON{
-			TeamID:  request.TrustLens.TeamID,
-			Type:    request.TrustLens.Type,
-			Mapping: request.TrustLens.Mapping,
+		if errors.Is(err, domain.ErrServiceNotFound) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Service not found"})
 		}
-	}
-
-	var pluginChainDB domain.PluginChainJSON
-	if request.PluginChain != nil {
-		pluginChainDB = append(pluginChainDB, request.PluginChain...)
-	}
-
-	ruleType := forwarding_rule.EndpointRuleType
-	if request.Type != nil {
-		ruleType = forwarding_rule.Type(*request.Type)
-		if ruleType != forwarding_rule.AgentRuleType && ruleType != forwarding_rule.EndpointRuleType {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": domain.ErrInvalidRuleType.Error()})
-		}
-	}
-
-	var sessionConfig *forwarding_rule.SessionConfig
-	if request.SessionConfig != nil {
-		sessionConfig = &forwarding_rule.SessionConfig{
-			HeaderName:    request.SessionConfig.HeaderName,
-			BodyParamName: request.SessionConfig.BodyParamName,
-		}
-	}
-
-	var pathsDB domain.PathsJSON
-	if request.Path.IsMultiPath() {
-		pathsDB = domain.PathsJSON(request.Path.All)
-	}
-
-	dbRule := &forwarding_rule.ForwardingRule{
-		ID:            id,
-		Name:          request.Name,
-		GatewayID:     gatewayUUID,
-		Path:          request.Path.Primary,
-		Paths:         pathsDB,
-		Type:          ruleType,
-		ServiceID:     serviceUUID,
-		Methods:       request.Methods,
-		Headers:       domain.HeadersJSON(request.Headers),
-		StripPath:     stripPath,
-		PreserveHost:  preserveHost,
-		RetryAttempts: retryAttempts,
-		PluginChain:   pluginChainDB,
-		Active:        true,
-		Public:        false,
-		TrustLens:     trustLensConfig,
-		SessionConfig: sessionConfig,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-	}
-
-	if len(request.PluginChain) > 0 {
-		err = s.pluginChainValidator.Validate(c.Context(), gatewayUUID, request.PluginChain)
-		if err != nil {
-			s.logger.WithError(err).Error("failed to validate plugin chain")
+		if errors.Is(err, domain.ErrRuleAlreadyExists) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-	}
-
-	rules, err := s.repo.ListRules(c.Context(), gatewayUUID)
-	if err != nil {
-		s.logger.WithError(err).Error("Failed to list rules")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to check existing rules"})
-	}
-
-	newPaths := dbRule.AllPaths()
-	for _, rule := range rules {
-		if rule.GatewayID != gatewayUUID {
-			continue
+		if errors.Is(err, domain.ErrValidation) || errors.Is(err, domain.ErrInvalidRuleType) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		for _, np := range newPaths {
-			normalizedNew := s.ruleMatcher.NormalizePath(np)
-			for _, ep := range rule.AllPaths() {
-				if s.ruleMatcher.NormalizePath(ep) == normalizedNew {
-					s.logger.WithField("path", np).Error("rule with this path already exists for this service")
-					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": domain.ErrRuleAlreadyExists.Error()})
-				}
-			}
-		}
-	}
-
-	if err := s.repo.Create(c.Context(), dbRule); err != nil {
-		s.logger.WithError(err).Error("Failed to create rule")
+		h.logger.WithError(err).Error("failed to create rule")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create rule"})
 	}
 
-	ruleOutput := s.getRuleResponse(dbRule)
+	ruleOutput := getRuleResponse(r)
 
-	if err := s.publisher.Publish(
-		c.Context(),
-		event.DeleteGatewayCacheEvent{GatewayID: gatewayID},
-	); err != nil {
-		s.logger.WithError(err).Error("failed to publish cache invalidation")
-	}
-
-	s.emitAuditLog(c, dbRule.ID.String(), dbRule.Name, auditlogs.StatusSuccess, "")
+	h.emitAuditLog(c, r.ID.String(), r.Name, auditlogs.StatusSuccess, "")
 
 	return c.Status(fiber.StatusCreated).JSON(ruleOutput)
 }
 
-func (s *createRuleHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
-	if s.auditService == nil {
+func (h *createRuleHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, status, errMsg string) {
+	if h.auditService == nil {
 		return
 	}
-	s.auditService.Emit(c, auditlogs.Event{
+	h.auditService.Emit(c, auditlogs.Event{
 		Event: auditlogs.EventInfo{
 			Type:         auditlogs.EventTypeRuleCreated,
 			Category:     auditlogs.CategoryRunTimeSecurity,
@@ -270,143 +106,29 @@ func (s *createRuleHandler) emitAuditLog(c *fiber.Ctx, targetID, targetName, sta
 	})
 }
 
-func (s *createRuleHandler) getRuleResponse(rule *forwarding_rule.ForwardingRule) response.ForwardingRuleOutput {
-	outputPath := types.FlexiblePath{Primary: rule.Path}
-	if len(rule.Paths) > 0 {
-		outputPath.All = rule.Paths
+func getRuleResponse(r *forwarding_rule.ForwardingRule) response.ForwardingRuleOutput {
+	outputPath := types.FlexiblePath{Primary: r.Path}
+	if len(r.Paths) > 0 {
+		outputPath.All = r.Paths
 	}
 
 	return response.ForwardingRuleOutput{
-		ID:            rule.ID.String(),
-		Name:          rule.Name,
-		GatewayID:     rule.GatewayID.String(),
-		ServiceID:     rule.ServiceID.String(),
+		ID:            r.ID.String(),
+		Name:          r.Name,
+		GatewayID:     r.GatewayID.String(),
+		ServiceID:     r.ServiceID.String(),
 		Path:          outputPath,
-		Type:          string(rule.Type),
-		Methods:       rule.Methods,
-		Headers:       rule.Headers,
-		StripPath:     rule.StripPath,
-		PreserveHost:  rule.PreserveHost,
-		RetryAttempts: rule.RetryAttempts,
-		PluginChain:   rule.PluginChain,
-		Active:        rule.Active,
-		TrustLens:     rule.TrustLens,
-		SessionConfig: rule.SessionConfig,
-		CreatedAt:     rule.CreatedAt,
-		UpdatedAt:     rule.UpdatedAt,
+		Type:          string(r.Type),
+		Methods:       r.Methods,
+		Headers:       r.Headers,
+		StripPath:     r.StripPath,
+		PreserveHost:  r.PreserveHost,
+		RetryAttempts: r.RetryAttempts,
+		PluginChain:   r.PluginChain,
+		Active:        r.Active,
+		TrustLens:     r.TrustLens,
+		SessionConfig: r.SessionConfig,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
 	}
-}
-
-func (s *createRuleHandler) validate(rule *req.CreateRuleRequest) error {
-
-	if rule.Path.Primary == "" {
-		return fmt.Errorf("path is required")
-	}
-
-	if rule.Path.IsMultiPath() {
-		for i, p := range rule.Path.All {
-			if p == "" {
-				return fmt.Errorf("paths[%d] must not be empty", i)
-			}
-		}
-	}
-
-	allPaths := []string{rule.Path.Primary}
-	if rule.Path.IsMultiPath() {
-		allPaths = rule.Path.All
-	}
-	for _, p := range allPaths {
-		if err := validateWildcardPath(p); err != nil {
-			return err
-		}
-	}
-
-	if len(rule.Methods) == 0 {
-		return fmt.Errorf("at least one method is required")
-	}
-
-	if rule.ServiceID == "" {
-		return fmt.Errorf("service_id is required")
-	}
-
-	validMethods := map[string]bool{
-		"GET":     true,
-		"POST":    true,
-		"PUT":     true,
-		"DELETE":  true,
-		"PATCH":   true,
-		"HEAD":    true,
-		"OPTIONS": true,
-	}
-	for _, method := range rule.Methods {
-		if !validMethods[strings.ToUpper(method)] {
-			return fmt.Errorf("invalid HTTP method: %s", method)
-		}
-	}
-
-	if rule.TrustLens != nil {
-		if rule.TrustLens.TeamID == "" {
-			return fmt.Errorf("trust lens team id is required")
-		}
-
-		// Validate Type field if provided
-		if rule.TrustLens.Type != "" {
-			validTypes := map[string]bool{
-				"MESSAGE":    true,
-				"TOOL":       true,
-				"AGENT":      true,
-				"RETRIEVAL":  true,
-				"GENERATION": true,
-				"ROUTER":     true,
-				"SYSTEM":     true,
-				"FEEDBACK":   true,
-			}
-
-			if !validTypes[strings.ToUpper(rule.TrustLens.Type)] {
-				return fmt.Errorf("invalid trust lens type: %s. Must be one of: MESSAGE, TOOL, AGENT, RETRIEVAL, GENERATION, ROUTER, SYSTEM, FEEDBACK", rule.TrustLens.Type)
-			}
-		}
-
-		// Validate Mapping field if provided
-		if rule.TrustLens.Mapping != nil {
-			// Define valid data projection fields
-			validDataProjectionFields := map[string]bool{
-				"input":         true,
-				"output":        true,
-				"feedback_tag":  true,
-				"feedback_text": true,
-			}
-
-			for key := range rule.TrustLens.Mapping.Input.DataProjection {
-				if !validDataProjectionFields[key] {
-					return fmt.Errorf("invalid data_projection field in input: %s. Must be one of: input, output, feedback_tag, feedback_text", key)
-				}
-			}
-
-			for key := range rule.TrustLens.Mapping.Output.DataProjection {
-				if !validDataProjectionFields[key] {
-					return fmt.Errorf("invalid data_projection field in output: %s. Must be one of: input, output, feedback_tag, feedback_text", key)
-				}
-			}
-		}
-	}
-
-	if rule.Name == "" {
-		return fmt.Errorf("name is required")
-	}
-
-	return nil
-}
-
-func validateWildcardPath(path string) error {
-	if !strings.Contains(path, "*") {
-		return nil
-	}
-	if strings.Count(path, "*") > 1 {
-		return fmt.Errorf("only one wildcard (*) is allowed per path")
-	}
-	if !strings.HasSuffix(path, "/*") {
-		return fmt.Errorf("wildcard (*) is only allowed at the end of a path (e.g. /v1/*)")
-	}
-	return nil
 }
