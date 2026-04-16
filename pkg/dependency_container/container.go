@@ -100,6 +100,9 @@ type Container struct {
 	RuleCreator                 rule.Creator
 	RuleUpdater                 rule.Updater
 	AuditLogsService            auditlogs.Service
+	TxManager                   database.TxManager
+	SAService                   gcp.ServiceAccountService
+	RuleMatcher                 rule.Matcher
 }
 
 type ContainerDI struct {
@@ -505,6 +508,9 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		RuleCreator:                 ruleCreator,
 		RuleUpdater:                 ruleUpdater,
 		AuditLogsService:            auditLogsService,
+		TxManager:                   database.NewTxManager(di.DB.DB),
+		SAService:                   saService,
+		RuleMatcher:                 ruleMatcher,
 	}
 
 	return container, nil

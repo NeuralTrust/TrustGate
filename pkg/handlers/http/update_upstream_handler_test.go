@@ -2,18 +2,17 @@ package http
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"testing"
 
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
+	appUpstreamMocks "github.com/NeuralTrust/TrustGate/pkg/app/upstream/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream/mocks"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/gcp"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	cacheMocks "github.com/NeuralTrust/TrustGate/pkg/infra/cache/mocks"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -28,22 +27,15 @@ func buildMockCache(t *testing.T) cache.Client {
 	return c
 }
 
-type noopPublisher struct{}
-
-func (n *noopPublisher) Publish(ctx context.Context, ev event.Event) error {
-	return nil
-}
-
-type noopDescEmbedding struct{}
-
-func (n *noopDescEmbedding) Process(ctx context.Context, _ *upstream.Upstream) error { return nil }
-
 func newFiber() *fiber.App { return fiber.New() }
 
-func buildTestUpdater(repo upstream.Repository, pub *noopPublisher, cacheInstance cache.Client) appUpstream.Updater {
+func buildTestUpdater(t *testing.T, repo upstream.Repository, cacheInstance cache.Client) appUpstream.Updater {
 	logger := logrus.New()
 	saService := gcp.NewServiceAccountService(nil)
-	desc := &noopDescEmbedding{}
+	pub := cacheMocks.NewEventPublisher(t)
+	pub.EXPECT().Publish(mock.Anything, mock.Anything).Return(nil).Maybe()
+	desc := appUpstreamMocks.NewDescriptionEmbeddingCreator(t)
+	desc.EXPECT().Process(mock.Anything, mock.Anything).Return(nil).Maybe()
 	return appUpstream.NewUpdater(
 		logger,
 		repo,
@@ -56,10 +48,9 @@ func buildTestUpdater(repo upstream.Repository, pub *noopPublisher, cacheInstanc
 
 func TestUpdateUpstream_OAuthValidation_ClientCredentialsMissingClientID(t *testing.T) {
 	repo := new(mocks.Repository)
-	pub := &noopPublisher{}
 	cacheInstance := buildMockCache(t)
 	logger := logrus.New()
-	updater := buildTestUpdater(repo, pub, cacheInstance)
+	updater := buildTestUpdater(t, repo, cacheInstance)
 	h := NewUpdateUpstreamHandler(logger, updater, nil)
 
 	app := newFiber()
@@ -103,10 +94,9 @@ func TestUpdateUpstream_OAuthValidation_ClientCredentialsMissingClientID(t *test
 
 func TestUpdateUpstream_Success_Minimal(t *testing.T) {
 	repo := new(mocks.Repository)
-	pub := &noopPublisher{}
 	cacheInstance := buildMockCache(t)
 	logger := logrus.New()
-	updater := buildTestUpdater(repo, pub, cacheInstance)
+	updater := buildTestUpdater(t, repo, cacheInstance)
 	h := NewUpdateUpstreamHandler(logger, updater, nil)
 
 	app := newFiber()
