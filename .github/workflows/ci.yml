@@ -19,7 +19,7 @@ jobs:
 
       - uses: ./.github/actions/setup-go-private
         with:
-          token: ${{ secrets.GITHUB_PAT || secrets.TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
 
       - name: Install golangci-lint
         run: |
@@ -59,7 +59,7 @@ jobs:
 
       - uses: ./.github/actions/setup-go-private
         with:
-          token: ${{ secrets.GITHUB_PAT || secrets.TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
 
       - name: Copy environment file
         run: cp .env.example .env
@@ -105,7 +105,7 @@ jobs:
 
       - uses: ./.github/actions/setup-go-private
         with:
-          token: ${{ secrets.GITHUB_PAT || secrets.TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
 
       - name: Install service check tools
         run: |
