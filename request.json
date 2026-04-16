@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.21.1\n\nCommits since last release:\n- a6a2e10 Merge pull request #347 from NeuralTrust/feat/detection-exporters\n- af5ea61 feat: detection exporter\n- 33c52d5 feat: detection exporter\n- 2cc8cb7 feat: detection exporter\n"
+      "content": "Current version: 1.22.0\n\nCommits since last release:\n- cdf0c73 Merge pull request #348 from NeuralTrust/refactor/app-services\n- 58ac1ca refactor: refactor use cases (creators & updaters)\n- 215dc6e refactor: refactor use cases (creators & updaters)\n"
     }
   ],
   "max_tokens": 200,
