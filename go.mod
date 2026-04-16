@@ -6,6 +6,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
 	github.com/NeuralTrust/audit-sdk-go v1.0.3
+	github.com/NeuralTrust/event-schemas/gen/go v1.0.1
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/andybalholm/brotli v1.2.0
 	github.com/avct/uasurfer v0.0.0-20250320214457-f1f6afeb74db
@@ -34,6 +35,7 @@ require (
 	github.com/valyala/fasthttp v1.58.0
 	github.com/valyala/fastjson v1.6.4
 	golang.org/x/sync v0.20.0
+	google.golang.org/protobuf v1.36.11
 	gorm.io/driver/postgres v1.5.11
 	gorm.io/gorm v1.25.12
 )
@@ -94,6 +96,5 @@ require (
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
-	google.golang.org/protobuf v1.34.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

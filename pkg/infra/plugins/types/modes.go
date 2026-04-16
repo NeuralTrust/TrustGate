@@ -18,6 +18,7 @@ type Decision string
 const (
 	DecisionBlock    Decision = "block"
 	DecisionThrottle Decision = "throttle"
+	DecisionMasked   Decision = "masked"
 )
 
 func ValidateOption(option *Option) error {

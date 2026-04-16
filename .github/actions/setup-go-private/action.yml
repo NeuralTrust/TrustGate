@@ -1,0 +1,48 @@
+name: 'Setup Go with Private Repos'
+description: 'Sets up Go, configures git for private NeuralTrust repos, and installs dependencies'
+
+inputs:
+  go-version:
+    description: 'Go version to install'
+    required: false
+    default: '1.26'
+  token:
+    description: 'GitHub token for private repo access'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ inputs.go-version }}
+        check-latest: true
+        cache: false
+
+    - name: Configure Git and Go for private repositories
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+      run: |
+        echo "GOPRIVATE=github.com/NeuralTrust/*" >> $GITHUB_ENV
+        echo "GONOPROXY=github.com/NeuralTrust/*" >> $GITHUB_ENV
+        echo "GONOSUMDB=github.com/NeuralTrust/*" >> $GITHUB_ENV
+        echo "GIT_TERMINAL_PROMPT=0" >> $GITHUB_ENV
+
+        git config --global url."https://${TOKEN}@github.com/".insteadOf "https://github.com/"
+        git config --global url."https://${TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+
+        git config --global credential.helper store
+        echo "https://${TOKEN}@github.com" > ~/.git-credentials
+        chmod 600 ~/.git-credentials
+
+        echo "machine github.com login ${TOKEN} password x-oauth-basic" > ~/.netrc
+        chmod 600 ~/.netrc
+        echo "NETRC=$HOME/.netrc" >> $GITHUB_ENV
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        go clean -modcache
+        go mod tidy && go mod vendor

@@ -16,10 +16,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
+    - uses: ./.github/actions/setup-go-private
       with:
-        go-version: '1.26'
+        token: ${{ secrets.GH_TOKEN }}
 
     - name: Install Gosec
       run: go install github.com/securego/gosec/v2/cmd/gosec@latest

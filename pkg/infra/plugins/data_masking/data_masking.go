@@ -130,8 +130,6 @@ func (p *DataMaskingPlugin) ValidateConfig(config pluginTypes.PluginConfig) erro
 	return nil
 }
 
-// executionContext holds shared state for a single Execute call, avoiding
-// repeated parameter passing across the three execution paths.
 type executionContext struct {
 	ctx    context.Context
 	cfg    pluginTypes.PluginConfig
@@ -185,6 +183,9 @@ func (p *DataMaskingPlugin) Execute(
 		return nil, err
 	}
 
+	if len(ec.events) > 0 {
+		evtCtx.SetDecision(pluginTypes.DecisionMasked)
+	}
 	evtCtx.SetExtras(DataMaskingData{
 		Masked: len(ec.events) > 0,
 		Events: ec.events,

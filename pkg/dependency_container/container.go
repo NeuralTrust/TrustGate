@@ -12,12 +12,13 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/channel"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/database"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/policy"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	providersFactory "github.com/NeuralTrust/TrustGate/pkg/infra/providers/factory"
-	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/trustlens"
+	"github.com/NeuralTrust/TrustGate/pkg/server"
 	middleware "github.com/NeuralTrust/TrustGate/pkg/server/middleware"
 	audit "github.com/NeuralTrust/audit-sdk-go"
 
@@ -35,15 +36,16 @@ import (
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
+	domainTelemetry "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
 	wsHandlers "github.com/NeuralTrust/TrustGate/pkg/handlers/websocket"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/gcp"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/auth/oauth"
-	infraCrypto "github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/subscriber"
+	infraCrypto "github.com/NeuralTrust/TrustGate/pkg/infra/crypto"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/fingerprint"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
@@ -51,6 +53,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/repository"
 	infraTelemetry "github.com/NeuralTrust/TrustGate/pkg/infra/telemetry"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/detection"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/telemetry/kafka"
 	infraTLS "github.com/NeuralTrust/TrustGate/pkg/infra/tls"
 	"github.com/sirupsen/logrus"
@@ -97,6 +100,7 @@ type ContainerDI struct {
 	Cfg                           *config.Config
 	Logger                        *logrus.Logger
 	DB                            *database.DB
+	ServerType                    string
 	EventsRegistry                map[string]reflect.Type
 	InitializeMemoryCache         func(cacheInstance cache.Client)
 	InitializeLoadBalancerFactory loadbalancer.FactoryInitializer
@@ -197,7 +201,13 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	providerLocator := infraTelemetry.NewProviderLocator(
 		infraTelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaExporter(di.Logger)),
 		infraTelemetry.WithExporter(trustlens.ExporterName, trustlens.NewTrustLensExporter(di.Logger)),
+		infraTelemetry.WithExporter(detection.ExporterName, detection.NewDetectionExporter(di.Logger)),
 	)
+	var defaultExporters []domainTelemetry.Exporter
+	if di.ServerType == server.ProxyServerName {
+		defaultExportersBuilder := telemetry.NewDefaultExportersBuilder(di.Logger, providerLocator, di.Cfg.Kafka)
+		defaultExporters = defaultExportersBuilder.Build()
+	}
 	telemetryBuilder := telemetry.NewTelemetryExportersBuilder(providerLocator)
 	telemetryValidator := telemetry.NewTelemetryExportersValidator(providerLocator)
 
@@ -243,7 +253,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 
 	lbFactory := di.InitializeLoadBalancerFactory(embeddingRepository, embeddingServiceLocator)
 
-	metricsWorker := metrics.NewWorker(di.Logger, telemetryBuilder)
+	metricsWorker := metrics.NewWorker(di.Logger, telemetryBuilder, defaultExporters)
 
 	jwtManager := jwt.NewJwtManager(&di.Cfg.Server)
 

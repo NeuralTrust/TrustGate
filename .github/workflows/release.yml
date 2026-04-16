@@ -51,5 +51,6 @@ jobs:
             VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.date.outputs.date }}
+            GH_TOKEN=${{ secrets.GH_TOKEN }}
           cache-from: type=registry,ref=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/trustgate:buildcache
           cache-to: type=registry,ref=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/trustgate:buildcache,mode=max 

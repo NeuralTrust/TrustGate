@@ -11,8 +11,14 @@ ARG BUILD_DATE
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
 
+# Private repo access
+ARG GH_TOKEN=""
+
 # Install build dependencies (use precompiled librdkafka-dev instead of building from source)
 RUN apt-get update && apt-get install -y git ca-certificates librdkafka-dev && rm -rf /var/lib/apt/lists/*
+
+ENV GOPRIVATE=github.com/NeuralTrust/*
+RUN if [ -n "$GH_TOKEN" ]; then git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
 
 # Copy go mod files
 COPY go.mod go.sum ./
