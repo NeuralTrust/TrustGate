@@ -93,7 +93,16 @@ type Container struct {
 	GatewayCreator              gateway.Creator
 	GatewayDeleter              gateway.Deleter
 	DescriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
+	UpstreamCreator             appUpstream.Creator
+	UpstreamUpdater             appUpstream.Updater
+	ServiceCreator              service.Creator
+	ServiceUpdater              service.Updater
+	RuleCreator                 rule.Creator
+	RuleUpdater                 rule.Updater
 	AuditLogsService            auditlogs.Service
+	TxManager                   database.TxManager
+	SAService                   gcp.ServiceAccountService
+	RuleMatcher                 rule.Matcher
 }
 
 type ContainerDI struct {
@@ -219,6 +228,55 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		infraTLS.WithBasePath(di.Cfg.TLS.CertsBasePath),
 	)
 
+	// upstream creator / updater
+	upstreamCreator := appUpstream.NewCreator(
+		di.Logger,
+		upstreamRepository,
+		gatewayRepository,
+		cacheInstance,
+		descriptionEmbeddingCreator,
+		saService,
+	)
+	upstreamUpdater := appUpstream.NewUpdater(
+		di.Logger,
+		upstreamRepository,
+		redisPublisher,
+		cacheInstance,
+		descriptionEmbeddingCreator,
+		saService,
+	)
+
+	// service creator / updater
+	serviceCreator := service.NewCreator(
+		di.Logger,
+		serviceRepository,
+		cacheInstance,
+	)
+	serviceUpdater := service.NewUpdater(
+		di.Logger,
+		serviceRepository,
+		redisPublisher,
+	)
+
+	// rule creator / updater
+	ruleCreator := rule.NewCreator(
+		di.Logger,
+		ruleRepository,
+		gatewayRepository,
+		serviceRepository,
+		pluginChainValidator,
+		redisPublisher,
+		ruleMatcher,
+	)
+	ruleUpdater := rule.NewUpdater(
+		di.Logger,
+		ruleRepository,
+		cacheInstance,
+		validatePlugin,
+		redisPublisher,
+		ruleMatcher,
+	)
+
 	// gateway creator
 	gatewayCreator := gateway.NewCreator(
 		di.Logger,
@@ -324,46 +382,19 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		}),
 		DeleteGatewayHandler: handlers.NewDeleteGatewayHandler(di.Logger, gatewayDeleter, auditLogsService),
 		// Upstream
-		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(handlers.CreateUpstreamHandlerDeps{
-			Logger:                      di.Logger,
-			Repo:                        upstreamRepository,
-			GatewayRepo:                 gatewayRepository,
-			Cache:                       cacheInstance,
-			DescriptionEmbeddingCreator: descriptionEmbeddingCreator,
-			Cfg:                         di.Cfg,
-			AuditService:                auditLogsService,
-			SAService:                   saService,
-		}),
-		ListUpstreamHandler: handlers.NewListUpstreamHandler(di.Logger, upstreamRepository, cacheInstance),
-		GetUpstreamHandler:  handlers.NewGetUpstreamHandler(di.Logger, upstreamRepository, cacheInstance, upstreamFinder),
-		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(handlers.UpdateUpstreamHandlerDeps{
-			Logger:                      di.Logger,
-			Repo:                        upstreamRepository,
-			Publisher:                   redisPublisher,
-			Cache:                       cacheInstance,
-			DescriptionEmbeddingCreator: descriptionEmbeddingCreator,
-			Cfg:                         di.Cfg,
-			AuditService:                auditLogsService,
-			SAService:                   saService,
-		}),
+		CreateUpstreamHandler: handlers.NewCreateUpstreamHandler(di.Logger, upstreamCreator, auditLogsService),
+		ListUpstreamHandler:   handlers.NewListUpstreamHandler(di.Logger, upstreamRepository, cacheInstance),
+		GetUpstreamHandler:    handlers.NewGetUpstreamHandler(di.Logger, upstreamRepository, cacheInstance, upstreamFinder),
+		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(di.Logger, upstreamUpdater, auditLogsService),
 		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(di.Logger, upstreamRepository, redisPublisher, auditLogsService),
 		// Service
-		CreateServiceHandler: handlers.NewCreateServiceHandler(di.Logger, serviceRepository, cacheInstance, auditLogsService),
+		CreateServiceHandler: handlers.NewCreateServiceHandler(di.Logger, serviceCreator, auditLogsService),
 		ListServicesHandler:  handlers.NewListServicesHandler(di.Logger, serviceRepository),
 		GetServiceHandler:    handlers.NewGetServiceHandler(di.Logger, serviceRepository, cacheInstance),
-		UpdateServiceHandler: handlers.NewUpdateServiceHandler(di.Logger, serviceRepository, redisPublisher, auditLogsService),
+		UpdateServiceHandler: handlers.NewUpdateServiceHandler(di.Logger, serviceUpdater, auditLogsService),
 		DeleteServiceHandler: handlers.NewDeleteServiceHandler(di.Logger, serviceRepository, redisPublisher, auditLogsService),
 		// Rule
-		CreateRuleHandler: handlers.NewCreateRuleHandler(handlers.CreateRuleHandlerDeps{
-			Logger:               di.Logger,
-			Repo:                 ruleRepository,
-			GatewayRepo:          gatewayRepository,
-			ServiceRepo:          serviceRepository,
-			PluginChainValidator: pluginChainValidator,
-			Publisher:            redisPublisher,
-			RuleMatcher:          ruleMatcher,
-			AuditService:         auditLogsService,
-		}),
+		CreateRuleHandler: handlers.NewCreateRuleHandler(di.Logger, ruleCreator, auditLogsService),
 		ListRulesHandler: handlers.NewListRulesHandler(handlers.ListRulesHandlerDeps{
 			Logger:      di.Logger,
 			RuleRepo:    ruleRepository,
@@ -371,15 +402,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 			ServiceRepo: serviceRepository,
 			Cache:       cacheInstance,
 		}),
-		UpdateRuleHandler: handlers.NewUpdateRuleHandler(handlers.UpdateRuleHandlerDeps{
-			Logger:                di.Logger,
-			Repo:                  ruleRepository,
-			Cache:                 cacheInstance,
-			ValidatePlugin:        validatePlugin,
-			InvalidationPublisher: redisPublisher,
-			RuleMatcher:           ruleMatcher,
-			AuditService:          auditLogsService,
-		}),
+		UpdateRuleHandler: handlers.NewUpdateRuleHandler(di.Logger, ruleUpdater, auditLogsService),
 		DeleteRuleHandler: handlers.NewDeleteRuleHandler(handlers.DeleteRuleHandlerDeps{
 			Logger:       di.Logger,
 			Repo:         ruleRepository,
@@ -478,7 +501,16 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		GatewayCreator:              gatewayCreator,
 		GatewayDeleter:              gatewayDeleter,
 		DescriptionEmbeddingCreator: descriptionEmbeddingCreator,
+		UpstreamCreator:             upstreamCreator,
+		UpstreamUpdater:             upstreamUpdater,
+		ServiceCreator:              serviceCreator,
+		ServiceUpdater:              serviceUpdater,
+		RuleCreator:                 ruleCreator,
+		RuleUpdater:                 ruleUpdater,
 		AuditLogsService:            auditLogsService,
+		TxManager:                   database.NewTxManager(di.DB.DB),
+		SAService:                   saService,
+		RuleMatcher:                 ruleMatcher,
 	}
 
 	return container, nil

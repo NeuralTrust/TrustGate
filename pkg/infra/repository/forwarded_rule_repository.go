@@ -36,23 +36,7 @@ func NewForwardedRuleRepository(db *gorm.DB, logger *logrus.Logger, cache cache.
 }
 
 func (r *forwardedRuleRepository) Create(ctx context.Context, rule *forwarding_rule.ForwardingRule) error {
-	tx := r.db.WithContext(ctx).Begin()
-	if tx.Error != nil {
-		return tx.Error
-	}
-	if err := tx.Create(rule).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
-	var rules []forwarding_rule.ForwardingRule
-	if err := tx.Where("gateway_id = ?", rule.GatewayID).Find(&rules).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
-	if err := tx.Commit().Error; err != nil {
-		return err
-	}
-	return nil
+	return dbFromContext(ctx, r.db).WithContext(ctx).Create(rule).Error
 }
 
 func (r *forwardedRuleRepository) ListRules(
@@ -60,7 +44,7 @@ func (r *forwardedRuleRepository) ListRules(
 	gatewayID uuid.UUID,
 ) ([]forwarding_rule.ForwardingRule, error) {
 	var rules []forwarding_rule.ForwardingRule
-	err := r.db.Where("gateway_id = ?", gatewayID).Find(&rules).Error
+	err := dbFromContext(ctx, r.db).WithContext(ctx).Where("gateway_id = ?", gatewayID).Find(&rules).Error
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +57,7 @@ func (r *forwardedRuleRepository) ListRules(
 }
 
 func (r *forwardedRuleRepository) Update(ctx context.Context, rule *forwarding_rule.ForwardingRule) error {
-	result := r.db.WithContext(ctx).Save(rule)
+	result := dbFromContext(ctx, r.db).WithContext(ctx).Save(rule)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -84,7 +68,7 @@ func (r *forwardedRuleRepository) Update(ctx context.Context, rule *forwarding_r
 }
 
 func (r *forwardedRuleRepository) Delete(ctx context.Context, id, gatewayID uuid.UUID) error {
-	result := r.db.WithContext(ctx).Unscoped().Where("id = ? AND gateway_id = ?", id, gatewayID).
+	result := dbFromContext(ctx, r.db).WithContext(ctx).Unscoped().Where("id = ? AND gateway_id = ?", id, gatewayID).
 		Delete(&forwarding_rule.ForwardingRule{})
 	if result.Error != nil {
 		return result.Error
@@ -101,7 +85,7 @@ func (r *forwardedRuleRepository) GetRule(
 	gatewayID uuid.UUID,
 ) (*forwarding_rule.ForwardingRule, error) {
 	var rule forwarding_rule.ForwardingRule
-	err := r.db.WithContext(ctx).Where("id = ? AND gateway_id = ?", id, gatewayID).First(&rule).Error
+	err := dbFromContext(ctx, r.db).WithContext(ctx).Where("id = ? AND gateway_id = ?", id, gatewayID).First(&rule).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domain.NewNotFoundError("rule", id)
@@ -113,7 +97,7 @@ func (r *forwardedRuleRepository) GetRule(
 
 func (r *forwardedRuleRepository) GetRuleByID(ctx context.Context, id uuid.UUID) (*forwarding_rule.ForwardingRule, error) {
 	var rule forwarding_rule.ForwardingRule
-	err := r.db.WithContext(ctx).Where("id = ?", id).First(&rule).Error
+	err := dbFromContext(ctx, r.db).WithContext(ctx).Where("id = ?", id).First(&rule).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domain.NewNotFoundError("rule", id)
@@ -129,7 +113,7 @@ func (r *forwardedRuleRepository) FindByIds(ctx context.Context, ids []uuid.UUID
 	}
 
 	var rules []forwarding_rule.ForwardingRule
-	err := r.db.WithContext(ctx).Where("id IN ? AND gateway_id = ?", ids, gatewayID).Find(&rules).Error
+	err := dbFromContext(ctx, r.db).WithContext(ctx).Where("id IN ? AND gateway_id = ?", ids, gatewayID).Find(&rules).Error
 	if err != nil {
 		return nil, err
 	}

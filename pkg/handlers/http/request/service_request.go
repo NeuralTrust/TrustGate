@@ -1,6 +1,7 @@
 package request
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -26,4 +27,14 @@ type ServiceRequest struct {
 	Retries   int       `json:"retries,omitempty"`
 	CreatedAt time.Time `json:"CreatedAt"`
 	UpdatedAt time.Time `json:"UpdatedAt"`
+}
+
+func (r *ServiceRequest) Validate() error {
+	if r.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if r.Type == "" {
+		return fmt.Errorf("type is required")
+	}
+	return nil
 }
