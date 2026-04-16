@@ -28,6 +28,7 @@ import (
 type Worker interface {
 	Shutdown()
 	StartWorkers(n int)
+	HasDefaultExporters() bool
 	Process(
 		metricsCollector *Collector,
 		exporters []types.ExporterDTO,
@@ -41,6 +42,7 @@ type Worker interface {
 type worker struct {
 	logger           *logrus.Logger
 	providersBuilder appTelemetry.ExportersBuilder
+	defaultExporters []domainTelemetry.Exporter
 	taskChan         chan func()
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -51,11 +53,13 @@ type worker struct {
 func NewWorker(
 	logger *logrus.Logger,
 	providersBuilder appTelemetry.ExportersBuilder,
+	defaultExporters []domainTelemetry.Exporter,
 ) Worker {
 	ctx, cancel := context.WithCancel(context.Background()) // #nosec G118 -- cancel is stored in the struct and called in Shutdown()
 	m := &worker{
 		logger:           logger,
 		providersBuilder: providersBuilder,
+		defaultExporters: defaultExporters,
 		taskChan:         make(chan func(), 1000),
 		ctx:              ctx,
 		cancel:           cancel,
@@ -63,11 +67,14 @@ func NewWorker(
 	return m
 }
 
+func (m *worker) HasDefaultExporters() bool {
+	return len(m.defaultExporters) > 0
+}
+
 func (m *worker) Shutdown() {
 	m.closed.Store(true)
 	m.logger.Info("shutting down metrics workers")
 
-	// Clean up cached exporters
 	m.exporterCache.Range(func(key, value interface{}) bool {
 		exporters, ok := value.([]domainTelemetry.Exporter)
 		if ok {
@@ -79,6 +86,10 @@ func (m *worker) Shutdown() {
 		m.logger.Info("metric exporters cleaned up")
 		return true
 	})
+
+	for _, exp := range m.defaultExporters {
+		exp.Close()
+	}
 
 	m.cancel()
 	close(m.taskChan)
@@ -110,42 +121,47 @@ func (m *worker) registryMetricsToExporters(
 	startTime,
 	endTime time.Time,
 ) {
-	if len(exporters) == 0 {
+	if len(exporters) == 0 && len(m.defaultExporters) == 0 {
 		return
 	}
 
-	cacheKey := m.createExportersCacheKey(exporters)
+	var allExporters []domainTelemetry.Exporter
 
-	var exp []domainTelemetry.Exporter
-	var err error
+	allExporters = append(allExporters, m.defaultExporters...)
 
-	if cachedExp, found := m.exporterCache.Load(cacheKey); found {
-		var ok bool
-		exp, ok = cachedExp.([]domainTelemetry.Exporter)
-		if !ok {
-			m.logger.Error("cached exporter is not of expected type")
-			return
+	filteredDTOs := m.filterGatewayExporters(exporters)
+	if len(filteredDTOs) > 0 {
+		cacheKey := m.createExportersCacheKey(filteredDTOs)
+
+		if cachedExp, found := m.exporterCache.Load(cacheKey); found {
+			if exp, ok := cachedExp.([]domainTelemetry.Exporter); ok {
+				allExporters = append(allExporters, exp...)
+			} else {
+				m.logger.Error("cached exporter is not of expected type")
+			}
+		} else {
+			exp, err := m.providersBuilder.Build(filteredDTOs)
+			if err != nil {
+				m.logger.WithError(err).Error("failed to build telemetry providers")
+			} else {
+				m.exporterCache.Store(cacheKey, exp)
+				allExporters = append(allExporters, exp...)
+			}
 		}
-	} else {
-		exp, err = m.providersBuilder.Build(exporters)
-		if err != nil {
-			fmt.Println("failed to build telemetry providers")
-			m.logger.WithError(err).Error("failed to build telemetry providers")
-			return
-		}
-		m.exporterCache.Store(cacheKey, exp)
+	}
+
+	if len(allExporters) == 0 {
+		return
 	}
 
 	events := collector.Flush()
 	var failedExporters []string
-	for _, exporter := range exp {
-		// Don't close the exporters here as they're cached and reused
-		// We'll handle cleanup separately
+	for _, exporter := range allExporters {
 		for _, metricsEvent := range events {
 			clonedEvent := m.cloneEvent(*metricsEvent)
 			//nolint
 			ctx := context.WithValue(context.Background(), string(common.MatchedRuleContextKey), resp.Rule)
-			err = exporter.Handle(ctx, m.feedEvent(clonedEvent, req, resp, startTime, endTime))
+			err := exporter.Handle(ctx, m.feedEvent(clonedEvent, req, resp, startTime, endTime))
 			if err != nil {
 				m.logger.WithFields(logrus.Fields{
 					"gatewayID":   req.GatewayID,
@@ -163,6 +179,25 @@ func (m *worker) registryMetricsToExporters(
 		m.logger.WithField("failedExporters", failedExporters).
 			Warnf("%d exporters failed to handle metrics events", len(failedExporters))
 	}
+}
+
+func (m *worker) filterGatewayExporters(exporters []types.ExporterDTO) []types.ExporterDTO {
+	if len(m.defaultExporters) == 0 {
+		return exporters
+	}
+
+	defaultNames := make(map[string]struct{}, len(m.defaultExporters))
+	for _, d := range m.defaultExporters {
+		defaultNames[d.Name()] = struct{}{}
+	}
+
+	var filtered []types.ExporterDTO
+	for _, dto := range exporters {
+		if _, isDefault := defaultNames[dto.Name]; !isDefault {
+			filtered = append(filtered, dto)
+		}
+	}
+	return filtered
 }
 
 func (m *worker) registryMetricsToPrometheus(method, gatewayID string, statusCode int) {

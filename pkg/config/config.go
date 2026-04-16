@@ -27,7 +27,13 @@ type Config struct {
 	WebSocket WebSocketConfig
 	TLS       TLSConfig
 	AuditLogs AuditLogsConfig
-	Upstream UpstreamConfig
+	Upstream  UpstreamConfig
+	Kafka     KafkaConfig
+}
+
+type KafkaConfig struct {
+	Host string
+	Port string
 }
 
 type UpstreamConfig struct {
@@ -164,6 +170,9 @@ func Load() (*Config, error) {
 	upstreamProviderTimeout := getEnvDuration("UPSTREAM_PROVIDER_TIMEOUT", 120*time.Second)
 	upstreamErrorPassthrough := getEnvBool("UPSTREAM_ERROR_PASSTHROUGH", false)
 
+	kafkaHost := getEnv("KAFKA_HOST", "")
+	kafkaPort := getEnv("KAFKA_PORT", "9092")
+
 	auditLogsEnabled := getEnvBool("ENABLE_AUDIT_LOGS", false)
 	auditLogsKafkaBrokers := getEnvSlice("AUDIT_LOGS_KAFKA_BROKERS", []string{})
 	auditLogsEventsTopic := getEnv("AUDIT_LOGS_EVENTS_TOPIC", "")
@@ -238,6 +247,10 @@ func Load() (*Config, error) {
 			StreamTimeout:    upstreamStreamTimeout,
 			ProviderTimeout:  upstreamProviderTimeout,
 			ErrorPassthrough: upstreamErrorPassthrough,
+		},
+		Kafka: KafkaConfig{
+			Host: kafkaHost,
+			Port: kafkaPort,
 		},
 	}
 

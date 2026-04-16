@@ -19,12 +19,13 @@ import (
 
 const (
 	ExporterName = "trustlens"
+	DefaultTopic = "metrics"
 )
 
 type Config struct {
 	Host    string  `mapstructure:"host"`
 	Port    string  `mapstructure:"port"`
-	Topic   string  `mapstructure:"Topic"`
+	Topic   string  `mapstructure:"topic"`
 	Mapping Mapping `mapstructure:"mapping"`
 }
 
@@ -65,9 +66,6 @@ func (p *Exporter) ValidateConfig(settings map[string]interface{}) error {
 	if conf.Port == "" {
 		return errors.New("kafka port is required")
 	}
-	if conf.Topic == "" {
-		return errors.New("kafka topic is required")
-	}
 	return nil
 }
 
@@ -75,6 +73,9 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 	var conf Config
 	if err := mapstructure.Decode(settings, &conf); err != nil {
 		return nil, fmt.Errorf("invalid kafka (trustlens) config: %w", err)
+	}
+	if conf.Topic == "" {
+		conf.Topic = DefaultTopic
 	}
 	producer, err := kafka.NewProducer(&kafka.ConfigMap{
 		"bootstrap.servers": fmt.Sprintf("%s:%s", conf.Host, conf.Port),

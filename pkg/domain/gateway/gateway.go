@@ -17,8 +17,8 @@ type Gateway struct {
 	Telemetry       *telemetry.Telemetry       `json:"telemetry,omitempty" gorm:"type:jsonb"`
 	RequiredPlugins domain.PluginChainJSON     `json:"required_plugins,omitempty" gorm:"type:jsonb"`
 	SecurityConfig  *domain.SecurityConfigJSON `json:"security_config,omitempty" gorm:"type:jsonb"`
-	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty" gorm:"type:jsonb"`
-	CreatedAt       time.Time              `json:"created_at"`
+	ClientTLSConfig domain.ClientTLSConfig     `json:"client_tls,omitempty" gorm:"type:jsonb"`
+	CreatedAt       time.Time                  `json:"created_at"`
 	UpdatedAt       time.Time                  `json:"updated_at"`
 }
 

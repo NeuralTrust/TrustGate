@@ -74,6 +74,7 @@ func main() {
 		Cfg:                           cfg,
 		Logger:                        logger,
 		DB:                            db,
+		ServerType:                    serverType,
 		EventsRegistry:                event.GetEventsRegistry(),
 		InitializeMemoryCache:         initializeMemoryCache(),
 		InitializeLoadBalancerFactory: loadbalancer.NewBaseFactory,

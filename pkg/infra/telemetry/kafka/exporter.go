@@ -21,7 +21,7 @@ const (
 type Config struct {
 	Host  string `mapstructure:"host"`
 	Port  string `mapstructure:"port"`
-	Topic string `mapstructure:"Topic"`
+	Topic string `mapstructure:"topic"`
 }
 
 type Exporter struct {

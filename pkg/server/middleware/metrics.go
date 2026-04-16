@@ -23,14 +23,16 @@ const (
 )
 
 type metricsMiddleware struct {
-	logger *logrus.Logger
-	worker metrics.Worker
+	logger              *logrus.Logger
+	worker              metrics.Worker
+	hasDefaultExporters bool
 }
 
 func NewMetricsMiddleware(logger *logrus.Logger, worker metrics.Worker) Middleware {
 	return &metricsMiddleware{
-		logger: logger,
-		worker: worker,
+		logger:              logger,
+		worker:              worker,
+		hasDefaultExporters: worker.HasDefaultExporters(),
 	}
 }
 
@@ -147,6 +149,10 @@ func (m *metricsMiddleware) createMetricsCollector(traceID, fingerprintID string
 
 // isTelemetryEnabled checks if telemetry is enabled for the gateway
 func (m *metricsMiddleware) isTelemetryEnabled(gatewayData *types.GatewayData) bool {
+	if m.hasDefaultExporters {
+		return true
+	}
+
 	if gatewayData.Gateway == nil || gatewayData.Gateway.Telemetry == nil {
 		return false
 	}
@@ -216,7 +222,7 @@ func (m *metricsMiddleware) handleStreamResponse(
 	}
 
 	inputRequest.SessionID = m.getSessionID(ctx)
-	exporters := gatewayData.Gateway.Telemetry.Exporters
+	exporters := m.getExporters(gatewayData)
 	rule := GetMatchedRule(ctx, m.logger)
 	headers := m.copyHeaders(c.GetRespHeaders())
 	statusCode := c.Response().StatusCode()
@@ -269,13 +275,13 @@ func (m *metricsMiddleware) handleNonStreamResponse(
 	inputRequest.SessionID = m.getSessionID(ctx)
 	rule := GetMatchedRule(ctx, m.logger)
 	collector := m.getCollectorFromContext(c)
-	resp := m.buildResponseContext(c, gatewayID, rule)
+	respCtx := m.buildResponseContext(c, gatewayID, rule)
 	m.logger.Debug("processing metrics as non stream mode")
 	m.worker.Process(
 		collector,
-		gatewayData.Gateway.Telemetry.Exporters,
+		m.getExporters(gatewayData),
 		inputRequest,
-		&resp,
+		&respCtx,
 		startTime,
 		time.Now(),
 	)
@@ -351,7 +357,13 @@ func (m *metricsMiddleware) setTelemetryHeaders(c *fiber.Ctx, gatewayData *types
 	}
 }
 
-// getHeaderMapping retrieves the header mapping configuration
+func (m *metricsMiddleware) getExporters(gatewayData *types.GatewayData) []types.ExporterDTO {
+	if gatewayData.Gateway == nil || gatewayData.Gateway.Telemetry == nil {
+		return nil
+	}
+	return gatewayData.Gateway.Telemetry.Exporters
+}
+
 func (m *metricsMiddleware) getHeaderMapping(gatewayData *types.GatewayData) map[string]string {
 	if gatewayData.Gateway != nil &&
 		gatewayData.Gateway.Telemetry != nil &&
