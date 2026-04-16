@@ -17,17 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
+      - uses: ./.github/actions/setup-go-private
         with:
-          go-version: '1.26'
-          check-latest: true
-          cache: false
-
-      - name: Install dependencies
-        run: |
-          go clean -modcache
-          go mod tidy && go mod vendor
+          token: ${{ secrets.GITHUB_PAT || secrets.TOKEN }}
 
       - name: Install golangci-lint
         run: |
@@ -37,10 +29,6 @@ jobs:
 
       - name: Run golangci-lint
         continue-on-error: true
-        env:
-          GOPRIVATE: github.com/NeuralTrust/*
-          GONOPROXY: github.com/NeuralTrust/*
-          GONOSUMDB: github.com/NeuralTrust/*
         run: golangci-lint run --timeout=10m ./...
 
   unit-tests:
@@ -69,17 +57,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
+      - uses: ./.github/actions/setup-go-private
         with:
-          go-version: '1.26'
-          check-latest: true
-          cache: false
-
-      - name: Install dependencies
-        run: |
-          go clean -modcache
-          go mod tidy && go mod vendor
+          token: ${{ secrets.GITHUB_PAT || secrets.TOKEN }}
 
       - name: Copy environment file
         run: cp .env.example .env
@@ -123,17 +103,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
+      - uses: ./.github/actions/setup-go-private
         with:
-          go-version: '1.26'
-          check-latest: true
-          cache: false
-
-      - name: Install dependencies
-        run: |
-          go clean -modcache
-          go mod tidy && go mod vendor
+          token: ${{ secrets.GITHUB_PAT || secrets.TOKEN }}
 
       - name: Install service check tools
         run: |
