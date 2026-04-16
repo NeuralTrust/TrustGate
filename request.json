@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.21.0\n\nCommits since last release:\n- ac5f8b9 Merge pull request #346 from NeuralTrust/fix/return-trace-id-on-stream\n- 52e55a3 fix: return trace id on streaming\n"
+      "content": "Current version: 1.21.1\n\nCommits since last release:\n- a6a2e10 Merge pull request #347 from NeuralTrust/feat/detection-exporters\n- af5ea61 feat: detection exporter\n- 33c52d5 feat: detection exporter\n- 2cc8cb7 feat: detection exporter\n"
     }
   ],
   "max_tokens": 200,
