@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.22.0\n\nCommits since last release:\n- cdf0c73 Merge pull request #348 from NeuralTrust/refactor/app-services\n- 58ac1ca refactor: refactor use cases (creators & updaters)\n- 215dc6e refactor: refactor use cases (creators & updaters)\n"
+      "content": "Current version: 1.22.1\n\nCommits since last release:\n- 8a92ec7 Merge pull request #349 from NeuralTrust/fix/upstream-error-passtrought-true\n- 9b1f3cc fix functional test\n- 9402dde fix: upstream error env var passtrough\n"
     }
   ],
   "max_tokens": 200,
