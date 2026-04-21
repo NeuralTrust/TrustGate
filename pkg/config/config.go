@@ -168,7 +168,7 @@ func Load() (*Config, error) {
 	upstreamWriteTimeout := getEnvDuration("UPSTREAM_WRITE_TIMEOUT", 60*time.Second)
 	upstreamStreamTimeout := getEnvDuration("UPSTREAM_STREAM_TIMEOUT", 60*time.Second)
 	upstreamProviderTimeout := getEnvDuration("UPSTREAM_PROVIDER_TIMEOUT", 120*time.Second)
-	upstreamErrorPassthrough := getEnvBool("UPSTREAM_ERROR_PASSTHROUGH", false)
+	upstreamErrorPassthrough := getEnvBool("UPSTREAM_ERROR_PASSTHROUGH", true)
 
 	kafkaHost := getEnv("KAFKA_HOST", "")
 	kafkaPort := getEnv("KAFKA_PORT", "9092")
