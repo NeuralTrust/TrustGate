@@ -1,3 +1,2 @@
-- 8a92ec7 Merge pull request #349 from NeuralTrust/fix/upstream-error-passtrought-true
-- 9b1f3cc fix functional test
-- 9402dde fix: upstream error env var passtrough
+- 97787e5 Merge pull request #350 from NeuralTrust/fix/reverse-plugin-execution
+- 57ceed6 fix: reverse plugin execution
