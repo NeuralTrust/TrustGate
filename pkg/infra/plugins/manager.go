@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -226,14 +227,11 @@ func (m *manager) ExecuteStage(
 	plugins := m.plugins
 	m.mu.RUnlock()
 
-	// Set the current stage in the request context
 	req.Stage = stage
 
-	// Track executed plugins to prevent duplicates
 	executedPlugins := make(map[string]bool)
 
-	// Chains are inserted in PluginChain Middleware and in Forwarded Handler
-	for _, chain := range gatewayChains {
+	for _, chain := range slices.Backward(gatewayChains) {
 		if len(chain) > 0 {
 			if err := m.executeChains(ctx, plugins, chain, req, resp, executedPlugins, collector); err != nil {
 				return resp, err
