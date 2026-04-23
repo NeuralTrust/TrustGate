@@ -397,6 +397,53 @@ func TestManager_ExecuteStage(t *testing.T) {
 
 		assert.Equal(t, pluginTypes.PreRequest, req.Stage)
 	})
+
+	t.Run("rule plugin overrides gateway plugin with same name", func(t *testing.T) {
+		m := newManagerForTesting(newTestLogger())
+
+		var capturedSettings map[string]interface{}
+
+		plugin := pluginMocks.NewPlugin(t)
+		plugin.EXPECT().Name().Return("rate_limiter")
+		plugin.EXPECT().Stages().Return([]pluginTypes.Stage{pluginTypes.PreRequest})
+		plugin.EXPECT().Execute(
+			mock.Anything,
+			mock.AnythingOfType("types.PluginConfig"),
+			mock.AnythingOfType("*types.RequestContext"),
+			mock.AnythingOfType("*types.ResponseContext"),
+			mock.Anything,
+		).RunAndReturn(func(
+			ctx context.Context,
+			cfg pluginTypes.PluginConfig,
+			req *types.RequestContext,
+			resp *types.ResponseContext,
+			evtCtx *metrics.EventContext,
+		) (*pluginTypes.PluginResponse, error) {
+			capturedSettings = cfg.Settings
+			return &pluginTypes.PluginResponse{StatusCode: 200}, nil
+		}).Once()
+
+		_ = m.RegisterPlugin(plugin)
+
+		gatewayChain := []pluginTypes.PluginConfig{
+			{Name: "rate_limiter", Enabled: true, Stage: pluginTypes.PreRequest, Settings: map[string]interface{}{"limit": 100}},
+		}
+		ruleChain := []pluginTypes.PluginConfig{
+			{Name: "rate_limiter", Enabled: true, Stage: pluginTypes.PreRequest, Settings: map[string]interface{}{"limit": 10}},
+		}
+
+		_ = m.SetPluginChain("gw-1", gatewayChain)
+		_ = m.SetPluginChain("gw-1", ruleChain)
+
+		req := &types.RequestContext{}
+		resp := &types.ResponseContext{}
+
+		result, err := m.ExecuteStage(context.Background(), pluginTypes.PreRequest, "gw-1", req, resp, newTestCollector())
+
+		assert.NoError(t, err)
+		assert.Equal(t, 200, result.StatusCode)
+		assert.Equal(t, map[string]interface{}{"limit": 10}, capturedSettings)
+	})
 }
 
 func TestManager_ExecuteChain_Parallel(t *testing.T) {
