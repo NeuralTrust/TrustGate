@@ -1,2 +1,2 @@
-- 97787e5 Merge pull request #350 from NeuralTrust/fix/reverse-plugin-execution
-- 57ceed6 fix: reverse plugin execution
+- f7f3d91 Merge pull request #351 from NeuralTrust/feat/clear-trustlens-dto
+- 975735f feat: clean up trustlens & exporters

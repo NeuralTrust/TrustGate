@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.22.2\n\nCommits since last release:\n- 97787e5 Merge pull request #350 from NeuralTrust/fix/reverse-plugin-execution\n- 57ceed6 fix: reverse plugin execution\n"
+      "content": "Current version: 1.22.3\n\nCommits since last release:\n- f7f3d91 Merge pull request #351 from NeuralTrust/feat/clear-trustlens-dto\n- 975735f feat: clean up trustlens & exporters\n"
     }
   ],
   "max_tokens": 200,
