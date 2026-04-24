@@ -208,13 +208,13 @@ func NewContainer(di ContainerDI) (*Container, error) {
 
 	// telemetry
 	providerLocator := infraTelemetry.NewProviderLocator(
-		infraTelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaExporter(di.Logger)),
-		infraTelemetry.WithExporter(trustlens.ExporterName, trustlens.NewTrustLensExporter(di.Logger)),
-		infraTelemetry.WithExporter(detection.ExporterName, detection.NewDetectionExporter(di.Logger)),
+		infraTelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaExporter(di.Logger, di.Cfg.Kafka)),
+		infraTelemetry.WithExporter(trustlens.ExporterName, trustlens.NewTrustLensExporter(di.Logger, di.Cfg.Kafka)),
+		infraTelemetry.WithExporter(detection.ExporterName, detection.NewDetectionExporter(di.Logger, di.Cfg.Kafka)),
 	)
 	var defaultExporters []domainTelemetry.Exporter
-	if di.ServerType == server.ProxyServerName {
-		defaultExportersBuilder := telemetry.NewDefaultExportersBuilder(di.Logger, providerLocator, di.Cfg.Kafka)
+	if di.ServerType != server.AdminServerName {
+		defaultExportersBuilder := telemetry.NewDefaultExportersBuilder(di.Logger, providerLocator)
 		defaultExporters = defaultExportersBuilder.Build()
 	}
 	telemetryBuilder := telemetry.NewTelemetryExportersBuilder(providerLocator)

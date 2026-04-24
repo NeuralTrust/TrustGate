@@ -3026,9 +3026,6 @@ const docTemplate = `{
                 },
                 "team_id": {
                     "type": "string"
-                },
-                "type": {
-                    "type": "string"
                 }
             }
         },
@@ -3046,12 +3043,6 @@ const docTemplate = `{
         "github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDataDTO": {
             "type": "object",
             "properties": {
-                "data_projection": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
                 "extract_fields": {
                     "type": "object",
                     "additionalProperties": {

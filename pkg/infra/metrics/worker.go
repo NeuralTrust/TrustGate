@@ -127,11 +127,18 @@ func (m *worker) registryMetricsToExporters(
 
 	var allExporters []domainTelemetry.Exporter
 
-	allExporters = append(allExporters, m.defaultExporters...)
+	explicitNames := make(map[string]struct{}, len(exporters))
+	for _, dto := range exporters {
+		explicitNames[dto.Name] = struct{}{}
+	}
+	for _, d := range m.defaultExporters {
+		if _, overridden := explicitNames[d.Name()]; !overridden {
+			allExporters = append(allExporters, d)
+		}
+	}
 
-	filteredDTOs := m.filterGatewayExporters(exporters)
-	if len(filteredDTOs) > 0 {
-		cacheKey := m.createExportersCacheKey(filteredDTOs)
+	if len(exporters) > 0 {
+		cacheKey := m.createExportersCacheKey(exporters)
 
 		if cachedExp, found := m.exporterCache.Load(cacheKey); found {
 			if exp, ok := cachedExp.([]domainTelemetry.Exporter); ok {
@@ -140,7 +147,7 @@ func (m *worker) registryMetricsToExporters(
 				m.logger.Error("cached exporter is not of expected type")
 			}
 		} else {
-			exp, err := m.providersBuilder.Build(filteredDTOs)
+			exp, err := m.providersBuilder.Build(exporters)
 			if err != nil {
 				m.logger.WithError(err).Error("failed to build telemetry providers")
 			} else {
@@ -181,24 +188,6 @@ func (m *worker) registryMetricsToExporters(
 	}
 }
 
-func (m *worker) filterGatewayExporters(exporters []types.ExporterDTO) []types.ExporterDTO {
-	if len(m.defaultExporters) == 0 {
-		return exporters
-	}
-
-	defaultNames := make(map[string]struct{}, len(m.defaultExporters))
-	for _, d := range m.defaultExporters {
-		defaultNames[d.Name()] = struct{}{}
-	}
-
-	var filtered []types.ExporterDTO
-	for _, dto := range exporters {
-		if _, isDefault := defaultNames[dto.Name]; !isDefault {
-			filtered = append(filtered, dto)
-		}
-	}
-	return filtered
-}
 
 func (m *worker) registryMetricsToPrometheus(method, gatewayID string, statusCode int) {
 	if prometheus.Config.EnableConnections {
@@ -281,9 +270,7 @@ func (m *worker) feedEvent(
 	if resp.Rule != nil {
 		if resp.Rule.TrustLens != nil {
 			evt.TeamID = resp.Rule.TrustLens.TeamID
-			if resp.Rule.TrustLens.Type != "" {
-				evt.Task = strings.ToLower(resp.Rule.TrustLens.Type)
-			}
+			evt.Task = "message"
 		}
 		evt.RuleID = resp.Rule.ID
 	}

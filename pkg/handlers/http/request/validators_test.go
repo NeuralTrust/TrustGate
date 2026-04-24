@@ -70,38 +70,6 @@ func TestValidateTrustLens(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("valid type", func(t *testing.T) {
-		err := validateTrustLens(&types.TrustLensConfigDTO{TeamID: "team-1", Type: "MESSAGE"})
-		assert.NoError(t, err)
-	})
-
-	t.Run("invalid type", func(t *testing.T) {
-		err := validateTrustLens(&types.TrustLensConfigDTO{TeamID: "team-1", Type: "INVALID"})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid trust lens type")
-	})
-
-	t.Run("valid data projection field", func(t *testing.T) {
-		err := validateTrustLens(&types.TrustLensConfigDTO{
-			TeamID: "team-1",
-			Mapping: &types.TrustLensMappingDTO{
-				Input:  types.TrustLensMappingDataDTO{DataProjection: map[string]string{"input": "$.message"}},
-				Output: types.TrustLensMappingDataDTO{DataProjection: map[string]string{"output": "$.response"}},
-			},
-		})
-		assert.NoError(t, err)
-	})
-
-	t.Run("invalid input data projection field", func(t *testing.T) {
-		err := validateTrustLens(&types.TrustLensConfigDTO{
-			TeamID: "team-1",
-			Mapping: &types.TrustLensMappingDTO{
-				Input: types.TrustLensMappingDataDTO{DataProjection: map[string]string{"invalid_field": "$.x"}},
-			},
-		})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid data_projection field in input")
-	})
 }
 
 func TestValidateRuleType(t *testing.T) {
