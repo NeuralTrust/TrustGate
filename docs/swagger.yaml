@@ -1145,8 +1145,6 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDTO'
       team_id:
         type: string
-      type:
-        type: string
     type: object
   github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDTO:
     properties:
@@ -1157,10 +1155,6 @@ definitions:
     type: object
   github_com_NeuralTrust_TrustGate_pkg_types.TrustLensMappingDataDTO:
     properties:
-      data_projection:
-        additionalProperties:
-          type: string
-        type: object
       extract_fields:
         additionalProperties:
           type: string

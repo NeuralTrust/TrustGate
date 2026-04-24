@@ -142,7 +142,6 @@ func (r *forwardedRuleRepository) UpdateRulesCache(
 		if rule.TrustLens != nil {
 			trustLensConfig = &types.TrustLensConfigDTO{
 				TeamID: rule.TrustLens.TeamID,
-				Type:   rule.TrustLens.Type,
 			}
 		}
 

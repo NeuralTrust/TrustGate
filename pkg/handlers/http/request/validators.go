@@ -48,43 +48,6 @@ func validateTrustLens(trustLens *types.TrustLensConfigDTO) error {
 		return fmt.Errorf("trust lens team id is required")
 	}
 
-	if trustLens.Type != "" {
-		validTypes := map[string]bool{
-			"MESSAGE":    true,
-			"TOOL":       true,
-			"AGENT":      true,
-			"RETRIEVAL":  true,
-			"GENERATION": true,
-			"ROUTER":     true,
-			"SYSTEM":     true,
-			"FEEDBACK":   true,
-		}
-		if !validTypes[strings.ToUpper(trustLens.Type)] {
-			return fmt.Errorf("invalid trust lens type: %s. Must be one of: MESSAGE, TOOL, AGENT, RETRIEVAL, GENERATION, ROUTER, SYSTEM, FEEDBACK", trustLens.Type)
-		}
-	}
-
-	if trustLens.Mapping != nil {
-		validDataProjectionFields := map[string]bool{
-			"input":         true,
-			"output":        true,
-			"feedback_tag":  true,
-			"feedback_text": true,
-		}
-
-		for key := range trustLens.Mapping.Input.DataProjection {
-			if !validDataProjectionFields[key] {
-				return fmt.Errorf("invalid data_projection field in input: %s. Must be one of: input, output, feedback_tag, feedback_text", key)
-			}
-		}
-
-		for key := range trustLens.Mapping.Output.DataProjection {
-			if !validDataProjectionFields[key] {
-				return fmt.Errorf("invalid data_projection field in output: %s. Must be one of: input, output, feedback_tag, feedback_text", key)
-			}
-		}
-	}
-
 	return nil
 }
 

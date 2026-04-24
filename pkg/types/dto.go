@@ -156,7 +156,6 @@ func (r *ForwardingRuleDTO) AllPaths() []string {
 
 type TrustLensConfigDTO struct {
 	TeamID  string               `json:"team_id,omitempty"`
-	Type    string               `json:"type,omitempty"`
 	Mapping *TrustLensMappingDTO `json:"mapping,omitempty"`
 }
 
@@ -166,8 +165,7 @@ type TrustLensMappingDTO struct {
 }
 
 type TrustLensMappingDataDTO struct {
-	ExtractFields  map[string]string `json:"extract_fields"`
-	DataProjection map[string]string `json:"data_projection"`
+	ExtractFields map[string]string `json:"extract_fields"`
 }
 
 type HealthStatusDTO struct {

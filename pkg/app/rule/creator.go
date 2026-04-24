@@ -90,7 +90,6 @@ func (c *creator) Create(
 	if req.TrustLens != nil {
 		trustLensConfig = &domain.TrustLensJSON{
 			TeamID:  req.TrustLens.TeamID,
-			Type:    req.TrustLens.Type,
 			Mapping: req.TrustLens.Mapping,
 		}
 	}

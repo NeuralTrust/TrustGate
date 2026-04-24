@@ -210,7 +210,6 @@ func (u *updater) applyRequestToDBRule(fwdRule *forwarding_rule.ForwardingRule, 
 	if updateReq.TrustLens != nil {
 		fwdRule.TrustLens = &domain.TrustLensJSON{
 			TeamID:  updateReq.TrustLens.TeamID,
-			Type:    updateReq.TrustLens.Type,
 			Mapping: updateReq.TrustLens.Mapping,
 		}
 	}

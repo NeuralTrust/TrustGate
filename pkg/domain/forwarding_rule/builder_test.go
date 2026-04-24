@@ -62,7 +62,7 @@ func TestNew_PreservesExplicitType(t *testing.T) {
 }
 
 func TestNew_WithOptionalFields(t *testing.T) {
-	trustLens := &domain.TrustLensJSON{TeamID: "team-1", Type: "MESSAGE"}
+	trustLens := &domain.TrustLensJSON{TeamID: "team-1"}
 	sessionCfg := &SessionConfig{HeaderName: "X-Session"}
 
 	rule, err := New(CreateParams{
