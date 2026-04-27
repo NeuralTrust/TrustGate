@@ -98,6 +98,7 @@ func (b *KafkaBase) Produce(data []byte) error {
 	if m.TopicPartition.Error != nil {
 		return fmt.Errorf("delivery failed: %w", m.TopicPartition.Error)
 	}
+	b.Logger.Debug(string(data))
 	close(deliveryChan)
 	return nil
 }

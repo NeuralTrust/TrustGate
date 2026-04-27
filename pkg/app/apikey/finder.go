@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	rootDomain "github.com/NeuralTrust/TrustGate/pkg/domain"
 	domain "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/sirupsen/logrus"
@@ -52,7 +53,11 @@ func (f *finder) Find(ctx context.Context, key string) (*domain.APIKey, error) {
 
 	entity, err := f.repo.GetByKey(ctx, key)
 	if err != nil {
-		f.logger.WithError(err).Error("failed to fetch apikey from repository")
+		if rootDomain.IsNotFoundError(err) {
+			f.logger.WithError(err).Warn("apikey not found in repository")
+		} else {
+			f.logger.WithError(err).Error("failed to fetch apikey from repository")
+		}
 		return nil, err
 	}
 

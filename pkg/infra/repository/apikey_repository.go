@@ -27,7 +27,10 @@ func (r *ApiKeyRepository) GetByKey(ctx context.Context, key string) (*apikey.AP
 	if err := r.db.WithContext(ctx).
 		Where("key = ?", key).
 		First(entity).Error; err != nil {
-		return nil, fmt.Errorf("apikey not found: %w", err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domain.NewNotFoundError("apikey", uuid.Nil)
+		}
+		return nil, fmt.Errorf("failed to fetch apikey: %w", err)
 	}
 	return entity, nil
 }
