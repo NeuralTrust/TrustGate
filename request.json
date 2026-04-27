@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.22.3\n\nCommits since last release:\n- f7f3d91 Merge pull request #351 from NeuralTrust/feat/clear-trustlens-dto\n- 975735f feat: clean up trustlens & exporters\n"
+      "content": "Current version: 1.23.0\n\nCommits since last release:\n- 54d9273 Merge pull request #352 from NeuralTrust/feat/clear-trustlens-dto\n- b456c91 fix: degrade log to warking\n"
     }
   ],
   "max_tokens": 200,

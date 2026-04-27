@@ -1,2 +1,2 @@
-- f7f3d91 Merge pull request #351 from NeuralTrust/feat/clear-trustlens-dto
-- 975735f feat: clean up trustlens & exporters
+- 54d9273 Merge pull request #352 from NeuralTrust/feat/clear-trustlens-dto
+- b456c91 fix: degrade log to warking
