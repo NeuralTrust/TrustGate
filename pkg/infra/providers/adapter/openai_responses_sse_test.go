@@ -1,38 +1,52 @@
 package adapter
 
 import (
-	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestExtractOpenAIResponseFromResponsesSSE(t *testing.T) {
+// Streaming Responses API bodies are decoded per SSE data line via DecodeStreamChunk,
+// not as a full body in DecodeResponse.
+
+func TestOpenAIAdapter_DecodeStreamChunk_ResponseCompleted(t *testing.T) {
+	a := &OpenAIAdapter{}
+	payload := `{"type":"response.completed","response":{"id":"r1","object":"response","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"hi"}]}],"usage":{"total_tokens":3}}}`
+	sc, err := a.DecodeStreamChunk([]byte(payload))
+	require.NoError(t, err)
+	require.NotNil(t, sc)
+	assert.Equal(t, "stop", sc.FinishReason)
+	assert.Equal(t, "r1", sc.ID)
+	require.NotNil(t, sc.Usage)
+	assert.Equal(t, 3, sc.Usage.TotalTokens)
+}
+
+func TestOpenAIAdapter_DecodeStreamChunk_ResponseCreatedThenCompleted(t *testing.T) {
+	a := &OpenAIAdapter{}
 	sse := "event: x\n" +
 		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\"}}\n\n" +
 		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"done\",\"object\":\"response\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}],\"usage\":{\"total_tokens\":9}}}\n"
 
-	raw, ok := ExtractOpenAIResponseFromResponsesSSE([]byte(sse))
-	require.True(t, ok)
-	var obj map[string]interface{}
-	require.NoError(t, json.Unmarshal(raw, &obj))
-	assert.Equal(t, "response", obj["object"])
-	u, _ := obj["usage"].(map[string]interface{})
-	require.NotNil(t, u)
-	assert.Equal(t, float64(9), u["total_tokens"])
-}
-
-func TestExtractOpenAIResponseFromResponsesSSE_NotSSE(t *testing.T) {
-	_, ok := ExtractOpenAIResponseFromResponsesSSE([]byte(`{"id":"x"}`))
-	assert.False(t, ok)
-}
-
-func TestOpenAIAdapter_DecodeResponse_ResponsesSSE(t *testing.T) {
-	a := &OpenAIAdapter{}
-	sse := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"object\":\"response\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}],\"usage\":{\"total_tokens\":3}}}\n"
-	cr, err := a.DecodeResponse([]byte(sse))
-	require.NoError(t, err)
-	assert.Contains(t, cr.Content, "hi")
-	assert.Equal(t, 3, cr.Usage.TotalTokens)
+	for _, line := range strings.Split(strings.ReplaceAll(sse, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" {
+			continue
+		}
+		sc, err := a.DecodeStreamChunk([]byte(payload))
+		require.NoError(t, err)
+		if strings.Contains(payload, `"type":"response.created"`) {
+			assert.Nil(t, sc, "created event has no canonical chunk mapping")
+			continue
+		}
+		require.NotNil(t, sc, "completed event")
+		assert.Equal(t, "stop", sc.FinishReason)
+		require.NotNil(t, sc.Usage)
+		assert.Equal(t, 9, sc.Usage.TotalTokens)
+	}
 }

@@ -53,37 +53,6 @@ func isResponsesAPIStreamChunk(chunk []byte) bool {
 	return strings.HasPrefix(probe.Type, "response.")
 }
 
-// ExtractOpenAIResponseFromResponsesSSE scans an OpenAI Responses API SSE
-// payload and returns the JSON object from the last "response.completed"
-// event's "response" field. ok is false when no such event is present.
-func ExtractOpenAIResponseFromResponsesSSE(body []byte) (json.RawMessage, bool) {
-	s := strings.ReplaceAll(string(body), "\r\n", "\n")
-	var last json.RawMessage
-	found := false
-	for _, line := range strings.Split(s, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" || payload == "[DONE]" {
-			continue
-		}
-		var envelope struct {
-			Type     string          `json:"type"`
-			Response json.RawMessage `json:"response"`
-		}
-		if json.Unmarshal([]byte(payload), &envelope) != nil {
-			continue
-		}
-		if envelope.Type == "response.completed" && len(envelope.Response) > 0 {
-			last = envelope.Response
-			found = true
-		}
-	}
-	return last, found
-}
-
 // ---------------------------------------------------------------------------
 // Request
 // ---------------------------------------------------------------------------
@@ -104,9 +73,6 @@ func (a *OpenAIAdapter) EncodeRequest(req *CanonicalRequest) ([]byte, error) {
 // ---------------------------------------------------------------------------
 
 func (a *OpenAIAdapter) DecodeResponse(body []byte) (*CanonicalResponse, error) {
-	if raw, ok := ExtractOpenAIResponseFromResponsesSSE(body); ok {
-		return decodeResponsesResponse(raw)
-	}
 	if isResponsesAPIResponse(body) {
 		return decodeResponsesResponse(body)
 	}
