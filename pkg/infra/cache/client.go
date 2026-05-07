@@ -23,7 +23,7 @@ const (
 	ServicesKeyPattern        = "gateway:%s:services"
 	ServiceKeyPattern         = "gateway:%s:service:%s"
 	ApiKeyPattern             = "apikey:%s"
-	UpstreamOauthTokenPattern = "upstream:%s:oauth" //nolint:gosec // G101: Redis key template, not a secret
+	UpstreamOauthTokenPattern = "upstream:%s:oauth" // #nosec G101 -- Redis key template, not credentials
 
 	GatewayTTLName      = "gateway"
 	ApiKeyTTLName       = "api_key"
@@ -34,7 +34,7 @@ const (
 	LoadBalancerTTLName = "lb"
 
 	DataMaskingTTLName        = "data_masking"
-	UpstreamOauthTokenTTLName = "upstream_oauth_token" //nolint:gosec // G101: TTL config name, not a credential
+	UpstreamOauthTokenTTLName = "upstream_oauth_token" // #nosec G101 -- TTL registry name, not credentials
 )
 
 const (
