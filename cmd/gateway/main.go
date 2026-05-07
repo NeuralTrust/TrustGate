@@ -13,7 +13,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/dependency_container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -160,14 +159,15 @@ func main() {
 func initializeMemoryCache() func(cacheInstance cache.Client) {
 	// memoryCache
 	return func(cacheInstance cache.Client) {
-		_ = cacheInstance.CreateTTLMap(cache.GatewayTTLName, common.GatewayCacheTTL)
-		_ = cacheInstance.CreateTTLMap(cache.RulesTTLName, common.RulesCacheTTL)
-		_ = cacheInstance.CreateTTLMap(cache.PluginTTLName, common.PluginCacheTTL)
-		_ = cacheInstance.CreateTTLMap(cache.ServiceTTLName, common.ServiceCacheTTL)
-		_ = cacheInstance.CreateTTLMap(cache.UpstreamTTLName, common.UpstreamCacheTTL)
-		_ = cacheInstance.CreateTTLMap(cache.ApiKeyTTLName, common.ApiKeyCacheTTL)
-		_ = cacheInstance.CreateTTLMap(cache.DataMaskingTTLName, common.PluginCacheTTL)
-		_ = cacheInstance.CreateTTLMap(cache.LoadBalancerTTLName, common.LoadBalancerCacheTTL)
+		_ = cacheInstance.CreateTTLMap(cache.GatewayTTLName, cache.GatewayCacheTTL)
+		_ = cacheInstance.CreateTTLMap(cache.RulesTTLName, cache.RulesCacheTTL)
+		_ = cacheInstance.CreateTTLMap(cache.PluginTTLName, cache.PluginCacheTTL)
+		_ = cacheInstance.CreateTTLMap(cache.ServiceTTLName, cache.ServiceCacheTTL)
+		_ = cacheInstance.CreateTTLMap(cache.UpstreamTTLName, cache.UpstreamCacheTTL)
+		_ = cacheInstance.CreateTTLMap(cache.ApiKeyTTLName, cache.ApiKeyCacheTTL)
+		_ = cacheInstance.CreateTTLMap(cache.DataMaskingTTLName, cache.PluginCacheTTL)
+		_ = cacheInstance.CreateTTLMap(cache.LoadBalancerTTLName, cache.LoadBalancerCacheTTL)
+		_ = cacheInstance.CreateTTLMap(cache.UpstreamOauthTokenTTLName, cache.LoadBalancerCacheTTL)
 	}
 }
 

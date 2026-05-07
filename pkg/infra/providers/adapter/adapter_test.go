@@ -72,6 +72,54 @@ func TestDetectFormat(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ResolveAgentFormat
+// ---------------------------------------------------------------------------
+
+func TestResolveAgentFormat_SourceFormatOverrides(t *testing.T) {
+	got, err := ResolveAgentFormat("ignored", "openai_responses", nil)
+	require.NoError(t, err)
+	assert.Equal(t, FormatOpenAIResponses, got)
+}
+
+func TestResolveAgentFormat_OpenAIResponsesViaOptions(t *testing.T) {
+	opts := map[string]any{"api": "responses"}
+	got, err := ResolveAgentFormat("openai", "", opts)
+	require.NoError(t, err)
+	assert.Equal(t, FormatOpenAIResponses, got)
+
+	gotAzure, err := ResolveAgentFormat("azure", "", opts)
+	require.NoError(t, err)
+	assert.Equal(t, FormatOpenAIResponses, gotAzure)
+}
+
+func TestResolveAgentFormat_KnownProviders(t *testing.T) {
+	tests := []struct {
+		provider string
+		want     Format
+	}{
+		{"openai", FormatOpenAI},
+		{"azure", FormatAzure},
+		{"anthropic", FormatAnthropic},
+		{"google", FormatGemini},
+		{"bedrock", FormatBedrock},
+		{"mistral", FormatMistral},
+		{"vertex", FormatVertex},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			got, err := ResolveAgentFormat(tt.provider, "", nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestResolveAgentFormat_UnknownProvider(t *testing.T) {
+	_, err := ResolveAgentFormat("unknown-provider", "", nil)
+	require.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
 // IsSameWireFormat
 // ---------------------------------------------------------------------------
 
@@ -1433,6 +1481,24 @@ func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_WithTools(t *testing.T) {
 	assert.Equal(t, "get_weather", canonical.Tools[0].Name)
 	assert.Equal(t, "Get weather info", canonical.Tools[0].Description)
 	assert.NotNil(t, canonical.Tools[0].Schema)
+}
+
+func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_WithTools_ShorthandNoType(t *testing.T) {
+	input := `{
+		"instructions": "You are helpful.",
+		"tools": [
+			{"description": "entry without name is skipped"},
+			{"name": "translate", "description": "Translate text"}
+		]
+	}`
+
+	adapter := &OpenAIResponsesAdapter{}
+	canonical, err := adapter.DecodeRequest([]byte(input))
+	require.NoError(t, err)
+
+	require.Len(t, canonical.Tools, 1)
+	assert.Equal(t, "translate", canonical.Tools[0].Name)
+	assert.Equal(t, "Translate text", canonical.Tools[0].Description)
 }
 
 func TestCanonical_OpenAI_ResponsesAPI_DecodeRequest_WithTextFormat(t *testing.T) {

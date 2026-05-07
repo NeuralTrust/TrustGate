@@ -176,16 +176,20 @@ func decodeResponsesRequest(body []byte) (*CanonicalRequest, error) {
 		}
 	}
 
-	// tools: internally-tagged format
+	// tools: internally-tagged format (type may be omitted — shorthand for "function")
 	for _, raw := range req.Tools {
 		var tool openaiResponsesTool
-		if json.Unmarshal(raw, &tool) == nil && tool.Type == "function" && tool.Name != "" {
-			cr.Tools = append(cr.Tools, CanonicalTool{
-				Name:        tool.Name,
-				Description: tool.Description,
-				Schema:      tool.Parameters,
-			})
+		if json.Unmarshal(raw, &tool) != nil || tool.Name == "" {
+			continue
 		}
+		if tool.Type != "" && tool.Type != "function" {
+			continue
+		}
+		cr.Tools = append(cr.Tools, CanonicalTool{
+			Name:        tool.Name,
+			Description: tool.Description,
+			Schema:      tool.Parameters,
+		})
 	}
 
 	return cr, nil

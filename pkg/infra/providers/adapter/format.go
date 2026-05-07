@@ -1,6 +1,9 @@
 package adapter
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Format represents an AI provider's API format.
 type Format string
@@ -101,6 +104,33 @@ func ResolveTargetFormat(provider string, providerOptions map[string]any) Format
 		}
 	}
 	return f
+}
+
+// ResolveAgentFormat maps gateway provider identifiers to Format for parser /
+// registry selection (plugins, Enterprise). Provider strings must match
+// pkg/infra/providers client constants. When sourceFormat is non-empty it
+// wins (explicit client wire format). providerOptions is forwarded to
+// ResolveTargetFormat for openai/azure (e.g. {"api":"responses"}).
+func ResolveAgentFormat(provider, sourceFormat string, providerOptions map[string]any) (Format, error) {
+	if sourceFormat != "" {
+		return Format(sourceFormat), nil
+	}
+	switch provider {
+	case "openai", "azure":
+		return ResolveTargetFormat(provider, providerOptions), nil
+	case "anthropic":
+		return FormatAnthropic, nil
+	case "google":
+		return FormatGemini, nil
+	case "bedrock":
+		return FormatBedrock, nil
+	case "mistral":
+		return FormatMistral, nil
+	case "vertex":
+		return FormatVertex, nil
+	default:
+		return "", fmt.Errorf("unsupported provider: %s", provider)
+	}
 }
 
 // IsSameWireFormat returns true when two formats are wire-compatible and

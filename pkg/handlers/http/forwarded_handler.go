@@ -657,7 +657,7 @@ func (h *forwardedHandler) forwardRequest(
 func (h *forwardedHandler) getOrCreateLoadBalancer(upstream *domainUpstream.Upstream) (*loadbalancer.LoadBalancer, error) {
 	upstreamID := upstream.ID.String()
 	if h.loadBalancerCache == nil {
-		h.loadBalancerCache = h.cache.CreateTTLMap(cache.LoadBalancerTTLName, common.LoadBalancerCacheTTL)
+		h.loadBalancerCache = h.cache.CreateTTLMap(cache.LoadBalancerTTLName, cache.LoadBalancerCacheTTL)
 	}
 	if lbValue, ok := h.loadBalancerCache.Get(upstreamID); ok {
 		if lb, ok := lbValue.(*loadbalancer.LoadBalancer); ok {
