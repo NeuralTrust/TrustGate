@@ -3,6 +3,8 @@ package data_masking
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"regexp"
 	"testing"
 	"time"
@@ -544,6 +546,460 @@ func TestValidateConfig(t *testing.T) {
 
 	err := plugin.ValidateConfig(config)
 	assert.NoError(t, err)
+}
+
+// TrustGate UI persists custom patterns under custom_rules with mask (not mask_with) and omits type (regex).
+func TestCustomRulesUIMetadataMasksJSONBody(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	config := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"apply_all":             false,
+			"similarity_threshold":  0.8,
+			"max_edit_distance":     1,
+			"predefined_entities":   []map[string]interface{}{},
+			"custom_rules": []map[string]interface{}{
+				{
+					"name":        "test",
+					"pattern":     "EMP-",
+					"mask":        "***",
+					"description": "test",
+				},
+			},
+			"reversible_hashing": map[string]interface{}{
+				"enabled": false,
+				"secret":  "",
+			},
+		},
+	}
+
+	err := plugin.ValidateConfig(config)
+	assert.NoError(t, err)
+
+	body := []byte(`{"input":"quiero in ejemplo de telefono español EMP-1234 "}`)
+	req := &types.RequestContext{Body: body}
+	resp := &types.ResponseContext{}
+
+	_, err = plugin.Execute(context.Background(), config, req, resp, metrics.NewEventContext("", "", nil))
+	assert.NoError(t, err)
+	assert.Contains(t, string(req.Body), "***")
+	assert.NotContains(t, string(req.Body), "EMP-")
+}
+
+func TestDecodeDataMaskingSettings_MergesRulesAndCustomRules(t *testing.T) {
+	cfg, err := decodeDataMaskingSettings(map[string]interface{}{
+		"rules": []map[string]interface{}{
+			{"pattern": "alpha", "type": "keyword", "mask_with": "[A]"},
+		},
+		"custom_rules": []map[string]interface{}{
+			{"pattern": `EMP-\d+`, "mask": "[EMP]"},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, cfg.Rules, 2)
+	assert.Equal(t, "alpha", cfg.Rules[0].Pattern)
+	assert.Equal(t, `EMP-\d+`, cfg.Rules[1].Pattern)
+	assert.Equal(t, "regex", cfg.Rules[1].Type)
+	assert.Equal(t, "[EMP]", cfg.Rules[1].MaskWith)
+}
+
+func TestDecodeDataMaskingSettings_MaskWithPrecedenceOverMask(t *testing.T) {
+	cfg, err := decodeDataMaskingSettings(map[string]interface{}{
+		"custom_rules": []map[string]interface{}{
+			{
+				"pattern":   "token",
+				"mask_with": "[OFFICIAL]",
+				"mask":      "[IGNORE]",
+			},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, cfg.Rules, 1)
+	assert.Equal(t, "[OFFICIAL]", cfg.Rules[0].MaskWith)
+}
+
+func TestDecodeDataMaskingSettings_CustomRuleExplicitKeyword(t *testing.T) {
+	cfg, err := decodeDataMaskingSettings(map[string]interface{}{
+		"custom_rules": []map[string]interface{}{
+			{"pattern": "codigo-secreto", "type": "keyword", "mask": "[REDACTED]"},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, cfg.Rules, 1)
+	assert.Equal(t, "keyword", cfg.Rules[0].Type)
+
+	plugin := &DataMaskingPlugin{}
+	rules := plugin.buildRules(cfg)
+	masked, events := plugin.maskPlainTextWithRules(
+		"El codigo-secreto es importante",
+		cfg.SimilarityThreshold,
+		cfg,
+		rules.keywords,
+		rules.regexRules,
+	)
+	assert.Contains(t, masked, "[REDACTED]")
+	assert.NotContains(t, masked, "codigo-secreto")
+	assert.NotEmpty(t, events)
+}
+
+func TestDecodeDataMaskingSettings_CustomRuleKeywordViaExecute(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	cfg := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"apply_all":           false,
+			"predefined_entities": []map[string]interface{}{},
+			"custom_rules": []map[string]interface{}{
+				{"pattern": "INTERNAL-ID", "type": "keyword", "mask": "##"},
+			},
+			"reversible_hashing": map[string]interface{}{"enabled": false},
+		},
+	}
+
+	req := &types.RequestContext{Body: []byte(`INTERNAL-ID-123 visible`)}
+	resp := &types.ResponseContext{}
+
+	_, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+	assert.NoError(t, err)
+	assert.Contains(t, string(req.Body), "##")
+	assert.NotContains(t, string(req.Body), "INTERNAL-ID")
+}
+
+func TestDecodeDataMaskingSettings_OmitsMaskUsesDefaultMaskChar(t *testing.T) {
+	cfg, err := decodeDataMaskingSettings(map[string]interface{}{
+		"custom_rules": []map[string]interface{}{
+			{"pattern": `REF-[0-9]+`},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, cfg.Rules, 1)
+	assert.Equal(t, DefaultMaskChar, cfg.Rules[0].MaskWith)
+
+	plugin := &DataMaskingPlugin{}
+	rules := plugin.buildRules(cfg)
+	masked, _ := plugin.maskPlainTextWithRules(
+		"Pedido REF-42 OK",
+		cfg.SimilarityThreshold,
+		cfg,
+		rules.keywords,
+		rules.regexRules,
+	)
+	assert.Contains(t, masked, "Pedido ")
+	assert.NotContains(t, masked, "REF-42")
+}
+
+func TestDecodeDataMaskingSettings_CustomRegexFullMatchEMP(t *testing.T) {
+	cfg, err := decodeDataMaskingSettings(map[string]interface{}{
+		"custom_rules": []map[string]interface{}{
+			{"pattern": `EMP-[A-Z0-9]+`, "mask": "***"},
+		},
+	})
+	assert.NoError(t, err)
+
+	plugin := &DataMaskingPlugin{}
+	rules := plugin.buildRules(cfg)
+	masked, events := plugin.maskPlainTextWithRules(
+		"Referencia EMP-1234Z fin",
+		cfg.SimilarityThreshold,
+		cfg,
+		rules.keywords,
+		rules.regexRules,
+	)
+	assert.Equal(t, "Referencia *** fin", masked)
+	assert.Len(t, events, 1)
+	assert.Equal(t, "EMP-1234Z", events[0].OriginalValue)
+}
+
+func TestDecodeDataMaskingSettings_AppliesSimilarityAndEditDefaults(t *testing.T) {
+	cfg, err := decodeDataMaskingSettings(map[string]interface{}{
+		"custom_rules": []map[string]interface{}{
+			{"pattern": "x", "mask": "y"},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, SimilarityThreshold, cfg.SimilarityThreshold)
+	assert.Equal(t, 1, cfg.MaxEditDistance)
+}
+
+func TestValidateConfig_CustomRulesInvalidRegexRejected(t *testing.T) {
+	plugin := &DataMaskingPlugin{}
+	cfg := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"apply_all":           false,
+			"predefined_entities": []map[string]interface{}{},
+			"custom_rules": []map[string]interface{}{
+				{"pattern": "(unclosed", "mask": "x"},
+			},
+		},
+	}
+	err := plugin.ValidateConfig(cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid regex")
+}
+
+func TestValidateConfig_CustomRulesInvalidTypeRejected(t *testing.T) {
+	plugin := &DataMaskingPlugin{}
+	cfg := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"apply_all":           false,
+			"predefined_entities": []map[string]interface{}{},
+			"custom_rules": []map[string]interface{}{
+				{"pattern": "a", "type": "gibberish", "mask": "b"},
+			},
+		},
+	}
+	err := plugin.ValidateConfig(cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid rule type")
+}
+
+func TestExecute_CustomRulesPlainTextBody(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	cfg := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"apply_all":           false,
+			"predefined_entities": []map[string]interface{}{},
+			"custom_rules": []map[string]interface{}{
+				{"pattern": `NIE-[A-Z]\d{7}[A-Z]`, "mask": "[NIE]"},
+			},
+			"reversible_hashing": map[string]interface{}{"enabled": false},
+		},
+	}
+
+	req := &types.RequestContext{Body: []byte(`Documento NIE-Y1234567Z tramite`)}
+	resp := &types.ResponseContext{}
+
+	_, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+	assert.NoError(t, err)
+	out := string(req.Body)
+	assert.Contains(t, out, "[NIE]")
+	assert.NotContains(t, out, "NIE-Y1234567Z")
+}
+
+func TestValidateConfig_InvalidMode(t *testing.T) {
+	plugin := &DataMaskingPlugin{}
+	cfg := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"mode":               "obliterate",
+			"apply_all":          true,
+			"reversible_hashing": map[string]interface{}{"enabled": false},
+		},
+	}
+	err := plugin.ValidateConfig(cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid mode")
+}
+
+func TestExecute_EnforceModeReturns403AndPreservesBody(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	original := `{"msg":"write to foo@bar.com please"}`
+	req := &types.RequestContext{Body: []byte(original)}
+	resp := &types.ResponseContext{}
+
+	cfg := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"mode":               ModeEnforce,
+			"apply_all":          true,
+			"reversible_hashing": map[string]interface{}{"enabled": false},
+		},
+	}
+
+	_, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+	var pe *pluginTypes.PluginError
+	assert.True(t, errors.As(err, &pe))
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+	assert.JSONEq(t, original, string(req.Body))
+}
+
+func TestExecute_EnforceModeAllowsCleanPayload(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	original := `{"msg":"hello world"}`
+	req := &types.RequestContext{Body: []byte(original)}
+	resp := &types.ResponseContext{}
+
+	cfg := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"mode":               ModeEnforce,
+			"apply_all":          true,
+			"reversible_hashing": map[string]interface{}{"enabled": false},
+		},
+	}
+
+	_, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+	assert.NoError(t, err)
+	assert.JSONEq(t, original, string(req.Body))
+}
+
+func TestDecodeDataMaskingSettings_NormalizesMode(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "empty defaults mask", raw: "", want: ModeMask},
+		{name: "whitespace defaults mask", raw: "   ", want: ModeMask},
+		{name: "uppercase enforce", raw: "ENFORCE", want: ModeEnforce},
+		{name: "mixed case mask", raw: "MaSk", want: ModeMask},
+		{name: "trim enforce", raw: "  enforce  ", want: ModeEnforce},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := decodeDataMaskingSettings(map[string]interface{}{
+				"mode":               tt.raw,
+				"apply_all":          true,
+				"reversible_hashing": map[string]interface{}{"enabled": false},
+			})
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, cfg.Mode)
+		})
+	}
+}
+
+func TestValidateConfig_ModeAcceptsCaseAndWhitespace(t *testing.T) {
+	plugin := &DataMaskingPlugin{}
+	base := map[string]interface{}{
+		"apply_all":          true,
+		"reversible_hashing": map[string]interface{}{"enabled": false},
+	}
+	for _, mode := range []string{"  ENFORCE  ", "mask", "MASK"} {
+		settings := map[string]interface{}{
+			"mode":               mode,
+			"apply_all":          base["apply_all"],
+			"reversible_hashing": base["reversible_hashing"],
+		}
+		err := plugin.ValidateConfig(pluginTypes.PluginConfig{Settings: settings})
+		assert.NoError(t, err, "mode %q should validate", mode)
+	}
+}
+
+func TestExecute_EnforceMode_CustomRulesMatchReturns403(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	original := `{"ref":"SECRET-123"}`
+	req := &types.RequestContext{Body: []byte(original)}
+	resp := &types.ResponseContext{}
+
+	cfg := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"mode":                ModeEnforce,
+			"apply_all":           false,
+			"predefined_entities": []map[string]interface{}{},
+			"custom_rules": []map[string]interface{}{
+				{"pattern": `SECRET-\d+`, "mask": "[BLOCKED]"},
+			},
+			"reversible_hashing": map[string]interface{}{"enabled": false},
+		},
+	}
+
+	_, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+	var pe *pluginTypes.PluginError
+	assert.True(t, errors.As(err, &pe))
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+	assert.JSONEq(t, original, string(req.Body))
+}
+
+func TestExecute_MaskModeExplicit_MasksEmail(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	original := `{"msg":"write to foo@bar.com please"}`
+	req := &types.RequestContext{Body: []byte(original)}
+	resp := &types.ResponseContext{}
+
+	cfg := pluginTypes.PluginConfig{
+		Settings: map[string]interface{}{
+			"mode":               ModeMask,
+			"apply_all":          true,
+			"reversible_hashing": map[string]interface{}{"enabled": false},
+		},
+	}
+
+	_, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+	assert.NoError(t, err)
+	assert.NotContains(t, string(req.Body), "foo@bar.com")
+	assert.Contains(t, string(req.Body), "msg")
+}
+
+func TestExecute_EnforceMode_MappingFieldPreservesBody(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	cfg := pluginTypes.PluginConfig{
+		Stage: pluginTypes.PreRequest,
+		Settings: map[string]interface{}{
+			"mode":          ModeEnforce,
+			"mapping_field": "data.text",
+			"predefined_entities": []map[string]interface{}{
+				{"entity": "email", "enabled": true},
+			},
+			"reversible_hashing": map[string]interface{}{"enabled": false},
+		},
+	}
+
+	original := `{"data":{"text":"Contact test@example.com for info","id":123},"meta":"keep"}`
+	req := &types.RequestContext{Body: []byte(original)}
+	resp := &types.ResponseContext{}
+
+	_, err := plugin.Execute(context.Background(), cfg, req, resp, metrics.NewEventContext("", "", nil))
+	var pe *pluginTypes.PluginError
+	assert.True(t, errors.As(err, &pe))
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+	assert.JSONEq(t, original, string(req.Body))
+}
+
+func TestExecute_EnforceMode_DropsReversibleHashCacheOnBlock(t *testing.T) {
+	logger := logrus.New()
+	testCache := createTestCache(t)
+	plugin, ok := NewDataMaskingPlugin(logger, testCache).(*DataMaskingPlugin)
+	assert.True(t, ok)
+
+	traceID := "trace-enforce-reversible"
+	ctx := context.WithValue(context.Background(), common.TraceIdKey, traceID)
+
+	req := &types.RequestContext{Body: []byte(`{"note":"reach me at foo@bar.com"}`)}
+	resp := &types.ResponseContext{}
+
+	cfg := pluginTypes.PluginConfig{
+		Stage: pluginTypes.PreRequest,
+		Settings: map[string]interface{}{
+			"mode":               ModeEnforce,
+			"apply_all":          true,
+			"reversible_hashing": map[string]interface{}{"enabled": true, "secret": "unit-test-hmac-secret-key"},
+		},
+	}
+
+	_, err := plugin.Execute(ctx, cfg, req, resp, metrics.NewEventContext("", "", nil))
+	var pe *pluginTypes.PluginError
+	assert.True(t, errors.As(err, &pe))
+	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
+
+	_, exists := plugin.memoryCache.Get(traceID)
+	assert.False(t, exists, "reversible hash entry must be removed when enforce blocks")
 }
 
 func TestJSONMasking(t *testing.T) {

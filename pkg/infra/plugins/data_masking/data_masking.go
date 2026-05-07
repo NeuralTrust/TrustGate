@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -28,6 +29,9 @@ const (
 	PluginName          = "data_masking"
 	DefaultMaskChar     = "*"
 	SimilarityThreshold = 0.8
+
+	ModeMask    = "mask"
+	ModeEnforce = "enforce"
 )
 
 type hashToOriginalMap map[string]string
@@ -51,6 +55,7 @@ type Config struct {
 	MaxEditDistance     int                     `mapstructure:"max_edit_distance"`
 	NormalizeInput      bool                    `mapstructure:"normalize_input"`
 	MappingField        string                  `mapstructure:"mapping_field"`
+	Mode                string                  `mapstructure:"mode"`
 }
 
 type EntityConfig struct {
@@ -65,6 +70,79 @@ type Rule struct {
 	Type        string `mapstructure:"type"` // "keyword" or "regex"
 	MaskWith    string `mapstructure:"mask_with"`
 	PreserveLen bool   `mapstructure:"preserve_len"`
+}
+
+// customRuleWire matches settings emitted by the TrustGate UI (`custom_rules` + `mask`).
+type customRuleWire struct {
+	Pattern     string `mapstructure:"pattern"`
+	Type        string `mapstructure:"type"`
+	MaskWith    string `mapstructure:"mask_with"`
+	Mask        string `mapstructure:"mask"`
+	PreserveLen bool   `mapstructure:"preserve_len"`
+}
+
+func (w customRuleWire) toRule() Rule {
+	mask := w.MaskWith
+	if mask == "" {
+		mask = w.Mask
+	}
+	if mask == "" {
+		mask = DefaultMaskChar
+	}
+	ruleType := w.Type
+	if ruleType == "" {
+		ruleType = "regex"
+	}
+	return Rule{
+		Pattern:     w.Pattern,
+		Type:        ruleType,
+		MaskWith:    mask,
+		PreserveLen: w.PreserveLen,
+	}
+}
+
+// decodeDataMaskingSettings decodes plugin settings and merges UI `custom_rules` into `rules`.
+func decodeDataMaskingSettings(settings interface{}) (Config, error) {
+	var cfg Config
+	if err := mapstructure.Decode(settings, &cfg); err != nil {
+		return Config{}, err
+	}
+
+	var extra struct {
+		CustomRules []customRuleWire `mapstructure:"custom_rules"`
+	}
+	if err := mapstructure.Decode(settings, &extra); err != nil {
+		return Config{}, err
+	}
+	for _, w := range extra.CustomRules {
+		cfg.Rules = append(cfg.Rules, w.toRule())
+	}
+
+	if cfg.SimilarityThreshold == 0 {
+		cfg.SimilarityThreshold = SimilarityThreshold
+	}
+	if cfg.MaxEditDistance == 0 {
+		cfg.MaxEditDistance = 1
+	}
+	cfg.Mode = normalizeMode(cfg.Mode)
+	return cfg, nil
+}
+
+func normalizeMode(mode string) string {
+	m := strings.TrimSpace(strings.ToLower(mode))
+	if m == "" {
+		return ModeMask
+	}
+	return m
+}
+
+func isValidMode(mode string) bool {
+	switch mode {
+	case ModeMask, ModeEnforce:
+		return true
+	default:
+		return false
+	}
 }
 
 func NewDataMaskingPlugin(logger *logrus.Logger, c cache.Client) pluginiface.Plugin {
@@ -92,8 +170,8 @@ func (p *DataMaskingPlugin) AllowedStages() []pluginTypes.Stage {
 }
 
 func (p *DataMaskingPlugin) ValidateConfig(config pluginTypes.PluginConfig) error {
-	var cfg Config
-	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
+	cfg, err := decodeDataMaskingSettings(config.Settings)
+	if err != nil {
 		return fmt.Errorf("failed to decode config: %v", err)
 	}
 
@@ -127,6 +205,10 @@ func (p *DataMaskingPlugin) ValidateConfig(config pluginTypes.PluginConfig) erro
 		return fmt.Errorf("reversible_hashing.secret must be set when reversible_hashing is enabled")
 	}
 
+	if !isValidMode(cfg.Mode) {
+		return fmt.Errorf("invalid mode %q: must be %q or %q", cfg.Mode, ModeMask, ModeEnforce)
+	}
+
 	return nil
 }
 
@@ -145,16 +227,9 @@ func (p *DataMaskingPlugin) Execute(
 	resp *types.ResponseContext,
 	evtCtx *metrics.EventContext,
 ) (*pluginTypes.PluginResponse, error) {
-	var config Config
-	if err := mapstructure.Decode(cfg.Settings, &config); err != nil {
+	config, err := decodeDataMaskingSettings(cfg.Settings)
+	if err != nil {
 		return nil, fmt.Errorf("failed to decode config: %v", err)
-	}
-
-	if config.SimilarityThreshold == 0 {
-		config.SimilarityThreshold = SimilarityThreshold
-	}
-	if config.MaxEditDistance == 0 {
-		config.MaxEditDistance = 1
 	}
 
 	if p.memoryCache == nil {
@@ -170,7 +245,16 @@ func (p *DataMaskingPlugin) Execute(
 
 	p.initHashMapIfNeeded(ec)
 
-	var err error
+	var backupReq, backupResp []byte
+	reqBacked := req != nil && req.Body != nil
+	respBacked := resp != nil && resp.Body != nil
+	if reqBacked {
+		backupReq = append([]byte(nil), req.Body...)
+	}
+	if respBacked {
+		backupResp = append([]byte(nil), resp.Body...)
+	}
+
 	switch {
 	case req.Provider != "":
 		err = p.executeProvider(ec, req, resp)
@@ -183,6 +267,27 @@ func (p *DataMaskingPlugin) Execute(
 		return nil, err
 	}
 
+	if config.Mode == ModeEnforce && len(ec.events) > 0 {
+		if reqBacked {
+			req.Body = backupReq
+		}
+		if respBacked {
+			resp.Body = backupResp
+		}
+		p.dropReversibleHashMap(ec)
+
+		evtCtx.SetDecision(pluginTypes.DecisionBlock)
+		evtCtx.SetExtras(DataMaskingData{
+			Masked: false,
+			Events: ec.events,
+		})
+		return nil, &pluginTypes.PluginError{
+			StatusCode: http.StatusForbidden,
+			Message:    "request blocked: sensitive data detected",
+			Err:        fmt.Errorf("data masking enforce mode: %d detection event(s)", len(ec.events)),
+		}
+	}
+
 	if len(ec.events) > 0 {
 		evtCtx.SetDecision(pluginTypes.DecisionMasked)
 	}
@@ -192,7 +297,7 @@ func (p *DataMaskingPlugin) Execute(
 	})
 	return &pluginTypes.PluginResponse{
 		StatusCode: 200,
-		Message:    "Content masked successfully",
+		Message:    "content masked successfully",
 	}, nil
 }
 
@@ -206,6 +311,17 @@ func (p *DataMaskingPlugin) initHashMapIfNeeded(ec *executionContext) {
 			p.memoryCache.Set(traceId, make(hashToOriginalMap))
 		}
 	}
+}
+
+func (p *DataMaskingPlugin) dropReversibleHashMap(ec *executionContext) {
+	if !ec.config.ReversibleHashing.Enabled || ec.cfg.Stage != pluginTypes.PreRequest || p.memoryCache == nil {
+		return
+	}
+	traceID, ok := ec.ctx.Value(common.TraceIdKey).(string)
+	if !ok {
+		return
+	}
+	p.memoryCache.Delete(traceID)
 }
 
 // maskText is the single entry point for masking a plain-text string using the
