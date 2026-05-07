@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.24.0\n\nCommits since last release:\n- cc5f7fc Merge pull request #354 from NeuralTrust/fix/cache-keys-refactor\n- afe638a fixes\n- aaef238 fixes\n- 4a16ac3 fixes\n"
+      "content": "Current version: 1.24.1\n\nCommits since last release:\n- 6df5204 Merge pull request #355 from NeuralTrust/feat/enforce-data-masking\n- d826f3d feat: enforce data masking\n"
     }
   ],
   "max_tokens": 200,
