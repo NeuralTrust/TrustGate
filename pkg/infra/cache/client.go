@@ -16,13 +16,14 @@ import (
 )
 
 const (
-	GatewayKeyPattern   = "gateway:%s"
-	RulesKeyPattern     = "rules:%s"
-	UpstreamsKeyPattern = "gateway:%s:upstreams"
-	UpstreamKeyPattern  = "gateway:%s:upstream:%s"
-	ServicesKeyPattern  = "gateway:%s:services"
-	ServiceKeyPattern   = "gateway:%s:service:%s"
-	ApiKeyPattern       = "apikey:%s"
+	GatewayKeyPattern         = "gateway:%s"
+	RulesKeyPattern           = "rules:%s"
+	UpstreamsKeyPattern       = "gateway:%s:upstreams"
+	UpstreamKeyPattern        = "gateway:%s:upstream:%s"
+	ServicesKeyPattern        = "gateway:%s:services"
+	ServiceKeyPattern         = "gateway:%s:service:%s"
+	ApiKeyPattern             = "apikey:%s"
+	UpstreamOauthTokenPattern = "upstream:%s:oauth" // #nosec G101 -- Redis key template, not credentials
 
 	GatewayTTLName      = "gateway"
 	ApiKeyTTLName       = "api_key"
@@ -32,7 +33,18 @@ const (
 	UpstreamTTLName     = "upstream"
 	LoadBalancerTTLName = "lb"
 
-	DataMaskingTTLName = "data_masking"
+	DataMaskingTTLName        = "data_masking"
+	UpstreamOauthTokenTTLName = "upstream_oauth_token" // #nosec G101 -- TTL registry name, not credentials
+)
+
+const (
+	ServiceCacheTTL      = 5 * time.Minute
+	ApiKeyCacheTTL       = 5 * time.Minute
+	UpstreamCacheTTL     = 5 * time.Minute
+	GatewayCacheTTL      = 1 * time.Hour
+	RulesCacheTTL        = 5 * time.Minute
+	PluginCacheTTL       = 30 * time.Minute
+	LoadBalancerCacheTTL = 5 * time.Minute
 )
 
 //go:generate mockery --name=Client --dir=. --output=./mocks --filename=client_mock.go --case=underscore --with-expecter
