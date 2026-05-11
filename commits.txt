@@ -1,2 +1,3 @@
-- 6df5204 Merge pull request #355 from NeuralTrust/feat/enforce-data-masking
-- d826f3d feat: enforce data masking
+- 99f9d28 Merge pull request #356 from NeuralTrust/feat/oauth-upstream-cache-token
+- 56fff05 fix lint
+- 6752eba feat: oauth upstrea cache token
