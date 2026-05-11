@@ -20,7 +20,7 @@ type TokenClient interface {
 }
 
 const (
-	oauthRedisTokenPrefix = "oauth:token:"
+	oauthRedisTokenPrefix = "oauth:token:" // #nosec G101 -- Redis key prefix template, not credentials
 	// oauthTokenReuseSkew drops entries slightly before upstream expiry so we do not reuse almost-expired tokens.
 	oauthTokenReuseSkew = 45 * time.Second
 )
@@ -136,7 +136,7 @@ func (c *tokenClient) GetToken(ctx context.Context, dto TokenRequestDTO) (string
 		persistTTL := oauthCacheTTLFromExpiry(res.expiresAt)
 		if persistTTL > 0 {
 			entry := cachedOAuthToken{AccessToken: res.token, ExpiresAt: res.expiresAt}
-			if payload, marshalErr := json.Marshal(entry); marshalErr == nil {
+			if payload, marshalErr := json.Marshal(entry); marshalErr == nil { // #nosec G117 -- Redis OAuth cache blob, not logged
 				_ = c.client.Set(ctx, key, string(payload), persistTTL)
 			}
 		}
