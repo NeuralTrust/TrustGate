@@ -158,7 +158,7 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	providers.SetDefaultHTTPTimeout(di.Cfg.Upstream.ProviderTimeout)
 	providerFactory := providersFactory.NewProviderLocator()
 
-	oauthTokenClient := oauth.NewTokenClient()
+	oauthTokenClient := oauth.NewTokenClient(cacheInstance)
 
 	var cryptoService infraCrypto.EncryptionService
 	if di.Cfg.Server.SecretKey != "" {
