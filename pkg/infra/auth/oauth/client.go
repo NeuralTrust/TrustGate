@@ -10,19 +10,31 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"golang.org/x/sync/singleflight"
 )
 
 type TokenClient interface {
 	GetToken(ctx context.Context, dto TokenRequestDTO) (accessToken string, expiresAt time.Time, err error)
 }
 
+const (
+	oauthRedisTokenPrefix = "oauth:token:" // #nosec G101 -- Redis key prefix template, not credentials
+	// oauthTokenReuseSkew drops entries slightly before upstream expiry so we do not reuse almost-expired tokens.
+	oauthTokenReuseSkew = 45 * time.Second
+)
+
 type tokenClient struct {
-	http *http.Client
+	http        *http.Client
+	client      cache.Client
+	tokenFlight singleflight.Group
 }
 
-func NewTokenClient(opts ...TokenClientOption) TokenClient {
+func NewTokenClient(client cache.Client, opts ...TokenClientOption) TokenClient {
 	tc := &tokenClient{
-		http: &http.Client{Timeout: 30 * time.Second},
+		http:   &http.Client{Timeout: 30 * time.Second},
+		client: client,
 	}
 	for _, opt := range opts {
 		opt(tc)
@@ -68,14 +80,106 @@ type tokenResponse struct {
 	ExpiresIn   int64  `json:"expires_in"`
 }
 
+type cachedOAuthToken struct {
+	AccessToken string    `json:"access_token"` // #nosec G117 -- cached bearer token
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+type tokenFlightResult struct {
+	token     string
+	expiresAt time.Time
+}
+
 func (c *tokenClient) GetToken(ctx context.Context, dto TokenRequestDTO) (string, time.Time, error) {
 	if strings.TrimSpace(dto.TokenURL) == "" {
 		return "", time.Time{}, fmt.Errorf("token url is required")
 	}
-	tokenURL := strings.TrimSpace(strings.TrimPrefix(dto.TokenURL, "@"))
 	if dto.GrantType == "" {
 		return "", time.Time{}, fmt.Errorf("grant_type is required")
 	}
+
+	fp := oauthTokenCacheKeyFingerprint(dto)
+	cacheable := c.oauthCacheEnabled(dto) && fp != ""
+
+	if cacheable {
+		key := oauthRedisTokenPrefix + fp
+		if raw, err := c.client.Get(ctx, key); err == nil && raw != "" {
+			var entry cachedOAuthToken
+			if jsonErr := json.Unmarshal([]byte(raw), &entry); jsonErr == nil && isOAuthCachedTokenUsable(entry) {
+				return entry.AccessToken, entry.ExpiresAt, nil
+			}
+			_ = c.client.Delete(ctx, key)
+		}
+	}
+
+	if !cacheable {
+		return c.exchangeOAuthToken(ctx, dto)
+	}
+
+	key := oauthRedisTokenPrefix + fp
+
+	fr, err, _ := c.tokenFlight.Do(key, func() (any, error) {
+		if raw, getErr := c.client.Get(ctx, key); getErr == nil && raw != "" {
+			var warm cachedOAuthToken
+			if jsonErr := json.Unmarshal([]byte(raw), &warm); jsonErr == nil && isOAuthCachedTokenUsable(warm) {
+				return tokenFlightResult{token: warm.AccessToken, expiresAt: warm.ExpiresAt}, nil
+			}
+		}
+
+		token, expiresAt, exErr := c.exchangeOAuthToken(ctx, dto)
+		if exErr != nil {
+			return nil, exErr
+		}
+		res := tokenFlightResult{token: token, expiresAt: expiresAt}
+
+		// Persist exactly once inside the flight; waiters must not rewrite Redis (would spam Set).
+		persistTTL := oauthCacheTTLFromExpiry(res.expiresAt)
+		if persistTTL > 0 {
+			entry := cachedOAuthToken{AccessToken: res.token, ExpiresAt: res.expiresAt}
+			if payload, marshalErr := json.Marshal(entry); marshalErr == nil { // #nosec G117 -- Redis OAuth cache blob, not logged
+				_ = c.client.Set(ctx, key, string(payload), persistTTL)
+			}
+		}
+
+		return res, nil
+	})
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	res := fr.(tokenFlightResult)
+	return res.token, res.expiresAt, nil
+}
+
+func (c *tokenClient) oauthCacheEnabled(dto TokenRequestDTO) bool {
+	return c.client != nil && shouldCacheOAuthClientCredentialsGrant(dto)
+}
+
+func shouldCacheOAuthClientCredentialsGrant(dto TokenRequestDTO) bool {
+	return dto.GrantType == GrantTypeClientCredentials
+}
+
+func isOAuthCachedTokenUsable(entry cachedOAuthToken) bool {
+	if entry.AccessToken == "" || entry.ExpiresAt.IsZero() {
+		return false
+	}
+	return time.Until(entry.ExpiresAt) > oauthTokenReuseSkew
+}
+
+// oauthCacheTTLFromExpiry limits Redis retention to cache.UpstreamOauthCacheTTL even when the IdP
+// returns a long expires_in so keys align with the upstream OAuth cache policy.
+func oauthCacheTTLFromExpiry(expiresAt time.Time) time.Duration {
+	window := time.Until(expiresAt) - oauthTokenReuseSkew
+	if window <= 0 {
+		return 0
+	}
+	if window > cache.UpstreamOauthCacheTTL {
+		return cache.UpstreamOauthCacheTTL
+	}
+	return window
+}
+
+func (c *tokenClient) exchangeOAuthToken(ctx context.Context, dto TokenRequestDTO) (string, time.Time, error) {
+	tokenURL := normalizeTokenURLForCache(dto.TokenURL)
 
 	form, err := buildForm(dto)
 	if err != nil {
@@ -119,7 +223,12 @@ func (c *tokenClient) GetToken(ctx context.Context, dto TokenRequestDTO) (string
 		return "", time.Time{}, fmt.Errorf("empty access_token in response")
 	}
 
+	// Tokens without expiry are still returned but oauthCacheTTLFromExpiry rejects caching (skew).
 	expiresAt := time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
+	if tr.ExpiresIn <= 0 {
+		expiresAt = time.Time{}
+	}
+
 	return tr.AccessToken, expiresAt, nil
 }
 

@@ -3,17 +3,23 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewTokenClient_DefaultHTTPClient(t *testing.T) {
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 
 	assert.NotNil(t, client)
 	tc, ok := client.(*tokenClient)
@@ -25,7 +31,7 @@ func TestNewTokenClient_DefaultHTTPClient(t *testing.T) {
 func TestNewTokenClient_WithHTTPClient(t *testing.T) {
 	customClient := &http.Client{Timeout: 30 * time.Second}
 
-	client := NewTokenClient(WithHTTPClient(customClient))
+	client := NewTokenClient(nil, WithHTTPClient(customClient))
 
 	tc, ok := client.(*tokenClient)
 	require.True(t, ok)
@@ -34,7 +40,7 @@ func TestNewTokenClient_WithHTTPClient(t *testing.T) {
 }
 
 func TestNewTokenClient_WithHTTPClient_Nil(t *testing.T) {
-	client := NewTokenClient(WithHTTPClient(nil))
+	client := NewTokenClient(nil, WithHTTPClient(nil))
 
 	tc, ok := client.(*tokenClient)
 	require.True(t, ok)
@@ -43,7 +49,7 @@ func TestNewTokenClient_WithHTTPClient_Nil(t *testing.T) {
 }
 
 func TestNewTokenClient_WithTimeout(t *testing.T) {
-	client := NewTokenClient(WithTimeout(5 * time.Second))
+	client := NewTokenClient(nil, WithTimeout(5*time.Second))
 
 	tc, ok := client.(*tokenClient)
 	require.True(t, ok)
@@ -64,7 +70,7 @@ func TestGetToken_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 	token, expiresAt, err := client.GetToken(context.Background(), TokenRequestDTO{
 		TokenURL:     server.URL,
 		GrantType:    GrantTypeClientCredentials,
@@ -78,7 +84,7 @@ func TestGetToken_Success(t *testing.T) {
 }
 
 func TestGetToken_EmptyTokenURL(t *testing.T) {
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 
 	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
 		GrantType: GrantTypeClientCredentials,
@@ -89,7 +95,7 @@ func TestGetToken_EmptyTokenURL(t *testing.T) {
 }
 
 func TestGetToken_EmptyGrantType(t *testing.T) {
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 
 	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
 		TokenURL: "http://example.com/token",
@@ -106,7 +112,7 @@ func TestGetToken_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
 		TokenURL:     server.URL,
 		GrantType:    GrantTypeClientCredentials,
@@ -128,7 +134,7 @@ func TestGetToken_EmptyAccessToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
 		TokenURL:  server.URL,
 		GrantType: GrantTypeClientCredentials,
@@ -151,7 +157,7 @@ func TestGetToken_WithBasicAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 	token, _, err := client.GetToken(context.Background(), TokenRequestDTO{
 		TokenURL:     server.URL,
 		GrantType:    GrantTypeClientCredentials,
@@ -181,7 +187,7 @@ func TestGetToken_AuthorizationCodeFlow(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 	token, _, err := client.GetToken(context.Background(), TokenRequestDTO{
 		TokenURL:    server.URL,
 		GrantType:   GrantTypeAuthorizationCode,
@@ -194,7 +200,7 @@ func TestGetToken_AuthorizationCodeFlow(t *testing.T) {
 }
 
 func TestGetToken_AuthorizationCodeFlow_MissingCode(t *testing.T) {
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 
 	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
 		TokenURL:    "http://example.com/token",
@@ -223,7 +229,7 @@ func TestGetToken_PasswordFlow(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 	token, _, err := client.GetToken(context.Background(), TokenRequestDTO{
 		TokenURL:  server.URL,
 		GrantType: GrantTypePassword,
@@ -236,7 +242,7 @@ func TestGetToken_PasswordFlow(t *testing.T) {
 }
 
 func TestGetToken_PasswordFlow_MissingCredentials(t *testing.T) {
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 
 	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
 		TokenURL:  "http://example.com/token",
@@ -249,7 +255,7 @@ func TestGetToken_PasswordFlow_MissingCredentials(t *testing.T) {
 }
 
 func TestGetToken_UnsupportedGrantType(t *testing.T) {
-	client := NewTokenClient()
+	client := NewTokenClient(nil)
 
 	_, _, err := client.GetToken(context.Background(), TokenRequestDTO{
 		TokenURL:  "http://example.com/token",
@@ -258,4 +264,78 @@ func TestGetToken_UnsupportedGrantType(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported grant_type")
+}
+
+func oauthTestRedis(t *testing.T) cache.Client {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	log := logrus.New()
+	log.SetOutput(io.Discard)
+	host, portStr, err := net.SplitHostPort(mr.Addr())
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+	c, err := cache.NewClient(cache.Config{Host: host, Port: port}, log)
+	require.NoError(t, err)
+	return c
+}
+
+func TestGetToken_ClientCredentialsSecondCallUsesCache(t *testing.T) {
+	serverCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "cached-token",
+			"token_type":   "Bearer",
+			"expires_in":   3600,
+		})
+	}))
+	defer server.Close()
+
+	redisCache := oauthTestRedis(t)
+	client := NewTokenClient(redisCache)
+	dto := TokenRequestDTO{
+		TokenURL:     server.URL,
+		GrantType:    GrantTypeClientCredentials,
+		ClientID:     "cid",
+		ClientSecret: "sec",
+	}
+
+	_, _, err := client.GetToken(context.Background(), dto)
+	require.NoError(t, err)
+	_, _, err = client.GetToken(context.Background(), dto)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, serverCalls)
+}
+
+func TestGetToken_PasswordGrantDoesNotUseCache(t *testing.T) {
+	serverCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverCalls++
+		require.NoError(t, r.ParseForm())
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "pw",
+			"expires_in":   3600,
+		})
+	}))
+	defer server.Close()
+
+	redisCache := oauthTestRedis(t)
+	client := NewTokenClient(redisCache)
+	dto := TokenRequestDTO{
+		TokenURL:  server.URL,
+		GrantType: GrantTypePassword,
+		Username:  "u",
+		Password:  "p",
+	}
+
+	_, _, err := client.GetToken(context.Background(), dto)
+	require.NoError(t, err)
+	_, _, err = client.GetToken(context.Background(), dto)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, serverCalls)
 }

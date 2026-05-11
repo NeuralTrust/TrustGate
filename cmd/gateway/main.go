@@ -167,7 +167,7 @@ func initializeMemoryCache() func(cacheInstance cache.Client) {
 		_ = cacheInstance.CreateTTLMap(cache.ApiKeyTTLName, cache.ApiKeyCacheTTL)
 		_ = cacheInstance.CreateTTLMap(cache.DataMaskingTTLName, cache.PluginCacheTTL)
 		_ = cacheInstance.CreateTTLMap(cache.LoadBalancerTTLName, cache.LoadBalancerCacheTTL)
-		_ = cacheInstance.CreateTTLMap(cache.UpstreamOauthTokenTTLName, cache.LoadBalancerCacheTTL)
+		_ = cacheInstance.CreateTTLMap(cache.UpstreamOauthTokenTTLName, cache.UpstreamOauthCacheTTL)
 	}
 }
 
