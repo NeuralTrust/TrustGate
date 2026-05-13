@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -358,6 +359,110 @@ func TestManager_ExecuteChain(t *testing.T) {
 	})
 }
 
+func TestManager_ExecuteChain_ContentTypeFiltering(t *testing.T) {
+	t.Run("skips json only plugin for multipart request", func(t *testing.T) {
+		m := newManagerForTesting(newTestLogger())
+		var executed int32
+		plugin := &mockPlugin{
+			name:         "json-plugin",
+			contentTypes: []string{pluginTypes.ContentTypeApplicationJSON},
+			executeCount: &executed,
+		}
+
+		_ = m.RegisterPlugin(plugin)
+
+		req := &types.RequestContext{
+			Headers: map[string][]string{
+				"Content-Type": {"multipart/form-data; boundary=abc123"},
+			},
+		}
+		resp := &types.ResponseContext{}
+
+		_, err := m.ExecuteChain(context.Background(), []pluginTypes.PluginConfig{
+			{Name: "json-plugin", Enabled: true},
+		}, req, resp, newTestCollector())
+
+		assert.NoError(t, err)
+		assert.Equal(t, int32(0), atomic.LoadInt32(&executed))
+	})
+
+	t.Run("executes multipart aware plugin for multipart request", func(t *testing.T) {
+		m := newManagerForTesting(newTestLogger())
+		var executed int32
+		plugin := &mockPlugin{
+			name: "doc-analyzer",
+			contentTypes: []string{
+				pluginTypes.ContentTypeApplicationJSON,
+				pluginTypes.ContentTypeMultipartFormData,
+			},
+			executeCount: &executed,
+		}
+
+		_ = m.RegisterPlugin(plugin)
+
+		req := &types.RequestContext{
+			Headers: map[string][]string{
+				"Content-Type": {"multipart/form-data; boundary=abc123"},
+			},
+		}
+		resp := &types.ResponseContext{}
+
+		result, err := m.ExecuteChain(context.Background(), []pluginTypes.PluginConfig{
+			{Name: "doc-analyzer", Enabled: true},
+		}, req, resp, newTestCollector())
+
+		assert.NoError(t, err)
+		assert.Equal(t, int32(1), atomic.LoadInt32(&executed))
+		assert.Equal(t, 200, result.StatusCode)
+	})
+
+	t.Run("executes content type agnostic plugin for multipart request", func(t *testing.T) {
+		m := newManagerForTesting(newTestLogger())
+		var executed int32
+		plugin := &mockPlugin{name: "agnostic-plugin", executeCount: &executed}
+
+		_ = m.RegisterPlugin(plugin)
+
+		req := &types.RequestContext{
+			Headers: map[string][]string{
+				"Content-Type": {"multipart/form-data; boundary=abc123"},
+			},
+		}
+		resp := &types.ResponseContext{}
+
+		result, err := m.ExecuteChain(context.Background(), []pluginTypes.PluginConfig{
+			{Name: "agnostic-plugin", Enabled: true},
+		}, req, resp, newTestCollector())
+
+		assert.NoError(t, err)
+		assert.Equal(t, int32(1), atomic.LoadInt32(&executed))
+		assert.Equal(t, 200, result.StatusCode)
+	})
+
+	t.Run("executes json only plugin when content type is missing", func(t *testing.T) {
+		m := newManagerForTesting(newTestLogger())
+		var executed int32
+		plugin := &mockPlugin{
+			name:         "json-plugin",
+			contentTypes: []string{pluginTypes.ContentTypeApplicationJSON},
+			executeCount: &executed,
+		}
+
+		_ = m.RegisterPlugin(plugin)
+
+		req := &types.RequestContext{}
+		resp := &types.ResponseContext{}
+
+		result, err := m.ExecuteChain(context.Background(), []pluginTypes.PluginConfig{
+			{Name: "json-plugin", Enabled: true},
+		}, req, resp, newTestCollector())
+
+		assert.NoError(t, err)
+		assert.Equal(t, int32(1), atomic.LoadInt32(&executed))
+		assert.Equal(t, 200, result.StatusCode)
+	})
+}
+
 func TestManager_ExecuteStage(t *testing.T) {
 	t.Run("executes stage with registered chains", func(t *testing.T) {
 		m := newManagerForTesting(newTestLogger())
@@ -485,6 +590,43 @@ func TestManager_ExecuteChain_Parallel(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, 200, result.StatusCode)
 	})
+
+	t.Run("skips unsupported content type in parallel plugins", func(t *testing.T) {
+		m := newManagerForTesting(newTestLogger())
+
+		var jsonExecuted int32
+		var agnosticExecuted int32
+		jsonPlugin := &mockPlugin{
+			name:         "json-plugin",
+			contentTypes: []string{pluginTypes.ContentTypeApplicationJSON},
+			executeCount: &jsonExecuted,
+		}
+		agnosticPlugin := &mockPlugin{
+			name:         "agnostic-plugin",
+			executeCount: &agnosticExecuted,
+		}
+
+		_ = m.RegisterPlugin(jsonPlugin)
+		_ = m.RegisterPlugin(agnosticPlugin)
+
+		chain := []pluginTypes.PluginConfig{
+			{Name: "json-plugin", Enabled: true, Parallel: true, Priority: 1},
+			{Name: "agnostic-plugin", Enabled: true, Parallel: true, Priority: 1},
+		}
+		req := &types.RequestContext{
+			Headers: map[string][]string{
+				"Content-Type": {"multipart/form-data; boundary=abc123"},
+			},
+		}
+		resp := &types.ResponseContext{}
+
+		result, err := m.ExecuteChain(context.Background(), chain, req, resp, newTestCollector())
+
+		assert.NoError(t, err)
+		assert.Equal(t, int32(0), atomic.LoadInt32(&jsonExecuted))
+		assert.Equal(t, int32(1), atomic.LoadInt32(&agnosticExecuted))
+		assert.Equal(t, 200, result.StatusCode)
+	})
 }
 
 func TestManager_ExecuteChain_Priority(t *testing.T) {
@@ -554,6 +696,8 @@ type mockPlugin struct {
 	stages        []pluginTypes.Stage
 	allowedStages []pluginTypes.Stage
 	validateErr   error
+	contentTypes  []string
+	executeCount  *int32
 }
 
 func (p *mockPlugin) Name() string {
@@ -568,6 +712,10 @@ func (p *mockPlugin) AllowedStages() []pluginTypes.Stage {
 	return p.allowedStages
 }
 
+func (p *mockPlugin) SupportedContentTypes() []string {
+	return p.contentTypes
+}
+
 func (p *mockPlugin) Execute(
 	ctx context.Context,
 	cfg pluginTypes.PluginConfig,
@@ -575,6 +723,9 @@ func (p *mockPlugin) Execute(
 	resp *types.ResponseContext,
 	evtCtx *metrics.EventContext,
 ) (*pluginTypes.PluginResponse, error) {
+	if p.executeCount != nil {
+		atomic.AddInt32(p.executeCount, 1)
+	}
 	return &pluginTypes.PluginResponse{StatusCode: 200}, nil
 }
 
@@ -587,4 +738,3 @@ func (p *mockPlugin) RequiredPlugins() []string {
 }
 
 var _ pluginiface.Plugin = (*mockPlugin)(nil)
-

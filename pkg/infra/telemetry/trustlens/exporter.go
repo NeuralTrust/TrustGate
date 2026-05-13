@@ -80,7 +80,7 @@ func (p *Exporter) WithSettings(settings map[string]interface{}) (telemetry.Expo
 
 func (p *Exporter) Handle(ctx context.Context, evt metric_events.Event) error {
 	if rule, ok := ctx.Value(string(common.MatchedRuleContextKey)).(*types.ForwardingRuleDTO); ok {
-		if rule.TrustLens == nil {
+		if rule == nil || rule.TrustLens == nil {
 			return nil
 		}
 		p.mapping = p.buildMappingWithDefaults(rule.TrustLens.Mapping)

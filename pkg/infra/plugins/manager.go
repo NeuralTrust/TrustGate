@@ -83,6 +83,13 @@ type manager struct {
 	adapterRegistry    *adapter.Registry
 }
 
+type pluginResult struct {
+	cfg       pluginTypes.PluginConfig
+	resp      *pluginTypes.PluginResponse
+	startTime time.Time
+	endTime   time.Time
+}
+
 // NewManager creates a new plugin Manager.
 func NewManager(logger *logrus.Logger, cache cache.Client, opts ...Option) Manager {
 	once.Do(func() {
@@ -321,12 +328,22 @@ func (m *manager) executeSequential(
 		return sortedConfigs[i].Priority < sortedConfigs[j].Priority
 	})
 
+	mediaType := mediaTypeForStage(req, resp)
 	for _, cfg := range sortedConfigs {
 		if !cfg.Enabled {
 			continue
 		}
 
 		if plugin, exists := plugins[cfg.Name]; exists {
+			if mediaType != "" && !shouldExecuteForContentType(plugin.SupportedContentTypes(), mediaType) {
+				m.logger.WithFields(logrus.Fields{
+					"plugin":       cfg.Name,
+					"stage":        req.Stage,
+					"content_type": mediaType,
+				}).Debug("skipping plugin for unsupported content type")
+				continue
+			}
+
 			wrappedPlugin := NewPluginWrapper(plugin, metricsCollector)
 			pluginResp, err := wrappedPlugin.Execute(ctx, cfg, req, resp)
 			if err != nil {
@@ -378,15 +395,9 @@ func (m *manager) executeParallel(
 	}
 	sort.Ints(priorities)
 
+	mediaType := mediaTypeForStage(req, resp)
 	for _, priority := range priorities {
 		group := priorityGroups[priority]
-
-		type pluginResult struct {
-			cfg       pluginTypes.PluginConfig
-			resp      *pluginTypes.PluginResponse
-			startTime time.Time
-			endTime   time.Time
-		}
 
 		results := make([]pluginResult, 0, len(group))
 		var resultsMu sync.Mutex
@@ -413,6 +424,15 @@ func (m *manager) executeParallel(
 					return pe
 				}
 
+				if mediaType != "" && !shouldExecuteForContentType(plugin.SupportedContentTypes(), mediaType) {
+					m.logger.WithFields(logrus.Fields{
+						"plugin":       cfg.Name,
+						"stage":        req.Stage,
+						"content_type": mediaType,
+					}).Debug("skipping plugin for unsupported content type")
+					return nil
+				}
+
 				wrapped := NewPluginWrapper(plugin, metricsCollector)
 				start := time.Now()
 				pluginResp, err := wrapped.Execute(gctx, cfg, req, resp)
@@ -428,8 +448,7 @@ func (m *manager) executeParallel(
 					if errors.Is(err, context.Canceled) {
 						return nil
 					}
-					var pe *pluginTypes.PluginError
-					if errors.As(err, &pe) {
+					if pe, ok := errors.AsType[*pluginTypes.PluginError](err); ok {
 						applyPluginErrorToResponse(pe, resp, &respMu)
 						return pe
 					}

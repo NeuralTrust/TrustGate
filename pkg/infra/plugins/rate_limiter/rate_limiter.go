@@ -94,6 +94,10 @@ func (p *RateLimiterPlugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest}
 }
 
+func (p *RateLimiterPlugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesAny
+}
+
 func (p *RateLimiterPlugin) ValidateConfig(config pluginTypes.PluginConfig) error {
 	if config.Stage != pluginTypes.PreRequest {
 		return fmt.Errorf("rate limiter plugin must be in pre_request stage")

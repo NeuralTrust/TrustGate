@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"strconv"
 	"testing"
 
@@ -657,3 +658,12 @@ func TestExecute_UnsupportedStage(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+func TestTokenRateLimiterPlugin_SupportedContentTypes(t *testing.T) {
+	expected := pluginTypes.SupportedContentTypesJSON
+	actual := (&token_rate_limiter.TokenRateLimiterPlugin{}).SupportedContentTypes()
+
+	if !reflect.DeepEqual(expected, actual) {
+		t.Fatalf("expected supported content types %v, got %v", expected, actual)
+	}
+}

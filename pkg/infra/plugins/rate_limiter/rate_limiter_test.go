@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -454,4 +455,13 @@ func TestRateLimiterPlugin_ValidateConfig_PerFingerprint(t *testing.T) {
 	}
 
 	assert.NoError(t, plugin.ValidateConfig(validConfig))
+}
+
+func TestRateLimiterPlugin_SupportedContentTypes(t *testing.T) {
+	expected := pluginTypes.SupportedContentTypesAny
+	actual := (&rate_limiter.RateLimiterPlugin{}).SupportedContentTypes()
+
+	if !reflect.DeepEqual(expected, actual) {
+		t.Fatalf("expected supported content types %v, got %v", expected, actual)
+	}
 }

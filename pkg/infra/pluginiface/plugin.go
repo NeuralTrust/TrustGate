@@ -17,6 +17,9 @@ type Plugin interface {
 	// AllowedStages returns all stages where the plugin is allowed to run.
 	// This is used for validation to ensure the plugin is not configured to run on unsupported stages.
 	AllowedStages() []pluginTypes.Stage
+	// SupportedContentTypes returns the request/response media types this plugin can process.
+	// Empty or nil means the plugin is content-type agnostic.
+	SupportedContentTypes() []string
 	Execute(
 		ctx context.Context,
 		cfg pluginTypes.PluginConfig,

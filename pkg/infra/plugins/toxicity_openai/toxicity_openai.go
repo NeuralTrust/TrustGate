@@ -115,6 +115,10 @@ func (p *ToxicityOpenAIPlugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest}
 }
 
+func (p *ToxicityOpenAIPlugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesJSON
+}
+
 func (p *ToxicityOpenAIPlugin) ValidateConfig(config pluginTypes.PluginConfig) error {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {

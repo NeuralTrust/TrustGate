@@ -20,6 +20,18 @@ const (
 	PostResponse Stage = "post_response"
 )
 
+const (
+	ContentTypeAny               = "*/*"
+	ContentTypeApplicationJSON   = "application/json"
+	ContentTypeMultipartFormData = "multipart/form-data"
+)
+
+var (
+	SupportedContentTypesAny           = []string{ContentTypeAny}
+	SupportedContentTypesJSON          = []string{ContentTypeApplicationJSON}
+	SupportedContentTypesJSONMultipart = []string{ContentTypeApplicationJSON, ContentTypeMultipartFormData}
+)
+
 // PluginConfig represents the configuration for a plugin
 type PluginConfig struct {
 	ID       string                 `json:"id"` // ID of the gateway or rule this plugin belongs to

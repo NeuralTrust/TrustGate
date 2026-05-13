@@ -3,6 +3,7 @@ package bedrock_guardrail_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/bedrock/mocks"
@@ -132,4 +133,13 @@ func TestExecute_BedrockAPIFailure(t *testing.T) {
 	assert.Nil(t, result)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to call Bedrock API")
+}
+
+func TestBedrockGuardrailPlugin_SupportedContentTypes(t *testing.T) {
+	expected := pluginTypes.SupportedContentTypesJSON
+	actual := (&bedrock_guardrail.BedrockGuardrailPlugin{}).SupportedContentTypes()
+
+	if !reflect.DeepEqual(expected, actual) {
+		t.Fatalf("expected supported content types %v, got %v", expected, actual)
+	}
 }

@@ -3,6 +3,7 @@ package request_size_limiter
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -418,5 +419,14 @@ func TestRemoveSpecialChars(t *testing.T) {
 			result := removeSpecialChars(tt.input, tt.pattern)
 			assert.Equal(t, tt.expected, result)
 		})
+	}
+}
+
+func TestRequestSizeLimiterPlugin_SupportedContentTypes(t *testing.T) {
+	expected := pluginTypes.SupportedContentTypesAny
+	actual := (&RequestSizeLimiterPlugin{}).SupportedContentTypes()
+
+	if !reflect.DeepEqual(expected, actual) {
+		t.Fatalf("expected supported content types %v, got %v", expected, actual)
 	}
 }

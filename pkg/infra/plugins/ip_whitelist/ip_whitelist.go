@@ -41,6 +41,10 @@ func (p *Plugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest}
 }
 
+func (p *Plugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesAny
+}
+
 func (p *Plugin) ValidateConfig(config pluginTypes.PluginConfig) error {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {

@@ -74,6 +74,10 @@ func (p *RequestSizeLimiterPlugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest}
 }
 
+func (p *RequestSizeLimiterPlugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesAny
+}
+
 // ValidateConfig validates the plugin configuration
 func (p *RequestSizeLimiterPlugin) ValidateConfig(config pluginTypes.PluginConfig) error {
 	var cfg Config
