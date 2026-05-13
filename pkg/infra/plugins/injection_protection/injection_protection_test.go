@@ -262,7 +262,7 @@ func TestInjectionProtectionPlugin_AllowedStages(t *testing.T) {
 }
 
 func TestInjectionProtectionPlugin_SupportedContentTypes(t *testing.T) {
-	expected := pluginTypes.SupportedContentTypesJSON
+	expected := pluginTypes.SupportedContentTypesJSONTextXML
 	actual := (&InjectionProtectionPlugin{}).SupportedContentTypes()
 
 	if !reflect.DeepEqual(expected, actual) {

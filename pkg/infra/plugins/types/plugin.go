@@ -23,13 +23,17 @@ const (
 const (
 	ContentTypeAny               = "*/*"
 	ContentTypeApplicationJSON   = "application/json"
+	ContentTypeApplicationXML    = "application/xml"
 	ContentTypeMultipartFormData = "multipart/form-data"
+	ContentTypeTextPlain         = "text/plain"
 )
 
 var (
 	SupportedContentTypesAny           = []string{ContentTypeAny}
 	SupportedContentTypesJSON          = []string{ContentTypeApplicationJSON}
 	SupportedContentTypesJSONMultipart = []string{ContentTypeApplicationJSON, ContentTypeMultipartFormData}
+	SupportedContentTypesJSONText      = []string{ContentTypeApplicationJSON, ContentTypeTextPlain}
+	SupportedContentTypesJSONTextXML   = []string{ContentTypeApplicationJSON, ContentTypeTextPlain, ContentTypeApplicationXML}
 )
 
 // PluginConfig represents the configuration for a plugin

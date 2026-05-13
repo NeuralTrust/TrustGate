@@ -245,7 +245,7 @@ func (p *InjectionProtectionPlugin) AllowedStages() []pluginTypes.Stage {
 }
 
 func (p *InjectionProtectionPlugin) SupportedContentTypes() []string {
-	return pluginTypes.SupportedContentTypesJSON
+	return pluginTypes.SupportedContentTypesJSONTextXML
 }
 
 func (p *InjectionProtectionPlugin) ValidateConfig(config pluginTypes.PluginConfig) error {

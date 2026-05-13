@@ -136,7 +136,7 @@ func TestExecute_BedrockAPIFailure(t *testing.T) {
 }
 
 func TestBedrockGuardrailPlugin_SupportedContentTypes(t *testing.T) {
-	expected := pluginTypes.SupportedContentTypesJSON
+	expected := pluginTypes.SupportedContentTypesJSONText
 	actual := (&bedrock_guardrail.BedrockGuardrailPlugin{}).SupportedContentTypes()
 
 	if !reflect.DeepEqual(expected, actual) {

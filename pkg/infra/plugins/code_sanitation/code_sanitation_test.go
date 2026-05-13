@@ -1590,7 +1590,7 @@ func TestCodeSanitationPlugin_DetectionCoverage_Sanitize(t *testing.T) {
 }
 
 func TestCodeSanitationPlugin_SupportedContentTypes(t *testing.T) {
-	expected := plugintypes.SupportedContentTypesJSON
+	expected := plugintypes.SupportedContentTypesJSONText
 	actual := (&code_sanitation.CodeSanitationPlugin{}).SupportedContentTypes()
 
 	if !reflect.DeepEqual(expected, actual) {

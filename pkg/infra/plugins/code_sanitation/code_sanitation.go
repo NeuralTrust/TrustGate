@@ -203,7 +203,7 @@ func (p *CodeSanitationPlugin) AllowedStages() []pluginTypes.Stage {
 }
 
 func (p *CodeSanitationPlugin) SupportedContentTypes() []string {
-	return pluginTypes.SupportedContentTypesJSON
+	return pluginTypes.SupportedContentTypesJSONText
 }
 
 func (p *CodeSanitationPlugin) ValidateConfig(config pluginTypes.PluginConfig) error {

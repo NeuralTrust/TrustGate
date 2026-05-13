@@ -105,7 +105,7 @@ func (p *BedrockGuardrailPlugin) AllowedStages() []pluginTypes.Stage {
 }
 
 func (p *BedrockGuardrailPlugin) SupportedContentTypes() []string {
-	return pluginTypes.SupportedContentTypesJSON
+	return pluginTypes.SupportedContentTypesJSONText
 }
 
 func (p *BedrockGuardrailPlugin) Execute(
