@@ -186,12 +186,3 @@ jobs:
 
       - name: Run Functional tests
         run: go test -v -race ./tests/functional
-
-  auto-approve:
-    needs: [ lint, unit-tests, functional-tests ]
-    permissions:
-      contents: read
-      checks: read
-      pull-requests: write
-    uses: NeuralTrust/workflows/.github/workflows/auto-approve.yml@main
-    secrets: inherit
