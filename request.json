@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.25.0\n\nCommits since last release:\n- 99f9d28 Merge pull request #356 from NeuralTrust/feat/oauth-upstream-cache-token\n- 56fff05 fix lint\n- 6752eba feat: oauth upstrea cache token\n"
+      "content": "Current version: 1.26.0\n\nCommits since last release:\n- ae78fda Merge pull request #357 from NeuralTrust/fix/add-supported-content-type-method\n- d278e13 fix: fix functional tests\n- e0de5f8 feat: added supported content type validation\n- e81cb1f feat: added supported content type validation\n"
     }
   ],
   "max_tokens": 200,
