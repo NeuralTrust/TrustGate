@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"reflect"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
@@ -41,7 +42,7 @@ func TestInjectionProtectionPlugin_Execute(t *testing.T) {
 				},
 			},
 			"content_to_check": []string{"headers", "path_and_query", "body"},
-			"mode":           "enforce",
+			"mode":             "enforce",
 			"status_code":      400,
 			"error_message":    "Potential security threat detected",
 		},
@@ -155,7 +156,7 @@ func TestInjectionProtectionPlugin_ValidateConfig(t *testing.T) {
 						},
 					},
 					"content_to_check": []string{"body"},
-					"mode":           "enforce",
+					"mode":             "enforce",
 					"status_code":      400,
 				},
 			},
@@ -171,7 +172,7 @@ func TestInjectionProtectionPlugin_ValidateConfig(t *testing.T) {
 							"enabled": true,
 						},
 					},
-					"mode":      "enforce",
+					"mode":        "enforce",
 					"status_code": 400,
 				},
 			},
@@ -188,7 +189,7 @@ func TestInjectionProtectionPlugin_ValidateConfig(t *testing.T) {
 						},
 					},
 					"content_to_check": []string{"body"},
-					"mode":           "invalid_action",
+					"mode":             "invalid_action",
 				},
 			},
 			expectError: true,
@@ -204,7 +205,7 @@ func TestInjectionProtectionPlugin_ValidateConfig(t *testing.T) {
 						},
 					},
 					"content_to_check": []string{"body"},
-					"mode":           "enforce",
+					"mode":             "enforce",
 					"status_code":      1000, // Invalid status code
 				},
 			},
@@ -228,7 +229,7 @@ func TestInjectionProtectionPlugin_ValidateConfig(t *testing.T) {
 						},
 					},
 					"content_to_check": []string{"body"},
-					"mode":           "enforce",
+					"mode":             "enforce",
 				},
 			},
 			expectError: true,
@@ -258,4 +259,13 @@ func TestInjectionProtectionPlugin_AllowedStages(t *testing.T) {
 	plugin := NewInjectionProtectionPlugin(logger)
 	stages := plugin.AllowedStages()
 	assert.Contains(t, stages, pluginTypes.PreRequest)
+}
+
+func TestInjectionProtectionPlugin_SupportedContentTypes(t *testing.T) {
+	expected := pluginTypes.SupportedContentTypesJSONTextXML
+	actual := (&InjectionProtectionPlugin{}).SupportedContentTypes()
+
+	if !reflect.DeepEqual(expected, actual) {
+		t.Fatalf("expected supported content types %v, got %v", expected, actual)
+	}
 }

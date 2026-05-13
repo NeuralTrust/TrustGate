@@ -104,6 +104,10 @@ func (p *BedrockGuardrailPlugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest}
 }
 
+func (p *BedrockGuardrailPlugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesJSONText
+}
+
 func (p *BedrockGuardrailPlugin) Execute(
 	ctx context.Context,
 	cfg pluginTypes.PluginConfig,

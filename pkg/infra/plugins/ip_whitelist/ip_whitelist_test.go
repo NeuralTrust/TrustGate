@@ -2,6 +2,7 @@ package ip_whitelist_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/common"
@@ -65,4 +66,13 @@ func TestIPWhitelist_BlockUnknown(t *testing.T) {
 	resp, err := pl.Execute(ctx, cfg, &types.RequestContext{}, &types.ResponseContext{}, nil)
 	assert.Error(t, err)
 	assert.Nil(t, resp)
+}
+
+func TestPlugin_SupportedContentTypes(t *testing.T) {
+	expected := pluginTypes.SupportedContentTypesAny
+	actual := (&ip_whitelist.Plugin{}).SupportedContentTypes()
+
+	if !reflect.DeepEqual(expected, actual) {
+		t.Fatalf("expected supported content types %v, got %v", expected, actual)
+	}
 }

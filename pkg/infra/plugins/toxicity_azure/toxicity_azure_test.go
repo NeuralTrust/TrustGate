@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/NeuralTrust/TrustGate/pkg/infra/httpx/mocks"
@@ -191,4 +192,13 @@ func TestToxicityAzurePlugin_Execute_FlaggedContent(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "Toxic content detected")
 	mockClient.AssertExpectations(t)
+}
+
+func TestToxicityAzurePlugin_SupportedContentTypes(t *testing.T) {
+	expected := pluginTypes.SupportedContentTypesJSON
+	actual := (&toxicity_azure.ToxicityAzurePlugin{}).SupportedContentTypes()
+
+	if !reflect.DeepEqual(expected, actual) {
+		t.Fatalf("expected supported content types %v, got %v", expected, actual)
+	}
 }

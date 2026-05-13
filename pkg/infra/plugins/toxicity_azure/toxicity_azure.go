@@ -114,6 +114,10 @@ func (p *ToxicityAzurePlugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest}
 }
 
+func (p *ToxicityAzurePlugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesJSON
+}
+
 // ValidateConfig implements the PluginValidator interface
 func (p *ToxicityAzurePlugin) ValidateConfig(config pluginTypes.PluginConfig) error {
 	var cfg Config

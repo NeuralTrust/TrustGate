@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"regexp"
 	"testing"
 	"time"
@@ -557,10 +558,10 @@ func TestCustomRulesUIMetadataMasksJSONBody(t *testing.T) {
 
 	config := pluginTypes.PluginConfig{
 		Settings: map[string]interface{}{
-			"apply_all":             false,
-			"similarity_threshold":  0.8,
-			"max_edit_distance":     1,
-			"predefined_entities":   []map[string]interface{}{},
+			"apply_all":            false,
+			"similarity_threshold": 0.8,
+			"max_edit_distance":    1,
+			"predefined_entities":  []map[string]interface{}{},
 			"custom_rules": []map[string]interface{}{
 				{
 					"name":        "test",
@@ -1468,4 +1469,13 @@ func TestNonProvider_NoMappingField_FallsBackToFullBody(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.NotContains(t, string(req.Body), "test@example.com", "email should be masked in full body mode")
+}
+
+func TestDataMaskingPlugin_SupportedContentTypes(t *testing.T) {
+	expected := pluginTypes.SupportedContentTypesJSON
+	actual := (&DataMaskingPlugin{}).SupportedContentTypes()
+
+	if !reflect.DeepEqual(expected, actual) {
+		t.Fatalf("expected supported content types %v, got %v", expected, actual)
+	}
 }

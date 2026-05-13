@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -368,4 +369,13 @@ func TestExternalApiPlugin_Execute_WithExistingQueryParams(t *testing.T) {
 	assert.NotNil(t, pluginResponse)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, pluginResponse.StatusCode)
+}
+
+func TestExternalApiPlugin_SupportedContentTypes(t *testing.T) {
+	expected := pluginTypes.SupportedContentTypesJSON
+	actual := (&external_api.ExternalApiPlugin{}).SupportedContentTypes()
+
+	if !reflect.DeepEqual(expected, actual) {
+		t.Fatalf("expected supported content types %v, got %v", expected, actual)
+	}
 }

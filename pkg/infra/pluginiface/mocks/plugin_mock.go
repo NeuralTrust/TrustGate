@@ -72,6 +72,11 @@ func (_c *Plugin_AllowedStages_Call) RunAndReturn(run func() []types.Stage) *Plu
 	return _c
 }
 
+// SupportedContentTypes provides a mock function with no fields
+func (_m *Plugin) SupportedContentTypes() []string {
+	return nil
+}
+
 // Execute provides a mock function with given fields: ctx, cfg, req, resp, evtCtx
 func (_m *Plugin) Execute(ctx context.Context, cfg types.PluginConfig, req *pkgtypes.RequestContext, resp *pkgtypes.ResponseContext, evtCtx *metrics.EventContext) (*types.PluginResponse, error) {
 	ret := _m.Called(ctx, cfg, req, resp, evtCtx)

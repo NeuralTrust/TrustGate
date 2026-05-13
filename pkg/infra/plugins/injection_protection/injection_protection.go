@@ -49,7 +49,6 @@ const (
 	AllContent   ContentType = "all"
 )
 
-
 var (
 	urlPatternForFP      = regexp.MustCompile(`(?i)(https?|ftp|file)://|/[a-z0-9_\-\.]+(?:/[a-z0-9_\-\.]+)*`)
 	templateMathPattern  = regexp.MustCompile(`\{[^}]*\d+\s*[*/+\-<>=]\s*\d+[^}]*\}`)
@@ -212,10 +211,10 @@ type Config struct {
 		Pattern        string      `mapstructure:"pattern"`
 		ContentToCheck ContentType `mapstructure:"content_to_check"`
 	} `mapstructure:"custom_injections"`
-	ContentToCheck []ContentType `mapstructure:"content_to_check"`
+	ContentToCheck []ContentType      `mapstructure:"content_to_check"`
 	Mode           pluginTypes.Option `mapstructure:"mode"`
-	StatusCode     int           `mapstructure:"status_code"`
-	ErrorMessage   string        `mapstructure:"error_message"`
+	StatusCode     int                `mapstructure:"status_code"`
+	ErrorMessage   string             `mapstructure:"error_message"`
 }
 
 type InjectionProtectionPlugin struct {
@@ -243,6 +242,10 @@ func (p *InjectionProtectionPlugin) Stages() []pluginTypes.Stage {
 
 func (p *InjectionProtectionPlugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest}
+}
+
+func (p *InjectionProtectionPlugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesJSONTextXML
 }
 
 func (p *InjectionProtectionPlugin) ValidateConfig(config pluginTypes.PluginConfig) error {

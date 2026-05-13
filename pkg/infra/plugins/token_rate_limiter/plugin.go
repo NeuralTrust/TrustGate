@@ -76,6 +76,10 @@ func (p *TokenRateLimiterPlugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest, pluginTypes.PostResponse}
 }
 
+func (p *TokenRateLimiterPlugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesJSON
+}
+
 func (p *TokenRateLimiterPlugin) ValidateConfig(pc pluginTypes.PluginConfig) error {
 	if pc.Settings == nil {
 		return fmt.Errorf("token_rate_limiter requires settings")

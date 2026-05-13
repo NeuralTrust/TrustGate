@@ -169,6 +169,10 @@ func (p *DataMaskingPlugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest, pluginTypes.PreResponse, pluginTypes.PostResponse}
 }
 
+func (p *DataMaskingPlugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesJSON
+}
+
 func (p *DataMaskingPlugin) ValidateConfig(config pluginTypes.PluginConfig) error {
 	cfg, err := decodeDataMaskingSettings(config.Settings)
 	if err != nil {

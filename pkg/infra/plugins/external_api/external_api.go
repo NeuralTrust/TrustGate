@@ -67,6 +67,10 @@ func (p *ExternalApiPlugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest, pluginTypes.PostResponse}
 }
 
+func (p *ExternalApiPlugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesJSON
+}
+
 func (p *ExternalApiPlugin) SetUp(gatewayID uuid.UUID, config pluginTypes.PluginConfig) error {
 	return nil
 }

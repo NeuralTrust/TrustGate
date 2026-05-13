@@ -202,6 +202,10 @@ func (p *CodeSanitationPlugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest}
 }
 
+func (p *CodeSanitationPlugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesJSONText
+}
+
 func (p *CodeSanitationPlugin) ValidateConfig(config pluginTypes.PluginConfig) error {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {

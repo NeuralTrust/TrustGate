@@ -58,6 +58,10 @@ func (p *CorsPlugin) AllowedStages() []pluginTypes.Stage {
 	return []pluginTypes.Stage{pluginTypes.PreRequest}
 }
 
+func (p *CorsPlugin) SupportedContentTypes() []string {
+	return pluginTypes.SupportedContentTypesAny
+}
+
 func (p *CorsPlugin) ValidateConfig(config pluginTypes.PluginConfig) error {
 	var cfg Config
 	if err := mapstructure.Decode(config.Settings, &cfg); err != nil {
