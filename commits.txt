@@ -1,4 +1,2 @@
-- ae78fda Merge pull request #357 from NeuralTrust/fix/add-supported-content-type-method
-- d278e13 fix: fix functional tests
-- e0de5f8 feat: added supported content type validation
-- e81cb1f feat: added supported content type validation
+- 4548ca2 Merge pull request #358 from NeuralTrust/fix/add-supported-content-type-method
+- cc41569 fix: fixing bedrock content mapping

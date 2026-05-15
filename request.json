@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.26.0\n\nCommits since last release:\n- ae78fda Merge pull request #357 from NeuralTrust/fix/add-supported-content-type-method\n- d278e13 fix: fix functional tests\n- e0de5f8 feat: added supported content type validation\n- e81cb1f feat: added supported content type validation\n"
+      "content": "Current version: 1.27.0\n\nCommits since last release:\n- 4548ca2 Merge pull request #358 from NeuralTrust/fix/add-supported-content-type-method\n- cc41569 fix: fixing bedrock content mapping\n"
     }
   ],
   "max_tokens": 200,
