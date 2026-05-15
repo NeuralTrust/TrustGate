@@ -57,6 +57,14 @@ func TestDetectFormat(t *testing.T) {
 			expect: FormatBedrock,
 		},
 		{
+			name: "bedrock native with modelId and messages",
+			body: `{
+				"modelId": "eu.amazon.nova-micro-v1:0",
+				"messages": [{"role":"user","content":[{"text":"hi"}]}]
+			}`,
+			expect: FormatBedrock,
+		},
+		{
 			name:   "invalid json defaults to openai",
 			body:   `not json`,
 			expect: FormatOpenAI,
@@ -165,6 +173,24 @@ func TestValidateModel(t *testing.T) {
 		_, model, err := ValidateModel(body, nil, "default")
 		require.NoError(t, err)
 		assert.Equal(t, "anything", model)
+	})
+
+	t.Run("modelId passes through", func(t *testing.T) {
+		body := []byte(`{"modelId":"eu.amazon.nova-micro-v1:0","messages":[]}`)
+		out, model, err := ValidateModel(body, []string{"eu.amazon.nova-micro-v1:0"}, "anthropic.claude-sonnet-4-20250514-v1:0")
+		require.NoError(t, err)
+		assert.Equal(t, "eu.amazon.nova-micro-v1:0", model)
+		assert.Contains(t, string(out), `"modelId":"eu.amazon.nova-micro-v1:0"`)
+		assert.NotContains(t, string(out), `"model":"anthropic.claude-sonnet-4-20250514-v1:0"`)
+	})
+
+	t.Run("modelId is not silently replaced", func(t *testing.T) {
+		body := []byte(`{"modelId":"eu.amazon.nova-micro-v1:0","messages":[]}`)
+		out, model, err := ValidateModel(body, []string{"amazon.nova-pro-v1:0"}, "amazon.nova-pro-v1:0")
+		require.NoError(t, err)
+		assert.Equal(t, "eu.amazon.nova-micro-v1:0", model)
+		assert.Contains(t, string(out), `"modelId":"eu.amazon.nova-micro-v1:0"`)
+		assert.NotContains(t, string(out), `"amazon.nova-pro-v1:0"`)
 	})
 
 	t.Run("no model field in body injects default", func(t *testing.T) {
