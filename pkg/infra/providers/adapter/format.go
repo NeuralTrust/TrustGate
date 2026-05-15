@@ -27,9 +27,10 @@ const (
 //  1. Has "contents" key                        → Gemini
 //  2. Has "anthropic_version" key               → Anthropic
 //  3. Has top-level "system" (string or array) AND "messages" → Anthropic
-//  4. Has "inputText" key                       → Bedrock (Titan)
-//  5. Has "prompt" key without "messages"        → Bedrock (legacy Claude v2)
-//  6. Default (has "messages")                  → OpenAI
+//  4. Has "modelId" key                         → Bedrock
+//  5. Has "inputText" key                       → Bedrock (Titan)
+//  6. Has "prompt" key without "messages"        → Bedrock (legacy Claude v2)
+//  7. Default (has "messages")                  → OpenAI
 func DetectFormat(body []byte) Format {
 	// Quick probe: unmarshal into a thin map that only captures keys we care
 	// about. Values are kept as json.RawMessage to avoid allocating real
@@ -40,6 +41,7 @@ func DetectFormat(body []byte) Format {
 		System           json.RawMessage `json:"system"`
 		Messages         json.RawMessage `json:"messages"`
 		Input            json.RawMessage `json:"input"`
+		ModelID          json.RawMessage `json:"modelId"`
 		InputText        json.RawMessage `json:"inputText"`
 		Prompt           json.RawMessage `json:"prompt"`
 	}
@@ -74,6 +76,10 @@ func DetectFormat(body []byte) Format {
 	// 4. OpenAI Responses API uses "input" without "messages".
 	if probe.Input != nil && probe.Messages == nil {
 		return FormatOpenAIResponses
+	}
+
+	if probe.ModelID != nil {
+		return FormatBedrock
 	}
 
 	// 5. Bedrock Titan uses "inputText".

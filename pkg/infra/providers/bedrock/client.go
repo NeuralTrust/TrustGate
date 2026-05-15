@@ -3,10 +3,13 @@ package bedrock
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 
+	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	bedrockClient "github.com/NeuralTrust/TrustGate/pkg/infra/bedrock"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
@@ -17,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	stsTypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
+	smithy "github.com/aws/smithy-go"
 )
 
 type client struct {
@@ -46,11 +50,6 @@ func (c *client) Completions(
 		return nil, fmt.Errorf("model is required")
 	}
 
-	// Strip fields that Bedrock does not accept in the body.
-	// "model" is resolved from ModelId in the URL, and "stream" is
-	// controlled by using InvokeModel vs InvokeModelWithResponseStream.
-	// ValidateModel may re-inject "model" after the adapter removed it,
-	// so we strip here as a final safeguard.
 	reqBody = stripBedrockFields(reqBody)
 
 	bedrockCl, err := c.getOrCreateClient(ctx, cfg.Credentials)
@@ -64,6 +63,9 @@ func (c *client) Completions(
 		Body:        reqBody,
 	})
 	if err != nil {
+		if upstreamErr := newBedrockUpstreamError(err); upstreamErr != nil {
+			return nil, upstreamErr
+		}
 		return nil, fmt.Errorf("failed to invoke model: %w", err)
 	}
 
@@ -101,6 +103,9 @@ func (c *client) CompletionsStream(
 		Body:        reqBody,
 	})
 	if err != nil {
+		if upstreamErr := newBedrockUpstreamError(err); upstreamErr != nil {
+			return upstreamErr
+		}
 		return err
 	}
 	close(breakChan)
@@ -127,6 +132,37 @@ func (c *client) CompletionsStream(
 	}
 
 	return nil
+}
+
+func newBedrockUpstreamError(err error) *domainUpstream.UpstreamError {
+	var statusErr interface {
+		HTTPStatusCode() int
+	}
+	if !errors.As(err, &statusErr) {
+		return nil
+	}
+
+	statusCode := statusErr.HTTPStatusCode()
+	if !domainUpstream.IsHTTPError(statusCode) {
+		return nil
+	}
+
+	body, marshalErr := json.Marshal(bedrockErrorPayload(err))
+	if marshalErr != nil {
+		body = []byte(http.StatusText(statusCode))
+	}
+	return domainUpstream.NewUpstreamError(statusCode, body)
+}
+
+func bedrockErrorPayload(err error) map[string]string {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		return map[string]string{
+			"error":   apiErr.ErrorCode(),
+			"message": apiErr.ErrorMessage(),
+		}
+	}
+	return map[string]string{"message": err.Error()}
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +300,7 @@ func stripBedrockFields(body []byte) []byte {
 		return body // best-effort: return original
 	}
 	delete(raw, "model")
+	delete(raw, "modelId")
 	delete(raw, "stream")
 	out, err := json.Marshal(raw)
 	if err != nil {
@@ -273,15 +310,28 @@ func stripBedrockFields(body []byte) []byte {
 }
 
 // resolveModel extracts the model from the request body. Falls back to
-// defaultModel when the body doesn't contain a "model" field.
+// defaultModel when the body doesn't contain a model field.
 // Strips a leading region prefix (e.g. "eu.") so that the value passed to
 // InvokeModel is the standard Bedrock model ID (e.g. anthropic.claude-3-5-sonnet-...).
 func (c *client) resolveModel(reqBody []byte, defaultModel string) string {
+	if modelID, err := extractBedrockModelID(reqBody); err == nil && modelID != "" {
+		return modelID
+	}
 	m := defaultModel
 	if extracted, err := adapter.ExtractModel(reqBody); err == nil && extracted != "" {
 		m = extracted
 	}
 	return bedrockModelID(m)
+}
+
+func extractBedrockModelID(body []byte) (string, error) {
+	var probe struct {
+		ModelID string `json:"modelId"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return "", err
+	}
+	return probe.ModelID, nil
 }
 
 // bedrockModelID returns the model ID to pass to InvokeModel. Removes a leading
