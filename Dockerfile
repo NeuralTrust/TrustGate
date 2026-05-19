@@ -42,16 +42,19 @@ FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Install runtime dependencies (use precompiled librdkafka1 instead of building from source)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install runtime dependencies and patch OS-level CVEs
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && \
+    apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
-    curl \
     librdkafka1 \
     libssl3 \
     libsasl2-2 \
     zlib1g \
     libzstd1 \
+    libnghttp2-14 \
+    libarchive13 \
+    libopenjp2-7 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/gateway /app/
