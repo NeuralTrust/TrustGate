@@ -1,2 +1,2 @@
-- 4548ca2 Merge pull request #358 from NeuralTrust/fix/add-supported-content-type-method
-- cc41569 fix: fixing bedrock content mapping
+- bf86d6a Merge pull request #359 from NeuralTrust/fix/vulnerabilities-may
+- 5aa87af chore: update Dockerfile dependencies and bump Go module versions

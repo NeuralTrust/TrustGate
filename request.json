@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.27.0\n\nCommits since last release:\n- 4548ca2 Merge pull request #358 from NeuralTrust/fix/add-supported-content-type-method\n- cc41569 fix: fixing bedrock content mapping\n"
+      "content": "Current version: 1.27.1\n\nCommits since last release:\n- bf86d6a Merge pull request #359 from NeuralTrust/fix/vulnerabilities-may\n- 5aa87af chore: update Dockerfile dependencies and bump Go module versions\n"
     }
   ],
   "max_tokens": 200,
