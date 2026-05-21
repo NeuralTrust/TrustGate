@@ -1,2 +1,2 @@
-- c519c14 Merge pull request #360 from NeuralTrust/feat/deprecate-service
-- bf5cd02 feat: deprecate entity service
+- 7897ad7 Merge pull request #361 from NeuralTrust/feat/deprecate-service
+- fad3543 feat: archive spec

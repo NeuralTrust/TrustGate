@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.27.2\n\nCommits since last release:\n- c519c14 Merge pull request #360 from NeuralTrust/feat/deprecate-service\n- bf5cd02 feat: deprecate entity service\n"
+      "content": "Current version: 1.28.0\n\nCommits since last release:\n- 7897ad7 Merge pull request #361 from NeuralTrust/feat/deprecate-service\n- fad3543 feat: archive spec\n"
     }
   ],
   "max_tokens": 200,
