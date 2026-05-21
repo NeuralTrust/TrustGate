@@ -73,7 +73,7 @@ func TestOpenAIToxicityDetection(t *testing.T) {
 
 	rulePayload := map[string]interface{}{
 		"path":       "/post",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"POST"},
 		"strip_path": false,
 		"active":     true,

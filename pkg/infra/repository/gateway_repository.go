@@ -9,7 +9,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/types"
 	"github.com/google/uuid"
@@ -88,10 +87,6 @@ func (r *gatewayRepository) Delete(id uuid.UUID) error {
 
 	// Delete associated forwarding rules first
 	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&forwarding_rule.ForwardingRule{}).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
-	if err := tx.Unscoped().Where("gateway_id = ?", id).Delete(&service.Service{}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}

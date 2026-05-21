@@ -188,7 +188,7 @@ func TestUpstreamTargetOAuth_ClientCredentials_WithClientSecretAudienceScopes(t 
 
 	rulePayload := map[string]interface{}{
 		"path":       "/oauth-proxy-form",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET"},
 		"active":     true,
 	}
@@ -256,7 +256,7 @@ func TestUpstreamTargetOAuth_ClientCredentials(t *testing.T) {
 
 	rulePayload := map[string]interface{}{
 		"path":       "/oauth-proxy",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET"},
 		"active":     true,
 	}

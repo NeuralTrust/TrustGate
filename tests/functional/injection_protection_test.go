@@ -49,7 +49,7 @@ func TestInjectionProtection_BlockAttacks(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"name":       uuid.New().String(),
 		"path":       "/injection-test",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET", "POST"},
 		"strip_path": true,
 		"active":     true,
@@ -956,7 +956,7 @@ func TestInjectionProtection_AllowSafeInputs(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"name":       uuid.New().String(),
 		"path":       "/injection-safe-test",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET", "POST"},
 		"strip_path": true,
 		"active":     true,

@@ -62,8 +62,8 @@ func (h *createRuleHandler) Handle(c *fiber.Ctx) error {
 		if errors.Is(err, domain.ErrGatewayNotFound) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Gateway not found"})
 		}
-		if errors.Is(err, domain.ErrServiceNotFound) {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Service not found"})
+		if errors.Is(err, domain.ErrUpstreamNotFound) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Upstream not found"})
 		}
 		if errors.Is(err, domain.ErrRuleAlreadyExists) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -116,7 +116,7 @@ func getRuleResponse(r *forwarding_rule.ForwardingRule) response.ForwardingRuleO
 		ID:            r.ID.String(),
 		Name:          r.Name,
 		GatewayID:     r.GatewayID.String(),
-		ServiceID:     r.ServiceID.String(),
+		UpstreamID:    r.UpstreamID.String(),
 		Path:          outputPath,
 		Type:          string(r.Type),
 		Methods:       r.Methods,

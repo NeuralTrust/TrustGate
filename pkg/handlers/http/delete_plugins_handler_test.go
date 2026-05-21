@@ -100,9 +100,9 @@ func TestDeletePluginsHandler_RuleSuccess(t *testing.T) {
 	existingRule := &forwarding_rule.ForwardingRule{
 		ID:        ruleID,
 		GatewayID: gatewayID,
-		Path:      "/test",
-		ServiceID: uuid.New(),
-		Methods:   []string{"GET"},
+		Path:       "/test",
+		UpstreamID: uuid.New(),
+		Methods:    []string{"GET"},
 		PluginChain: []types.PluginConfig{
 			{ID: plugin1ID, Name: "rate_limiter", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"limit": 100}},
 			{ID: plugin2ID, Name: "cors", Enabled: true, Stage: types.PreRequest, Settings: map[string]interface{}{"allowed_origins": []string{"*"}}},

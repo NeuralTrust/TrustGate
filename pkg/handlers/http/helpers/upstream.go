@@ -5,27 +5,29 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
-	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
+	"github.com/google/uuid"
 )
 
+// GetUpstream resolves the upstream targeted by a forwarding rule. After the
+// Service entity deprecation, forwarding rules carry the upstream ID directly
+// and the lookup is a single call to upstream.Finder.
 func GetUpstream(
 	ctx context.Context,
-	serviceFinder service.Finder,
 	upstreamFinder upstream.Finder,
 	rule *types.ForwardingRuleDTO,
 ) (*domainUpstream.Upstream, error) {
-	serviceEntity, err := serviceFinder.Find(ctx, rule.GatewayID, rule.ServiceID)
+	gatewayUUID, err := uuid.Parse(rule.GatewayID)
 	if err != nil {
-		return nil, fmt.Errorf("service not found: %w", err)
+		return nil, fmt.Errorf("invalid gateway_id %q: %w", rule.GatewayID, err)
 	}
-	if serviceEntity.Type != domainService.TypeUpstream {
-		return nil, fmt.Errorf("service %s is not an upstream type", rule.ServiceID)
+	upstreamUUID, err := uuid.Parse(rule.UpstreamID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid upstream_id %q: %w", rule.UpstreamID, err)
 	}
-	upstreamModel, err := upstreamFinder.Find(ctx, serviceEntity.GatewayID, serviceEntity.UpstreamID)
+	upstreamModel, err := upstreamFinder.Find(ctx, gatewayUUID, upstreamUUID)
 	if err != nil {
 		return nil, fmt.Errorf("upstream not found: %w", err)
 	}

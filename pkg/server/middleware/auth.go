@@ -162,7 +162,7 @@ func (m *authMiddleware) attachRequestContext(
 
 func (m *authMiddleware) setRuleContext(ctx *fiber.Ctx, rule *types.ForwardingRuleDTO) {
 	ctx.Set(RouteIDKey, rule.ID)
-	ctx.Set(ServiceIDKey, rule.ServiceID)
+	ctx.Set(UpstreamIDKey, rule.UpstreamID)
 
 	ctx.Locals(string(common.MatchedRuleContextKey), rule)
 	c := context.WithValue(ctx.Context(), common.MatchedRuleContextKey, rule)

@@ -43,7 +43,7 @@ func TestQueryParamsForwarding(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"path":       "/ping",
 		"name":       "query-params-rule",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET", "POST"},
 		"strip_path": false,
 	}

@@ -56,15 +56,15 @@ func TestUpdater_Update_Success(t *testing.T) {
 	ctx := context.Background()
 	gatewayID := uuid.New()
 	ruleID := uuid.New()
-	serviceID := uuid.New()
+	upstreamID := uuid.New()
 
 	existing := &forwarding_rule.ForwardingRule{
-		ID:        ruleID,
-		GatewayID: gatewayID,
-		ServiceID: serviceID,
-		Name:      "old-name",
-		Path:      "/api/v1",
-		Methods:   []string{"GET"},
+		ID:         ruleID,
+		GatewayID:  gatewayID,
+		UpstreamID: upstreamID,
+		Name:       "old-name",
+		Path:       "/api/v1",
+		Methods:    []string{"GET"},
 	}
 
 	req := &request.UpdateRuleRequest{
@@ -114,21 +114,21 @@ func TestUpdater_Update_RuleNotFoundNil(t *testing.T) {
 	assert.True(t, domain.IsNotFoundError(err))
 }
 
-func TestUpdater_Update_InvalidServiceID(t *testing.T) {
+func TestUpdater_Update_InvalidUpstreamID(t *testing.T) {
 	u, repo, _, _, _, _ := setupRuleUpdater(t)
 	ctx := context.Background()
 	gatewayID := uuid.New()
 	ruleID := uuid.New()
 
 	existing := &forwarding_rule.ForwardingRule{
-		ID:        ruleID,
-		GatewayID: gatewayID,
-		ServiceID: uuid.New(),
+		ID:         ruleID,
+		GatewayID:  gatewayID,
+		UpstreamID: uuid.New(),
 	}
 
 	repo.EXPECT().GetRule(ctx, ruleID, gatewayID).Return(existing, nil)
 
-	err := u.Update(ctx, gatewayID, ruleID, &request.UpdateRuleRequest{ServiceID: "not-a-uuid"})
+	err := u.Update(ctx, gatewayID, ruleID, &request.UpdateRuleRequest{UpstreamID: "not-a-uuid"})
 
 	assert.ErrorIs(t, err, domain.ErrValidation)
 }
@@ -138,20 +138,20 @@ func TestUpdater_Update_PathUniquenessViolation(t *testing.T) {
 	ctx := context.Background()
 	gatewayID := uuid.New()
 	ruleID := uuid.New()
-	serviceID := uuid.New()
+	upstreamID := uuid.New()
 	otherRuleID := uuid.New()
 
 	existing := &forwarding_rule.ForwardingRule{
-		ID:        ruleID,
-		GatewayID: gatewayID,
-		ServiceID: serviceID,
+		ID:         ruleID,
+		GatewayID:  gatewayID,
+		UpstreamID: upstreamID,
 	}
 
 	otherRule := forwarding_rule.ForwardingRule{
-		ID:        otherRuleID,
-		GatewayID: gatewayID,
-		ServiceID: serviceID,
-		Path:      "/api/v2",
+		ID:         otherRuleID,
+		GatewayID:  gatewayID,
+		UpstreamID: upstreamID,
+		Path:       "/api/v2",
 	}
 
 	repo.EXPECT().GetRule(ctx, ruleID, gatewayID).Return(existing, nil)
@@ -159,8 +159,8 @@ func TestUpdater_Update_PathUniquenessViolation(t *testing.T) {
 	matcher.EXPECT().NormalizePath("/api/v2").Return("/api/v2")
 
 	err := u.Update(ctx, gatewayID, ruleID, &request.UpdateRuleRequest{
-		ServiceID: serviceID.String(),
-		Path:      &types.FlexiblePath{Primary: "/api/v2"},
+		UpstreamID: upstreamID.String(),
+		Path:       &types.FlexiblePath{Primary: "/api/v2"},
 	})
 
 	assert.ErrorIs(t, err, domain.ErrRuleAlreadyExists)
@@ -173,9 +173,9 @@ func TestUpdater_Update_RepositoryError(t *testing.T) {
 	ruleID := uuid.New()
 
 	existing := &forwarding_rule.ForwardingRule{
-		ID:        ruleID,
-		GatewayID: gatewayID,
-		ServiceID: uuid.New(),
+		ID:         ruleID,
+		GatewayID:  gatewayID,
+		UpstreamID: uuid.New(),
 	}
 
 	repo.EXPECT().GetRule(ctx, ruleID, gatewayID).Return(existing, nil)
@@ -193,13 +193,13 @@ func TestUpdater_Update_AppliesFieldsCorrectly(t *testing.T) {
 	ruleID := uuid.New()
 
 	existing := &forwarding_rule.ForwardingRule{
-		ID:        ruleID,
-		GatewayID: gatewayID,
-		ServiceID: uuid.New(),
-		Name:      "old",
-		Path:      "/old",
-		Methods:   []string{"GET"},
-		Active:    true,
+		ID:         ruleID,
+		GatewayID:  gatewayID,
+		UpstreamID: uuid.New(),
+		Name:       "old",
+		Path:       "/old",
+		Methods:    []string{"GET"},
+		Active:     true,
 	}
 
 	stripPath := true

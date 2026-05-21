@@ -10,9 +10,9 @@ import (
 
 func validRule() *ForwardingRule {
 	return &ForwardingRule{
-		Path:      "/api/v1",
-		ServiceID: uuid.New(),
-		Methods:   []string{"POST"},
+		Path:       "/api/v1",
+		UpstreamID: uuid.New(),
+		Methods:    []string{"POST"},
 	}
 }
 
@@ -29,12 +29,12 @@ func TestValidate_PathRequired(t *testing.T) {
 	assert.Contains(t, err.Error(), "path is required")
 }
 
-func TestValidate_ServiceIDRequired(t *testing.T) {
+func TestValidate_UpstreamIDRequired(t *testing.T) {
 	r := validRule()
-	r.ServiceID = uuid.Nil
+	r.UpstreamID = uuid.Nil
 	err := r.Validate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "service_id is required")
+	assert.Contains(t, err.Error(), "upstream_id is required")
 }
 
 func TestValidate_MethodsRequired(t *testing.T) {

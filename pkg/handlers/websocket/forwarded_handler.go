@@ -10,11 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
-	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/loadbalancer"
@@ -25,6 +23,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/types"
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	gorilla "github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 )
@@ -33,7 +32,6 @@ type forwardedWebsocketHandler struct {
 	config                *config.Config
 	logger                *logrus.Logger
 	upstreamFinder        upstream.Finder
-	serviceFinder         service.Finder
 	lbFactory             loadbalancer.Factory
 	cache                 cache.Client
 	connections           map[string]*gorilla.Conn
@@ -57,7 +55,6 @@ func NewWebsocketHandler(
 	config *config.Config,
 	logger *logrus.Logger,
 	upstreamFinder upstream.Finder,
-	serviceFinder service.Finder,
 	lbFactory loadbalancer.Factory,
 	cache cache.Client,
 	pluginManager plugins.Manager,
@@ -66,7 +63,6 @@ func NewWebsocketHandler(
 		config:            config,
 		logger:            logger,
 		upstreamFinder:    upstreamFinder,
-		serviceFinder:     serviceFinder,
 		lbFactory:         lbFactory,
 		cache:             cache,
 		connections:       make(map[string]*gorilla.Conn),
@@ -176,16 +172,15 @@ func (h *forwardedWebsocketHandler) forwardWebsocketRequest(
 	gatewayData *types.GatewayData,
 	collector *metrics.Collector,
 ) error {
-	serviceEntity, err := h.serviceFinder.Find(reqCtx.Context, rule.GatewayID, rule.ServiceID)
+	gatewayUUID, err := uuid.Parse(rule.GatewayID)
 	if err != nil {
-		return fmt.Errorf("service not found: %w", err)
+		return fmt.Errorf("invalid gateway_id %q: %w", rule.GatewayID, err)
 	}
-
-	if serviceEntity.Type != domainService.TypeUpstream {
-		return fmt.Errorf("only upstream services are supported for websocket connections")
+	upstreamUUID, err := uuid.Parse(rule.UpstreamID)
+	if err != nil {
+		return fmt.Errorf("invalid upstream_id %q: %w", rule.UpstreamID, err)
 	}
-
-	upstreamModel, err := h.upstreamFinder.Find(reqCtx.Context, serviceEntity.GatewayID, serviceEntity.UpstreamID)
+	upstreamModel, err := h.upstreamFinder.Find(reqCtx.Context, gatewayUUID, upstreamUUID)
 	if err != nil {
 		return fmt.Errorf("upstream not found: %w", err)
 	}

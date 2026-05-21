@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
-	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/common"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
@@ -63,7 +62,6 @@ type forwardedHandler struct {
 	gatewayCache        *cache.TTLMap
 	loadBalancerCache   *cache.TTLMap
 	upstreamFinder      upstream.Finder
-	serviceFinder       service.Finder
 	pluginManager       plugins.Manager
 	client              *fasthttp.Client
 	loadBalancerFactory loadbalancer.Factory
@@ -81,7 +79,6 @@ type ForwardedHandlerDeps struct {
 	Logger              *logrus.Logger
 	Cache               cache.Client
 	UpstreamFinder      upstream.Finder
-	ServiceFinder       service.Finder
 	PluginManager       plugins.Manager
 	LoadBalancerFactory loadbalancer.Factory
 	Cfg                 *config.Config
@@ -115,7 +112,6 @@ func NewForwardedHandler(deps ForwardedHandlerDeps) Handler {
 		gatewayCache:        deps.Cache.GetTTLMap(cache.GatewayTTLName),
 		loadBalancerCache:   deps.Cache.GetTTLMap(cache.LoadBalancerTTLName),
 		upstreamFinder:      deps.UpstreamFinder,
-		serviceFinder:       deps.ServiceFinder,
 		pluginManager:       deps.PluginManager,
 		client:              client,
 		loadBalancerFactory: deps.LoadBalancerFactory,
@@ -199,7 +195,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 		return helpers.SendErrorResponse(c, h.logger, fiber.StatusInternalServerError, fiber.Map{"error": "internal server error"})
 	}
 
-	upstreamModel, err := helpers.GetUpstream(c.Context(), h.serviceFinder, h.upstreamFinder, matchingRule)
+	upstreamModel, err := helpers.GetUpstream(c.Context(), h.upstreamFinder, matchingRule)
 	if err != nil {
 		h.logger.WithError(err).Error("failed to get upstream")
 		return helpers.SendErrorResponse(c, h.logger, fiber.StatusInternalServerError, fiber.Map{"error": "failed to get upstream"})
@@ -361,7 +357,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	if prometheus.Config.EnableUpstreamLatency {
 		prometheus.GatewayUpstreamLatency.WithLabelValues(
 			gatewayID,
-			matchingRule.ServiceID,
+			matchingRule.UpstreamID,
 			matchingRule.ID,
 		).Observe(upstreamLatency)
 	}
@@ -509,7 +505,7 @@ func (h *forwardedHandler) Handle(c *fiber.Ctx) error {
 	if prometheus.Config.EnablePerRoute {
 		prometheus.GatewayDetailedLatency.WithLabelValues(
 			gatewayID,
-			matchingRule.ServiceID,
+			matchingRule.UpstreamID,
 			matchingRule.ID,
 		).Observe(float64(duration))
 	}

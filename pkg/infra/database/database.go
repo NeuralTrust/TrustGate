@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -11,6 +12,26 @@ import (
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
 )
+
+const defaultMigrationTimeout = 5 * time.Minute
+
+// migrationTimeout resolves the budget for applying pending migrations on
+// startup. It honors DB_MIGRATION_TIMEOUT (Go duration syntax, e.g. "2m",
+// "90s") and falls back to defaultMigrationTimeout if the variable is unset
+// or unparseable.
+func migrationTimeout(logger *logrus.Logger) time.Duration {
+	raw := os.Getenv("DB_MIGRATION_TIMEOUT")
+	if raw == "" {
+		return defaultMigrationTimeout
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		logger.WithField("DB_MIGRATION_TIMEOUT", raw).
+			Warn("invalid DB_MIGRATION_TIMEOUT, falling back to default")
+		return defaultMigrationTimeout
+	}
+	return d
+}
 
 type DB struct {
 	logger *logrus.Logger
@@ -76,9 +97,9 @@ func NewDB(logger *logrus.Logger, cfg *Config) (*DB, error) {
 	db := &DB{logger: logger, DB: gormDB}
 	migrationsManager := NewMigrationsManager(db.DB)
 
-	// Apply migrations with a timeout (30s)
-	logger.WithField("timeout", "30s").Info("applying database migrations")
-	migCtx, migCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeout := migrationTimeout(logger)
+	logger.WithField("timeout", timeout.String()).Info("applying database migrations")
+	migCtx, migCancel := context.WithTimeout(context.Background(), timeout)
 	defer migCancel()
 	migErrCh := make(chan error, 1)
 	go func() {

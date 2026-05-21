@@ -9,7 +9,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/response"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/types"
@@ -19,28 +19,28 @@ import (
 )
 
 type ListRulesHandlerDeps struct {
-	Logger      *logrus.Logger
-	RuleRepo    forwarding_rule.Repository
-	GatewayRepo gateway.Repository
-	ServiceRepo service.Repository
-	Cache       cache.Client
+	Logger       *logrus.Logger
+	RuleRepo     forwarding_rule.Repository
+	GatewayRepo  gateway.Repository
+	UpstreamRepo upstream.Repository
+	Cache        cache.Client
 }
 
 type listRulesHandler struct {
-	logger      *logrus.Logger
-	ruleRepo    forwarding_rule.Repository
-	gatewayRepo gateway.Repository
-	serviceRepo service.Repository
-	cache       cache.Client
+	logger       *logrus.Logger
+	ruleRepo     forwarding_rule.Repository
+	gatewayRepo  gateway.Repository
+	upstreamRepo upstream.Repository
+	cache        cache.Client
 }
 
 func NewListRulesHandler(deps ListRulesHandlerDeps) Handler {
 	return &listRulesHandler{
-		logger:      deps.Logger,
-		ruleRepo:    deps.RuleRepo,
-		gatewayRepo: deps.GatewayRepo,
-		serviceRepo: deps.ServiceRepo,
-		cache:       deps.Cache,
+		logger:       deps.Logger,
+		ruleRepo:     deps.RuleRepo,
+		gatewayRepo:  deps.GatewayRepo,
+		upstreamRepo: deps.UpstreamRepo,
+		cache:        deps.Cache,
 	}
 }
 
@@ -99,7 +99,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			Path:          rule.Path,
 			Paths:         rule.Paths,
 			Type:          string(rule.Type),
-			ServiceID:     rule.ServiceID.String(),
+			UpstreamID:    rule.UpstreamID.String(),
 			Methods:       rule.Methods,
 			Headers:       rule.Headers,
 			StripPath:     rule.StripPath,
@@ -114,19 +114,17 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			UpdatedAt:     rule.UpdatedAt.Format(time.RFC3339),
 		}
 
-		srv, err := s.serviceRepo.Get(c.Context(), rule.ServiceID.String())
+		ups, err := s.upstreamRepo.GetUpstream(c.Context(), rule.UpstreamID)
 		if err != nil {
-			s.logger.WithError(err).Error("failed to get service from database")
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get service"})
+			s.logger.WithError(err).Error("failed to get upstream from database")
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get upstream"})
 		}
 		var upstreamOutput *response.UpstreamOutput
-		if srv != nil {
-			if srv.Upstream != nil {
-				upstreamOutput = &response.UpstreamOutput{
-					Name:      srv.Upstream.Name,
-					Algorithm: srv.Upstream.Algorithm,
-					Targets:   srv.Upstream.Targets,
-				}
+		if ups != nil {
+			upstreamOutput = &response.UpstreamOutput{
+				Name:      ups.Name,
+				Algorithm: ups.Algorithm,
+				Targets:   ups.Targets,
 			}
 		}
 		outputPath := types.FlexiblePath{Primary: rule.Path}
@@ -138,7 +136,7 @@ func (s *listRulesHandler) Handle(c *fiber.Ctx) error {
 			Name:          rule.Name,
 			GatewayID:     rule.GatewayID.String(),
 			Upstream:      upstreamOutput,
-			ServiceID:     rule.ServiceID.String(),
+			UpstreamID:    rule.UpstreamID.String(),
 			Path:          outputPath,
 			Type:          string(rule.Type),
 			Methods:       rule.Methods,

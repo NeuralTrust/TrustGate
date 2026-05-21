@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/go-redis/redis/v8"
 	"github.com/sirupsen/logrus"
@@ -20,8 +19,6 @@ const (
 	RulesKeyPattern           = "rules:%s"
 	UpstreamsKeyPattern       = "gateway:%s:upstreams"
 	UpstreamKeyPattern        = "gateway:%s:upstream:%s"
-	ServicesKeyPattern        = "gateway:%s:services"
-	ServiceKeyPattern         = "gateway:%s:service:%s"
 	ApiKeyPattern             = "apikey:%s"
 	UpstreamOauthTokenPattern = "upstream:%s:oauth" // #nosec G101 -- Redis key template, not credentials
 
@@ -29,7 +26,6 @@ const (
 	ApiKeyTTLName       = "api_key"
 	RulesTTLName        = "rules"
 	PluginTTLName       = "plugin"
-	ServiceTTLName      = "service"
 	UpstreamTTLName     = "upstream"
 	LoadBalancerTTLName = "lb"
 
@@ -38,7 +34,6 @@ const (
 )
 
 const (
-	ServiceCacheTTL       = 5 * time.Minute
 	ApiKeyCacheTTL        = 5 * time.Minute
 	UpstreamCacheTTL      = 5 * time.Minute
 	GatewayCacheTTL       = 1 * time.Hour
@@ -59,8 +54,6 @@ type Client interface {
 
 	GetApiKey(ctx context.Context, key string) (*apikey.APIKey, error)
 	SaveAPIKey(ctx context.Context, key *apikey.APIKey) error
-	GetService(ctx context.Context, gatewayID, serviceID string) (*service.Service, error)
-	SaveService(ctx context.Context, gatewayID string, service *service.Service) error
 	GetUpstream(ctx context.Context, gatewayID, upstreamID string) (*upstream.Upstream, error)
 	SaveUpstream(ctx context.Context, gatewayID string, upstream *upstream.Upstream) error
 	DeleteAllPluginsData(ctx context.Context, gatewayID string) error
@@ -278,19 +271,6 @@ func (c *client) GetUpstream(ctx context.Context, gatewayID, upstreamID string) 
 	return upstream, nil
 }
 
-func (c *client) GetService(ctx context.Context, gatewayID, serviceID string) (*service.Service, error) {
-	key := fmt.Sprintf(ServiceKeyPattern, gatewayID, serviceID)
-	res, err := c.Get(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	entity := new(service.Service)
-	if err := json.Unmarshal([]byte(res), entity); err != nil {
-		return nil, err
-	}
-	return entity, nil
-}
-
 func (c *client) GetApiKey(ctx context.Context, key string) (*apikey.APIKey, error) {
 	apikeyPattern := fmt.Sprintf(ApiKeyPattern, key)
 	res, err := c.Get(ctx, apikeyPattern)
@@ -302,22 +282,6 @@ func (c *client) GetApiKey(ctx context.Context, key string) (*apikey.APIKey, err
 		return nil, err
 	}
 	return apiKey, nil
-}
-
-func (c *client) SaveService(ctx context.Context, gatewayID string, service *service.Service) error {
-	// Cache individual service
-	serviceKey := fmt.Sprintf(ServiceKeyPattern, gatewayID, service.ID)
-	serviceJSON, err := json.Marshal(service)
-	if err != nil {
-		return err
-	}
-	if err := c.Set(ctx, serviceKey, string(serviceJSON), 0); err != nil {
-		return err
-	}
-
-	// Invalidate services list cache
-	servicesKey := fmt.Sprintf(ServicesKeyPattern, gatewayID)
-	return c.Delete(ctx, servicesKey)
 }
 
 func safeStringCast(value interface{}) (string, error) {

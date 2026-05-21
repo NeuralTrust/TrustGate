@@ -338,7 +338,7 @@ func TestTLS_ServerCertValidation(t *testing.T) {
 
 		CreateRules(t, gatewayID, map[string]interface{}{
 			"path":       "/tls-test",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		})
 
@@ -416,7 +416,7 @@ func TestMTLS_MutualAuthentication(t *testing.T) {
 
 		CreateRules(t, gatewayID, map[string]interface{}{
 			"path":       "/mtls-test",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		})
 
@@ -491,7 +491,7 @@ func TestMTLS_FailsWithoutClientCert(t *testing.T) {
 
 		CreateRules(t, gatewayID, map[string]interface{}{
 			"path":       "/mtls-nocert",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		})
 
@@ -561,7 +561,7 @@ func TestTLS_CertRecoveryFromDatabase(t *testing.T) {
 
 		CreateRules(t, gatewayID, map[string]interface{}{
 			"path":       "/tls-recovery",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		})
 
@@ -675,7 +675,7 @@ func TestMTLS_CertRecoveryFromDatabase(t *testing.T) {
 
 		CreateRules(t, gatewayID, map[string]interface{}{
 			"path":       "/mtls-recovery",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		})
 

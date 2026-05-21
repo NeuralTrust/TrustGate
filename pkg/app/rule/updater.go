@@ -86,12 +86,12 @@ func (u *updater) updateForwardingRuleDB(
 		return domain.NewNotFoundError("rule", ruleUUID)
 	}
 
-	serviceUUID, err := u.parseAndUpdateServiceID(fwdRule, updateReq)
+	upstreamUUID, err := u.parseAndUpdateUpstreamID(fwdRule, updateReq)
 	if err != nil {
 		return err
 	}
 
-	if err := u.validateRuleUniqueness(ctx, ruleUUID, gatewayUUID, updateReq, serviceUUID); err != nil {
+	if err := u.validateRuleUniqueness(ctx, ruleUUID, gatewayUUID, updateReq, upstreamUUID); err != nil {
 		return err
 	}
 
@@ -106,31 +106,31 @@ func (u *updater) updateForwardingRuleDB(
 	return nil
 }
 
-func (u *updater) parseAndUpdateServiceID(
+func (u *updater) parseAndUpdateUpstreamID(
 	fwdRule *forwarding_rule.ForwardingRule,
 	updateReq *request.UpdateRuleRequest,
 ) (uuid.UUID, error) {
-	if updateReq.ServiceID == "" {
+	if updateReq.UpstreamID == "" {
 		return uuid.Nil, nil
 	}
 
-	serviceUUID, err := uuid.Parse(updateReq.ServiceID)
+	upstreamUUID, err := uuid.Parse(updateReq.UpstreamID)
 	if err != nil {
-		u.logger.WithError(err).Error("failed to parse service ID")
-		return uuid.Nil, fmt.Errorf("%w: invalid service ID", domain.ErrValidation)
+		u.logger.WithError(err).Error("failed to parse upstream ID")
+		return uuid.Nil, fmt.Errorf("%w: invalid upstream ID", domain.ErrValidation)
 	}
 
-	fwdRule.ServiceID = serviceUUID
-	return serviceUUID, nil
+	fwdRule.UpstreamID = upstreamUUID
+	return upstreamUUID, nil
 }
 
 func (u *updater) validateRuleUniqueness(
 	ctx context.Context,
 	ruleUUID, gatewayUUID uuid.UUID,
 	updateReq *request.UpdateRuleRequest,
-	serviceUUID uuid.UUID,
+	upstreamUUID uuid.UUID,
 ) error {
-	if updateReq.Path == nil || serviceUUID == uuid.Nil {
+	if updateReq.Path == nil || upstreamUUID == uuid.Nil {
 		return nil
 	}
 
@@ -154,8 +154,8 @@ func (u *updater) validateRuleUniqueness(
 		for _, np := range updatePaths {
 			normalizedNew := u.ruleMatcher.NormalizePath(np)
 			for _, ep := range existing.AllPaths() {
-				if u.ruleMatcher.NormalizePath(ep) == normalizedNew && existing.ServiceID == serviceUUID {
-					u.logger.WithField("path", np).Error("rule with this path already exists for this service")
+				if u.ruleMatcher.NormalizePath(ep) == normalizedNew && existing.UpstreamID == upstreamUUID {
+					u.logger.WithField("path", np).Error("rule with this path already exists for this upstream")
 					return domain.ErrRuleAlreadyExists
 				}
 			}
@@ -289,8 +289,8 @@ func (u *updater) updateCacheRuleFields(rule *types.ForwardingRuleDTO, updateReq
 		}
 	}
 
-	if updateReq.ServiceID != "" {
-		rule.ServiceID = updateReq.ServiceID
+	if updateReq.UpstreamID != "" {
+		rule.UpstreamID = updateReq.UpstreamID
 	}
 
 	if updateReq.Type != nil {

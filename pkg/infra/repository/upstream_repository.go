@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -52,7 +52,7 @@ func (r *UpstreamRepository) UpdateUpstream(ctx context.Context, upstream *upstr
 func (r *UpstreamRepository) DeleteUpstream(ctx context.Context, id string) error {
 	db := dbFromContext(ctx, r.db).WithContext(ctx)
 	var count int64
-	if err := db.Model(&service.Service{}).Where("upstream_id = ?", id).Count(&count).Error; err != nil {
+	if err := db.Model(&forwarding_rule.ForwardingRule{}).Where("upstream_id = ?", id).Count(&count).Error; err != nil {
 		return err
 	}
 	if count > 0 {

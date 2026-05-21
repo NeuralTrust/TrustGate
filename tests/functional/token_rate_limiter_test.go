@@ -64,7 +64,7 @@ func TestTokenRateLimiter(t *testing.T) {
 
 	rulePayload := map[string]interface{}{
 		"path":       "/tokens",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"POST"},
 		"strip_path": true,
 		"active":     true,
@@ -168,7 +168,7 @@ func TestTokenRateLimiterWithIdentifierHeader(t *testing.T) {
 
 	rulePayload := map[string]interface{}{
 		"path":       "/tokens-hdr",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"POST"},
 		"strip_path": true,
 		"active":     true,

@@ -35,7 +35,7 @@ func NewUpdateUpstreamHandler(logger *logrus.Logger, updater appUpstream.Updater
 // @Param gateway_id path string true "Gateway ID"
 // @Param upstream_id path string true "Upstream ID"
 // @Param upstream body request.UpstreamRequest true "Updated upstream data"
-// @Success 200 {object} upstream.Upstream "Upstream updated successfully"
+// @Success 200 {object} map[string]interface{} "Upstream updated successfully"
 // @Router /api/v1/gateways/{gateway_id}/upstreams/{upstream_id} [put]
 func (h *updateUpstreamHandler) Handle(c *fiber.Ctx) error {
 	gatewayUUID, err := uuid.Parse(c.Params("gateway_id"))

@@ -9,7 +9,6 @@ type Event interface {
 var (
 	DeleteRulesCacheEventType    = "DeleteRulesCacheEvent"
 	DeleteGatewayCacheEventType  = "DeleteGatewayCacheEvent"
-	DeleteServiceCacheEventType  = "DeleteServiceCacheEvent"
 	DeleteUpstreamCacheEventType = "DeleteUpstreamCacheEvent"
 	DeleteKeyCacheEventType      = "DeleteKeyCacheEvent"
 )
@@ -17,7 +16,6 @@ var (
 var Registry = map[string]reflect.Type{
 	DeleteRulesCacheEventType:    reflect.TypeOf(DeleteRulesCacheEvent{}),
 	DeleteGatewayCacheEventType:  reflect.TypeOf(DeleteGatewayCacheEvent{}),
-	DeleteServiceCacheEventType:  reflect.TypeOf(DeleteServiceCacheEvent{}),
 	DeleteUpstreamCacheEventType: reflect.TypeOf(DeleteUpstreamCacheEvent{}),
 	DeleteKeyCacheEventType:      reflect.TypeOf(DeleteKeyCacheEvent{}),
 }

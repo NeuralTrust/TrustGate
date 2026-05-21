@@ -15,7 +15,7 @@ var (
 	commonLabels = []string{"gateway_id"}
 
 	// Additional labels for detailed metrics
-	routeLabels = []string{"service", "route"}
+	routeLabels = []string{"upstream", "route"}
 
 	// Latency buckets in milliseconds (similar to Kong's approach)
 	latencyBuckets = []float64{
@@ -45,7 +45,7 @@ var (
 	GatewayDetailedLatency = promauto.With(registerer).NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "trustgate_detailed_latency_ms",
-			Help:    "Detailed request latency by service and route",
+			Help:    "Detailed request latency by upstream and route",
 			Buckets: latencyBuckets,
 		},
 		append(commonLabels, routeLabels...),
@@ -62,7 +62,7 @@ var (
 	GatewayUpstreamLatency = promauto.With(registerer).NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "trustgate_upstream_latency_ms",
-			Help:    "Upstream service latency in milliseconds",
+			Help:    "Upstream latency in milliseconds",
 			Buckets: latencyBuckets,
 		},
 		append(commonLabels, routeLabels...), // Use existing label definitions

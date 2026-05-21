@@ -89,30 +89,19 @@ func CreateUpstream(t *testing.T, gatewayID string, upstreamPayload map[string]i
 	return upstreamID
 }
 
-func CreateService(t *testing.T, gatewayID string, servicePayload map[string]interface{}) string {
-	status, serviceResp := sendRequest(
-		t,
-		http.MethodPost,
-		fmt.Sprintf("%s/gateways/%s/services", AdminUrl, gatewayID),
-		map[string]string{
-			"Authorization": fmt.Sprintf("Bearer %s", AdminToken),
-		},
-		servicePayload,
-	)
-	assert.Equal(t, http.StatusCreated, status)
-	if status != http.StatusCreated {
-		t.Fatalf("❌ Failed to create service. Status: %d, Response: %v", status, serviceResp)
+// CreateService is a compatibility shim retained after the Service entity
+// deprecation. Forwarding rules now link directly to upstreams; instead of
+// creating a service, this helper simply returns the `upstream_id` field from
+// the legacy payload so existing tests continue to compile.
+//
+// Deprecated: use the upstream_id from CreateUpstream directly in rule payloads.
+func CreateService(t *testing.T, _ string, servicePayload map[string]interface{}) string {
+	t.Helper()
+	upstreamID, ok := servicePayload["upstream_id"].(string)
+	if !ok || upstreamID == "" {
+		t.Fatalf("❌ CreateService shim requires upstream_id in payload (services were deprecated). payload=%v", servicePayload)
 	}
-
-	serviceID, ok := serviceResp["id"].(string)
-	assert.True(t, ok)
-	if serviceID == "" {
-		t.Fatalf("❌ Service creation response did not contain a valid ID. Response: %v", serviceResp)
-	}
-
-	t.Logf("✅ Service created with ID: %s", serviceID)
-
-	return serviceID
+	return upstreamID
 }
 
 func CreateRules(t *testing.T, gatewayID string, rulesPayload map[string]interface{}) {

@@ -26,7 +26,6 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/app/gateway"
 	"github.com/NeuralTrust/TrustGate/pkg/app/plugin"
 	"github.com/NeuralTrust/TrustGate/pkg/app/rule"
-	"github.com/NeuralTrust/TrustGate/pkg/app/service"
 	"github.com/NeuralTrust/TrustGate/pkg/app/telemetry"
 	appUpstream "github.com/NeuralTrust/TrustGate/pkg/app/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -35,7 +34,6 @@ import (
 	domainEmbedding "github.com/NeuralTrust/TrustGate/pkg/domain/embedding"
 	domainGateway "github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
 	domainApikey "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
-	domainService "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	domainTelemetry "github.com/NeuralTrust/TrustGate/pkg/domain/telemetry"
 	domainUpstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	handlers "github.com/NeuralTrust/TrustGate/pkg/handlers/http"
@@ -87,7 +85,6 @@ type Container struct {
 	RuleRepository              ruledomain.Repository
 	GatewayRepository           domainGateway.Repository
 	UpstreamRepository          domainUpstream.Repository
-	ServiceRepository           domainService.Repository
 	TelemetryExporterLocator    *infraTelemetry.ExporterLocator
 	TelemetryExporterValidator  telemetry.ExportersValidator
 	GatewayCreator              gateway.Creator
@@ -95,8 +92,6 @@ type Container struct {
 	DescriptionEmbeddingCreator appUpstream.DescriptionEmbeddingCreator
 	UpstreamCreator             appUpstream.Creator
 	UpstreamUpdater             appUpstream.Updater
-	ServiceCreator              service.Creator
-	ServiceUpdater              service.Updater
 	RuleCreator                 rule.Creator
 	RuleUpdater                 rule.Updater
 	AuditLogsService            auditlogs.Service
@@ -187,14 +182,11 @@ func NewContainer(di ContainerDI) (*Container, error) {
 
 	// repository
 	upstreamRepository := repository.NewUpstreamRepository(di.DB.DB)
-	serviceRepository := repository.NewServiceRepository(di.DB.DB)
 	apiKeyRepository := repository.NewApiKeyRepository(di.DB.DB)
 	gatewayRepository := repository.NewGatewayRepository(di.DB.DB)
 	ruleRepository := repository.NewForwardedRuleRepository(di.DB.DB, di.Logger, cacheInstance)
 
-	// service
 	upstreamFinder := appUpstream.NewFinder(upstreamRepository, cacheInstance, di.Logger)
-	serviceFinder := service.NewFinder(serviceRepository, cacheInstance, di.Logger)
 	apiKeyFinder := apikey.NewFinder(apiKeyRepository, cacheInstance, di.Logger)
 	updateGatewayCache := gateway.NewUpdateGatewayCache(cacheInstance)
 	getGatewayCache := gateway.NewGetGatewayCache(cacheInstance)
@@ -246,24 +238,12 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		saService,
 	)
 
-	// service creator / updater
-	serviceCreator := service.NewCreator(
-		di.Logger,
-		serviceRepository,
-		cacheInstance,
-	)
-	serviceUpdater := service.NewUpdater(
-		di.Logger,
-		serviceRepository,
-		redisPublisher,
-	)
-
 	// rule creator / updater
 	ruleCreator := rule.NewCreator(
 		di.Logger,
 		ruleRepository,
 		gatewayRepository,
-		serviceRepository,
+		upstreamRepository,
 		pluginChainValidator,
 		redisPublisher,
 		ruleMatcher,
@@ -299,13 +279,11 @@ func NewContainer(di ContainerDI) (*Container, error) {
 	// subscribers
 	deleteGatewaySubscriber := subscriber.NewDeleteGatewayCacheEventSubscriber(di.Logger, cacheInstance)
 	deleteRulesSubscriber := subscriber.NewDeleteRulesEventSubscriber(di.Logger, cacheInstance)
-	deleteServiceSubscriber := subscriber.NewDeleteServiceCacheEventSubscriber(di.Logger, cacheInstance)
 	deleteUpstreamSubscriber := subscriber.NewDeleteUpstreamCacheEventSubscriber(di.Logger, cacheInstance)
 	deleteApiKeySubscriber := subscriber.NewDeleteApiKeyCacheEventSubscriber(di.Logger, cacheInstance)
 
 	cache.RegisterEventSubscriber[event.DeleteGatewayCacheEvent](redisListener, deleteGatewaySubscriber)
 	cache.RegisterEventSubscriber[event.DeleteRulesCacheEvent](redisListener, deleteRulesSubscriber)
-	cache.RegisterEventSubscriber[event.DeleteServiceCacheEvent](redisListener, deleteServiceSubscriber)
 	cache.RegisterEventSubscriber[event.DeleteUpstreamCacheEvent](redisListener, deleteUpstreamSubscriber)
 	cache.RegisterEventSubscriber[event.DeleteKeyCacheEvent](redisListener, deleteApiKeySubscriber)
 
@@ -338,7 +316,6 @@ func NewContainer(di ContainerDI) (*Container, error) {
 			di.Cfg,
 			di.Logger,
 			upstreamFinder,
-			serviceFinder,
 			lbFactory,
 			cacheInstance,
 			pluginManager,
@@ -352,7 +329,6 @@ func NewContainer(di ContainerDI) (*Container, error) {
 			Logger:              di.Logger,
 			Cache:               cacheInstance,
 			UpstreamFinder:      upstreamFinder,
-			ServiceFinder:       serviceFinder,
 			PluginManager:       pluginManager,
 			LoadBalancerFactory: lbFactory,
 			Cfg:                 di.Cfg,
@@ -387,20 +363,14 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		GetUpstreamHandler:    handlers.NewGetUpstreamHandler(di.Logger, upstreamRepository, cacheInstance, upstreamFinder),
 		UpdateUpstreamHandler: handlers.NewUpdateUpstreamHandler(di.Logger, upstreamUpdater, auditLogsService),
 		DeleteUpstreamHandler: handlers.NewDeleteUpstreamHandler(di.Logger, upstreamRepository, redisPublisher, auditLogsService),
-		// Service
-		CreateServiceHandler: handlers.NewCreateServiceHandler(di.Logger, serviceCreator, auditLogsService),
-		ListServicesHandler:  handlers.NewListServicesHandler(di.Logger, serviceRepository),
-		GetServiceHandler:    handlers.NewGetServiceHandler(di.Logger, serviceRepository, cacheInstance),
-		UpdateServiceHandler: handlers.NewUpdateServiceHandler(di.Logger, serviceUpdater, auditLogsService),
-		DeleteServiceHandler: handlers.NewDeleteServiceHandler(di.Logger, serviceRepository, redisPublisher, auditLogsService),
 		// Rule
 		CreateRuleHandler: handlers.NewCreateRuleHandler(di.Logger, ruleCreator, auditLogsService),
 		ListRulesHandler: handlers.NewListRulesHandler(handlers.ListRulesHandlerDeps{
-			Logger:      di.Logger,
-			RuleRepo:    ruleRepository,
-			GatewayRepo: gatewayRepository,
-			ServiceRepo: serviceRepository,
-			Cache:       cacheInstance,
+			Logger:       di.Logger,
+			RuleRepo:     ruleRepository,
+			GatewayRepo:  gatewayRepository,
+			UpstreamRepo: upstreamRepository,
+			Cache:        cacheInstance,
 		}),
 		UpdateRuleHandler: handlers.NewUpdateRuleHandler(di.Logger, ruleUpdater, auditLogsService),
 		DeleteRuleHandler: handlers.NewDeleteRuleHandler(handlers.DeleteRuleHandlerDeps{
@@ -495,7 +465,6 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		RuleRepository:              ruleRepository,
 		GatewayRepository:           gatewayRepository,
 		UpstreamRepository:          upstreamRepository,
-		ServiceRepository:           serviceRepository,
 		TelemetryExporterLocator:    providerLocator,
 		TelemetryExporterValidator:  telemetryValidator,
 		GatewayCreator:              gatewayCreator,
@@ -503,8 +472,6 @@ func NewContainer(di ContainerDI) (*Container, error) {
 		DescriptionEmbeddingCreator: descriptionEmbeddingCreator,
 		UpstreamCreator:             upstreamCreator,
 		UpstreamUpdater:             upstreamUpdater,
-		ServiceCreator:              serviceCreator,
-		ServiceUpdater:              serviceUpdater,
 		RuleCreator:                 ruleCreator,
 		RuleUpdater:                 ruleUpdater,
 		AuditLogsService:            auditLogsService,
