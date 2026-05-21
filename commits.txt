@@ -1,2 +1,2 @@
-- bf86d6a Merge pull request #359 from NeuralTrust/fix/vulnerabilities-may
-- 5aa87af chore: update Dockerfile dependencies and bump Go module versions
+- c519c14 Merge pull request #360 from NeuralTrust/feat/deprecate-service
+- bf5cd02 feat: deprecate entity service

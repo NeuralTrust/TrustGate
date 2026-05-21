@@ -8,7 +8,7 @@
     },
     {
       "role": "user",
-      "content": "Current version: 1.27.1\n\nCommits since last release:\n- bf86d6a Merge pull request #359 from NeuralTrust/fix/vulnerabilities-may\n- 5aa87af chore: update Dockerfile dependencies and bump Go module versions\n"
+      "content": "Current version: 1.27.2\n\nCommits since last release:\n- c519c14 Merge pull request #360 from NeuralTrust/feat/deprecate-service\n- bf5cd02 feat: deprecate entity service\n"
     }
   ],
   "max_tokens": 200,
