@@ -28,13 +28,6 @@ type HandlerTransportDTO struct {
 	UpdateUpstreamHandler Handler
 	DeleteUpstreamHandler Handler
 
-	// Service
-	CreateServiceHandler Handler
-	ListServicesHandler  Handler
-	GetServiceHandler    Handler
-	UpdateServiceHandler Handler
-	DeleteServiceHandler Handler
-
 	// Rule
 	CreateRuleHandler Handler
 	ListRulesHandler  Handler

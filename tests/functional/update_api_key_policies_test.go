@@ -42,7 +42,7 @@ func TestUpdateAPIKeyPolicies(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"path":       "/policies-test",
 		"name":       "policies-rule",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET"},
 	}
 	status, ruleResp := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
@@ -141,7 +141,7 @@ func TestUpdateAPIKeyPolicies(t *testing.T) {
 		otherRulePayload := map[string]interface{}{
 			"path":       "/other-rule",
 			"name":       "other-rule-name",
-			"service_id": otherServiceID,
+			"upstream_id": otherServiceID,
 			"methods":    []string{"GET"},
 		}
 		status, otherRuleResp := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, otherGatewayID), map[string]string{

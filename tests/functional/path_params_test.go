@@ -42,7 +42,7 @@ func TestPathParams(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"path":       "/test/{id}",
 		"name":       "path-params-rule",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"POST"},
 	}
 	status, ruleResp := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
@@ -152,7 +152,7 @@ func TestPathParams(t *testing.T) {
 		rulePayload2 := map[string]interface{}{
 			"path":       "/simple",
 			"name":       "simple-rule",
-			"service_id": serviceID2,
+			"upstream_id": serviceID2,
 			"methods":    []string{"POST"},
 		}
 		status2, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{

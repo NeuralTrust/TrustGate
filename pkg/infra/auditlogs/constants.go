@@ -9,10 +9,6 @@ const (
 	EventTypeUpstreamUpdated = "upstream.updated"
 	EventTypeUpstreamDeleted = "upstream.deleted"
 
-	EventTypeServiceCreated = "service.created"
-	EventTypeServiceUpdated = "service.updated"
-	EventTypeServiceDeleted = "service.deleted"
-
 	EventTypeRuleCreated = "rule.created"
 	EventTypeRuleUpdated = "rule.updated"
 	EventTypeRuleDeleted = "rule.deleted"
@@ -37,7 +33,6 @@ const (
 const (
 	TargetTypeGateway  = "gateway"
 	TargetTypeUpstream = "upstream"
-	TargetTypeService  = "service"
 	TargetTypeRule     = "rule"
 	TargetTypeAPIKey   = "apikey"
 )

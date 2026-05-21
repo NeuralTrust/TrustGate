@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	ServiceIDKey      = "service_id"
+	UpstreamIDKey     = "upstream_id"
 	RouteIDKey        = "route_id"
 	streamModeTimeout = 30 * time.Second
 )

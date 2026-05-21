@@ -53,7 +53,7 @@ func TestInvalidRequestBody_Returns400(t *testing.T) {
 
 	CreateRules(t, gatewayID, map[string]interface{}{
 		"path":       "/v1/chat/completions",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"POST"},
 		"strip_path": false,
 		"active":     true,

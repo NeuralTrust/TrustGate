@@ -84,16 +84,6 @@ func (r *adminRouter) BuildRoutes(router *fiber.App) error {
 				upstreams.Delete("/:upstream_id", handlerTransport.DeleteUpstreamHandler.Handle)
 			}
 
-			// Service management (scoped to gateway)
-			services := gateways.Group("/:gateway_id/services")
-			{
-				services.Post("", handlerTransport.CreateServiceHandler.Handle)
-				services.Get("", handlerTransport.ListServicesHandler.Handle)
-				services.Get("/:service_id", handlerTransport.GetServiceHandler.Handle)
-				services.Put("/:service_id", handlerTransport.UpdateServiceHandler.Handle)
-				services.Delete("/:service_id", handlerTransport.DeleteServiceHandler.Handle)
-			}
-
 			// Rules management (already scoped to gateway)
 			rules := gateways.Group("/:gateway_id/rules")
 			{

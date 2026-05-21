@@ -500,322 +500,6 @@
                 }
             }
         },
-        "/api/v1/gateways/{gateway_id}/services": {
-            "get": {
-                "description": "Returns a list of all services for a gateway",
-                "tags": [
-                    "Services"
-                ],
-                "parameters": [
-                    {
-                        "description": "Authorization token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "description": "Gateway ID",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "List of services",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service"
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "Gateway not found",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "additionalProperties": true
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "post": {
-                "description": "Adds a new service under a gateway",
-                "tags": [
-                    "Services"
-                ],
-                "parameters": [
-                    {
-                        "description": "Authorization token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "description": "Gateway ID",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "requestBody": {
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ServiceRequest"
-                            }
-                        }
-                    },
-                    "description": "Service request body",
-                    "required": true
-                },
-                "responses": {
-                    "201": {
-                        "description": "Service created successfully",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service"
-                                }
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request data",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "additionalProperties": true
-                                }
-                            }
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "additionalProperties": true
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/gateways/{gateway_id}/services/{service_id}": {
-            "get": {
-                "description": "Returns details of a specific service",
-                "tags": [
-                    "Services"
-                ],
-                "parameters": [
-                    {
-                        "description": "Authorization token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "description": "Gateway ID",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "description": "Service ID",
-                        "name": "service_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Service details",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service"
-                                }
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "Service not found",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "additionalProperties": true
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "put": {
-                "description": "Updates an existing service",
-                "tags": [
-                    "Services"
-                ],
-                "parameters": [
-                    {
-                        "description": "Authorization token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "description": "Gateway ID",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "description": "Service ID",
-                        "name": "service_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "requestBody": {
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ServiceRequest"
-                            }
-                        }
-                    },
-                    "description": "Updated service data",
-                    "required": true
-                },
-                "responses": {
-                    "200": {
-                        "description": "Service updated successfully",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_service.Service"
-                                }
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request data",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "additionalProperties": true
-                                }
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "Service not found",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "type": "object",
-                                    "additionalProperties": true
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "description": "Removes a service from a gateway",
-                "tags": [
-                    "Services"
-                ],
-                "parameters": [
-                    {
-                        "description": "Authorization token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "description": "Gateway ID",
-                        "name": "gateway_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    {
-                        "description": "Service ID",
-                        "name": "service_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "Service deleted successfully"
-                    },
-                    "404": {
-                        "description": "Service not found",
-                        "content": {
-                            "*/*": {
-                                "schema": {
-                                    "type": "object",
-                                    "additionalProperties": true
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/api/v1/gateways/{gateway_id}/upstreams": {
             "get": {
                 "description": "Returns a list of all upstreams for a gateway",
@@ -900,7 +584,8 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream"
+                                    "type": "object",
+                                    "additionalProperties": true
                                 }
                             }
                         }
@@ -1007,7 +692,8 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream"
+                                    "type": "object",
+                                    "additionalProperties": true
                                 }
                             }
                         }
@@ -1678,9 +1364,6 @@
                     },
                     "team_id": {
                         "type": "string"
-                    },
-                    "type": {
-                        "type": "string"
                     }
                 }
             },
@@ -1714,6 +1397,12 @@
                     "path": {
                         "type": "string"
                     },
+                    "paths": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
                     "pluginChain": {
                         "type": "array",
                         "items": {
@@ -1729,9 +1418,6 @@
                     "retryAttempts": {
                         "type": "integer"
                     },
-                    "serviceID": {
-                        "type": "string"
-                    },
                     "session_config": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.SessionConfig"
                     },
@@ -1745,6 +1431,9 @@
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.Type"
                     },
                     "updatedAt": {
+                        "type": "string"
+                    },
+                    "upstreamID": {
                         "type": "string"
                     }
                 }
@@ -1854,69 +1543,6 @@
                     "SentinelType"
                 ]
             },
-            "github_com_NeuralTrust_TrustGate_pkg_domain_service.Service": {
-                "type": "object",
-                "properties": {
-                    "created_at": {
-                        "type": "string"
-                    },
-                    "credentials": {
-                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.CredentialsJSON"
-                    },
-                    "description": {
-                        "type": "string"
-                    },
-                    "gateway_id": {
-                        "type": "string"
-                    },
-                    "headers": {
-                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON"
-                    },
-                    "host": {
-                        "description": "Direct configuration (used when type is \"direct\")",
-                        "type": "string"
-                    },
-                    "id": {
-                        "type": "string"
-                    },
-                    "name": {
-                        "type": "string"
-                    },
-                    "path": {
-                        "type": "string"
-                    },
-                    "port": {
-                        "type": "integer"
-                    },
-                    "protocol": {
-                        "type": "string"
-                    },
-                    "stream": {
-                        "description": "Common settings",
-                        "type": "boolean"
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "type": {
-                        "description": "\"upstream\" or \"endpoint\"",
-                        "type": "string"
-                    },
-                    "updated_at": {
-                        "type": "string"
-                    },
-                    "upstream": {
-                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.Upstream"
-                    },
-                    "upstream_id": {
-                        "description": "Upstream configuration (used when type is \"upstream\")",
-                        "type": "string"
-                    }
-                }
-            },
             "github_com_NeuralTrust_TrustGate_pkg_domain_telemetry.ExporterConfig": {
                 "type": "object",
                 "properties": {
@@ -1961,10 +1587,12 @@
             "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.AuthType": {
                 "type": "string",
                 "enum": [
-                    "oauth2"
+                    "oauth2",
+                    "gcp_service_account"
                 ],
                 "x-enum-varnames": [
-                    "AuthTypeOAuth2"
+                    "AuthTypeOAuth2",
+                    "AuthTypeGCPServiceAccount"
                 ]
             },
             "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.EmbeddingConfig": {
@@ -2083,6 +1711,9 @@
             "github_com_NeuralTrust_TrustGate_pkg_domain_upstream.TargetAuth": {
                 "type": "object",
                 "properties": {
+                    "gcp_service_account": {
+                        "type": "string"
+                    },
                     "oauth": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_upstream.TargetOAuthConfig"
                     },
@@ -2240,10 +1871,12 @@
             "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.AuthType": {
                 "type": "string",
                 "enum": [
-                    "oauth2"
+                    "oauth2",
+                    "gcp_service_account"
                 ],
                 "x-enum-varnames": [
-                    "AuthTypeOAuth2"
+                    "AuthTypeOAuth2",
+                    "AuthTypeGCPServiceAccount"
                 ]
             },
             "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ClientTLSCertRequest": {
@@ -2360,7 +1993,7 @@
                 "required": [
                     "name",
                     "path",
-                    "service_id"
+                    "upstream_id"
                 ],
                 "properties": {
                     "headers": {
@@ -2379,7 +2012,7 @@
                         "type": "string"
                     },
                     "path": {
-                        "type": "string"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.FlexiblePath"
                     },
                     "plugin_chain": {
                         "type": "array",
@@ -2393,9 +2026,6 @@
                     "retry_attempts": {
                         "type": "integer"
                     },
-                    "service_id": {
-                        "type": "string"
-                    },
                     "session_config": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.SessionConfigDTO"
                     },
@@ -2406,6 +2036,9 @@
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensConfigDTO"
                     },
                     "type": {
+                        "type": "string"
+                    },
+                    "upstream_id": {
                         "type": "string"
                     }
                 }
@@ -2545,68 +2178,12 @@
                     }
                 }
             },
-            "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.ServiceRequest": {
-                "type": "object",
-                "properties": {
-                    "CreatedAt": {
-                        "type": "string"
-                    },
-                    "UpdatedAt": {
-                        "type": "string"
-                    },
-                    "credentials": {
-                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.CredentialsDTO"
-                    },
-                    "description": {
-                        "type": "string"
-                    },
-                    "gateway_id": {
-                        "type": "string"
-                    },
-                    "headers": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "string"
-                        }
-                    },
-                    "host": {
-                        "type": "string"
-                    },
-                    "id": {
-                        "type": "string"
-                    },
-                    "name": {
-                        "type": "string"
-                    },
-                    "path": {
-                        "type": "string"
-                    },
-                    "port": {
-                        "type": "integer"
-                    },
-                    "protocol": {
-                        "type": "string"
-                    },
-                    "retries": {
-                        "type": "integer"
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "type": {
-                        "type": "string"
-                    },
-                    "upstream_id": {
-                        "type": "string"
-                    }
-                }
-            },
             "github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.TargetAuthRequest": {
                 "type": "object",
                 "properties": {
+                    "gcp_service_account": {
+                        "type": "string"
+                    },
                     "oauth": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_request.UpstreamOAuthRequest"
                     },
@@ -2779,7 +2356,7 @@
                         "type": "string"
                     },
                     "path": {
-                        "type": "string"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.FlexiblePath"
                     },
                     "plugin_chain": {
                         "type": "array",
@@ -2793,9 +2370,6 @@
                     "retry_attempts": {
                         "type": "integer"
                     },
-                    "service_id": {
-                        "type": "string"
-                    },
                     "session_config": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.SessionConfigDTO"
                     },
@@ -2806,6 +2380,9 @@
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.TrustLensConfigDTO"
                     },
                     "type": {
+                        "type": "string"
+                    },
+                    "upstream_id": {
                         "type": "string"
                     }
                 }
@@ -2956,6 +2533,9 @@
                     "created_at": {
                         "type": "string"
                     },
+                    "gateway_id": {
+                        "type": "string"
+                    },
                     "headers": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain.HeadersJSON"
                     },
@@ -2972,7 +2552,7 @@
                         "type": "string"
                     },
                     "path": {
-                        "type": "string"
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_types.FlexiblePath"
                     },
                     "plugin_chain": {
                         "type": "array",
@@ -2985,9 +2565,6 @@
                     },
                     "retry_attempts": {
                         "type": "integer"
-                    },
-                    "service_id": {
-                        "type": "string"
                     },
                     "session_config": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_domain_forwarding_rule.SessionConfig"
@@ -3006,6 +2583,9 @@
                     },
                     "upstream": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_TrustGate_pkg_handlers_http_response.UpstreamOutput"
+                    },
+                    "upstream_id": {
+                        "type": "string"
                     }
                 }
             },
@@ -3225,6 +2805,20 @@
                         "type": "string"
                     },
                     "param_value": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_TrustGate_pkg_types.FlexiblePath": {
+                "type": "object",
+                "properties": {
+                    "all": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "primary": {
                         "type": "string"
                     }
                 }

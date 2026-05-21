@@ -140,7 +140,7 @@ func (f *dataFinder) convertModelToTypesRules(rules []forwarding_rule.Forwarding
 			Path:          r.Path,
 			Paths:         r.Paths,
 			Type:          string(r.Type),
-			ServiceID:     r.ServiceID.String(),
+			UpstreamID:    r.UpstreamID.String(),
 			Methods:       r.Methods,
 			Headers:       r.Headers,
 			StripPath:     r.StripPath,

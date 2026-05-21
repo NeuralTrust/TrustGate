@@ -12,7 +12,6 @@ var (
 	ErrInvalidRuleType         = errors.New("invalid rule_type, must be 'agent' or 'endpoint'")
 	ErrRuleAlreadyExists       = errors.New("rule already exists")
 	ErrGatewayNotFound         = errors.New("gateway not found")
-	ErrServiceNotFound         = errors.New("service not found")
 	ErrUpstreamNotFound        = errors.New("upstream not found")
 	ErrInvalidEmbeddingProvider = errors.New("embedding provider is not allowed")
 	ErrValidation              = errors.New("validation error")

@@ -98,10 +98,10 @@ func TestValidateRuleType(t *testing.T) {
 func TestCreateRuleRequest_Validate(t *testing.T) {
 	validReq := func() *CreateRuleRequest {
 		return &CreateRuleRequest{
-			Name:      "test-rule",
-			Path:      types.FlexiblePath{Primary: "/api/v1"},
-			ServiceID: "550e8400-e29b-41d4-a716-446655440000",
-			Methods:   []string{"GET", "POST"},
+			Name:       "test-rule",
+			Path:       types.FlexiblePath{Primary: "/api/v1"},
+			UpstreamID: "550e8400-e29b-41d4-a716-446655440000",
+			Methods:    []string{"GET", "POST"},
 		}
 	}
 
@@ -141,12 +141,12 @@ func TestCreateRuleRequest_Validate(t *testing.T) {
 		assert.Contains(t, err.Error(), "at least one method is required")
 	})
 
-	t.Run("missing service_id", func(t *testing.T) {
+	t.Run("missing upstream_id", func(t *testing.T) {
 		r := validReq()
-		r.ServiceID = ""
+		r.UpstreamID = ""
 		err := r.Validate()
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "service_id is required")
+		assert.Contains(t, err.Error(), "upstream_id is required")
 	})
 
 	t.Run("invalid http method", func(t *testing.T) {

@@ -70,7 +70,7 @@ func TestRateLimit(t *testing.T) {
 
 	rulePayload := map[string]interface{}{
 		"path":       "/path1",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET"},
 		"strip_path": true,
 		"active":     true,
@@ -176,7 +176,7 @@ func TestRateLimitPerFingerprint(t *testing.T) {
 
 	rulePayload := map[string]interface{}{
 		"path":       "/path2",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET"},
 		"strip_path": true,
 		"active":     true,

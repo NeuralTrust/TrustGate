@@ -10,7 +10,7 @@ import (
 
 type CreateParams struct {
 	GatewayID     uuid.UUID
-	ServiceID     uuid.UUID
+	UpstreamID    uuid.UUID
 	Name          string
 	Path          string
 	Paths         domain.PathsJSON
@@ -40,7 +40,7 @@ func New(params CreateParams) (*ForwardingRule, error) {
 	return &ForwardingRule{
 		ID:            id,
 		GatewayID:     params.GatewayID,
-		ServiceID:     params.ServiceID,
+		UpstreamID:    params.UpstreamID,
 		Name:          params.Name,
 		Path:          params.Path,
 		Paths:         params.Paths,

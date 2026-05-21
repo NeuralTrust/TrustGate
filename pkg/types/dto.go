@@ -132,7 +132,7 @@ type ForwardingRuleDTO struct {
 	Paths         []string                   `json:"paths,omitempty"`
 	MatchedPath   string                     `json:"-"`
 	Type          string                     `json:"type"`
-	ServiceID     string                     `json:"service_id"`
+	UpstreamID    string                     `json:"upstream_id"`
 	Methods       []string                   `json:"methods"`
 	Headers       map[string]string          `json:"headers"`
 	StripPath     bool                       `json:"strip_path"`

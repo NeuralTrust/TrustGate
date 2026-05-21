@@ -28,7 +28,7 @@ type ForwardingRuleOutput struct {
 	Name          string                 `json:"name"`
 	GatewayID     string                 `json:"gateway_id"`
 	Upstream      *UpstreamOutput        `json:"upstream"`
-	ServiceID     string                 `json:"service_id"`
+	UpstreamID    string                 `json:"upstream_id"`
 	Path          types.FlexiblePath     `json:"path"`
 	Type          string                 `json:"type"`
 	Methods       domain.MethodsJSON     `json:"methods"`

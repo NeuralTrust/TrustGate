@@ -64,7 +64,7 @@ func TestCORSPlugin(t *testing.T) {
 
 	rulePayload := map[string]interface{}{
 		"path":       "/cors-test",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET", "POST", "OPTIONS"},
 		"strip_path": true,
 		"active":     true,
@@ -223,7 +223,7 @@ func TestCORSPlugin_WildcardOriginsAllowed(t *testing.T) {
 
 	rulePayload := map[string]interface{}{
 		"path":       "/cors-wild-test",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET", "POST", "OPTIONS"},
 		"strip_path": true,
 		"active":     true,

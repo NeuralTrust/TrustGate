@@ -8,7 +8,7 @@ import (
 type UpdateRuleRequest struct {
 	Path          *types.FlexiblePath        `json:"path,omitempty"`
 	Name          string                     `json:"name"`
-	ServiceID     string                     `json:"service_id"`
+	UpstreamID    string                     `json:"upstream_id"`
 	Type          *string                    `json:"type,omitempty"`
 	Methods       []string                   `json:"methods"`
 	Headers       map[string]string          `json:"headers"`

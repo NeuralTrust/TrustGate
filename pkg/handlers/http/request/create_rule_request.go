@@ -10,7 +10,7 @@ import (
 type CreateRuleRequest struct {
 	Path          types.FlexiblePath         `json:"path" binding:"required"`
 	Name          string                     `json:"name" binding:"required"`
-	ServiceID     string                     `json:"service_id" binding:"required"`
+	UpstreamID    string                     `json:"upstream_id" binding:"required"`
 	Type          *string                    `json:"type,omitempty"`
 	Methods       []string                   `json:"methods"`
 	Headers       map[string]string          `json:"headers"`
@@ -48,8 +48,8 @@ func (r *CreateRuleRequest) Validate() error {
 	if len(r.Methods) == 0 {
 		return fmt.Errorf("at least one method is required")
 	}
-	if r.ServiceID == "" {
-		return fmt.Errorf("service_id is required")
+	if r.UpstreamID == "" {
+		return fmt.Errorf("upstream_id is required")
 	}
 	if err := validateHTTPMethods(r.Methods); err != nil {
 		return err

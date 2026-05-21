@@ -40,7 +40,7 @@ func TestIPWhitelist(t *testing.T) {
 		"name": "svc", "type": "upstream", "upstream_id": upstreamID,
 	})
 	CreateRules(t, gatewayID, map[string]interface{}{
-		"path": "/ipwl", "service_id": serviceID, "methods": []string{"GET"},
+		"path": "/ipwl", "upstream_id": serviceID, "methods": []string{"GET"},
 	})
 
 	apiKey := CreateApiKey(t, gatewayID)

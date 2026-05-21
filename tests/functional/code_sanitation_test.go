@@ -52,7 +52,7 @@ func TestCodeSanitation_SanitizeMode(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"name":       uuid.New().String(),
 		"path":       "/code-sanitize-test",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET", "POST"},
 		"strip_path": true,
 		"active":     true,
@@ -213,7 +213,7 @@ func TestCodeSanitation_BlockMode(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"name":       uuid.New().String(),
 		"path":       "/code-block-test",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET", "POST"},
 		"strip_path": true,
 		"active":     true,
@@ -383,7 +383,7 @@ func TestCodeSanitation_SpecificLanguages(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"name":       uuid.New().String(),
 		"path":       "/code-lang-test",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET", "POST"},
 		"strip_path": true,
 		"active":     true,
@@ -522,7 +522,7 @@ func TestCodeSanitation_ContentTypes(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"name":       uuid.New().String(),
 		"path":       "/code-content-test",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET", "POST"},
 		"strip_path": true,
 		"active":     true,
@@ -672,7 +672,7 @@ func TestCodeSanitation_NestedJSON(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"name":       uuid.New().String(),
 		"path":       "/code-nested-test",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"POST"},
 		"strip_path": true,
 		"active":     true,
@@ -829,7 +829,7 @@ func TestCodeSanitation_PlainTextBody(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"name":       uuid.New().String(),
 		"path":       "/code-plain-test",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"POST"},
 		"strip_path": true,
 		"active":     true,

@@ -87,7 +87,7 @@ func TestUpdateRule(t *testing.T) {
 	initialRulePayload := map[string]interface{}{
 		"path":       "/initial",
 		"name":       "initial-rule",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET"},
 		"headers": map[string]string{
 			"X-Initial": "initial-value",
@@ -126,7 +126,7 @@ func TestUpdateRule(t *testing.T) {
 		updatePayload := map[string]interface{}{
 			"path":       "/updated",
 			"name":       "updated-rule",
-			"service_id": serviceID2,
+			"upstream_id": serviceID2,
 			"methods":    []string{"GET", "POST", "PUT"},
 			"headers": map[string]string{
 				"X-Updated":     "updated-value",
@@ -162,7 +162,7 @@ func TestUpdateRule(t *testing.T) {
 		assert.Equal(t, ruleID, getResponse["id"], "Rule ID should remain unchanged")
 		assert.Equal(t, "/updated", getResponse["path"])
 		assert.Equal(t, "updated-rule", getResponse["name"])
-		assert.Equal(t, serviceID2, getResponse["service_id"])
+		assert.Equal(t, serviceID2, getResponse["upstream_id"])
 		assert.Equal(t, true, getResponse["strip_path"])
 		assert.Equal(t, true, getResponse["preserve_host"])
 		assert.Equal(t, float64(5), getResponse["retry_attempts"])
@@ -211,7 +211,7 @@ func TestUpdateRule(t *testing.T) {
 		assert.Equal(t, "/individual-update", getResponse["path"])
 		// Other fields should remain from previous update
 		assert.Equal(t, "updated-rule", getResponse["name"])
-		assert.Equal(t, serviceID2, getResponse["service_id"])
+		assert.Equal(t, serviceID2, getResponse["upstream_id"])
 
 		t.Logf("✅ Individual field update successful")
 	})

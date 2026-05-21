@@ -135,7 +135,7 @@ func TestAddPluginsHandler_RuleSuccess(t *testing.T) {
 	rulePayload := map[string]interface{}{
 		"path":       "/add-plugin-rule",
 		"name":       "rulename",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET"},
 	}
 	status, ruleResp := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{

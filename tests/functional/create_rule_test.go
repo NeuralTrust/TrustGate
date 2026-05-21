@@ -43,7 +43,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test",
 			"name":       "rulename",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		}
 
@@ -55,7 +55,7 @@ func TestCreateRule(t *testing.T) {
 		// Verify response fields
 		assert.NotEmpty(t, response["id"])
 		assert.Equal(t, "/test", response["path"])
-		assert.Equal(t, serviceID, response["service_id"])
+		assert.Equal(t, serviceID, response["upstream_id"])
 		assert.Equal(t, []interface{}{"GET"}, response["methods"])
 		assert.Equal(t, gatewayID, response["gateway_id"])
 		// Verify default type is endpoint
@@ -66,7 +66,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-headers",
 			"name":       "rulename",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET", "POST"},
 			"headers": map[string]interface{}{
 				"Content-Type": "application/json",
@@ -82,7 +82,7 @@ func TestCreateRule(t *testing.T) {
 		// Verify response fields
 		assert.NotEmpty(t, response["id"])
 		assert.Equal(t, "/test-headers", response["path"])
-		assert.Equal(t, serviceID, response["service_id"])
+		assert.Equal(t, serviceID, response["upstream_id"])
 		assert.Equal(t, []interface{}{"GET", "POST"}, response["methods"])
 		assert.NotNil(t, response["headers"])
 	})
@@ -91,7 +91,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":          "/test-options",
 			"name":          "rulename",
-			"service_id":    serviceID,
+			"upstream_id":    serviceID,
 			"methods":       []string{"GET"},
 			"strip_path":    true,
 			"preserve_host": true,
@@ -105,7 +105,7 @@ func TestCreateRule(t *testing.T) {
 		// Verify response fields
 		assert.NotEmpty(t, response["id"])
 		assert.Equal(t, "/test-options", response["path"])
-		assert.Equal(t, serviceID, response["service_id"])
+		assert.Equal(t, serviceID, response["upstream_id"])
 		assert.Equal(t, true, response["strip_path"])
 		assert.Equal(t, true, response["preserve_host"])
 	})
@@ -114,7 +114,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":           "/test-retry",
 			"name":           "rulename",
-			"service_id":     serviceID,
+			"upstream_id":     serviceID,
 			"methods":        []string{"GET"},
 			"retry_attempts": 3,
 		}
@@ -127,7 +127,7 @@ func TestCreateRule(t *testing.T) {
 		// Verify response fields
 		assert.NotEmpty(t, response["id"])
 		assert.Equal(t, "/test-retry", response["path"])
-		assert.Equal(t, serviceID, response["service_id"])
+		assert.Equal(t, serviceID, response["upstream_id"])
 		assert.Equal(t, float64(3), response["retry_attempts"])
 	})
 
@@ -135,7 +135,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-plugins",
 			"name":       "rulename",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 			"plugin_chain": []map[string]interface{}{
 				{
@@ -169,13 +169,13 @@ func TestCreateRule(t *testing.T) {
 		// Verify response fields
 		assert.NotEmpty(t, response["id"])
 		assert.Equal(t, "/test-plugins", response["path"])
-		assert.Equal(t, serviceID, response["service_id"])
+		assert.Equal(t, serviceID, response["upstream_id"])
 		assert.NotNil(t, response["plugin_chain"])
 	})
 
 	t.Run("it should fail when path is missing", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"name":       "rulename",
 			"methods":    []string{"GET"},
 		}
@@ -186,7 +186,7 @@ func TestCreateRule(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
-	t.Run("it should fail when service_id is missing", func(t *testing.T) {
+	t.Run("it should fail when upstream_id is missing", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":    "/test-missing-service",
 			"name":    "rulename",
@@ -202,7 +202,7 @@ func TestCreateRule(t *testing.T) {
 	t.Run("it should fail when methods are missing", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-missing-methods",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 		}
 
 		status, _ := sendRequest(t, http.MethodPost, fmt.Sprintf("%s/gateways/%s/rules", AdminUrl, gatewayID), map[string]string{
@@ -215,7 +215,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-nonexistent-gateway",
 			"name":       "rulename",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		}
 
@@ -226,11 +226,11 @@ func TestCreateRule(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
-	t.Run("it should fail with non-existent service ID", func(t *testing.T) {
+	t.Run("it should fail with non-existent upstream ID", func(t *testing.T) {
 		rulePayload := map[string]interface{}{
-			"path":       "/test-nonexistent-service",
+			"path":       "/test-nonexistent-upstream",
 			"name":       "rulename",
-			"service_id": uuid.New().String(),
+			"upstream_id": uuid.New().String(),
 			"methods":    []string{"GET"},
 		}
 
@@ -244,7 +244,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-invalid-method",
 			"name":       "rulename",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"INVALID"},
 		}
 
@@ -260,7 +260,7 @@ func TestCreateRule(t *testing.T) {
 		firstRulePayload := map[string]interface{}{
 			"path":       duplicatePath,
 			"name":       "first-rule",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		}
 
@@ -274,7 +274,7 @@ func TestCreateRule(t *testing.T) {
 		secondRulePayload := map[string]interface{}{
 			"path":       duplicatePath,
 			"name":       "second-rule",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"POST"},
 		}
 
@@ -321,7 +321,7 @@ func TestCreateRule(t *testing.T) {
 		firstGatewayRulePayload := map[string]interface{}{
 			"path":       sharedPath,
 			"name":       "first-gateway-rule",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		}
 
@@ -335,7 +335,7 @@ func TestCreateRule(t *testing.T) {
 		secondGatewayRulePayload := map[string]interface{}{
 			"path":       sharedPath,
 			"name":       "second-gateway-rule",
-			"service_id": secondServiceID,
+			"upstream_id": secondServiceID,
 			"methods":    []string{"POST"},
 		}
 
@@ -350,7 +350,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-default-type",
 			"name":       "rulename",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		}
 
@@ -367,7 +367,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-endpoint-type",
 			"name":       "rulename",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 			"type":       "endpoint",
 		}
@@ -385,7 +385,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-agent-type",
 			"name":       "rulename",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 			"type":       "agent",
 		}
@@ -403,7 +403,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-invalid-type",
 			"name":       "rulename",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 			"type":       "invalid",
 		}
@@ -422,7 +422,7 @@ func TestCreateRule(t *testing.T) {
 		rulePayload := map[string]interface{}{
 			"path":       "/test-type-in-response",
 			"name":       "rulename",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 			"type":       "agent",
 		}

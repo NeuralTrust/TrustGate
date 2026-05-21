@@ -8,7 +8,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/domain"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/forwarding_rule"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/gateway"
-	"github.com/NeuralTrust/TrustGate/pkg/domain/service"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	"github.com/NeuralTrust/TrustGate/pkg/handlers/http/request"
 	infraCache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/event"
@@ -25,7 +25,7 @@ type creator struct {
 	logger               *logrus.Logger
 	repo                 forwarding_rule.Repository
 	gatewayRepo          gateway.Repository
-	serviceRepo          service.Repository
+	upstreamRepo         upstream.Repository
 	pluginChainValidator plugin.ValidatePluginChain
 	publisher            infraCache.EventPublisher
 	ruleMatcher          Matcher
@@ -35,7 +35,7 @@ func NewCreator(
 	logger *logrus.Logger,
 	repo forwarding_rule.Repository,
 	gatewayRepo gateway.Repository,
-	serviceRepo service.Repository,
+	upstreamRepo upstream.Repository,
 	pluginChainValidator plugin.ValidatePluginChain,
 	publisher infraCache.EventPublisher,
 	ruleMatcher Matcher,
@@ -44,7 +44,7 @@ func NewCreator(
 		logger:               logger,
 		repo:                 repo,
 		gatewayRepo:          gatewayRepo,
-		serviceRepo:          serviceRepo,
+		upstreamRepo:         upstreamRepo,
 		pluginChainValidator: pluginChainValidator,
 		publisher:            publisher,
 		ruleMatcher:          ruleMatcher,
@@ -56,9 +56,9 @@ func (c *creator) Create(
 	gatewayID uuid.UUID,
 	req *request.CreateRuleRequest,
 ) (*forwarding_rule.ForwardingRule, error) {
-	serviceUUID, err := uuid.Parse(req.ServiceID)
+	upstreamUUID, err := uuid.Parse(req.UpstreamID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid service ID", domain.ErrValidation)
+		return nil, fmt.Errorf("%w: invalid upstream ID", domain.ErrValidation)
 	}
 
 	if _, err = c.gatewayRepo.Get(ctx, gatewayID); err != nil {
@@ -66,9 +66,18 @@ func (c *creator) Create(
 		return nil, domain.ErrGatewayNotFound
 	}
 
-	if _, err = c.serviceRepo.Get(ctx, req.ServiceID); err != nil {
-		c.logger.WithError(err).WithField("service_id", req.ServiceID).Error("service not found")
-		return nil, domain.ErrServiceNotFound
+	ups, err := c.upstreamRepo.GetUpstream(ctx, upstreamUUID)
+	if err != nil {
+		c.logger.WithError(err).WithField("upstream_id", req.UpstreamID).Error("upstream not found")
+		return nil, domain.ErrUpstreamNotFound
+	}
+	if ups.GatewayID != gatewayID {
+		c.logger.WithFields(logrus.Fields{
+			"upstream_id":          req.UpstreamID,
+			"upstream_gateway_id":  ups.GatewayID,
+			"request_gateway_id":   gatewayID,
+		}).Error("upstream belongs to a different gateway")
+		return nil, domain.ErrUpstreamNotFound
 	}
 
 	stripPath := false
@@ -119,7 +128,7 @@ func (c *creator) Create(
 
 	dbRule, err := forwarding_rule.New(forwarding_rule.CreateParams{
 		GatewayID:     gatewayID,
-		ServiceID:     serviceUUID,
+		UpstreamID:    upstreamUUID,
 		Name:          req.Name,
 		Path:          req.Path.Primary,
 		Paths:         pathsDB,

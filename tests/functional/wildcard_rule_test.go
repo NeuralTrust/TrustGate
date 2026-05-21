@@ -51,7 +51,7 @@ func TestWildcardRules(t *testing.T) {
 			map[string]interface{}{
 				"path":       path,
 				"name":       fmt.Sprintf("rule-%d", time.Now().UnixNano()),
-				"service_id": serviceID,
+				"upstream_id": serviceID,
 				"methods":    []string{"GET", "POST"},
 			},
 		)
@@ -174,7 +174,7 @@ func TestWildcardRules(t *testing.T) {
 			map[string]interface{}{
 				"path":       "/proxy-wc/*",
 				"name":       fmt.Sprintf("wc-proxy-%d", time.Now().UnixNano()),
-				"service_id": wcServiceID,
+				"upstream_id": wcServiceID,
 				"methods":    []string{"GET", "POST"},
 			},
 		)

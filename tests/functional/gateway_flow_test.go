@@ -46,7 +46,7 @@ func TestGatewayFlowPolicies(t *testing.T) {
 		}, map[string]interface{}{
 			"path":       "/flow-1a",
 			"name":       "flow-1a",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		})
 		assert.Equal(t, http.StatusCreated, status)
@@ -59,7 +59,7 @@ func TestGatewayFlowPolicies(t *testing.T) {
 		}, map[string]interface{}{
 			"path":       "/flow-1b",
 			"name":       "flow-1b",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		})
 		assert.Equal(t, http.StatusCreated, status)
@@ -124,7 +124,7 @@ func TestGatewayFlowPolicies(t *testing.T) {
 		}, map[string]interface{}{
 			"path":       "/flow-2",
 			"name":       "flow-2",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		})
 		assert.Equal(t, http.StatusCreated, status)
@@ -175,7 +175,7 @@ func TestGatewayFlowPolicies(t *testing.T) {
 		}, map[string]interface{}{
 			"path":       "/flow-3",
 			"name":       "flow-3",
-			"service_id": serviceID,
+			"upstream_id": serviceID,
 			"methods":    []string{"GET"},
 		})
 		assert.Equal(t, http.StatusCreated, status)

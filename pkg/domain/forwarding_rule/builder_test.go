@@ -11,20 +11,20 @@ import (
 
 func TestNew_Success(t *testing.T) {
 	gatewayID := uuid.New()
-	serviceID := uuid.New()
+	upstreamID := uuid.New()
 
 	rule, err := New(CreateParams{
-		GatewayID: gatewayID,
-		ServiceID: serviceID,
-		Name:      "test-rule",
-		Path:      "/api/v1",
-		Methods:   domain.MethodsJSON{"GET", "POST"},
+		GatewayID:  gatewayID,
+		UpstreamID: upstreamID,
+		Name:       "test-rule",
+		Path:       "/api/v1",
+		Methods:    domain.MethodsJSON{"GET", "POST"},
 	})
 
 	require.NoError(t, err)
 	assert.NotEqual(t, uuid.Nil, rule.ID)
 	assert.Equal(t, gatewayID, rule.GatewayID)
-	assert.Equal(t, serviceID, rule.ServiceID)
+	assert.Equal(t, upstreamID, rule.UpstreamID)
 	assert.Equal(t, "test-rule", rule.Name)
 	assert.Equal(t, "/api/v1", rule.Path)
 	assert.Equal(t, domain.MethodsJSON{"GET", "POST"}, rule.Methods)
@@ -36,11 +36,11 @@ func TestNew_Success(t *testing.T) {
 
 func TestNew_DefaultsToEndpointType(t *testing.T) {
 	rule, err := New(CreateParams{
-		GatewayID: uuid.New(),
-		ServiceID: uuid.New(),
-		Name:      "rule",
-		Path:      "/api",
-		Methods:   domain.MethodsJSON{"GET"},
+		GatewayID:  uuid.New(),
+		UpstreamID: uuid.New(),
+		Name:       "rule",
+		Path:       "/api",
+		Methods:    domain.MethodsJSON{"GET"},
 	})
 
 	require.NoError(t, err)
@@ -49,12 +49,12 @@ func TestNew_DefaultsToEndpointType(t *testing.T) {
 
 func TestNew_PreservesExplicitType(t *testing.T) {
 	rule, err := New(CreateParams{
-		GatewayID: uuid.New(),
-		ServiceID: uuid.New(),
-		Name:      "agent-rule",
-		Path:      "/agent",
-		Methods:   domain.MethodsJSON{"POST"},
-		Type:      AgentRuleType,
+		GatewayID:  uuid.New(),
+		UpstreamID: uuid.New(),
+		Name:       "agent-rule",
+		Path:       "/agent",
+		Methods:    domain.MethodsJSON{"POST"},
+		Type:       AgentRuleType,
 	})
 
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestNew_WithOptionalFields(t *testing.T) {
 
 	rule, err := New(CreateParams{
 		GatewayID:     uuid.New(),
-		ServiceID:     uuid.New(),
+		UpstreamID:    uuid.New(),
 		Name:          "full-rule",
 		Path:          "/v1/chat",
 		Paths:         domain.PathsJSON{"/v1/chat", "/v1/completions"},
@@ -92,11 +92,11 @@ func TestNew_WithOptionalFields(t *testing.T) {
 
 func TestNew_GeneratesUniqueIDs(t *testing.T) {
 	params := CreateParams{
-		GatewayID: uuid.New(),
-		ServiceID: uuid.New(),
-		Name:      "rule",
-		Path:      "/api",
-		Methods:   domain.MethodsJSON{"GET"},
+		GatewayID:  uuid.New(),
+		UpstreamID: uuid.New(),
+		Name:       "rule",
+		Path:       "/api",
+		Methods:    domain.MethodsJSON{"GET"},
 	}
 
 	r1, err := New(params)

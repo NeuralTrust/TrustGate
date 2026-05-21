@@ -23,7 +23,7 @@ type ForwardingRule struct {
 	ID            uuid.UUID `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	Name          string
 	GatewayID     uuid.UUID              `gorm:"type:uuid;not null"`
-	ServiceID     uuid.UUID              `gorm:"type:uuid;not null"`
+	UpstreamID    uuid.UUID              `gorm:"type:uuid;not null"`
 	Path          string                 `gorm:"not null"`
 	Paths         domain.PathsJSON       `gorm:"type:jsonb"`
 	Type          Type                   `gorm:"column:rule_type;type:rule_type;default:'endpoint';not null"`
@@ -84,8 +84,8 @@ func (r *ForwardingRule) Validate() error {
 		}
 	}
 
-	if r.ServiceID == uuid.Nil {
-		return fmt.Errorf("service_id is required")
+	if r.UpstreamID == uuid.Nil {
+		return fmt.Errorf("upstream_id is required")
 	}
 
 	if len(r.Methods) == 0 {

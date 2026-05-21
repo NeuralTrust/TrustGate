@@ -76,7 +76,7 @@ func TestProviderLoadBalancer(t *testing.T) {
 
 	rulePayload := map[string]interface{}{
 		"path":       "/v1",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"POST"},
 		"strip_path": false,
 		"active":     true,

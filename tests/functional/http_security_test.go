@@ -67,7 +67,7 @@ func TestSecurityMiddleware(t *testing.T) {
 
 	rulePayload := map[string]interface{}{
 		"path":       "/security-test",
-		"service_id": serviceID,
+		"upstream_id": serviceID,
 		"methods":    []string{"GET"},
 		"strip_path": true,
 		"active":     true,

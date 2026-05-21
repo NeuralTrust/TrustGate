@@ -34,7 +34,7 @@ func NewCreateUpstreamHandler(logger *logrus.Logger, creator appUpstream.Creator
 // @Param Authorization header string true "Authorization token"
 // @Param gateway_id path string true "Gateway ID"
 // @Param upstream body request.UpstreamRequest true "Upstream data"
-// @Success 201 {object} upstream.Upstream "Upstream created successfully"
+// @Success 201 {object} map[string]interface{} "Upstream created successfully"
 // @Router /api/v1/gateways/{gateway_id}/upstreams [post]
 func (h *createUpstreamHandler) Handle(c *fiber.Ctx) error {
 	gatewayUUID, err := uuid.Parse(c.Params("gateway_id"))

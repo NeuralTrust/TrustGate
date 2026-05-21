@@ -7,7 +7,6 @@ import (
 	time "time"
 
 	apikey "github.com/NeuralTrust/TrustGate/pkg/domain/iam/apikey"
-	service "github.com/NeuralTrust/TrustGate/pkg/domain/service"
 	upstream "github.com/NeuralTrust/TrustGate/pkg/domain/upstream"
 	cache "github.com/NeuralTrust/TrustGate/pkg/infra/cache"
 	redis "github.com/go-redis/redis/v8"
@@ -365,66 +364,6 @@ func (_c *Client_GetApiKey_Call) RunAndReturn(run func(context.Context, string) 
 	return _c
 }
 
-// GetService provides a mock function with given fields: ctx, gatewayID, serviceID
-func (_m *Client) GetService(ctx context.Context, gatewayID string, serviceID string) (*service.Service, error) {
-	ret := _m.Called(ctx, gatewayID, serviceID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetService")
-	}
-
-	var r0 *service.Service
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) (*service.Service, error)); ok {
-		return rf(ctx, gatewayID, serviceID)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) *service.Service); ok {
-		r0 = rf(ctx, gatewayID, serviceID)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*service.Service)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
-		r1 = rf(ctx, gatewayID, serviceID)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// Client_GetService_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetService'
-type Client_GetService_Call struct {
-	*mock.Call
-}
-
-// GetService is a helper method to define mock.On call
-//   - ctx context.Context
-//   - gatewayID string
-//   - serviceID string
-func (_e *Client_Expecter) GetService(ctx interface{}, gatewayID interface{}, serviceID interface{}) *Client_GetService_Call {
-	return &Client_GetService_Call{Call: _e.mock.On("GetService", ctx, gatewayID, serviceID)}
-}
-
-func (_c *Client_GetService_Call) Run(run func(ctx context.Context, gatewayID string, serviceID string)) *Client_GetService_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string))
-	})
-	return _c
-}
-
-func (_c *Client_GetService_Call) Return(_a0 *service.Service, _a1 error) *Client_GetService_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *Client_GetService_Call) RunAndReturn(run func(context.Context, string, string) (*service.Service, error)) *Client_GetService_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // GetTTLMap provides a mock function with given fields: name
 func (_m *Client) GetTTLMap(name string) *cache.TTLMap {
 	ret := _m.Called(name)
@@ -669,54 +608,6 @@ func (_c *Client_SaveAPIKey_Call) Return(_a0 error) *Client_SaveAPIKey_Call {
 }
 
 func (_c *Client_SaveAPIKey_Call) RunAndReturn(run func(context.Context, *apikey.APIKey) error) *Client_SaveAPIKey_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// SaveService provides a mock function with given fields: ctx, gatewayID, _a2
-func (_m *Client) SaveService(ctx context.Context, gatewayID string, _a2 *service.Service) error {
-	ret := _m.Called(ctx, gatewayID, _a2)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SaveService")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, *service.Service) error); ok {
-		r0 = rf(ctx, gatewayID, _a2)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// Client_SaveService_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SaveService'
-type Client_SaveService_Call struct {
-	*mock.Call
-}
-
-// SaveService is a helper method to define mock.On call
-//   - ctx context.Context
-//   - gatewayID string
-//   - _a2 *service.Service
-func (_e *Client_Expecter) SaveService(ctx interface{}, gatewayID interface{}, _a2 interface{}) *Client_SaveService_Call {
-	return &Client_SaveService_Call{Call: _e.mock.On("SaveService", ctx, gatewayID, _a2)}
-}
-
-func (_c *Client_SaveService_Call) Run(run func(ctx context.Context, gatewayID string, _a2 *service.Service)) *Client_SaveService_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(*service.Service))
-	})
-	return _c
-}
-
-func (_c *Client_SaveService_Call) Return(_a0 error) *Client_SaveService_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *Client_SaveService_Call) RunAndReturn(run func(context.Context, string, *service.Service) error) *Client_SaveService_Call {
 	_c.Call.Return(run)
 	return _c
 }
