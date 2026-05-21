@@ -24,24 +24,24 @@ type GatewayOutput struct {
 }
 
 type ForwardingRuleOutput struct {
-	ID            string                 `json:"id"`
-	Name          string                 `json:"name"`
-	GatewayID     string                 `json:"gateway_id"`
-	Upstream      *UpstreamOutput        `json:"upstream"`
-	UpstreamID    string                 `json:"upstream_id"`
-	Path          types.FlexiblePath     `json:"path"`
-	Type          string                 `json:"type"`
-	Methods       domain.MethodsJSON     `json:"methods"`
-	Headers       domain.HeadersJSON     `json:"headers"`
-	StripPath     bool                   `json:"strip_path"`
-	PreserveHost  bool                   `json:"preserve_host"`
-	RetryAttempts int                    `json:"retry_attempts"`
-	PluginChain   domain.PluginChainJSON `json:"plugin_chain,omitempty"`
+	ID            string                         `json:"id"`
+	Name          string                         `json:"name"`
+	GatewayID     string                         `json:"gateway_id"`
+	Upstream      *UpstreamOutput                `json:"upstream,omitempty"`
+	UpstreamID    string                         `json:"upstream_id"`
+	Path          types.FlexiblePath             `json:"path"`
+	Type          string                         `json:"type"`
+	Methods       domain.MethodsJSON             `json:"methods"`
+	Headers       domain.HeadersJSON             `json:"headers"`
+	StripPath     bool                           `json:"strip_path"`
+	PreserveHost  bool                           `json:"preserve_host"`
+	RetryAttempts int                            `json:"retry_attempts"`
+	PluginChain   domain.PluginChainJSON         `json:"plugin_chain,omitempty"`
 	Active        bool                           `json:"active"`
 	TrustLens     *domain.TrustLensJSON          `json:"trustlens"`
 	SessionConfig *forwarding_rule.SessionConfig `json:"session_config,omitempty"`
 	CreatedAt     time.Time                      `json:"created_at"`
-	UpdatedAt     time.Time              `json:"updated_at"`
+	UpdatedAt     time.Time                      `json:"updated_at"`
 }
 
 type UpstreamOutput struct {
