@@ -1,0 +1,2 @@
+// Reserved for B.x use-cases (creators, updaters, queries) consuming pkg/domain.
+// See .agents/AGENT.md for the hexagonal layer responsibilities.
