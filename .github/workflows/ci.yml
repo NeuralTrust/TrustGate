@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+  security-events: write
+  id-token: write
+
+jobs:
+  unit-tests:
+    uses: NeuralTrust/workflows/.github/workflows/tests.yml@main
+    with:
+      language: go
+      language_version: "1.26"
+      go_private_modules: true
+      lint_enabled: true
+      coverage_enabled: true
+      test_command: |
+        go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+      setup_commands: |
+        cp .env.example .env
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  security:
+    uses: NeuralTrust/workflows/.github/workflows/sast.yml@main
+    with:
+      gitleaks_enabled: false
+      gosec_enabled: true
+      gosec_args: "-no-fail ./..."
