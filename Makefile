@@ -1,4 +1,5 @@
 .PHONY: help build run run-admin run-proxy test test-race test-cover lint fmt tidy generate \
+        install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
 # --- Build metadata injected into the binary via -ldflags ------------------
@@ -66,6 +67,13 @@ tidy: ## Run go mod tidy
 generate: ## Run go generate
 	@$(info $(M) Running go generate ...)
 	go generate ./...
+
+install-pre-commit: ## Install the git pre-commit hook
+	@$(info $(M) Installing pre-commit hook ...)
+	@mkdir -p .git/hooks
+	@cp scripts/pre-commit.sh .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "Pre-commit hook installed successfully!"
 
 docker-build: ## Build the production docker image
 	@$(info $(M) Building docker image $(DOCKER_IMAGE):$(DOCKER_TAG) ...)
