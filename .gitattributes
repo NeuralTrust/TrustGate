@@ -1,0 +1,4 @@
+# Mockery-generated mocks: marked as generated so GitHub collapses
+# them in diffs and reviewers focus on hand-written code. Regenerate
+# with `make mocks` (runs `go generate ./...`).
+**/mocks/*_mock.go linguist-generated=true

@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy test test-race test-cover lint fmt tidy generate \
+.PHONY: help build run run-admin run-proxy test test-race test-cover lint fmt tidy generate mocks tools \
         install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -66,6 +66,17 @@ tidy: ## Run go mod tidy
 
 generate: ## Run go generate
 	@$(info $(M) Running go generate ...)
+	go generate ./...
+
+tools: ## Install Go dev tools pinned in tools/tools.go
+	@$(info $(M) Installing dev tools ...)
+	go install github.com/vektra/mockery/v2
+
+mocks: ## Regenerate all mockery mocks across the codebase
+	@$(info $(M) Regenerating mocks ...)
+	@command -v mockery >/dev/null 2>&1 || { \
+	  echo "mockery not found in PATH; run 'make tools' first" >&2; exit 1; \
+	}
 	go generate ./...
 
 install-pre-commit: ## Install the git pre-commit hook

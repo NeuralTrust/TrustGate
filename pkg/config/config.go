@@ -37,8 +37,27 @@ const (
 	defaultRedisHost = "localhost"
 	defaultRedisPort = 6379
 	defaultRedisDB   = 0
+	defaultRedisTLS  = false
+
+	defaultCacheLocalTTL = 5 * time.Minute
 
 	defaultKafkaBrokers = "localhost:9092"
+
+	defaultTelemetryEnabled          = true
+	defaultTelemetryKafkaTopic       = "agentgateway.requests"
+	defaultTelemetryTrustLensEnabled = false
+	defaultTelemetryTrustLensURL     = ""
+
+	defaultMetricsEnabled       = true
+	defaultMetricsQueueSize     = 1000
+	defaultMetricsWorkerCount   = 1
+	defaultMetricsFlushInterval = 5 * time.Second
+
+	defaultUpstreamTimeout          = 60 * time.Second
+	defaultUpstreamErrorPassthrough = true
+
+	defaultProviderRequestTimeout = 60 * time.Second
+	defaultProviderMaxRetries     = 2
 
 	defaultCORSAllowOrigins     = "*"
 	defaultCORSAllowMethods     = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
@@ -56,7 +75,12 @@ type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
 	Redis    RedisConfig
+	Cache    CacheConfig
 	Kafka    KafkaConfig
+	Telemetry TelemetryConfig
+	Metrics  MetricsConfig
+	Upstream UpstreamConfig
+	Provider ProviderConfig
 	CORS     CORSConfig
 	Logger   LoggerConfig
 }
@@ -86,14 +110,47 @@ type DatabaseConfig struct {
 }
 
 type RedisConfig struct {
-	Host     string
-	Port     int
-	Password string
-	DB       int
+	Host              string
+	Port              int
+	Password          string
+	DB                int
+	TLSEnabled        bool
+	TLSInsecureVerify bool
+}
+
+// CacheConfig drives the in-process TTL cache used by app-layer
+// finders. RUN-291 (B.1) will add a parallel Redis-backed layer; the
+// finder contract will not change.
+type CacheConfig struct {
+	LocalTTL time.Duration
 }
 
 type KafkaConfig struct {
 	Brokers []string
+}
+
+type TelemetryConfig struct {
+	Enabled          bool
+	KafkaTopic       string
+	TrustLensEnabled bool
+	TrustLensURL     string
+}
+
+type MetricsConfig struct {
+	Enabled       bool
+	QueueSize     int
+	WorkerCount   int
+	FlushInterval time.Duration
+}
+
+type UpstreamConfig struct {
+	Timeout          time.Duration
+	ErrorPassthrough bool
+}
+
+type ProviderConfig struct {
+	RequestTimeout time.Duration
+	MaxRetries     int
 }
 
 // CORSConfig drives the CORSMiddleware applied by both admin and proxy.
@@ -118,7 +175,12 @@ func LoadConfig() (*Config, error) {
 		Server:   getServerConfig(),
 		Database: getDatabaseConfig(),
 		Redis:    getRedisConfig(),
+		Cache:    getCacheConfig(),
 		Kafka:    getKafkaConfig(),
+		Telemetry: getTelemetryConfig(),
+		Metrics:  getMetricsConfig(),
+		Upstream: getUpstreamConfig(),
+		Provider: getProviderConfig(),
 		CORS:     getCORSConfig(),
 		Logger:   getLoggerConfig(),
 	}
@@ -162,11 +224,51 @@ func getRedisConfig() RedisConfig {
 		Port:     getEnvInt("REDIS_PORT", defaultRedisPort),
 		Password: getEnv("REDIS_PASSWORD", ""),
 		DB:       getEnvInt("REDIS_DB", defaultRedisDB),
+		TLSEnabled:        getEnvBool("REDIS_TLS_ENABLED", defaultRedisTLS),
+		TLSInsecureVerify: getEnvBool("REDIS_TLS_INSECURE_VERIFY", false),
+	}
+}
+
+func getCacheConfig() CacheConfig {
+	return CacheConfig{
+		LocalTTL: getEnvDuration("CACHE_LOCAL_TTL", defaultCacheLocalTTL),
 	}
 }
 
 func getKafkaConfig() KafkaConfig {
 	return KafkaConfig{Brokers: splitCSV(getEnv("KAFKA_BROKERS", defaultKafkaBrokers))}
+}
+
+func getTelemetryConfig() TelemetryConfig {
+	return TelemetryConfig{
+		Enabled:          getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
+		KafkaTopic:       getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
+		TrustLensEnabled: getEnvBool("TELEMETRY_TRUSTLENS_ENABLED", defaultTelemetryTrustLensEnabled),
+		TrustLensURL:     getEnv("TELEMETRY_TRUSTLENS_URL", defaultTelemetryTrustLensURL),
+	}
+}
+
+func getMetricsConfig() MetricsConfig {
+	return MetricsConfig{
+		Enabled:       getEnvBool("METRICS_ENABLED", defaultMetricsEnabled),
+		QueueSize:     getEnvInt("METRICS_QUEUE_SIZE", defaultMetricsQueueSize),
+		WorkerCount:   getEnvInt("METRICS_WORKER_COUNT", defaultMetricsWorkerCount),
+		FlushInterval: getEnvDuration("METRICS_FLUSH_INTERVAL", defaultMetricsFlushInterval),
+	}
+}
+
+func getUpstreamConfig() UpstreamConfig {
+	return UpstreamConfig{
+		Timeout:          getEnvDuration("UPSTREAM_TIMEOUT", defaultUpstreamTimeout),
+		ErrorPassthrough: getEnvBool("UPSTREAM_ERROR_PASSTHROUGH", defaultUpstreamErrorPassthrough),
+	}
+}
+
+func getProviderConfig() ProviderConfig {
+	return ProviderConfig{
+		RequestTimeout: getEnvDuration("PROVIDER_REQUEST_TIMEOUT", defaultProviderRequestTimeout),
+		MaxRetries:     getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
+	}
 }
 
 // splitCSV trims whitespace and drops empty tokens so " a, , b " -> ["a","b"].
@@ -214,6 +316,21 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Kafka.Brokers) == 0 {
 		return fmt.Errorf("%w: KAFKA_BROKERS must contain at least one broker", errors.ErrInvalidConfig)
+	}
+	if c.Telemetry.Enabled && c.Telemetry.KafkaTopic == "" {
+		return fmt.Errorf("%w: TELEMETRY_KAFKA_TOPIC is required when telemetry is enabled", errors.ErrInvalidConfig)
+	}
+	if c.Telemetry.TrustLensEnabled && c.Telemetry.TrustLensURL == "" {
+		return fmt.Errorf("%w: TELEMETRY_TRUSTLENS_URL is required when TrustLens telemetry is enabled", errors.ErrInvalidConfig)
+	}
+	if c.Metrics.Enabled && c.Metrics.QueueSize <= 0 {
+		return fmt.Errorf("%w: METRICS_QUEUE_SIZE must be greater than zero", errors.ErrInvalidConfig)
+	}
+	if c.Metrics.Enabled && c.Metrics.WorkerCount <= 0 {
+		return fmt.Errorf("%w: METRICS_WORKER_COUNT must be greater than zero", errors.ErrInvalidConfig)
+	}
+	if c.Provider.MaxRetries < 0 {
+		return fmt.Errorf("%w: PROVIDER_MAX_RETRIES must be zero or greater", errors.ErrInvalidConfig)
 	}
 	return nil
 }
