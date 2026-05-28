@@ -3,27 +3,28 @@ package gateway
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/google/uuid"
 )
 
-//go:generate mockery --name=Updater --dir=. --output=./mocks --filename=gateway_updater_mock.go --case=underscore --with-expecter
-
-// UpdateInput models a full-replacement PUT-style update. The handler
-// rejects requests missing required fields before reaching here.
 type UpdateInput struct {
-	ID          uuid.UUID
-	Name        string
-	Description string
+	ID              uuid.UUID
+	Name            string
+	Status          string
+	Telemetry       *telemetry.Telemetry
+	ClientTLSConfig domain.ClientTLSConfig
 }
 
-// Updater loads, mutates, and persists a gateway, refreshing the local
-// TTL cache so the next read sees the post-write state immediately.
+//go:generate mockery --name=Updater --dir=. --output=./mocks --filename=gateway_updater_mock.go --case=underscore --with-expecter
 type Updater interface {
 	Update(ctx context.Context, in UpdateInput) (*domain.Gateway, error)
 }
+
+var _ Updater = (*updater)(nil)
 
 type updater struct {
 	repo        domain.Repository
@@ -44,10 +45,12 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if err != nil {
 		return nil, err
 	}
-	if err := g.Rename(in.Name); err != nil {
-		return nil, err
-	}
-	if err := g.SetDescription(in.Description); err != nil {
+	g.Name = in.Name
+	g.Status = in.Status
+	g.Telemetry = in.Telemetry
+	g.ClientTLSConfig = in.ClientTLSConfig
+	g.UpdatedAt = time.Now().UTC()
+	if err := g.Validate(); err != nil {
 		return nil, err
 	}
 	if err := u.repo.Update(ctx, g); err != nil {

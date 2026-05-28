@@ -9,9 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// runInCtx executes fn from inside a Fiber handler, capturing its return
-// values. Fiber pools its *Ctx, so callers cannot use the value after the
-// handler returns — every assertion must happen here.
 func runInCtx[T any](t *testing.T, target, route string, fn func(c *fiber.Ctx) (T, error)) (T, error) {
 	t.Helper()
 	var (

@@ -1,17 +1,42 @@
 package modules
 
 import (
+	"log/slog"
+
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
 
-// Cache wires the in-process TTL cache singleton. RUN-291 (B.1) will
-// add a Redis client provider alongside this manager — finders consume
-// both through their existing constructor and the manager keeps
-// handing out per-namespace TTLMaps.
 func Cache(c *container.Container) error {
-	return c.Provide(func(cfg *config.Config) *cache.TTLMapManager {
-		return cache.NewTTLMapManager(cfg.Cache.LocalTTL)
+	if err := c.Provide(func(cfg *config.Config) *cache.TTLMapManager {
+		mgr := cache.NewTTLMapManager(cfg.Cache.LocalTTL)
+		initializeMemoryCache(mgr)
+		return mgr
+	}); err != nil {
+		return err
+	}
+	return c.Provide(func(
+		cfg *config.Config,
+		mgr *cache.TTLMapManager,
+		logger *slog.Logger,
+	) (cache.Client, error) {
+		return cache.NewClient(cache.Config{
+			Host:              cfg.Redis.Host,
+			Port:              cfg.Redis.Port,
+			Password:          cfg.Redis.Password,
+			DB:                cfg.Redis.DB,
+			TLSEnabled:        cfg.Redis.TLSEnabled,
+			TLSInsecureVerify: cfg.Redis.TLSInsecureVerify,
+		}, mgr, logger)
 	})
+}
+
+func initializeMemoryCache(mgr *cache.TTLMapManager) {
+	mgr.CreateTTLMap(cache.GatewayTTLName, cache.GatewayCacheTTL)
+	mgr.CreateTTLMap(cache.BackendTTLName, cache.BackendCacheTTL)
+	mgr.CreateTTLMap(cache.ConsumerTTLName, cache.ConsumerCacheTTL)
+	mgr.CreateTTLMap(cache.PolicyTTLName, cache.PolicyCacheTTL)
+	mgr.CreateTTLMap(cache.AuthTTLName, cache.AuthCacheTTL)
+	mgr.CreateTTLMap(cache.LoadBalancerTTLName, cache.LoadBalancerCacheTTL)
 }

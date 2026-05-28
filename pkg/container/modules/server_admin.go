@@ -5,6 +5,10 @@ import (
 	"log/slog"
 
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
+	backendhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/backend"
+	consumerhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer"
+	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
+	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
@@ -37,6 +41,30 @@ type adminRouterParams struct {
 	Transport      *middleware.Transport `name:"admin"`
 	HealthHandler  *apihandler.HealthHandler
 	VersionHandler *apihandler.VersionHandler
+
+	CreateGateway *gatewayhttp.CreateGatewayHandler
+	GetGateway    *gatewayhttp.GetGatewayHandler
+	ListGateway   *gatewayhttp.ListGatewayHandler
+	UpdateGateway *gatewayhttp.UpdateGatewayHandler
+	DeleteGateway *gatewayhttp.DeleteGatewayHandler
+
+	CreateBackend *backendhttp.CreateBackendHandler
+	GetBackend    *backendhttp.GetBackendHandler
+	ListBackend   *backendhttp.ListBackendHandler
+	UpdateBackend *backendhttp.UpdateBackendHandler
+	DeleteBackend *backendhttp.DeleteBackendHandler
+
+	CreatePolicy *policyhttp.CreatePolicyHandler
+	GetPolicy    *policyhttp.GetPolicyHandler
+	ListPolicy   *policyhttp.ListPolicyHandler
+	UpdatePolicy *policyhttp.UpdatePolicyHandler
+	DeletePolicy *policyhttp.DeletePolicyHandler
+
+	CreateConsumer *consumerhttp.CreateConsumerHandler
+	GetConsumer    *consumerhttp.GetConsumerHandler
+	ListConsumer   *consumerhttp.ListConsumerHandler
+	UpdateConsumer *consumerhttp.UpdateConsumerHandler
+	DeleteConsumer *consumerhttp.DeleteConsumerHandler
 }
 
 type adminServerParams struct {
@@ -52,7 +80,31 @@ func ServerAdmin(c *container.Container) error {
 	}
 	if err := c.Provide(
 		func(p adminRouterParams) router.ServerRouter {
-			return router.NewAdminRouter(p.Transport, p.HealthHandler, p.VersionHandler)
+			return router.NewAdminRouter(router.AdminRouterDeps{
+				MiddlewareTransport: p.Transport,
+				HealthHandler:       p.HealthHandler,
+				VersionHandler:      p.VersionHandler,
+				CreateGateway:       p.CreateGateway,
+				GetGateway:          p.GetGateway,
+				ListGateway:         p.ListGateway,
+				UpdateGateway:       p.UpdateGateway,
+				DeleteGateway:       p.DeleteGateway,
+				CreateBackend:       p.CreateBackend,
+				GetBackend:          p.GetBackend,
+				ListBackend:         p.ListBackend,
+				UpdateBackend:       p.UpdateBackend,
+				DeleteBackend:       p.DeleteBackend,
+				CreatePolicy:        p.CreatePolicy,
+				GetPolicy:           p.GetPolicy,
+				ListPolicy:          p.ListPolicy,
+				UpdatePolicy:        p.UpdatePolicy,
+				DeletePolicy:        p.DeletePolicy,
+				CreateConsumer:      p.CreateConsumer,
+				GetConsumer:         p.GetConsumer,
+				ListConsumer:        p.ListConsumer,
+				UpdateConsumer:      p.UpdateConsumer,
+				DeleteConsumer:      p.DeleteConsumer,
+			})
 		},
 		dig.Name("admin"),
 	); err != nil {

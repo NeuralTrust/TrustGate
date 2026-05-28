@@ -1,14 +1,13 @@
-// Package gateway is the pgx-backed implementation of the gateway
-// domain repository. It only knows about SQL and uuid; domain
-// invariants stay in pkg/domain/gateway.
 package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -20,49 +19,65 @@ const (
 	pgForeignKeyViolation = "23503"
 )
 
-// Repository persists Gateway aggregates against Postgres via pgxpool.
+var _ domain.Repository = (*Repository)(nil)
+
 type Repository struct {
 	conn *database.Connection
 }
 
-// NewRepository wires a fresh repository against the given connection.
-// It returns the concrete struct so dig can also bind it as
-// domain.Repository in the entity module.
 func NewRepository(conn *database.Connection) *Repository {
 	return &Repository{conn: conn}
 }
 
-// Save inserts a new gateway row. On unique-name conflict it returns
-// domain.ErrAlreadyExists.
 func (r *Repository) Save(ctx context.Context, g *domain.Gateway) error {
 	if g == nil {
 		return errors.New("gateway repository: nil gateway")
 	}
+	telemetryBytes, err := marshalJSON(g.Telemetry)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal telemetry: %w", err)
+	}
+	clientTLSBytes, err := marshalJSON(g.ClientTLSConfig)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal client_tls: %w", err)
+	}
 	const query = `
-		INSERT INTO gateways (id, name, description, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5)`
+		INSERT INTO gateways (id, name, status, telemetry, client_tls, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, query, g.ID, g.Name, g.Description, g.CreatedAt, g.UpdatedAt); err != nil {
+		if _, err := tx.Exec(ctx, query,
+			g.ID, g.Name, g.Status, telemetryBytes, clientTLSBytes, g.CreatedAt, g.UpdatedAt,
+		); err != nil {
 			return mapPgError(err)
 		}
 		return nil
 	})
 }
 
-// Update overwrites name + description + updated_at for an existing
-// gateway. Returns domain.ErrNotFound if no row matches the ID.
 func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 	if g == nil {
 		return errors.New("gateway repository: nil gateway")
 	}
+	telemetryBytes, err := marshalJSON(g.Telemetry)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal telemetry: %w", err)
+	}
+	clientTLSBytes, err := marshalJSON(g.ClientTLSConfig)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal client_tls: %w", err)
+	}
 	const query = `
 		UPDATE gateways
-		   SET name = $2,
-		       description = $3,
-		       updated_at = $4
+		   SET name        = $2,
+		       status      = $3,
+		       telemetry   = $4,
+		       client_tls  = $5,
+		       updated_at  = $6
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, g.ID, g.Name, g.Description, g.UpdatedAt)
+		cmd, err := tx.Exec(ctx, query,
+			g.ID, g.Name, g.Status, telemetryBytes, clientTLSBytes, g.UpdatedAt,
+		)
 		if err != nil {
 			return mapPgError(err)
 		}
@@ -73,9 +88,6 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 	})
 }
 
-// Delete removes a gateway by ID. Returns domain.ErrNotFound when
-// missing and domain.ErrHasDependents when FK constraints (backends)
-// reference it.
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	const query = `DELETE FROM gateways WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
@@ -90,10 +102,9 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	})
 }
 
-// FindByID loads a gateway by primary key.
 func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, name, description, created_at, updated_at
+		SELECT id, name, status, telemetry, client_tls, created_at, updated_at
 		  FROM gateways
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -107,8 +118,6 @@ func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Gatewa
 	return g, nil
 }
 
-// List returns gateways matching the filter together with the total
-// count of matches (independent of pagination).
 func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Gateway, int, error) {
 	if filter.Page < 1 {
 		filter.Page = 1
@@ -128,7 +137,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, name, description, created_at, updated_at
+		SELECT id, name, status, telemetry, client_tls, created_at, updated_at
 		  FROM gateways
 		 WHERE ($1 = '' OR lower(name) LIKE '%' || lower($1) || '%')
 		 ORDER BY created_at DESC, id
@@ -153,23 +162,58 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	return items, total, nil
 }
 
-// rowScanner is the minimal contract shared by pgx.Row and pgx.Rows so
-// scanGateway can read from both QueryRow and Query results.
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
 func scanGateway(s rowScanner) (*domain.Gateway, error) {
 	g := &domain.Gateway{}
-	if err := s.Scan(&g.ID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt); err != nil {
+	var telemetryRaw, clientTLSRaw []byte
+	if err := s.Scan(
+		&g.ID, &g.Name, &g.Status,
+		&telemetryRaw, &clientTLSRaw,
+		&g.CreatedAt, &g.UpdatedAt,
+	); err != nil {
 		return nil, err
 	}
+
+	if len(telemetryRaw) > 0 {
+		var t telemetry.Telemetry
+		if err := json.Unmarshal(telemetryRaw, &t); err != nil {
+			return nil, fmt.Errorf("scan telemetry: %w", err)
+		}
+		g.Telemetry = &t
+	}
+	if len(clientTLSRaw) > 0 {
+		var c domain.ClientTLSConfig
+		if err := json.Unmarshal(clientTLSRaw, &c); err != nil {
+			return nil, fmt.Errorf("scan client_tls: %w", err)
+		}
+		g.ClientTLSConfig = c
+	}
+
 	return g, nil
 }
 
+func marshalJSON(v any) ([]byte, error) {
+	if v == nil {
+		return nil, nil
+	}
+	switch t := v.(type) {
+	case *telemetry.Telemetry:
+		if t == nil {
+			return nil, nil
+		}
+	case domain.ClientTLSConfig:
+		if t == nil {
+			return nil, nil
+		}
+	}
+	return json.Marshal(v)
+}
+
 func mapPgError(err error) error {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		switch pgErr.Code {
 		case pgUniqueViolation:
 			return domain.ErrAlreadyExists

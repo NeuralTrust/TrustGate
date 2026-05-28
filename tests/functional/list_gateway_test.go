@@ -1,0 +1,69 @@
+package functional_test
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestListGateways_Pagination(t *testing.T) {
+	prefix := uniqueName("list-page")
+	created := make([]string, 0, 3)
+	for i := 0; i < 3; i++ {
+		id := CreateGateway(t, map[string]any{"name": fmt.Sprintf("%s-%d", prefix, i)})
+		created = append(created, id)
+	}
+
+	status, body := sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways?name=%s&page=1&size=10", AdminURL, url.QueryEscape(prefix)),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+
+	items, ok := body["items"].([]any)
+	require.True(t, ok, "items missing or wrong type: %v", body)
+	assert.Equal(t, float64(3), body["total"])
+	assert.Equal(t, float64(1), body["page"])
+	assert.Equal(t, float64(10), body["size"])
+	assert.Len(t, items, 3)
+
+	gotIDs := make(map[string]struct{}, len(items))
+	for _, raw := range items {
+		obj, ok := raw.(map[string]any)
+		require.True(t, ok)
+		id, _ := obj["id"].(string)
+		gotIDs[id] = struct{}{}
+	}
+	for _, id := range created {
+		assert.Contains(t, gotIDs, id, "expected id %s in list", id)
+	}
+}
+
+func TestListGateways_FilterByName(t *testing.T) {
+	uniq := uniqueName("list-needle")
+	id := CreateGateway(t, map[string]any{"name": uniq})
+
+	status, body := sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways?name=%s", AdminURL, url.QueryEscape(uniq)),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, float64(1), body["total"])
+
+	items, _ := body["items"].([]any)
+	require.Len(t, items, 1)
+	obj, _ := items[0].(map[string]any)
+	assert.Equal(t, id, obj["id"])
+}
+
+func TestListGateways_InvalidPagination(t *testing.T) {
+	status, body := sendRequest(t, http.MethodGet,
+		AdminURL+"/v1/gateways?page=-1", nil, nil,
+	)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "invalid_pagination", body["error"])
+}

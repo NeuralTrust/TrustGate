@@ -2,6 +2,7 @@ package gateway_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
@@ -19,10 +21,8 @@ import (
 
 // setupRepo opens a pgx pool against PG_TEST_URL, applies all
 // registered migrations, and registers a cleanup that truncates the
-// gateways table between tests. Tests that need a different cleanup
-// scope should call TRUNCATE themselves.
-//
-// When PG_TEST_URL is not set the test is skipped — see AGENT.md §9.
+// gateways table between tests. When PG_TEST_URL is not set the test
+// is skipped — see AGENT.md §9.
 func setupRepo(t *testing.T) (*repo.Repository, *database.Connection) {
 	t.Helper()
 	dsn := os.Getenv("PG_TEST_URL")
@@ -65,7 +65,47 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	r, _ := setupRepo(t)
 	ctx := context.Background()
 
-	g, err := domain.New("alpha", "primary")
+	g, err := domain.New("alpha")
+	if err != nil {
+		t.Fatalf("domain.New: %v", err)
+	}
+	g.Telemetry = &telemetry.Telemetry{
+		ExtraParams: map[string]string{"env": "prod"},
+	}
+	g.ClientTLSConfig = domain.ClientTLSConfig{
+		"api.example.com": json.RawMessage(`{"insecure":false}`),
+	}
+	if err := r.Save(ctx, g); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := r.FindByID(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.ID != g.ID || got.Name != "alpha" || got.Status != "active" {
+		t.Fatalf("FindByID returned %+v", got)
+	}
+	if got.Telemetry == nil || got.Telemetry.ExtraParams["env"] != "prod" {
+		t.Fatalf("Telemetry round-trip lost data: %+v", got.Telemetry)
+	}
+	if len(got.ClientTLSConfig) != 1 {
+		t.Fatalf("ClientTLSConfig round-trip lost entries: %+v", got.ClientTLSConfig)
+	}
+	var decoded map[string]bool
+	if err := json.Unmarshal(got.ClientTLSConfig["api.example.com"], &decoded); err != nil {
+		t.Fatalf("ClientTLSConfig entry not valid JSON: %v", err)
+	}
+	if decoded["insecure"] != false {
+		t.Fatalf("ClientTLSConfig round-trip mutated payload: %+v", decoded)
+	}
+}
+
+func TestRepository_SaveAndFindByID_NullableJSONB(t *testing.T) {
+	r, _ := setupRepo(t)
+	ctx := context.Background()
+
+	g, err := domain.New("naked")
 	if err != nil {
 		t.Fatalf("domain.New: %v", err)
 	}
@@ -77,8 +117,11 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
-	if got.ID != g.ID || got.Name != "alpha" || got.Description != "primary" {
-		t.Fatalf("FindByID returned %+v", got)
+	if got.Telemetry != nil {
+		t.Fatalf("Telemetry should be nil for NULL column, got %+v", got.Telemetry)
+	}
+	if got.ClientTLSConfig != nil {
+		t.Fatalf("ClientTLSConfig should be nil for NULL column, got %+v", got.ClientTLSConfig)
 	}
 }
 
@@ -97,11 +140,11 @@ func TestRepository_Save_Duplicate(t *testing.T) {
 	r, _ := setupRepo(t)
 	ctx := context.Background()
 
-	g1, _ := domain.New("dupe", "")
+	g1, _ := domain.New("dupe")
 	if err := r.Save(ctx, g1); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
-	g2, _ := domain.New("dupe", "")
+	g2, _ := domain.New("dupe")
 	err := r.Save(ctx, g2)
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
@@ -112,16 +155,14 @@ func TestRepository_Update(t *testing.T) {
 	r, _ := setupRepo(t)
 	ctx := context.Background()
 
-	g, _ := domain.New("alpha", "v1")
+	g, _ := domain.New("alpha")
 	if err := r.Save(ctx, g); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := g.Rename("alpha-renamed"); err != nil {
-		t.Fatalf("Rename: %v", err)
-	}
-	if err := g.SetDescription("v2"); err != nil {
-		t.Fatalf("SetDescription: %v", err)
-	}
+
+	g.Name = "alpha-renamed"
+	g.Status = "paused"
+	g.UpdatedAt = time.Now().UTC()
 	if err := r.Update(ctx, g); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -130,14 +171,14 @@ func TestRepository_Update(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID after update: %v", err)
 	}
-	if got.Name != "alpha-renamed" || got.Description != "v2" {
+	if got.Name != "alpha-renamed" || got.Status != "paused" {
 		t.Fatalf("Update did not persist: %+v", got)
 	}
 }
 
 func TestRepository_Update_NotFound(t *testing.T) {
 	r, _ := setupRepo(t)
-	g, _ := domain.New("ghost", "")
+	g, _ := domain.New("ghost")
 	err := r.Update(context.Background(), g)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -148,7 +189,7 @@ func TestRepository_Delete(t *testing.T) {
 	r, _ := setupRepo(t)
 	ctx := context.Background()
 
-	g, _ := domain.New("victim", "")
+	g, _ := domain.New("victim")
 	if err := r.Save(ctx, g); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -168,7 +209,7 @@ func TestRepository_List(t *testing.T) {
 	ctx := context.Background()
 
 	for _, name := range []string{"alpha", "alphabet", "beta", "gamma", "delta"} {
-		g, _ := domain.New(name, "")
+		g, _ := domain.New(name)
 		if err := r.Save(ctx, g); err != nil {
 			t.Fatalf("Save %s: %v", name, err)
 		}

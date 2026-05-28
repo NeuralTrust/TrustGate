@@ -10,19 +10,12 @@ import (
 )
 
 //go:generate mockery --name=Finder --dir=. --output=./mocks --filename=gateway_finder_mock.go --case=underscore --with-expecter
-
-// Finder reads gateways. FindByID follows the cache-first pattern:
-// look up the in-process TTL map, fall back to the repository on miss
-// or type-assertion error, then prime the cache. List is intentionally
-// uncached — pages move and substring filters are too varied to make
-// per-call caching worthwhile.
-//
-// RUN-291 will insert a Redis hit between the memory cache and the
-// repository. The contract here does not change.
 type Finder interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*domain.Gateway, error)
 	List(ctx context.Context, filter domain.ListFilter) ([]*domain.Gateway, int, error)
 }
+
+var _ Finder = (*finder)(nil)
 
 type finder struct {
 	repo        domain.Repository
@@ -43,9 +36,6 @@ func (f *finder) FindByID(ctx context.Context, id uuid.UUID) (*domain.Gateway, e
 		if g, ok := cached.(*domain.Gateway); ok {
 			return g, nil
 		}
-		// Defensive: if the type assertion fails the slot has been
-		// poisoned by a bug elsewhere; drop the entry and fall through
-		// to the database rather than serving a stale or wrong type.
 		f.logger.Warn("gateway cache entry failed type assertion; falling back to database",
 			slog.String("gateway_id", id.String()))
 		f.memoryCache.Delete(id.String())

@@ -5,29 +5,30 @@ import (
 	"time"
 )
 
-// Namespace identifiers used by the application layer. Each entity
-// owns one. Keep this list close to the consumers — adding an entity
-// adds one constant here.
 const (
-	GatewayTTLName  = "gateway"
-	BackendTTLName  = "backend"
-	ConsumerTTLName = "consumer"
-	PolicyTTLName   = "policy"
-	AuthTTLName     = "auth"
+	GatewayTTLName      = "gateway"
+	BackendTTLName      = "backend"
+	ConsumerTTLName     = "consumer"
+	PolicyTTLName       = "policy"
+	AuthTTLName         = "auth"
+	LoadBalancerTTLName = "lb"
 )
 
-// TTLMapManager hands out lazily-created TTLMaps per namespace. The
-// manager itself is a singleton; the TTLMap it returns for a given
-// name is stable for the lifetime of the process.
+const (
+	GatewayCacheTTL      = 1 * time.Hour
+	BackendCacheTTL      = 5 * time.Minute
+	ConsumerCacheTTL     = 5 * time.Minute
+	PolicyCacheTTL       = 5 * time.Minute
+	AuthCacheTTL         = 5 * time.Minute
+	LoadBalancerCacheTTL = 5 * time.Minute
+)
+
 type TTLMapManager struct {
 	mu         sync.Mutex
 	maps       map[string]*TTLMap
 	defaultTTL time.Duration
 }
 
-// NewTTLMapManager builds a manager whose maps default to the given
-// TTL on every Set. RUN-291 will extend this with per-namespace TTL
-// overrides driven by env config.
 func NewTTLMapManager(defaultTTL time.Duration) *TTLMapManager {
 	return &TTLMapManager{
 		maps:       make(map[string]*TTLMap),
@@ -35,8 +36,6 @@ func NewTTLMapManager(defaultTTL time.Duration) *TTLMapManager {
 	}
 }
 
-// GetTTLMap returns the TTLMap for the given namespace, creating it
-// on first access. Safe for concurrent use.
 func (m *TTLMapManager) GetTTLMap(name string) *TTLMap {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -48,6 +47,20 @@ func (m *TTLMapManager) GetTTLMap(name string) *TTLMap {
 	return tm
 }
 
-// DefaultTTL exposes the TTL applied to maps freshly created by this
-// manager.
+func (m *TTLMapManager) CreateTTLMap(name string, ttl time.Duration) *TTLMap {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tm := NewTTLMap(ttl)
+	m.maps[name] = tm
+	return tm
+}
+
+func (m *TTLMapManager) ClearAllTTLMaps() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, tm := range m.maps {
+		tm.Clear()
+	}
+}
+
 func (m *TTLMapManager) DefaultTTL() time.Duration { return m.defaultTTL }

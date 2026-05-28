@@ -10,14 +10,11 @@ import (
 )
 
 //go:generate mockery --name=Deleter --dir=. --output=./mocks --filename=gateway_deleter_mock.go --case=underscore --with-expecter
-
-// Deleter removes a gateway and invalidates the local TTL entry so
-// subsequent reads in the same process see the removal immediately
-// (without waiting for the TTL to expire). RUN-291 will replace this
-// invalidation with a pub/sub event for the multi-replica case.
 type Deleter interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 }
+
+var _ Deleter = (*deleter)(nil)
 
 type deleter struct {
 	repo        domain.Repository

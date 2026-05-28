@@ -1,0 +1,38 @@
+package factory
+
+import (
+	"fmt"
+
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
+)
+
+const (
+	OpenAIProvider = "openai"
+)
+
+//go:generate mockery --name=EmbeddingServiceLocator --dir=. --output=./mocks --filename=embedding_locator_mock.go --case=underscore --with-expecter
+type EmbeddingServiceLocator interface {
+	GetService(provider string) (embedding.Creator, error)
+}
+
+type ProviderRegistry map[string]embedding.Creator
+
+func NewServiceLocator(providers ProviderRegistry) EmbeddingServiceLocator {
+	if providers == nil {
+		providers = make(ProviderRegistry)
+	}
+	return &embeddingServiceLocator{providers: providers}
+}
+
+var _ EmbeddingServiceLocator = (*embeddingServiceLocator)(nil)
+
+type embeddingServiceLocator struct {
+	providers ProviderRegistry
+}
+
+func (l *embeddingServiceLocator) GetService(provider string) (embedding.Creator, error) {
+	if svc, ok := l.providers[provider]; ok {
+		return svc, nil
+	}
+	return nil, fmt.Errorf("unsupported embedding provider: %s", provider)
+}

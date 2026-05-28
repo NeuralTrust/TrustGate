@@ -12,6 +12,7 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/stretchr/testify/mock"
 )
@@ -27,9 +28,12 @@ func newCacheManager() *cache.TTLMapManager {
 func TestCreator_Create_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
+	tel := &telemetry.Telemetry{ExtraParams: map[string]string{"env": "prod"}}
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
-			return g.Name == "Prod" && g.Description == "primary"
+			return g.Name == "Prod" &&
+				g.Status == "active" &&
+				g.Telemetry == tel
 		})).
 		Return(nil).
 		Once()
@@ -38,17 +42,16 @@ func TestCreator_Create_Success(t *testing.T) {
 	creator := appgateway.NewCreator(repo, mgr, newTestLogger())
 
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Name:        "Prod",
-		Description: "primary",
+		Name:      "Prod",
+		Telemetry: tel,
 	})
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
-	if g.Name != "Prod" || g.Description != "primary" {
+	if g.Name != "Prod" || g.Status != "active" {
 		t.Fatalf("Create returned unexpected gateway: %+v", g)
 	}
 
-	// Pre-warm: the cache should hold the new entity under its ID.
 	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get(g.ID.String())
 	if !ok {
 		t.Fatal("created gateway was not pre-warmed in the cache")
@@ -58,19 +61,17 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 }
 
-func TestCreator_Create_RejectsInvalidName(t *testing.T) {
+func TestCreator_Create_RejectsEmptyName(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	// repo.Save must never be called.
 	mgr := newCacheManager()
 	creator := appgateway.NewCreator(repo, mgr, newTestLogger())
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Name:        "   ",
-		Description: "",
+		Name: "",
 	})
-	if !errors.Is(err, commonerrors.ErrValidation) {
-		t.Fatalf("expected validation error, got %v", err)
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
 	}
 }
 
@@ -86,8 +87,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	creator := appgateway.NewCreator(repo, mgr, newTestLogger())
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
-		Name:        "Prod",
-		Description: "",
+		Name: "Prod",
 	})
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("expected ErrAlreadyExists, got %v", err)

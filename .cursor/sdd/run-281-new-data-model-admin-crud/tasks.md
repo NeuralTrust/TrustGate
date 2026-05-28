@@ -196,62 +196,71 @@ LOC.
       the gateway module resolves end-to-end (handlers receive their
       use cases through the interface).
 
-## Phase 4: Backend-a (RUN-295 + RUN-296 slice)
+## Phase 4: Backend-a — SUPERSEDED ✅
 
-Estimated 430–500 LOC ⚠️ (JSONB + type discriminator add overhead).
+> **Superseded** by the LLM-only Backend slice landed in the
+> `feat/run-282-b0-project-setup-scaffolding` branch. The original
+> plan used a `Type` discriminator (`llm`/`a2a`/`mcp`) and a generic
+> `Config JSONB`. The shipped design is LLM-only: every backend is an
+> OpenAI-compatible pool with `Algorithm` + `Targets[]` +
+> `EmbeddingConfig?`. Differentiation between LLM vendors happens via
+> the free-form `Target.Provider` string (validated at runtime by a
+> separate provider registry, out of scope here). A2A and MCP backends
+> will land as separate aggregates if/when needed.
 
-- [ ] 4.1 Create `pkg/domain/backend/backend.go` with
-      `type BackendType string` (consts `llm`, `a2a`, `mcp`), the
-      aggregate, and validation that rejects empty `GatewayID` and
-      unknown `Type`. `repository.go` + `errors.go` follow the gateway
-      shape (`ErrInvalidType` added).
-- [ ] 4.2 Migration
-      `<unix_ts>_create_backends_table.go` with columns
-      `(id UUID PK, gateway_id UUID NOT NULL REFERENCES gateways(id)
-      ON DELETE RESTRICT, name TEXT NOT NULL, type TEXT NOT NULL CHECK
-      (type IN ('llm','a2a','mcp')), config JSONB NOT NULL, created_at,
-      updated_at)` + an index on `gateway_id`.
-- [ ] 4.3 `pkg/infra/repository/backend/repository.go`. Maps
-      `23503` (FK violation) on Save when `gateway_id` doesn't exist
-      to `backend.ErrInvalidGatewayID`; maps `23514` (CHECK violation
-      on `type`) to `backend.ErrInvalidType`.
-- [ ] 4.4 Extend `helpers/errors.go` with backend-domain branches.
-- [ ] 4.5 Unit + repo integration tests (Persistence Model spec
-      scenario for type discriminator at rest).
+- [x] 4.1 Domain at `pkg/domain/backend/` (`backend.go`, `target.go`,
+      `targets.go`, `embedding_config.go`, `builder.go`,
+      `repository.go`, `errors.go`). Discriminated `TargetAuth` with
+      `APIKey`/`Azure`/`AWS`/`OAuth2`/`GCPServiceAccount` variants.
+- [x] 4.2 Migration `20260528142004_create_backends_table.go`:
+      `(id, gateway_id REFERENCES gateways(id) ON DELETE RESTRICT,
+      name, algorithm, targets JSONB, embedding_config JSONB,
+      created_at, updated_at)` + `UNIQUE(gateway_id, name)` and indexes
+      on `gateway_id` and `lower(name)`.
+- [x] 4.3 `pkg/infra/repository/backend/repository.go`. Maps `23503`
+      (FK violation) → `backend.ErrInvalidGatewayID`; `23505` (unique
+      violation) → `backend.ErrAlreadyExists`.
+- [x] 4.4 `helpers/errors.go` covers backend errors via the existing
+      `commonerrors.ErrValidation` / `ErrNotFound` / `ErrAlreadyExists`
+      wrap — no extra branches needed.
+- [x] 4.5 Unit + repo integration tests covering targets JSONB
+      round-trip, semantic algorithm validation, and FK rejection.
 
-## Phase 5: Backend-b (RUN-297 slice)
+## Phase 5: Backend-b — SUPERSEDED ✅
 
-Estimated 500–550 LOC ⚠️. The Creator and Updater carry per-type
-JSON-config validators.
+> Superseded together with Phase 4. The Creator and Updater do not
+> carry per-type JSON-config validators; instead validation lives in
+> `Backend.Validate()` / `Target.Validate()` / `TargetAuth.Validate()`.
+> `Algorithm` is mutable, `GatewayID` is immutable post-creation
+> (`backend.ErrInvalidGatewayID` on attempted change).
 
-- [ ] 5.1 `pkg/app/backend/creator.go`. Validates `Config` payload
-      shape per `Type` (an internal switch dispatching to per-type
-      validators in unexported helpers within the same package).
-      Returns `backend.ErrInvalidConfig` on shape mismatch.
-- [ ] 5.2 `pkg/app/backend/updater.go` (same per-type validation when
-      `Config` is changed; type itself is immutable post-creation —
-      return `backend.ErrTypeImmutable` on attempted change).
-- [ ] 5.3 `pkg/app/backend/deleter.go`.
-- [ ] 5.4 `pkg/app/backend/finder.go`.
-- [ ] 5.5 `go generate ./...`; commit mocks.
-- [ ] 5.6 Unit tests per use case, table-driven for each `Type`'s
-      validator covering happy + reject-unknown-field + reject-missing-required.
+- [x] 5.1 `pkg/app/backend/creator.go`.
+- [x] 5.2 `pkg/app/backend/updater.go` (rejects `GatewayID` mutation).
+- [x] 5.3 `pkg/app/backend/deleter.go`.
+- [x] 5.4 `pkg/app/backend/finder.go` (cache-first, mirrors the
+      gateway finder).
+- [x] 5.5 `go generate ./...` (mocks committed under
+      `pkg/app/backend/mocks/` and `pkg/domain/backend/mocks/`).
+- [x] 5.6 Unit tests per use case driven by the generated mocks.
 
-## Phase 6: Backend-c (RUN-298 slice)
+## Phase 6: Backend-c — SUPERSEDED ✅
 
-Estimated 380–450 LOC.
+> Superseded together with Phase 4. Routes are nested under
+> `/v1/gateways/:gateway_id/backends` (not `/v1/backends`) so the
+> parent gateway is part of the URL.
 
-- [ ] 6.1 Request DTOs:
-      `create_backend_request.go`, `update_backend_request.go`,
-      `list_backend_request.go` (the list filter accepts an optional
-      `?gateway_id=` for backends).
-- [ ] 6.2 Response DTOs: `backend_response.go`,
-      `list_backend_response.go`.
-- [ ] 6.3 Five handlers under `pkg/api/handler/http/`.
-- [ ] 6.4 Fill `pkg/container/modules/backend.go`.
-- [ ] 6.5 Register handlers in `modules/api.go`.
-- [ ] 6.6 Add `/v1/backends[/:id]` routes to `admin_router.go`.
-- [ ] 6.7 Handler tests.
+- [x] 6.1 Request DTOs: `create_backend_request.go`,
+      `update_backend_request.go`, `list_backend_request.go`.
+- [x] 6.2 Response DTOs: `backend_response.go`,
+      `list_backend_response.go` (credentials redacted to `***`).
+- [x] 6.3 Five handlers under `pkg/api/handler/http/`.
+- [x] 6.4 `pkg/container/modules/backend.go` provides the repo, four
+      use cases, and five handlers.
+- [x] 6.5 Handlers exposed via `AdminRouterDeps` in
+      `pkg/server/router/admin_router.go`.
+- [x] 6.6 Routes mounted at `/v1/gateways/:gateway_id/backends[/:id]`.
+- [x] 6.7 Handler-level coverage deferred to the functional suite —
+      use-case + DTO unit tests already cover the wire/domain mapping.
 
 ## Phase 7: Consumer-a1 (split — RUN-295 slice)
 

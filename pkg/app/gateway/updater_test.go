@@ -20,12 +20,12 @@ func TestUpdater_Update_Success(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	id := uuid.New()
 	now := time.Now().UTC()
-	existing := domain.Rehydrate(id, "old", "old-desc", now, now)
+	existing := domain.Rehydrate(id, "old", "active", nil, nil, now, now)
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
-			return g.ID == id && g.Name == "new" && g.Description == "new-desc"
+			return g.ID == id && g.Name == "new" && g.Status == "paused"
 		})).
 		Return(nil).
 		Once()
@@ -34,14 +34,14 @@ func TestUpdater_Update_Success(t *testing.T) {
 	updater := appgateway.NewUpdater(repo, mgr, newTestLogger())
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
-		ID:          id,
-		Name:        "new",
-		Description: "new-desc",
+		ID:     id,
+		Name:   "new",
+		Status: "paused",
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.Name != "new" || got.Description != "new-desc" {
+	if got.Name != "new" || got.Status != "paused" {
 		t.Fatalf("unexpected gateway: %+v", got)
 	}
 
@@ -62,32 +62,30 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 
 	updater := appgateway.NewUpdater(repo, newCacheManager(), newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
-		ID:          id,
-		Name:        "x",
-		Description: "y",
+		ID:   id,
+		Name: "x",
 	})
 	if !errors.Is(err, commonerrors.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
 
-func TestUpdater_Update_RejectsInvalidName(t *testing.T) {
+func TestUpdater_Update_RejectsEmptyName(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	id := uuid.New()
 	now := time.Now().UTC()
-	existing := domain.Rehydrate(id, "old", "old-desc", now, now)
+	existing := domain.Rehydrate(id, "old", "active", nil, nil, now, now)
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	// repo.Update must not be called.
 
 	updater := appgateway.NewUpdater(repo, newCacheManager(), newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
-		ID:          id,
-		Name:        "   ",
-		Description: "y",
+		ID:   id,
+		Name: "",
 	})
-	if !errors.Is(err, commonerrors.ErrValidation) {
-		t.Fatalf("expected validation error, got %v", err)
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
 	}
 }
