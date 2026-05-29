@@ -14,7 +14,6 @@ func validParams() CreateParams {
 		GatewayID:  uuid.New(),
 		Name:       "openai-chat",
 		Type:       TypeLLM,
-		Path:       "/v1/chat",
 		BackendIDs: []uuid.UUID{uuid.New()},
 	}
 }
@@ -37,12 +36,6 @@ func TestConsumer_New_HappyPath(t *testing.T) {
 	}
 	if !c.Active {
 		t.Fatal("Active should default to true")
-	}
-	if c.RetryAttempts != 1 {
-		t.Fatalf("RetryAttempts = %d, want 1", c.RetryAttempts)
-	}
-	if len(c.Methods) != 1 || c.Methods[0] != "POST" {
-		t.Fatalf("Methods = %v, want [POST]", c.Methods)
 	}
 	if c.CreatedAt.IsZero() || c.UpdatedAt.IsZero() {
 		t.Fatal("timestamps are zero")
@@ -99,21 +92,6 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 			wantErr: ErrInvalidType,
 		},
 		{
-			name:    "empty path",
-			mutate:  func(c *Consumer) { c.Path = "" },
-			wantErr: ErrInvalidPath,
-		},
-		{
-			name:    "empty method string",
-			mutate:  func(c *Consumer) { c.Methods = []string{"POST", ""} },
-			wantErr: ErrInvalidMethods,
-		},
-		{
-			name:    "negative retries",
-			mutate:  func(c *Consumer) { c.RetryAttempts = -1 },
-			wantErr: ErrInvalidRetries,
-		},
-		{
 			name:    "no backends",
 			mutate:  func(c *Consumer) { c.BackendIDs = nil },
 			wantErr: ErrNoBackends,
@@ -137,14 +115,11 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := &Consumer{
-				ID:            uuid.New(),
-				GatewayID:     uuid.New(),
-				Name:          "x",
-				Type:          TypeLLM,
-				Path:          "/p",
-				Methods:       []string{"POST"},
-				RetryAttempts: 1,
-				BackendIDs:    []uuid.UUID{uuid.New()},
+				ID:         uuid.New(),
+				GatewayID:  uuid.New(),
+				Name:       "x",
+				Type:       TypeLLM,
+				BackendIDs: []uuid.UUID{uuid.New()},
 			}
 			tc.mutate(c)
 			err := c.Validate()
@@ -200,10 +175,9 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	now := time.Now().UTC()
 	c := Rehydrate(
 		id, gwID, "x", TypeMCP,
-		"/p", []string{"/p2"}, []string{"POST"},
 		map[string]string{"X-K": "v"},
-		true, false, true, false, 3,
-		[]uuid.UUID{beID},
+		true,
+		[]uuid.UUID{beID}, nil, nil,
 		now, now,
 	)
 	if c.ID != id || c.GatewayID != gwID {

@@ -8,22 +8,17 @@ import (
 )
 
 type ConsumerResponse struct {
-	ID            uuid.UUID         `json:"id"`
-	GatewayID     uuid.UUID         `json:"gateway_id"`
-	Name          string            `json:"name"`
-	Type          string            `json:"type"`
-	Path          string            `json:"path"`
-	Paths         []string          `json:"paths,omitempty"`
-	Methods       []string          `json:"methods"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	StripPath     bool              `json:"strip_path"`
-	PreserveHost  bool              `json:"preserve_host"`
-	Active        bool              `json:"active"`
-	Public        bool              `json:"public"`
-	RetryAttempts int               `json:"retry_attempts"`
-	BackendIDs    []uuid.UUID       `json:"backend_ids"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	ID         uuid.UUID         `json:"id"`
+	GatewayID  uuid.UUID         `json:"gateway_id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	Active     bool              `json:"active"`
+	BackendIDs []uuid.UUID       `json:"backend_ids"`
+	PolicyIDs  []uuid.UUID       `json:"policy_ids"`
+	AuthIDs    []uuid.UUID       `json:"auth_ids"`
+	CreatedAt  time.Time         `json:"created_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
 }
 
 func FromConsumer(c *domain.Consumer) ConsumerResponse {
@@ -34,26 +29,25 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 	if backendIDs == nil {
 		backendIDs = []uuid.UUID{}
 	}
-	methods := c.Methods
-	if methods == nil {
-		methods = []string{}
+	policyIDs := c.PolicyIDs
+	if policyIDs == nil {
+		policyIDs = []uuid.UUID{}
+	}
+	authIDs := c.AuthIDs
+	if authIDs == nil {
+		authIDs = []uuid.UUID{}
 	}
 	return ConsumerResponse{
-		ID:            c.ID,
-		GatewayID:     c.GatewayID,
-		Name:          c.Name,
-		Type:          string(c.Type),
-		Path:          c.Path,
-		Paths:         c.Paths,
-		Methods:       methods,
-		Headers:       c.Headers,
-		StripPath:     c.StripPath,
-		PreserveHost:  c.PreserveHost,
-		Active:        c.Active,
-		Public:        c.Public,
-		RetryAttempts: c.RetryAttempts,
-		BackendIDs:    backendIDs,
-		CreatedAt:     c.CreatedAt,
-		UpdatedAt:     c.UpdatedAt,
+		ID:         c.ID,
+		GatewayID:  c.GatewayID,
+		Name:       c.Name,
+		Type:       string(c.Type),
+		Headers:    c.Headers,
+		Active:     c.Active,
+		BackendIDs: backendIDs,
+		PolicyIDs:  policyIDs,
+		AuthIDs:    authIDs,
+		CreatedAt:  c.CreatedAt,
+		UpdatedAt:  c.UpdatedAt,
 	}
 }

@@ -93,12 +93,42 @@ func CreateConsumer(t *testing.T, gatewayID string, payload map[string]any) stri
 }
 
 // validConsumerPayload returns a minimal payload accepted by Validate()
-// (name, path, one backend reference). Callers may override fields.
+// (name, one backend reference). Callers may override fields.
 func validConsumerPayload(name, backendID string) map[string]any {
 	return map[string]any{
 		"name":        name,
-		"path":        "/v1/chat",
 		"backend_ids": []string{backendID},
+	}
+}
+
+// CreateAuth issues a POST /v1/gateways/:gateway_id/auths and returns the
+// new auth id. Aborts the calling test on any failure.
+func CreateAuth(t *testing.T, gatewayID string, payload map[string]any) string {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gatewayID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, payload)
+	require.Equal(t, http.StatusCreated, status, "create auth failed: %v", body)
+
+	id, ok := body["id"].(string)
+	require.True(t, ok, "create auth response missing id: %v", body)
+	require.NotEmpty(t, id)
+	return id
+}
+
+// validAuthPayload returns a minimal api_key auth payload accepted by
+// Validate(). The secret is long enough to exercise partial masking.
+func validAuthPayload(name string) map[string]any {
+	return map[string]any{
+		"name":    name,
+		"type":    "api_key",
+		"enabled": true,
+		"config": map[string]any{
+			"api_key": map[string]any{
+				"key":  "sk-supersecretclientkey",
+				"in":   "header",
+				"name": "X-API-Key",
+			},
+		},
 	}
 }
 

@@ -7,6 +7,7 @@ func All() []container.Option {
 		container.WithModule(Core),
 		container.WithModule(API),
 		container.WithModule(Cache),
+		container.WithModule(CacheEvents),
 		container.WithModule(Telemetry),
 		container.WithModule(Auth),
 		container.WithModule(Policy),
@@ -15,6 +16,7 @@ func All() []container.Option {
 		container.WithModule(Gateway),
 		container.WithModule(Backend),
 		container.WithModule(Consumer),
+		container.WithModule(Proxy),
 		container.WithModule(ServerAdmin),
 		container.WithModule(ServerProxy),
 	}

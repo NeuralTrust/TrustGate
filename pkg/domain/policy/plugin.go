@@ -6,9 +6,6 @@ import (
 	"fmt"
 )
 
-// Stage represents the point in the request/response lifecycle at which a
-// plugin executes. Values mirror the constants used by TrustGate to keep
-// configuration portable across products.
 type Stage string
 
 const (
@@ -27,8 +24,6 @@ func (s Stage) IsValid() bool {
 	}
 }
 
-// Plugin matches the TrustGate PluginConfig shape so a Policy can declare an
-// ordered list of plugin executions that the proxy applies at runtime.
 type Plugin struct {
 	ID       string                 `json:"id,omitempty"`
 	Name     string                 `json:"name"`
@@ -49,8 +44,6 @@ func (p *Plugin) Validate() error {
 	return nil
 }
 
-// Plugins is the JSONB-serializable list of plugin configurations bound to
-// a Policy. The ordering of the slice is preserved.
 type Plugins []Plugin
 
 func (p Plugins) Validate() error {

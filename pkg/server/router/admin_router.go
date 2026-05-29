@@ -2,6 +2,7 @@ package router
 
 import (
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
+	authhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth"
 	backendhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/backend"
 	consumerhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
@@ -48,6 +49,12 @@ type AdminRouterDeps struct {
 	ListConsumer   *consumerhttp.ListConsumerHandler
 	UpdateConsumer *consumerhttp.UpdateConsumerHandler
 	DeleteConsumer *consumerhttp.DeleteConsumerHandler
+
+	CreateAuth *authhttp.CreateAuthHandler
+	GetAuth    *authhttp.GetAuthHandler
+	ListAuth   *authhttp.ListAuthHandler
+	UpdateAuth *authhttp.UpdateAuthHandler
+	DeleteAuth *authhttp.DeleteAuthHandler
 }
 
 type adminRouter struct {
@@ -92,6 +99,13 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	consumers.Get("/:id", r.deps.GetConsumer.Handle)
 	consumers.Put("/:id", r.deps.UpdateConsumer.Handle)
 	consumers.Delete("/:id", r.deps.DeleteConsumer.Handle)
+
+	auths := gw.Group("/:gateway_id/auths")
+	auths.Post("", r.deps.CreateAuth.Handle)
+	auths.Get("", r.deps.ListAuth.Handle)
+	auths.Get("/:id", r.deps.GetAuth.Handle)
+	auths.Put("/:id", r.deps.UpdateAuth.Handle)
+	auths.Delete("/:id", r.deps.DeleteAuth.Handle)
 
 	return nil
 }

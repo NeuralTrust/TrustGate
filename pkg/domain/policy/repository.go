@@ -19,5 +19,6 @@ type Repository interface {
 	Update(ctx context.Context, p *Policy) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	FindByID(ctx context.Context, id uuid.UUID) (*Policy, error)
+	FindByIDs(ctx context.Context, gatewayID uuid.UUID, ids []uuid.UUID) ([]*Policy, error)
 	List(ctx context.Context, filter ListFilter) (items []*Policy, total int, err error)
 }

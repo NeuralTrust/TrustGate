@@ -20,11 +20,7 @@ func NewUpdatePolicyHandler(updater apppolicy.Updater) *UpdatePolicyHandler {
 }
 
 func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseUUIDParam(c, "gateway_id")
-	if err != nil {
-		return helpers.WriteError(c, err)
-	}
-	id, err := helpers.ParseUUIDParam(c, "id")
+	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

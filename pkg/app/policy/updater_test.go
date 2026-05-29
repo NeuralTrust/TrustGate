@@ -8,6 +8,7 @@ import (
 	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
@@ -15,17 +16,13 @@ import (
 func TestUpdater_Update_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	existing, _ := domain.New(domain.CreateParams{
-		GatewayID: uuid.New(),
-		Name:      "old",
-		Plugins:   validPlugins(),
-	})
+	existing, _ := domain.NewPolicy(uuid.New(), "old", validPlugins())
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
 		return p.ID == existing.ID && p.Name == "new"
 	})).Return(nil).Once()
 
-	updater := apppolicy.NewUpdater(repo, newCacheManager(), newTestLogger())
+	updater := apppolicy.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{
 		ID:      existing.ID,
 		Name:    "new",
@@ -42,14 +39,10 @@ func TestUpdater_Update_Success(t *testing.T) {
 func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	existing, _ := domain.New(domain.CreateParams{
-		GatewayID: uuid.New(),
-		Name:      "x",
-		Plugins:   validPlugins(),
-	})
+	existing, _ := domain.NewPolicy(uuid.New(), "x", validPlugins())
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := apppolicy.NewUpdater(repo, newCacheManager(), newTestLogger())
+	updater := apppolicy.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: uuid.New(),
@@ -67,7 +60,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	id := uuid.New()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	updater := apppolicy.NewUpdater(repo, newCacheManager(), newTestLogger())
+	updater := apppolicy.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
 		ID:      id,
 		Name:    "x",

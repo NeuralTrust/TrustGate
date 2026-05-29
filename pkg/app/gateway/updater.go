@@ -29,13 +29,20 @@ var _ Updater = (*updater)(nil)
 type updater struct {
 	repo        domain.Repository
 	memoryCache *cache.TTLMap
+	publisher   cache.EventPublisher
 	logger      *slog.Logger
 }
 
-func NewUpdater(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger) Updater {
+func NewUpdater(
+	repo domain.Repository,
+	manager *cache.TTLMapManager,
+	publisher cache.EventPublisher,
+	logger *slog.Logger,
+) Updater {
 	return &updater{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.GatewayTTLName),
+		publisher:   publisher,
 		logger:      logger,
 	}
 }
@@ -57,5 +64,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 		return nil, err
 	}
 	u.memoryCache.Set(g.ID.String(), g)
+	publishGatewayDataInvalidation(ctx, u.publisher, u.logger, g.ID)
 	return g, nil
 }

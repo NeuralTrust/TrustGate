@@ -26,20 +26,12 @@ func TestCreateConsumer_Success(t *testing.T) {
 	assert.Equal(t, gwID, body["gateway_id"])
 	assert.Equal(t, name, body["name"])
 	assert.Equal(t, "LLM", body["type"])
-	assert.Equal(t, "/v1/chat", body["path"])
 	assert.Equal(t, true, body["active"])
-	assert.Equal(t, false, body["public"])
-	assert.Equal(t, float64(1), body["retry_attempts"])
 
 	beIDs, ok := body["backend_ids"].([]any)
 	require.True(t, ok, "backend_ids missing: %v", body)
 	require.Len(t, beIDs, 1)
 	assert.Equal(t, beID, beIDs[0])
-
-	methods, ok := body["methods"].([]any)
-	require.True(t, ok)
-	require.Len(t, methods, 1)
-	assert.Equal(t, "POST", methods[0])
 }
 
 func TestCreateConsumer_ConflictSameGateway(t *testing.T) {
@@ -114,7 +106,6 @@ func TestCreateConsumer_ValidationEmptyBackendIDs(t *testing.T) {
 		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
 		nil, map[string]any{
 			"name":        uniqueName("co-empty-bes"),
-			"path":        "/v1/chat",
 			"backend_ids": []string{},
 		},
 	)
@@ -129,7 +120,6 @@ func TestCreateConsumer_ValidationBadBackendUUID(t *testing.T) {
 		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
 		nil, map[string]any{
 			"name":        uniqueName("co-bad-be"),
-			"path":        "/v1/chat",
 			"backend_ids": []string{"not-a-uuid"},
 		},
 	)

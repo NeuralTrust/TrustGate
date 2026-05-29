@@ -45,15 +45,8 @@ func init() {
 					gateway_id      UUID NOT NULL REFERENCES gateways(id) ON DELETE RESTRICT,
 					name            TEXT NOT NULL,
 					type            TEXT NOT NULL DEFAULT 'LLM',
-					path            TEXT NOT NULL,
-					paths           JSONB NOT NULL DEFAULT '[]'::jsonb,
-					methods         JSONB NOT NULL DEFAULT '["POST"]'::jsonb,
 					headers         JSONB NOT NULL DEFAULT '{}'::jsonb,
-					strip_path      BOOLEAN NOT NULL DEFAULT FALSE,
-					preserve_host   BOOLEAN NOT NULL DEFAULT FALSE,
 					active          BOOLEAN NOT NULL DEFAULT TRUE,
-					public          BOOLEAN NOT NULL DEFAULT FALSE,
-					retry_attempts  INTEGER NOT NULL DEFAULT 1,
 					created_at      TIMESTAMPTZ NOT NULL,
 					updated_at      TIMESTAMPTZ NOT NULL,
 					CONSTRAINT consumers_gateway_name_unique UNIQUE (gateway_id, name),
@@ -79,12 +72,44 @@ func init() {
 					CONSTRAINT policies_gateway_name_unique UNIQUE (gateway_id, name)
 				);
 				CREATE INDEX policies_gateway_id_idx ON policies (gateway_id);
-				CREATE INDEX policies_name_lower_idx ON policies (lower(name));`
+				CREATE INDEX policies_name_lower_idx ON policies (lower(name));
+
+				CREATE TABLE auths (
+					id          UUID PRIMARY KEY,
+					gateway_id  UUID NOT NULL REFERENCES gateways(id) ON DELETE RESTRICT,
+					name        TEXT NOT NULL,
+					type        TEXT NOT NULL,
+					enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+					config      JSONB NOT NULL DEFAULT '{}'::jsonb,
+					created_at  TIMESTAMPTZ NOT NULL,
+					updated_at  TIMESTAMPTZ NOT NULL,
+					CONSTRAINT auths_gateway_name_unique UNIQUE (gateway_id, name),
+					CONSTRAINT auths_type_check           CHECK (type IN ('api_key','oauth2','mtls'))
+				);
+				CREATE INDEX auths_gateway_id_idx ON auths (gateway_id);
+				CREATE INDEX auths_name_lower_idx ON auths (lower(name));
+
+				CREATE TABLE consumer_policy (
+					consumer_id UUID NOT NULL REFERENCES consumers(id) ON DELETE CASCADE,
+					policy_id   UUID NOT NULL REFERENCES policies(id) ON DELETE RESTRICT,
+					PRIMARY KEY (consumer_id, policy_id)
+				);
+				CREATE INDEX consumer_policy_policy_idx ON consumer_policy (policy_id);
+
+				CREATE TABLE consumer_auth (
+					consumer_id UUID NOT NULL REFERENCES consumers(id) ON DELETE CASCADE,
+					auth_id     UUID NOT NULL REFERENCES auths(id) ON DELETE RESTRICT,
+					PRIMARY KEY (consumer_id, auth_id)
+				);
+				CREATE INDEX consumer_auth_auth_idx ON consumer_auth (auth_id);`
 			_, err := tx.Exec(ctx, ddl)
 			return err
 		},
 		Down: func(ctx context.Context, tx pgx.Tx) error {
 			const ddl = `
+				DROP TABLE IF EXISTS consumer_auth;
+				DROP TABLE IF EXISTS consumer_policy;
+				DROP TABLE IF EXISTS auths;
 				DROP TABLE IF EXISTS policies;
 				DROP TABLE IF EXISTS consumer_backend;
 				DROP TABLE IF EXISTS consumers;

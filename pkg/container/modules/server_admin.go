@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
+	authhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth"
 	backendhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/backend"
 	consumerhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
@@ -65,6 +66,12 @@ type adminRouterParams struct {
 	ListConsumer   *consumerhttp.ListConsumerHandler
 	UpdateConsumer *consumerhttp.UpdateConsumerHandler
 	DeleteConsumer *consumerhttp.DeleteConsumerHandler
+
+	CreateAuth *authhttp.CreateAuthHandler
+	GetAuth    *authhttp.GetAuthHandler
+	ListAuth   *authhttp.ListAuthHandler
+	UpdateAuth *authhttp.UpdateAuthHandler
+	DeleteAuth *authhttp.DeleteAuthHandler
 }
 
 type adminServerParams struct {
@@ -104,6 +111,11 @@ func ServerAdmin(c *container.Container) error {
 				ListConsumer:        p.ListConsumer,
 				UpdateConsumer:      p.UpdateConsumer,
 				DeleteConsumer:      p.DeleteConsumer,
+				CreateAuth:          p.CreateAuth,
+				GetAuth:             p.GetAuth,
+				ListAuth:            p.ListAuth,
+				UpdateAuth:          p.UpdateAuth,
+				DeleteAuth:          p.DeleteAuth,
 			})
 		},
 		dig.Name("admin"),

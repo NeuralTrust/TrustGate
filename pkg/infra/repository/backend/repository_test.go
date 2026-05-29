@@ -70,19 +70,14 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUI
 
 func validBackend(t *testing.T, gwID uuid.UUID, name string) *domain.Backend {
 	t.Helper()
-	b, err := domain.New(domain.CreateParams{
-		GatewayID: gwID,
-		Name:      name,
-		Algorithm: domain.AlgorithmRoundRobin,
-		Targets: domain.Targets{
-			{
-				Provider: "openai",
-				Auth:     domain.NewAPIKeyAuth("sk-test"),
-			},
+	b, err := domain.NewBackend(gwID, name, domain.AlgorithmRoundRobin, domain.Targets{
+		{
+			Provider: "openai",
+			Auth:     domain.NewAPIKeyAuth("sk-test"),
 		},
-	})
+	}, nil, nil)
 	if err != nil {
-		t.Fatalf("backend domain.New: %v", err)
+		t.Fatalf("backend domain.NewBackend: %v", err)
 	}
 	return b
 }

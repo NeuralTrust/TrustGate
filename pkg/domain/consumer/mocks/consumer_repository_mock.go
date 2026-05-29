@@ -195,6 +195,65 @@ func (_c *Repository_List_Call) RunAndReturn(run func(context.Context, consumer.
 	return _c
 }
 
+// ListByGateway provides a mock function with given fields: ctx, gatewayID
+func (_m *Repository) ListByGateway(ctx context.Context, gatewayID uuid.UUID) ([]*consumer.Consumer, error) {
+	ret := _m.Called(ctx, gatewayID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListByGateway")
+	}
+
+	var r0 []*consumer.Consumer
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) ([]*consumer.Consumer, error)); ok {
+		return rf(ctx, gatewayID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) []*consumer.Consumer); ok {
+		r0 = rf(ctx, gatewayID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*consumer.Consumer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID) error); ok {
+		r1 = rf(ctx, gatewayID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_ListByGateway_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListByGateway'
+type Repository_ListByGateway_Call struct {
+	*mock.Call
+}
+
+// ListByGateway is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID uuid.UUID
+func (_e *Repository_Expecter) ListByGateway(ctx interface{}, gatewayID interface{}) *Repository_ListByGateway_Call {
+	return &Repository_ListByGateway_Call{Call: _e.mock.On("ListByGateway", ctx, gatewayID)}
+}
+
+func (_c *Repository_ListByGateway_Call) Run(run func(ctx context.Context, gatewayID uuid.UUID)) *Repository_ListByGateway_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(uuid.UUID))
+	})
+	return _c
+}
+
+func (_c *Repository_ListByGateway_Call) Return(_a0 []*consumer.Consumer, _a1 error) *Repository_ListByGateway_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_ListByGateway_Call) RunAndReturn(run func(context.Context, uuid.UUID) ([]*consumer.Consumer, error)) *Repository_ListByGateway_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Save provides a mock function with given fields: ctx, c
 func (_m *Repository) Save(ctx context.Context, c *consumer.Consumer) error {
 	ret := _m.Called(ctx, c)

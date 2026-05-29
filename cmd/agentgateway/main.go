@@ -36,6 +36,10 @@ func main() {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
 
+	if err := c.Invoke(modules.StartCacheEventListener); err != nil {
+		log.Fatalf("failed to start cache event listener: %v", err)
+	}
+
 	if serverType() == serverAdmin {
 		if err := c.Invoke(runAdmin); err != nil {
 			log.Fatalf("failed to start application: %v", err)

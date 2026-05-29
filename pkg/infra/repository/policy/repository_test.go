@@ -12,8 +12,8 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
-	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/policy"
 	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
+	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/policy"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -70,21 +70,17 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUI
 
 func validPolicy(t *testing.T, gwID uuid.UUID, name string) *domain.Policy {
 	t.Helper()
-	p, err := domain.New(domain.CreateParams{
-		GatewayID: gwID,
-		Name:      name,
-		Plugins: domain.Plugins{
-			{
-				Name:     "rate_limiter",
-				Enabled:  true,
-				Stage:    domain.StagePreRequest,
-				Priority: 0,
-				Settings: map[string]interface{}{"limit": 100},
-			},
+	p, err := domain.NewPolicy(gwID, name, domain.Plugins{
+		{
+			Name:     "rate_limiter",
+			Enabled:  true,
+			Stage:    domain.StagePreRequest,
+			Priority: 0,
+			Settings: map[string]interface{}{"limit": 100},
 		},
 	})
 	if err != nil {
-		t.Fatalf("policy domain.New: %v", err)
+		t.Fatalf("policy domain.NewPolicy: %v", err)
 	}
 	return p
 }
@@ -119,12 +115,9 @@ func TestRepository_SaveAndFindByID_EmptyPlugins(t *testing.T) {
 	ctx := context.Background()
 	gwID := seedGateway(t, gw, "pgw-empty")
 
-	p, err := domain.New(domain.CreateParams{
-		GatewayID: gwID,
-		Name:      "empty",
-	})
+	p, err := domain.NewPolicy(gwID, "empty", nil)
 	if err != nil {
-		t.Fatalf("domain.New: %v", err)
+		t.Fatalf("domain.NewPolicy: %v", err)
 	}
 	if err := r.Save(ctx, p); err != nil {
 		t.Fatalf("Save: %v", err)

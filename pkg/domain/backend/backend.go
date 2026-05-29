@@ -28,6 +28,35 @@ type Backend struct {
 	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
+func NewBackend(
+	gatewayID uuid.UUID,
+	name, algorithm string,
+	targets Targets,
+	embeddingConfig *EmbeddingConfig,
+	healthChecks *HealthChecks,
+) (*Backend, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, fmt.Errorf("backend: generate uuid: %w", err)
+	}
+	now := time.Now().UTC()
+	b := &Backend{
+		ID:              id,
+		GatewayID:       gatewayID,
+		Name:            name,
+		Algorithm:       algorithm,
+		Targets:         targets,
+		EmbeddingConfig: embeddingConfig,
+		HealthChecks:    healthChecks,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := b.Validate(); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
 func Rehydrate(
 	id, gatewayID uuid.UUID,
 	name, algorithm string,

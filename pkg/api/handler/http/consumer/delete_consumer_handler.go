@@ -15,10 +15,7 @@ func NewDeleteConsumerHandler(deleter appconsumer.Deleter) *DeleteConsumerHandle
 }
 
 func (h *DeleteConsumerHandler) Handle(c *fiber.Ctx) error {
-	if _, err := helpers.ParseUUIDParam(c, "gateway_id"); err != nil {
-		return helpers.WriteError(c, err)
-	}
-	id, err := helpers.ParseUUIDParam(c, "id")
+	_, id, err := helpers.ParseGatewayScopedID(c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

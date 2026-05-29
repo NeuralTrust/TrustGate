@@ -20,11 +20,7 @@ func NewUpdateConsumerHandler(updater appconsumer.Updater) *UpdateConsumerHandle
 }
 
 func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseUUIDParam(c, "gateway_id")
-	if err != nil {
-		return helpers.WriteError(c, err)
-	}
-	id, err := helpers.ParseUUIDParam(c, "id")
+	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
@@ -41,22 +37,25 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	policyIDs, err := req.ToPolicyIDs()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	authIDs, err := req.ToAuthIDs()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 
 	cons, err := h.updater.Update(c.UserContext(), appconsumer.UpdateInput{
-		ID:            id,
-		GatewayID:     gatewayID,
-		Name:          req.Name,
-		Type:          req.ToType(),
-		Path:          req.Path,
-		Paths:         req.Paths,
-		Methods:       req.Methods,
-		Headers:       req.Headers,
-		StripPath:     req.StripPath,
-		PreserveHost:  req.PreserveHost,
-		Active:        req.Active,
-		Public:        req.Public,
-		RetryAttempts: req.RetryAttempts,
-		BackendIDs:    backendIDs,
+		ID:         id,
+		GatewayID:  gatewayID,
+		Name:       req.Name,
+		Type:       req.ToType(),
+		Headers:    req.Headers,
+		Active:     req.Active,
+		BackendIDs: backendIDs,
+		PolicyIDs:  policyIDs,
+		AuthIDs:    authIDs,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

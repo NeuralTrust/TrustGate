@@ -22,11 +22,7 @@ func validPlugin() Plugin {
 func TestPolicy_New_HappyPath(t *testing.T) {
 	t.Parallel()
 	gwID := uuid.New()
-	p, err := New(CreateParams{
-		GatewayID: gwID,
-		Name:      "default",
-		Plugins:   Plugins{validPlugin()},
-	})
+	p, err := NewPolicy(gwID, "default", Plugins{validPlugin()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -46,11 +42,7 @@ func TestPolicy_New_HappyPath(t *testing.T) {
 
 func TestPolicy_New_DefaultsPluginsToEmptySlice(t *testing.T) {
 	t.Parallel()
-	p, err := New(CreateParams{
-		GatewayID: uuid.New(),
-		Name:      "no-plugins",
-		Plugins:   nil,
-	})
+	p, err := NewPolicy(uuid.New(), "no-plugins", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

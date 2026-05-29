@@ -30,6 +30,26 @@ func ParseUUIDParam(c *fiber.Ctx, name string) (uuid.UUID, error) {
 	return id, nil
 }
 
+// ParseGatewayID parses the required :gateway_id path param shared by every
+// gateway-scoped collection handler (create/list).
+func ParseGatewayID(c *fiber.Ctx) (uuid.UUID, error) {
+	return ParseUUIDParam(c, "gateway_id")
+}
+
+// ParseGatewayScopedID parses the required :gateway_id and :id path params
+// shared by every gateway-scoped sub-resource handler (get/update/delete).
+func ParseGatewayScopedID(c *fiber.Ctx) (gatewayID, id uuid.UUID, err error) {
+	gatewayID, err = ParseGatewayID(c)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	id, err = ParseUUIDParam(c, "id")
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	return gatewayID, id, nil
+}
+
 func ParsePage(c *fiber.Ctx) (int, error) {
 	raw := c.Query("page")
 	if raw == "" {
