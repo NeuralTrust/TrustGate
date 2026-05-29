@@ -9,7 +9,7 @@ import (
 type Targets []Target
 
 func (t Targets) Value() (driver.Value, error) {
-	if t == nil || len(t) == 0 {
+	if len(t) == 0 {
 		return []byte("[]"), nil
 	}
 	return json.Marshal(t)

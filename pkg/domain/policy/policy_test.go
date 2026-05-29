@@ -194,8 +194,11 @@ func TestPlugins_Scan_Nil(t *testing.T) {
 	if err := ps.Scan(nil); err != nil {
 		t.Fatalf("Scan(nil): %v", err)
 	}
-	if ps == nil || len(ps) != 0 {
-		t.Fatalf("expected empty non-nil slice, got %v", ps)
+	if ps == nil {
+		t.Fatal("Plugins should be a non-nil empty slice")
+	}
+	if len(ps) != 0 {
+		t.Fatalf("len = %d, want 0", len(ps))
 	}
 }
 
