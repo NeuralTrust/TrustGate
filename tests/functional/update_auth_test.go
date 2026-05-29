@@ -10,6 +10,7 @@ import (
 )
 
 func TestUpdateAuth_Success(t *testing.T) {
+	defer Track(t, "UpdateAuth")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd")})
 	id := CreateAuth(t, gwID, validAuthPayload(uniqueName("api-key")))
 
@@ -36,6 +37,7 @@ func TestUpdateAuth_Success(t *testing.T) {
 }
 
 func TestUpdateAuth_Validation(t *testing.T) {
+	defer Track(t, "UpdateAuth")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd-val")})
 	id := CreateAuth(t, gwID, validAuthPayload(uniqueName("api-key")))
 

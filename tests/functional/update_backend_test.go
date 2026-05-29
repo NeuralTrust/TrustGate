@@ -11,6 +11,7 @@ import (
 )
 
 func TestUpdateBackend_Success(t *testing.T) {
+	defer Track(t, "UpdateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-gw")})
 	original := uniqueName("be-upd-from")
 	beID := CreateBackend(t, gwID, validBackendPayload(original))
@@ -37,6 +38,7 @@ func TestUpdateBackend_Success(t *testing.T) {
 }
 
 func TestUpdateBackend_NotFound(t *testing.T) {
+	defer Track(t, "UpdateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-missing-gw")})
 	missing := uuid.NewString()
 
@@ -50,6 +52,7 @@ func TestUpdateBackend_NotFound(t *testing.T) {
 }
 
 func TestUpdateBackend_ValidationEmptyName(t *testing.T) {
+	defer Track(t, "UpdateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-val-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("be-upd-val")))
 
@@ -63,6 +66,7 @@ func TestUpdateBackend_ValidationEmptyName(t *testing.T) {
 }
 
 func TestUpdateBackend_NameConflictSameGateway(t *testing.T) {
+	defer Track(t, "UpdateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-conflict-gw")})
 	a := uniqueName("be-upd-a")
 	b := uniqueName("be-upd-b")
@@ -79,6 +83,7 @@ func TestUpdateBackend_NameConflictSameGateway(t *testing.T) {
 }
 
 func TestUpdateBackend_InvalidGatewayUUID(t *testing.T) {
+	defer Track(t, "UpdateBackend")()
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/not-a-uuid/backends/%s", AdminURL, uuid.NewString()),
 		nil,
@@ -89,6 +94,7 @@ func TestUpdateBackend_InvalidGatewayUUID(t *testing.T) {
 }
 
 func TestUpdateBackend_InvalidBackendUUID(t *testing.T) {
+	defer Track(t, "UpdateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-bad-be-gw")})
 
 	status, body := sendRequest(t, http.MethodPut,

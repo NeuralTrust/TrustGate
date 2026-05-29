@@ -11,6 +11,7 @@ import (
 )
 
 func TestCreateConsumer_Success(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-create-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-create-be")))
 	name := uniqueName("co-create-ok")
@@ -35,6 +36,7 @@ func TestCreateConsumer_Success(t *testing.T) {
 }
 
 func TestCreateConsumer_ConflictSameGateway(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-conflict-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-conflict-be")))
 	name := uniqueName("co-conflict")
@@ -51,6 +53,7 @@ func TestCreateConsumer_ConflictSameGateway(t *testing.T) {
 }
 
 func TestCreateConsumer_SameNameDifferentGatewaysAllowed(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-shared-a")})
 	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-shared-b")})
 	beA := CreateBackend(t, gwA, validBackendPayload(uniqueName("co-shared-be-a")))
@@ -67,6 +70,7 @@ func TestCreateConsumer_SameNameDifferentGatewaysAllowed(t *testing.T) {
 }
 
 func TestCreateConsumer_GatewayDoesNotExist(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	missingGW := uuid.NewString()
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, missingGW),
@@ -78,6 +82,7 @@ func TestCreateConsumer_GatewayDoesNotExist(t *testing.T) {
 }
 
 func TestCreateConsumer_InvalidGatewayUUID(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	status, body := sendRequest(t, http.MethodPost,
 		AdminURL+"/v1/gateways/not-a-uuid/consumers",
 		nil,
@@ -88,6 +93,7 @@ func TestCreateConsumer_InvalidGatewayUUID(t *testing.T) {
 }
 
 func TestCreateConsumer_ValidationEmptyName(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-emptyname-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-emptyname-be")))
 
@@ -100,6 +106,7 @@ func TestCreateConsumer_ValidationEmptyName(t *testing.T) {
 }
 
 func TestCreateConsumer_ValidationEmptyBackendIDs(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-emptybes-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -114,6 +121,7 @@ func TestCreateConsumer_ValidationEmptyBackendIDs(t *testing.T) {
 }
 
 func TestCreateConsumer_ValidationBadBackendUUID(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-badbe-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -128,6 +136,7 @@ func TestCreateConsumer_ValidationBadBackendUUID(t *testing.T) {
 }
 
 func TestCreateConsumer_UnknownBackend(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-ghost-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -139,6 +148,7 @@ func TestCreateConsumer_UnknownBackend(t *testing.T) {
 }
 
 func TestCreateConsumer_BackendFromDifferentGateway(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-xgw-a")})
 	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-xgw-b")})
 	beA := CreateBackend(t, gwA, validBackendPayload(uniqueName("co-xgw-be")))
@@ -152,6 +162,7 @@ func TestCreateConsumer_BackendFromDifferentGateway(t *testing.T) {
 }
 
 func TestCreateConsumer_InvalidBody(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-badbody-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -163,6 +174,7 @@ func TestCreateConsumer_InvalidBody(t *testing.T) {
 }
 
 func TestCreateConsumer_TypeDefaultsToLLM(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-deftype-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-deftype-be")))
 	name := uniqueName("co-deftype")
@@ -176,6 +188,7 @@ func TestCreateConsumer_TypeDefaultsToLLM(t *testing.T) {
 }
 
 func TestCreateConsumer_TypeMCPAndA2A(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	for _, ty := range []string{"MCP", "A2A"} {
 		ty := ty
 		t.Run(ty, func(t *testing.T) {
@@ -195,6 +208,7 @@ func TestCreateConsumer_TypeMCPAndA2A(t *testing.T) {
 }
 
 func TestCreateConsumer_InvalidType(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-badtype-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-badtype-be")))
 

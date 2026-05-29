@@ -12,6 +12,7 @@ import (
 )
 
 func TestListBackends_Pagination(t *testing.T) {
+	defer Track(t, "ListBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-list-gw")})
 	prefix := uniqueName("be-list-page")
 	created := make([]string, 0, 3)
@@ -47,6 +48,7 @@ func TestListBackends_Pagination(t *testing.T) {
 }
 
 func TestListBackends_FilterByName(t *testing.T) {
+	defer Track(t, "ListBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-list-filter-gw")})
 	uniq := uniqueName("be-list-needle")
 	id := CreateBackend(t, gwID, validBackendPayload(uniq))
@@ -66,6 +68,7 @@ func TestListBackends_FilterByName(t *testing.T) {
 }
 
 func TestListBackends_ScopedByGateway(t *testing.T) {
+	defer Track(t, "ListBackend")()
 	gwA := CreateGateway(t, map[string]any{"name": uniqueName("be-scope-a")})
 	gwB := CreateGateway(t, map[string]any{"name": uniqueName("be-scope-b")})
 
@@ -93,6 +96,7 @@ func TestListBackends_ScopedByGateway(t *testing.T) {
 }
 
 func TestListBackends_InvalidPagination(t *testing.T) {
+	defer Track(t, "ListBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-list-badpage-gw")})
 
 	status, body := sendRequest(t, http.MethodGet,
@@ -104,6 +108,7 @@ func TestListBackends_InvalidPagination(t *testing.T) {
 }
 
 func TestListBackends_InvalidGatewayUUID(t *testing.T) {
+	defer Track(t, "ListBackend")()
 	status, body := sendRequest(t, http.MethodGet,
 		AdminURL+"/v1/gateways/not-a-uuid/backends", nil, nil,
 	)
@@ -112,6 +117,7 @@ func TestListBackends_InvalidGatewayUUID(t *testing.T) {
 }
 
 func TestListBackends_UnknownGatewayReturnsEmpty(t *testing.T) {
+	defer Track(t, "ListBackend")()
 	missing := uuid.NewString()
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/backends", AdminURL, missing),

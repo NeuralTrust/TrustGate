@@ -11,6 +11,7 @@ import (
 )
 
 func TestCreateConsumer_WithPolicyAndAuthJoins(t *testing.T) {
+	defer Track(t, "ConsumerJoins")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-joins-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-joins-be")))
 	policyID := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("co-joins-pol")))
@@ -38,6 +39,7 @@ func TestCreateConsumer_WithPolicyAndAuthJoins(t *testing.T) {
 }
 
 func TestCreateConsumer_PolicyFromDifferentGatewayRejected(t *testing.T) {
+	defer Track(t, "ConsumerJoins")()
 	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-xpol-a")})
 	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-xpol-b")})
 	beB := CreateBackend(t, gwB, validBackendPayload(uniqueName("co-xpol-be")))
@@ -55,6 +57,7 @@ func TestCreateConsumer_PolicyFromDifferentGatewayRejected(t *testing.T) {
 }
 
 func TestCreateConsumer_UnknownAuthRejected(t *testing.T) {
+	defer Track(t, "ConsumerJoins")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-ghostauth-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-ghostauth-be")))
 
@@ -70,6 +73,7 @@ func TestCreateConsumer_UnknownAuthRejected(t *testing.T) {
 }
 
 func TestUpdateConsumer_ReplacesJoins(t *testing.T) {
+	defer Track(t, "ConsumerJoins")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upjoin-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-upjoin-be")))
 	authID := CreateAuth(t, gwID, validAuthPayload(uniqueName("co-upjoin-auth")))

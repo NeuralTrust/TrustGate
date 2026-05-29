@@ -11,6 +11,7 @@ import (
 )
 
 func TestGetGateway_Success(t *testing.T) {
+	defer Track(t, "GetGateway")()
 	name := uniqueName("get-ok")
 	id := CreateGateway(t, map[string]any{"name": name})
 
@@ -21,6 +22,7 @@ func TestGetGateway_Success(t *testing.T) {
 }
 
 func TestGetGateway_NotFound(t *testing.T) {
+	defer Track(t, "GetGateway")()
 	missing := uuid.NewString()
 	status, body := sendRequest(t, http.MethodGet, fmt.Sprintf("%s/v1/gateways/%s", AdminURL, missing), nil, nil)
 	require.Equal(t, http.StatusNotFound, status, "body=%v", body)
@@ -28,6 +30,7 @@ func TestGetGateway_NotFound(t *testing.T) {
 }
 
 func TestGetGateway_InvalidUUID(t *testing.T) {
+	defer Track(t, "GetGateway")()
 	status, body := sendRequest(t, http.MethodGet, AdminURL+"/v1/gateways/not-a-uuid", nil, nil)
 	require.Equal(t, http.StatusBadRequest, status, "body=%v", body)
 	assert.Equal(t, "invalid_uuid", body["error"])

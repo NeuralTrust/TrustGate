@@ -11,6 +11,7 @@ import (
 )
 
 func TestCreatePolicy_Success(t *testing.T) {
+	defer Track(t, "CreatePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw")})
 
 	name := uniqueName("pol-ok")
@@ -34,6 +35,7 @@ func TestCreatePolicy_Success(t *testing.T) {
 }
 
 func TestCreatePolicy_DefaultsPluginsToEmptyArray(t *testing.T) {
+	defer Track(t, "CreatePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw2")})
 
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gwID)
@@ -48,6 +50,7 @@ func TestCreatePolicy_DefaultsPluginsToEmptyArray(t *testing.T) {
 }
 
 func TestCreatePolicy_Conflict(t *testing.T) {
+	defer Track(t, "CreatePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw3")})
 	name := uniqueName("pol-dup")
 	_ = CreatePolicy(t, gwID, validPolicyPayload(name))
@@ -59,6 +62,7 @@ func TestCreatePolicy_Conflict(t *testing.T) {
 }
 
 func TestCreatePolicy_AllowsSameNameAcrossGateways(t *testing.T) {
+	defer Track(t, "CreatePolicy")()
 	gw1 := CreateGateway(t, map[string]any{"name": uniqueName("pol-gwA")})
 	gw2 := CreateGateway(t, map[string]any{"name": uniqueName("pol-gwB")})
 
@@ -71,6 +75,7 @@ func TestCreatePolicy_AllowsSameNameAcrossGateways(t *testing.T) {
 }
 
 func TestCreatePolicy_ValidationEmptyName(t *testing.T) {
+	defer Track(t, "CreatePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw4")})
 
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gwID)
@@ -80,6 +85,7 @@ func TestCreatePolicy_ValidationEmptyName(t *testing.T) {
 }
 
 func TestCreatePolicy_ValidationUnknownStage(t *testing.T) {
+	defer Track(t, "CreatePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw5")})
 
 	payload := map[string]any{
@@ -98,6 +104,7 @@ func TestCreatePolicy_ValidationUnknownStage(t *testing.T) {
 }
 
 func TestCreatePolicy_GatewayNotFound(t *testing.T) {
+	defer Track(t, "CreatePolicy")()
 	missing := uuid.NewString()
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, missing)
 	status, body := sendRequest(t, http.MethodPost, url, nil, validPolicyPayload(uniqueName("pol-orphan")))
@@ -106,6 +113,7 @@ func TestCreatePolicy_GatewayNotFound(t *testing.T) {
 }
 
 func TestCreatePolicy_InvalidGatewayUUID(t *testing.T) {
+	defer Track(t, "CreatePolicy")()
 	status, body := sendRequest(t, http.MethodPost,
 		AdminURL+"/v1/gateways/not-a-uuid/policies", nil,
 		validPolicyPayload(uniqueName("pol-bad")),

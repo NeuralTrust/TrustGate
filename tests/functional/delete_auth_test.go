@@ -11,6 +11,7 @@ import (
 )
 
 func TestDeleteAuth_Success(t *testing.T) {
+	defer Track(t, "DeleteAuth")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-del")})
 	id := CreateAuth(t, gwID, validAuthPayload(uniqueName("api-key")))
 
@@ -27,6 +28,7 @@ func TestDeleteAuth_Success(t *testing.T) {
 }
 
 func TestDeleteAuth_NotFound(t *testing.T) {
+	defer Track(t, "DeleteAuth")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-del-404")})
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s/auths/%s", AdminURL, gwID, uuid.NewString()), nil, nil,

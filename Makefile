@@ -40,7 +40,7 @@ run-proxy: build ## Build and run the proxy server
 
 test: ## Run unit tests
 	@$(info $(M) Running unit tests ...)
-	go test ./...
+	go test -v ./...
 
 test-race: ## Run unit tests with the race detector
 	@$(info $(M) Running unit tests with -race ...)
@@ -53,7 +53,7 @@ test-cover: ## Run unit tests with coverage profile
 
 test-functional: ## Run functional tests against a real admin server (requires Postgres on localhost:5432)
 	@$(info $(M) Running functional tests ...)
-	go test -count=1 -timeout=120s ./tests/functional/...
+	go test -v -count=1 -timeout=120s ./tests/functional/...
 
 lint: ## Run golangci-lint
 	@$(info $(M) Running golangci-lint ...)

@@ -11,6 +11,7 @@ import (
 )
 
 func TestDeletePolicy_Success(t *testing.T) {
+	defer Track(t, "DeletePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pold-gw")})
 	id := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("pold-ok")))
 
@@ -24,6 +25,7 @@ func TestDeletePolicy_Success(t *testing.T) {
 }
 
 func TestDeletePolicy_NotFound(t *testing.T) {
+	defer Track(t, "DeletePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pold-gw2")})
 	missing := uuid.NewString()
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, missing)
@@ -33,6 +35,7 @@ func TestDeletePolicy_NotFound(t *testing.T) {
 }
 
 func TestDeletePolicy_InvalidUUID(t *testing.T) {
+	defer Track(t, "DeletePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pold-gw3")})
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies/not-a-uuid", AdminURL, gwID)
 	status, body := sendRequest(t, http.MethodDelete, url, nil, nil)
