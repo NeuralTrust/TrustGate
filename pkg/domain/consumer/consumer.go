@@ -29,38 +29,28 @@ func IsValidType(t Type) bool {
 }
 
 type Consumer struct {
-	ID            uuid.UUID         `json:"id"`
-	GatewayID     uuid.UUID         `json:"gateway_id"`
-	Name          string            `json:"name"`
-	Type          Type              `json:"type"`
-	Path          string            `json:"path"`
-	Paths         []string          `json:"paths,omitempty"`
-	Methods       []string          `json:"methods"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	StripPath     bool              `json:"strip_path"`
-	PreserveHost  bool              `json:"preserve_host"`
-	Active        bool              `json:"active"`
-	Public        bool              `json:"public"`
-	RetryAttempts int               `json:"retry_attempts"`
-	BackendIDs    []uuid.UUID       `json:"backend_ids"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	ID         uuid.UUID         `json:"id"`
+	GatewayID  uuid.UUID         `json:"gateway_id"`
+	Name       string            `json:"name"`
+	Type       Type              `json:"type"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	Active     bool              `json:"active"`
+	BackendIDs []uuid.UUID       `json:"backend_ids"`
+	PolicyIDs  []uuid.UUID       `json:"policy_ids"`
+	AuthIDs    []uuid.UUID       `json:"auth_ids"`
+	CreatedAt  time.Time         `json:"created_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
 }
 
 type CreateParams struct {
-	GatewayID     uuid.UUID
-	Name          string
-	Type          Type
-	Path          string
-	Paths         []string
-	Methods       []string
-	Headers       map[string]string
-	StripPath     bool
-	PreserveHost  bool
-	Active        *bool
-	Public        bool
-	RetryAttempts int
-	BackendIDs    []uuid.UUID
+	GatewayID  uuid.UUID
+	Name       string
+	Type       Type
+	Headers    map[string]string
+	Active     *bool
+	BackendIDs []uuid.UUID
+	PolicyIDs  []uuid.UUID
+	AuthIDs    []uuid.UUID
 }
 
 func New(params CreateParams) (*Consumer, error) {
@@ -74,25 +64,17 @@ func New(params CreateParams) (*Consumer, error) {
 		active = *params.Active
 	}
 	c := &Consumer{
-		ID:            id,
-		GatewayID:     params.GatewayID,
-		Name:          params.Name,
-		Type:          params.Type,
-		Path:          params.Path,
-		Paths:         params.Paths,
-		Methods:       params.Methods,
-		Headers:       params.Headers,
-		StripPath:     params.StripPath,
-		PreserveHost:  params.PreserveHost,
-		Active:        active,
-		Public:        params.Public,
-		RetryAttempts: params.RetryAttempts,
-		BackendIDs:    params.BackendIDs,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-	}
-	if c.RetryAttempts == 0 {
-		c.RetryAttempts = 1
+		ID:         id,
+		GatewayID:  params.GatewayID,
+		Name:       params.Name,
+		Type:       params.Type,
+		Headers:    params.Headers,
+		Active:     active,
+		BackendIDs: params.BackendIDs,
+		PolicyIDs:  params.PolicyIDs,
+		AuthIDs:    params.AuthIDs,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -104,32 +86,23 @@ func Rehydrate(
 	id, gatewayID uuid.UUID,
 	name string,
 	consumerType Type,
-	path string,
-	paths []string,
-	methods []string,
 	headers map[string]string,
-	stripPath, preserveHost, active, public bool,
-	retryAttempts int,
-	backendIDs []uuid.UUID,
+	active bool,
+	backendIDs, policyIDs, authIDs []uuid.UUID,
 	createdAt, updatedAt time.Time,
 ) *Consumer {
 	return &Consumer{
-		ID:            id,
-		GatewayID:     gatewayID,
-		Name:          name,
-		Type:          consumerType,
-		Path:          path,
-		Paths:         paths,
-		Methods:       methods,
-		Headers:       headers,
-		StripPath:     stripPath,
-		PreserveHost:  preserveHost,
-		Active:        active,
-		Public:        public,
-		RetryAttempts: retryAttempts,
-		BackendIDs:    backendIDs,
-		CreatedAt:     createdAt,
-		UpdatedAt:     updatedAt,
+		ID:         id,
+		GatewayID:  gatewayID,
+		Name:       name,
+		Type:       consumerType,
+		Headers:    headers,
+		Active:     active,
+		BackendIDs: backendIDs,
+		PolicyIDs:  policyIDs,
+		AuthIDs:    authIDs,
+		CreatedAt:  createdAt,
+		UpdatedAt:  updatedAt,
 	}
 }
 
@@ -146,31 +119,29 @@ func (c *Consumer) Validate() error {
 	if !IsValidType(c.Type) {
 		return fmt.Errorf("%w: %q", ErrInvalidType, c.Type)
 	}
-	if strings.TrimSpace(c.Path) == "" {
-		return fmt.Errorf("%w: path is required", ErrInvalidPath)
-	}
-	if len(c.Methods) == 0 {
-		c.Methods = []string{"POST"}
-	} else {
-		for _, m := range c.Methods {
-			if strings.TrimSpace(m) == "" {
-				return fmt.Errorf("%w: method cannot be empty", ErrInvalidMethods)
-			}
-		}
-	}
-	if c.RetryAttempts < 0 {
-		return fmt.Errorf("%w: retry_attempts must be >= 0", ErrInvalidRetries)
-	}
 	if len(c.BackendIDs) == 0 {
 		return ErrNoBackends
 	}
-	seen := make(map[uuid.UUID]struct{}, len(c.BackendIDs))
-	for _, id := range c.BackendIDs {
+	if err := validateUniqueIDs(c.BackendIDs, ErrInvalidBackendID, "backend"); err != nil {
+		return err
+	}
+	if err := validateUniqueIDs(c.PolicyIDs, ErrInvalidPolicyID, "policy"); err != nil {
+		return err
+	}
+	if err := validateUniqueIDs(c.AuthIDs, ErrInvalidAuthID, "auth"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateUniqueIDs(ids []uuid.UUID, invalidErr error, label string) error {
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	for _, id := range ids {
 		if id == uuid.Nil {
-			return fmt.Errorf("%w: nil uuid", ErrInvalidBackendID)
+			return fmt.Errorf("%w: nil uuid", invalidErr)
 		}
 		if _, dup := seen[id]; dup {
-			return fmt.Errorf("%w: duplicate backend %s", ErrInvalidBackendID, id)
+			return fmt.Errorf("%w: duplicate %s %s", invalidErr, label, id)
 		}
 		seen[id] = struct{}{}
 	}
@@ -178,24 +149,58 @@ func (c *Consumer) Validate() error {
 }
 
 func (c *Consumer) AttachBackend(id uuid.UUID) bool {
-	if id == uuid.Nil {
-		return false
-	}
-	for _, existing := range c.BackendIDs {
-		if existing == id {
-			return false
-		}
-	}
-	c.BackendIDs = append(c.BackendIDs, id)
-	return true
+	out, ok := attachID(c.BackendIDs, id)
+	c.BackendIDs = out
+	return ok
 }
 
 func (c *Consumer) DetachBackend(id uuid.UUID) bool {
-	for i, existing := range c.BackendIDs {
+	out, ok := detachID(c.BackendIDs, id)
+	c.BackendIDs = out
+	return ok
+}
+
+func (c *Consumer) AttachPolicy(id uuid.UUID) bool {
+	out, ok := attachID(c.PolicyIDs, id)
+	c.PolicyIDs = out
+	return ok
+}
+
+func (c *Consumer) DetachPolicy(id uuid.UUID) bool {
+	out, ok := detachID(c.PolicyIDs, id)
+	c.PolicyIDs = out
+	return ok
+}
+
+func (c *Consumer) AttachAuth(id uuid.UUID) bool {
+	out, ok := attachID(c.AuthIDs, id)
+	c.AuthIDs = out
+	return ok
+}
+
+func (c *Consumer) DetachAuth(id uuid.UUID) bool {
+	out, ok := detachID(c.AuthIDs, id)
+	c.AuthIDs = out
+	return ok
+}
+
+func attachID(ids []uuid.UUID, id uuid.UUID) ([]uuid.UUID, bool) {
+	if id == uuid.Nil {
+		return ids, false
+	}
+	for _, existing := range ids {
 		if existing == id {
-			c.BackendIDs = append(c.BackendIDs[:i], c.BackendIDs[i+1:]...)
-			return true
+			return ids, false
 		}
 	}
-	return false
+	return append(ids, id), true
+}
+
+func detachID(ids []uuid.UUID, id uuid.UUID) ([]uuid.UUID, bool) {
+	for i, existing := range ids {
+		if existing == id {
+			return append(ids[:i], ids[i+1:]...), true
+		}
+	}
+	return ids, false
 }

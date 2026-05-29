@@ -1,14 +1,12 @@
 package policy
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// Policy is the admin-managed aggregate that groups an ordered set of plugin
-// executions for a Gateway. The runtime resolves a Policy by ID and applies
-// its plugin chain to matching requests.
 type Policy struct {
 	ID        uuid.UUID `json:"id"`
 	GatewayID uuid.UUID `json:"gateway_id"`
@@ -16,6 +14,29 @@ type Policy struct {
 	Plugins   Plugins   `json:"plugins"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func NewPolicy(gatewayID uuid.UUID, name string, plugins Plugins) (*Policy, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, fmt.Errorf("policy: generate uuid: %w", err)
+	}
+	now := time.Now().UTC()
+	if plugins == nil {
+		plugins = make(Plugins, 0)
+	}
+	p := &Policy{
+		ID:        id,
+		GatewayID: gatewayID,
+		Name:      name,
+		Plugins:   plugins,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func Rehydrate(

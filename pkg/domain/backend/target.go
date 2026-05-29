@@ -4,9 +4,6 @@ import (
 	"fmt"
 )
 
-// AuthType discriminates the auth/credentials configuration carried by
-// a Target. Every value MUST be paired with the matching populated
-// pointer in TargetAuth (e.g. AuthTypeAzure ↔ Azure).
 type AuthType string
 
 const (
@@ -78,6 +75,28 @@ type TargetOAuthConfig struct {
 	Username     string            `json:"username,omitempty"`
 	Password     string            `json:"password,omitempty"` // #nosec G117 -- OAuth password grant
 	Extra        map[string]string `json:"extra,omitempty"`
+}
+
+// NewAPIKeyAuth builds a TargetAuth for the common bearer-key case.
+func NewAPIKeyAuth(apiKey string) *TargetAuth {
+	return &TargetAuth{
+		Type:   AuthTypeAPIKey,
+		APIKey: &APIKeyAuth{APIKey: apiKey},
+	}
+}
+
+func NewOAuth2Auth(config *TargetOAuthConfig) *TargetAuth {
+	return &TargetAuth{
+		Type:  AuthTypeOAuth2,
+		OAuth: config,
+	}
+}
+
+func NewGCPServiceAccountAuth(encryptedSA string) *TargetAuth {
+	return &TargetAuth{
+		Type:              AuthTypeGCPServiceAccount,
+		GCPServiceAccount: &encryptedSA,
+	}
 }
 
 func (t *Target) Validate() error {

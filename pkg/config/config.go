@@ -71,18 +71,18 @@ const (
 )
 
 type Config struct {
-	AppEnv   string
-	Server   ServerConfig
-	Database DatabaseConfig
-	Redis    RedisConfig
-	Cache    CacheConfig
-	Kafka    KafkaConfig
+	AppEnv    string
+	Server    ServerConfig
+	Database  DatabaseConfig
+	Redis     RedisConfig
+	Cache     CacheConfig
+	Kafka     KafkaConfig
 	Telemetry TelemetryConfig
-	Metrics  MetricsConfig
-	Upstream UpstreamConfig
-	Provider ProviderConfig
-	CORS     CORSConfig
-	Logger   LoggerConfig
+	Metrics   MetricsConfig
+	Upstream  UpstreamConfig
+	Provider  ProviderConfig
+	CORS      CORSConfig
+	Logger    LoggerConfig
 }
 
 type ServerConfig struct {
@@ -171,18 +171,18 @@ type LoggerConfig struct {
 
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
-		AppEnv:   getEnv("APP_ENV", defaultAppEnv),
-		Server:   getServerConfig(),
-		Database: getDatabaseConfig(),
-		Redis:    getRedisConfig(),
-		Cache:    getCacheConfig(),
-		Kafka:    getKafkaConfig(),
+		AppEnv:    getEnv("APP_ENV", defaultAppEnv),
+		Server:    getServerConfig(),
+		Database:  getDatabaseConfig(),
+		Redis:     getRedisConfig(),
+		Cache:     getCacheConfig(),
+		Kafka:     getKafkaConfig(),
 		Telemetry: getTelemetryConfig(),
-		Metrics:  getMetricsConfig(),
-		Upstream: getUpstreamConfig(),
-		Provider: getProviderConfig(),
-		CORS:     getCORSConfig(),
-		Logger:   getLoggerConfig(),
+		Metrics:   getMetricsConfig(),
+		Upstream:  getUpstreamConfig(),
+		Provider:  getProviderConfig(),
+		CORS:      getCORSConfig(),
+		Logger:    getLoggerConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -220,10 +220,10 @@ func getDatabaseConfig() DatabaseConfig {
 
 func getRedisConfig() RedisConfig {
 	return RedisConfig{
-		Host:     getEnv("REDIS_HOST", defaultRedisHost),
-		Port:     getEnvInt("REDIS_PORT", defaultRedisPort),
-		Password: getEnv("REDIS_PASSWORD", ""),
-		DB:       getEnvInt("REDIS_DB", defaultRedisDB),
+		Host:              getEnv("REDIS_HOST", defaultRedisHost),
+		Port:              getEnvInt("REDIS_PORT", defaultRedisPort),
+		Password:          getEnv("REDIS_PASSWORD", ""),
+		DB:                getEnvInt("REDIS_DB", defaultRedisDB),
 		TLSEnabled:        getEnvBool("REDIS_TLS_ENABLED", defaultRedisTLS),
 		TLSInsecureVerify: getEnvBool("REDIS_TLS_INSECURE_VERIFY", false),
 	}

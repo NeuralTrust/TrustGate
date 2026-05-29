@@ -11,6 +11,7 @@ import (
 )
 
 func TestCreateBackend_Success(t *testing.T) {
+	defer Track(t, "CreateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-create-gw")})
 	name := uniqueName("be-create-ok")
 
@@ -42,6 +43,7 @@ func TestCreateBackend_Success(t *testing.T) {
 }
 
 func TestCreateBackend_ConflictSameGateway(t *testing.T) {
+	defer Track(t, "CreateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-conflict-gw")})
 	name := uniqueName("be-conflict")
 
@@ -57,6 +59,7 @@ func TestCreateBackend_ConflictSameGateway(t *testing.T) {
 }
 
 func TestCreateBackend_SameNameDifferentGatewaysAllowed(t *testing.T) {
+	defer Track(t, "CreateBackend")()
 	gwA := CreateGateway(t, map[string]any{"name": uniqueName("be-shared-a")})
 	gwB := CreateGateway(t, map[string]any{"name": uniqueName("be-shared-b")})
 	shared := uniqueName("be-shared-name")
@@ -71,6 +74,7 @@ func TestCreateBackend_SameNameDifferentGatewaysAllowed(t *testing.T) {
 }
 
 func TestCreateBackend_GatewayDoesNotExist(t *testing.T) {
+	defer Track(t, "CreateBackend")()
 	missingGW := uuid.NewString()
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/backends", AdminURL, missingGW),
@@ -82,6 +86,7 @@ func TestCreateBackend_GatewayDoesNotExist(t *testing.T) {
 }
 
 func TestCreateBackend_InvalidGatewayUUID(t *testing.T) {
+	defer Track(t, "CreateBackend")()
 	status, body := sendRequest(t, http.MethodPost,
 		AdminURL+"/v1/gateways/not-a-uuid/backends",
 		nil,
@@ -92,6 +97,7 @@ func TestCreateBackend_InvalidGatewayUUID(t *testing.T) {
 }
 
 func TestCreateBackend_ValidationEmptyName(t *testing.T) {
+	defer Track(t, "CreateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-emptyname-gw")})
 	payload := validBackendPayload("")
 
@@ -104,6 +110,7 @@ func TestCreateBackend_ValidationEmptyName(t *testing.T) {
 }
 
 func TestCreateBackend_ValidationNoTargets(t *testing.T) {
+	defer Track(t, "CreateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-notargets-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -120,6 +127,7 @@ func TestCreateBackend_ValidationNoTargets(t *testing.T) {
 }
 
 func TestCreateBackend_ValidationUnknownAlgorithm(t *testing.T) {
+	defer Track(t, "CreateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-badalg-gw")})
 
 	payload := validBackendPayload(uniqueName("be-badalg"))
@@ -134,6 +142,7 @@ func TestCreateBackend_ValidationUnknownAlgorithm(t *testing.T) {
 }
 
 func TestCreateBackend_SemanticRequiresEmbeddingAndDescriptions(t *testing.T) {
+	defer Track(t, "CreateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-semantic-gw")})
 
 	payload := validBackendPayload(uniqueName("be-semantic-noembed"))
@@ -147,6 +156,7 @@ func TestCreateBackend_SemanticRequiresEmbeddingAndDescriptions(t *testing.T) {
 }
 
 func TestCreateBackend_InvalidBody(t *testing.T) {
+	defer Track(t, "CreateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-badbody-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
@@ -158,6 +168,7 @@ func TestCreateBackend_InvalidBody(t *testing.T) {
 }
 
 func TestCreateBackend_WithHealthChecks(t *testing.T) {
+	defer Track(t, "CreateBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-hc-gw")})
 	payload := validBackendPayload(uniqueName("be-hc"))
 	payload["health_checks"] = map[string]any{

@@ -11,6 +11,7 @@ import (
 )
 
 func TestListPolicies_Pagination(t *testing.T) {
+	defer Track(t, "ListPolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("poll-gw")})
 
 	prefix := uniqueName("poll-page")
@@ -47,6 +48,7 @@ func TestListPolicies_Pagination(t *testing.T) {
 }
 
 func TestListPolicies_ScopedToGateway(t *testing.T) {
+	defer Track(t, "ListPolicy")()
 	gw1 := CreateGateway(t, map[string]any{"name": uniqueName("poll-gw1")})
 	gw2 := CreateGateway(t, map[string]any{"name": uniqueName("poll-gw2")})
 
@@ -69,6 +71,7 @@ func TestListPolicies_ScopedToGateway(t *testing.T) {
 }
 
 func TestListPolicies_FilterByName(t *testing.T) {
+	defer Track(t, "ListPolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("poll-gw3")})
 
 	uniq := uniqueName("poll-needle")
@@ -89,6 +92,7 @@ func TestListPolicies_FilterByName(t *testing.T) {
 }
 
 func TestListPolicies_InvalidPagination(t *testing.T) {
+	defer Track(t, "ListPolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("poll-gw4")})
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/policies?page=-1", AdminURL, gwID),

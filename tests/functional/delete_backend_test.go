@@ -11,6 +11,7 @@ import (
 )
 
 func TestDeleteBackend_Success(t *testing.T) {
+	defer Track(t, "DeleteBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("be-del-ok")))
 
@@ -29,6 +30,7 @@ func TestDeleteBackend_Success(t *testing.T) {
 }
 
 func TestDeleteBackend_NotFound(t *testing.T) {
+	defer Track(t, "DeleteBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-notfound-gw")})
 	missing := uuid.NewString()
 
@@ -41,6 +43,7 @@ func TestDeleteBackend_NotFound(t *testing.T) {
 }
 
 func TestDeleteBackend_InvalidGatewayUUID(t *testing.T) {
+	defer Track(t, "DeleteBackend")()
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/not-a-uuid/backends/%s", AdminURL, uuid.NewString()),
 		nil, nil,
@@ -50,6 +53,7 @@ func TestDeleteBackend_InvalidGatewayUUID(t *testing.T) {
 }
 
 func TestDeleteBackend_InvalidBackendUUID(t *testing.T) {
+	defer Track(t, "DeleteBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-baduuid-gw")})
 
 	status, body := sendRequest(t, http.MethodDelete,
@@ -61,6 +65,7 @@ func TestDeleteBackend_InvalidBackendUUID(t *testing.T) {
 }
 
 func TestDeleteGateway_FailsWhenItHasBackends(t *testing.T) {
+	defer Track(t, "DeleteBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-cascade-gw")})
 	_ = CreateBackend(t, gwID, validBackendPayload(uniqueName("be-del-cascade-be")))
 

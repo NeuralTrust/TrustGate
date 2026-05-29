@@ -7,11 +7,15 @@ type Event interface {
 }
 
 var (
-	DeleteGatewayCacheEventType = "DeleteGatewayCacheEvent"
+	DeleteGatewayCacheEventType     = "DeleteGatewayCacheEvent"
+	InvalidateGatewayDataEventType  = "InvalidateGatewayDataEvent"
+	InvalidateBackendCacheEventType = "InvalidateBackendCacheEvent"
 )
 
 var Registry = map[string]reflect.Type{
-	DeleteGatewayCacheEventType: reflect.TypeOf(DeleteGatewayCacheEvent{}),
+	DeleteGatewayCacheEventType:     reflect.TypeOf(DeleteGatewayCacheEvent{}),
+	InvalidateGatewayDataEventType:  reflect.TypeOf(InvalidateGatewayDataEvent{}),
+	InvalidateBackendCacheEventType: reflect.TypeOf(InvalidateBackendCacheEvent{}),
 }
 
 func GetEventsRegistry() map[string]reflect.Type {

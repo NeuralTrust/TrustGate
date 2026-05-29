@@ -9,6 +9,7 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
@@ -17,12 +18,13 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	t.Parallel()
 	id := uuid.New()
 	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: uuid.New()}, nil).Once()
 	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.ConsumerTTLName).Set(id.String(), &domain.Consumer{ID: id})
 
-	d := appconsumer.NewDeleter(repo, mgr, newTestLogger())
+	d := appconsumer.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
 	if err := d.Delete(context.Background(), id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}
@@ -31,13 +33,27 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	}
 }
 
+func TestDeleter_Delete_NotFound(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
+
+	d := appconsumer.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	if err := d.Delete(context.Background(), id); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestDeleter_Delete_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
+	id := uuid.New()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().Delete(mock.Anything, mock.Anything).Return(domain.ErrNotFound).Once()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: uuid.New()}, nil).Once()
+	repo.EXPECT().Delete(mock.Anything, id).Return(domain.ErrAlreadyExists).Once()
 
-	d := appconsumer.NewDeleter(repo, newCacheManager(), newTestLogger())
-	if err := d.Delete(context.Background(), uuid.New()); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", err)
+	d := appconsumer.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	if err := d.Delete(context.Background(), id); !errors.Is(err, domain.ErrAlreadyExists) {
+		t.Fatalf("err = %v, want ErrAlreadyExists", err)
 	}
 }

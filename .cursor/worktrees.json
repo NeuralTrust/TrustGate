@@ -1,0 +1,3 @@
+{
+  "setup-worktree-unix": "MAIN=$(git worktree list --porcelain | head -1 | sed 's/^worktree //'); cp \"$MAIN/.env\" .env 2>/dev/null || true; cp \"$MAIN/.env.functional\" .env.functional 2>/dev/null || true; go mod tidy && go mod vendor"
+}

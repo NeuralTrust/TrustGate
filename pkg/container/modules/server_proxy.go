@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
+	proxyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/proxy"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
@@ -36,6 +37,7 @@ type proxyRouterParams struct {
 	dig.In
 	Transport     *middleware.Transport `name:"proxy"`
 	HealthHandler *apihandler.HealthHandler
+	ProxyHandler  *proxyhttp.ProxyHandler
 }
 
 type proxyServerParams struct {
@@ -51,7 +53,7 @@ func ServerProxy(c *container.Container) error {
 	}
 	if err := c.Provide(
 		func(p proxyRouterParams) router.ServerRouter {
-			return router.NewProxyRouter(p.Transport, p.HealthHandler)
+			return router.NewProxyRouter(p.Transport, p.HealthHandler, p.ProxyHandler)
 		},
 		dig.Name("proxy"),
 	); err != nil {

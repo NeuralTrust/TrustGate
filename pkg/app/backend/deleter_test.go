@@ -9,6 +9,7 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/backend/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
@@ -17,12 +18,13 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	id := uuid.New()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Backend{ID: id, GatewayID: uuid.New()}, nil).Once()
 	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.BackendTTLName).Set(id.String(), "junk")
 
-	deleter := appbackend.NewDeleter(repo, mgr, newTestLogger())
+	deleter := appbackend.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
 	if err := deleter.Delete(context.Background(), id); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -35,9 +37,9 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	id := uuid.New()
-	repo.EXPECT().Delete(mock.Anything, id).Return(domain.ErrNotFound).Once()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	deleter := appbackend.NewDeleter(repo, newCacheManager(), newTestLogger())
+	deleter := appbackend.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	err := deleter.Delete(context.Background(), id)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)

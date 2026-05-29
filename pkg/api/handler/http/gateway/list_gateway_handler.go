@@ -1,9 +1,9 @@
 package gateway
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway/request"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway/response"
+	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/gofiber/fiber/v2"

@@ -28,6 +28,9 @@ func Consumer(c *container.Container) error {
 	if err := c.Provide(appconsumer.NewFinder); err != nil {
 		return err
 	}
+	if err := c.Provide(appconsumer.NewDataFinder); err != nil {
+		return err
+	}
 
 	if err := c.Provide(consumerhttp.NewCreateConsumerHandler); err != nil {
 		return err

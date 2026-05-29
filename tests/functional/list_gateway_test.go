@@ -11,6 +11,7 @@ import (
 )
 
 func TestListGateways_Pagination(t *testing.T) {
+	defer Track(t, "ListGateway")()
 	prefix := uniqueName("list-page")
 	created := make([]string, 0, 3)
 	for i := 0; i < 3; i++ {
@@ -44,6 +45,7 @@ func TestListGateways_Pagination(t *testing.T) {
 }
 
 func TestListGateways_FilterByName(t *testing.T) {
+	defer Track(t, "ListGateway")()
 	uniq := uniqueName("list-needle")
 	id := CreateGateway(t, map[string]any{"name": uniq})
 
@@ -61,6 +63,7 @@ func TestListGateways_FilterByName(t *testing.T) {
 }
 
 func TestListGateways_InvalidPagination(t *testing.T) {
+	defer Track(t, "ListGateway")()
 	status, body := sendRequest(t, http.MethodGet,
 		AdminURL+"/v1/gateways?page=-1", nil, nil,
 	)

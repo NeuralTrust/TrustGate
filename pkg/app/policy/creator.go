@@ -37,11 +37,7 @@ func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, logger *sl
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, error) {
-	p, err := domain.New(domain.CreateParams{
-		GatewayID: in.GatewayID,
-		Name:      in.Name,
-		Plugins:   in.Plugins,
-	})
+	p, err := domain.NewPolicy(in.GatewayID, in.Name, in.Plugins)
 	if err != nil {
 		return nil, err
 	}

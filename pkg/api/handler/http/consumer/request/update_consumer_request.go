@@ -10,18 +10,13 @@ import (
 )
 
 type UpdateConsumerRequest struct {
-	Name          string            `json:"name"`
-	Type          string            `json:"type,omitempty"`
-	Path          string            `json:"path"`
-	Paths         []string          `json:"paths,omitempty"`
-	Methods       []string          `json:"methods,omitempty"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	StripPath     bool              `json:"strip_path,omitempty"`
-	PreserveHost  bool              `json:"preserve_host,omitempty"`
-	Active        *bool             `json:"active,omitempty"`
-	Public        bool              `json:"public,omitempty"`
-	RetryAttempts int               `json:"retry_attempts,omitempty"`
-	BackendIDs    []string          `json:"backend_ids"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type,omitempty"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	Active     *bool             `json:"active,omitempty"`
+	BackendIDs []string          `json:"backend_ids"`
+	PolicyIDs  []string          `json:"policy_ids,omitempty"`
+	AuthIDs    []string          `json:"auth_ids,omitempty"`
 }
 
 func (r UpdateConsumerRequest) Validate() error {
@@ -30,9 +25,6 @@ func (r UpdateConsumerRequest) Validate() error {
 	}
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
-	}
-	if strings.TrimSpace(r.Path) == "" {
-		return fmt.Errorf("path is required: %w", commonerrors.ErrValidation)
 	}
 	if len(r.BackendIDs) == 0 {
 		return fmt.Errorf("at least one backend_id is required: %w", commonerrors.ErrValidation)
@@ -45,5 +37,13 @@ func (r UpdateConsumerRequest) ToType() domain.Type {
 }
 
 func (r UpdateConsumerRequest) ToBackendIDs() ([]uuid.UUID, error) {
-	return parseBackendIDs(r.BackendIDs)
+	return parseUUIDList(r.BackendIDs, "backend_ids")
+}
+
+func (r UpdateConsumerRequest) ToPolicyIDs() ([]uuid.UUID, error) {
+	return parseUUIDList(r.PolicyIDs, "policy_ids")
+}
+
+func (r UpdateConsumerRequest) ToAuthIDs() ([]uuid.UUID, error) {
+	return parseUUIDList(r.AuthIDs, "auth_ids")
 }

@@ -50,7 +50,13 @@ func TestMain(m *testing.M) {
 	fmt.Println("Creating Test Environment...")
 	setupTestEnvironment()
 
+	GlobalReporter = NewTestReporter()
+
 	code := m.Run()
+
+	if GlobalReporter != nil {
+		GlobalReporter.PrintReportWithExitCode(code)
+	}
 
 	teardownTestEnvironment()
 	os.Exit(code)

@@ -20,12 +20,7 @@ func validTarget() Target {
 func TestBackend_New_HappyPath(t *testing.T) {
 	t.Parallel()
 	gwID := uuid.New()
-	b, err := New(CreateParams{
-		GatewayID: gwID,
-		Name:      "openai-pool",
-		Algorithm: AlgorithmRoundRobin,
-		Targets:   Targets{validTarget()},
-	})
+	b, err := NewBackend(gwID, "openai-pool", AlgorithmRoundRobin, Targets{validTarget()}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

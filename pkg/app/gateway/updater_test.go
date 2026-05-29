@@ -11,6 +11,7 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
@@ -31,7 +32,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	updater := appgateway.NewUpdater(repo, mgr, newTestLogger())
+	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:     id,
@@ -60,7 +61,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	id := uuid.New()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Name: "x",
@@ -80,7 +81,7 @@ func TestUpdater_Update_RejectsEmptyName(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	// repo.Update must not be called.
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Name: "",

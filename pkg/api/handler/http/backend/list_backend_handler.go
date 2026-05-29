@@ -1,9 +1,9 @@
 package backend
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/backend/request"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/backend/response"
+	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	appbackend "github.com/NeuralTrust/AgentGateway/pkg/app/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/gofiber/fiber/v2"
@@ -18,7 +18,7 @@ func NewListBackendHandler(finder appbackend.Finder) *ListBackendHandler {
 }
 
 func (h *ListBackendHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseUUIDParam(c, "gateway_id")
+	gatewayID, err := helpers.ParseGatewayID(c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

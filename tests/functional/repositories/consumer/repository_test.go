@@ -82,16 +82,11 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUI
 
 func seedBackend(t *testing.T, be *backendrepo.Repository, gwID uuid.UUID, name string) uuid.UUID {
 	t.Helper()
-	b, err := backenddomain.New(backenddomain.CreateParams{
-		GatewayID: gwID,
-		Name:      name,
-		Algorithm: backenddomain.AlgorithmRoundRobin,
-		Targets: backenddomain.Targets{
-			{Provider: "openai", Auth: backenddomain.NewAPIKeyAuth("sk-test")},
-		},
-	})
+	b, err := backenddomain.NewBackend(gwID, name, backenddomain.AlgorithmRoundRobin, backenddomain.Targets{
+		{Provider: "openai", Auth: backenddomain.NewAPIKeyAuth("sk-test")},
+	}, nil, nil)
 	if err != nil {
-		t.Fatalf("backend domain.New: %v", err)
+		t.Fatalf("backend domain.NewBackend: %v", err)
 	}
 	if err := be.Save(context.Background(), b); err != nil {
 		t.Fatalf("backend Save: %v", err)
@@ -105,7 +100,6 @@ func validConsumer(t *testing.T, gwID uuid.UUID, name string, beIDs ...uuid.UUID
 		GatewayID:  gwID,
 		Name:       name,
 		Type:       domain.TypeLLM,
-		Path:       "/v1/chat/" + name,
 		BackendIDs: beIDs,
 	})
 	if err != nil {
@@ -122,7 +116,6 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 
 	c := validConsumer(t, gwID, "openai-chat", beID)
 	c.Headers = map[string]string{"X-Tenant": "acme"}
-	c.Paths = []string{"/v1/chat", "/v1/completions"}
 
 	if err := f.repo.Save(ctx, c); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -143,9 +136,6 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	}
 	if got.Headers["X-Tenant"] != "acme" {
 		t.Fatalf("Headers lost data: %+v", got.Headers)
-	}
-	if len(got.Paths) != 2 {
-		t.Fatalf("Paths len = %d", len(got.Paths))
 	}
 }
 

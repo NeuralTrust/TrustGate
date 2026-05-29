@@ -11,6 +11,7 @@ import (
 )
 
 func TestGetPolicy_Success(t *testing.T) {
+	defer Track(t, "GetPolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polg-gw")})
 	name := uniqueName("polg-ok")
 	id := CreatePolicy(t, gwID, validPolicyPayload(name))
@@ -24,6 +25,7 @@ func TestGetPolicy_Success(t *testing.T) {
 }
 
 func TestGetPolicy_NotFound(t *testing.T) {
+	defer Track(t, "GetPolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polg-gw2")})
 	missing := uuid.NewString()
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, missing)
@@ -33,6 +35,7 @@ func TestGetPolicy_NotFound(t *testing.T) {
 }
 
 func TestGetPolicy_InvalidUUID(t *testing.T) {
+	defer Track(t, "GetPolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polg-gw3")})
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies/not-a-uuid", AdminURL, gwID)
 	status, body := sendRequest(t, http.MethodGet, url, nil, nil)

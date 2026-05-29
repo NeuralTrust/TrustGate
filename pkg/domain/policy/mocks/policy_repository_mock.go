@@ -129,6 +129,66 @@ func (_c *Repository_FindByID_Call) RunAndReturn(run func(context.Context, uuid.
 	return _c
 }
 
+// FindByIDs provides a mock function with given fields: ctx, gatewayID, ids
+func (_m *Repository) FindByIDs(ctx context.Context, gatewayID uuid.UUID, ids []uuid.UUID) ([]*policy.Policy, error) {
+	ret := _m.Called(ctx, gatewayID, ids)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindByIDs")
+	}
+
+	var r0 []*policy.Policy
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, []uuid.UUID) ([]*policy.Policy, error)); ok {
+		return rf(ctx, gatewayID, ids)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, []uuid.UUID) []*policy.Policy); ok {
+		r0 = rf(ctx, gatewayID, ids)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*policy.Policy)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID, []uuid.UUID) error); ok {
+		r1 = rf(ctx, gatewayID, ids)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_FindByIDs_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindByIDs'
+type Repository_FindByIDs_Call struct {
+	*mock.Call
+}
+
+// FindByIDs is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID uuid.UUID
+//   - ids []uuid.UUID
+func (_e *Repository_Expecter) FindByIDs(ctx interface{}, gatewayID interface{}, ids interface{}) *Repository_FindByIDs_Call {
+	return &Repository_FindByIDs_Call{Call: _e.mock.On("FindByIDs", ctx, gatewayID, ids)}
+}
+
+func (_c *Repository_FindByIDs_Call) Run(run func(ctx context.Context, gatewayID uuid.UUID, ids []uuid.UUID)) *Repository_FindByIDs_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(uuid.UUID), args[2].([]uuid.UUID))
+	})
+	return _c
+}
+
+func (_c *Repository_FindByIDs_Call) Return(_a0 []*policy.Policy, _a1 error) *Repository_FindByIDs_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_FindByIDs_Call) RunAndReturn(run func(context.Context, uuid.UUID, []uuid.UUID) ([]*policy.Policy, error)) *Repository_FindByIDs_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // List provides a mock function with given fields: ctx, filter
 func (_m *Repository) List(ctx context.Context, filter policy.ListFilter) ([]*policy.Policy, int, error) {
 	ret := _m.Called(ctx, filter)

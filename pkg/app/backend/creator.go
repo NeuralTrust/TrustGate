@@ -40,14 +40,14 @@ func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, logger *sl
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Backend, error) {
-	b, err := domain.New(domain.CreateParams{
-		GatewayID:       in.GatewayID,
-		Name:            in.Name,
-		Algorithm:       in.Algorithm,
-		Targets:         in.Targets,
-		EmbeddingConfig: in.EmbeddingConfig,
-		HealthChecks:    in.HealthChecks,
-	})
+	b, err := domain.NewBackend(
+		in.GatewayID,
+		in.Name,
+		in.Algorithm,
+		in.Targets,
+		in.EmbeddingConfig,
+		in.HealthChecks,
+	)
 	if err != nil {
 		return nil, err
 	}

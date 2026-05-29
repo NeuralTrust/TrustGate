@@ -9,6 +9,7 @@ const (
 	GatewayTTLName      = "gateway"
 	BackendTTLName      = "backend"
 	ConsumerTTLName     = "consumer"
+	ConsumerDataTTLName = "consumer_data"
 	PolicyTTLName       = "policy"
 	AuthTTLName         = "auth"
 	LoadBalancerTTLName = "lb"
@@ -18,6 +19,7 @@ const (
 	GatewayCacheTTL      = 1 * time.Hour
 	BackendCacheTTL      = 5 * time.Minute
 	ConsumerCacheTTL     = 5 * time.Minute
+	ConsumerDataCacheTTL = 1 * time.Hour
 	PolicyCacheTTL       = 5 * time.Minute
 	AuthCacheTTL         = 5 * time.Minute
 	LoadBalancerCacheTTL = 5 * time.Minute

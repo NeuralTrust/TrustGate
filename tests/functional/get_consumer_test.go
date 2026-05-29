@@ -11,6 +11,7 @@ import (
 )
 
 func TestGetConsumer_Success(t *testing.T) {
+	defer Track(t, "GetConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-get-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-get-be")))
 	name := uniqueName("co-get-ok")
@@ -28,6 +29,7 @@ func TestGetConsumer_Success(t *testing.T) {
 }
 
 func TestGetConsumer_NotFound(t *testing.T) {
+	defer Track(t, "GetConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-get-notfound-gw")})
 	missing := uuid.NewString()
 
@@ -40,6 +42,7 @@ func TestGetConsumer_NotFound(t *testing.T) {
 }
 
 func TestGetConsumer_InvalidGatewayUUID(t *testing.T) {
+	defer Track(t, "GetConsumer")()
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/not-a-uuid/consumers/%s", AdminURL, uuid.NewString()),
 		nil, nil,
@@ -49,6 +52,7 @@ func TestGetConsumer_InvalidGatewayUUID(t *testing.T) {
 }
 
 func TestGetConsumer_InvalidConsumerUUID(t *testing.T) {
+	defer Track(t, "GetConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-get-baduuid-gw")})
 
 	status, body := sendRequest(t, http.MethodGet,

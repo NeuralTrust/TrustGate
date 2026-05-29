@@ -11,6 +11,7 @@ import (
 )
 
 func TestDeleteGateway_Success(t *testing.T) {
+	defer Track(t, "DeleteGateway")()
 	id := CreateGateway(t, map[string]any{"name": uniqueName("del-ok")})
 
 	status, _ := sendRequest(t, http.MethodDelete,
@@ -26,6 +27,7 @@ func TestDeleteGateway_Success(t *testing.T) {
 }
 
 func TestDeleteGateway_NotFound(t *testing.T) {
+	defer Track(t, "DeleteGateway")()
 	missing := uuid.NewString()
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s", AdminURL, missing), nil, nil,
@@ -35,6 +37,7 @@ func TestDeleteGateway_NotFound(t *testing.T) {
 }
 
 func TestDeleteGateway_InvalidUUID(t *testing.T) {
+	defer Track(t, "DeleteGateway")()
 	status, body := sendRequest(t, http.MethodDelete,
 		AdminURL+"/v1/gateways/not-a-uuid", nil, nil,
 	)

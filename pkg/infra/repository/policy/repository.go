@@ -80,7 +80,7 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, id)
 		if err != nil {
-			return mapPgError(err)
+			return mapPgDeleteError(err)
 		}
 		if cmd.RowsAffected() == 0 {
 			return domain.ErrNotFound
@@ -103,6 +103,35 @@ func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Policy
 		return nil, fmt.Errorf("policy repository: find: %w", err)
 	}
 	return p, nil
+}
+
+func (r *Repository) FindByIDs(ctx context.Context, gatewayID uuid.UUID, ids []uuid.UUID) ([]*domain.Policy, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	const query = `
+		SELECT id, gateway_id, name, plugins, created_at, updated_at
+		  FROM policies
+		 WHERE gateway_id = $1
+		   AND id = ANY($2::uuid[])`
+	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("policy repository: find by ids: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*domain.Policy, 0, len(ids))
+	for rows.Next() {
+		p, err := scanPolicy(rows)
+		if err != nil {
+			return nil, fmt.Errorf("policy repository: scan: %w", err)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("policy repository: iter: %w", err)
+	}
+	return out, nil
 }
 
 func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Policy, int, error) {
@@ -201,6 +230,15 @@ func mapPgError(err error) error {
 			return domain.ErrAlreadyExists
 		case pgForeignKeyViolation:
 			return domain.ErrInvalidGatewayID
+		}
+	}
+	return err
+}
+
+func mapPgDeleteError(err error) error {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+		if pgErr.Code == pgForeignKeyViolation {
+			return domain.ErrHasDependents
 		}
 	}
 	return err

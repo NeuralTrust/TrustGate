@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
@@ -23,6 +24,8 @@ type LoadBalancer struct {
 	targetStatus map[string]*TargetStatus
 	successCh    chan *backend.Target
 	factory      Factory
+	done         chan struct{}
+	closeOnce    sync.Once
 }
 
 type TargetStatus struct {
@@ -78,15 +81,27 @@ func NewLoadBalancer(
 		targetStatus: make(map[string]*TargetStatus),
 		successCh:    make(chan *backend.Target, 1000),
 		factory:      factory,
+		done:         make(chan struct{}),
 	}
 	go lb.processSuccessReports()
 	return lb, nil
 }
 
 func (lb *LoadBalancer) processSuccessReports() {
-	for target := range lb.successCh {
-		lb.performSuccessUpdate(target)
+	for {
+		select {
+		case target := <-lb.successCh:
+			lb.performSuccessUpdate(target)
+		case <-lb.done:
+			return
+		}
 	}
+}
+
+// Close stops the background success-report goroutine. It is idempotent, and
+// ReportSuccess stays safe afterwards since successCh is never closed.
+func (lb *LoadBalancer) Close() {
+	lb.closeOnce.Do(func() { close(lb.done) })
 }
 
 func (lb *LoadBalancer) ReportSuccess(target *backend.Target) {

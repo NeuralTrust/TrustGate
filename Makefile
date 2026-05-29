@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy test test-race test-cover test-functional lint fmt tidy generate mocks tools \
+.PHONY: help build run run-admin run-proxy test test-race test-cover test-functional test-repositories lint fmt tidy generate mocks tools \
         install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -40,20 +40,24 @@ run-proxy: build ## Build and run the proxy server
 
 test: ## Run unit tests
 	@$(info $(M) Running unit tests ...)
-	go test ./...
+	go test -v ./pkg/...
 
 test-race: ## Run unit tests with the race detector
 	@$(info $(M) Running unit tests with -race ...)
-	go test -race ./...
+	go test -race ./pkg/...
 
 test-cover: ## Run unit tests with coverage profile
 	@$(info $(M) Running unit tests with coverage ...)
-	go test -race -coverprofile=coverage.out -covermode=atomic ./...
+	go test -race -coverprofile=coverage.out -covermode=atomic ./pkg/...
 	go tool cover -func=coverage.out | tail -1
 
 test-functional: ## Run functional tests against a real admin server (requires Postgres on localhost:5432)
 	@$(info $(M) Running functional tests ...)
-	go test -count=1 -timeout=120s ./tests/functional/...
+	go test -v -count=1 -timeout=120s ./tests/functional/...
+
+test-repositories: ## Run repository integration tests (requires PG_TEST_URL pointing at a disposable database)
+	@$(info $(M) Running repository integration tests ...)
+	go test -v -count=1 -p 1 -timeout=120s ./tests/functional/repositories/...
 
 lint: ## Run golangci-lint
 	@$(info $(M) Running golangci-lint ...)

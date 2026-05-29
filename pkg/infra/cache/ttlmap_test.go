@@ -81,6 +81,54 @@ func TestTTLMap_Concurrent(t *testing.T) {
 	wg.Wait()
 }
 
+func TestTTLMap_OnEvict_FiresOnDeleteClearAndExpiry(t *testing.T) {
+	t.Parallel()
+
+	t.Run("delete", func(t *testing.T) {
+		t.Parallel()
+		m := NewTTLMap(time.Hour)
+		var evicted []any
+		m.SetOnEvict(func(v any) { evicted = append(evicted, v) })
+		m.Set("k", "v")
+		m.Delete("k")
+		m.Delete("k") // second delete must not evict again
+		if len(evicted) != 1 || evicted[0] != "v" {
+			t.Fatalf("delete eviction = %v, want [v]", evicted)
+		}
+	})
+
+	t.Run("clear", func(t *testing.T) {
+		t.Parallel()
+		m := NewTTLMap(time.Hour)
+		count := 0
+		m.SetOnEvict(func(any) { count++ })
+		m.Set("a", 1)
+		m.Set("b", 2)
+		m.Clear()
+		if count != 2 {
+			t.Fatalf("clear evicted %d entries, want 2", count)
+		}
+	})
+
+	t.Run("expiry", func(t *testing.T) {
+		t.Parallel()
+		m := NewTTLMap(20 * time.Millisecond)
+		got := make(chan any, 1)
+		m.SetOnEvict(func(v any) { got <- v })
+		m.Set("k", "v")
+		time.Sleep(40 * time.Millisecond)
+		m.Get("k") // lazy expiry must evict
+		select {
+		case v := <-got:
+			if v != "v" {
+				t.Fatalf("expiry eviction = %v, want v", v)
+			}
+		default:
+			t.Fatal("expiry did not trigger eviction callback")
+		}
+	})
+}
+
 func TestManager_NamespaceIsolation(t *testing.T) {
 	t.Parallel()
 	mgr := NewTTLMapManager(time.Hour)

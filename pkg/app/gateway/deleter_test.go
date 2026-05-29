@@ -11,6 +11,7 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
@@ -26,7 +27,7 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	now := time.Now().UTC()
 	mgr.GetTTLMap(cache.GatewayTTLName).Set(id.String(), domain.Rehydrate(id, "x", "active", nil, nil, now, now))
 
-	deleter := appgateway.NewDeleter(repo, mgr, newTestLogger())
+	deleter := appgateway.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
 	if err := deleter.Delete(context.Background(), id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}
@@ -44,7 +45,7 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.GatewayTTLName).Set(id.String(), &domain.Gateway{ID: id})
 
-	deleter := appgateway.NewDeleter(repo, mgr, newTestLogger())
+	deleter := appgateway.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
 	err := deleter.Delete(context.Background(), id)
 	if !errors.Is(err, commonerrors.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
@@ -62,7 +63,7 @@ func TestDeleter_Delete_HasDependents(t *testing.T) {
 	id := uuid.New()
 	repo.EXPECT().Delete(mock.Anything, id).Return(domain.ErrHasDependents).Once()
 
-	deleter := appgateway.NewDeleter(repo, newCacheManager(), newTestLogger())
+	deleter := appgateway.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	err := deleter.Delete(context.Background(), id)
 	if !errors.Is(err, commonerrors.ErrHasDependents) {
 		t.Fatalf("expected ErrHasDependents, got %v", err)

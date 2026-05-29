@@ -11,6 +11,7 @@ import (
 )
 
 func TestGetBackend_Success(t *testing.T) {
+	defer Track(t, "GetBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-get-gw")})
 	name := uniqueName("be-get-ok")
 	beID := CreateBackend(t, gwID, validBackendPayload(name))
@@ -27,6 +28,7 @@ func TestGetBackend_Success(t *testing.T) {
 }
 
 func TestGetBackend_NotFound(t *testing.T) {
+	defer Track(t, "GetBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-get-notfound-gw")})
 	missing := uuid.NewString()
 
@@ -39,6 +41,7 @@ func TestGetBackend_NotFound(t *testing.T) {
 }
 
 func TestGetBackend_InvalidGatewayUUID(t *testing.T) {
+	defer Track(t, "GetBackend")()
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/not-a-uuid/backends/%s", AdminURL, uuid.NewString()),
 		nil, nil,
@@ -48,6 +51,7 @@ func TestGetBackend_InvalidGatewayUUID(t *testing.T) {
 }
 
 func TestGetBackend_InvalidBackendUUID(t *testing.T) {
+	defer Track(t, "GetBackend")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-get-baduuid-gw")})
 
 	status, body := sendRequest(t, http.MethodGet,

@@ -11,6 +11,7 @@ import (
 )
 
 func TestUpdateGateway_Success(t *testing.T) {
+	defer Track(t, "UpdateGateway")()
 	original := uniqueName("upd-from")
 	id := CreateGateway(t, map[string]any{"name": original})
 
@@ -37,6 +38,7 @@ func TestUpdateGateway_Success(t *testing.T) {
 }
 
 func TestUpdateGateway_NotFound(t *testing.T) {
+	defer Track(t, "UpdateGateway")()
 	missing := uuid.NewString()
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s", AdminURL, missing), nil,
@@ -47,6 +49,7 @@ func TestUpdateGateway_NotFound(t *testing.T) {
 }
 
 func TestUpdateGateway_ValidationEmptyName(t *testing.T) {
+	defer Track(t, "UpdateGateway")()
 	id := CreateGateway(t, map[string]any{"name": uniqueName("upd-val")})
 
 	status, body := sendRequest(t, http.MethodPut,
@@ -58,6 +61,7 @@ func TestUpdateGateway_ValidationEmptyName(t *testing.T) {
 }
 
 func TestUpdateGateway_NameConflict(t *testing.T) {
+	defer Track(t, "UpdateGateway")()
 	a := uniqueName("upd-a")
 	b := uniqueName("upd-b")
 	_ = CreateGateway(t, map[string]any{"name": a})

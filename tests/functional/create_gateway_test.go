@@ -9,6 +9,7 @@ import (
 )
 
 func TestCreateGateway_Success(t *testing.T) {
+	defer Track(t, "CreateGateway")()
 	name := uniqueName("create-ok")
 	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, map[string]any{
 		"name": name,
@@ -23,6 +24,7 @@ func TestCreateGateway_Success(t *testing.T) {
 }
 
 func TestCreateGateway_Conflict(t *testing.T) {
+	defer Track(t, "CreateGateway")()
 	name := uniqueName("create-dup")
 	_ = CreateGateway(t, map[string]any{"name": name})
 
@@ -34,6 +36,7 @@ func TestCreateGateway_Conflict(t *testing.T) {
 }
 
 func TestCreateGateway_ValidationEmptyName(t *testing.T) {
+	defer Track(t, "CreateGateway")()
 	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, map[string]any{
 		"name": "",
 	})
@@ -42,6 +45,7 @@ func TestCreateGateway_ValidationEmptyName(t *testing.T) {
 }
 
 func TestCreateGateway_InvalidBody(t *testing.T) {
+	defer Track(t, "CreateGateway")()
 	status, body := sendRequest(t, http.MethodPost, AdminURL+"/v1/gateways", nil, "not-an-object")
 	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
 	assert.Equal(t, "validation_failed", body["error"])

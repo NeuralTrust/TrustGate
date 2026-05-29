@@ -1,0 +1,46 @@
+package auth_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
+	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/mock"
+)
+
+func TestDeleter_Delete_Success(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := uuid.New()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Auth{ID: id, GatewayID: uuid.New()}, nil).Once()
+	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
+
+	mgr := newCacheManager()
+	mgr.GetTTLMap(cache.AuthTTLName).Set(id.String(), &domain.Auth{ID: id})
+
+	deleter := appauth.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
+	if err := deleter.Delete(context.Background(), id); err != nil {
+		t.Fatalf("Delete error: %v", err)
+	}
+	if _, ok := mgr.GetTTLMap(cache.AuthTTLName).Get(id.String()); ok {
+		t.Fatal("expected cache entry to be evicted")
+	}
+}
+
+func TestDeleter_Delete_PropagatesError(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := uuid.New()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
+
+	deleter := appauth.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	if err := deleter.Delete(context.Background(), id); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}

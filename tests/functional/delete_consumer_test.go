@@ -11,6 +11,7 @@ import (
 )
 
 func TestDeleteConsumer_Success(t *testing.T) {
+	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-del-be")))
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-ok"), beID))
@@ -30,6 +31,7 @@ func TestDeleteConsumer_Success(t *testing.T) {
 }
 
 func TestDeleteConsumer_NotFound(t *testing.T) {
+	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-notfound-gw")})
 	missing := uuid.NewString()
 
@@ -42,6 +44,7 @@ func TestDeleteConsumer_NotFound(t *testing.T) {
 }
 
 func TestDeleteConsumer_InvalidGatewayUUID(t *testing.T) {
+	defer Track(t, "DeleteConsumer")()
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/not-a-uuid/consumers/%s", AdminURL, uuid.NewString()),
 		nil, nil,
@@ -51,6 +54,7 @@ func TestDeleteConsumer_InvalidGatewayUUID(t *testing.T) {
 }
 
 func TestDeleteConsumer_InvalidConsumerUUID(t *testing.T) {
+	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-baduuid-gw")})
 
 	status, body := sendRequest(t, http.MethodDelete,
@@ -62,6 +66,7 @@ func TestDeleteConsumer_InvalidConsumerUUID(t *testing.T) {
 }
 
 func TestDeleteGateway_FailsWhenItHasConsumers(t *testing.T) {
+	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-gw-cascade")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-del-gw-cascade-be")))
 	_ = CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-gw-cascade-co"), beID))
@@ -75,6 +80,7 @@ func TestDeleteGateway_FailsWhenItHasConsumers(t *testing.T) {
 }
 
 func TestDeleteBackend_FailsWhenReferencedByConsumer(t *testing.T) {
+	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-be-ref-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-del-be-ref-be")))
 	_ = CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-be-ref"), beID))

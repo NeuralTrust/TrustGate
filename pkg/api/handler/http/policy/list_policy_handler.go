@@ -18,7 +18,7 @@ func NewListPolicyHandler(finder apppolicy.Finder) *ListPolicyHandler {
 }
 
 func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseUUIDParam(c, "gateway_id")
+	gatewayID, err := helpers.ParseGatewayID(c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

@@ -12,6 +12,7 @@ import (
 )
 
 func TestListConsumers_Pagination(t *testing.T) {
+	defer Track(t, "ListConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-list-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-list-be")))
 	prefix := uniqueName("co-list-page")
@@ -47,6 +48,7 @@ func TestListConsumers_Pagination(t *testing.T) {
 }
 
 func TestListConsumers_FilterByName(t *testing.T) {
+	defer Track(t, "ListConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-list-filter-gw")})
 	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-list-filter-be")))
 	uniq := uniqueName("co-list-needle")
@@ -67,6 +69,7 @@ func TestListConsumers_FilterByName(t *testing.T) {
 }
 
 func TestListConsumers_ScopedByGateway(t *testing.T) {
+	defer Track(t, "ListConsumer")()
 	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-scope-a")})
 	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-scope-b")})
 	beA := CreateBackend(t, gwA, validBackendPayload(uniqueName("co-scope-be-a")))
@@ -96,6 +99,7 @@ func TestListConsumers_ScopedByGateway(t *testing.T) {
 }
 
 func TestListConsumers_InvalidPagination(t *testing.T) {
+	defer Track(t, "ListConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-list-badpage-gw")})
 
 	status, body := sendRequest(t, http.MethodGet,
@@ -107,6 +111,7 @@ func TestListConsumers_InvalidPagination(t *testing.T) {
 }
 
 func TestListConsumers_InvalidGatewayUUID(t *testing.T) {
+	defer Track(t, "ListConsumer")()
 	status, body := sendRequest(t, http.MethodGet,
 		AdminURL+"/v1/gateways/not-a-uuid/consumers", nil, nil,
 	)
@@ -115,6 +120,7 @@ func TestListConsumers_InvalidGatewayUUID(t *testing.T) {
 }
 
 func TestListConsumers_UnknownGatewayReturnsEmpty(t *testing.T) {
+	defer Track(t, "ListConsumer")()
 	missing := uuid.NewString()
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, missing),

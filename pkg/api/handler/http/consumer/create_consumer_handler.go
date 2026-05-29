@@ -20,7 +20,7 @@ func NewCreateConsumerHandler(creator appconsumer.Creator) *CreateConsumerHandle
 }
 
 func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, err := helpers.ParseUUIDParam(c, "gateway_id")
+	gatewayID, err := helpers.ParseGatewayID(c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
@@ -37,21 +37,24 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	policyIDs, err := req.ToPolicyIDs()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	authIDs, err := req.ToAuthIDs()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
-		GatewayID:     gatewayID,
-		Name:          req.Name,
-		Type:          req.ToType(),
-		Path:          req.Path,
-		Paths:         req.Paths,
-		Methods:       req.Methods,
-		Headers:       req.Headers,
-		StripPath:     req.StripPath,
-		PreserveHost:  req.PreserveHost,
-		Active:        req.Active,
-		Public:        req.Public,
-		RetryAttempts: req.RetryAttempts,
-		BackendIDs:    backendIDs,
+		GatewayID:  gatewayID,
+		Name:       req.Name,
+		Type:       req.ToType(),
+		Headers:    req.Headers,
+		Active:     req.Active,
+		BackendIDs: backendIDs,
+		PolicyIDs:  policyIDs,
+		AuthIDs:    authIDs,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

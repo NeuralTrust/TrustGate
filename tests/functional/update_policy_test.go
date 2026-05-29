@@ -11,6 +11,7 @@ import (
 )
 
 func TestUpdatePolicy_Success(t *testing.T) {
+	defer Track(t, "UpdatePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw")})
 
 	original := uniqueName("polu-from")
@@ -38,6 +39,7 @@ func TestUpdatePolicy_Success(t *testing.T) {
 }
 
 func TestUpdatePolicy_NotFound(t *testing.T) {
+	defer Track(t, "UpdatePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw2")})
 	missing := uuid.NewString()
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, missing)
@@ -47,6 +49,7 @@ func TestUpdatePolicy_NotFound(t *testing.T) {
 }
 
 func TestUpdatePolicy_ValidationEmptyName(t *testing.T) {
+	defer Track(t, "UpdatePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw3")})
 	id := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("polu-val")))
 
@@ -57,6 +60,7 @@ func TestUpdatePolicy_ValidationEmptyName(t *testing.T) {
 }
 
 func TestUpdatePolicy_NameConflict(t *testing.T) {
+	defer Track(t, "UpdatePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw4")})
 	a := uniqueName("polu-a")
 	b := uniqueName("polu-b")
