@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy test test-race test-cover lint fmt tidy generate \
+.PHONY: help build run run-admin run-proxy test test-race test-cover test-functional lint fmt tidy generate mocks tools \
         install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -51,6 +51,10 @@ test-cover: ## Run unit tests with coverage profile
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...
 	go tool cover -func=coverage.out | tail -1
 
+test-functional: ## Run functional tests against a real admin server (requires Postgres on localhost:5432)
+	@$(info $(M) Running functional tests ...)
+	go test -count=1 -timeout=120s ./tests/functional/...
+
 lint: ## Run golangci-lint
 	@$(info $(M) Running golangci-lint ...)
 	@PATH="$$HOME/go/bin:$$PATH" golangci-lint run ./...
@@ -66,6 +70,17 @@ tidy: ## Run go mod tidy
 
 generate: ## Run go generate
 	@$(info $(M) Running go generate ...)
+	go generate ./...
+
+tools: ## Install Go dev tools pinned in tools/tools.go
+	@$(info $(M) Installing dev tools ...)
+	go install github.com/vektra/mockery/v2
+
+mocks: ## Regenerate all mockery mocks across the codebase
+	@$(info $(M) Regenerating mocks ...)
+	@command -v mockery >/dev/null 2>&1 || { \
+	  echo "mockery not found in PATH; run 'make tools' first" >&2; exit 1; \
+	}
 	go generate ./...
 
 install-pre-commit: ## Install the git pre-commit hook

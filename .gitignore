@@ -27,8 +27,9 @@ go.work.sum
 bin/
 var/
 
-# env file
+# env files
 .env
+.env.functional
 
 # Editor/IDE
 .idea/

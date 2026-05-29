@@ -1,0 +1,53 @@
+package backend
+
+import (
+	"context"
+	"log/slog"
+
+	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/google/uuid"
+)
+
+//go:generate mockery --name=Finder --dir=. --output=./mocks --filename=backend_finder_mock.go --case=underscore --with-expecter
+type Finder interface {
+	FindByID(ctx context.Context, id uuid.UUID) (*domain.Backend, error)
+	List(ctx context.Context, filter domain.ListFilter) ([]*domain.Backend, int, error)
+}
+
+var _ Finder = (*finder)(nil)
+
+type finder struct {
+	repo        domain.Repository
+	memoryCache *cache.TTLMap
+	logger      *slog.Logger
+}
+
+func NewFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger) Finder {
+	return &finder{
+		repo:        repo,
+		memoryCache: manager.GetTTLMap(cache.BackendTTLName),
+		logger:      logger,
+	}
+}
+
+func (f *finder) FindByID(ctx context.Context, id uuid.UUID) (*domain.Backend, error) {
+	if cached, ok := f.memoryCache.Get(id.String()); ok {
+		if b, ok := cached.(*domain.Backend); ok {
+			return b, nil
+		}
+		f.logger.Warn("backend cache entry failed type assertion; falling back to database",
+			slog.String("backend_id", id.String()))
+		f.memoryCache.Delete(id.String())
+	}
+	b, err := f.repo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	f.memoryCache.Set(id.String(), b)
+	return b, nil
+}
+
+func (f *finder) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Backend, int, error) {
+	return f.repo.List(ctx, filter)
+}

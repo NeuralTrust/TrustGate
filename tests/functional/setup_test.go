@@ -1,0 +1,300 @@
+// Package functional_test boots the admin server as a real process
+// against a dedicated Postgres database and exercises it through HTTP.
+// Each test file in this package is a black-box smoke test of the
+// run-281 admin CRUD surface; nothing here imports app/domain code.
+package functional_test
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	"github.com/go-redis/redis/v8"
+	"github.com/jackc/pgx/v5"
+	"github.com/joho/godotenv"
+)
+
+var (
+	GlobalConfig      *config.Config
+	redisDB           *redis.Client
+	adminCmd          *exec.Cmd
+	gatewayBinaryPath string
+
+	AdminURL   = getEnv("ADMIN_URL", "")
+	BaseDomain = getEnv("BASE_DOMAIN", "")
+)
+
+const (
+	dbUser     = "postgres"
+	dbPassword = "postgres"
+	dbHost     = "localhost"
+	dbPort     = "5432"
+	dbName     = "agentgateway_functional"
+	redisAddr  = "localhost:6379"
+	redisDBIdx = 9
+)
+
+func TestMain(m *testing.M) {
+	fmt.Println("Creating Test Environment...")
+	setupTestEnvironment()
+
+	code := m.Run()
+
+	teardownTestEnvironment()
+	os.Exit(code)
+}
+
+func getEnv(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return fallback
+}
+
+// buildCmdEnv returns the env the gateway binary will see, pinning
+// ENV_FILE so it loads the same .env.functional as TestMain.
+func buildCmdEnv() []string {
+	env := os.Environ()
+	env = append(env, "ENV_FILE=../../.env.functional")
+	return env
+}
+
+func setupTestEnvironment() {
+	if err := godotenv.Overload("../../.env.functional"); err != nil {
+		log.Printf("no .env.functional found, relying on system env: %v", err)
+	}
+
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
+	GlobalConfig = cfg
+
+	AdminURL = getEnv("ADMIN_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.AdminPort))
+	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
+
+	killProcessesOnPorts([]int{cfg.Server.AdminPort})
+
+	dropTestDB(dbName)
+	createTestDB(dbName)
+
+	redisDB = redis.NewClient(&redis.Options{Addr: redisAddr, DB: redisDBIdx})
+	_ = redisDB.FlushDB(context.Background()).Err()
+
+	cmdEnv := buildCmdEnv()
+	gatewayBinaryPath = buildGatewayBinary(cmdEnv)
+
+	adminCmd = startServer("ADMIN", "admin", cmdEnv)
+
+	waitForServerReady(fmt.Sprintf("%s/healthz", AdminURL), "admin server", cfg.Server.AdminPort)
+
+	fmt.Println("Test Environment Ready")
+}
+
+func teardownTestEnvironment() {
+	if adminCmd != nil && adminCmd.Process != nil {
+		if err := syscall.Kill(-adminCmd.Process.Pid, syscall.SIGKILL); err != nil {
+			log.Printf("error killing admin server: %v", err)
+		}
+	}
+	if gatewayBinaryPath != "" {
+		_ = os.RemoveAll(filepath.Dir(gatewayBinaryPath))
+	}
+	if redisDB != nil {
+		_ = redisDB.FlushDB(context.Background()).Err()
+		_ = redisDB.Close()
+	}
+	dropTestDB(dbName)
+	fmt.Println("Test Environment Torn Down")
+}
+
+func buildGatewayBinary(env []string) string {
+	tmpDir, err := os.MkdirTemp("", "agentgateway-test-*")
+	if err != nil {
+		log.Fatalf("failed to create temp dir for gateway binary: %v", err)
+	}
+	binaryPath := filepath.Join(tmpDir, "agentgateway")
+
+	fmt.Println("Pre-building agentgateway binary...")
+	start := time.Now()
+	cmd := exec.Command("go", "build", "-o", binaryPath, "../../cmd/agentgateway") //nolint:gosec // controlled paths
+	cmd.Env = env
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		log.Fatalf("failed to build agentgateway binary: %v", err)
+	}
+	fmt.Printf("Built agentgateway binary in %s\n", time.Since(start).Round(time.Millisecond))
+	return binaryPath
+}
+
+type prefixWriter struct {
+	prefix string
+	w      io.Writer
+	buf    []byte
+}
+
+func (pw *prefixWriter) Write(p []byte) (int, error) {
+	pw.buf = append(pw.buf, p...)
+	for {
+		idx := bytes.IndexByte(pw.buf, '\n')
+		if idx < 0 {
+			break
+		}
+		_, _ = fmt.Fprintf(pw.w, "%s%s\n", pw.prefix, string(pw.buf[:idx]))
+		pw.buf = pw.buf[idx+1:]
+	}
+	return len(p), nil
+}
+
+func (pw *prefixWriter) Flush() {
+	if len(pw.buf) > 0 {
+		_, _ = fmt.Fprintf(pw.w, "%s%s\n", pw.prefix, string(pw.buf))
+		pw.buf = nil
+	}
+}
+
+func startServer(label, mode string, env []string) *exec.Cmd {
+	cmd := exec.Command(gatewayBinaryPath, mode) //nolint:gosec // controlled binary path
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	stdout := &prefixWriter{prefix: fmt.Sprintf("[%s] ", label), w: os.Stdout}
+	stderr := &prefixWriter{prefix: fmt.Sprintf("[%s ERR] ", label), w: os.Stderr}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	fmt.Printf("Starting %s server: %s %s\n", label, gatewayBinaryPath, mode)
+	if err := cmd.Start(); err != nil {
+		log.Fatalf("failed to start %s: %v", label, err)
+	}
+	fmt.Printf("  %s pid=%d\n", label, cmd.Process.Pid)
+
+	exitCh := make(chan struct{}, 1)
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			fmt.Printf("[%s EXIT] %v\n", label, err)
+		}
+		stdout.Flush()
+		stderr.Flush()
+		close(exitCh)
+	}()
+
+	select {
+	case <-exitCh:
+		log.Fatalf("%s server exited immediately; check logs above", label)
+	case <-time.After(3 * time.Second):
+	}
+	return cmd
+}
+
+func waitForServerReady(url, name string, port int) {
+	const maxRetries = 30
+	for i := 0; i < maxRetries; i++ {
+		resp, err := http.Get(url) //nolint:gosec // controlled URL
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode < 500 {
+				fmt.Printf("%s ready\n", name)
+				return
+			}
+		}
+		if i == maxRetries-1 {
+			checkPortListening(port, name)
+			log.Fatalf("%s never became ready after %ds: %v", name, maxRetries, err)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// pgxAdminConn opens a one-shot connection to the default "postgres"
+// database; required because you cannot CREATE/DROP the database you
+// are currently connected to.
+func pgxAdminConn(ctx context.Context) (*pgx.Conn, error) {
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/postgres?sslmode=disable",
+		dbUser, dbPassword, dbHost, dbPort)
+	return pgx.Connect(ctx, dsn)
+}
+
+func createTestDB(name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := pgxAdminConn(ctx)
+	if err != nil {
+		log.Fatalf("cannot connect to postgres: %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	if _, err := conn.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s;", name)); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			return
+		}
+		log.Fatalf("error creating database %s: %v", name, err)
+	}
+	fmt.Printf("Database %s created\n", name)
+}
+
+func dropTestDB(name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := pgxAdminConn(ctx)
+	if err != nil {
+		log.Printf("cannot connect to postgres for drop: %v", err)
+		return
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	if _, err := conn.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE);", name)); err != nil {
+		log.Printf("error dropping database %s: %v", name, err)
+		return
+	}
+	fmt.Printf("Database %s dropped\n", name)
+}
+
+func checkPortListening(port int, name string) {
+	cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port)) //nolint:gosec // hardcoded callsite
+	out, err := cmd.Output()
+	if err != nil {
+		fmt.Printf("port %d is NOT listening for %s\n", port, name)
+		return
+	}
+	if pids := strings.TrimSpace(string(out)); pids != "" {
+		fmt.Printf("port %d listening pids=%s for %s\n", port, pids, name)
+	}
+}
+
+func killProcessesOnPorts(ports []int) {
+	for _, port := range ports {
+		cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port)) //nolint:gosec // hardcoded callsite
+		out, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		for _, pidStr := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			pidStr = strings.TrimSpace(pidStr)
+			if pidStr == "" {
+				continue
+			}
+			pid, err := strconv.Atoi(pidStr)
+			if err != nil {
+				continue
+			}
+			fmt.Printf("Killing pid=%d on port %d\n", pid, port)
+			if p, err := os.FindProcess(pid); err == nil {
+				_ = p.Kill()
+			}
+		}
+	}
+}

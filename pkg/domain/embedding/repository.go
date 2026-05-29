@@ -1,0 +1,12 @@
+package embedding
+
+import "context"
+
+//go:generate mockery --name=Repository --dir=. --output=./mocks --filename=embedding_repository_mock.go --case=underscore --with-expecter
+type Repository interface {
+	Count(ctx context.Context, index, keyQuery string) (int, error)
+	Store(ctx context.Context, targetID string, embeddingData *Embedding, key string) error
+	GetByTargetID(ctx context.Context, targetID string) (*Embedding, error)
+	StoreWithHMSet(ctx context.Context, index, key, gatewayID string, embeddingData *Embedding, data []byte) error
+	Search(ctx context.Context, index, query string, embeddingData *Embedding) ([]SearchResult, error)
+}

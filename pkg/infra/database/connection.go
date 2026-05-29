@@ -1,4 +1,3 @@
-// Package database wires Postgres connectivity and migrations.
 package database
 
 import (

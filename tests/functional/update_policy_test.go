@@ -1,0 +1,70 @@
+package functional_test
+
+import (
+	"fmt"
+	"net/http"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestUpdatePolicy_Success(t *testing.T) {
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw")})
+
+	original := uniqueName("polu-from")
+	id := CreatePolicy(t, gwID, validPolicyPayload(original))
+
+	updated := uniqueName("polu-to")
+	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, id)
+	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{
+		"name": updated,
+		"plugins": []map[string]any{
+			{"name": "cors", "stage": "post_response", "enabled": false},
+		},
+	})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, updated, body["name"])
+
+	plugins, _ := body["plugins"].([]any)
+	require.Len(t, plugins, 1)
+	plugin, _ := plugins[0].(map[string]any)
+	assert.Equal(t, "cors", plugin["name"])
+
+	status, body = sendRequest(t, http.MethodGet, url, nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, updated, body["name"])
+}
+
+func TestUpdatePolicy_NotFound(t *testing.T) {
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw2")})
+	missing := uuid.NewString()
+	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, missing)
+	status, body := sendRequest(t, http.MethodPut, url, nil, validPolicyPayload(uniqueName("polu-missing")))
+	require.Equal(t, http.StatusNotFound, status, "body=%v", body)
+	assert.Equal(t, "not_found", body["error"])
+}
+
+func TestUpdatePolicy_ValidationEmptyName(t *testing.T) {
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw3")})
+	id := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("polu-val")))
+
+	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, id)
+	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{"name": ""})
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
+}
+
+func TestUpdatePolicy_NameConflict(t *testing.T) {
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("polu-gw4")})
+	a := uniqueName("polu-a")
+	b := uniqueName("polu-b")
+	_ = CreatePolicy(t, gwID, validPolicyPayload(a))
+	bID := CreatePolicy(t, gwID, validPolicyPayload(b))
+
+	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, bID)
+	status, body := sendRequest(t, http.MethodPut, url, nil, validPolicyPayload(a))
+	require.Equal(t, http.StatusConflict, status, "body=%v", body)
+	assert.Equal(t, "already_exists", body["error"])
+}

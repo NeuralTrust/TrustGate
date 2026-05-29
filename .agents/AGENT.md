@@ -49,23 +49,25 @@ srv.Shutdown()
 
 Hexagonal-ish layout. The rule of thumb:
 
-| Directory | Owns | Imports |
-|---|---|---|
-| `cmd/agentgateway/` | Binary entry point. Just composition. | `container`, `modules`, `database`, `server` |
-| `pkg/version/` | Build info injected via `-ldflags`. | stdlib only |
-| `pkg/common/errors/` | Cross-package sentinel errors (`ErrNotFound`, `ErrInvalidConfig`, `ErrBoot`). | stdlib only |
-| `pkg/config/` | Env-only config loader (`LoadConfig`). | stdlib + `errors` |
-| `pkg/infra/logger/` | `log/slog` with `MultiHandler`, `AsyncHandler`, `SourceFilterHandler`, `ColoredHandler`. | stdlib only |
-| `pkg/infra/database/` | `pgx/v5` pool, `WithTx` helper, in-code migrations registry + runner. | `config`, `common/errors`, `pgx/v5` |
-| `pkg/api/handler/http/` | Per-route HTTP handlers (e.g. `HealthHandler`, `VersionHandler`). | `version`, `fiber` |
-| `pkg/api/handler/websocket/` | Per-route WS handlers (B.x). | `fiber` |
-| `pkg/api/middleware/` | Cross-cutting middleware (request id, panic recover, access log, CORS, security headers, …). Each one implements the `Middleware` interface. | `config`, `fiber`, `slog` |
-| `pkg/server/` | `Server` interface, `BaseServer` (Fiber tuning), `httpServer` impl. | `config`, `server/router`, `fiber` |
-| `pkg/server/router/` | `ServerRouter` contract + `AdminRouter` / `ProxyRouter`. | `api/handler/http`, `api/middleware`, `fiber` |
-| `pkg/container/` | `dig` wrapper (`Container`, `Module`, `WithModule`, `WithOverride`). | `dig` |
-| `pkg/container/modules/` | One file per DI context — `core`, `api`, `cache`, `telemetry`, `auth`, `policy`, `plugins`, `gateway`, `backend`, `consumer`, `server_admin`, `server_proxy`. | their respective collaborators |
-| `pkg/domain/` | Aggregate roots (B.x). | only stdlib + `common/*` |
-| `pkg/app/` | Use cases / application services (B.x). | `domain`, `common/*`, repository interfaces |
+| Directory                        | Owns                                                                                                                                                                                                                                 | Imports                                                                     |
+|----------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| `cmd/agentgateway/`              | Binary entry point. Just composition.                                                                                                                                                                                                | `container`, `modules`, `database`, `server`                                |
+| `pkg/version/`                   | Build info injected via `-ldflags`.                                                                                                                                                                                                  | stdlib only                                                                 |
+| `pkg/common/errors/`             | Cross-package sentinel errors (`ErrNotFound`, `ErrInvalidConfig`, `ErrBoot`).                                                                                                                                                        | stdlib only                                                                 |
+| `pkg/config/`                    | Env-only config loader (`LoadConfig`).                                                                                                                                                                                               | stdlib + `errors`                                                           |
+| `pkg/infra/logger/`              | `log/slog` with `MultiHandler`, `AsyncHandler`, `SourceFilterHandler`, `ColoredHandler`.                                                                                                                                             | stdlib only                                                                 |
+| `pkg/infra/database/`            | `pgx/v5` pool, `WithTx` helper, in-code migrations registry + runner.                                                                                                                                                                | `config`, `common/errors`, `pgx/v5`                                         |
+| `pkg/api/handler/http/`          | Per-route HTTP handlers (e.g. `HealthHandler`, `VersionHandler`). One handler per file.                                                                                                                                              | `version`, `fiber`, `api/handler/http/request`, `api/handler/http/response` |
+| `pkg/api/handler/http/request/`  | Inbound request DTOs. **One DTO per file**, named after the action (e.g. `create_gateway_request.go`).                                                                                                                               | stdlib + `domain/*` value types                                             |
+| `pkg/api/handler/http/response/` | Outbound response DTOs. **One DTO per file** (e.g. `list_rules_output.go`).                                                                                                                                                          | stdlib + `domain/*` value types                                             |
+| `pkg/api/handler/websocket/`     | Per-route WS handlers (B.x).                                                                                                                                                                                                         | `fiber`                                                                     |
+| `pkg/api/middleware/`            | Cross-cutting middleware (request id, panic recover, access log, CORS, security headers, …). Each one implements the `Middleware` interface.                                                                                         | `config`, `fiber`, `slog`                                                   |
+| `pkg/server/`                    | `Server` interface, `BaseServer` (Fiber tuning), `httpServer` impl.                                                                                                                                                                  | `config`, `server/router`, `fiber`                                          |
+| `pkg/server/router/`             | `ServerRouter` contract + `AdminRouter` / `ProxyRouter`.                                                                                                                                                                             | `api/handler/http`, `api/middleware`, `fiber`                               |
+| `pkg/container/`                 | `dig` wrapper (`Container`, `Module`, `WithModule`, `WithOverride`).                                                                                                                                                                 | `dig`                                                                       |
+| `pkg/container/modules/`         | One file per DI context — `core`, `api`, `cache`, `telemetry`, `auth`, `policy`, `plugins`, `gateway`, `backend`, `consumer`, `server_admin`, `server_proxy`.                                                                        | their respective collaborators                                              |
+| `pkg/domain/<entity>/`           | Aggregate roots, value objects, repository **interfaces**.                                                                                                                                                                           | only stdlib + `common/*`                                                    |
+| `pkg/app/<entity>/`              | Use cases / application services. **One use case per file** (`finder.go`, `creator.go`, `matcher.go`, …) containing the interface + its implementation + `//go:generate mockery` directive. Mocks land in `pkg/app/<entity>/mocks/`. | `domain`, `common/*`, repository interfaces                                 |
 
 ### Dependency direction (must hold)
 
@@ -183,21 +185,151 @@ type Middleware interface { Middleware() fiber.Handler }
 - DB-touching tests are deferred to B.1 (they will gate on a
   `PG_TEST_URL` env var so CI can skip them on a missing socket).
 
-## 10. Where do I put …
+## 10. App layer & DTO placement (hard rules)
+
+These rules are **mandatory** and mirror TrustGate (`TrustGate/pkg/app/**`,
+`TrustGate/pkg/handlers/http/request/`, `…/response/`). Diverging breaks the
+hexagonal boundaries and the team's review expectations.
+
+### 10.1 Never group multiple interfaces in one file
+
+There is no such thing as a `contracts.go` / `interfaces.go` /
+`<thing>_contracts.go` aggregating several interfaces. Each interface lives
+in **its own file**, next to its implementation when it has one. If you
+catch yourself writing two `type … interface { … }` declarations in the same
+file, stop.
+
+### 10.2 Use cases live in `pkg/app/<entity>/<usecase>.go`
+
+One file per use case, named after the verb / responsibility — `finder.go`,
+`creator.go`, `updater.go`, `deleter.go`, `matcher.go`, `validator.go`, …
+Inside that file, in this order:
+
+1. Package-level sentinel errors (`var ErrInvalidCacheType = errors.New(...)`).
+2. The `//go:generate mockery` directive for the interface.
+3. The interface (exported, named after the responsibility — `Finder`,
+   `Matcher`, `Creator`).
+4. The unexported struct implementation and its dependencies.
+5. The `New<Iface>` constructor returning the interface.
+6. The methods.
+
+Canonical shape (copy this, change the names):
+
+```go
+package upstream
+
+//go:generate mockery --name=Finder --dir=. --output=./mocks --filename=upstream_finder_mock.go --case=underscore --with-expecter
+type Finder interface {
+    Find(ctx context.Context, gatewayID, upstreamID uuid.UUID) (*domain.Upstream, error)
+}
+
+type finder struct {
+    repo   domain.Repository
+    cache  cache.Client
+    logger *slog.Logger
+}
+
+func NewFinder(repo domain.Repository, c cache.Client, l *slog.Logger) Finder {
+    return &finder{repo: repo, cache: c, logger: l}
+}
+
+func (f *finder) Find(ctx context.Context, gatewayID, upstreamID uuid.UUID) (*domain.Upstream, error) {
+    // …
+}
+```
+
+Notes:
+
+- Mocks **must** be generated by `go generate ./...` into
+  `pkg/app/<entity>/mocks/<entity>_<usecase>_mock.go`. Don't hand-write
+  mocks. Don't commit a mock without its source `//go:generate` line.
+- Use cases consume **domain repository interfaces** (from
+  `pkg/domain/<entity>`), never concrete `pgx` / `fiber` / HTTP types.
+- If a use case depends on another use case, depend on its interface, not
+  the concrete struct, so tests can inject the generated mock.
+
+### 10.3 Request DTOs live in `pkg/api/handler/http/request/`
+
+- **One DTO per file**, named after the action: `create_gateway_request.go`,
+  `update_upstream_request.go`, `forward_proxy_request.go`.
+- The file holds the struct + its JSON tags + any `Validate()` method.
+- Handlers in `pkg/api/handler/http/` consume these by importing
+  `pkg/api/handler/http/request`.
+- Request DTOs may reference domain value types but must not import infra
+  (`pgx`, `redis`, `kafka`, …).
+
+### 10.4 Response DTOs live in `pkg/api/handler/http/response/`
+
+- **One DTO per file**, named after the action's output:
+  `list_rules_response.go`, `get_gateway_response.go`.
+- Same import discipline as request DTOs.
+
+### 10.5 Anti-patterns (do not do these)
+
+- Do **not** bundle interfaces into `pkg/api/handler/http/*_contracts.go` /
+  `*_interfaces.go`. Move them to `pkg/app/<entity>/<usecase>.go`.
+- Do **not** define the interface in one file and its only implementation in
+  another file in the same package "for cleanliness". Keep them together;
+  the `mocks/` package is the indirection.
+- Do **not** put request / response DTOs in `pkg/types` or inside the handler
+  file. They belong in `request/` and `response/`.
+- Do **not** hand-roll mocks. Always `go:generate mockery`.
+
+## 11. Code style (hard rules)
+
+### 11.1 No comments
+
+Code in this repository **must not contain comments**. The codebase relies on
+small files, named symbols, typed signatures, and use-case-per-file layout
+(§10) to communicate intent. Comments rot, lie under refactor, and silently
+duplicate information that the diff history already captures.
+
+This applies to:
+
+- Doc comments above packages, types, functions, methods, fields, constants.
+- Inline `//` comments narrating what the next line does.
+- Block `/* … */` comments explaining structure or rationale.
+- Comments describing why a change was made — that belongs in the commit
+  message, not in the file.
+- Section banners (`// === Helpers ===`, `// --- internal ---`, …).
+- TODO / FIXME / XXX / HACK markers. Open a Linear ticket instead and let
+  the issue tracker carry the context.
+
+The only comments allowed in committed code are the ones the toolchain
+itself reads as instructions, not prose:
+
+- `//go:generate …` directives consumed by `go generate`.
+- Compiler / static-analysis directives (`//go:build`, `//go:embed`,
+  `//nolint:<rule>`, `// #nosec G…`).
+- The single-line copyright header, when one is required by upstream policy.
+
+If the code needs an explanation to be understood, that is a signal to
+rename a symbol, split a function, or add a test that documents the
+behaviour through an assertion — not to add a comment. Reviewers will
+ask for comments to be removed; CI may also reject them via a lint pass
+in the future.
+
+When porting code from other Neuraltrust repositories (TrustGate,
+AgentGuardian, …), strip the comments during the port. Don't leave them
+behind "for later".
+
+## 12. Where do I put …
 
 | New code | Goes in | Notes |
 |---|---|---|
 | A new HTTP endpoint for admin only | `pkg/api/handler/http/<name>_handler.go` + wire in `pkg/server/router/admin_router.go` | Add the handler as a provider in `modules.API`, add the field to `adminRouterParams`. |
 | A new HTTP endpoint shared by admin + proxy | Same as above, wire in both routers. | Health probes already do this — copy that pattern. |
 | A new cross-cutting middleware | `pkg/api/middleware/<name>.go` (implements `Middleware`) | Provide in `modules.API`, add the field to the relevant `*Middlewares` struct(s) + composer(s). |
-| A new aggregate root | `pkg/domain/<context>/` | Pure Go. No `pgx`, no `fiber`, no logging. Define repository interfaces in this package. |
-| A new use case | `pkg/app/<context>/` | Consumes domain + repository interfaces. Stays infra-free. |
-| A repository implementation | `pkg/infra/repository/<context>/` (B.x) | Implements an interface from `pkg/domain/<context>`. Uses `database.WithTx` for atomic writes. |
+| A new request DTO | `pkg/api/handler/http/request/<action>_request.go` | One DTO per file. Imported by the handler. |
+| A new response DTO | `pkg/api/handler/http/response/<action>_response.go` | One DTO per file. Imported by the handler. |
+| A new aggregate root | `pkg/domain/<entity>/` | Pure Go. No `pgx`, no `fiber`, no logging. Define repository interfaces in this package. |
+| A new use case / finder | `pkg/app/<entity>/<usecase>.go` | Interface + impl + `//go:generate mockery` together. See §10.2. |
+| A repository implementation | `pkg/infra/repository/<entity>/` (B.x) | Implements an interface from `pkg/domain/<entity>`. Uses `database.WithTx` for atomic writes. |
 | A DB migration | `pkg/infra/database/migrations/<unix_ts>_<name>.go` | Registers in `init()`. Idempotent up + down inside one tx. |
 | A new env var | `pkg/config/config.go` (default + struct field + getter) + `.env.example` | If required, extend `Validate()`. |
 | A new module | `pkg/container/modules/<name>.go` | Add to `modules.All()` if it's part of the canonical boot. |
 
-## 11. Commits, PRs, branches
+## 13. Commits, PRs, branches
 
 - Conventional Commits per `_base.mdc`. Examples:
   - `feat(server): admin and proxy server adapters`
@@ -209,7 +341,7 @@ type Middleware interface { Middleware() fiber.Handler }
 - The Linear issue id (`RUN-###`) goes in the PR body. The implementation
   branch comes from `gitBranchName` on the Linear issue.
 
-## 12. References
+## 14. References
 
 - Platform shape: `/home/edu/.cursor/rules/neuraltrust-platform.mdc`
 - Domain glossary: `/home/edu/.cursor/rules/neuraltrust-domain.mdc`
@@ -220,3 +352,6 @@ type Middleware interface { Middleware() fiber.Handler }
   - `AgentGuardian/internal/infra/logging/logger.go` — slog handler stack.
   - `TrustGate/cmd/gateway/main.go` — `argv[1]` server selection.
   - `TrustGate/pkg/server/middleware/cors_global.go` — CORS shape we mirror.
+  - `TrustGate/pkg/app/apikey/finder.go` — canonical use-case shape (interface + `//go:generate mockery` + impl in one file).
+  - `TrustGate/pkg/app/upstream/mocks/upstream_creator_mock.go` — what mockery output should look like.
+  - `TrustGate/pkg/handlers/http/request/create_gateway_request.go` — canonical request DTO shape (one DTO per file).
