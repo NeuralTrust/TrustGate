@@ -173,6 +173,11 @@ func sendRequest(
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// Authenticate against the admin-plane auth middleware unless the caller
+	// supplied its own Authorization header (e.g. to exercise a 401 path).
+	if _, ok := headers["Authorization"]; !ok && AdminToken != "" {
+		req.Header.Set("Authorization", "Bearer "+AdminToken)
+	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}

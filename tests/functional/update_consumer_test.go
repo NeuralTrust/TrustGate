@@ -45,11 +45,13 @@ func TestUpdateConsumer_RebindsBackends(t *testing.T) {
 	name := uniqueName("co-upd-rebind")
 	coID := CreateConsumer(t, gwID, map[string]any{
 		"name":        name,
+		"path":        "/v1/" + name,
 		"backend_ids": []string{be1, be2},
 	})
 
 	payload := map[string]any{
 		"name":        name,
+		"path":        "/v1/" + name,
 		"backend_ids": []string{be2, be3},
 	}
 	status, body := sendRequest(t, http.MethodPut,

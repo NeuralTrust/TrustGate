@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
 	"github.com/go-redis/redis/v8"
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
@@ -36,6 +37,10 @@ var (
 	AdminURL   = getEnv("ADMIN_URL", "")
 	ProxyURL   = getEnv("PROXY_URL", "")
 	BaseDomain = getEnv("BASE_DOMAIN", "")
+
+	// AdminToken is a JWT signed with the same secret the admin server boots
+	// with, so the suite can authenticate against the admin-plane auth middleware.
+	AdminToken string
 )
 
 const (
@@ -93,6 +98,12 @@ func setupTestEnvironment() {
 	AdminURL = getEnv("ADMIN_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.AdminPort))
 	ProxyURL = getEnv("PROXY_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.ProxyPort))
 	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
+
+	token, err := jwt.NewJwtManager(&cfg.Server).CreateToken()
+	if err != nil {
+		log.Fatalf("failed to mint admin token: %v", err)
+	}
+	AdminToken = token
 
 	killProcessesOnPorts([]int{cfg.Server.AdminPort, cfg.Server.ProxyPort})
 
