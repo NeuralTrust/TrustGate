@@ -1,0 +1,48 @@
+# Ingress patch for prod environment - agentgateway
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agentgateway-admin
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - agentgateway-admin.neuraltrust.ai
+    secretName: agentgateway-admin-tls
+  rules:
+  - host: agentgateway-admin.neuraltrust.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: agentgateway-admin
+            port:
+              number: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agentgateway-gateway
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - agentgateway.neuraltrust.ai
+    secretName: agentgateway-gateway-tls
+  rules:
+  - host: agentgateway.neuraltrust.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: agentgateway-proxy
+            port:
+              number: 8081

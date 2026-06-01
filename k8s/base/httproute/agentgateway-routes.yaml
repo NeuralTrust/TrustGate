@@ -1,0 +1,45 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentgateway-admin-route
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: agentgateway
+    component: admin
+spec:
+  parentRefs:
+  - name: internal-gateway
+    namespace: gateway-internal
+  hostnames:
+  - "agentgateway-admin.internal.neuraltrust.ai"  # Base domain, overridden in overlays
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: agentgateway-admin
+      port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentgateway-proxy-route
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: agentgateway
+    component: proxy
+spec:
+  parentRefs:
+  - name: internal-gateway
+    namespace: gateway-internal
+  hostnames:
+  - "agentgateway.internal.neuraltrust.ai"  # Base domain, overridden in overlays
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: agentgateway-proxy
+      port: 8081

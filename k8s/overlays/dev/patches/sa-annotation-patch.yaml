@@ -1,0 +1,7 @@
+# ServiceAccount annotation patch for dev environment - agentgateway
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentgateway
+  annotations:
+    iam.gke.io/gcp-service-account: "agentgateway-neuraltrust-dev@neuraltrust-app-dev.iam.gserviceaccount.com"

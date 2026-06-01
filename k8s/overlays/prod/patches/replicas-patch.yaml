@@ -1,0 +1,14 @@
+# Replicas patch for prod environment - agentgateway
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-admin
+spec:
+  replicas: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-proxy
+spec:
+  replicas: 2

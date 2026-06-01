@@ -1,0 +1,41 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agentgateway-gateway
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    component: proxy
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    nginx.ingress.kubernetes.io/cors-allow-headers: X-API-KEY,X-API-Key,x-api-key,X-TG-API-Key,x-tg-api-key,DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,token,Token,Authorization
+    nginx.ingress.kubernetes.io/cors-allow-methods: PUT, GET, POST, OPTIONS, DELETE
+    nginx.ingress.kubernetes.io/cors-expose-headers: '*'
+    nginx.ingress.kubernetes.io/enable-cors: 'true'
+    nginx.ingress.kubernetes.io/force-ssl-redirect: 'true'
+    nginx.ingress.kubernetes.io/proxy-body-size: 50m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 128k
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: '600'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '600'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '600'
+    nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+    nginx.ingress.kubernetes.io/x-content-type-options: nosniff
+    nginx.ingress.kubernetes.io/x-frame-options: DENY
+    nginx.ingress.kubernetes.io/x-xss-protection: 1; mode=block
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - agentgateway.neuraltrust.ai
+    secretName: agentgateway-gateway-tls
+  rules:
+  - host: agentgateway.neuraltrust.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: agentgateway-proxy
+            port:
+              number: 8081

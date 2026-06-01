@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agentgateway-proxy
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    component: proxy
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agentgateway
+      app.kubernetes.io/instance: agentgateway
+      component: proxy
