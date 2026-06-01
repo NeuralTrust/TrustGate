@@ -29,9 +29,11 @@ func init() {
 					id                UUID PRIMARY KEY,
 					gateway_id        UUID NOT NULL REFERENCES gateways(id) ON DELETE RESTRICT,
 					name              TEXT NOT NULL,
-					algorithm         TEXT NOT NULL DEFAULT 'round-robin',
-					targets           JSONB NOT NULL DEFAULT '[]'::jsonb,
-					embedding_config  JSONB,
+					provider          TEXT NOT NULL,
+					provider_options  JSONB,
+					auth              JSONB,
+					weight            INT NOT NULL DEFAULT 0,
+					description       TEXT,
 					health_checks     JSONB,
 					created_at        TIMESTAMPTZ NOT NULL,
 					updated_at        TIMESTAMPTZ NOT NULL,
@@ -41,15 +43,19 @@ func init() {
 				CREATE INDEX backends_name_lower_idx ON backends (lower(name));
 
 				CREATE TABLE consumers (
-					id              UUID PRIMARY KEY,
-					gateway_id      UUID NOT NULL REFERENCES gateways(id) ON DELETE RESTRICT,
-					name            TEXT NOT NULL,
-					type            TEXT NOT NULL DEFAULT 'LLM',
-					headers         JSONB NOT NULL DEFAULT '{}'::jsonb,
-					active          BOOLEAN NOT NULL DEFAULT TRUE,
-					created_at      TIMESTAMPTZ NOT NULL,
-					updated_at      TIMESTAMPTZ NOT NULL,
+					id                UUID PRIMARY KEY,
+					gateway_id        UUID NOT NULL REFERENCES gateways(id) ON DELETE RESTRICT,
+					name              TEXT NOT NULL,
+					type              TEXT NOT NULL DEFAULT 'LLM',
+					path              TEXT NOT NULL,
+					algorithm         TEXT NOT NULL DEFAULT 'round-robin',
+					embedding_config  JSONB,
+					headers           JSONB NOT NULL DEFAULT '{}'::jsonb,
+					active            BOOLEAN NOT NULL DEFAULT TRUE,
+					created_at        TIMESTAMPTZ NOT NULL,
+					updated_at        TIMESTAMPTZ NOT NULL,
 					CONSTRAINT consumers_gateway_name_unique UNIQUE (gateway_id, name),
+					CONSTRAINT consumers_gateway_path_unique UNIQUE (gateway_id, path),
 					CONSTRAINT consumers_type_check          CHECK (type IN ('LLM','MCP','A2A'))
 				);
 				CREATE INDEX consumers_gateway_id_idx ON consumers (gateway_id);

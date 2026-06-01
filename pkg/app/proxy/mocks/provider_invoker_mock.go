@@ -24,9 +24,9 @@ func (_m *ProviderInvoker) EXPECT() *ProviderInvoker_Expecter {
 	return &ProviderInvoker_Expecter{mock: &_m.Mock}
 }
 
-// Invoke provides a mock function with given fields: ctx, target, req
-func (_m *ProviderInvoker) Invoke(ctx context.Context, target *backend.Target, req *infracontext.RequestContext) (*proxy.ProviderResponse, error) {
-	ret := _m.Called(ctx, target, req)
+// Invoke provides a mock function with given fields: ctx, bk, req
+func (_m *ProviderInvoker) Invoke(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*proxy.ProviderResponse, error) {
+	ret := _m.Called(ctx, bk, req)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Invoke")
@@ -34,19 +34,19 @@ func (_m *ProviderInvoker) Invoke(ctx context.Context, target *backend.Target, r
 
 	var r0 *proxy.ProviderResponse
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, *backend.Target, *infracontext.RequestContext) (*proxy.ProviderResponse, error)); ok {
-		return rf(ctx, target, req)
+	if rf, ok := ret.Get(0).(func(context.Context, *backend.Backend, *infracontext.RequestContext) (*proxy.ProviderResponse, error)); ok {
+		return rf(ctx, bk, req)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, *backend.Target, *infracontext.RequestContext) *proxy.ProviderResponse); ok {
-		r0 = rf(ctx, target, req)
+	if rf, ok := ret.Get(0).(func(context.Context, *backend.Backend, *infracontext.RequestContext) *proxy.ProviderResponse); ok {
+		r0 = rf(ctx, bk, req)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*proxy.ProviderResponse)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, *backend.Target, *infracontext.RequestContext) error); ok {
-		r1 = rf(ctx, target, req)
+	if rf, ok := ret.Get(1).(func(context.Context, *backend.Backend, *infracontext.RequestContext) error); ok {
+		r1 = rf(ctx, bk, req)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -61,15 +61,15 @@ type ProviderInvoker_Invoke_Call struct {
 
 // Invoke is a helper method to define mock.On call
 //   - ctx context.Context
-//   - target *backend.Target
+//   - bk *backend.Backend
 //   - req *infracontext.RequestContext
-func (_e *ProviderInvoker_Expecter) Invoke(ctx interface{}, target interface{}, req interface{}) *ProviderInvoker_Invoke_Call {
-	return &ProviderInvoker_Invoke_Call{Call: _e.mock.On("Invoke", ctx, target, req)}
+func (_e *ProviderInvoker_Expecter) Invoke(ctx interface{}, bk interface{}, req interface{}) *ProviderInvoker_Invoke_Call {
+	return &ProviderInvoker_Invoke_Call{Call: _e.mock.On("Invoke", ctx, bk, req)}
 }
 
-func (_c *ProviderInvoker_Invoke_Call) Run(run func(ctx context.Context, target *backend.Target, req *infracontext.RequestContext)) *ProviderInvoker_Invoke_Call {
+func (_c *ProviderInvoker_Invoke_Call) Run(run func(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext)) *ProviderInvoker_Invoke_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*backend.Target), args[2].(*infracontext.RequestContext))
+		run(args[0].(context.Context), args[1].(*backend.Backend), args[2].(*infracontext.RequestContext))
 	})
 	return _c
 }
@@ -79,7 +79,67 @@ func (_c *ProviderInvoker_Invoke_Call) Return(_a0 *proxy.ProviderResponse, _a1 e
 	return _c
 }
 
-func (_c *ProviderInvoker_Invoke_Call) RunAndReturn(run func(context.Context, *backend.Target, *infracontext.RequestContext) (*proxy.ProviderResponse, error)) *ProviderInvoker_Invoke_Call {
+func (_c *ProviderInvoker_Invoke_Call) RunAndReturn(run func(context.Context, *backend.Backend, *infracontext.RequestContext) (*proxy.ProviderResponse, error)) *ProviderInvoker_Invoke_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// InvokeStream provides a mock function with given fields: ctx, bk, req
+func (_m *ProviderInvoker) InvokeStream(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*proxy.ProviderResponse, error) {
+	ret := _m.Called(ctx, bk, req)
+
+	if len(ret) == 0 {
+		panic("no return value specified for InvokeStream")
+	}
+
+	var r0 *proxy.ProviderResponse
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, *backend.Backend, *infracontext.RequestContext) (*proxy.ProviderResponse, error)); ok {
+		return rf(ctx, bk, req)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, *backend.Backend, *infracontext.RequestContext) *proxy.ProviderResponse); ok {
+		r0 = rf(ctx, bk, req)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*proxy.ProviderResponse)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, *backend.Backend, *infracontext.RequestContext) error); ok {
+		r1 = rf(ctx, bk, req)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// ProviderInvoker_InvokeStream_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'InvokeStream'
+type ProviderInvoker_InvokeStream_Call struct {
+	*mock.Call
+}
+
+// InvokeStream is a helper method to define mock.On call
+//   - ctx context.Context
+//   - bk *backend.Backend
+//   - req *infracontext.RequestContext
+func (_e *ProviderInvoker_Expecter) InvokeStream(ctx interface{}, bk interface{}, req interface{}) *ProviderInvoker_InvokeStream_Call {
+	return &ProviderInvoker_InvokeStream_Call{Call: _e.mock.On("InvokeStream", ctx, bk, req)}
+}
+
+func (_c *ProviderInvoker_InvokeStream_Call) Run(run func(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext)) *ProviderInvoker_InvokeStream_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*backend.Backend), args[2].(*infracontext.RequestContext))
+	})
+	return _c
+}
+
+func (_c *ProviderInvoker_InvokeStream_Call) Return(_a0 *proxy.ProviderResponse, _a1 error) *ProviderInvoker_InvokeStream_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ProviderInvoker_InvokeStream_Call) RunAndReturn(run func(context.Context, *backend.Backend, *infracontext.RequestContext) (*proxy.ProviderResponse, error)) *ProviderInvoker_InvokeStream_Call {
 	_c.Call.Return(run)
 	return _c
 }

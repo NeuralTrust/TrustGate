@@ -8,12 +8,11 @@ import (
 	"testing"
 	"time"
 
-	appbackendmocks "github.com/NeuralTrust/AgentGateway/pkg/app/backend/mocks"
-	appgatewaymocks "github.com/NeuralTrust/AgentGateway/pkg/app/gateway/mocks"
+	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
 	domainbackend "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
-	domaingateway "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	cachemocks "github.com/NeuralTrust/AgentGateway/pkg/infra/cache/mocks"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
@@ -35,25 +34,42 @@ func newPermissiveCache(t *testing.T) *cachemocks.Client {
 	return c
 }
 
-func backendWith(gatewayID uuid.UUID, target domainbackend.Target) *domainbackend.Backend {
+func routableConsumerWith(gatewayID uuid.UUID, backends ...*domainbackend.Backend) *appconsumer.RoutableConsumer {
+	return &appconsumer.RoutableConsumer{
+		Consumer: &domainconsumer.Consumer{
+			ID:        uuid.New(),
+			GatewayID: gatewayID,
+			Name:      "test-consumer",
+			Path:      "/v1/chat/completions",
+			Algorithm: loadbalancer.AlgorithmRoundRobin,
+		},
+		Backends: backends,
+	}
+}
+
+func backendFor(gatewayID uuid.UUID, provider string) *domainbackend.Backend {
 	return &domainbackend.Backend{
 		ID:        uuid.New(),
 		GatewayID: gatewayID,
 		Name:      "test-backend",
-		Algorithm: domainbackend.AlgorithmRoundRobin,
-		Targets:   domainbackend.Targets{target},
+		Provider:  provider,
+		Weight:    1,
+		Auth:      domainbackend.NewAPIKeyAuth("sk-1"),
 	}
+}
+
+func newTestForwarder(t *testing.T, invoker appproxy.ProviderInvoker) appproxy.Forwarder {
+	mgr := cache.NewTTLMapManager(time.Minute)
+	return appproxy.NewForwarder(
+		loadbalancer.NewBaseFactory(nil, nil),
+		newPermissiveCache(t), mgr, invoker, nil, nil, newTestLogger(),
+	)
 }
 
 func TestForward_SyncSuccess(t *testing.T) {
 	gatewayID := uuid.New()
-	bk := backendWith(gatewayID, domainbackend.Target{ID: "t1", Provider: "openai"})
-
-	gateways := appgatewaymocks.NewFinder(t)
-	gateways.EXPECT().FindByID(mock.Anything, gatewayID).Return(&domaingateway.Gateway{ID: gatewayID}, nil).Once()
-
-	backends := appbackendmocks.NewFinder(t)
-	backends.EXPECT().FindByID(mock.Anything, bk.ID).Return(bk, nil).Once()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
 
 	invoker := proxymocks.NewProviderInvoker(t)
 	invoker.EXPECT().
@@ -61,15 +77,11 @@ func TestForward_SyncSuccess(t *testing.T) {
 		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
 		Once()
 
-	mgr := cache.NewTTLMapManager(time.Minute)
-	fwd := appproxy.NewForwarder(
-		gateways, backends, loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, newTestLogger(),
-	)
+	fwd := newTestForwarder(t, invoker)
 
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
-		BackendID: bk.ID,
+		Consumer:  rc,
 		Request:   &infracontext.RequestContext{Context: context.Background()},
 	})
 	if err != nil {
@@ -80,117 +92,130 @@ func TestForward_SyncSuccess(t *testing.T) {
 	}
 }
 
-func TestForward_StreamingTargetNotImplemented(t *testing.T) {
+func TestForward_BackendErrorStatusPassthrough(t *testing.T) {
 	gatewayID := uuid.New()
-	bk := backendWith(gatewayID, domainbackend.Target{ID: "t1", Provider: "openai", Stream: true})
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
 
-	gateways := appgatewaymocks.NewFinder(t)
-	gateways.EXPECT().FindByID(mock.Anything, gatewayID).Return(&domaingateway.Gateway{ID: gatewayID}, nil).Once()
-
-	backends := appbackendmocks.NewFinder(t)
-	backends.EXPECT().FindByID(mock.Anything, bk.ID).Return(bk, nil).Once()
-
-	// Invoker must never be called on the streaming branch.
+	backendBody := []byte(`{"error":"rate limited"}`)
 	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{
+			StatusCode: 429,
+			Headers:    map[string][]string{"Retry-After": {"5"}},
+			Body:       backendBody,
+		}, nil).
+		Once()
 
-	mgr := cache.NewTTLMapManager(time.Minute)
-	fwd := appproxy.NewForwarder(
-		gateways, backends, loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, newTestLogger(),
-	)
+	fwd := newTestForwarder(t, invoker)
 
-	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
-		BackendID: bk.ID,
+		Consumer:  rc,
 		Request:   &infracontext.RequestContext{Context: context.Background()},
 	})
-	if !errors.Is(err, appproxy.ErrStreamingNotImplemented) {
-		t.Fatalf("err = %v, want ErrStreamingNotImplemented", err)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 429 {
+		t.Fatalf("status = %d, want 429", res.StatusCode)
+	}
+	if string(res.Body) != string(backendBody) {
+		t.Fatalf("body = %q, want %q", string(res.Body), string(backendBody))
+	}
+	if got := res.Headers["Retry-After"]; len(got) != 1 || got[0] != "5" {
+		t.Fatalf("Retry-After header = %v, want [5]", got)
+	}
+}
+
+func TestForward_StreamingRequestInvokesStream(t *testing.T) {
+	gatewayID := uuid.New()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
+
+	stream := func(yield func([]byte, error) bool) {
+		yield([]byte("data: {}"), nil)
+	}
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: stream}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+
+	// Streaming is auto-detected from the request body ("stream": true).
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Context: context.Background(),
+			Body:    []byte(`{"model":"gpt-4","stream":true}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward returned error: %v", err)
+	}
+	if res.Stream == nil {
+		t.Fatal("expected ForwardResult.Stream to be set on the streaming branch")
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
 	}
 }
 
 func TestForward_ProviderErrorPropagates(t *testing.T) {
 	gatewayID := uuid.New()
-	bk := backendWith(gatewayID, domainbackend.Target{ID: "t1", Provider: "openai"})
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
 
-	gateways := appgatewaymocks.NewFinder(t)
-	gateways.EXPECT().FindByID(mock.Anything, gatewayID).Return(&domaingateway.Gateway{ID: gatewayID}, nil).Once()
-
-	backends := appbackendmocks.NewFinder(t)
-	backends.EXPECT().FindByID(mock.Anything, bk.ID).Return(bk, nil).Once()
-
+	errProvider := errors.New("provider boom")
 	invoker := proxymocks.NewProviderInvoker(t)
 	invoker.EXPECT().
 		Invoke(mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, appproxy.ErrProviderNotImplemented).
+		Return(nil, errProvider).
 		Once()
 
-	mgr := cache.NewTTLMapManager(time.Minute)
-	fwd := appproxy.NewForwarder(
-		gateways, backends, loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, newTestLogger(),
-	)
+	fwd := newTestForwarder(t, invoker)
 
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
-		BackendID: bk.ID,
+		Consumer:  rc,
 		Request:   &infracontext.RequestContext{Context: context.Background()},
 	})
-	if !errors.Is(err, appproxy.ErrProviderNotImplemented) {
-		t.Fatalf("err = %v, want ErrProviderNotImplemented", err)
+	if !errors.Is(err, errProvider) {
+		t.Fatalf("err = %v, want errProvider", err)
 	}
 }
 
-func TestForward_BackendGatewayMismatch(t *testing.T) {
+func TestForward_NoBackendsInPool(t *testing.T) {
 	gatewayID := uuid.New()
-	bk := backendWith(uuid.New(), domainbackend.Target{ID: "t1", Provider: "openai"})
-
-	gateways := appgatewaymocks.NewFinder(t)
-	gateways.EXPECT().FindByID(mock.Anything, gatewayID).Return(&domaingateway.Gateway{ID: gatewayID}, nil).Once()
-
-	backends := appbackendmocks.NewFinder(t)
-	backends.EXPECT().FindByID(mock.Anything, bk.ID).Return(bk, nil).Once()
+	rc := routableConsumerWith(gatewayID)
 
 	invoker := proxymocks.NewProviderInvoker(t)
-
-	mgr := cache.NewTTLMapManager(time.Minute)
-	fwd := appproxy.NewForwarder(
-		gateways, backends, loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, newTestLogger(),
-	)
+	fwd := newTestForwarder(t, invoker)
 
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
-		BackendID: bk.ID,
+		Consumer:  rc,
 		Request:   &infracontext.RequestContext{Context: context.Background()},
 	})
-	if !errors.Is(err, appproxy.ErrBackendGatewayMismatch) {
-		t.Fatalf("err = %v, want ErrBackendGatewayMismatch", err)
+	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
+		t.Fatalf("err = %v, want ErrNoBackendsInPool", err)
 	}
 }
 
-func TestForward_GatewayNotFoundPropagates(t *testing.T) {
-	gatewayID := uuid.New()
-	wantErr := errors.New("gateway gone")
-
-	gateways := appgatewaymocks.NewFinder(t)
-	gateways.EXPECT().FindByID(mock.Anything, gatewayID).Return(nil, wantErr).Once()
-
-	backends := appbackendmocks.NewFinder(t)
+func TestForward_NilConsumer(t *testing.T) {
 	invoker := proxymocks.NewProviderInvoker(t)
-
-	mgr := cache.NewTTLMapManager(time.Minute)
-	fwd := appproxy.NewForwarder(
-		gateways, backends, loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, newTestLogger(),
-	)
+	fwd := newTestForwarder(t, invoker)
 
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		BackendID: uuid.New(),
+		GatewayID: uuid.New(),
+		Consumer:  nil,
 		Request:   &infracontext.RequestContext{Context: context.Background()},
 	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("err = %v, want %v", err, wantErr)
+	if !errors.Is(err, appproxy.ErrNoBackendsInPool) {
+		t.Fatalf("err = %v, want ErrNoBackendsInPool", err)
 	}
 }

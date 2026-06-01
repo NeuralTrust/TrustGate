@@ -32,24 +32,24 @@ func (r *Repository) Save(ctx context.Context, b *domain.Backend) error {
 	if b == nil {
 		return errors.New("backend repository: nil backend")
 	}
-	targetsBytes, err := json.Marshal(b.Targets)
+	providerOptionsBytes, err := marshalProviderOptions(b.ProviderOptions)
 	if err != nil {
-		return fmt.Errorf("backend repository: marshal targets: %w", err)
+		return fmt.Errorf("backend repository: marshal provider_options: %w", err)
 	}
-	embeddingBytes, err := marshalEmbedding(b.EmbeddingConfig)
+	authBytes, err := marshalAuth(b.Auth)
 	if err != nil {
-		return fmt.Errorf("backend repository: marshal embedding_config: %w", err)
+		return fmt.Errorf("backend repository: marshal auth: %w", err)
 	}
 	healthChecksBytes, err := marshalHealthChecks(b.HealthChecks)
 	if err != nil {
 		return fmt.Errorf("backend repository: marshal health_checks: %w", err)
 	}
 	const query = `
-		INSERT INTO backends (id, gateway_id, name, algorithm, targets, embedding_config, health_checks, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+		INSERT INTO backends (id, gateway_id, name, provider, provider_options, auth, weight, description, health_checks, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			b.ID, b.GatewayID, b.Name, b.Algorithm, targetsBytes, embeddingBytes, healthChecksBytes, b.CreatedAt, b.UpdatedAt,
+			b.ID, b.GatewayID, b.Name, b.Provider, providerOptionsBytes, authBytes, b.Weight, b.Description, healthChecksBytes, b.CreatedAt, b.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -61,13 +61,13 @@ func (r *Repository) Update(ctx context.Context, b *domain.Backend) error {
 	if b == nil {
 		return errors.New("backend repository: nil backend")
 	}
-	targetsBytes, err := json.Marshal(b.Targets)
+	providerOptionsBytes, err := marshalProviderOptions(b.ProviderOptions)
 	if err != nil {
-		return fmt.Errorf("backend repository: marshal targets: %w", err)
+		return fmt.Errorf("backend repository: marshal provider_options: %w", err)
 	}
-	embeddingBytes, err := marshalEmbedding(b.EmbeddingConfig)
+	authBytes, err := marshalAuth(b.Auth)
 	if err != nil {
-		return fmt.Errorf("backend repository: marshal embedding_config: %w", err)
+		return fmt.Errorf("backend repository: marshal auth: %w", err)
 	}
 	healthChecksBytes, err := marshalHealthChecks(b.HealthChecks)
 	if err != nil {
@@ -76,15 +76,17 @@ func (r *Repository) Update(ctx context.Context, b *domain.Backend) error {
 	const query = `
 		UPDATE backends
 		   SET name             = $2,
-		       algorithm        = $3,
-		       targets          = $4,
-		       embedding_config = $5,
-		       health_checks    = $6,
-		       updated_at       = $7
+		       provider         = $3,
+		       provider_options = $4,
+		       auth             = $5,
+		       weight           = $6,
+		       description      = $7,
+		       health_checks    = $8,
+		       updated_at       = $9
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			b.ID, b.Name, b.Algorithm, targetsBytes, embeddingBytes, healthChecksBytes, b.UpdatedAt,
+			b.ID, b.Name, b.Provider, providerOptionsBytes, authBytes, b.Weight, b.Description, healthChecksBytes, b.UpdatedAt,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -112,7 +114,7 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 
 func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Backend, error) {
 	const query = `
-		SELECT id, gateway_id, name, algorithm, targets, embedding_config, health_checks, created_at, updated_at
+		SELECT id, gateway_id, name, provider, provider_options, auth, weight, description, health_checks, created_at, updated_at
 		  FROM backends
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -131,7 +133,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID uuid.UUID, ids []u
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, algorithm, targets, embedding_config, health_checks, created_at, updated_at
+		SELECT id, gateway_id, name, provider, provider_options, auth, weight, description, health_checks, created_at, updated_at
 		  FROM backends
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -178,7 +180,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, gateway_id, name, algorithm, targets, embedding_config, health_checks, created_at, updated_at
+		SELECT id, gateway_id, name, provider, provider_options, auth, weight, description, health_checks, created_at, updated_at
 		  FROM backends
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
@@ -210,30 +212,27 @@ type rowScanner interface {
 
 func scanBackend(s rowScanner) (*domain.Backend, error) {
 	b := &domain.Backend{}
-	var targetsRaw, embeddingRaw, healthChecksRaw []byte
+	var providerOptionsRaw, authRaw, healthChecksRaw []byte
 	if err := s.Scan(
-		&b.ID, &b.GatewayID, &b.Name, &b.Algorithm,
-		&targetsRaw, &embeddingRaw, &healthChecksRaw,
+		&b.ID, &b.GatewayID, &b.Name, &b.Provider,
+		&providerOptionsRaw, &authRaw, &b.Weight, &b.Description, &healthChecksRaw,
 		&b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 
-	if len(targetsRaw) > 0 {
-		if err := json.Unmarshal(targetsRaw, &b.Targets); err != nil {
-			return nil, fmt.Errorf("scan targets: %w", err)
+	if len(providerOptionsRaw) > 0 {
+		if err := json.Unmarshal(providerOptionsRaw, &b.ProviderOptions); err != nil {
+			return nil, fmt.Errorf("scan provider_options: %w", err)
 		}
-	}
-	if b.Targets == nil {
-		b.Targets = domain.Targets{}
 	}
 
-	if len(embeddingRaw) > 0 {
-		var ec domain.EmbeddingConfig
-		if err := json.Unmarshal(embeddingRaw, &ec); err != nil {
-			return nil, fmt.Errorf("scan embedding_config: %w", err)
+	if len(authRaw) > 0 {
+		var auth domain.TargetAuth
+		if err := json.Unmarshal(authRaw, &auth); err != nil {
+			return nil, fmt.Errorf("scan auth: %w", err)
 		}
-		b.EmbeddingConfig = &ec
+		b.Auth = &auth
 	}
 
 	if len(healthChecksRaw) > 0 {
@@ -247,11 +246,18 @@ func scanBackend(s rowScanner) (*domain.Backend, error) {
 	return b, nil
 }
 
-func marshalEmbedding(e *domain.EmbeddingConfig) ([]byte, error) {
-	if e == nil {
+func marshalProviderOptions(o map[string]any) ([]byte, error) {
+	if len(o) == 0 {
 		return nil, nil
 	}
-	return json.Marshal(e)
+	return json.Marshal(o)
+}
+
+func marshalAuth(a *domain.TargetAuth) ([]byte, error) {
+	if a == nil {
+		return nil, nil
+	}
+	return json.Marshal(a)
 }
 
 func marshalHealthChecks(h *domain.HealthChecks) ([]byte, error) {

@@ -9,11 +9,13 @@ import (
 )
 
 type UpdateBackendRequest struct {
-	Name            string                  `json:"name"`
-	Algorithm       string                  `json:"algorithm,omitempty"`
-	Targets         []TargetRequest         `json:"targets"`
-	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
-	HealthChecks    *HealthChecksRequest    `json:"health_checks,omitempty"`
+	Name            string               `json:"name"`
+	Provider        string               `json:"provider"`
+	ProviderOptions map[string]any       `json:"provider_options,omitempty"`
+	Description     string               `json:"description,omitempty"`
+	Weight          int                  `json:"weight,omitempty"`
+	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
+	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
 }
 
 func (r UpdateBackendRequest) Validate() error {
@@ -23,25 +25,14 @@ func (r UpdateBackendRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
-	if len(r.Targets) == 0 {
-		return fmt.Errorf("at least one target is required: %w", commonerrors.ErrValidation)
+	if strings.TrimSpace(r.Provider) == "" {
+		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
 	}
 	return nil
 }
 
-func (r UpdateBackendRequest) ToTargets() domain.Targets {
-	out := make(domain.Targets, 0, len(r.Targets))
-	for _, tr := range r.Targets {
-		out = append(out, tr.ToDomain())
-	}
-	return out
-}
-
-func (r UpdateBackendRequest) ToEmbeddingConfig() *domain.EmbeddingConfig {
-	if r.EmbeddingConfig == nil {
-		return nil
-	}
-	return r.EmbeddingConfig.ToDomain()
+func (r UpdateBackendRequest) ToAuth() *domain.TargetAuth {
+	return r.Auth.ToDomain()
 }
 
 func (r UpdateBackendRequest) ToHealthChecks() *domain.HealthChecks {

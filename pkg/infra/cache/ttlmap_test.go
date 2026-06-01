@@ -29,6 +29,33 @@ func TestTTLMap_GetSetDelete(t *testing.T) {
 	}
 }
 
+func TestTTLMap_DeleteByPrefix(t *testing.T) {
+	t.Parallel()
+	m := NewTTLMap(time.Minute)
+
+	var evicted []any
+	m.SetOnEvict(func(v any) { evicted = append(evicted, v) })
+
+	m.Set("gw1:c1", "a")
+	m.Set("gw1:c2", "b")
+	m.Set("gw2:c1", "keep")
+
+	m.DeleteByPrefix("gw1:")
+
+	if _, ok := m.Get("gw1:c1"); ok {
+		t.Fatal("gw1:c1 was not evicted")
+	}
+	if _, ok := m.Get("gw1:c2"); ok {
+		t.Fatal("gw1:c2 was not evicted")
+	}
+	if _, ok := m.Get("gw2:c1"); !ok {
+		t.Fatal("gw2:c1 must be preserved")
+	}
+	if len(evicted) != 2 {
+		t.Fatalf("onEvict fired %d times, want 2", len(evicted))
+	}
+}
+
 func TestTTLMap_Expiry(t *testing.T) {
 	t.Parallel()
 	m := NewTTLMap(20 * time.Millisecond)

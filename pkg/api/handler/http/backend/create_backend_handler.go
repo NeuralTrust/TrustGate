@@ -36,9 +36,11 @@ func (h *CreateBackendHandler) Handle(c *fiber.Ctx) error {
 	b, err := h.creator.Create(c.UserContext(), appbackend.CreateInput{
 		GatewayID:       gatewayID,
 		Name:            req.Name,
-		Algorithm:       req.Algorithm,
-		Targets:         req.ToTargets(),
-		EmbeddingConfig: req.ToEmbeddingConfig(),
+		Provider:        req.Provider,
+		ProviderOptions: req.ProviderOptions,
+		Description:     req.Description,
+		Weight:          req.Weight,
+		Auth:            req.ToAuth(),
 		HealthChecks:    req.ToHealthChecks(),
 	})
 	if err != nil {

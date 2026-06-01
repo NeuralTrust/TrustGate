@@ -21,7 +21,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	id := uuid.New()
 	now := time.Now().UTC()
-	existing := domain.Rehydrate(id, "old", "active", nil, nil, now, now)
+	existing := domain.Rehydrate(id, "old", "active", nil, nil, nil, now, now)
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	repo.EXPECT().
@@ -76,7 +76,7 @@ func TestUpdater_Update_RejectsEmptyName(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	id := uuid.New()
 	now := time.Now().UTC()
-	existing := domain.Rehydrate(id, "old", "active", nil, nil, now, now)
+	existing := domain.Rehydrate(id, "old", "active", nil, nil, nil, now, now)
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	// repo.Update must not be called.

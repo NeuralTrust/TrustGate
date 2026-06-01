@@ -47,15 +47,18 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	cons, err := h.updater.Update(c.UserContext(), appconsumer.UpdateInput{
-		ID:         id,
-		GatewayID:  gatewayID,
-		Name:       req.Name,
-		Type:       req.ToType(),
-		Headers:    req.Headers,
-		Active:     req.Active,
-		BackendIDs: backendIDs,
-		PolicyIDs:  policyIDs,
-		AuthIDs:    authIDs,
+		ID:              id,
+		GatewayID:       gatewayID,
+		Name:            req.Name,
+		Type:            req.ToType(),
+		Path:            req.Path,
+		Algorithm:       req.Algorithm,
+		EmbeddingConfig: req.ToEmbeddingConfig(),
+		Headers:         req.Headers,
+		Active:          req.Active,
+		BackendIDs:      backendIDs,
+		PolicyIDs:       policyIDs,
+		AuthIDs:         authIDs,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

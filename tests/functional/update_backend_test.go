@@ -18,7 +18,7 @@ func TestUpdateBackend_Success(t *testing.T) {
 
 	updatedName := uniqueName("be-upd-to")
 	payload := validBackendPayload(updatedName)
-	payload["algorithm"] = "random"
+	payload["provider"] = "anthropic"
 
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/backends/%s", AdminURL, gwID, beID),
@@ -26,7 +26,7 @@ func TestUpdateBackend_Success(t *testing.T) {
 	)
 	require.Equal(t, http.StatusOK, status, "body=%v", body)
 	assert.Equal(t, updatedName, body["name"])
-	assert.Equal(t, "random", body["algorithm"])
+	assert.Equal(t, "anthropic", body["provider"])
 
 	status, body = sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/backends/%s", AdminURL, gwID, beID),
@@ -34,7 +34,7 @@ func TestUpdateBackend_Success(t *testing.T) {
 	)
 	require.Equal(t, http.StatusOK, status)
 	assert.Equal(t, updatedName, body["name"])
-	assert.Equal(t, "random", body["algorithm"])
+	assert.Equal(t, "anthropic", body["provider"])
 }
 
 func TestUpdateBackend_NotFound(t *testing.T) {

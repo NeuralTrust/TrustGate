@@ -40,6 +40,7 @@ func adminTransport(m adminMiddlewares) *middleware.Transport {
 type adminRouterParams struct {
 	dig.In
 	Transport      *middleware.Transport `name:"admin"`
+	AdminAuth      *middleware.AdminAuthMiddleware
 	HealthHandler  *apihandler.HealthHandler
 	VersionHandler *apihandler.VersionHandler
 
@@ -89,6 +90,7 @@ func ServerAdmin(c *container.Container) error {
 		func(p adminRouterParams) router.ServerRouter {
 			return router.NewAdminRouter(router.AdminRouterDeps{
 				MiddlewareTransport: p.Transport,
+				AdminAuth:           p.AdminAuth,
 				HealthHandler:       p.HealthHandler,
 				VersionHandler:      p.VersionHandler,
 				CreateGateway:       p.CreateGateway,

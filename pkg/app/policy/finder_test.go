@@ -17,13 +17,14 @@ func TestFinder_FindByID_CacheHit(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	id := uuid.New()
-	cached := &domain.Policy{ID: id, Name: "cached"}
+	gwID := uuid.New()
+	cached := &domain.Policy{ID: id, GatewayID: gwID, Name: "cached"}
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.PolicyTTLName).Set(id.String(), cached)
 
 	finder := apppolicy.NewFinder(repo, mgr, newTestLogger())
-	got, err := finder.FindByID(context.Background(), id)
+	got, err := finder.FindByID(context.Background(), gwID, id)
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
@@ -36,13 +37,14 @@ func TestFinder_FindByID_CacheMiss_PopulatesCache(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	id := uuid.New()
-	want := &domain.Policy{ID: id, Name: "from-db"}
+	gwID := uuid.New()
+	want := &domain.Policy{ID: id, GatewayID: gwID, Name: "from-db"}
 	repo.EXPECT().FindByID(mock.Anything, id).Return(want, nil).Once()
 
 	mgr := newCacheManager()
 	finder := apppolicy.NewFinder(repo, mgr, newTestLogger())
 
-	got, err := finder.FindByID(context.Background(), id)
+	got, err := finder.FindByID(context.Background(), gwID, id)
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
@@ -61,9 +63,23 @@ func TestFinder_FindByID_NotFound(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
 	finder := apppolicy.NewFinder(repo, newCacheManager(), newTestLogger())
-	_, err := finder.FindByID(context.Background(), id)
+	_, err := finder.FindByID(context.Background(), uuid.New(), id)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestFinder_FindByID_WrongGateway(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := uuid.New()
+	want := &domain.Policy{ID: id, GatewayID: uuid.New(), Name: "other"}
+	repo.EXPECT().FindByID(mock.Anything, id).Return(want, nil).Once()
+
+	finder := apppolicy.NewFinder(repo, newCacheManager(), newTestLogger())
+	_, err := finder.FindByID(context.Background(), uuid.New(), id)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound for cross-gateway id", err)
 	}
 }
 

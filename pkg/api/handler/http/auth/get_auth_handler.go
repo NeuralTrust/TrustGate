@@ -16,11 +16,11 @@ func NewGetAuthHandler(finder appauth.Finder) *GetAuthHandler {
 }
 
 func (h *GetAuthHandler) Handle(c *fiber.Ctx) error {
-	_, id, err := helpers.ParseGatewayScopedID(c)
+	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
-	a, err := h.finder.FindByID(c.UserContext(), id)
+	a, err := h.finder.FindByID(c.UserContext(), gatewayID, id)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

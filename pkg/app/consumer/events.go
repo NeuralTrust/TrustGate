@@ -9,8 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// publishGatewayDataInvalidation is best-effort: a publish error is logged, never
-// returned, because the database write already succeeded.
 func publishGatewayDataInvalidation(
 	ctx context.Context,
 	publisher cache.EventPublisher,

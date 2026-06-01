@@ -4,35 +4,33 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
 	"github.com/google/uuid"
 )
 
-const (
-	AlgorithmRoundRobin         = algorithm.RoundRobin
-	AlgorithmWeightedRoundRobin = algorithm.WeightedRoundRobin
-	AlgorithmRandom             = algorithm.Random
-	AlgorithmLeastConnections   = algorithm.LeastConnections
-	AlgorithmSemantic           = algorithm.Semantic
-)
-
+// Backend is a single load-balancing target: one provider endpoint with its
+// credentials and optional weight/description/health-check config. A Consumer
+// owns a pool of backends and the algorithm used to balance across them.
 type Backend struct {
-	ID              uuid.UUID        `json:"id"`
-	GatewayID       uuid.UUID        `json:"gateway_id"`
-	Name            string           `json:"name"`
-	Algorithm       string           `json:"algorithm"`
-	Targets         Targets          `json:"targets"`
-	EmbeddingConfig *EmbeddingConfig `json:"embedding_config,omitempty"`
-	HealthChecks    *HealthChecks    `json:"health_checks,omitempty"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
+	ID              uuid.UUID      `json:"id"`
+	GatewayID       uuid.UUID      `json:"gateway_id"`
+	Name            string         `json:"name"`
+	Provider        string         `json:"provider"`
+	ProviderOptions map[string]any `json:"provider_options,omitempty"`
+	Description     string         `json:"description,omitempty"`
+	Weight          int            `json:"weight,omitempty"`
+	Auth            *TargetAuth    `json:"auth,omitempty"`
+	HealthChecks    *HealthChecks  `json:"health_checks,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 func NewBackend(
 	gatewayID uuid.UUID,
-	name, algorithm string,
-	targets Targets,
-	embeddingConfig *EmbeddingConfig,
+	name, provider string,
+	providerOptions map[string]any,
+	description string,
+	weight int,
+	auth *TargetAuth,
 	healthChecks *HealthChecks,
 ) (*Backend, error) {
 	id, err := uuid.NewV7()
@@ -44,9 +42,11 @@ func NewBackend(
 		ID:              id,
 		GatewayID:       gatewayID,
 		Name:            name,
-		Algorithm:       algorithm,
-		Targets:         targets,
-		EmbeddingConfig: embeddingConfig,
+		Provider:        provider,
+		ProviderOptions: providerOptions,
+		Description:     description,
+		Weight:          weight,
+		Auth:            auth,
 		HealthChecks:    healthChecks,
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -59,9 +59,11 @@ func NewBackend(
 
 func Rehydrate(
 	id, gatewayID uuid.UUID,
-	name, algorithm string,
-	targets Targets,
-	embedding *EmbeddingConfig,
+	name, provider string,
+	providerOptions map[string]any,
+	description string,
+	weight int,
+	auth *TargetAuth,
 	healthChecks *HealthChecks,
 	createdAt, updatedAt time.Time,
 ) *Backend {
@@ -69,9 +71,11 @@ func Rehydrate(
 		ID:              id,
 		GatewayID:       gatewayID,
 		Name:            name,
-		Algorithm:       algorithm,
-		Targets:         targets,
-		EmbeddingConfig: embedding,
+		Provider:        provider,
+		ProviderOptions: providerOptions,
+		Description:     description,
+		Weight:          weight,
+		Auth:            auth,
 		HealthChecks:    healthChecks,
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
@@ -80,47 +84,27 @@ func Rehydrate(
 
 func (b *Backend) Validate() error {
 	if b.Name == "" {
-		return fmt.Errorf("%w: name is required", ErrInvalidTarget)
+		return fmt.Errorf("%w: name is required", ErrInvalidBackend)
 	}
 	if b.GatewayID == uuid.Nil {
 		return ErrInvalidGatewayID
 	}
-	if b.Algorithm == "" {
-		b.Algorithm = AlgorithmRoundRobin
+	if b.Weight < 0 {
+		return fmt.Errorf("%w: weight cannot be negative", ErrInvalidBackend)
 	}
-	if !algorithm.IsValid(b.Algorithm) {
-		return fmt.Errorf("%w: %q", ErrInvalidAlgorithm, b.Algorithm)
+	if b.Provider == "" {
+		return fmt.Errorf("%w: provider is required", ErrInvalidBackend)
 	}
-	if len(b.Targets) == 0 {
-		return ErrNoTargets
+	if b.Auth == nil {
+		return fmt.Errorf("%w: auth is required", ErrInvalidBackend)
+	}
+	if err := b.Auth.Validate(); err != nil {
+		return err
 	}
 	if b.HealthChecks != nil {
 		if err := b.HealthChecks.Validate(); err != nil {
 			return err
 		}
 	}
-
-	if b.Algorithm == AlgorithmSemantic {
-		if b.EmbeddingConfig == nil {
-			return fmt.Errorf("%w: embedding_config required for semantic algorithm", ErrInvalidEmbeddingConfig)
-		}
-		if err := b.EmbeddingConfig.Validate(); err != nil {
-			return err
-		}
-	}
-
-	for i := range b.Targets {
-		t := &b.Targets[i]
-		if t.ID == "" {
-			t.ID = fmt.Sprintf("%s-%s-%d", b.ID, t.Provider, i)
-		}
-		if err := t.Validate(); err != nil {
-			return fmt.Errorf("target %d: %w", i, err)
-		}
-		if b.Algorithm == AlgorithmSemantic && t.Description == "" {
-			return fmt.Errorf("%w: target %d description is required for semantic algorithm", ErrInvalidTarget, i)
-		}
-	}
-
 	return nil
 }

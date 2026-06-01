@@ -23,7 +23,7 @@ func TestFinder_FindByID_CacheHit(t *testing.T) {
 	id := uuid.New()
 	now := time.Now().UTC()
 	mgr := newCacheManager()
-	cached := domain.Rehydrate(id, "Prod", "active", nil, nil, now, now)
+	cached := domain.Rehydrate(id, "Prod", "active", nil, nil, nil, now, now)
 	mgr.GetTTLMap(cache.GatewayTTLName).Set(id.String(), cached)
 
 	finder := appgateway.NewFinder(repo, mgr, newTestLogger())
@@ -41,7 +41,7 @@ func TestFinder_FindByID_CacheMiss_PopulatesCache(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	id := uuid.New()
 	now := time.Now().UTC()
-	fromDB := domain.Rehydrate(id, "Prod", "active", nil, nil, now, now)
+	fromDB := domain.Rehydrate(id, "Prod", "active", nil, nil, nil, now, now)
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(fromDB, nil).Once()
 
@@ -83,7 +83,7 @@ func TestFinder_FindByID_PoisonedCache_FallsBackToDB(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	id := uuid.New()
 	now := time.Now().UTC()
-	fromDB := domain.Rehydrate(id, "Prod", "active", nil, nil, now, now)
+	fromDB := domain.Rehydrate(id, "Prod", "active", nil, nil, nil, now, now)
 	repo.EXPECT().FindByID(mock.Anything, id).Return(fromDB, nil).Once()
 
 	mgr := newCacheManager()
@@ -111,8 +111,8 @@ func TestFinder_List_Passthrough(t *testing.T) {
 	filter := domain.ListFilter{NameContains: "prod", Page: 1, Size: 20}
 	now := time.Now().UTC()
 	items := []*domain.Gateway{
-		domain.Rehydrate(uuid.New(), "Prod-eu", "active", nil, nil, now, now),
-		domain.Rehydrate(uuid.New(), "Prod-us", "active", nil, nil, now, now),
+		domain.Rehydrate(uuid.New(), "Prod-eu", "active", nil, nil, nil, now, now),
+		domain.Rehydrate(uuid.New(), "Prod-us", "active", nil, nil, nil, now, now),
 	}
 	repo.EXPECT().List(mock.Anything, filter).Return(items, 2, nil).Once()
 

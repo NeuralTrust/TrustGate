@@ -16,13 +16,13 @@ const (
 )
 
 type Strategy interface {
-	Next(req *infracontext.RequestContext) *backend.Target
+	Next(req *infracontext.RequestContext) *backend.Backend
 	Name() string
 }
 
 type StrategyInput struct {
 	Algorithm       string
-	Targets         []backend.Target
+	Backends        []*backend.Backend
 	EmbeddingConfig *embedding.Config
 }
 

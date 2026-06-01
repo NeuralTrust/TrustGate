@@ -9,18 +9,10 @@ import (
 	"github.com/google/uuid"
 )
 
-func validTarget() Target {
-	return Target{
-		Provider:    "openai",
-		Description: "primary",
-		Auth:        NewAPIKeyAuth("sk-test"),
-	}
-}
-
 func TestBackend_New_HappyPath(t *testing.T) {
 	t.Parallel()
 	gwID := uuid.New()
-	b, err := NewBackend(gwID, "openai-pool", AlgorithmRoundRobin, Targets{validTarget()}, nil, nil)
+	b, err := NewBackend(gwID, "openai-1", "openai", nil, "primary", 5, NewAPIKeyAuth("sk-test"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -30,34 +22,14 @@ func TestBackend_New_HappyPath(t *testing.T) {
 	if b.GatewayID != gwID {
 		t.Fatalf("GatewayID = %s, want %s", b.GatewayID, gwID)
 	}
-	if b.Algorithm != AlgorithmRoundRobin {
-		t.Fatalf("Algorithm = %q, want %q", b.Algorithm, AlgorithmRoundRobin)
+	if b.Provider != "openai" {
+		t.Fatalf("Provider = %q, want openai", b.Provider)
 	}
-	if len(b.Targets) != 1 {
-		t.Fatalf("Targets len = %d, want 1", len(b.Targets))
-	}
-	if b.Targets[0].ID == "" {
-		t.Fatal("Target.ID should be auto-generated")
+	if b.Weight != 5 {
+		t.Fatalf("Weight = %d, want 5", b.Weight)
 	}
 	if b.CreatedAt.IsZero() || b.UpdatedAt.IsZero() {
 		t.Fatal("timestamps are zero")
-	}
-}
-
-func TestBackend_Validate_AlgorithmDefaultsToRoundRobin(t *testing.T) {
-	t.Parallel()
-	b := &Backend{
-		ID:        uuid.New(),
-		GatewayID: uuid.New(),
-		Name:      "x",
-		Algorithm: "",
-		Targets:   Targets{validTarget()},
-	}
-	if err := b.Validate(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if b.Algorithm != AlgorithmRoundRobin {
-		t.Fatalf("Algorithm = %q, want %q", b.Algorithm, AlgorithmRoundRobin)
 	}
 }
 
@@ -79,51 +51,24 @@ func TestBackend_Validate_Rejects(t *testing.T) {
 			wantErr: ErrInvalidGatewayID,
 		},
 		{
-			name:    "unknown algorithm",
-			mutate:  func(b *Backend) { b.Algorithm = "bogus" },
-			wantErr: ErrInvalidAlgorithm,
+			name:    "negative weight",
+			mutate:  func(b *Backend) { b.Weight = -1 },
+			wantErr: ErrInvalidBackend,
 		},
 		{
-			name:    "no targets",
-			mutate:  func(b *Backend) { b.Targets = Targets{} },
-			wantErr: ErrNoTargets,
+			name:    "no provider",
+			mutate:  func(b *Backend) { b.Provider = "" },
+			wantErr: ErrInvalidBackend,
 		},
 		{
-			name: "semantic without embedding",
-			mutate: func(b *Backend) {
-				b.Algorithm = AlgorithmSemantic
-				b.EmbeddingConfig = nil
-			},
-			wantErr: ErrInvalidEmbeddingConfig,
+			name:    "no auth",
+			mutate:  func(b *Backend) { b.Auth = nil },
+			wantErr: ErrInvalidBackend,
 		},
 		{
-			name: "semantic target without description",
-			mutate: func(b *Backend) {
-				b.Algorithm = AlgorithmSemantic
-				b.EmbeddingConfig = &EmbeddingConfig{
-					Provider: "openai",
-					Model:    "text-embedding-3-small",
-					Auth:     &APIKeyAuth{APIKey: "sk-test"},
-				}
-				b.Targets = Targets{
-					{Provider: "openai", Auth: NewAPIKeyAuth("sk-test")},
-				}
-			},
-			wantErr: ErrInvalidTarget,
-		},
-		{
-			name: "target without provider",
-			mutate: func(b *Backend) {
-				b.Targets = Targets{{Provider: "", Auth: NewAPIKeyAuth("k")}}
-			},
-			wantErr: ErrInvalidTarget,
-		},
-		{
-			name: "target without auth",
-			mutate: func(b *Backend) {
-				b.Targets = Targets{{Provider: "openai"}}
-			},
-			wantErr: ErrInvalidTarget,
+			name:    "invalid auth",
+			mutate:  func(b *Backend) { b.Auth = &TargetAuth{Type: AuthTypeAPIKey} },
+			wantErr: ErrInvalidBackend,
 		},
 	}
 
@@ -135,8 +80,8 @@ func TestBackend_Validate_Rejects(t *testing.T) {
 				ID:        uuid.New(),
 				GatewayID: uuid.New(),
 				Name:      "x",
-				Algorithm: AlgorithmRoundRobin,
-				Targets:   Targets{validTarget()},
+				Provider:  "openai",
+				Auth:      NewAPIKeyAuth("sk-test"),
 			}
 			tc.mutate(b)
 			err := b.Validate()
@@ -150,46 +95,19 @@ func TestBackend_Validate_Rejects(t *testing.T) {
 	}
 }
 
-func TestBackend_Validate_SemanticHappyPath(t *testing.T) {
-	t.Parallel()
-	b := &Backend{
-		ID:        uuid.New(),
-		GatewayID: uuid.New(),
-		Name:      "x",
-		Algorithm: AlgorithmSemantic,
-		EmbeddingConfig: &EmbeddingConfig{
-			Provider: "openai",
-			Model:    "text-embedding-3-small",
-			Auth:     &APIKeyAuth{APIKey: "sk-test"},
-		},
-		Targets: Targets{
-			{
-				Provider:    "openai",
-				Description: "code tasks",
-				Auth:        NewAPIKeyAuth("sk-1"),
-			},
-			{
-				Provider:    "anthropic",
-				Description: "reasoning tasks",
-				Auth:        NewAPIKeyAuth("sk-2"),
-			},
-		},
-	}
-	if err := b.Validate(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestBackend_Rehydrate(t *testing.T) {
 	t.Parallel()
 	id, gwID := uuid.New(), uuid.New()
 	now := time.Now().UTC()
-	b := Rehydrate(id, gwID, "x", AlgorithmRandom, Targets{validTarget()}, nil, nil, now, now)
+	b := Rehydrate(id, gwID, "x", "anthropic", map[string]any{"k": "v"}, "desc", 3, NewAPIKeyAuth("sk-1"), nil, now, now)
 	if b.ID != id || b.GatewayID != gwID {
 		t.Fatal("identity mismatch after rehydrate")
 	}
-	if b.Algorithm != AlgorithmRandom {
-		t.Fatalf("Algorithm = %q", b.Algorithm)
+	if b.Provider != "anthropic" {
+		t.Fatalf("Provider = %q", b.Provider)
+	}
+	if b.Weight != 3 {
+		t.Fatalf("Weight = %d, want 3", b.Weight)
 	}
 	if !b.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")
@@ -230,45 +148,6 @@ func TestTargetAuth_Validate(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
-	}
-}
-
-func TestTargets_ValueAndScan(t *testing.T) {
-	t.Parallel()
-	original := Targets{
-		{Provider: "openai", Weight: 5, Auth: NewAPIKeyAuth("sk-a")},
-		{Provider: "anthropic", Weight: 1, Auth: NewAPIKeyAuth("sk-b")},
-	}
-	v, err := original.Value()
-	if err != nil {
-		t.Fatalf("Value: %v", err)
-	}
-	bytes, ok := v.([]byte)
-	if !ok {
-		t.Fatalf("Value returned %T, want []byte", v)
-	}
-	var roundtrip Targets
-	if err := roundtrip.Scan(bytes); err != nil {
-		t.Fatalf("Scan: %v", err)
-	}
-	if len(roundtrip) != len(original) {
-		t.Fatalf("len = %d, want %d", len(roundtrip), len(original))
-	}
-	for i := range original {
-		if roundtrip[i].Provider != original[i].Provider {
-			t.Fatalf("Provider[%d] = %q, want %q", i, roundtrip[i].Provider, original[i].Provider)
-		}
-	}
-}
-
-func TestTargets_Scan_Nil(t *testing.T) {
-	t.Parallel()
-	var ts Targets
-	if err := ts.Scan(nil); err != nil {
-		t.Fatalf("Scan(nil): %v", err)
-	}
-	if len(ts) != 0 {
-		t.Fatalf("len = %d, want 0", len(ts))
 	}
 }
 

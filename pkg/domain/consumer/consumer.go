@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
 	"github.com/google/uuid"
 )
 
@@ -29,28 +31,34 @@ func IsValidType(t Type) bool {
 }
 
 type Consumer struct {
-	ID         uuid.UUID         `json:"id"`
-	GatewayID  uuid.UUID         `json:"gateway_id"`
-	Name       string            `json:"name"`
-	Type       Type              `json:"type"`
-	Headers    map[string]string `json:"headers,omitempty"`
-	Active     bool              `json:"active"`
-	BackendIDs []uuid.UUID       `json:"backend_ids"`
-	PolicyIDs  []uuid.UUID       `json:"policy_ids"`
-	AuthIDs    []uuid.UUID       `json:"auth_ids"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
+	ID              uuid.UUID                `json:"id"`
+	GatewayID       uuid.UUID                `json:"gateway_id"`
+	Name            string                   `json:"name"`
+	Type            Type                     `json:"type"`
+	Path            string                   `json:"path"`
+	Algorithm       string                   `json:"algorithm"`
+	EmbeddingConfig *backend.EmbeddingConfig `json:"embedding_config,omitempty"`
+	Headers         map[string]string        `json:"headers,omitempty"`
+	Active          bool                     `json:"active"`
+	BackendIDs      backend.Backends         `json:"backend_ids"`
+	PolicyIDs       []uuid.UUID              `json:"policy_ids"`
+	AuthIDs         []uuid.UUID              `json:"auth_ids"`
+	CreatedAt       time.Time                `json:"created_at"`
+	UpdatedAt       time.Time                `json:"updated_at"`
 }
 
 type CreateParams struct {
-	GatewayID  uuid.UUID
-	Name       string
-	Type       Type
-	Headers    map[string]string
-	Active     *bool
-	BackendIDs []uuid.UUID
-	PolicyIDs  []uuid.UUID
-	AuthIDs    []uuid.UUID
+	GatewayID       uuid.UUID
+	Name            string
+	Type            Type
+	Path            string
+	Algorithm       string
+	EmbeddingConfig *backend.EmbeddingConfig
+	Headers         map[string]string
+	Active          *bool
+	BackendIDs      []uuid.UUID
+	PolicyIDs       []uuid.UUID
+	AuthIDs         []uuid.UUID
 }
 
 func New(params CreateParams) (*Consumer, error) {
@@ -64,17 +72,20 @@ func New(params CreateParams) (*Consumer, error) {
 		active = *params.Active
 	}
 	c := &Consumer{
-		ID:         id,
-		GatewayID:  params.GatewayID,
-		Name:       params.Name,
-		Type:       params.Type,
-		Headers:    params.Headers,
-		Active:     active,
-		BackendIDs: params.BackendIDs,
-		PolicyIDs:  params.PolicyIDs,
-		AuthIDs:    params.AuthIDs,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:              id,
+		GatewayID:       params.GatewayID,
+		Name:            params.Name,
+		Type:            params.Type,
+		Path:            params.Path,
+		Algorithm:       params.Algorithm,
+		EmbeddingConfig: params.EmbeddingConfig,
+		Headers:         params.Headers,
+		Active:          active,
+		BackendIDs:      params.BackendIDs,
+		PolicyIDs:       params.PolicyIDs,
+		AuthIDs:         params.AuthIDs,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -86,23 +97,28 @@ func Rehydrate(
 	id, gatewayID uuid.UUID,
 	name string,
 	consumerType Type,
+	path, algo string,
+	embeddingConfig *backend.EmbeddingConfig,
 	headers map[string]string,
 	active bool,
 	backendIDs, policyIDs, authIDs []uuid.UUID,
 	createdAt, updatedAt time.Time,
 ) *Consumer {
 	return &Consumer{
-		ID:         id,
-		GatewayID:  gatewayID,
-		Name:       name,
-		Type:       consumerType,
-		Headers:    headers,
-		Active:     active,
-		BackendIDs: backendIDs,
-		PolicyIDs:  policyIDs,
-		AuthIDs:    authIDs,
-		CreatedAt:  createdAt,
-		UpdatedAt:  updatedAt,
+		ID:              id,
+		GatewayID:       gatewayID,
+		Name:            name,
+		Type:            consumerType,
+		Path:            path,
+		Algorithm:       algo,
+		EmbeddingConfig: embeddingConfig,
+		Headers:         headers,
+		Active:          active,
+		BackendIDs:      backendIDs,
+		PolicyIDs:       policyIDs,
+		AuthIDs:         authIDs,
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
 	}
 }
 
@@ -119,10 +135,27 @@ func (c *Consumer) Validate() error {
 	if !IsValidType(c.Type) {
 		return fmt.Errorf("%w: %q", ErrInvalidType, c.Type)
 	}
+	if strings.TrimSpace(c.Path) == "" {
+		return fmt.Errorf("%w: path is required", ErrInvalidPath)
+	}
+	if c.Algorithm == "" {
+		c.Algorithm = algorithm.RoundRobin
+	}
+	if !algorithm.IsValid(c.Algorithm) {
+		return fmt.Errorf("%w: %q", ErrInvalidAlgorithm, c.Algorithm)
+	}
+	if c.Algorithm == algorithm.Semantic {
+		if c.EmbeddingConfig == nil {
+			return fmt.Errorf("%w: embedding_config required for semantic algorithm", ErrInvalidEmbeddingConfig)
+		}
+		if err := c.EmbeddingConfig.Validate(); err != nil {
+			return err
+		}
+	}
 	if len(c.BackendIDs) == 0 {
 		return ErrNoBackends
 	}
-	if err := validateUniqueIDs(c.BackendIDs, ErrInvalidBackendID, "backend"); err != nil {
+	if err := c.BackendIDs.Validate(); err != nil {
 		return err
 	}
 	if err := validateUniqueIDs(c.PolicyIDs, ErrInvalidPolicyID, "policy"); err != nil {
@@ -149,13 +182,13 @@ func validateUniqueIDs(ids []uuid.UUID, invalidErr error, label string) error {
 }
 
 func (c *Consumer) AttachBackend(id uuid.UUID) bool {
-	out, ok := attachID(c.BackendIDs, id)
+	out, ok := c.BackendIDs.Attach(id)
 	c.BackendIDs = out
 	return ok
 }
 
 func (c *Consumer) DetachBackend(id uuid.UUID) bool {
-	out, ok := detachID(c.BackendIDs, id)
+	out, ok := c.BackendIDs.Detach(id)
 	c.BackendIDs = out
 	return ok
 }

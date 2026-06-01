@@ -14,14 +14,17 @@ import (
 )
 
 type CreateInput struct {
-	GatewayID  uuid.UUID
-	Name       string
-	Type       domain.Type
-	Headers    map[string]string
-	Active     *bool
-	BackendIDs []uuid.UUID
-	PolicyIDs  []uuid.UUID
-	AuthIDs    []uuid.UUID
+	GatewayID       uuid.UUID
+	Name            string
+	Type            domain.Type
+	Path            string
+	Algorithm       string
+	EmbeddingConfig *backenddomain.EmbeddingConfig
+	Headers         map[string]string
+	Active          *bool
+	BackendIDs      []uuid.UUID
+	PolicyIDs       []uuid.UUID
+	AuthIDs         []uuid.UUID
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -67,14 +70,17 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		return nil, err
 	}
 	cons, err := domain.New(domain.CreateParams{
-		GatewayID:  in.GatewayID,
-		Name:       in.Name,
-		Type:       in.Type,
-		Headers:    in.Headers,
-		Active:     in.Active,
-		BackendIDs: in.BackendIDs,
-		PolicyIDs:  in.PolicyIDs,
-		AuthIDs:    in.AuthIDs,
+		GatewayID:       in.GatewayID,
+		Name:            in.Name,
+		Type:            in.Type,
+		Path:            in.Path,
+		Algorithm:       in.Algorithm,
+		EmbeddingConfig: in.EmbeddingConfig,
+		Headers:         in.Headers,
+		Active:          in.Active,
+		BackendIDs:      in.BackendIDs,
+		PolicyIDs:       in.PolicyIDs,
+		AuthIDs:         in.AuthIDs,
 	})
 	if err != nil {
 		return nil, err
@@ -124,7 +130,7 @@ func validateBackendIDsBelongToGateway(
 	for _, id := range ids {
 		if _, ok := foundIdx[id]; !ok {
 			return fmt.Errorf("%w: %s not found in gateway %s",
-				domain.ErrInvalidBackendID, id, gatewayID)
+				backenddomain.ErrInvalidBackendID, id, gatewayID)
 		}
 	}
 	return nil

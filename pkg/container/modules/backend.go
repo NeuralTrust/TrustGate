@@ -28,10 +28,6 @@ func Backend(c *container.Container) error {
 	if err := c.Provide(appbackend.NewFinder); err != nil {
 		return err
 	}
-	if err := c.Provide(appbackend.NewBackendResolver); err != nil {
-		return err
-	}
-
 	if err := c.Provide(backendhttp.NewCreateBackendHandler); err != nil {
 		return err
 	}

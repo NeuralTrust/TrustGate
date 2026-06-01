@@ -16,8 +16,18 @@ type Gateway struct {
 	Status          string               `json:"status"`
 	Telemetry       *telemetry.Telemetry `json:"telemetry,omitempty"`
 	ClientTLSConfig ClientTLSConfig      `json:"client_tls,omitempty"`
+	SessionConfig   *SessionConfig       `json:"session_config,omitempty"`
 	CreatedAt       time.Time            `json:"created_at"`
 	UpdatedAt       time.Time            `json:"updated_at"`
+}
+
+// SessionConfig controls how the session middleware resolves a session
+// identifier for requests routed through the gateway. When nil (or Enabled is
+// false), session resolution is skipped.
+type SessionConfig struct {
+	Enabled       bool   `json:"enabled"`
+	HeaderName    string `json:"header_name,omitempty"`
+	BodyParamName string `json:"body_param_name,omitempty"`
 }
 
 func New(name string) (*Gateway, error) {
@@ -39,6 +49,7 @@ func Rehydrate(
 	name, status string,
 	tel *telemetry.Telemetry,
 	clientTLS ClientTLSConfig,
+	session *SessionConfig,
 	createdAt, updatedAt time.Time,
 ) *Gateway {
 	return &Gateway{
@@ -47,6 +58,7 @@ func Rehydrate(
 		Status:          status,
 		Telemetry:       tel,
 		ClientTLSConfig: clientTLS,
+		SessionConfig:   session,
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
 	}

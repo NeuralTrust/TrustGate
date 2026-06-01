@@ -24,9 +24,12 @@ func newCacheManager() *cache.TTLMapManager {
 	return cache.NewTTLMapManager(time.Hour)
 }
 
-func validTargets() domain.Targets {
-	return domain.Targets{
-		{Provider: "openai", Auth: domain.NewAPIKeyAuth("sk-1")},
+func validCreateInput(gwID uuid.UUID, name string) appbackend.CreateInput {
+	return appbackend.CreateInput{
+		GatewayID: gwID,
+		Name:      name,
+		Provider:  "openai",
+		Auth:      domain.NewAPIKeyAuth("sk-1"),
 	}
 }
 
@@ -36,7 +39,7 @@ func TestCreator_Create_Success(t *testing.T) {
 	gwID := uuid.New()
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(b *domain.Backend) bool {
-			return b.GatewayID == gwID && b.Name == "pool" && b.Algorithm == domain.AlgorithmRoundRobin
+			return b.GatewayID == gwID && b.Name == "backend-1" && b.Provider == "openai"
 		})).
 		Return(nil).
 		Once()
@@ -44,12 +47,7 @@ func TestCreator_Create_Success(t *testing.T) {
 	mgr := newCacheManager()
 	creator := appbackend.NewCreator(repo, mgr, newTestLogger())
 
-	b, err := creator.Create(context.Background(), appbackend.CreateInput{
-		GatewayID: gwID,
-		Name:      "pool",
-		Algorithm: domain.AlgorithmRoundRobin,
-		Targets:   validTargets(),
-	})
+	b, err := creator.Create(context.Background(), validCreateInput(gwID, "backend-1"))
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
@@ -67,14 +65,11 @@ func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	creator := appbackend.NewCreator(repo, newCacheManager(), newTestLogger())
 
-	_, err := creator.Create(context.Background(), appbackend.CreateInput{
-		GatewayID: uuid.New(),
-		Name:      "x",
-		Algorithm: domain.AlgorithmRoundRobin,
-		Targets:   domain.Targets{},
-	})
-	if !errors.Is(err, domain.ErrNoTargets) {
-		t.Fatalf("err = %v, want ErrNoTargets", err)
+	in := validCreateInput(uuid.New(), "x")
+	in.Provider = ""
+	_, err := creator.Create(context.Background(), in)
+	if !errors.Is(err, domain.ErrInvalidBackend) {
+		t.Fatalf("err = %v, want ErrInvalidBackend", err)
 	}
 }
 
@@ -84,12 +79,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
 	creator := appbackend.NewCreator(repo, newCacheManager(), newTestLogger())
 
-	_, err := creator.Create(context.Background(), appbackend.CreateInput{
-		GatewayID: uuid.New(),
-		Name:      "dupe",
-		Algorithm: domain.AlgorithmRoundRobin,
-		Targets:   validTargets(),
-	})
+	_, err := creator.Create(context.Background(), validCreateInput(uuid.New(), "dupe"))
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
 	}

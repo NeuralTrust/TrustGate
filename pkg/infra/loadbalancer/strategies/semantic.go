@@ -16,7 +16,7 @@ import (
 
 type Semantic struct {
 	mu              sync.RWMutex
-	targets         []backend.Target
+	backends        []*backend.Backend
 	embeddingRepo   embedding.Repository
 	serviceLocator  factory.EmbeddingServiceLocator
 	embeddingConfig *embedding.Config
@@ -24,41 +24,41 @@ type Semantic struct {
 
 func NewSemantic(
 	embeddingCfg *embedding.Config,
-	targets []backend.Target,
+	backends []*backend.Backend,
 	embeddingRepo embedding.Repository,
 	serviceLocator factory.EmbeddingServiceLocator,
 ) *Semantic {
 	return &Semantic{
-		targets:         targets,
+		backends:        backends,
 		embeddingRepo:   embeddingRepo,
 		serviceLocator:  serviceLocator,
 		embeddingConfig: embeddingCfg,
 	}
 }
 
-func (s *Semantic) Next(req *infracontext.RequestContext) *backend.Target {
+func (s *Semantic) Next(req *infracontext.RequestContext) *backend.Backend {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if len(s.targets) == 0 {
+	if len(s.backends) == 0 {
 		return nil
 	}
-	if len(s.targets) == 1 {
-		return &s.targets[0]
+	if len(s.backends) == 1 {
+		return s.backends[0]
 	}
 	if s.embeddingConfig == nil || s.serviceLocator == nil || s.embeddingRepo == nil || req == nil {
-		return &s.targets[0]
+		return s.backends[0]
 	}
 
 	prompt, err := extractPromptFromRequest(req.Body)
 	if err != nil {
-		return &s.targets[0]
+		return s.backends[0]
 	}
 	promptEmbedding, err := s.generateEmbedding(req.Context, prompt)
 	if err != nil {
-		return &s.targets[0]
+		return s.backends[0]
 	}
-	return s.findBestTarget(req.Context, promptEmbedding)
+	return s.findBestBackend(req.Context, promptEmbedding)
 }
 
 func (s *Semantic) Name() string {
@@ -88,7 +88,11 @@ func extractPromptFromRequest(body []byte) (string, error) {
 }
 
 func (s *Semantic) generateEmbedding(ctx context.Context, text string) ([]float64, error) {
-	svc, err := s.serviceLocator.GetService(factory.OpenAIProvider)
+	provider := s.embeddingConfig.Provider
+	if provider == "" {
+		provider = factory.OpenAIProvider
+	}
+	svc, err := s.serviceLocator.GetService(provider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get embedding service: %w", err)
 	}
@@ -99,27 +103,27 @@ func (s *Semantic) generateEmbedding(ctx context.Context, text string) ([]float6
 	return emb.Value, nil
 }
 
-func (s *Semantic) findBestTarget(ctx context.Context, promptEmbedding []float64) *backend.Target {
-	var bestTarget *backend.Target
+func (s *Semantic) findBestBackend(ctx context.Context, promptEmbedding []float64) *backend.Backend {
+	var bestBackend *backend.Backend
 	bestSimilarity := -1.0
-	for i, target := range s.targets {
-		if target.Description == "" {
+	for _, b := range s.backends {
+		if b.Description == "" {
 			continue
 		}
-		targetEmbedding, err := s.embeddingRepo.GetByTargetID(ctx, target.ID)
+		backendEmbedding, err := s.embeddingRepo.GetByTargetID(ctx, b.ID.String())
 		if err != nil {
 			continue
 		}
-		similarity := cosineSimilarity(promptEmbedding, targetEmbedding.Value)
+		similarity := cosineSimilarity(promptEmbedding, backendEmbedding.Value)
 		if similarity > bestSimilarity {
 			bestSimilarity = similarity
-			bestTarget = &s.targets[i]
+			bestBackend = b
 		}
 	}
-	if bestTarget == nil {
-		return &s.targets[0]
+	if bestBackend == nil {
+		return s.backends[0]
 	}
-	return bestTarget
+	return bestBackend
 }
 
 func cosineSimilarity(a, b []float64) float64 {

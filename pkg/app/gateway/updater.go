@@ -17,6 +17,7 @@ type UpdateInput struct {
 	Status          string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig domain.ClientTLSConfig
+	SessionConfig   *domain.SessionConfig
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=gateway_updater_mock.go --case=underscore --with-expecter
@@ -56,6 +57,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	g.Status = in.Status
 	g.Telemetry = in.Telemetry
 	g.ClientTLSConfig = in.ClientTLSConfig
+	g.SessionConfig = in.SessionConfig
 	g.UpdatedAt = time.Now().UTC()
 	if err := g.Validate(); err != nil {
 		return nil, err

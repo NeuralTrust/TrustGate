@@ -5,15 +5,20 @@ FROM golang:1.26-bookworm AS builder
 
 WORKDIR /build
 
+# CGO is required: confluent-kafka-go is a cgo binding to librdkafka. The
+# bundled glibc librdkafka (statically linked into the binary) ships for both
+# amd64 and arm64, so we build against glibc and run on distroless base.
 ENV GOPRIVATE=github.com/NeuralTrust/* \
     GONOPROXY=github.com/NeuralTrust/* \
     GONOSUMDB=github.com/NeuralTrust/* \
     GIT_TERMINAL_PROMPT=0 \
-    CGO_ENABLED=0
+    CGO_ENABLED=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         git \
+        gcc \
+        libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY go.mod go.sum ./
@@ -43,7 +48,8 @@ RUN go build \
     ./cmd/agentgateway
 
 # --- Runtime stage ---------------------------------------------------------
-FROM gcr.io/distroless/static-debian12:nonroot AS runtime
+# distroless "base" (not "static") because the cgo binary dynamically links glibc.
+FROM gcr.io/distroless/base-debian12:nonroot AS runtime
 
 WORKDIR /app
 

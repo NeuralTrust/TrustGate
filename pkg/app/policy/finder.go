@@ -11,7 +11,7 @@ import (
 
 //go:generate mockery --name=Finder --dir=. --output=./mocks --filename=policy_finder_mock.go --case=underscore --with-expecter
 type Finder interface {
-	FindByID(ctx context.Context, id uuid.UUID) (*domain.Policy, error)
+	FindByID(ctx context.Context, gatewayID, id uuid.UUID) (*domain.Policy, error)
 	List(ctx context.Context, filter domain.ListFilter) ([]*domain.Policy, int, error)
 }
 
@@ -31,10 +31,10 @@ func NewFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slo
 	}
 }
 
-func (f *finder) FindByID(ctx context.Context, id uuid.UUID) (*domain.Policy, error) {
+func (f *finder) FindByID(ctx context.Context, gatewayID, id uuid.UUID) (*domain.Policy, error) {
 	if cached, ok := f.memoryCache.Get(id.String()); ok {
 		if p, ok := cached.(*domain.Policy); ok {
-			return p, nil
+			return scopeToGateway(p, gatewayID)
 		}
 		f.logger.Warn("policy cache entry failed type assertion; falling back to database",
 			slog.String("policy_id", id.String()))
@@ -45,6 +45,16 @@ func (f *finder) FindByID(ctx context.Context, id uuid.UUID) (*domain.Policy, er
 		return nil, err
 	}
 	f.memoryCache.Set(id.String(), p)
+	return scopeToGateway(p, gatewayID)
+}
+
+// scopeToGateway enforces that a policy belongs to the requesting gateway,
+// returning ErrNotFound for cross-gateway ids so the API never confirms the
+// existence of another gateway's resource.
+func scopeToGateway(p *domain.Policy, gatewayID uuid.UUID) (*domain.Policy, error) {
+	if p.GatewayID != gatewayID {
+		return nil, domain.ErrNotFound
+	}
 	return p, nil
 }
 

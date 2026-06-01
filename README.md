@@ -27,6 +27,28 @@ The `agentgateway` binary itself runs from your local machine so you can
 attach a debugger and iterate without rebuilding the docker image. `make
 compose-down` stops the infra stack (and `-v` wipes the volumes).
 
+### Run everything in Docker
+
+To run the admin and proxy servers as containers alongside the infra stack
+(no local Go toolchain needed), use `make run-servers`. It combines
+`docker-compose.yaml` (Postgres, Redis, Kafka, Zookeeper) with
+`docker-compose.api.yaml` (admin on :8080, proxy on :8081):
+
+```bash
+make run-servers              # build + start the full stack and both servers
+docker compose -f docker-compose.yaml -f docker-compose.api.yaml logs -f
+docker compose -f docker-compose.yaml -f docker-compose.api.yaml down
+```
+
+The server containers load `.env` and override the host-based defaults
+(`DB_HOST`, `REDIS_HOST`, `KAFKA_BROKERS`) so they reach the compose services
+by hostname. If your private NeuralTrust modules need auth at build time,
+export `GITHUB_TOKEN` before running.
+
+> The image is pinned to `linux/amd64`: `confluent-kafka-go` v1.9.2 only
+> bundles an amd64 `librdkafka`, so on Apple Silicon the build/run happens
+> under emulation (slower first build, but it works out of the box).
+
 ## Boot sequence
 
 `agentgateway` has no subcommands. Each invocation runs **one** HTTP server,
@@ -59,7 +81,8 @@ make build           # compile bin/agentgateway with version ldflags
 make run             # build + run proxy (alias for run-proxy)
 make run-admin       # build + run admin server
 make run-proxy       # build + run proxy server
-make test            # go test ./...
+make run-servers     # build + run full stack and both servers in docker
+make test            # go test ./pkg/...
 make test-race       # with -race
 make test-cover      # with coverage profile
 make lint            # golangci-lint
@@ -75,6 +98,8 @@ cmd/agentgateway/      # entry point
 pkg/version/           # ldflag-fed build info
 pkg/common/errors/     # cross-package sentinel errors
 pkg/config/            # env-only config loader (.env via godotenv in dev)
+pkg/domain/            # domain entities, value objects and port interfaces
+pkg/app/               # application services (use cases)
 pkg/infra/logger/      # log/slog multi/async/source-filter/colored handlers
 pkg/infra/database/    # pgx/v5 pgxpool + in-code Go migrations registry
 pkg/api/handler/http/  # per-route HTTP handlers (health, version)

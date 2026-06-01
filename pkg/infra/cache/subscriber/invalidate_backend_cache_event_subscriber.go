@@ -10,12 +10,14 @@ import (
 
 var _ cache.EventSubscriber[event.InvalidateBackendCacheEvent] = (*InvalidateBackendCacheEventSubscriber)(nil)
 
-// InvalidateBackendCacheEventSubscriber drops the cached backend entity and the
-// load balancer instance derived from it, forcing the next request to rebuild
-// the load balancer from fresh backend data.
+// InvalidateBackendCacheEventSubscriber drops the cached backend entity, the
+// aggregated consumer-data view that embeds the backend, and every load balancer
+// of the gateway (balancers embed backend config), forcing the next request to
+// rebuild them from fresh backend data.
 type InvalidateBackendCacheEventSubscriber struct {
 	logger            *slog.Logger
 	backendCache      *cache.TTLMap
+	consumerDataCache *cache.TTLMap
 	loadBalancerCache *cache.TTLMap
 }
 
@@ -26,6 +28,7 @@ func NewInvalidateBackendCacheEventSubscriber(
 	return &InvalidateBackendCacheEventSubscriber{
 		logger:            logger,
 		backendCache:      c.GetTTLMap(cache.BackendTTLName),
+		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
 		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
 	}
 }
@@ -39,8 +42,13 @@ func (s *InvalidateBackendCacheEventSubscriber) OnEvent(_ context.Context, evt e
 	if s.backendCache != nil {
 		s.backendCache.Delete(evt.BackendID)
 	}
+	if s.consumerDataCache != nil {
+		s.consumerDataCache.Delete(evt.GatewayID)
+	}
 	if s.loadBalancerCache != nil {
-		s.loadBalancerCache.Delete(evt.BackendID)
+		// Balancers are keyed by "<gatewayID>:<consumerID>" and embed backend
+		// config, so evict all of this gateway's balancers by prefix.
+		s.loadBalancerCache.DeleteByPrefix(evt.GatewayID + ":")
 	}
 
 	return nil

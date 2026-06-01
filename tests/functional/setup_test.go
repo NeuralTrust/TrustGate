@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
 	"github.com/go-redis/redis/v8"
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
@@ -30,10 +31,16 @@ var (
 	GlobalConfig      *config.Config
 	redisDB           *redis.Client
 	adminCmd          *exec.Cmd
+	proxyCmd          *exec.Cmd
 	gatewayBinaryPath string
 
 	AdminURL   = getEnv("ADMIN_URL", "")
+	ProxyURL   = getEnv("PROXY_URL", "")
 	BaseDomain = getEnv("BASE_DOMAIN", "")
+
+	// AdminToken is a JWT signed with the same secret the admin server boots
+	// with, so the suite can authenticate against the admin-plane auth middleware.
+	AdminToken string
 )
 
 const (
@@ -89,9 +96,16 @@ func setupTestEnvironment() {
 	GlobalConfig = cfg
 
 	AdminURL = getEnv("ADMIN_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.AdminPort))
+	ProxyURL = getEnv("PROXY_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.ProxyPort))
 	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
 
-	killProcessesOnPorts([]int{cfg.Server.AdminPort})
+	token, err := jwt.NewJwtManager(&cfg.Server).CreateToken()
+	if err != nil {
+		log.Fatalf("failed to mint admin token: %v", err)
+	}
+	AdminToken = token
+
+	killProcessesOnPorts([]int{cfg.Server.AdminPort, cfg.Server.ProxyPort})
 
 	dropTestDB(dbName)
 	createTestDB(dbName)
@@ -102,14 +116,25 @@ func setupTestEnvironment() {
 	cmdEnv := buildCmdEnv()
 	gatewayBinaryPath = buildGatewayBinary(cmdEnv)
 
+	// The admin plane runs the migrations on boot; wait for it to be ready before
+	// starting the proxy so the two boots do not race on the (idempotent) schema.
 	adminCmd = startServer("ADMIN", "admin", cmdEnv)
-
 	waitForServerReady(fmt.Sprintf("%s/healthz", AdminURL), "admin server", cfg.Server.AdminPort)
+
+	// The proxy plane serves the E2E forwarding tests; it shares the same DB and
+	// Redis as the admin plane.
+	proxyCmd = startServer("PROXY", "proxy", cmdEnv)
+	waitForServerReady(fmt.Sprintf("%s/healthz", ProxyURL), "proxy server", cfg.Server.ProxyPort)
 
 	fmt.Println("Test Environment Ready")
 }
 
 func teardownTestEnvironment() {
+	if proxyCmd != nil && proxyCmd.Process != nil {
+		if err := syscall.Kill(-proxyCmd.Process.Pid, syscall.SIGKILL); err != nil {
+			log.Printf("error killing proxy server: %v", err)
+		}
+	}
 	if adminCmd != nil && adminCmd.Process != nil {
 		if err := syscall.Kill(-adminCmd.Process.Pid, syscall.SIGKILL); err != nil {
 			log.Printf("error killing admin server: %v", err)

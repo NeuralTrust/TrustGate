@@ -19,6 +19,7 @@ type InvalidateGatewayDataEventSubscriber struct {
 	cache             cache.Client
 	gatewayCache      *cache.TTLMap
 	consumerDataCache *cache.TTLMap
+	loadBalancerCache *cache.TTLMap
 }
 
 func NewInvalidateGatewayDataEventSubscriber(
@@ -30,6 +31,7 @@ func NewInvalidateGatewayDataEventSubscriber(
 		cache:             c,
 		gatewayCache:      c.GetTTLMap(cache.GatewayTTLName),
 		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
+		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
 	}
 }
 
@@ -41,6 +43,12 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 	}
 	if s.consumerDataCache != nil {
 		s.consumerDataCache.Delete(evt.GatewayID)
+	}
+	if s.loadBalancerCache != nil {
+		// Load balancers are keyed by "<gatewayID>:<consumerID>"; drop every
+		// balancer of this gateway so the next request rebuilds it from the
+		// refreshed consumer/backend configuration.
+		s.loadBalancerCache.DeleteByPrefix(evt.GatewayID + ":")
 	}
 
 	if err := s.cache.DeleteAllByGatewayID(ctx, evt.GatewayID); err != nil {

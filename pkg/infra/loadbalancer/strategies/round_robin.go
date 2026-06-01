@@ -9,24 +9,24 @@ import (
 )
 
 type RoundRobin struct {
-	mu      sync.Mutex
-	targets []backend.Target
-	current int
+	mu       sync.Mutex
+	backends []*backend.Backend
+	current  int
 }
 
-func NewRoundRobin(targets []backend.Target) *RoundRobin {
-	return &RoundRobin{targets: targets}
+func NewRoundRobin(backends []*backend.Backend) *RoundRobin {
+	return &RoundRobin{backends: backends}
 }
 
-func (rr *RoundRobin) Next(req *infracontext.RequestContext) *backend.Target {
+func (rr *RoundRobin) Next(req *infracontext.RequestContext) *backend.Backend {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
-	if len(rr.targets) == 0 {
+	if len(rr.backends) == 0 {
 		return nil
 	}
-	target := &rr.targets[rr.current]
-	rr.current = (rr.current + 1) % len(rr.targets)
-	return target
+	b := rr.backends[rr.current]
+	rr.current = (rr.current + 1) % len(rr.backends)
+	return b
 }
 
 func (rr *RoundRobin) Name() string {

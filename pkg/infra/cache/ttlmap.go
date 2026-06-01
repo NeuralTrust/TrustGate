@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,8 +28,8 @@ func NewTTLMap(ttl time.Duration) *TTLMap {
 func (m *TTLMap) TTL() time.Duration { return m.ttl }
 
 // SetOnEvict registers a callback run with each value as it leaves the map (via
-// Delete, Clear or TTL expiry), letting a namespace release resources tied to
-// cached values. The callback runs outside the map lock.
+// Set replacement, Delete, Clear or TTL expiry), letting a namespace release
+// resources tied to cached values. The callback runs outside the map lock.
 func (m *TTLMap) SetOnEvict(fn func(value any)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -67,11 +68,26 @@ func (m *TTLMap) Get(key string) (any, bool) {
 }
 
 func (m *TTLMap) Set(key string, value any) {
+	var (
+		evicted any
+		onEvict func(any)
+		hadPrev bool
+	)
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	if prev, ok := m.data[key]; ok && m.onEvict != nil {
+		evicted = prev.Value
+		onEvict = m.onEvict
+		hadPrev = true
+	}
 	m.data[key] = &TTLEntry{
 		Value:     value,
 		ExpiresAt: time.Now().Add(m.ttl),
+	}
+	m.mu.Unlock()
+	// Release the value being replaced so resource-owning entries (e.g. a load
+	// balancer's background goroutine) cannot leak when a key is overwritten.
+	if hadPrev && onEvict != nil {
+		onEvict(evicted)
 	}
 }
 
@@ -89,6 +105,28 @@ func (m *TTLMap) Delete(key string) {
 	m.mu.Unlock()
 	if onEvict != nil {
 		onEvict(evicted)
+	}
+}
+
+// DeleteByPrefix removes every entry whose key starts with prefix, firing
+// onEvict for each so resource-owning values (e.g. load balancers keyed by
+// "<gatewayID>:<consumerID>") are released. Used to evict all entries scoped to
+// a gateway when its configuration changes.
+func (m *TTLMap) DeleteByPrefix(prefix string) {
+	var evicted []any
+	m.mu.Lock()
+	onEvict := m.onEvict
+	for k, entry := range m.data {
+		if strings.HasPrefix(k, prefix) {
+			if onEvict != nil {
+				evicted = append(evicted, entry.Value)
+			}
+			delete(m.data, k)
+		}
+	}
+	m.mu.Unlock()
+	for _, value := range evicted {
+		onEvict(value)
 	}
 }
 

@@ -14,16 +14,6 @@ const (
 	AuthTypeGCPServiceAccount AuthType = "gcp_service_account"
 )
 
-type Target struct {
-	ID              string         `json:"id"`
-	Weight          int            `json:"weight,omitempty"`
-	Provider        string         `json:"provider"`
-	ProviderOptions map[string]any `json:"provider_options,omitempty"`
-	Description     string         `json:"description,omitempty"`
-	Stream          bool           `json:"stream,omitempty"`
-	Auth            *TargetAuth    `json:"auth,omitempty"`
-}
-
 type TargetAuth struct {
 	Type              AuthType           `json:"type"`
 	APIKey            *APIKeyAuth        `json:"api_key,omitempty"`
@@ -99,53 +89,40 @@ func NewGCPServiceAccountAuth(encryptedSA string) *TargetAuth {
 	}
 }
 
-func (t *Target) Validate() error {
-	if t.Weight < 0 {
-		return fmt.Errorf("%w: weight cannot be negative", ErrInvalidTarget)
-	}
-	if t.Provider == "" {
-		return fmt.Errorf("%w: provider is required", ErrInvalidTarget)
-	}
-	if t.Auth == nil {
-		return fmt.Errorf("%w: auth is required", ErrInvalidTarget)
-	}
-	return t.Auth.Validate()
-}
-
 func (a *TargetAuth) Validate() error {
 	switch a.Type {
 	case AuthTypeAPIKey:
 		if a.APIKey == nil {
-			return fmt.Errorf("%w: api_key payload required for type api_key", ErrInvalidTarget)
+			return fmt.Errorf("%w: api_key payload required for type api_key", ErrInvalidBackend)
 		}
 		if a.APIKey.APIKey == "" && (a.APIKey.HeaderName == "" || a.APIKey.HeaderValue == "") &&
 			(a.APIKey.ParamName == "" || a.APIKey.ParamValue == "") {
-			return fmt.Errorf("%w: api_key requires api_key, header pair, or param pair", ErrInvalidTarget)
+			return fmt.Errorf("%w: api_key requires api_key, header pair, or param pair", ErrInvalidBackend)
 		}
 	case AuthTypeAzure:
 		if a.Azure == nil {
-			return fmt.Errorf("%w: azure payload required for type azure", ErrInvalidTarget)
+			return fmt.Errorf("%w: azure payload required for type azure", ErrInvalidBackend)
 		}
 	case AuthTypeAWS:
 		if a.AWS == nil {
-			return fmt.Errorf("%w: aws payload required for type aws", ErrInvalidTarget)
+			return fmt.Errorf("%w: aws payload required for type aws", ErrInvalidBackend)
 		}
 	case AuthTypeOAuth2:
 		if a.OAuth == nil {
-			return fmt.Errorf("%w: oauth configuration required for type oauth2", ErrInvalidTarget)
+			return fmt.Errorf("%w: oauth configuration required for type oauth2", ErrInvalidBackend)
 		}
 		if a.OAuth.TokenURL == "" {
-			return fmt.Errorf("%w: oauth.token_url is required", ErrInvalidTarget)
+			return fmt.Errorf("%w: oauth.token_url is required", ErrInvalidBackend)
 		}
 		if a.OAuth.GrantType == "" {
-			return fmt.Errorf("%w: oauth.grant_type is required", ErrInvalidTarget)
+			return fmt.Errorf("%w: oauth.grant_type is required", ErrInvalidBackend)
 		}
 	case AuthTypeGCPServiceAccount:
 		if a.GCPServiceAccount == nil || *a.GCPServiceAccount == "" {
-			return fmt.Errorf("%w: gcp_service_account payload required", ErrInvalidTarget)
+			return fmt.Errorf("%w: gcp_service_account payload required", ErrInvalidBackend)
 		}
 	default:
-		return fmt.Errorf("%w: unknown auth type %q", ErrInvalidTarget, a.Type)
+		return fmt.Errorf("%w: unknown auth type %q", ErrInvalidBackend, a.Type)
 	}
 	return nil
 }

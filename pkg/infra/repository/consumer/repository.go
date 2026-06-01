@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	"github.com/google/uuid"
@@ -22,10 +23,11 @@ const (
 	consumerBackendFKConstraint = "consumer_backend_backend_id_fkey"
 	consumerPolicyFKConstraint  = "consumer_policy_policy_id_fkey"
 	consumerAuthFKConstraint    = "consumer_auth_auth_id_fkey"
+	consumerPathUniqueIndex     = "consumers_gateway_path_unique"
 )
 
 const consumerSelectColumns = `
-		SELECT c.id, c.gateway_id, c.name, c.type, c.headers, c.active,
+		SELECT c.id, c.gateway_id, c.name, c.type, c.path, c.algorithm, c.embedding_config, c.headers, c.active,
 		       c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.backend_id ORDER BY cb.backend_id)
 		                   FROM consumer_backend cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS backend_ids,
@@ -52,15 +54,19 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal headers: %w", err)
 	}
+	embeddingBytes, err := marshalEmbedding(c.EmbeddingConfig)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal embedding_config: %w", err)
+	}
 	const insertConsumer = `
 		INSERT INTO consumers (
-			id, gateway_id, name, type, headers, active, created_at, updated_at
+			id, gateway_id, name, type, path, algorithm, embedding_config, headers, active, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 		)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
-			c.ID, c.GatewayID, c.Name, string(c.Type), headersBytes,
+			c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, headersBytes,
 			c.Active, c.CreatedAt, c.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
@@ -101,17 +107,24 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal headers: %w", err)
 	}
+	embeddingBytes, err := marshalEmbedding(c.EmbeddingConfig)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal embedding_config: %w", err)
+	}
 	const updateConsumer = `
 		UPDATE consumers
-		   SET name       = $2,
-		       type       = $3,
-		       headers    = $4,
-		       active     = $5,
-		       updated_at = $6
+		   SET name             = $2,
+		       type             = $3,
+		       path             = $4,
+		       algorithm        = $5,
+		       embedding_config = $6,
+		       headers          = $7,
+		       active           = $8,
+		       updated_at       = $9
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, updateConsumer,
-			c.ID, c.Name, string(c.Type), headersBytes,
+			c.ID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, headersBytes,
 			c.Active, c.UpdatedAt,
 		)
 		if err != nil {
@@ -254,10 +267,11 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 	c := &domain.Consumer{}
 	var (
 		headersRaw   []byte
+		embeddingRaw []byte
 		consumerType string
 	)
 	if err := s.Scan(
-		&c.ID, &c.GatewayID, &c.Name, &consumerType, &headersRaw, &c.Active,
+		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &c.Algorithm, &embeddingRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
 		&c.BackendIDs, &c.PolicyIDs, &c.AuthIDs,
 	); err != nil {
@@ -268,6 +282,13 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		if err := json.Unmarshal(headersRaw, &c.Headers); err != nil {
 			return nil, fmt.Errorf("scan headers: %w", err)
 		}
+	}
+	if len(embeddingRaw) > 0 {
+		var ec backenddomain.EmbeddingConfig
+		if err := json.Unmarshal(embeddingRaw, &ec); err != nil {
+			return nil, fmt.Errorf("scan embedding_config: %w", err)
+		}
+		c.EmbeddingConfig = &ec
 	}
 	if c.BackendIDs == nil {
 		c.BackendIDs = []uuid.UUID{}
@@ -288,6 +309,13 @@ func marshalHeaders(v map[string]string) ([]byte, error) {
 	return json.Marshal(v)
 }
 
+func marshalEmbedding(e *backenddomain.EmbeddingConfig) ([]byte, error) {
+	if e == nil {
+		return nil, nil
+	}
+	return json.Marshal(e)
+}
+
 func nullableUUID(id uuid.UUID) any {
 	if id == uuid.Nil {
 		return nil
@@ -299,6 +327,9 @@ func mapPgError(err error) error {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		switch pgErr.Code {
 		case pgUniqueViolation:
+			if strings.Contains(pgErr.ConstraintName, consumerPathUniqueIndex) {
+				return domain.ErrPathAlreadyExists
+			}
 			return domain.ErrAlreadyExists
 		case pgForeignKeyViolation:
 			if strings.Contains(pgErr.ConstraintName, gatewayFKConstraint) ||
@@ -307,7 +338,7 @@ func mapPgError(err error) error {
 			}
 			if strings.Contains(pgErr.ConstraintName, consumerBackendFKConstraint) ||
 				strings.Contains(pgErr.Detail, "(backend_id)") {
-				return domain.ErrInvalidBackendID
+				return backenddomain.ErrInvalidBackendID
 			}
 			if strings.Contains(pgErr.ConstraintName, consumerPolicyFKConstraint) ||
 				strings.Contains(pgErr.Detail, "(policy_id)") {

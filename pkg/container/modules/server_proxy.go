@@ -21,6 +21,10 @@ type proxyMiddlewares struct {
 	AccessLog       *middleware.AccessLogMiddleware
 	CORS            *middleware.CORSMiddleware
 	SecurityHeaders *middleware.SecurityHeadersMiddleware
+	Session         *middleware.SessionMiddleware
+	FingerPrint     *middleware.FingerPrintMiddleware
+	Auth            *middleware.AuthMiddleware
+	Metrics         *middleware.MetricsMiddleware
 }
 
 func proxyTransport(m proxyMiddlewares) *middleware.Transport {
@@ -30,6 +34,10 @@ func proxyTransport(m proxyMiddlewares) *middleware.Transport {
 		m.CORS,
 		m.PanicRecover,
 		m.AccessLog,
+		m.Session,
+		m.FingerPrint,
+		m.Auth,
+		m.Metrics,
 	)
 }
 
@@ -37,7 +45,7 @@ type proxyRouterParams struct {
 	dig.In
 	Transport     *middleware.Transport `name:"proxy"`
 	HealthHandler *apihandler.HealthHandler
-	ProxyHandler  *proxyhttp.ProxyHandler
+	ProxyHandler  *proxyhttp.ForwardedHandler
 }
 
 type proxyServerParams struct {

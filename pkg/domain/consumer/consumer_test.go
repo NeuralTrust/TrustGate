@@ -6,6 +6,7 @@ import (
 	"time"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/google/uuid"
 )
 
@@ -14,6 +15,7 @@ func validParams() CreateParams {
 		GatewayID:  uuid.New(),
 		Name:       "openai-chat",
 		Type:       TypeLLM,
+		Path:       "/v1/chat/completions",
 		BackendIDs: []uuid.UUID{uuid.New()},
 	}
 }
@@ -92,6 +94,21 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 			wantErr: ErrInvalidType,
 		},
 		{
+			name:    "empty path",
+			mutate:  func(c *Consumer) { c.Path = "" },
+			wantErr: ErrInvalidPath,
+		},
+		{
+			name:    "invalid algorithm",
+			mutate:  func(c *Consumer) { c.Algorithm = "bogus" },
+			wantErr: ErrInvalidAlgorithm,
+		},
+		{
+			name:    "semantic without embedding",
+			mutate:  func(c *Consumer) { c.Algorithm = "semantic" },
+			wantErr: ErrInvalidEmbeddingConfig,
+		},
+		{
 			name:    "no backends",
 			mutate:  func(c *Consumer) { c.BackendIDs = nil },
 			wantErr: ErrNoBackends,
@@ -102,12 +119,12 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 				id := uuid.New()
 				c.BackendIDs = []uuid.UUID{id, id}
 			},
-			wantErr: ErrInvalidBackendID,
+			wantErr: backenddomain.ErrInvalidBackendID,
 		},
 		{
 			name:    "nil backend uuid",
 			mutate:  func(c *Consumer) { c.BackendIDs = []uuid.UUID{uuid.Nil} },
-			wantErr: ErrInvalidBackendID,
+			wantErr: backenddomain.ErrInvalidBackendID,
 		},
 	}
 	for _, tc := range tests {
@@ -119,6 +136,7 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 				GatewayID:  uuid.New(),
 				Name:       "x",
 				Type:       TypeLLM,
+				Path:       "/v1/chat",
 				BackendIDs: []uuid.UUID{uuid.New()},
 			}
 			tc.mutate(c)
@@ -175,6 +193,7 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	now := time.Now().UTC()
 	c := Rehydrate(
 		id, gwID, "x", TypeMCP,
+		"/v1/messages", "round-robin", nil,
 		map[string]string{"X-K": "v"},
 		true,
 		[]uuid.UUID{beID}, nil, nil,
@@ -185,6 +204,9 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	}
 	if c.Type != TypeMCP {
 		t.Fatalf("Type = %q", c.Type)
+	}
+	if c.Path != "/v1/messages" {
+		t.Fatalf("Path = %q", c.Path)
 	}
 	if !c.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")

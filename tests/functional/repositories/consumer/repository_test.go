@@ -82,9 +82,7 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUI
 
 func seedBackend(t *testing.T, be *backendrepo.Repository, gwID uuid.UUID, name string) uuid.UUID {
 	t.Helper()
-	b, err := backenddomain.NewBackend(gwID, name, backenddomain.AlgorithmRoundRobin, backenddomain.Targets{
-		{Provider: "openai", Auth: backenddomain.NewAPIKeyAuth("sk-test")},
-	}, nil, nil)
+	b, err := backenddomain.NewBackend(gwID, name, "openai", nil, "", 1, backenddomain.NewAPIKeyAuth("sk-test"), nil)
 	if err != nil {
 		t.Fatalf("backend domain.NewBackend: %v", err)
 	}
@@ -94,12 +92,16 @@ func seedBackend(t *testing.T, be *backendrepo.Repository, gwID uuid.UUID, name 
 	return b.ID
 }
 
+// validConsumer builds a consumer with a path unique to this call so that the
+// per-gateway path uniqueness constraint never trips incidentally; tests that
+// exercise path uniqueness set the path explicitly.
 func validConsumer(t *testing.T, gwID uuid.UUID, name string, beIDs ...uuid.UUID) *domain.Consumer {
 	t.Helper()
 	c, err := domain.New(domain.CreateParams{
 		GatewayID:  gwID,
 		Name:       name,
 		Type:       domain.TypeLLM,
+		Path:       "/v1/" + uuid.NewString(),
 		BackendIDs: beIDs,
 	})
 	if err != nil {
@@ -137,6 +139,12 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.Headers["X-Tenant"] != "acme" {
 		t.Fatalf("Headers lost data: %+v", got.Headers)
 	}
+	if got.Path != c.Path {
+		t.Fatalf("Path = %q, want %q", got.Path, c.Path)
+	}
+	if got.Algorithm == "" {
+		t.Fatalf("Algorithm should default, got empty")
+	}
 }
 
 func TestRepository_FindByID_NotFound(t *testing.T) {
@@ -161,6 +169,45 @@ func TestRepository_Save_DuplicateNameForSameGateway(t *testing.T) {
 	err := f.repo.Save(ctx, c2)
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestRepository_Save_DuplicatePathForSameGateway(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "pool-path")
+	beID := seedBackend(t, f.be, gwID, "be-path")
+
+	c1 := validConsumer(t, gwID, "first", beID)
+	c1.Path = "/v1/shared/path"
+	if err := f.repo.Save(ctx, c1); err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	c2 := validConsumer(t, gwID, "second", beID)
+	c2.Path = "/v1/shared/path"
+	err := f.repo.Save(ctx, c2)
+	if !errors.Is(err, domain.ErrPathAlreadyExists) {
+		t.Fatalf("err = %v, want ErrPathAlreadyExists", err)
+	}
+}
+
+func TestRepository_Save_SamePathDifferentGatewaysAllowed(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gw1 := seedGateway(t, f.gw, "g-p1")
+	gw2 := seedGateway(t, f.gw, "g-p2")
+	be1 := seedBackend(t, f.be, gw1, "be-p1")
+	be2 := seedBackend(t, f.be, gw2, "be-p2")
+
+	c1 := validConsumer(t, gw1, "c1", be1)
+	c1.Path = "/v1/chat/completions"
+	if err := f.repo.Save(ctx, c1); err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	c2 := validConsumer(t, gw2, "c2", be2)
+	c2.Path = "/v1/chat/completions"
+	if err := f.repo.Save(ctx, c2); err != nil {
+		t.Fatalf("second Save: %v", err)
 	}
 }
 
@@ -198,7 +245,7 @@ func TestRepository_Save_InvalidBackendID(t *testing.T) {
 	ghostBE := uuid.New()
 	c := validConsumer(t, gwID, "with-ghost", ghostBE)
 	err := f.repo.Save(ctx, c)
-	if !errors.Is(err, domain.ErrInvalidBackendID) {
+	if !errors.Is(err, backenddomain.ErrInvalidBackendID) {
 		t.Fatalf("err = %v, want ErrInvalidBackendID", err)
 	}
 }

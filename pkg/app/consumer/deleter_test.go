@@ -17,15 +17,16 @@ import (
 func TestDeleter_Delete_Success(t *testing.T) {
 	t.Parallel()
 	id := uuid.New()
+	gwID := uuid.New()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: uuid.New()}, nil).Once()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: gwID}, nil).Once()
 	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.ConsumerTTLName).Set(id.String(), &domain.Consumer{ID: id})
 
 	d := appconsumer.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
-	if err := d.Delete(context.Background(), id); err != nil {
+	if err := d.Delete(context.Background(), gwID, id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}
 	if _, ok := mgr.GetTTLMap(cache.ConsumerTTLName).Get(id.String()); ok {
@@ -40,20 +41,33 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
 	d := appconsumer.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-	if err := d.Delete(context.Background(), id); !errors.Is(err, domain.ErrNotFound) {
+	if err := d.Delete(context.Background(), uuid.New(), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleter_Delete_WrongGateway(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: uuid.New()}, nil).Once()
+
+	d := appconsumer.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	if err := d.Delete(context.Background(), uuid.New(), id); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound for cross-gateway delete", err)
 	}
 }
 
 func TestDeleter_Delete_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
 	id := uuid.New()
+	gwID := uuid.New()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: uuid.New()}, nil).Once()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: gwID}, nil).Once()
 	repo.EXPECT().Delete(mock.Anything, id).Return(domain.ErrAlreadyExists).Once()
 
 	d := appconsumer.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-	if err := d.Delete(context.Background(), id); !errors.Is(err, domain.ErrAlreadyExists) {
+	if err := d.Delete(context.Background(), gwID, id); !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
 	}
 }

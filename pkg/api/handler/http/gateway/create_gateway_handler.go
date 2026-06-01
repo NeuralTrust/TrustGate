@@ -32,6 +32,7 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Name:            req.Name,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
+		SessionConfig:   req.SessionConfig,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

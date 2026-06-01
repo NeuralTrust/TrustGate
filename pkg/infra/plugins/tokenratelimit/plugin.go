@@ -1,0 +1,213 @@
+// Package tokenratelimit implements a Redis fixed-window token budget limiter.
+// It checks the consumed-token counter at PreRequest and records the tokens an
+// upstream response actually used at PostResponse.
+package tokenratelimit
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	"github.com/go-redis/redis/v8"
+)
+
+// PluginName is the catalog name used in policy configuration.
+const PluginName = "token_rate_limiter"
+
+const counterKeyPrefix = "trl"
+
+// recordScript atomically increments the consumed-token counter and sets the
+// TTL only on the first write, so the window resets when the key expires.
+var recordScript = redis.NewScript(`
+local key        = KEYS[1]
+local tokens     = tonumber(ARGV[1])
+local window_sec = tonumber(ARGV[2])
+local total = redis.call('INCRBY', key, tokens)
+if redis.call('TTL', key) == -1 then
+    redis.call('EXPIRE', key, window_sec)
+end
+return total
+`)
+
+var _ appplugins.Plugin = (*Plugin)(nil)
+
+// Plugin enforces a token budget per identifier over a fixed time window.
+type Plugin struct {
+	redis    *redis.Client
+	registry *adapter.Registry
+}
+
+// New builds a token rate limiter backed by Redis and the provider adapter
+// registry (used to count tokens in upstream responses).
+func New(redisClient *redis.Client, registry *adapter.Registry) *Plugin {
+	return &Plugin{redis: redisClient, registry: registry}
+}
+
+func (p *Plugin) Name() string { return PluginName }
+
+func (p *Plugin) Stages() []policy.Stage {
+	return []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}
+}
+
+func (p *Plugin) ValidateConfig(settings map[string]any) error {
+	_, err := parseConfig(settings)
+	return err
+}
+
+func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
+	// Token limiting only applies to provider (LLM) traffic.
+	if in.Request == nil || in.Request.Provider == "" {
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
+	}
+
+	cfg, err := parseConfig(in.Config.Settings)
+	if err != nil {
+		return nil, fmt.Errorf("token_rate_limiter: %w", err)
+	}
+
+	identifier := extractIdentifier(in.Request, cfg.IdentifierHeader)
+	counterKey := fmt.Sprintf("%s:%s:%s", counterKeyPrefix, in.Config.ID, identifier)
+
+	switch in.Stage {
+	case policy.StagePreRequest:
+		return p.preRequest(ctx, cfg, counterKey)
+	case policy.StagePostResponse:
+		return p.postResponse(ctx, cfg, counterKey, in.Request, in.Response)
+	default:
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
+	}
+}
+
+func (p *Plugin) preRequest(ctx context.Context, cfg *config, counterKey string) (*appplugins.Result, error) {
+	consumed, err := p.redis.Get(ctx, counterKey).Int64()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("token_rate_limiter: read counter: %w", err)
+	}
+
+	remaining := cfg.Window.Max - int(consumed)
+	if remaining < 0 {
+		remaining = 0
+	}
+	headers := rateLimitHeaders(cfg.Window.Max, remaining, p.resetSeconds(ctx, counterKey, cfg))
+
+	if consumed >= int64(cfg.Window.Max) {
+		return nil, &appplugins.PluginError{
+			StatusCode: http.StatusTooManyRequests,
+			Message:    fmt.Sprintf("token rate limit exceeded: consumed %d, limit %d", consumed, cfg.Window.Max),
+			Headers:    headers,
+		}
+	}
+	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
+}
+
+func (p *Plugin) postResponse(
+	ctx context.Context,
+	cfg *config,
+	counterKey string,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+) (*appplugins.Result, error) {
+	if resp == nil {
+		return &appplugins.Result{}, nil
+	}
+
+	tokens := p.extractTokens(req, resp)
+	if tokens == 0 {
+		return &appplugins.Result{}, nil
+	}
+
+	total, err := recordScript.Run(ctx, p.redis, []string{counterKey}, tokens, cfg.windowSeconds()).Int64()
+	if err != nil {
+		return nil, fmt.Errorf("token_rate_limiter: record tokens: %w", err)
+	}
+
+	remaining := cfg.Window.Max - int(total)
+	if remaining < 0 {
+		remaining = 0
+	}
+	headers := rateLimitHeaders(cfg.Window.Max, remaining, p.resetSeconds(ctx, counterKey, cfg))
+	headers["X-Tokens-Consumed"] = []string{strconv.Itoa(tokens)}
+	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
+}
+
+// extractTokens reads the total tokens an upstream response consumed. Streaming
+// responses are read from the usage observed during the stream; non-streaming
+// responses are decoded from the body.
+func (p *Plugin) extractTokens(req *infracontext.RequestContext, resp *infracontext.ResponseContext) int {
+	if resp.Streaming {
+		if req != nil && req.Metadata != nil {
+			if cu, ok := req.Metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage); ok && cu != nil {
+				return cu.TotalTokens
+			}
+		}
+		return 0
+	}
+
+	if len(resp.Body) == 0 || p.registry == nil {
+		return 0
+	}
+	format := responseFormat(req)
+	if format == "" {
+		return 0
+	}
+	canonical, err := p.registry.DecodeResponseFor(resp.Body, adapter.Format(format))
+	if err != nil || canonical == nil || canonical.Usage == nil {
+		return 0
+	}
+	return canonical.Usage.TotalTokens
+}
+
+// responseFormat returns the wire format of the response body. The forwarder
+// adapts upstream responses back to the client's source format, so that is the
+// format to decode; provider is the fallback.
+func responseFormat(req *infracontext.RequestContext) string {
+	if req == nil {
+		return ""
+	}
+	if req.SourceFormat != "" {
+		return req.SourceFormat
+	}
+	return req.Provider
+}
+
+func (p *Plugin) resetSeconds(ctx context.Context, counterKey string, cfg *config) int {
+	ttl, err := p.redis.TTL(ctx, counterKey).Result()
+	if err == nil && ttl > 0 {
+		return int(ttl / time.Second)
+	}
+	return cfg.windowSeconds()
+}
+
+func extractIdentifier(req *infracontext.RequestContext, headerName string) string {
+	if req != nil && headerName != "" {
+		if values, ok := req.Headers[headerName]; ok && len(values) > 0 && values[0] != "" {
+			return values[0]
+		}
+		canonical := strings.ToLower(headerName)
+		for name, values := range req.Headers {
+			if strings.ToLower(name) == canonical && len(values) > 0 && values[0] != "" {
+				return values[0]
+			}
+		}
+	}
+	if req != nil && req.IP != "" {
+		return req.IP
+	}
+	return "_global"
+}
+
+func rateLimitHeaders(limit, remaining, resetSeconds int) map[string][]string {
+	return map[string][]string{
+		"X-Ratelimit-Limit-Tokens":     {strconv.Itoa(limit)},
+		"X-Ratelimit-Remaining-Tokens": {strconv.Itoa(remaining)},
+		"X-Ratelimit-Reset-Tokens":     {strconv.Itoa(resetSeconds) + "s"},
+	}
+}
