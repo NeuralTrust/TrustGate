@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools \
+.PHONY: help build run run-admin run-proxy run-servers test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools \
         install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -37,6 +37,10 @@ run-admin: build ## Build and run the admin server
 run-proxy: build ## Build and run the proxy server
 	@$(info $(M) Running $(APP_NAME) proxy ...)
 	./bin/$(APP_NAME) proxy
+
+run-servers: ## Start the full stack + proxy & admin servers in docker
+	@$(info $(M) Starting full stack with proxy + admin servers ...)
+	docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
 
 test: ## Run unit tests
 	@$(info $(M) Running unit tests ...)

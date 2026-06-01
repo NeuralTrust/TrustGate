@@ -1,0 +1,45 @@
+name: agentgateway
+
+# Runs the AgentGateway proxy and admin servers as containers.
+# Meant to be combined with docker-compose.yaml (postgres/redis/kafka):
+#   docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
+# Both files share the same project name, so these services join the same
+# network and can reach the backing services by hostname.
+
+x-server-common: &server-common
+  image: agentgateway:local
+  # confluent-kafka-go v1.9.2 only bundles an amd64 librdkafka, so the image
+  # must be built/run as linux/amd64 (emulated on Apple Silicon).
+  platform: linux/amd64
+  build:
+    context: .
+    args:
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+  env_file:
+    - .env
+  # Override localhost defaults so containers reach the compose services.
+  environment:
+    DB_HOST: postgres
+    REDIS_HOST: redis
+    KAFKA_BROKERS: kafka:9092
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    kafka:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  admin:
+    <<: *server-common
+    command: ["admin"]
+    ports:
+      - "8080:8080"
+
+  proxy:
+    <<: *server-common
+    command: ["proxy"]
+    ports:
+      - "8081:8081"
