@@ -11,7 +11,7 @@ import (
 
 //go:generate mockery --name=Deleter --dir=. --output=./mocks --filename=policy_deleter_mock.go --case=underscore --with-expecter
 type Deleter interface {
-	Delete(ctx context.Context, id uuid.UUID) error
+	Delete(ctx context.Context, gatewayID, id uuid.UUID) error
 }
 
 var _ Deleter = (*deleter)(nil)
@@ -37,10 +37,13 @@ func NewDeleter(
 	}
 }
 
-func (d *deleter) Delete(ctx context.Context, id uuid.UUID) error {
+func (d *deleter) Delete(ctx context.Context, gatewayID, id uuid.UUID) error {
 	existing, err := d.repo.FindByID(ctx, id)
 	if err != nil {
 		return err
+	}
+	if existing.GatewayID != gatewayID {
+		return domain.ErrNotFound
 	}
 	if err := d.repo.Delete(ctx, id); err != nil {
 		return err

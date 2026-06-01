@@ -14,6 +14,7 @@ type UpdateGatewayRequest struct {
 	Status          string                 `json:"status"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
+	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
 }
 
 func (r UpdateGatewayRequest) Validate() error {

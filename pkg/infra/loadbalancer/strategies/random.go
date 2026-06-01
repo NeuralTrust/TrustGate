@@ -11,25 +11,25 @@ import (
 )
 
 type Random struct {
-	mu      sync.Mutex
-	targets []backend.Target
+	mu       sync.Mutex
+	backends []*backend.Backend
 }
 
-func NewRandom(targets []backend.Target) *Random {
-	return &Random{targets: targets}
+func NewRandom(backends []*backend.Backend) *Random {
+	return &Random{backends: backends}
 }
 
-func (r *Random) Next(req *infracontext.RequestContext) *backend.Target {
+func (r *Random) Next(req *infracontext.RequestContext) *backend.Backend {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.targets) == 0 {
+	if len(r.backends) == 0 {
 		return nil
 	}
-	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(r.targets))))
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(r.backends))))
 	if err != nil {
-		return &r.targets[0]
+		return r.backends[0]
 	}
-	return &r.targets[n.Int64()]
+	return r.backends[n.Int64()]
 }
 
 func (r *Random) Name() string {

@@ -13,6 +13,7 @@ type CreateGatewayRequest struct {
 	Name            string                 `json:"name"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
+	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
 }
 
 func (r CreateGatewayRequest) Validate() error {

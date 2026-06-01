@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
@@ -20,6 +21,7 @@ var _ DataFinder = (*dataFinder)(nil)
 
 type dataFinder struct {
 	repo        domain.Repository
+	backendRepo backenddomain.Repository
 	policyRepo  policydomain.Repository
 	authRepo    authdomain.Repository
 	memoryCache *cache.TTLMap
@@ -28,6 +30,7 @@ type dataFinder struct {
 
 func NewDataFinder(
 	repo domain.Repository,
+	backendRepo backenddomain.Repository,
 	policyRepo policydomain.Repository,
 	authRepo authdomain.Repository,
 	manager *cache.TTLMapManager,
@@ -35,6 +38,7 @@ func NewDataFinder(
 ) DataFinder {
 	return &dataFinder{
 		repo:        repo,
+		backendRepo: backendRepo,
 		policyRepo:  policyRepo,
 		authRepo:    authRepo,
 		memoryCache: manager.GetTTLMap(cache.ConsumerDataTTLName),
@@ -58,6 +62,10 @@ func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID uuid.UUID) (*D
 		return nil, err
 	}
 
+	backendByID, err := f.loadBackends(ctx, gatewayID, consumers)
+	if err != nil {
+		return nil, err
+	}
 	policyByID, err := f.loadPolicies(ctx, gatewayID, consumers)
 	if err != nil {
 		return nil, err
@@ -71,14 +79,37 @@ func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID uuid.UUID) (*D
 	for _, c := range consumers {
 		routable = append(routable, RoutableConsumer{
 			Consumer: c,
+			Backends: collectBackends(c.BackendIDs, backendByID),
 			Policies: collectPolicies(c.PolicyIDs, policyByID),
 			Auths:    collectAuths(c.AuthIDs, authByID),
 		})
 	}
 
-	data := &Data{GatewayID: gatewayID, Consumers: routable}
+	data := NewData(gatewayID, routable)
 	f.memoryCache.Set(key, data)
 	return data, nil
+}
+
+// loadBackends batch-resolves every backend referenced by the gateway's consumers
+// in one query (no N+1), or none when no consumer references a backend.
+func (f *dataFinder) loadBackends(
+	ctx context.Context,
+	gatewayID uuid.UUID,
+	consumers []*domain.Consumer,
+) (map[uuid.UUID]*backenddomain.Backend, error) {
+	ids := uniqueIDs(consumers, func(c *domain.Consumer) []uuid.UUID { return c.BackendIDs })
+	if len(ids) == 0 {
+		return map[uuid.UUID]*backenddomain.Backend{}, nil
+	}
+	found, err := f.backendRepo.FindByIDs(ctx, gatewayID, ids)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[uuid.UUID]*backenddomain.Backend, len(found))
+	for _, b := range found {
+		byID[b.ID] = b
+	}
+	return byID, nil
 }
 
 // loadPolicies batch-resolves the gateway's policies in one query (no N+1), or
@@ -133,6 +164,16 @@ func uniqueIDs(consumers []*domain.Consumer, pick func(*domain.Consumer) []uuid.
 			}
 			seen[id] = struct{}{}
 			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func collectBackends(ids []uuid.UUID, byID map[uuid.UUID]*backenddomain.Backend) []*backenddomain.Backend {
+	out := make([]*backenddomain.Backend, 0, len(ids))
+	for _, id := range ids {
+		if b, ok := byID[id]; ok {
+			out = append(out, b)
 		}
 	}
 	return out

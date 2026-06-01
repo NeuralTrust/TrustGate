@@ -20,6 +20,7 @@ func existingConsumer(gwID, beID uuid.UUID) *domain.Consumer {
 	now := time.Now().UTC()
 	return domain.Rehydrate(
 		uuid.New(), gwID, "old", domain.TypeLLM,
+		"/v1/chat", "round-robin", nil,
 		nil, true,
 		[]uuid.UUID{beID}, nil, nil,
 		now, now,
@@ -52,6 +53,8 @@ func TestUpdater_Update_Success(t *testing.T) {
 		GatewayID:  gwID,
 		Name:       "new",
 		Type:       domain.TypeMCP,
+		Path:       "/v1/messages",
+		Algorithm:  "round-robin",
 		BackendIDs: []uuid.UUID{beID},
 	})
 	if err != nil {
@@ -103,7 +106,7 @@ func TestUpdater_Update_RejectsCrossGatewayBackend(t *testing.T) {
 		Type:       domain.TypeLLM,
 		BackendIDs: []uuid.UUID{uuid.New()},
 	})
-	if !errors.Is(err, domain.ErrInvalidBackendID) {
+	if !errors.Is(err, backenddomain.ErrInvalidBackendID) {
 		t.Fatalf("err = %v, want ErrInvalidBackendID", err)
 	}
 }

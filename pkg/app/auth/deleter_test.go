@@ -18,14 +18,15 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	id := uuid.New()
-	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Auth{ID: id, GatewayID: uuid.New()}, nil).Once()
+	gwID := uuid.New()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Auth{ID: id, GatewayID: gwID}, nil).Once()
 	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.AuthTTLName).Set(id.String(), &domain.Auth{ID: id})
 
 	deleter := appauth.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
-	if err := deleter.Delete(context.Background(), id); err != nil {
+	if err := deleter.Delete(context.Background(), gwID, id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}
 	if _, ok := mgr.GetTTLMap(cache.AuthTTLName).Get(id.String()); ok {
@@ -40,7 +41,19 @@ func TestDeleter_Delete_PropagatesError(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
 	deleter := appauth.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-	if err := deleter.Delete(context.Background(), id); !errors.Is(err, domain.ErrNotFound) {
+	if err := deleter.Delete(context.Background(), uuid.New(), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleter_Delete_WrongGateway(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := uuid.New()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Auth{ID: id, GatewayID: uuid.New()}, nil).Once()
+
+	deleter := appauth.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	if err := deleter.Delete(context.Background(), uuid.New(), id); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound for cross-gateway delete", err)
 	}
 }

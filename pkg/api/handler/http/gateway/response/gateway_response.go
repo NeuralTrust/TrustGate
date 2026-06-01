@@ -14,6 +14,7 @@ type GatewayResponse struct {
 	Status          string                 `json:"status"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
+	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
 	CreatedAt       time.Time              `json:"created_at"`
 	UpdatedAt       time.Time              `json:"updated_at"`
 }
@@ -25,6 +26,7 @@ func FromDomain(g *domain.Gateway) GatewayResponse {
 		Status:          g.Status,
 		Telemetry:       g.Telemetry,
 		ClientTLSConfig: g.ClientTLSConfig,
+		SessionConfig:   g.SessionConfig,
 		CreatedAt:       g.CreatedAt,
 		UpdatedAt:       g.UpdatedAt,
 	}

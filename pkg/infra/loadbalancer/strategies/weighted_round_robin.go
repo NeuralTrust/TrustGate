@@ -10,33 +10,33 @@ import (
 
 type WeightedRoundRobin struct {
 	mu            sync.Mutex
-	targets       []backend.Target
+	backends      []*backend.Backend
 	currentIndex  int
 	currentWeight int
 	maxWeight     int
 }
 
-func NewWeightedRoundRobin(targets []backend.Target) *WeightedRoundRobin {
+func NewWeightedRoundRobin(backends []*backend.Backend) *WeightedRoundRobin {
 	maxWeight := 0
-	for _, target := range targets {
-		if target.Weight > maxWeight {
-			maxWeight = target.Weight
+	for _, b := range backends {
+		if b.Weight > maxWeight {
+			maxWeight = b.Weight
 		}
 	}
 	return &WeightedRoundRobin{
-		targets:   targets,
+		backends:  backends,
 		maxWeight: maxWeight,
 	}
 }
 
-func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext) *backend.Target {
+func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext) *backend.Backend {
 	wrr.mu.Lock()
 	defer wrr.mu.Unlock()
-	if len(wrr.targets) == 0 {
+	if len(wrr.backends) == 0 {
 		return nil
 	}
 	for {
-		wrr.currentIndex = (wrr.currentIndex + 1) % len(wrr.targets)
+		wrr.currentIndex = (wrr.currentIndex + 1) % len(wrr.backends)
 		if wrr.currentIndex == 0 {
 			wrr.currentWeight = wrr.currentWeight - 1
 			if wrr.currentWeight <= 0 {
@@ -46,8 +46,8 @@ func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext) *backend.T
 				}
 			}
 		}
-		if wrr.targets[wrr.currentIndex].Weight >= wrr.currentWeight {
-			return &wrr.targets[wrr.currentIndex]
+		if wrr.backends[wrr.currentIndex].Weight >= wrr.currentWeight {
+			return wrr.backends[wrr.currentIndex]
 		}
 	}
 }

@@ -16,6 +16,7 @@ type CreateInput struct {
 	Name            string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig domain.ClientTLSConfig
+	SessionConfig   *domain.SessionConfig
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=gateway_creator_mock.go --case=underscore --with-expecter
@@ -46,6 +47,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	}
 	g.Telemetry = in.Telemetry
 	g.ClientTLSConfig = in.ClientTLSConfig
+	g.SessionConfig = in.SessionConfig
 	if err := c.repo.Save(ctx, g); err != nil {
 		return nil, err
 	}

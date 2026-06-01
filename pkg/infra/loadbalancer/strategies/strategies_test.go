@@ -4,22 +4,23 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/google/uuid"
 )
 
-func makeTargets(ids ...string) []backend.Target {
-	out := make([]backend.Target, len(ids))
-	for i, id := range ids {
-		out[i] = backend.Target{ID: id, Weight: 1, Provider: "openai"}
+func makeBackends(names ...string) []*backend.Backend {
+	out := make([]*backend.Backend, len(names))
+	for i, name := range names {
+		out[i] = &backend.Backend{ID: uuid.New(), Name: name, Weight: 1, Provider: "openai"}
 	}
 	return out
 }
 
-func TestRoundRobin_RotatesThroughTargets(t *testing.T) {
+func TestRoundRobin_RotatesThroughBackends(t *testing.T) {
 	t.Parallel()
-	rr := NewRoundRobin(makeTargets("a", "b", "c"))
+	rr := NewRoundRobin(makeBackends("a", "b", "c"))
 	got := []string{}
 	for i := 0; i < 6; i++ {
-		got = append(got, rr.Next(nil).ID)
+		got = append(got, rr.Next(nil).Name)
 	}
 	want := []string{"a", "b", "c", "a", "b", "c"}
 	for i := range want {
@@ -44,23 +45,23 @@ func TestRoundRobin_Name(t *testing.T) {
 	}
 }
 
-func TestRandom_PicksOneOfTheTargets(t *testing.T) {
+func TestRandom_PicksOneOfTheBackends(t *testing.T) {
 	t.Parallel()
-	r := NewRandom(makeTargets("a", "b", "c"))
+	r := NewRandom(makeBackends("a", "b", "c"))
 	seen := map[string]bool{}
 	for i := 0; i < 30; i++ {
-		t := r.Next(nil)
-		if t == nil {
+		b := r.Next(nil)
+		if b == nil {
 			break
 		}
-		seen[t.ID] = true
+		seen[b.Name] = true
 	}
 	if len(seen) == 0 {
-		t.Fatal("Random.Next never returned a target")
+		t.Fatal("Random.Next never returned a backend")
 	}
-	for id := range seen {
-		if id != "a" && id != "b" && id != "c" {
-			t.Fatalf("Random returned unexpected target id %q", id)
+	for name := range seen {
+		if name != "a" && name != "b" && name != "c" {
+			t.Fatalf("Random returned unexpected backend %q", name)
 		}
 	}
 }
@@ -81,18 +82,18 @@ func TestRandom_Name(t *testing.T) {
 
 func TestWeightedRoundRobin_RespectsWeights(t *testing.T) {
 	t.Parallel()
-	targets := []backend.Target{
-		{ID: "heavy", Weight: 3, Provider: "openai"},
-		{ID: "light", Weight: 1, Provider: "openai"},
+	backends := []*backend.Backend{
+		{ID: uuid.New(), Name: "heavy", Weight: 3, Provider: "openai"},
+		{ID: uuid.New(), Name: "light", Weight: 1, Provider: "openai"},
 	}
-	wrr := NewWeightedRoundRobin(targets)
+	wrr := NewWeightedRoundRobin(backends)
 	counts := map[string]int{}
 	for i := 0; i < 40; i++ {
-		t := wrr.Next(nil)
-		if t == nil {
+		b := wrr.Next(nil)
+		if b == nil {
 			break
 		}
-		counts[t.ID]++
+		counts[b.Name]++
 	}
 	if counts["heavy"] <= counts["light"] {
 		t.Fatalf("heavy=%d should outnumber light=%d", counts["heavy"], counts["light"])
@@ -101,7 +102,10 @@ func TestWeightedRoundRobin_RespectsWeights(t *testing.T) {
 
 func TestWeightedRoundRobin_AllZeroWeightsEventuallyReturnsNil(t *testing.T) {
 	t.Parallel()
-	wrr := NewWeightedRoundRobin([]backend.Target{{ID: "a"}, {ID: "b"}})
+	wrr := NewWeightedRoundRobin([]*backend.Backend{
+		{ID: uuid.New(), Name: "a"},
+		{ID: uuid.New(), Name: "b"},
+	})
 	sawNil := false
 	for i := 0; i < 10 && !sawNil; i++ {
 		if wrr.Next(nil) == nil {
@@ -122,25 +126,25 @@ func TestWeightedRoundRobin_Name(t *testing.T) {
 
 func TestLeastConnections_NameAndRotation(t *testing.T) {
 	t.Parallel()
-	lc := NewLeastConnections(makeTargets("a", "b", "c"))
+	lc := NewLeastConnections(makeBackends("a", "b", "c"))
 	if lc.Name() != "least-connections" {
 		t.Fatalf("Name() = %q", lc.Name())
 	}
 	got := []string{}
 	for i := 0; i < 3; i++ {
-		got = append(got, lc.Next(nil).ID)
+		got = append(got, lc.Next(nil).Name)
 	}
 	if got[0] != "a" || got[1] != "b" || got[2] != "c" {
 		t.Fatalf("expected a,b,c got %v", got)
 	}
 }
 
-func TestSemantic_NoConfigReturnsFirstTarget(t *testing.T) {
+func TestSemantic_NoConfigReturnsFirstBackend(t *testing.T) {
 	t.Parallel()
-	s := NewSemantic(nil, makeTargets("a", "b"), nil, nil)
-	t1 := s.Next(nil)
-	if t1 == nil || t1.ID != "a" {
-		t.Fatalf("expected first target a, got %+v", t1)
+	s := NewSemantic(nil, makeBackends("a", "b"), nil, nil)
+	b := s.Next(nil)
+	if b == nil || b.Name != "a" {
+		t.Fatalf("expected first backend a, got %+v", b)
 	}
 }
 
@@ -158,11 +162,11 @@ func TestSemantic_EmptyReturnsNil(t *testing.T) {
 	}
 }
 
-func TestSemantic_SingleTarget(t *testing.T) {
+func TestSemantic_SingleBackend(t *testing.T) {
 	t.Parallel()
-	s := NewSemantic(nil, makeTargets("only"), nil, nil)
+	s := NewSemantic(nil, makeBackends("only"), nil, nil)
 	got := s.Next(nil)
-	if got == nil || got.ID != "only" {
+	if got == nil || got.Name != "only" {
 		t.Fatalf("expected 'only', got %+v", got)
 	}
 }

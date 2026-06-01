@@ -25,18 +25,12 @@ func TestCreateBackend_Success(t *testing.T) {
 	assert.NotEmpty(t, body["id"])
 	assert.Equal(t, gwID, body["gateway_id"])
 	assert.Equal(t, name, body["name"])
-	assert.Equal(t, "round-robin", body["algorithm"])
+	assert.Equal(t, "openai", body["provider"])
 	assert.NotEmpty(t, body["created_at"])
 	assert.NotEmpty(t, body["updated_at"])
 
-	targets, ok := body["targets"].([]any)
-	require.True(t, ok, "targets missing or wrong type: %v", body)
-	require.Len(t, targets, 1)
-	first, _ := targets[0].(map[string]any)
-	assert.Equal(t, "openai", first["provider"])
-
-	auth, ok := first["auth"].(map[string]any)
-	require.True(t, ok)
+	auth, ok := body["auth"].(map[string]any)
+	require.True(t, ok, "auth missing or wrong type: %v", body)
 	assert.Equal(t, "api_key", auth["type"])
 	apiKey, _ := auth["api_key"].(map[string]any)
 	assert.Equal(t, "***", apiKey["api_key"], "api key must be redacted in response")
@@ -109,29 +103,12 @@ func TestCreateBackend_ValidationEmptyName(t *testing.T) {
 	assert.Equal(t, "validation_failed", body["error"])
 }
 
-func TestCreateBackend_ValidationNoTargets(t *testing.T) {
+func TestCreateBackend_ValidationNoProvider(t *testing.T) {
 	defer Track(t, "CreateBackend")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-notargets-gw")})
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-noprovider-gw")})
 
-	status, body := sendRequest(t, http.MethodPost,
-		fmt.Sprintf("%s/v1/gateways/%s/backends", AdminURL, gwID),
-		nil,
-		map[string]any{
-			"name":      uniqueName("be-notargets"),
-			"algorithm": "round-robin",
-			"targets":   []map[string]any{},
-		},
-	)
-	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
-	assert.Equal(t, "validation_failed", body["error"])
-}
-
-func TestCreateBackend_ValidationUnknownAlgorithm(t *testing.T) {
-	defer Track(t, "CreateBackend")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-badalg-gw")})
-
-	payload := validBackendPayload(uniqueName("be-badalg"))
-	payload["algorithm"] = "least-conn"
+	payload := validBackendPayload(uniqueName("be-noprovider"))
+	delete(payload, "provider")
 
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/backends", AdminURL, gwID),
@@ -141,12 +118,13 @@ func TestCreateBackend_ValidationUnknownAlgorithm(t *testing.T) {
 	assert.Equal(t, "validation_failed", body["error"])
 }
 
-func TestCreateBackend_SemanticRequiresEmbeddingAndDescriptions(t *testing.T) {
+func TestCreateBackend_ValidationNoAuth(t *testing.T) {
 	defer Track(t, "CreateBackend")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-semantic-gw")})
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-noauth-gw")})
 
-	payload := validBackendPayload(uniqueName("be-semantic-noembed"))
-	payload["algorithm"] = "semantic"
+	payload := validBackendPayload(uniqueName("be-noauth"))
+	delete(payload, "auth")
+
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/backends", AdminURL, gwID),
 		nil, payload,

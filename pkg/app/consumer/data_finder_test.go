@@ -8,6 +8,7 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
+	backendmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/backend/mocks"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
@@ -21,6 +22,7 @@ func routableConsumer(gwID uuid.UUID, policyIDs, authIDs []uuid.UUID) *domain.Co
 	now := time.Now().UTC()
 	return domain.Rehydrate(
 		uuid.New(), gwID, "c", domain.TypeLLM,
+		"/v1/chat", "round-robin", nil,
 		nil, true,
 		[]uuid.UUID{uuid.New()}, policyIDs, authIDs,
 		now, now,
@@ -53,7 +55,12 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 		})).
 		Return([]*authdomain.Auth{{ID: aid, GatewayID: gwID}}, nil).Once()
 
-	finder := appconsumer.NewDataFinder(repo, policyRepo, authRepo, newCacheManager(), newTestLogger())
+	backendRepo := backendmocks.NewRepository(t)
+	backendRepo.EXPECT().
+		FindByIDs(mock.Anything, gwID, mock.Anything).
+		Return(nil, nil).Once()
+
+	finder := appconsumer.NewDataFinder(repo, backendRepo, policyRepo, authRepo, newCacheManager(), newTestLogger())
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
@@ -98,7 +105,8 @@ func TestDataFinder_FindByGateway_CacheHitSkipsRepositories(t *testing.T) {
 	mgr.GetTTLMap(cache.ConsumerDataTTLName).Set(gwID.String(), cached)
 
 	finder := appconsumer.NewDataFinder(
-		repomocks.NewRepository(t), policymocks.NewRepository(t), authmocks.NewRepository(t),
+		repomocks.NewRepository(t), backendmocks.NewRepository(t),
+		policymocks.NewRepository(t), authmocks.NewRepository(t),
 		mgr, newTestLogger(),
 	)
 
@@ -121,7 +129,8 @@ func TestDataFinder_FindByGateway_RecoversFromCorruptCacheEntry(t *testing.T) {
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Consumer{}, nil).Once()
 
 	finder := appconsumer.NewDataFinder(
-		repo, policymocks.NewRepository(t), authmocks.NewRepository(t),
+		repo, backendmocks.NewRepository(t),
+		policymocks.NewRepository(t), authmocks.NewRepository(t),
 		mgr, newTestLogger(),
 	)
 

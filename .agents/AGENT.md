@@ -284,6 +284,28 @@ small files, named symbols, typed signatures, and use-case-per-file layout
 (§10) to communicate intent. Comments rot, lie under refactor, and silently
 duplicate information that the diff history already captures.
 
+**Above all: never add large comment blocks.** Do not write multi-line `//`
+runs, banner headers, or `/* … */` paragraphs that summarise a file,
+function, or change. A wall of comment text is the single most common thing
+reviewers reject. If you feel the urge to write more than a few words of
+prose, that is a signal to rename a symbol, split the function, or add a test
+— not to keep typing the comment.
+
+```go
+// BAD — never generate anything like this.
+//
+// forwardRequest takes the inbound proxy request, validates the consumer,
+// resolves the upstream backend, applies the policy chain, and finally
+// forwards the request to the LLM provider. It returns the response or an
+// error. We do it this way because the old approach was slow and ...
+func forwardRequest(...) { … }
+```
+
+```go
+// GOOD — the names and types already say all of this.
+func forwardRequest(...) { … }
+```
+
 This applies to:
 
 - Doc comments above packages, types, functions, methods, fields, constants.

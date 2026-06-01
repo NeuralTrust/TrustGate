@@ -16,11 +16,11 @@ func NewGetBackendHandler(finder appbackend.Finder) *GetBackendHandler {
 }
 
 func (h *GetBackendHandler) Handle(c *fiber.Ctx) error {
-	_, id, err := helpers.ParseGatewayScopedID(c)
+	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
-	b, err := h.finder.FindByID(c.UserContext(), id)
+	b, err := h.finder.FindByID(c.UserContext(), gatewayID, id)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

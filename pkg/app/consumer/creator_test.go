@@ -66,6 +66,7 @@ func TestCreator_Create_Success(t *testing.T) {
 		GatewayID:  gwID,
 		Name:       "chat",
 		Type:       domain.TypeLLM,
+		Path:       "/v1/chat/completions",
 		BackendIDs: []uuid.UUID{beID},
 	})
 	if err != nil {
@@ -99,7 +100,7 @@ func TestCreator_Create_RejectsBackendFromOtherGateway(t *testing.T) {
 		Type:       domain.TypeLLM,
 		BackendIDs: []uuid.UUID{beID},
 	})
-	if !errors.Is(err, domain.ErrInvalidBackendID) {
+	if !errors.Is(err, backenddomain.ErrInvalidBackendID) {
 		t.Fatalf("err = %v, want ErrInvalidBackendID", err)
 	}
 }
@@ -136,6 +137,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 		GatewayID:  gwID,
 		Name:       "dupe",
 		Type:       domain.TypeLLM,
+		Path:       "/v1/chat/completions",
 		BackendIDs: []uuid.UUID{beID},
 	})
 	if !errors.Is(err, domain.ErrAlreadyExists) {

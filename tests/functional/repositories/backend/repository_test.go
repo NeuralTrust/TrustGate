@@ -70,12 +70,7 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUI
 
 func validBackend(t *testing.T, gwID uuid.UUID, name string) *domain.Backend {
 	t.Helper()
-	b, err := domain.NewBackend(gwID, name, domain.AlgorithmRoundRobin, domain.Targets{
-		{
-			Provider: "openai",
-			Auth:     domain.NewAPIKeyAuth("sk-test"),
-		},
-	}, nil, nil)
+	b, err := domain.NewBackend(gwID, name, "openai", nil, "", 1, domain.NewAPIKeyAuth("sk-test"), nil)
 	if err != nil {
 		t.Fatalf("backend domain.NewBackend: %v", err)
 	}
@@ -88,13 +83,9 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	gwID := seedGateway(t, gw, "pool")
 
 	b := validBackend(t, gwID, "openai-pool")
-	b.EmbeddingConfig = &domain.EmbeddingConfig{
-		Provider: "openai",
-		Model:    "text-embedding-3-small",
-		Auth:     &domain.APIKeyAuth{APIKey: "sk-e"},
-	}
-	b.Algorithm = domain.AlgorithmSemantic
-	b.Targets[0].Description = "primary"
+	b.Description = "primary"
+	b.Weight = 7
+	b.ProviderOptions = map[string]any{"base_url": "https://api.openai.com"}
 
 	if err := r.Save(ctx, b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -107,18 +98,24 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.ID != b.ID || got.GatewayID != gwID || got.Name != "openai-pool" {
 		t.Fatalf("FindByID returned %+v", got)
 	}
-	if got.Algorithm != domain.AlgorithmSemantic {
-		t.Fatalf("Algorithm = %q, want %q", got.Algorithm, domain.AlgorithmSemantic)
+	if got.Provider != "openai" {
+		t.Fatalf("Provider = %q, want openai", got.Provider)
 	}
-	if len(got.Targets) != 1 || got.Targets[0].Provider != "openai" {
-		t.Fatalf("Targets round-trip lost data: %+v", got.Targets)
+	if got.Weight != 7 {
+		t.Fatalf("Weight = %d, want 7", got.Weight)
 	}
-	if got.EmbeddingConfig == nil || got.EmbeddingConfig.Model != "text-embedding-3-small" {
-		t.Fatalf("EmbeddingConfig round-trip lost data: %+v", got.EmbeddingConfig)
+	if got.Description != "primary" {
+		t.Fatalf("Description = %q, want primary", got.Description)
+	}
+	if got.ProviderOptions["base_url"] != "https://api.openai.com" {
+		t.Fatalf("ProviderOptions round-trip lost data: %+v", got.ProviderOptions)
+	}
+	if got.Auth == nil || got.Auth.APIKey == nil {
+		t.Fatalf("Auth round-trip lost data: %+v", got.Auth)
 	}
 }
 
-func TestRepository_SaveAndFindByID_NullableEmbedding(t *testing.T) {
+func TestRepository_SaveAndFindByID_NullableProviderOptions(t *testing.T) {
 	r, gw, _ := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, gw, "pool2")
@@ -131,8 +128,8 @@ func TestRepository_SaveAndFindByID_NullableEmbedding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
-	if got.EmbeddingConfig != nil {
-		t.Fatalf("EmbeddingConfig should be nil, got %+v", got.EmbeddingConfig)
+	if len(got.ProviderOptions) != 0 {
+		t.Fatalf("ProviderOptions should be empty, got %+v", got.ProviderOptions)
 	}
 }
 
@@ -185,7 +182,7 @@ func TestRepository_Update(t *testing.T) {
 	}
 
 	b.Name = "alpha-renamed"
-	b.Algorithm = domain.AlgorithmRandom
+	b.Provider = "anthropic"
 	b.UpdatedAt = time.Now().UTC()
 	if err := r.Update(ctx, b); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -195,7 +192,7 @@ func TestRepository_Update(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID after update: %v", err)
 	}
-	if got.Name != "alpha-renamed" || got.Algorithm != domain.AlgorithmRandom {
+	if got.Name != "alpha-renamed" || got.Provider != "anthropic" {
 		t.Fatalf("Update did not persist: %+v", got)
 	}
 }

@@ -14,9 +14,11 @@ type UpdateInput struct {
 	ID              uuid.UUID
 	GatewayID       uuid.UUID
 	Name            string
-	Algorithm       string
-	Targets         domain.Targets
-	EmbeddingConfig *domain.EmbeddingConfig
+	Provider        string
+	ProviderOptions map[string]any
+	Description     string
+	Weight          int
+	Auth            *domain.TargetAuth
 	HealthChecks    *domain.HealthChecks
 }
 
@@ -57,9 +59,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Backend, 
 		return nil, domain.ErrInvalidGatewayID
 	}
 	existing.Name = in.Name
-	existing.Algorithm = in.Algorithm
-	existing.Targets = in.Targets
-	existing.EmbeddingConfig = in.EmbeddingConfig
+	existing.Provider = in.Provider
+	existing.ProviderOptions = in.ProviderOptions
+	existing.Description = in.Description
+	existing.Weight = in.Weight
+	existing.Auth = in.Auth
 	existing.HealthChecks = in.HealthChecks
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {

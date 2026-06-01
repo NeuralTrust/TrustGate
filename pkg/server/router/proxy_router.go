@@ -10,13 +10,13 @@ import (
 type proxyRouter struct {
 	middlewareTransport *middleware.Transport
 	healthHandler       *apihandler.HealthHandler
-	proxyHandler        *proxyhttp.ProxyHandler
+	proxyHandler        *proxyhttp.ForwardedHandler
 }
 
 func NewProxyRouter(
 	middlewareTransport *middleware.Transport,
 	healthHandler *apihandler.HealthHandler,
-	proxyHandler *proxyhttp.ProxyHandler,
+	proxyHandler *proxyhttp.ForwardedHandler,
 ) ServerRouter {
 	return &proxyRouter{
 		middlewareTransport: middlewareTransport,

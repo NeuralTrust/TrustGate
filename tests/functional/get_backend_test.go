@@ -24,7 +24,7 @@ func TestGetBackend_Success(t *testing.T) {
 	assert.Equal(t, beID, body["id"])
 	assert.Equal(t, gwID, body["gateway_id"])
 	assert.Equal(t, name, body["name"])
-	assert.Equal(t, "round-robin", body["algorithm"])
+	assert.Equal(t, "openai", body["provider"])
 }
 
 func TestGetBackend_NotFound(t *testing.T) {

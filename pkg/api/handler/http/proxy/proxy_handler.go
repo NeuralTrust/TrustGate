@@ -1,11 +1,15 @@
 package proxy
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"net/textproto"
 	"net/url"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
+	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
@@ -13,19 +17,30 @@ import (
 	"github.com/google/uuid"
 )
 
-// Routing headers used to resolve the gateway and backend on the proxy plane.
-//
-// TODO(B.2/B.8): replace header-based routing with real proxy auth + gateway
-// resolution (API key / host based) once those sub-issues land.
+var newline = []byte("\n")
+
+// streamErrorEvent is the SSE payload written when an upstream stream aborts
+// mid-flight. It carries no internal error detail to avoid leaking backend
+// internals to clients.
+var streamErrorEvent = []byte(`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`)
+
 const (
-	HeaderGatewayID = "X-Gateway-Id"
-	HeaderBackendID = "X-Backend-Id"
+	// HeaderProvider is an optional client hint for the inbound request's wire
+	// format. When present it is trusted as the source format; otherwise the
+	// format is auto-detected from the body.
+	HeaderProvider = "X-Provider"
 )
 
-var errInvalidRouting = errors.New("missing or invalid routing headers")
+// errNotAuthenticated means the auth middleware did not attach a gateway +
+// consumer.Data to the request context (no resolvable identity).
+var errNotAuthenticated = errors.New("request is not authenticated")
+
+// errPathNotFound means no consumer of the resolved gateway has a path that
+// exactly matches the inbound request path.
+var errPathNotFound = errors.New("no consumer matches the request path")
 
 // hopByHopHeaders are connection-scoped headers that must not be relayed from
-// the upstream response back to the client.
+// the backend response back to the client.
 var hopByHopHeaders = map[string]struct{}{
 	"Connection":          {},
 	"Keep-Alive":          {},
@@ -38,33 +53,40 @@ var hopByHopHeaders = map[string]struct{}{
 	"Content-Length":      {},
 }
 
-// ProxyHandler is the AI Gateway data-plane entry point. It builds the proxy
-// RequestContext from the inbound request, resolves the target gateway and
-// backend, and delegates the forward to the application layer.
-type ProxyHandler struct {
+type ForwardedHandler struct {
 	forwarder appproxy.Forwarder
 }
 
-func NewProxyHandler(forwarder appproxy.Forwarder) *ProxyHandler {
-	return &ProxyHandler{forwarder: forwarder}
+func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
+	return &ForwardedHandler{forwarder: forwarder}
 }
 
-func (h *ProxyHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, backendID, err := resolveRouting(c)
+func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
+	gatewayID, consumer, err := resolveConsumer(c)
 	if err != nil {
 		return writeProxyError(c, err)
 	}
 
+	reqCtx := buildRequestContext(c, gatewayID)
 	result, err := h.forwarder.Forward(c.UserContext(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
-		BackendID: backendID,
-		Request:   buildRequestContext(c, gatewayID, backendID),
+		Consumer:  consumer,
+		Request:   reqCtx,
 	})
 	if err != nil {
 		return writeProxyError(c, err)
 	}
 
-	for name, values := range result.Headers {
+	relayHeaders(c, result.Headers)
+
+	if result.Stream != nil {
+		return writeStream(c, result, reqCtx)
+	}
+	return c.Status(result.StatusCode).Send(result.Body)
+}
+
+func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
+	for name, values := range headers {
 		if _, skip := hopByHopHeaders[textproto.CanonicalMIMEHeaderKey(name)]; skip {
 			continue
 		}
@@ -72,25 +94,81 @@ func (h *ProxyHandler) Handle(c *fiber.Ctx) error {
 			c.Response().Header.Add(name, v)
 		}
 	}
-	return c.Status(result.StatusCode).Send(result.Body)
 }
 
-// resolveRouting extracts the gateway and backend identifiers from the inbound
-// request. This is a deliberate seam: real proxy auth/routing arrives with
-// B.2/B.8.
-func resolveRouting(c *fiber.Ctx) (gatewayID, backendID uuid.UUID, err error) {
-	gatewayID, err = uuid.Parse(c.Get(HeaderGatewayID))
-	if err != nil {
-		return uuid.Nil, uuid.Nil, errInvalidRouting
+func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext.RequestContext) error {
+	finalizer, _ := c.Locals(infracontext.StreamMetricsFinalizerKey).(infracontext.StreamMetricsFinalizer)
+	statusCode := result.StatusCode
+	headers := result.Headers
+
+	// Claim metrics ownership synchronously so the middleware skips its own
+	// deferred emission (the finalizer runs later, during body serialization).
+	if finalizer != nil {
+		c.Locals(infracontext.StreamMetricsOwnedKey, true)
 	}
-	backendID, err = uuid.Parse(c.Get(HeaderBackendID))
-	if err != nil {
-		return uuid.Nil, uuid.Nil, errInvalidRouting
-	}
-	return gatewayID, backendID, nil
+
+	c.Status(statusCode)
+	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		var captured bytes.Buffer
+		if finalizer != nil {
+			defer func() {
+				req.Body = append([]byte(nil), req.Body...)
+				finalizer(req, captured.Bytes(), statusCode, headers)
+			}()
+		}
+		for line, err := range result.Stream {
+			if err != nil {
+				// The response is already a 200 SSE stream, so a mid-stream
+				// failure cannot change the status code. Emit an explicit error
+				// event (instead of a silent truncation that looks like a clean
+				// finish) so clients can distinguish an aborted stream.
+				if finalizer != nil {
+					captured.Write(streamErrorEvent)
+					captured.Write(newline)
+				}
+				_, _ = w.Write(streamErrorEvent)
+				_, _ = w.Write(newline)
+				_, _ = w.Write(newline)
+				_ = w.Flush()
+				return
+			}
+			if finalizer != nil {
+				captured.Write(line)
+				captured.Write(newline)
+			}
+			if _, werr := w.Write(line); werr != nil {
+				return
+			}
+			if _, werr := w.Write(newline); werr != nil {
+				return
+			}
+			if flushErr := w.Flush(); flushErr != nil {
+				return
+			}
+		}
+	})
+	return nil
 }
 
-func buildRequestContext(c *fiber.Ctx, gatewayID, backendID uuid.UUID) *infracontext.RequestContext {
+// resolveConsumer reads the gateway id + consumer read model attached by the
+// auth middleware and exact-matches the inbound path against a consumer's path.
+func resolveConsumer(c *fiber.Ctx) (uuid.UUID, *appconsumer.RoutableConsumer, error) {
+	gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
+	if !ok {
+		return uuid.Nil, nil, errNotAuthenticated
+	}
+	data, ok := appconsumer.DataFromContext(c.UserContext())
+	if !ok || data == nil {
+		return uuid.Nil, nil, errNotAuthenticated
+	}
+	rc, ok := data.MatchPath(c.Path())
+	if !ok {
+		return uuid.Nil, nil, errPathNotFound
+	}
+	return gatewayID, rc, nil
+}
+
+func buildRequestContext(c *fiber.Ctx, gatewayID uuid.UUID) *infracontext.RequestContext {
 	headers := make(map[string][]string)
 	c.Request().Header.VisitAll(func(key, value []byte) {
 		name := string(key)
@@ -103,16 +181,29 @@ func buildRequestContext(c *fiber.Ctx, gatewayID, backendID uuid.UUID) *infracon
 	})
 
 	return &infracontext.RequestContext{
-		Context:   c.UserContext(),
-		GatewayID: gatewayID.String(),
-		BackendID: backendID.String(),
-		Headers:   headers,
-		Method:    c.Method(),
-		Path:      c.Path(),
-		Query:     query,
-		Body:      c.Body(),
-		IP:        c.IP(),
+		Context:      c.UserContext(),
+		GatewayID:    gatewayID.String(),
+		Headers:      headers,
+		Method:       c.Method(),
+		Path:         c.Path(),
+		Query:        query,
+		Body:         c.Body(),
+		IP:           c.IP(),
+		SessionID:    sessionIDFromContext(c),
+		SourceFormat: c.Get(HeaderProvider),
 	}
+}
+
+// sessionIDFromContext reads the session identifier stamped by the session
+// middleware, preferring the request context value and falling back to Locals.
+func sessionIDFromContext(c *fiber.Ctx) string {
+	if v, ok := c.UserContext().Value(infracontext.SessionContextKey).(string); ok && v != "" {
+		return v
+	}
+	if v, ok := c.Locals(string(infracontext.SessionContextKey)).(string); ok {
+		return v
+	}
+	return ""
 }
 
 func writeProxyError(c *fiber.Ctx, err error) error {
@@ -121,18 +212,21 @@ func writeProxyError(c *fiber.Ctx, err error) error {
 }
 
 func mapProxyError(err error) (int, helpers.ErrorBody) {
+	if pe, ok := appplugins.AsPluginError(err); ok {
+		return pe.StatusCode, helpers.ErrorBody{Error: "plugin_rejected", Message: pe.Message}
+	}
 	switch {
-	case errors.Is(err, errInvalidRouting):
-		return fiber.StatusBadRequest, helpers.ErrorBody{Error: "invalid_routing", Message: err.Error()}
-	case errors.Is(err, commonerrors.ErrNotFound),
-		errors.Is(err, appproxy.ErrBackendGatewayMismatch):
+	case errors.Is(err, errNotAuthenticated):
+		return fiber.StatusUnauthorized, helpers.ErrorBody{Error: "unauthenticated", Message: err.Error()}
+	case errors.Is(err, errPathNotFound),
+		errors.Is(err, commonerrors.ErrNotFound):
 		return fiber.StatusNotFound, helpers.ErrorBody{Error: "not_found"}
-	case errors.Is(err, appproxy.ErrNoTargetAvailable):
-		return fiber.StatusServiceUnavailable, helpers.ErrorBody{Error: "no_target_available", Message: err.Error()}
-	case errors.Is(err, appproxy.ErrStreamingNotImplemented),
-		errors.Is(err, appproxy.ErrProviderNotImplemented):
-		return fiber.StatusNotImplemented, helpers.ErrorBody{Error: "not_implemented", Message: err.Error()}
+	case errors.Is(err, appproxy.ErrNoBackendAvailable),
+		errors.Is(err, appproxy.ErrNoBackendsInPool):
+		return fiber.StatusServiceUnavailable, helpers.ErrorBody{Error: "no_backend_available", Message: err.Error()}
+	case errors.Is(err, appproxy.ErrInvalidRequestPayload):
+		return fiber.StatusBadRequest, helpers.ErrorBody{Error: "invalid_request", Message: err.Error()}
 	default:
-		return fiber.StatusBadGateway, helpers.ErrorBody{Error: "upstream_error"}
+		return fiber.StatusBadGateway, helpers.ErrorBody{Error: "backend_error"}
 	}
 }

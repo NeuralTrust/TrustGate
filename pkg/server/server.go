@@ -33,7 +33,12 @@ func NewBaseServer(name, addr string, cfg config.ServerConfig, logger *slog.Logg
 		WriteTimeout:          cfg.WriteTimeout,
 		IdleTimeout:           cfg.IdleTimeout,
 		Concurrency:           16384,
-		StreamRequestBody:     true,
+		// The gateway must read the full request body on the hot path (stream
+		// detection, cross-format adaptation, session/metrics extraction), so
+		// streaming the request body provides no benefit and risks c.Body()
+		// returning an empty/partial payload if the stream is consumed once.
+		// Buffer the whole body up front instead, bounded by BodyLimit.
+		StreamRequestBody: false,
 	})
 
 	r.Server().MaxConnsPerIP = 1024

@@ -30,9 +30,11 @@ var (
 	GlobalConfig      *config.Config
 	redisDB           *redis.Client
 	adminCmd          *exec.Cmd
+	proxyCmd          *exec.Cmd
 	gatewayBinaryPath string
 
 	AdminURL   = getEnv("ADMIN_URL", "")
+	ProxyURL   = getEnv("PROXY_URL", "")
 	BaseDomain = getEnv("BASE_DOMAIN", "")
 )
 
@@ -89,9 +91,10 @@ func setupTestEnvironment() {
 	GlobalConfig = cfg
 
 	AdminURL = getEnv("ADMIN_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.AdminPort))
+	ProxyURL = getEnv("PROXY_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.ProxyPort))
 	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
 
-	killProcessesOnPorts([]int{cfg.Server.AdminPort})
+	killProcessesOnPorts([]int{cfg.Server.AdminPort, cfg.Server.ProxyPort})
 
 	dropTestDB(dbName)
 	createTestDB(dbName)
@@ -102,14 +105,25 @@ func setupTestEnvironment() {
 	cmdEnv := buildCmdEnv()
 	gatewayBinaryPath = buildGatewayBinary(cmdEnv)
 
+	// The admin plane runs the migrations on boot; wait for it to be ready before
+	// starting the proxy so the two boots do not race on the (idempotent) schema.
 	adminCmd = startServer("ADMIN", "admin", cmdEnv)
-
 	waitForServerReady(fmt.Sprintf("%s/healthz", AdminURL), "admin server", cfg.Server.AdminPort)
+
+	// The proxy plane serves the E2E forwarding tests; it shares the same DB and
+	// Redis as the admin plane.
+	proxyCmd = startServer("PROXY", "proxy", cmdEnv)
+	waitForServerReady(fmt.Sprintf("%s/healthz", ProxyURL), "proxy server", cfg.Server.ProxyPort)
 
 	fmt.Println("Test Environment Ready")
 }
 
 func teardownTestEnvironment() {
+	if proxyCmd != nil && proxyCmd.Process != nil {
+		if err := syscall.Kill(-proxyCmd.Process.Pid, syscall.SIGKILL); err != nil {
+			log.Printf("error killing proxy server: %v", err)
+		}
+	}
 	if adminCmd != nil && adminCmd.Process != nil {
 		if err := syscall.Kill(-adminCmd.Process.Pid, syscall.SIGKILL); err != nil {
 			log.Printf("error killing admin server: %v", err)

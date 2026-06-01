@@ -91,6 +91,9 @@ type ServerConfig struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
+	// SecretKey signs and verifies admin-plane JWTs. Empty disables admin auth
+	// token acceptance (every token is rejected).
+	SecretKey string
 }
 
 type DatabaseConfig struct {
@@ -197,6 +200,7 @@ func getServerConfig() ServerConfig {
 		ReadTimeout:  getEnvDuration("SERVER_READ_TIMEOUT", defaultServerReadTimeout),
 		WriteTimeout: getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
 		IdleTimeout:  getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),
+		SecretKey:    getEnv("SERVER_SECRET_KEY", ""),
 	}
 }
 

@@ -39,6 +39,7 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Status:          req.Status,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
+		SessionConfig:   req.SessionConfig,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

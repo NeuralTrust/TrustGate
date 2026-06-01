@@ -14,15 +14,18 @@ import (
 )
 
 type UpdateInput struct {
-	ID         uuid.UUID
-	GatewayID  uuid.UUID
-	Name       string
-	Type       domain.Type
-	Headers    map[string]string
-	Active     *bool
-	BackendIDs []uuid.UUID
-	PolicyIDs  []uuid.UUID
-	AuthIDs    []uuid.UUID
+	ID              uuid.UUID
+	GatewayID       uuid.UUID
+	Name            string
+	Type            domain.Type
+	Path            string
+	Algorithm       string
+	EmbeddingConfig *backenddomain.EmbeddingConfig
+	Headers         map[string]string
+	Active          *bool
+	BackendIDs      []uuid.UUID
+	PolicyIDs       []uuid.UUID
+	AuthIDs         []uuid.UUID
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -78,6 +81,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if in.Type != "" {
 		existing.Type = in.Type
 	}
+	existing.Path = in.Path
+	existing.Algorithm = in.Algorithm
+	existing.EmbeddingConfig = in.EmbeddingConfig
 	existing.Headers = in.Headers
 	if in.Active != nil {
 		existing.Active = *in.Active

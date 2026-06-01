@@ -7,13 +7,11 @@ import (
 )
 
 func Proxy(c *container.Container) error {
-	// TODO(providers): swap NewNotImplementedInvoker for the real LLM provider
-	// invoker once the provider adapters (RUN-280) are ported.
-	if err := c.Provide(appproxy.NewNotImplementedInvoker); err != nil {
+	if err := c.Provide(appproxy.NewProviderInvoker); err != nil {
 		return err
 	}
 	if err := c.Provide(appproxy.NewForwarder); err != nil {
 		return err
 	}
-	return c.Provide(proxyhttp.NewProxyHandler)
+	return c.Provide(proxyhttp.NewForwardedHandler)
 }

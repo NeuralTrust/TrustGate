@@ -23,9 +23,9 @@ func (_m *Finder) EXPECT() *Finder_Expecter {
 	return &Finder_Expecter{mock: &_m.Mock}
 }
 
-// FindByID provides a mock function with given fields: ctx, id
-func (_m *Finder) FindByID(ctx context.Context, id uuid.UUID) (*auth.Auth, error) {
-	ret := _m.Called(ctx, id)
+// FindByID provides a mock function with given fields: ctx, gatewayID, id
+func (_m *Finder) FindByID(ctx context.Context, gatewayID uuid.UUID, id uuid.UUID) (*auth.Auth, error) {
+	ret := _m.Called(ctx, gatewayID, id)
 
 	if len(ret) == 0 {
 		panic("no return value specified for FindByID")
@@ -33,19 +33,19 @@ func (_m *Finder) FindByID(ctx context.Context, id uuid.UUID) (*auth.Auth, error
 
 	var r0 *auth.Auth
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) (*auth.Auth, error)); ok {
-		return rf(ctx, id)
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, uuid.UUID) (*auth.Auth, error)); ok {
+		return rf(ctx, gatewayID, id)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) *auth.Auth); ok {
-		r0 = rf(ctx, id)
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, uuid.UUID) *auth.Auth); ok {
+		r0 = rf(ctx, gatewayID, id)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*auth.Auth)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID) error); ok {
-		r1 = rf(ctx, id)
+	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID, uuid.UUID) error); ok {
+		r1 = rf(ctx, gatewayID, id)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -60,14 +60,15 @@ type Finder_FindByID_Call struct {
 
 // FindByID is a helper method to define mock.On call
 //   - ctx context.Context
+//   - gatewayID uuid.UUID
 //   - id uuid.UUID
-func (_e *Finder_Expecter) FindByID(ctx interface{}, id interface{}) *Finder_FindByID_Call {
-	return &Finder_FindByID_Call{Call: _e.mock.On("FindByID", ctx, id)}
+func (_e *Finder_Expecter) FindByID(ctx interface{}, gatewayID interface{}, id interface{}) *Finder_FindByID_Call {
+	return &Finder_FindByID_Call{Call: _e.mock.On("FindByID", ctx, gatewayID, id)}
 }
 
-func (_c *Finder_FindByID_Call) Run(run func(ctx context.Context, id uuid.UUID)) *Finder_FindByID_Call {
+func (_c *Finder_FindByID_Call) Run(run func(ctx context.Context, gatewayID uuid.UUID, id uuid.UUID)) *Finder_FindByID_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(uuid.UUID))
+		run(args[0].(context.Context), args[1].(uuid.UUID), args[2].(uuid.UUID))
 	})
 	return _c
 }
@@ -77,7 +78,7 @@ func (_c *Finder_FindByID_Call) Return(_a0 *auth.Auth, _a1 error) *Finder_FindBy
 	return _c
 }
 
-func (_c *Finder_FindByID_Call) RunAndReturn(run func(context.Context, uuid.UUID) (*auth.Auth, error)) *Finder_FindByID_Call {
+func (_c *Finder_FindByID_Call) RunAndReturn(run func(context.Context, uuid.UUID, uuid.UUID) (*auth.Auth, error)) *Finder_FindByID_Call {
 	_c.Call.Return(run)
 	return _c
 }

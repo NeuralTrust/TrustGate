@@ -12,9 +12,11 @@ import (
 type CreateInput struct {
 	GatewayID       uuid.UUID
 	Name            string
-	Algorithm       string
-	Targets         domain.Targets
-	EmbeddingConfig *domain.EmbeddingConfig
+	Provider        string
+	ProviderOptions map[string]any
+	Description     string
+	Weight          int
+	Auth            *domain.TargetAuth
 	HealthChecks    *domain.HealthChecks
 }
 
@@ -43,9 +45,11 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Backend, 
 	b, err := domain.NewBackend(
 		in.GatewayID,
 		in.Name,
-		in.Algorithm,
-		in.Targets,
-		in.EmbeddingConfig,
+		in.Provider,
+		in.ProviderOptions,
+		in.Description,
+		in.Weight,
+		in.Auth,
 		in.HealthChecks,
 	)
 	if err != nil {

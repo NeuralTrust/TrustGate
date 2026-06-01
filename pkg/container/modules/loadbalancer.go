@@ -4,6 +4,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/embedding/factory"
+	embeddingopenai "github.com/NeuralTrust/AgentGateway/pkg/infra/embedding/openai"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
 	"go.uber.org/dig"
 )
@@ -16,7 +17,9 @@ type loadBalancerParams struct {
 
 func LoadBalancer(c *container.Container) error {
 	if err := c.Provide(func() factory.EmbeddingServiceLocator {
-		return factory.NewServiceLocator(nil)
+		return factory.NewServiceLocator(factory.ProviderRegistry{
+			embeddingopenai.ProviderName: embeddingopenai.NewCreator(),
+		})
 	}); err != nil {
 		return err
 	}

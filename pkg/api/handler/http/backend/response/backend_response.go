@@ -10,15 +10,17 @@ import (
 const redacted = "***"
 
 type BackendResponse struct {
-	ID              uuid.UUID                `json:"id"`
-	GatewayID       uuid.UUID                `json:"gateway_id"`
-	Name            string                   `json:"name"`
-	Algorithm       string                   `json:"algorithm"`
-	Targets         []TargetResponse         `json:"targets"`
-	EmbeddingConfig *EmbeddingConfigResponse `json:"embedding_config,omitempty"`
-	HealthChecks    *HealthChecksResponse    `json:"health_checks,omitempty"`
-	CreatedAt       time.Time                `json:"created_at"`
-	UpdatedAt       time.Time                `json:"updated_at"`
+	ID              uuid.UUID             `json:"id"`
+	GatewayID       uuid.UUID             `json:"gateway_id"`
+	Name            string                `json:"name"`
+	Provider        string                `json:"provider"`
+	ProviderOptions map[string]any        `json:"provider_options,omitempty"`
+	Description     string                `json:"description,omitempty"`
+	Weight          int                   `json:"weight,omitempty"`
+	Auth            *TargetAuthResponse   `json:"auth,omitempty"`
+	HealthChecks    *HealthChecksResponse `json:"health_checks,omitempty"`
+	CreatedAt       time.Time             `json:"created_at"`
+	UpdatedAt       time.Time             `json:"updated_at"`
 }
 
 type HealthChecksResponse struct {
@@ -27,16 +29,6 @@ type HealthChecksResponse struct {
 	Headers   map[string]string `json:"headers,omitempty"`
 	Threshold int               `json:"threshold"`
 	Interval  int               `json:"interval"`
-}
-
-type TargetResponse struct {
-	ID              string              `json:"id"`
-	Weight          int                 `json:"weight,omitempty"`
-	Provider        string              `json:"provider"`
-	ProviderOptions map[string]any      `json:"provider_options,omitempty"`
-	Description     string              `json:"description,omitempty"`
-	Stream          bool                `json:"stream,omitempty"`
-	Auth            *TargetAuthResponse `json:"auth,omitempty"`
 }
 
 type TargetAuthResponse struct {
@@ -87,25 +79,7 @@ type TargetOAuthConfigResponse struct {
 	Extra        map[string]string `json:"extra,omitempty"`
 }
 
-type EmbeddingConfigResponse struct {
-	Provider string              `json:"provider"`
-	Model    string              `json:"model"`
-	Auth     *APIKeyAuthResponse `json:"auth,omitempty"`
-}
-
 func FromBackend(b *domain.Backend) BackendResponse {
-	targets := make([]TargetResponse, 0, len(b.Targets))
-	for _, t := range b.Targets {
-		targets = append(targets, fromTarget(t))
-	}
-	var embedding *EmbeddingConfigResponse
-	if b.EmbeddingConfig != nil {
-		embedding = &EmbeddingConfigResponse{
-			Provider: b.EmbeddingConfig.Provider,
-			Model:    b.EmbeddingConfig.Model,
-			Auth:     fromAPIKeyAuth(b.EmbeddingConfig.Auth),
-		}
-	}
 	var health *HealthChecksResponse
 	if b.HealthChecks != nil {
 		health = &HealthChecksResponse{
@@ -120,28 +94,18 @@ func FromBackend(b *domain.Backend) BackendResponse {
 		ID:              b.ID,
 		GatewayID:       b.GatewayID,
 		Name:            b.Name,
-		Algorithm:       b.Algorithm,
-		Targets:         targets,
-		EmbeddingConfig: embedding,
+		Provider:        b.Provider,
+		ProviderOptions: b.ProviderOptions,
+		Description:     b.Description,
+		Weight:          b.Weight,
+		Auth:            FromAuth(b.Auth),
 		HealthChecks:    health,
 		CreatedAt:       b.CreatedAt,
 		UpdatedAt:       b.UpdatedAt,
 	}
 }
 
-func fromTarget(t domain.Target) TargetResponse {
-	return TargetResponse{
-		ID:              t.ID,
-		Weight:          t.Weight,
-		Provider:        t.Provider,
-		ProviderOptions: t.ProviderOptions,
-		Description:     t.Description,
-		Stream:          t.Stream,
-		Auth:            fromAuth(t.Auth),
-	}
-}
-
-func fromAuth(a *domain.TargetAuth) *TargetAuthResponse {
+func FromAuth(a *domain.TargetAuth) *TargetAuthResponse {
 	if a == nil {
 		return nil
 	}

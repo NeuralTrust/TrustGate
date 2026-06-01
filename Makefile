@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy test test-race test-cover test-functional test-repositories lint fmt tidy generate mocks tools \
+.PHONY: help build run run-admin run-proxy test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools \
         install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -80,7 +80,7 @@ tools: ## Install Go dev tools pinned in tools/tools.go
 	@$(info $(M) Installing dev tools ...)
 	go install github.com/vektra/mockery/v2
 
-mocks: ## Regenerate all mockery mocks across the codebase
+gen-mocks: ## Regenerate all mockery mocks across the codebase
 	@$(info $(M) Regenerating mocks ...)
 	@command -v mockery >/dev/null 2>&1 || { \
 	  echo "mockery not found in PATH; run 'make tools' first" >&2; exit 1; \

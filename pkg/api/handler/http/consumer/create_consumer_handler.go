@@ -47,14 +47,17 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
-		GatewayID:  gatewayID,
-		Name:       req.Name,
-		Type:       req.ToType(),
-		Headers:    req.Headers,
-		Active:     req.Active,
-		BackendIDs: backendIDs,
-		PolicyIDs:  policyIDs,
-		AuthIDs:    authIDs,
+		GatewayID:       gatewayID,
+		Name:            req.Name,
+		Type:            req.ToType(),
+		Path:            req.Path,
+		Algorithm:       req.Algorithm,
+		EmbeddingConfig: req.ToEmbeddingConfig(),
+		Headers:         req.Headers,
+		Active:          req.Active,
+		BackendIDs:      backendIDs,
+		PolicyIDs:       policyIDs,
+		AuthIDs:         authIDs,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

@@ -93,10 +93,13 @@ func CreateConsumer(t *testing.T, gatewayID string, payload map[string]any) stri
 }
 
 // validConsumerPayload returns a minimal payload accepted by Validate()
-// (name, one backend reference). Callers may override fields.
+// (name, exact-match path, one backend reference). The path is derived from the
+// (already unique) name so it stays unique per gateway. Callers may override
+// fields.
 func validConsumerPayload(name, backendID string) map[string]any {
 	return map[string]any{
 		"name":        name,
+		"path":        "/v1/" + name,
 		"backend_ids": []string{backendID},
 	}
 }
@@ -132,22 +135,17 @@ func validAuthPayload(name string) map[string]any {
 	}
 }
 
-// validBackendPayload returns a minimal payload accepted by Validate()
-// (name, algorithm, one openai target with api_key auth). Callers may
-// override fields.
+// validBackendPayload returns a minimal payload accepted by Validate(): a
+// single openai target (a backend IS a target now) with api_key auth. Callers
+// may override fields.
 func validBackendPayload(name string) map[string]any {
 	return map[string]any{
-		"name":      name,
-		"algorithm": "round-robin",
-		"targets": []map[string]any{
-			{
-				"provider": "openai",
-				"weight":   1,
-				"auth": map[string]any{
-					"type":    "api_key",
-					"api_key": map[string]any{"api_key": "sk-test"},
-				},
-			},
+		"name":     name,
+		"provider": "openai",
+		"weight":   1,
+		"auth": map[string]any{
+			"type":    "api_key",
+			"api_key": map[string]any{"api_key": "sk-test"},
 		},
 	}
 }

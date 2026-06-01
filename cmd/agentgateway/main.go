@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	"github.com/NeuralTrust/AgentGateway/pkg/container/modules"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
@@ -46,6 +47,10 @@ func main() {
 		}
 		return
 	}
+
+	if err := c.Invoke(modules.StartMetricsWorker); err != nil {
+		log.Fatalf("failed to start metrics worker: %v", err)
+	}
 	if err := c.Invoke(runProxy); err != nil {
 		log.Fatalf("failed to start application: %v", err)
 	}
@@ -77,11 +82,18 @@ type adminParam struct {
 
 type proxyParam struct {
 	dig.In
-	Srv server.Server `name:"proxy"`
+	Srv    server.Server `name:"proxy"`
+	Worker appmetrics.Worker
 }
 
-func runAdmin(p adminParam, logger *slog.Logger) { runServer(p.Srv, serverAdmin, logger) }
-func runProxy(p proxyParam, logger *slog.Logger) { runServer(p.Srv, serverProxy, logger) }
+func runAdmin(p adminParam, logger *slog.Logger) {
+	runServer(p.Srv, serverAdmin, logger)
+}
+
+func runProxy(p proxyParam, logger *slog.Logger) {
+	defer p.Worker.Shutdown()
+	runServer(p.Srv, serverProxy, logger)
+}
 
 func runServer(srv server.Server, name string, logger *slog.Logger) {
 	quit := make(chan os.Signal, 1)
@@ -98,7 +110,7 @@ func runServer(srv server.Server, name string, logger *slog.Logger) {
 	logger.Info("shutting down server", slog.String("server", name))
 	if err := srv.Shutdown(); err != nil {
 		logger.Error("server shutdown error", slog.String("server", name), slog.String("error", err.Error()))
-		os.Exit(1)
+		return
 	}
 	logger.Info("server stopped gracefully", slog.String("server", name))
 }

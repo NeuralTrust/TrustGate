@@ -9,11 +9,13 @@ import (
 )
 
 type CreateBackendRequest struct {
-	Name            string                  `json:"name"`
-	Algorithm       string                  `json:"algorithm,omitempty"`
-	Targets         []TargetRequest         `json:"targets"`
-	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
-	HealthChecks    *HealthChecksRequest    `json:"health_checks,omitempty"`
+	Name            string               `json:"name"`
+	Provider        string               `json:"provider"`
+	ProviderOptions map[string]any       `json:"provider_options,omitempty"`
+	Description     string               `json:"description,omitempty"`
+	Weight          int                  `json:"weight,omitempty"`
+	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
+	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
 }
 
 type HealthChecksRequest struct {
@@ -22,16 +24,6 @@ type HealthChecksRequest struct {
 	Headers   map[string]string `json:"headers,omitempty"`
 	Threshold int               `json:"threshold"`
 	Interval  int               `json:"interval"`
-}
-
-type TargetRequest struct {
-	ID              string             `json:"id,omitempty"`
-	Weight          int                `json:"weight,omitempty"`
-	Provider        string             `json:"provider"`
-	ProviderOptions map[string]any     `json:"provider_options,omitempty"`
-	Description     string             `json:"description,omitempty"`
-	Stream          bool               `json:"stream,omitempty"`
-	Auth            *TargetAuthRequest `json:"auth,omitempty"`
 }
 
 type TargetAuthRequest struct {
@@ -87,12 +79,6 @@ type TargetOAuthConfigRequest struct {
 	Extra        map[string]string `json:"extra,omitempty"`
 }
 
-type EmbeddingConfigRequest struct {
-	Provider string             `json:"provider"`
-	Model    string             `json:"model"`
-	Auth     *APIKeyAuthRequest `json:"auth,omitempty"`
-}
-
 func (r CreateBackendRequest) Validate() error {
 	if strings.TrimSpace(r.Name) == "" {
 		return fmt.Errorf("name is required: %w", commonerrors.ErrValidation)
@@ -100,25 +86,14 @@ func (r CreateBackendRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
-	if len(r.Targets) == 0 {
-		return fmt.Errorf("at least one target is required: %w", commonerrors.ErrValidation)
+	if strings.TrimSpace(r.Provider) == "" {
+		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
 	}
 	return nil
 }
 
-func (r CreateBackendRequest) ToTargets() domain.Targets {
-	out := make(domain.Targets, 0, len(r.Targets))
-	for _, tr := range r.Targets {
-		out = append(out, tr.ToDomain())
-	}
-	return out
-}
-
-func (r CreateBackendRequest) ToEmbeddingConfig() *domain.EmbeddingConfig {
-	if r.EmbeddingConfig == nil {
-		return nil
-	}
-	return r.EmbeddingConfig.ToDomain()
+func (r CreateBackendRequest) ToAuth() *domain.TargetAuth {
+	return r.Auth.ToDomain()
 }
 
 func (r CreateBackendRequest) ToHealthChecks() *domain.HealthChecks {
@@ -135,18 +110,6 @@ func (h *HealthChecksRequest) ToDomain() *domain.HealthChecks {
 		Headers:   h.Headers,
 		Threshold: h.Threshold,
 		Interval:  h.Interval,
-	}
-}
-
-func (t TargetRequest) ToDomain() domain.Target {
-	return domain.Target{
-		ID:              t.ID,
-		Weight:          t.Weight,
-		Provider:        t.Provider,
-		ProviderOptions: t.ProviderOptions,
-		Description:     t.Description,
-		Stream:          t.Stream,
-		Auth:            t.Auth.ToDomain(),
 	}
 }
 
@@ -234,16 +197,5 @@ func (o *TargetOAuthConfigRequest) ToDomain() *domain.TargetOAuthConfig {
 		Username:     o.Username,
 		Password:     o.Password,
 		Extra:        o.Extra,
-	}
-}
-
-func (e *EmbeddingConfigRequest) ToDomain() *domain.EmbeddingConfig {
-	if e == nil {
-		return nil
-	}
-	return &domain.EmbeddingConfig{
-		Provider: e.Provider,
-		Model:    e.Model,
-		Auth:     e.Auth.ToDomain(),
 	}
 }

@@ -1,0 +1,65 @@
+package factory
+
+import (
+	"fmt"
+
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/anthropic"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/azure"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/bedrock"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/google"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/groq"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/mistral"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/openai"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/vertex"
+)
+
+// Provider name constants — aliased from the providers package so callers that
+// import factory.ProviderX continue to compile.
+const (
+	ProviderOpenAI    = providers.ProviderOpenAI
+	ProviderGoogle    = providers.ProviderGoogle
+	ProviderVertex    = providers.ProviderVertex
+	ProviderAnthropic = providers.ProviderAnthropic
+	ProviderBedrock   = providers.ProviderBedrock
+	ProviderAzure     = providers.ProviderAzure
+	ProviderMistral   = providers.ProviderMistral
+	ProviderGroq      = providers.ProviderGroq
+)
+
+//go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
+type ProviderLocator interface {
+	Get(provider string) (providers.Client, error)
+}
+
+type providerLocator struct {
+	clients map[string]providers.Client
+}
+
+// NewProviderLocator builds one client per provider up front and reuses it for
+// the lifetime of the locator. Provider clients are stateless wrappers over an
+// HTTP connection pool, so constructing a fresh one per request (as before)
+// threw away connection reuse and defeated per-client caches (e.g. the Bedrock
+// SDK client pool). The map is read-only after construction, so Get is safe for
+// concurrent use.
+func NewProviderLocator() ProviderLocator {
+	return &providerLocator{
+		clients: map[string]providers.Client{
+			ProviderOpenAI:    openai.NewOpenaiClient(),
+			ProviderGoogle:    google.NewGoogleClient(),
+			ProviderAnthropic: anthropic.NewAnthropicClient(),
+			ProviderBedrock:   bedrock.NewBedrockClient(),
+			ProviderAzure:     azure.NewAzureClient(),
+			ProviderMistral:   mistral.NewMistralClient(),
+			ProviderGroq:      groq.NewGroqClient(),
+			ProviderVertex:    vertex.NewVertexClient(),
+		},
+	}
+}
+
+func (f *providerLocator) Get(provider string) (providers.Client, error) {
+	if c, ok := f.clients[provider]; ok {
+		return c, nil
+	}
+	return nil, fmt.Errorf("unsupported provider: %s", provider)
+}

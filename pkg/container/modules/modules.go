@@ -16,6 +16,7 @@ func All() []container.Option {
 		container.WithModule(Gateway),
 		container.WithModule(Backend),
 		container.WithModule(Consumer),
+		container.WithModule(Providers),
 		container.WithModule(Proxy),
 		container.WithModule(ServerAdmin),
 		container.WithModule(ServerProxy),

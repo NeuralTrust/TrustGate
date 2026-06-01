@@ -23,6 +23,7 @@ const (
 // argument to NewAdminRouter.
 type AdminRouterDeps struct {
 	MiddlewareTransport *middleware.Transport
+	AdminAuth           *middleware.AdminAuthMiddleware
 	HealthHandler       *apihandler.HealthHandler
 	VersionHandler      *apihandler.VersionHandler
 
@@ -72,7 +73,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(ReadyPath, r.deps.HealthHandler.Readiness)
 	app.Get(VersionPath, r.deps.VersionHandler.Handle)
 
-	gw := app.Group(GatewaysPath)
+	gw := app.Group(GatewaysPath, r.deps.AdminAuth.Middleware())
 	gw.Post("", r.deps.CreateGateway.Handle)
 	gw.Get("", r.deps.ListGateway.Handle)
 	gw.Get("/:id", r.deps.GetGateway.Handle)
