@@ -10,7 +10,6 @@ patchesStrategicMerge:
 - patches/resources-patch.yaml
 # - patches/hpa-patch.yaml
 - patches/pdb-patch.yaml
-# - patches/ingress-patch.yaml  # disabled - using Gateway API
 - patches/httproute-patch.yaml
 - patches/sa-annotation-patch.yaml
 commonLabels:

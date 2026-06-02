@@ -11,8 +11,6 @@ resources:
   - namespace.yaml
   # serviceaccount resources
   - serviceaccount/agentgateway.yaml
-  # ingress resources (disabled - using Gateway API HTTPRoute instead)
-  # - ingress/agentgateway-gateway.yaml
   # poddisruptionbudget resources
   - poddisruptionbudget/agentgateway-admin.yaml
   - poddisruptionbudget/agentgateway-proxy.yaml
