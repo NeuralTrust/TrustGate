@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"errors"
 	"net/http"
 
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
@@ -46,6 +47,9 @@ func triggersFrom(fb *consumerdomain.Fallback) fallbackTriggers {
 
 func classifyOutcome(resp *ProviderResponse, err error, triggers fallbackTriggers) Outcome {
 	if err != nil {
+		if errors.Is(err, ErrModelNotAllowed) || errors.Is(err, ErrInvalidRequestPayload) {
+			return OutcomeTerminal
+		}
 		return OutcomeRetryable
 	}
 	if resp == nil {

@@ -44,6 +44,7 @@ type Consumer struct {
 	PolicyIDs       []uuid.UUID              `json:"policy_ids"`
 	AuthIDs         []uuid.UUID              `json:"auth_ids"`
 	Fallback        *Fallback                `json:"fallback,omitempty"`
+	ModelPolicies   ModelPolicies            `json:"model_policies,omitempty"`
 	CreatedAt       time.Time                `json:"created_at"`
 	UpdatedAt       time.Time                `json:"updated_at"`
 }
@@ -61,6 +62,7 @@ type CreateParams struct {
 	PolicyIDs       []uuid.UUID
 	AuthIDs         []uuid.UUID
 	Fallback        *Fallback
+	ModelPolicies   ModelPolicies
 }
 
 func New(params CreateParams) (*Consumer, error) {
@@ -87,6 +89,7 @@ func New(params CreateParams) (*Consumer, error) {
 		PolicyIDs:       params.PolicyIDs,
 		AuthIDs:         params.AuthIDs,
 		Fallback:        params.Fallback,
+		ModelPolicies:   params.ModelPolicies,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -106,6 +109,7 @@ func Rehydrate(
 	active bool,
 	backendIDs, policyIDs, authIDs []uuid.UUID,
 	fallback *Fallback,
+	modelPolicies ModelPolicies,
 	createdAt, updatedAt time.Time,
 ) *Consumer {
 	return &Consumer{
@@ -122,6 +126,7 @@ func Rehydrate(
 		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
 		Fallback:        fallback,
+		ModelPolicies:   modelPolicies,
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
 	}
@@ -172,7 +177,23 @@ func (c *Consumer) Validate() error {
 	if err := c.Fallback.Validate(); err != nil {
 		return err
 	}
+	if err := c.ModelPolicies.Validate(c.knownBackendIDs()); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (c *Consumer) knownBackendIDs() map[uuid.UUID]struct{} {
+	known := make(map[uuid.UUID]struct{}, len(c.BackendIDs))
+	for _, id := range c.BackendIDs {
+		known[id] = struct{}{}
+	}
+	if c.Fallback != nil {
+		for _, id := range c.Fallback.Chain {
+			known[id] = struct{}{}
+		}
+	}
+	return known
 }
 
 func validateUniqueIDs(ids []uuid.UUID, invalidErr error, label string) error {

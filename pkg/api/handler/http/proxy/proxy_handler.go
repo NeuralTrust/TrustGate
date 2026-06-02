@@ -226,6 +226,8 @@ func mapProxyError(err error) (int, helpers.ErrorBody) {
 		return fiber.StatusServiceUnavailable, helpers.ErrorBody{Error: "no_backend_available", Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload):
 		return fiber.StatusBadRequest, helpers.ErrorBody{Error: "invalid_request", Message: err.Error()}
+	case errors.Is(err, appproxy.ErrModelNotAllowed):
+		return fiber.StatusForbidden, helpers.ErrorBody{Error: "model_not_allowed", Message: err.Error()}
 	default:
 		return fiber.StatusBadGateway, helpers.ErrorBody{Error: "backend_error"}
 	}

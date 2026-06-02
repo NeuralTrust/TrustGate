@@ -27,6 +27,7 @@ type UpdateInput struct {
 	PolicyIDs       []uuid.UUID
 	AuthIDs         []uuid.UUID
 	Fallback        *domain.Fallback
+	ModelPolicies   domain.ModelPolicies
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -93,6 +94,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	existing.PolicyIDs = in.PolicyIDs
 	existing.AuthIDs = in.AuthIDs
 	existing.Fallback = in.Fallback
+	existing.ModelPolicies = in.ModelPolicies
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {
 		return nil, err

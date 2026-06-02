@@ -24,6 +24,7 @@ func existingConsumer(gwID, beID uuid.UUID) *domain.Consumer {
 		nil, true,
 		[]uuid.UUID{beID}, nil, nil,
 		nil,
+		nil,
 		now, now,
 	)
 }

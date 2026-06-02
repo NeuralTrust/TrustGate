@@ -140,6 +140,7 @@ func (f *forwarder) invokeWithFailover(
 	fromFallback := false
 	for current != nil {
 		f.retarget(dto, current)
+		f.stampModelPolicy(dto, rc, current)
 		for r := 0; r < attemptsPerBackend; r++ {
 			if budget.exhausted() {
 				return f.relayLast(ctx, dto, last)
@@ -165,6 +166,9 @@ func (f *forwarder) invokeWithFailover(
 				last = failoverState{rejection: result}
 				f.logRetry(current, pe, budget)
 			case OutcomeTerminal:
+				if resp == nil {
+					return nil, err
+				}
 				lb.ReportSuccess(current)
 				return f.finalizeBody(ctx, dto, resp), nil
 			case OutcomeRetryable:
@@ -292,6 +296,17 @@ func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Backend) {
 	if dto.response != nil {
 		dto.response.BackendID = bk.ID.String()
 	}
+}
+
+func (f *forwarder) stampModelPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Backend) {
+	policy, ok := rc.Consumer.ModelPolicies.For(bk.ID)
+	if !ok {
+		dto.request.AllowedModels = nil
+		dto.request.DefaultModel = ""
+		return
+	}
+	dto.request.AllowedModels = policy.Allowed
+	dto.request.DefaultModel = policy.Default
 }
 
 func failureReason(resp *ProviderResponse, err error) error {

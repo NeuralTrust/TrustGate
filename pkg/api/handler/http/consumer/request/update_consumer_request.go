@@ -22,6 +22,7 @@ type UpdateConsumerRequest struct {
 	PolicyIDs       []string                `json:"policy_ids,omitempty"`
 	AuthIDs         []string                `json:"auth_ids,omitempty"`
 	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
+	ModelPolicies   []ModelPolicyRequest    `json:"model_policies,omitempty"`
 }
 
 func (r UpdateConsumerRequest) Validate() error {
@@ -62,4 +63,8 @@ func (r UpdateConsumerRequest) ToAuthIDs() ([]uuid.UUID, error) {
 
 func (r UpdateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 	return r.Fallback.ToFallback()
+}
+
+func (r UpdateConsumerRequest) ToModelPolicies() (domain.ModelPolicies, error) {
+	return parseModelPolicies(r.ModelPolicies)
 }

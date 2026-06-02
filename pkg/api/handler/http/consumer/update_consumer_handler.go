@@ -49,6 +49,10 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	modelPolicies, err := req.ToModelPolicies()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 
 	cons, err := h.updater.Update(c.UserContext(), appconsumer.UpdateInput{
 		ID:              id,
@@ -64,6 +68,7 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
 		Fallback:        fallback,
+		ModelPolicies:   modelPolicies,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

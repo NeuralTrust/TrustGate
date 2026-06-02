@@ -46,6 +46,8 @@ func TestClassifyOutcome(t *testing.T) {
 		want     Outcome
 	}{
 		{"transport error", nil, errors.New("boom"), fallbackTriggers{}, OutcomeRetryable},
+		{"model not allowed is terminal", nil, ErrModelNotAllowed, fallbackTriggers{}, OutcomeTerminal},
+		{"invalid payload is terminal", nil, ErrInvalidRequestPayload, fallbackTriggers{}, OutcomeTerminal},
 		{"nil response no error", nil, nil, fallbackTriggers{}, OutcomeRetryable},
 		{"committed stream", committedStream, nil, fallbackTriggers{}, OutcomeSuccess},
 		{"2xx success", &ProviderResponse{StatusCode: 200}, nil, fallbackTriggers{}, OutcomeSuccess},

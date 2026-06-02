@@ -183,6 +183,45 @@ func TestRepository_SaveAndFindByID_RoundTripsFallback(t *testing.T) {
 	}
 }
 
+func TestRepository_SaveAndFindByID_RoundTripsModelPolicies(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "pool-mp")
+	poolBE := seedBackend(t, f.be, gwID, "be-mp-pool")
+	fbBE := seedBackend(t, f.be, gwID, "be-mp-fallback")
+
+	c := validConsumer(t, gwID, "mp-consumer", poolBE)
+	c.Fallback = &domain.Fallback{
+		Enabled:  true,
+		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+		Budget:   domain.FallbackBudget{MaxAttempts: 3},
+		Chain:    backenddomain.Backends{fbBE},
+	}
+	c.ModelPolicies = domain.ModelPolicies{
+		poolBE: {Allowed: []string{"gpt-4o", "gpt-4o-mini"}, Default: "gpt-4o"},
+		fbBE:   {Default: "claude-3-5-sonnet"},
+	}
+
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.ModelPolicies) != 2 {
+		t.Fatalf("ModelPolicies = %+v, want 2 entries", got.ModelPolicies)
+	}
+	pool, ok := got.ModelPolicies.For(poolBE)
+	if !ok || pool.Default != "gpt-4o" || len(pool.Allowed) != 2 {
+		t.Fatalf("pool policy round-trip mismatch: %+v", pool)
+	}
+	fb, ok := got.ModelPolicies.For(fbBE)
+	if !ok || fb.Default != "claude-3-5-sonnet" || len(fb.Allowed) != 0 {
+		t.Fatalf("fallback policy round-trip mismatch: %+v", fb)
+	}
+}
+
 func TestRepository_FindByID_NotFound(t *testing.T) {
 	f := setupRepo(t)
 	_, err := f.repo.FindByID(context.Background(), uuid.New())

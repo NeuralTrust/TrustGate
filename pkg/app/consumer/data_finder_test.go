@@ -27,6 +27,7 @@ func routableConsumer(gwID uuid.UUID, policyIDs, authIDs []uuid.UUID) *domain.Co
 		nil, true,
 		[]uuid.UUID{uuid.New()}, policyIDs, authIDs,
 		nil,
+		nil,
 		now, now,
 	)
 }
@@ -115,6 +116,7 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 
 			Chain: []uuid.UUID{fb2, fb1},
 		},
+		nil,
 		now, now,
 	)
 
