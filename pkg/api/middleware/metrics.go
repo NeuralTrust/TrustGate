@@ -23,6 +23,8 @@ type MetricsMiddleware struct {
 	worker              appmetrics.Worker
 	telemetryEnabled    bool
 	hasDefaultExporters bool
+	enableRequestTraces bool
+	enablePluginTraces  bool
 }
 
 func NewMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *MetricsMiddleware {
@@ -30,6 +32,8 @@ func NewMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *Metrics
 		worker:              worker,
 		telemetryEnabled:    cfg.Telemetry.Enabled,
 		hasDefaultExporters: worker.HasDefaultExporters(),
+		enableRequestTraces: cfg.Telemetry.EnableRequestTraces,
+		enablePluginTraces:  cfg.Telemetry.EnablePluginTraces,
 	}
 }
 
@@ -44,6 +48,9 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 
 		traceID := m.resolveTraceID(c)
 		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID))
+		// Gating is set once here, before the trace is shared with any
+		// downstream goroutine (forwarder, plugins, finalizer).
+		requestTrace.SetGating(m.enableRequestTraces, m.enablePluginTraces)
 		m.attachTrace(c, requestTrace)
 
 		req := m.buildRequestContext(c, gatewayID)

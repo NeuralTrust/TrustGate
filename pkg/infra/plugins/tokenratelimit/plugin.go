@@ -15,6 +15,7 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 	"github.com/go-redis/redis/v8"
 )
@@ -78,15 +79,21 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	switch in.Stage {
 	case policy.StagePreRequest:
-		return p.preRequest(ctx, cfg, counterKey)
+		return p.preRequest(ctx, cfg, counterKey, in.Request.Provider, in.Event)
 	case policy.StagePostResponse:
-		return p.postResponse(ctx, cfg, counterKey, in.Request, in.Response)
+		return p.postResponse(ctx, cfg, counterKey, in.Request, in.Response, in.Event)
 	default:
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
 }
 
-func (p *Plugin) preRequest(ctx context.Context, cfg *config, counterKey string) (*appplugins.Result, error) {
+func (p *Plugin) preRequest(
+	ctx context.Context,
+	cfg *config,
+	counterKey string,
+	provider string,
+	event *metrics.EventContext,
+) (*appplugins.Result, error) {
 	consumed, err := p.redis.Get(ctx, counterKey).Int64()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("token_rate_limiter: read counter: %w", err)
@@ -98,13 +105,26 @@ func (p *Plugin) preRequest(ctx context.Context, cfg *config, counterKey string)
 	}
 	headers := rateLimitHeaders(cfg.Window.Max, remaining, p.resetSeconds(ctx, counterKey, cfg))
 
+	data := TokenRateLimiterData{
+		Stage:           string(policy.StagePreRequest),
+		CounterKey:      counterKey,
+		Provider:        provider,
+		WindowUnit:      cfg.Window.Unit,
+		WindowMax:       cfg.Window.Max,
+		TokensConsumed:  int(consumed),
+		TokensRemaining: remaining,
+	}
+
 	if consumed >= int64(cfg.Window.Max) {
+		data.LimitExceeded = true
+		setTokenExtras(event, data)
 		return nil, &appplugins.PluginError{
 			StatusCode: http.StatusTooManyRequests,
 			Message:    fmt.Sprintf("token rate limit exceeded: consumed %d, limit %d", consumed, cfg.Window.Max),
 			Headers:    headers,
 		}
 	}
+	setTokenExtras(event, data)
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 }
 
@@ -114,6 +134,7 @@ func (p *Plugin) postResponse(
 	counterKey string,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
+	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
 	if resp == nil {
 		return &appplugins.Result{}, nil
@@ -135,7 +156,29 @@ func (p *Plugin) postResponse(
 	}
 	headers := rateLimitHeaders(cfg.Window.Max, remaining, p.resetSeconds(ctx, counterKey, cfg))
 	headers["X-Tokens-Consumed"] = []string{strconv.Itoa(tokens)}
+
+	provider := ""
+	if req != nil {
+		provider = req.Provider
+	}
+	setTokenExtras(event, TokenRateLimiterData{
+		Stage:           string(policy.StagePostResponse),
+		CounterKey:      counterKey,
+		Provider:        provider,
+		WindowUnit:      cfg.Window.Unit,
+		WindowMax:       cfg.Window.Max,
+		TokensConsumed:  int(total),
+		TokensActual:    tokens,
+		TokensRemaining: remaining,
+	})
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
+}
+
+func setTokenExtras(event *metrics.EventContext, data TokenRateLimiterData) {
+	if event == nil {
+		return
+	}
+	event.SetExtras(data)
 }
 
 // extractTokens reads the total tokens an upstream response consumed. Streaming

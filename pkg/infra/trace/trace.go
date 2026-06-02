@@ -24,8 +24,8 @@ type RequestTrace struct {
 	meta      Metadata
 	startedAt time.Time
 
-	requestTracesEnabled bool
-	pluginTracesEnabled  bool
+	requestTracesEnabled atomic.Bool
+	pluginTracesEnabled  atomic.Bool
 
 	pending  int64
 	emitOnce sync.Once
@@ -40,14 +40,15 @@ func New(traceID string, meta Metadata) *RequestTrace {
 	if traceID == "" {
 		traceID = uuid.New().String()
 	}
-	return &RequestTrace{
-		traceID:              traceID,
-		meta:                 meta,
-		startedAt:            time.Now(),
-		requestTracesEnabled: true,
-		pluginTracesEnabled:  true,
-		pending:              1,
+	t := &RequestTrace{
+		traceID:   traceID,
+		meta:      meta,
+		startedAt: time.Now(),
+		pending:   1,
 	}
+	t.requestTracesEnabled.Store(true)
+	t.pluginTracesEnabled.Store(true)
+	return t
 }
 
 // OnComplete registers the callback fired once the request and all of its
@@ -89,13 +90,13 @@ func (t *RequestTrace) Metadata() Metadata { return t.meta }
 func (t *RequestTrace) StartedAt() time.Time { return t.startedAt }
 
 func (t *RequestTrace) SetGating(requestTraces, pluginTraces bool) {
-	t.requestTracesEnabled = requestTraces
-	t.pluginTracesEnabled = pluginTraces
+	t.requestTracesEnabled.Store(requestTraces)
+	t.pluginTracesEnabled.Store(pluginTraces)
 }
 
-func (t *RequestTrace) RequestTracesEnabled() bool { return t.requestTracesEnabled }
+func (t *RequestTrace) RequestTracesEnabled() bool { return t.requestTracesEnabled.Load() }
 
-func (t *RequestTrace) PluginTracesEnabled() bool { return t.pluginTracesEnabled }
+func (t *RequestTrace) PluginTracesEnabled() bool { return t.pluginTracesEnabled.Load() }
 
 func (t *RequestTrace) StartSpan(spanType SpanType, name string) *Span {
 	s := newSpan(spanType, name)

@@ -105,6 +105,8 @@ func (e *executor) runOne(ctx context.Context, in StageInput, entry chainEntry) 
 		span := rt.StartSpan(trace.SpanPlugin, entry.plugin.Name())
 		span.SetStage(string(in.Stage))
 		event = metrics.NewEventContext(span)
+		// Guarantee the span is closed even if Execute panics.
+		defer event.Publish()
 	}
 
 	start := time.Now()
@@ -127,7 +129,6 @@ func (e *executor) runOne(ctx context.Context, in StageInput, entry chainEntry) 
 		case res != nil:
 			event.SetStatusCode(res.StatusCode)
 		}
-		event.Publish()
 	}
 
 	if err != nil && e.logger != nil {

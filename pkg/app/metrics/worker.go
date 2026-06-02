@@ -177,6 +177,8 @@ func (w *worker) export(
 
 	events := projectTrace(requestTrace)
 	if len(events) == 0 {
+		// A nil trace still yields a base request event (its trace id is empty);
+		// a present trace with request traces gated off emits nothing.
 		if requestTrace != nil && !requestTrace.RequestTracesEnabled() {
 			return
 		}
@@ -232,6 +234,9 @@ func projectCallSpan(requestTrace *trace.RequestTrace, span *trace.Span) *metric
 		evt.Usage = metric_events.UsageEventFromCanonical(attrs.Usage)
 	}
 	evt.StatusCode = span.StatusCode()
+	if errMsg := span.Error(); errMsg != "" {
+		evt.Error = errMsg
+	}
 	stampTrace(evt, requestTrace)
 	return evt
 }
