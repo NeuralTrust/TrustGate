@@ -3,6 +3,7 @@ package request
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
@@ -21,6 +22,51 @@ type CreateConsumerRequest struct {
 	BackendIDs      []string                `json:"backend_ids"`
 	PolicyIDs       []string                `json:"policy_ids,omitempty"`
 	AuthIDs         []string                `json:"auth_ids,omitempty"`
+	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
+}
+
+type FallbackRequest struct {
+	Enabled  bool                   `json:"enabled"`
+	Triggers []string               `json:"triggers,omitempty"`
+	Budget   *FallbackBudgetRequest `json:"budget,omitempty"`
+	Chain    []string               `json:"chain,omitempty"`
+}
+
+type FallbackBudgetRequest struct {
+	MaxAttempts       int     `json:"max_attempts,omitempty"`
+	MaxTotalLatencyMs int     `json:"max_total_latency_ms,omitempty"`
+	MaxCostUSD        float64 `json:"max_cost_usd,omitempty"`
+}
+
+// ToFallback maps the request DTO to the domain fallback config. The chain is
+// resolved to UUIDs. budget.max_attempts left unset (0) means "auto": the
+// runtime bounds the failover by candidate exhaustion (pool + chain, each
+// retried per the server's per-backend retry budget) instead of a guessed
+// ceiling.
+func (r *FallbackRequest) ToFallback() (*domain.Fallback, error) {
+	if r == nil {
+		return nil, nil
+	}
+	chain, err := parseUUIDList(r.Chain, "fallback.chain")
+	if err != nil {
+		return nil, err
+	}
+	triggers := make([]domain.FallbackTrigger, 0, len(r.Triggers))
+	for _, t := range r.Triggers {
+		triggers = append(triggers, domain.FallbackTrigger(t))
+	}
+	budget := domain.FallbackBudget{}
+	if r.Budget != nil {
+		budget.MaxAttempts = r.Budget.MaxAttempts
+		budget.MaxTotalLatency = time.Duration(r.Budget.MaxTotalLatencyMs) * time.Millisecond
+		budget.MaxCostUSD = r.Budget.MaxCostUSD
+	}
+	return &domain.Fallback{
+		Enabled:  r.Enabled,
+		Triggers: triggers,
+		Budget:   budget,
+		Chain:    chain,
+	}, nil
 }
 
 type EmbeddingConfigRequest struct {
@@ -93,6 +139,10 @@ func (r CreateConsumerRequest) ToPolicyIDs() ([]uuid.UUID, error) {
 
 func (r CreateConsumerRequest) ToAuthIDs() ([]uuid.UUID, error) {
 	return parseUUIDList(r.AuthIDs, "auth_ids")
+}
+
+func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
+	return r.Fallback.ToFallback()
 }
 
 func parseUUIDList(raw []string, field string) ([]uuid.UUID, error) {

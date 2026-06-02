@@ -45,6 +45,10 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	fallback, err := req.ToFallback()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
 		GatewayID:       gatewayID,
@@ -58,6 +62,7 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 		BackendIDs:      backendIDs,
 		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
+		Fallback:        fallback,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

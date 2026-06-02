@@ -74,6 +74,35 @@ func (f *forwarder) runPreResponse(
 	}
 }
 
+// runPreResponseGated executes the PreResponse stage and returns a non-nil
+// *PluginError when a plugin rejects the response (so the forwarder can fail
+// over to the next candidate when the plugin_rejection trigger is enabled).
+// Plugin headers are merged into resp regardless; a non-rejection short-circuit
+// or a non-plugin error is treated as "accepted" (logged) like runPreResponse.
+func (f *forwarder) runPreResponseGated(
+	ctx context.Context,
+	policies []*policy.Policy,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+) *appplugins.PluginError {
+	if f.executor == nil {
+		return nil
+	}
+	if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
+		Stage:     policy.StagePreResponse,
+		Policies:  policies,
+		Request:   req,
+		Response:  resp,
+		Collector: metrics.CollectorFromContext(ctx),
+	}); err != nil {
+		if pe, ok := appplugins.AsPluginError(err); ok {
+			return pe
+		}
+		f.logger.Warn("pre_response plugin stage failed", slog.String("error", err.Error()))
+	}
+	return nil
+}
+
 // firePostResponse runs the PostResponse stage asynchronously against snapshots
 // of the request/response so it never races the client response that is being
 // relayed concurrently.

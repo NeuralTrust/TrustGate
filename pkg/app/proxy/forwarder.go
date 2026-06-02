@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
@@ -15,6 +16,8 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/metric_events"
 	"github.com/google/uuid"
 	"golang.org/x/sync/singleflight"
 )
@@ -124,79 +127,199 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	dto := &forwardRequestDTO{backend: bk, request: in.Request, response: resp, policies: policies}
 	stream := DetectStream(dto.request)
 
-	providerResp, err := f.invokeWithFailover(ctx, lb, dto, stream)
-	if err != nil {
-		return nil, err
-	}
-
-	// A streaming request that actually opened a stream is finalized on the
-	// streaming path; a pre-stream non-2xx response (Stream nil) is finalized as
-	// a body so PreResponse/PostResponse still run.
-	if stream && providerResp.Stream != nil {
-		return f.finalizeStream(ctx, dto, providerResp), nil
-	}
-	return f.finalizeBody(ctx, dto, providerResp), nil
+	return f.invokeWithFailover(ctx, lb, in.Consumer, dto, stream)
 }
 
-// invokeWithFailover invokes the selected backend and, on a retryable failure
-// (transport error or a backend failure status: 5xx/429/408), reports the
-// failure to the load balancer, asks it for the next backend and retries, up to
-// 1+maxRetries attempts. A streaming response that already opened a stream is
-// committed and never retried. When all attempts are exhausted it relays the
-// last backend response verbatim (e.g. a 5xx the client should see) or returns
-// the last transport error.
+// invokeWithFailover runs the request through the consumer's failover policy.
+// It walks two tiers of candidate backends, giving each backend up to
+// retriesPerBackend attempts before moving on:
+//
+//   - Tier 1 (pool): backends picked by the load balancer, excluding ones
+//     already tried this request (so e.g. round-robin over a single backend does
+//     not loop forever).
+//   - Tier 2 (fallback chain): the consumer's Fallback.Chain in strict priority
+//     order, walked only after the pool is exhausted.
+//
+// Each attempt is classified (success / retryable / terminal). A committed
+// stream or accepted buffered success is finalized and returned immediately; a
+// terminal 4xx is relayed verbatim without failover; a retryable outcome reports
+// failure to the LB and advances. When the plugin_rejection trigger is enabled,
+// a buffered success rejected by a PreResponse plugin also fails over to the
+// next candidate. An enabled fallback's Budget (MaxAttempts, MaxTotalLatency) is
+// the global ceiling. When everything is exhausted the last result is relayed
+// (a backend 5xx, the last plugin rejection, or the last transport error).
 func (f *forwarder) invokeWithFailover(
 	ctx context.Context,
 	lb *loadbalancer.LoadBalancer,
+	rc *appconsumer.RoutableConsumer,
 	dto *forwardRequestDTO,
 	stream bool,
-) (*ProviderResponse, error) {
-	attempts := f.maxRetries + 1
-	if attempts < 1 {
-		attempts = 1
-	}
+) (*ForwardResult, error) {
+	fb := rc.Consumer.Fallback
+	triggers := triggersFrom(fb)
+	retriesPerBackend := f.retriesPerBackend()
+	budget := newFailoverBudget(fb)
+	excluded := make(map[uuid.UUID]struct{})
 
-	var (
-		resp *ProviderResponse
-		err  error
-	)
-	for attempt := 0; attempt < attempts; attempt++ {
-		if attempt > 0 {
-			next, selErr := lb.NextBackend(dto.request)
-			if selErr != nil {
-				break
+	last := failoverState{}
+	current := dto.backend
+	fromFallback := false
+	for current != nil {
+		f.retarget(dto, current)
+		for r := 0; r < retriesPerBackend; r++ {
+			if budget.exhausted() {
+				return f.relayLast(ctx, dto, last)
 			}
-			f.retarget(dto, next)
-		}
+			budget.recordAttempt()
 
-		resp, err = f.invokeOnce(ctx, dto.backend, dto.request, stream)
-		if err == nil && !isRetryableResponse(resp, stream) {
-			lb.ReportSuccess(dto.backend)
-			return resp, nil
+			startedAt := time.Now()
+			resp, err := f.invokeOnce(ctx, current, dto.request, stream)
+			elapsed := time.Since(startedAt)
+			outcome := classifyOutcome(resp, err, triggers)
+			f.emitHop(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
+			switch outcome {
+			case OutcomeSuccess:
+				lb.ReportSuccess(current)
+				if stream && resp.Stream != nil {
+					return f.finalizeStream(ctx, dto, resp), nil
+				}
+				result, pe := f.finalizeBodyGated(ctx, dto, resp)
+				if pe == nil || !triggers.pluginRejection {
+					return result, nil
+				}
+				// The backend answered fine but a response plugin rejected the
+				// payload and the trigger is enabled: skip the remaining
+				// same-backend retries (a deterministic rejection would only
+				// repeat) and fail over to the next candidate, remembering the
+				// rejection to relay if nothing better is produced.
+				last = failoverState{rejection: result}
+				f.logRetry(current, pe, budget)
+			case OutcomeTerminal:
+				lb.ReportSuccess(current)
+				return f.finalizeBody(ctx, dto, resp), nil
+			case OutcomeRetryable:
+				reason := failureReason(resp, err)
+				lb.ReportFailure(current, reason)
+				last = failoverState{resp: resp, err: err}
+				f.logRetry(current, reason, budget)
+				continue
+			}
+			break
 		}
-
-		reason := failureReason(resp, err)
-		lb.ReportFailure(dto.backend, reason)
-		if attempt < attempts-1 {
-			f.logger.Warn("backend invocation failed; retrying with next backend",
-				slog.String("backend_id", dto.backend.ID.String()),
-				slog.String("provider", dto.backend.Provider),
-				slog.Int("attempt", attempt+1),
-				slog.Int("max_attempts", attempts),
-				slog.String("reason", reason.Error()),
-			)
-		}
+		excluded[current.ID] = struct{}{}
+		current, fromFallback = f.nextCandidate(lb, rc, dto.request, excluded)
 	}
 
-	// Exhausted: relay the last backend response (e.g. a 5xx) verbatim, or
-	// surface the last transport error when no response was produced.
+	return f.relayLast(ctx, dto, last)
+}
+
+// failoverState tracks the most recent attempt outcome so the loop can relay a
+// sensible result once every candidate is exhausted: the last plugin rejection
+// (when nothing better was produced), else the last backend response finalized
+// verbatim, else the last transport error.
+type failoverState struct {
+	resp      *ProviderResponse
+	err       error
+	rejection *ForwardResult
+}
+
+// relayLast finalizes the terminal state when the failover loop is exhausted.
+func (f *forwarder) relayLast(
+	ctx context.Context,
+	dto *forwardRequestDTO,
+	last failoverState,
+) (*ForwardResult, error) {
+	if last.resp != nil {
+		return f.finalizeBody(ctx, dto, last.resp), nil
+	}
+	if last.rejection != nil {
+		return last.rejection, nil
+	}
+	if last.err != nil {
+		return nil, last.err
+	}
+	return nil, ErrNoBackendAvailable
+}
+
+// retriesPerBackend is the per-backend attempt budget, derived from the provider
+// retry config and clamped to at least one attempt.
+func (f *forwarder) retriesPerBackend() int {
+	if f.maxRetries < 1 {
+		return 1
+	}
+	return f.maxRetries
+}
+
+// nextCandidate advances to the next backend to try: first the next pool backend
+// from the load balancer (excluding ones already attempted), then the fallback
+// chain in priority order. The bool reports whether the returned backend comes
+// from the fallback chain (vs the primary pool). Returns (nil, false) when no
+// further candidate remains.
+func (f *forwarder) nextCandidate(
+	lb *loadbalancer.LoadBalancer,
+	rc *appconsumer.RoutableConsumer,
+	req *infracontext.RequestContext,
+	excluded map[uuid.UUID]struct{},
+) (*domain.Backend, bool) {
+	if bk, err := lb.NextBackend(req, excluded); err == nil && bk != nil {
+		if _, seen := excluded[bk.ID]; !seen {
+			return bk, false
+		}
+	}
+	if fb := rc.Consumer.Fallback; fb != nil && fb.Enabled {
+		for _, bk := range rc.FallbackBackends {
+			if _, seen := excluded[bk.ID]; !seen {
+				return bk, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// emitHop records a per-attempt trace event so each backend tried in a request
+// is observable. The collector stamps the shared request TraceID, correlating
+// every hop with the original request. elapsed is the wall-clock time spent on
+// this backend call, surfaced as the hop latency.
+func (f *forwarder) emitHop(
+	ctx context.Context,
+	bk *domain.Backend,
+	fromFallback bool,
+	attempt int,
+	outcome Outcome,
+	resp *ProviderResponse,
+	elapsed time.Duration,
+) {
+	collector := metrics.CollectorFromContext(ctx)
+	if collector == nil {
+		return
+	}
+	latencyMs := elapsed.Milliseconds()
+	evt := metric_events.NewTraceEvent()
+	evt.Attempt = attempt
+	evt.Fallback = fromFallback
+	evt.BackendID = bk.ID.String()
+	evt.Outcome = outcome.String()
+	evt.EndTimestamp = time.Now().Unix()
+	evt.Latency = latencyMs
 	if resp != nil {
-		return resp, nil
+		evt.StatusCode = resp.StatusCode
 	}
-	if err == nil {
-		err = ErrNoBackendAvailable
+	if evt.Upstream != nil {
+		evt.Upstream.Target.Provider = bk.Provider
+		evt.Upstream.Target.Latency = latencyMs
 	}
-	return nil, err
+	collector.Emit(evt)
+}
+
+// logRetry emits a structured warning when a backend attempt fails and another
+// candidate/retry remains.
+func (f *forwarder) logRetry(bk *domain.Backend, reason error, budget *failoverBudget) {
+	f.logger.Warn("backend invocation failed; failing over",
+		slog.String("backend_id", bk.ID.String()),
+		slog.String("provider", bk.Provider),
+		slog.Int("attempt", budget.attempts),
+		slog.String("reason", reason.Error()),
+	)
 }
 
 // invokeOnce performs a single backend call on the streaming or synchronous
@@ -221,20 +344,6 @@ func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Backend) {
 	if dto.response != nil {
 		dto.response.BackendID = bk.ID.String()
 	}
-}
-
-// isRetryableResponse reports whether a (non-error) provider response should be
-// retried. A response that already carries a stream is committed and never
-// retried; otherwise a backend failure status (5xx/429/408) is retryable while
-// 2xx and other 4xx are terminal.
-func isRetryableResponse(resp *ProviderResponse, stream bool) bool {
-	if resp == nil {
-		return false
-	}
-	if stream && resp.Stream != nil {
-		return false
-	}
-	return backendFailureStatus(resp.StatusCode)
 }
 
 // failureReason builds the error recorded against the backend's passive health,
@@ -268,12 +377,16 @@ func (f *forwarder) finalizeStream(
 
 // finalizeBody runs the response plugins for a buffered backend response (the
 // synchronous path or a pre-stream non-2xx response on the streaming path).
+// Response headers are reset before the merge so a re-finalization after
+// failover (e.g. relaying the last 5xx, or a terminal response that follows an
+// earlier plugin-rejected attempt) does not accumulate stale headers.
 func (f *forwarder) finalizeBody(
 	ctx context.Context,
 	dto *forwardRequestDTO,
 	providerResp *ProviderResponse,
 ) *ForwardResult {
 	pluginResp := dto.response
+	pluginResp.Headers = nil
 	mergeProviderResponse(pluginResp, providerResp, false)
 	f.runPreResponse(ctx, dto.policies, dto.request, pluginResp)
 	f.firePostResponse(dto.policies, dto.request, pluginResp)
@@ -282,6 +395,31 @@ func (f *forwarder) finalizeBody(
 		Headers:    pluginResp.Headers,
 		Body:       pluginResp.Body,
 	}
+}
+
+// finalizeBodyGated finalizes a buffered backend response while surfacing a
+// PreResponse plugin rejection so the caller can decide whether to fail over.
+// When a plugin rejects the payload it returns the synthetic rejection result
+// and the *PluginError (PostResponse is not fired); otherwise it behaves like
+// finalizeBody and returns a nil error. Response headers are reset before the
+// merge so a re-finalization after failover does not accumulate stale headers.
+func (f *forwarder) finalizeBodyGated(
+	ctx context.Context,
+	dto *forwardRequestDTO,
+	providerResp *ProviderResponse,
+) (*ForwardResult, *appplugins.PluginError) {
+	pluginResp := dto.response
+	pluginResp.Headers = nil
+	mergeProviderResponse(pluginResp, providerResp, false)
+	if pe := f.runPreResponseGated(ctx, dto.policies, dto.request, pluginResp); pe != nil {
+		return pluginErrorResult(pe), pe
+	}
+	f.firePostResponse(dto.policies, dto.request, pluginResp)
+	return &ForwardResult{
+		StatusCode: pluginResp.StatusCode,
+		Headers:    pluginResp.Headers,
+		Body:       pluginResp.Body,
+	}, nil
 }
 
 // selectBackend resolves the load balancer for the consumer's pool and asks it
@@ -296,7 +434,7 @@ func (f *forwarder) selectBackend(
 	if err != nil {
 		return nil, nil, err
 	}
-	bk, err := lb.NextBackend(req)
+	bk, err := lb.NextBackend(req, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
 	}

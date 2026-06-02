@@ -44,6 +44,16 @@ type Event struct {
 	StatusCode      int                 `json:"status_code"`
 	Streaming       bool                `json:"streaming"`
 
+	// Failover params: per-hop attribution emitted once per backend attempt.
+	// Attempt is the 1-based attempt index within the request, Fallback marks an
+	// attempt against the consumer's fallback chain (vs the primary pool),
+	// BackendID is the backend tried and Outcome is its classification
+	// (success/retryable/terminal).
+	Attempt   int    `json:"attempt,omitempty"`
+	Fallback  bool   `json:"fallback,omitempty"`
+	BackendID string `json:"backend_id,omitempty"`
+	Outcome   string `json:"outcome,omitempty"`
+
 	TeamID string `json:"team_id,omitempty"`
 	AppID  string `json:"app_id,omitempty"`
 

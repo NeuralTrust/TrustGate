@@ -13,6 +13,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 )
 
 // Pool is the set of backends a single consumer balances across, together with
@@ -157,18 +158,22 @@ func (lb *LoadBalancer) performSuccessUpdate(b *backend.Backend) {
 	_, _ = pipe.Exec(ctx)
 }
 
-// NextBackend asks the strategy for a backend and skips ones currently marked
-// unhealthy, trying up to one full pass over the pool. When every candidate is
+// NextBackend asks the strategy for a backend (skipping any in exclude, i.e.
+// already tried in this request) and skips ones currently marked unhealthy,
+// trying up to one full pass over the pool. When every eligible candidate is
 // unhealthy it falls back to the last pick rather than failing the request, so a
-// stale/incorrect health flag cannot black-hole all traffic.
-func (lb *LoadBalancer) NextBackend(req *infracontext.RequestContext) (*backend.Backend, error) {
+// stale/incorrect health flag cannot black-hole all traffic. exclude may be nil.
+func (lb *LoadBalancer) NextBackend(
+	req *infracontext.RequestContext,
+	exclude map[uuid.UUID]struct{},
+) (*backend.Backend, error) {
 	attempts := lb.poolSize
 	if attempts < 1 {
 		attempts = 1
 	}
 	var last *backend.Backend
 	for i := 0; i < attempts; i++ {
-		b := lb.strategy.Next(req)
+		b := lb.strategy.Next(req, exclude)
 		if b == nil {
 			break
 		}

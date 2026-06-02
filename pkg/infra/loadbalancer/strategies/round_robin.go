@@ -6,6 +6,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
+	"github.com/google/uuid"
 )
 
 type RoundRobin struct {
@@ -18,15 +19,21 @@ func NewRoundRobin(backends []*backend.Backend) *RoundRobin {
 	return &RoundRobin{backends: backends}
 }
 
-func (rr *RoundRobin) Next(req *infracontext.RequestContext) *backend.Backend {
+func (rr *RoundRobin) Next(req *infracontext.RequestContext, exclude map[uuid.UUID]struct{}) *backend.Backend {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
-	if len(rr.backends) == 0 {
+	n := len(rr.backends)
+	if n == 0 {
 		return nil
 	}
-	b := rr.backends[rr.current]
-	rr.current = (rr.current + 1) % len(rr.backends)
-	return b
+	for i := 0; i < n; i++ {
+		b := rr.backends[rr.current]
+		rr.current = (rr.current + 1) % n
+		if !isExcluded(b.ID, exclude) {
+			return b
+		}
+	}
+	return nil
 }
 
 func (rr *RoundRobin) Name() string {

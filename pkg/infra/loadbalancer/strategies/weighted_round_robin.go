@@ -6,6 +6,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
+	"github.com/google/uuid"
 )
 
 type WeightedRoundRobin struct {
@@ -29,13 +30,16 @@ func NewWeightedRoundRobin(backends []*backend.Backend) *WeightedRoundRobin {
 	}
 }
 
-func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext) *backend.Backend {
+func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext, exclude map[uuid.UUID]struct{}) *backend.Backend {
 	wrr.mu.Lock()
 	defer wrr.mu.Unlock()
 	if len(wrr.backends) == 0 {
 		return nil
 	}
-	for {
+	// Bound the scan to one full weighted cycle so an exclude set that masks
+	// every eligible backend terminates with nil instead of spinning forever.
+	maxIterations := len(wrr.backends)*(wrr.maxWeight+1) + 1
+	for i := 0; i < maxIterations; i++ {
 		wrr.currentIndex = (wrr.currentIndex + 1) % len(wrr.backends)
 		if wrr.currentIndex == 0 {
 			wrr.currentWeight = wrr.currentWeight - 1
@@ -46,10 +50,12 @@ func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext) *backend.B
 				}
 			}
 		}
-		if wrr.backends[wrr.currentIndex].Weight >= wrr.currentWeight {
-			return wrr.backends[wrr.currentIndex]
+		b := wrr.backends[wrr.currentIndex]
+		if b.Weight >= wrr.currentWeight && !isExcluded(b.ID, exclude) {
+			return b
 		}
 	}
+	return nil
 }
 
 func (wrr *WeightedRoundRobin) Name() string {

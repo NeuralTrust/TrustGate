@@ -77,11 +77,14 @@ func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID uuid.UUID) (*D
 
 	routable := make([]RoutableConsumer, 0, len(consumers))
 	for _, c := range consumers {
+		fallbackBackends := collectBackends(fallbackChainOf(c), backendByID)
+		f.warnUnresolvedFallbackChain(c, fallbackBackends)
 		routable = append(routable, RoutableConsumer{
-			Consumer: c,
-			Backends: collectBackends(c.BackendIDs, backendByID),
-			Policies: collectPolicies(c.PolicyIDs, policyByID),
-			Auths:    collectAuths(c.AuthIDs, authByID),
+			Consumer:         c,
+			Backends:         collectBackends(c.BackendIDs, backendByID),
+			FallbackBackends: fallbackBackends,
+			Policies:         collectPolicies(c.PolicyIDs, policyByID),
+			Auths:            collectAuths(c.AuthIDs, authByID),
 		})
 	}
 
@@ -97,7 +100,9 @@ func (f *dataFinder) loadBackends(
 	gatewayID uuid.UUID,
 	consumers []*domain.Consumer,
 ) (map[uuid.UUID]*backenddomain.Backend, error) {
-	ids := uniqueIDs(consumers, func(c *domain.Consumer) []uuid.UUID { return c.BackendIDs })
+	ids := uniqueIDs(consumers, func(c *domain.Consumer) []uuid.UUID {
+		return append(append([]uuid.UUID{}, c.BackendIDs...), fallbackChainOf(c)...)
+	})
 	if len(ids) == 0 {
 		return map[uuid.UUID]*backenddomain.Backend{}, nil
 	}
@@ -167,6 +172,31 @@ func uniqueIDs(consumers []*domain.Consumer, pick func(*domain.Consumer) []uuid.
 		}
 	}
 	return out
+}
+
+// warnUnresolvedFallbackChain logs when a consumer's fallback chain references
+// backend IDs that no longer resolve (e.g. a backend deleted before the
+// delete-time chain guard existed). The unresolved entries are skipped at
+// routing time, so this surfaces the silent degradation for operators.
+func (f *dataFinder) warnUnresolvedFallbackChain(c *domain.Consumer, resolved []*backenddomain.Backend) {
+	chain := fallbackChainOf(c)
+	if len(chain) == len(resolved) {
+		return
+	}
+	f.logger.Warn("consumer fallback chain references unknown backend(s); skipping them",
+		slog.String("consumer_id", c.ID.String()),
+		slog.Int("chain_size", len(chain)),
+		slog.Int("resolved", len(resolved)),
+	)
+}
+
+// fallbackChainOf returns the consumer's fallback chain backend IDs, or nil when
+// no enabled fallback is configured.
+func fallbackChainOf(c *domain.Consumer) []uuid.UUID {
+	if c == nil || c.Fallback == nil || !c.Fallback.Enabled {
+		return nil
+	}
+	return c.Fallback.Chain
 }
 
 func collectBackends(ids []uuid.UUID, byID map[uuid.UUID]*backenddomain.Backend) []*backenddomain.Backend {

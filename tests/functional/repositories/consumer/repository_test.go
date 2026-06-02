@@ -147,6 +147,45 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	}
 }
 
+func TestRepository_SaveAndFindByID_RoundTripsFallback(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "pool-fb")
+	poolBE := seedBackend(t, f.be, gwID, "be-pool")
+	fbBE := seedBackend(t, f.be, gwID, "be-fallback")
+
+	c := validConsumer(t, gwID, "fb-consumer", poolBE)
+	c.Fallback = &domain.Fallback{
+		Enabled:  true,
+		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx, domain.TriggerHTTP429},
+		Budget:   domain.FallbackBudget{MaxAttempts: 6, MaxTotalLatency: 5 * time.Second, MaxCostUSD: 1.5},
+		Chain:    backenddomain.Backends{fbBE},
+	}
+
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Fallback == nil {
+		t.Fatal("Fallback was not persisted")
+	}
+	if !got.Fallback.Enabled || got.Fallback.Budget.MaxAttempts != 6 {
+		t.Fatalf("Fallback round-trip mismatch: %+v", got.Fallback)
+	}
+	if got.Fallback.Budget.MaxTotalLatency != 5*time.Second {
+		t.Fatalf("Fallback latency = %v, want 5s", got.Fallback.Budget.MaxTotalLatency)
+	}
+	if len(got.Fallback.Chain) != 1 || got.Fallback.Chain[0] != fbBE {
+		t.Fatalf("Fallback chain = %v, want [%s]", got.Fallback.Chain, fbBE)
+	}
+	if len(got.Fallback.Triggers) != 2 {
+		t.Fatalf("Fallback triggers = %v, want 2", got.Fallback.Triggers)
+	}
+}
+
 func TestRepository_FindByID_NotFound(t *testing.T) {
 	f := setupRepo(t)
 	_, err := f.repo.FindByID(context.Background(), uuid.New())
@@ -366,6 +405,32 @@ func TestRepository_DeleteBackend_FailsWhenReferencedByConsumer(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	err := f.be.Delete(ctx, beID)
+	if !errors.Is(err, backenddomain.ErrHasDependents) {
+		t.Fatalf("err = %v, want backenddomain.ErrHasDependents", err)
+	}
+}
+
+// A backend referenced only in a consumer's fallback chain (JSONB, no FK) must
+// still be protected from deletion by the explicit chain guard.
+func TestRepository_DeleteBackend_FailsWhenReferencedByFallbackChain(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "pool-fbd")
+	poolBE := seedBackend(t, f.be, gwID, "be-pool-fbd")
+	fbBE := seedBackend(t, f.be, gwID, "be-fallback-only")
+
+	c := validConsumer(t, gwID, "fb-only-consumer", poolBE)
+	c.Fallback = &domain.Fallback{
+		Enabled:  true,
+		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+		Budget:   domain.FallbackBudget{MaxAttempts: 3},
+		Chain:    backenddomain.Backends{fbBE},
+	}
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	err := f.be.Delete(ctx, fbBE)
 	if !errors.Is(err, backenddomain.ErrHasDependents) {
 		t.Fatalf("err = %v, want backenddomain.ErrHasDependents", err)
 	}
