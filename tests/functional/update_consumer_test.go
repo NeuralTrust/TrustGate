@@ -78,6 +78,40 @@ func TestUpdateConsumer_RebindsBackends(t *testing.T) {
 	assert.False(t, got[be1], "be1 must have been detached")
 }
 
+// TestUpdateConsumer_SetsModelPolicies attaches a model policy through an update
+// and asserts it is persisted and returned on a subsequent read.
+func TestUpdateConsumer_SetsModelPolicies(t *testing.T) {
+	defer Track(t, "UpdateConsumer")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-mp-gw")})
+	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-upd-mp-be")))
+	name := uniqueName("co-upd-mp")
+	coID := CreateConsumer(t, gwID, validConsumerPayload(name, beID))
+
+	payload := validConsumerPayload(name, beID)
+	payload["model_policies"] = []map[string]any{
+		{"backend_id": beID, "allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"},
+	}
+	status, body := sendRequest(t, http.MethodPut,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
+		nil, payload,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+
+	status, body = sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status)
+
+	policies, ok := body["model_policies"].([]any)
+	require.True(t, ok, "model_policies missing after update: %v", body)
+	require.Len(t, policies, 1)
+	policy, ok := policies[0].(map[string]any)
+	require.True(t, ok, "model policy entry malformed: %v", policies[0])
+	assert.Equal(t, beID, policy["backend_id"])
+	assert.Equal(t, "gpt-4o-mini", policy["default"])
+}
+
 func TestUpdateConsumer_NotFound(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-missing-gw")})

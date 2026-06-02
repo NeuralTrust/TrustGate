@@ -7,7 +7,7 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type UpdateConsumerRequest struct {
@@ -49,16 +49,16 @@ func (r UpdateConsumerRequest) ToEmbeddingConfig() *backenddomain.EmbeddingConfi
 	return r.EmbeddingConfig.ToDomain()
 }
 
-func (r UpdateConsumerRequest) ToBackendIDs() ([]uuid.UUID, error) {
-	return parseUUIDList(r.BackendIDs, "backend_ids")
+func (r UpdateConsumerRequest) ToBackendIDs() ([]ids.BackendID, error) {
+	return parseUUIDList[ids.BackendKind](r.BackendIDs, "backend_ids")
 }
 
-func (r UpdateConsumerRequest) ToPolicyIDs() ([]uuid.UUID, error) {
-	return parseUUIDList(r.PolicyIDs, "policy_ids")
+func (r UpdateConsumerRequest) ToPolicyIDs() ([]ids.PolicyID, error) {
+	return parseUUIDList[ids.PolicyKind](r.PolicyIDs, "policy_ids")
 }
 
-func (r UpdateConsumerRequest) ToAuthIDs() ([]uuid.UUID, error) {
-	return parseUUIDList(r.AuthIDs, "auth_ids")
+func (r UpdateConsumerRequest) ToAuthIDs() ([]ids.AuthID, error) {
+	return parseUUIDList[ids.AuthKind](r.AuthIDs, "auth_ids")
 }
 
 func (r UpdateConsumerRequest) ToFallback() (*domain.Fallback, error) {

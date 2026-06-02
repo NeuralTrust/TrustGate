@@ -5,14 +5,14 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 type UpdateInput struct {
-	ID        uuid.UUID
-	GatewayID uuid.UUID
+	ID        ids.PolicyID
+	GatewayID ids.GatewayID
 	Name      string
 	Plugins   domain.Plugins
 }
@@ -50,7 +50,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	if err != nil {
 		return nil, err
 	}
-	if in.GatewayID != uuid.Nil && in.GatewayID != existing.GatewayID {
+	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
 	existing.Name = in.Name

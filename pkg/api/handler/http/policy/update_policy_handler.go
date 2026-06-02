@@ -8,6 +8,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy/response"
 	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -20,7 +21,7 @@ func NewUpdatePolicyHandler(updater apppolicy.Updater) *UpdatePolicyHandler {
 }
 
 func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
+	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.PolicyKind](c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

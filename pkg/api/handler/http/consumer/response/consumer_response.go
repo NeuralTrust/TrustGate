@@ -5,12 +5,12 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type ConsumerResponse struct {
-	ID              uuid.UUID                `json:"id"`
-	GatewayID       uuid.UUID                `json:"gateway_id"`
+	ID              ids.ConsumerID           `json:"id"`
+	GatewayID       ids.GatewayID            `json:"gateway_id"`
 	Name            string                   `json:"name"`
 	Type            string                   `json:"type"`
 	Path            string                   `json:"path"`
@@ -18,9 +18,9 @@ type ConsumerResponse struct {
 	EmbeddingConfig *EmbeddingConfigResponse `json:"embedding_config,omitempty"`
 	Headers         map[string]string        `json:"headers,omitempty"`
 	Active          bool                     `json:"active"`
-	BackendIDs      []uuid.UUID              `json:"backend_ids"`
-	PolicyIDs       []uuid.UUID              `json:"policy_ids"`
-	AuthIDs         []uuid.UUID              `json:"auth_ids"`
+	BackendIDs      []ids.BackendID          `json:"backend_ids"`
+	PolicyIDs       []ids.PolicyID           `json:"policy_ids"`
+	AuthIDs         []ids.AuthID             `json:"auth_ids"`
 	Fallback        *FallbackResponse        `json:"fallback,omitempty"`
 	ModelPolicies   []ModelPolicyResponse    `json:"model_policies,omitempty"`
 	CreatedAt       time.Time                `json:"created_at"`
@@ -28,9 +28,9 @@ type ConsumerResponse struct {
 }
 
 type ModelPolicyResponse struct {
-	BackendID uuid.UUID `json:"backend_id"`
-	Allowed   []string  `json:"allowed,omitempty"`
-	Default   string    `json:"default,omitempty"`
+	BackendID ids.BackendID `json:"backend_id"`
+	Allowed   []string      `json:"allowed,omitempty"`
+	Default   string        `json:"default,omitempty"`
 }
 
 type EmbeddingConfigResponse struct {
@@ -42,7 +42,7 @@ type FallbackResponse struct {
 	Enabled  bool                   `json:"enabled"`
 	Triggers []string               `json:"triggers,omitempty"`
 	Budget   FallbackBudgetResponse `json:"budget"`
-	Chain    []uuid.UUID            `json:"chain"`
+	Chain    []ids.BackendID        `json:"chain"`
 }
 
 type FallbackBudgetResponse struct {
@@ -55,17 +55,17 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 	if c == nil {
 		return ConsumerResponse{}
 	}
-	backendIDs := c.BackendIDs
+	backendIDs := []ids.BackendID(c.BackendIDs)
 	if backendIDs == nil {
-		backendIDs = []uuid.UUID{}
+		backendIDs = []ids.BackendID{}
 	}
 	policyIDs := c.PolicyIDs
 	if policyIDs == nil {
-		policyIDs = []uuid.UUID{}
+		policyIDs = []ids.PolicyID{}
 	}
 	authIDs := c.AuthIDs
 	if authIDs == nil {
-		authIDs = []uuid.UUID{}
+		authIDs = []ids.AuthID{}
 	}
 	var embedding *EmbeddingConfigResponse
 	if c.EmbeddingConfig != nil {
@@ -120,9 +120,9 @@ func fromFallback(f *domain.Fallback) *FallbackResponse {
 	for _, t := range f.Triggers {
 		triggers = append(triggers, string(t))
 	}
-	chain := f.Chain
+	chain := []ids.BackendID(f.Chain)
 	if chain == nil {
-		chain = []uuid.UUID{}
+		chain = []ids.BackendID{}
 	}
 	return &FallbackResponse{
 		Enabled:  f.Enabled,

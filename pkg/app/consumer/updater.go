@@ -8,14 +8,14 @@ import (
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 type UpdateInput struct {
-	ID              uuid.UUID
-	GatewayID       uuid.UUID
+	ID              ids.ConsumerID
+	GatewayID       ids.GatewayID
 	Name            string
 	Type            domain.Type
 	Path            string
@@ -23,9 +23,9 @@ type UpdateInput struct {
 	EmbeddingConfig *backenddomain.EmbeddingConfig
 	Headers         map[string]string
 	Active          *bool
-	BackendIDs      []uuid.UUID
-	PolicyIDs       []uuid.UUID
-	AuthIDs         []uuid.UUID
+	BackendIDs      []ids.BackendID
+	PolicyIDs       []ids.PolicyID
+	AuthIDs         []ids.AuthID
 	Fallback        *domain.Fallback
 	ModelPolicies   domain.ModelPolicies
 }
@@ -72,7 +72,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if err != nil {
 		return nil, err
 	}
-	if in.GatewayID != uuid.Nil && in.GatewayID != existing.GatewayID {
+	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
 	if err := validateAssociations(ctx, u.backendRepo, u.policyRepo, u.authRepo,

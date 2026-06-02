@@ -4,12 +4,12 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
-	"github.com/google/uuid"
 )
 
 type GatewayResponse struct {
-	ID              uuid.UUID              `json:"id"`
+	ID              ids.GatewayID          `json:"id"`
 	Name            string                 `json:"name"`
 	Status          string                 `json:"status"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`

@@ -3,6 +3,7 @@ package auth
 import (
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -15,7 +16,7 @@ func NewDeleteAuthHandler(deleter appauth.Deleter) *DeleteAuthHandler {
 }
 
 func (h *DeleteAuthHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
+	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.AuthKind](c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

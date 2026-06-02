@@ -5,12 +5,12 @@ import (
 	"log/slog"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 type CreateInput struct {
-	GatewayID       uuid.UUID
+	GatewayID       ids.GatewayID
 	Name            string
 	Provider        string
 	ProviderOptions map[string]any

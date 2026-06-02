@@ -6,7 +6,7 @@ import (
 	"time"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 func validPlugin() Plugin {
@@ -21,12 +21,12 @@ func validPlugin() Plugin {
 
 func TestPolicy_New_HappyPath(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	p, err := NewPolicy(gwID, "default", Plugins{validPlugin()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p.ID == uuid.Nil {
+	if p.ID.IsNil() {
 		t.Fatal("ID is zero")
 	}
 	if p.GatewayID != gwID {
@@ -42,7 +42,7 @@ func TestPolicy_New_HappyPath(t *testing.T) {
 
 func TestPolicy_New_DefaultsPluginsToEmptySlice(t *testing.T) {
 	t.Parallel()
-	p, err := NewPolicy(uuid.New(), "no-plugins", nil)
+	p, err := NewPolicy(ids.New[ids.GatewayKind](), "no-plugins", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestPolicy_Validate_Rejects(t *testing.T) {
 		},
 		{
 			name:    "nil gateway id",
-			mutate:  func(p *Policy) { p.GatewayID = uuid.Nil },
+			mutate:  func(p *Policy) { p.GatewayID = ids.GatewayID{} },
 			wantErr: ErrInvalidGatewayID,
 		},
 		{
@@ -98,8 +98,8 @@ func TestPolicy_Validate_Rejects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			p := &Policy{
-				ID:        uuid.New(),
-				GatewayID: uuid.New(),
+				ID:        ids.New[ids.PolicyKind](),
+				GatewayID: ids.New[ids.GatewayKind](),
 				Name:      "x",
 				Plugins:   Plugins{validPlugin()},
 			}
@@ -121,8 +121,8 @@ func TestPolicy_Validate_Rejects(t *testing.T) {
 func TestPolicy_Validate_AcceptsAllKnownStages(t *testing.T) {
 	t.Parallel()
 	p := &Policy{
-		ID:        uuid.New(),
-		GatewayID: uuid.New(),
+		ID:        ids.New[ids.PolicyKind](),
+		GatewayID: ids.New[ids.GatewayKind](),
 		Name:      "all-stages",
 		Plugins: Plugins{
 			{Name: "a", Stage: StagePreRequest},
@@ -138,7 +138,8 @@ func TestPolicy_Validate_AcceptsAllKnownStages(t *testing.T) {
 
 func TestPolicy_Rehydrate(t *testing.T) {
 	t.Parallel()
-	id, gwID := uuid.New(), uuid.New()
+	id := ids.New[ids.PolicyKind]()
+	gwID := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	p := Rehydrate(id, gwID, "x", Plugins{validPlugin()}, now, now)
 	if p.ID != id || p.GatewayID != gwID {

@@ -6,18 +6,18 @@ import (
 	"testing"
 
 	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
 func TestFinder_FindByID_CacheHit(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
-	gwID := uuid.New()
+	id := ids.New[ids.PolicyKind]()
+	gwID := ids.New[ids.GatewayKind]()
 	cached := &domain.Policy{ID: id, GatewayID: gwID, Name: "cached"}
 
 	mgr := newCacheManager()
@@ -36,8 +36,8 @@ func TestFinder_FindByID_CacheHit(t *testing.T) {
 func TestFinder_FindByID_CacheMiss_PopulatesCache(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
-	gwID := uuid.New()
+	id := ids.New[ids.PolicyKind]()
+	gwID := ids.New[ids.GatewayKind]()
 	want := &domain.Policy{ID: id, GatewayID: gwID, Name: "from-db"}
 	repo.EXPECT().FindByID(mock.Anything, id).Return(want, nil).Once()
 
@@ -59,11 +59,11 @@ func TestFinder_FindByID_CacheMiss_PopulatesCache(t *testing.T) {
 func TestFinder_FindByID_NotFound(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
+	id := ids.New[ids.PolicyKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
 	finder := apppolicy.NewFinder(repo, newCacheManager(), newTestLogger())
-	_, err := finder.FindByID(context.Background(), uuid.New(), id)
+	_, err := finder.FindByID(context.Background(), ids.New[ids.GatewayKind](), id)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -72,12 +72,12 @@ func TestFinder_FindByID_NotFound(t *testing.T) {
 func TestFinder_FindByID_WrongGateway(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
-	want := &domain.Policy{ID: id, GatewayID: uuid.New(), Name: "other"}
+	id := ids.New[ids.PolicyKind]()
+	want := &domain.Policy{ID: id, GatewayID: ids.New[ids.GatewayKind](), Name: "other"}
 	repo.EXPECT().FindByID(mock.Anything, id).Return(want, nil).Once()
 
 	finder := apppolicy.NewFinder(repo, newCacheManager(), newTestLogger())
-	_, err := finder.FindByID(context.Background(), uuid.New(), id)
+	_, err := finder.FindByID(context.Background(), ids.New[ids.GatewayKind](), id)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for cross-gateway id", err)
 	}
@@ -86,7 +86,7 @@ func TestFinder_FindByID_WrongGateway(t *testing.T) {
 func TestFinder_List(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	want := []*domain.Policy{{ID: uuid.New(), Name: "a"}}
+	want := []*domain.Policy{{ID: ids.New[ids.PolicyKind](), Name: "a"}}
 	repo.EXPECT().
 		List(mock.Anything, mock.MatchedBy(func(f domain.ListFilter) bool {
 			return f.NameContains == "a"

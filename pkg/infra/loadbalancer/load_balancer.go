@@ -10,10 +10,10 @@ import (
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/go-redis/redis/v8"
-	"github.com/google/uuid"
 )
 
 type Pool struct {
@@ -146,7 +146,7 @@ func (lb *LoadBalancer) performSuccessUpdate(b *backend.Backend) {
 
 func (lb *LoadBalancer) NextBackend(
 	req *infracontext.RequestContext,
-	exclude map[uuid.UUID]struct{},
+	exclude map[ids.BackendID]struct{},
 ) (*backend.Backend, error) {
 	attempts := lb.poolSize
 	if attempts < 1 {

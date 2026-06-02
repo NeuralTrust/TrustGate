@@ -6,7 +6,7 @@ import (
 	context "context"
 
 	consumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	uuid "github.com/google/uuid"
+	ids "github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -24,7 +24,7 @@ func (_m *DataFinder) EXPECT() *DataFinder_Expecter {
 }
 
 // FindByGateway provides a mock function with given fields: ctx, gatewayID
-func (_m *DataFinder) FindByGateway(ctx context.Context, gatewayID uuid.UUID) (*consumer.Data, error) {
+func (_m *DataFinder) FindByGateway(ctx context.Context, gatewayID ids.ID[ids.GatewayKind]) (*consumer.Data, error) {
 	ret := _m.Called(ctx, gatewayID)
 
 	if len(ret) == 0 {
@@ -33,10 +33,10 @@ func (_m *DataFinder) FindByGateway(ctx context.Context, gatewayID uuid.UUID) (*
 
 	var r0 *consumer.Data
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) (*consumer.Data, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) (*consumer.Data, error)); ok {
 		return rf(ctx, gatewayID)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) *consumer.Data); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) *consumer.Data); ok {
 		r0 = rf(ctx, gatewayID)
 	} else {
 		if ret.Get(0) != nil {
@@ -44,7 +44,7 @@ func (_m *DataFinder) FindByGateway(ctx context.Context, gatewayID uuid.UUID) (*
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind]) error); ok {
 		r1 = rf(ctx, gatewayID)
 	} else {
 		r1 = ret.Error(1)
@@ -60,14 +60,14 @@ type DataFinder_FindByGateway_Call struct {
 
 // FindByGateway is a helper method to define mock.On call
 //   - ctx context.Context
-//   - gatewayID uuid.UUID
+//   - gatewayID ids.ID[ids.GatewayKind]
 func (_e *DataFinder_Expecter) FindByGateway(ctx interface{}, gatewayID interface{}) *DataFinder_FindByGateway_Call {
 	return &DataFinder_FindByGateway_Call{Call: _e.mock.On("FindByGateway", ctx, gatewayID)}
 }
 
-func (_c *DataFinder_FindByGateway_Call) Run(run func(ctx context.Context, gatewayID uuid.UUID)) *DataFinder_FindByGateway_Call {
+func (_c *DataFinder_FindByGateway_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind])) *DataFinder_FindByGateway_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(uuid.UUID))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]))
 	})
 	return _c
 }
@@ -77,7 +77,7 @@ func (_c *DataFinder_FindByGateway_Call) Return(_a0 *consumer.Data, _a1 error) *
 	return _c
 }
 
-func (_c *DataFinder_FindByGateway_Call) RunAndReturn(run func(context.Context, uuid.UUID) (*consumer.Data, error)) *DataFinder_FindByGateway_Call {
+func (_c *DataFinder_FindByGateway_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind]) (*consumer.Data, error)) *DataFinder_FindByGateway_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type Type string
@@ -29,18 +29,18 @@ func IsValidType(t Type) bool {
 }
 
 type Auth struct {
-	ID        uuid.UUID `json:"id"`
-	GatewayID uuid.UUID `json:"gateway_id"`
-	Name      string    `json:"name"`
-	Type      Type      `json:"type"`
-	Enabled   bool      `json:"enabled"`
-	Config    Config    `json:"config"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        ids.AuthID    `json:"id"`
+	GatewayID ids.GatewayID `json:"gateway_id"`
+	Name      string        `json:"name"`
+	Type      Type          `json:"type"`
+	Enabled   bool          `json:"enabled"`
+	Config    Config        `json:"config"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
 }
 
-func NewAuth(gatewayID uuid.UUID, name string, authType Type, enabled bool, config Config) (*Auth, error) {
-	id, err := uuid.NewV7()
+func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, config Config) (*Auth, error) {
+	id, err := ids.NewV7[ids.AuthKind]()
 	if err != nil {
 		return nil, fmt.Errorf("auth: generate uuid: %w", err)
 	}
@@ -65,7 +65,7 @@ func (a *Auth) Validate() error {
 	if strings.TrimSpace(a.Name) == "" {
 		return ErrInvalidName
 	}
-	if a.GatewayID == uuid.Nil {
+	if a.GatewayID.IsNil() {
 		return ErrInvalidGatewayID
 	}
 	if !IsValidType(a.Type) {

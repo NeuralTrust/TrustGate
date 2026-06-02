@@ -11,18 +11,18 @@ import (
 	backendmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/backend/mocks"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
-func existingConsumer(gwID, beID uuid.UUID) *domain.Consumer {
+func existingConsumer(gwID ids.GatewayID, beID ids.BackendID) *domain.Consumer {
 	now := time.Now().UTC()
 	return domain.Rehydrate(
-		uuid.New(), gwID, "old", domain.TypeLLM,
+		ids.New[ids.ConsumerKind](), gwID, "old", domain.TypeLLM,
 		"/v1/chat", "round-robin", nil,
 		nil, true,
-		[]uuid.UUID{beID}, nil, nil,
+		[]ids.BackendID{beID}, nil, nil,
 		nil,
 		nil,
 		now, now,
@@ -31,7 +31,8 @@ func existingConsumer(gwID, beID uuid.UUID) *domain.Consumer {
 
 func TestUpdater_Update_Success(t *testing.T) {
 	t.Parallel()
-	gwID, beID := uuid.New(), uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.BackendKind]()
 	existing := existingConsumer(gwID, beID)
 
 	repo := repomocks.NewRepository(t)
@@ -57,7 +58,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Type:       domain.TypeMCP,
 		Path:       "/v1/messages",
 		Algorithm:  "round-robin",
-		BackendIDs: []uuid.UUID{beID},
+		BackendIDs: []ids.BackendID{beID},
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -76,8 +77,8 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	updater := appconsumer.NewUpdater(repo, beRepo, newPolicyStub(), newAuthStub(), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
-		ID:         uuid.New(),
-		BackendIDs: []uuid.UUID{uuid.New()},
+		ID:         ids.New[ids.ConsumerKind](),
+		BackendIDs: []ids.BackendID{ids.New[ids.BackendKind]()},
 	})
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -86,8 +87,8 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 
 func TestUpdater_Update_RejectsCrossGatewayBackend(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
-	beID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.BackendKind]()
 	existing := existingConsumer(gwID, beID)
 
 	repo := repomocks.NewRepository(t)
@@ -106,7 +107,7 @@ func TestUpdater_Update_RejectsCrossGatewayBackend(t *testing.T) {
 		GatewayID:  gwID,
 		Name:       "n",
 		Type:       domain.TypeLLM,
-		BackendIDs: []uuid.UUID{uuid.New()},
+		BackendIDs: []ids.BackendID{ids.New[ids.BackendKind]()},
 	})
 	if !errors.Is(err, backenddomain.ErrInvalidBackendID) {
 		t.Fatalf("err = %v, want ErrInvalidBackendID", err)
@@ -115,8 +116,8 @@ func TestUpdater_Update_RejectsCrossGatewayBackend(t *testing.T) {
 
 func TestUpdater_Update_RejectsCrossGateway(t *testing.T) {
 	t.Parallel()
-	gwID, otherGW := uuid.New(), uuid.New()
-	beID := uuid.New()
+	gwID, otherGW := ids.New[ids.GatewayKind](), ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.BackendKind]()
 	existing := existingConsumer(gwID, beID)
 
 	repo := repomocks.NewRepository(t)
@@ -129,7 +130,7 @@ func TestUpdater_Update_RejectsCrossGateway(t *testing.T) {
 		ID:         existing.ID,
 		GatewayID:  otherGW,
 		Name:       "n",
-		BackendIDs: []uuid.UUID{beID},
+		BackendIDs: []ids.BackendID{beID},
 	})
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
 		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)

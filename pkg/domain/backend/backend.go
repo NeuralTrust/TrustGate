@@ -4,15 +4,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
-// Backend is a single load-balancing target: one provider endpoint with its
-// credentials and optional weight/description/health-check config. A Consumer
-// owns a pool of backends and the algorithm used to balance across them.
 type Backend struct {
-	ID              uuid.UUID      `json:"id"`
-	GatewayID       uuid.UUID      `json:"gateway_id"`
+	ID              ids.BackendID  `json:"id"`
+	GatewayID       ids.GatewayID  `json:"gateway_id"`
 	Name            string         `json:"name"`
 	Provider        string         `json:"provider"`
 	ProviderOptions map[string]any `json:"provider_options,omitempty"`
@@ -25,7 +22,7 @@ type Backend struct {
 }
 
 func NewBackend(
-	gatewayID uuid.UUID,
+	gatewayID ids.GatewayID,
 	name, provider string,
 	providerOptions map[string]any,
 	description string,
@@ -33,7 +30,7 @@ func NewBackend(
 	auth *TargetAuth,
 	healthChecks *HealthChecks,
 ) (*Backend, error) {
-	id, err := uuid.NewV7()
+	id, err := ids.NewV7[ids.BackendKind]()
 	if err != nil {
 		return nil, fmt.Errorf("backend: generate uuid: %w", err)
 	}
@@ -58,7 +55,8 @@ func NewBackend(
 }
 
 func Rehydrate(
-	id, gatewayID uuid.UUID,
+	id ids.BackendID,
+	gatewayID ids.GatewayID,
 	name, provider string,
 	providerOptions map[string]any,
 	description string,
@@ -86,7 +84,7 @@ func (b *Backend) Validate() error {
 	if b.Name == "" {
 		return fmt.Errorf("%w: name is required", ErrInvalidBackend)
 	}
-	if b.GatewayID == uuid.Nil {
+	if b.GatewayID.IsNil() {
 		return ErrInvalidGatewayID
 	}
 	if b.Weight < 0 {

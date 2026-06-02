@@ -9,10 +9,10 @@ import (
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
-	"github.com/google/uuid"
 )
 
 type Semantic struct {
@@ -37,7 +37,7 @@ func NewSemantic(
 	}
 }
 
-func (s *Semantic) Next(req *infracontext.RequestContext, exclude map[uuid.UUID]struct{}) *backend.Backend {
+func (s *Semantic) Next(req *infracontext.RequestContext, exclude map[ids.BackendID]struct{}) *backend.Backend {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

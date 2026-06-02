@@ -14,10 +14,10 @@ import (
 	backendmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/backend/mocks"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policymocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -29,7 +29,7 @@ func newCacheManager() *cache.TTLMapManager {
 	return cache.NewTTLMapManager(time.Hour)
 }
 
-func newBackendStub(gwID, beID uuid.UUID) *backendmocks.Repository {
+func newBackendStub(gwID ids.GatewayID, beID ids.BackendID) *backendmocks.Repository {
 	t := &backendmocks.Repository{}
 	t.EXPECT().
 		FindByIDs(mock.Anything, gwID, mock.Anything).
@@ -48,7 +48,8 @@ func newAuthStub() *authmocks.Repository {
 
 func TestCreator_Create_Success(t *testing.T) {
 	t.Parallel()
-	gwID, beID := uuid.New(), uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.BackendKind]()
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().
@@ -67,7 +68,7 @@ func TestCreator_Create_Success(t *testing.T) {
 		Name:       "chat",
 		Type:       domain.TypeLLM,
 		Path:       "/v1/chat/completions",
-		BackendIDs: []uuid.UUID{beID},
+		BackendIDs: []ids.BackendID{beID},
 	})
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
@@ -83,7 +84,8 @@ func TestCreator_Create_Success(t *testing.T) {
 
 func TestCreator_Create_RejectsBackendFromOtherGateway(t *testing.T) {
 	t.Parallel()
-	gwID, beID := uuid.New(), uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.BackendKind]()
 
 	repo := repomocks.NewRepository(t)
 	beRepo := &backendmocks.Repository{}
@@ -98,7 +100,7 @@ func TestCreator_Create_RejectsBackendFromOtherGateway(t *testing.T) {
 		GatewayID:  gwID,
 		Name:       "x",
 		Type:       domain.TypeLLM,
-		BackendIDs: []uuid.UUID{beID},
+		BackendIDs: []ids.BackendID{beID},
 	})
 	if !errors.Is(err, backenddomain.ErrInvalidBackendID) {
 		t.Fatalf("err = %v, want ErrInvalidBackendID", err)
@@ -107,7 +109,8 @@ func TestCreator_Create_RejectsBackendFromOtherGateway(t *testing.T) {
 
 func TestCreator_Create_RejectsInvalidDomain(t *testing.T) {
 	t.Parallel()
-	gwID, beID := uuid.New(), uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.BackendKind]()
 	beRepo := newBackendStub(gwID, beID)
 
 	creator := appconsumer.NewCreator(repomocks.NewRepository(t), beRepo, newPolicyStub(), newAuthStub(), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
@@ -116,7 +119,7 @@ func TestCreator_Create_RejectsInvalidDomain(t *testing.T) {
 		GatewayID:  gwID,
 		Name:       "",
 		Type:       domain.TypeLLM,
-		BackendIDs: []uuid.UUID{beID},
+		BackendIDs: []ids.BackendID{beID},
 	})
 	if !errors.Is(err, domain.ErrInvalidName) {
 		t.Fatalf("err = %v, want ErrInvalidName", err)
@@ -125,7 +128,8 @@ func TestCreator_Create_RejectsInvalidDomain(t *testing.T) {
 
 func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
-	gwID, beID := uuid.New(), uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.BackendKind]()
 	beRepo := newBackendStub(gwID, beID)
 
 	repo := repomocks.NewRepository(t)
@@ -138,7 +142,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 		Name:       "dupe",
 		Type:       domain.TypeLLM,
 		Path:       "/v1/chat/completions",
-		BackendIDs: []uuid.UUID{beID},
+		BackendIDs: []ids.BackendID{beID},
 	})
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)

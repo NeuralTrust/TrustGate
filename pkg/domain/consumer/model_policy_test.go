@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 func TestModelPolicies_Validate(t *testing.T) {
 	t.Parallel()
-	be1 := uuid.New()
-	be2 := uuid.New()
-	known := map[uuid.UUID]struct{}{be1: {}, be2: {}}
+	be1 := ids.New[ids.BackendKind]()
+	be2 := ids.New[ids.BackendKind]()
+	known := map[ids.BackendID]struct{}{be1: {}, be2: {}}
 
 	tests := []struct {
 		name     string
@@ -41,7 +41,7 @@ func TestModelPolicies_Validate(t *testing.T) {
 		},
 		{
 			name:     "unknown backend",
-			policies: ModelPolicies{uuid.New(): {Allowed: []string{"gpt-4o"}}},
+			policies: ModelPolicies{ids.New[ids.BackendKind](): {Allowed: []string{"gpt-4o"}}},
 			wantErr:  true,
 		},
 		{
@@ -79,7 +79,7 @@ func TestModelPolicies_Validate(t *testing.T) {
 
 func TestModelPolicies_ValueScanRoundTrip(t *testing.T) {
 	t.Parallel()
-	be := uuid.New()
+	be := ids.New[ids.BackendKind]()
 	original := ModelPolicies{be: {Allowed: []string{"gpt-4o"}, Default: "gpt-4o"}}
 
 	value, err := original.Value()

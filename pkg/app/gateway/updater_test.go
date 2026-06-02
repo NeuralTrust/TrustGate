@@ -10,16 +10,16 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
 func TestUpdater_Update_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
+	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	existing := domain.Rehydrate(id, "old", "active", nil, nil, nil, now, now)
 
@@ -58,7 +58,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 func TestUpdater_Update_NotFound(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
+	id := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
 	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
@@ -74,7 +74,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 func TestUpdater_Update_RejectsEmptyName(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
+	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	existing := domain.Rehydrate(id, "old", "active", nil, nil, nil, now, now)
 
