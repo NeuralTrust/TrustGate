@@ -12,7 +12,7 @@ spec:
       type: HTTP
       httpHealthCheck:
         port: 8080
-        requestPath: /health
+        requestPath: /healthz
   targetRef:
     group: ""
     kind: Service
@@ -32,7 +32,7 @@ spec:
       type: HTTP
       httpHealthCheck:
         port: 8081
-        requestPath: /health
+        requestPath: /healthz
   targetRef:
     group: ""
     kind: Service
