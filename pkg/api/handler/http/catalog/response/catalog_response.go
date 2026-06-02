@@ -2,11 +2,11 @@ package response
 
 import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type ProviderResponse struct {
-	ID          uuid.UUID      `json:"id"`
+	ID          ids.ProviderID `json:"id"`
 	Code        string         `json:"code"`
 	DisplayName string         `json:"display_name"`
 	WireFormat  string         `json:"wire_format"`
@@ -15,8 +15,8 @@ type ProviderResponse struct {
 }
 
 type ModelResponse struct {
-	ID            uuid.UUID      `json:"id"`
-	ProviderID    uuid.UUID      `json:"provider_id"`
+	ID            ids.ModelID    `json:"id"`
+	ProviderID    ids.ProviderID `json:"provider_id"`
 	Slug          string         `json:"slug"`
 	ExternalID    string         `json:"external_id,omitempty"`
 	DisplayName   string         `json:"display_name,omitempty"`

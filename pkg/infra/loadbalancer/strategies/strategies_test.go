@@ -4,13 +4,13 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 func makeBackends(names ...string) []*backend.Backend {
 	out := make([]*backend.Backend, len(names))
 	for i, name := range names {
-		out[i] = &backend.Backend{ID: uuid.New(), Name: name, Weight: 1, Provider: "openai"}
+		out[i] = &backend.Backend{ID: ids.New[ids.BackendKind](), Name: name, Weight: 1, Provider: "openai"}
 	}
 	return out
 }
@@ -34,7 +34,7 @@ func TestRoundRobin_SkipsExcluded(t *testing.T) {
 	t.Parallel()
 	backends := makeBackends("a", "b", "c")
 	rr := NewRoundRobin(backends)
-	exclude := map[uuid.UUID]struct{}{backends[0].ID: {}, backends[1].ID: {}}
+	exclude := map[ids.BackendID]struct{}{backends[0].ID: {}, backends[1].ID: {}}
 	for i := 0; i < 4; i++ {
 		b := rr.Next(nil, exclude)
 		if b == nil || b.Name != "c" {
@@ -47,7 +47,7 @@ func TestRoundRobin_AllExcludedReturnsNil(t *testing.T) {
 	t.Parallel()
 	backends := makeBackends("a", "b")
 	rr := NewRoundRobin(backends)
-	exclude := map[uuid.UUID]struct{}{backends[0].ID: {}, backends[1].ID: {}}
+	exclude := map[ids.BackendID]struct{}{backends[0].ID: {}, backends[1].ID: {}}
 	if rr.Next(nil, exclude) != nil {
 		t.Fatal("expected nil when every backend is excluded")
 	}
@@ -57,7 +57,7 @@ func TestWeightedRoundRobin_AllExcludedReturnsNil(t *testing.T) {
 	t.Parallel()
 	backends := makeBackends("a", "b")
 	wrr := NewWeightedRoundRobin(backends)
-	exclude := map[uuid.UUID]struct{}{backends[0].ID: {}, backends[1].ID: {}}
+	exclude := map[ids.BackendID]struct{}{backends[0].ID: {}, backends[1].ID: {}}
 	if wrr.Next(nil, exclude) != nil {
 		t.Fatal("expected nil when every weighted backend is excluded")
 	}
@@ -67,7 +67,7 @@ func TestLeastConnections_SkipsExcluded(t *testing.T) {
 	t.Parallel()
 	backends := makeBackends("a", "b", "c")
 	lc := NewLeastConnections(backends)
-	exclude := map[uuid.UUID]struct{}{backends[0].ID: {}}
+	exclude := map[ids.BackendID]struct{}{backends[0].ID: {}}
 	b := lc.Next(nil, exclude)
 	if b == nil || b.Name == "a" {
 		t.Fatalf("expected a non-excluded backend, got %+v", b)
@@ -127,8 +127,8 @@ func TestRandom_Name(t *testing.T) {
 func TestWeightedRoundRobin_RespectsWeights(t *testing.T) {
 	t.Parallel()
 	backends := []*backend.Backend{
-		{ID: uuid.New(), Name: "heavy", Weight: 3, Provider: "openai"},
-		{ID: uuid.New(), Name: "light", Weight: 1, Provider: "openai"},
+		{ID: ids.New[ids.BackendKind](), Name: "heavy", Weight: 3, Provider: "openai"},
+		{ID: ids.New[ids.BackendKind](), Name: "light", Weight: 1, Provider: "openai"},
 	}
 	wrr := NewWeightedRoundRobin(backends)
 	counts := map[string]int{}
@@ -147,8 +147,8 @@ func TestWeightedRoundRobin_RespectsWeights(t *testing.T) {
 func TestWeightedRoundRobin_AllZeroWeightsEventuallyReturnsNil(t *testing.T) {
 	t.Parallel()
 	wrr := NewWeightedRoundRobin([]*backend.Backend{
-		{ID: uuid.New(), Name: "a"},
-		{ID: uuid.New(), Name: "b"},
+		{ID: ids.New[ids.BackendKind](), Name: "a"},
+		{ID: ids.New[ids.BackendKind](), Name: "b"},
 	})
 	sawNil := false
 	for i := 0; i < 10 && !sawNil; i++ {

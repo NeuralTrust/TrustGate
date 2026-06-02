@@ -5,13 +5,13 @@ import (
 	"log/slog"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 //go:generate mockery --name=Finder --dir=. --output=./mocks --filename=backend_finder_mock.go --case=underscore --with-expecter
 type Finder interface {
-	FindByID(ctx context.Context, gatewayID, id uuid.UUID) (*domain.Backend, error)
+	FindByID(ctx context.Context, gatewayID ids.GatewayID, id ids.BackendID) (*domain.Backend, error)
 	List(ctx context.Context, filter domain.ListFilter) ([]*domain.Backend, int, error)
 }
 
@@ -31,7 +31,7 @@ func NewFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slo
 	}
 }
 
-func (f *finder) FindByID(ctx context.Context, gatewayID, id uuid.UUID) (*domain.Backend, error) {
+func (f *finder) FindByID(ctx context.Context, gatewayID ids.GatewayID, id ids.BackendID) (*domain.Backend, error) {
 	if cached, ok := f.memoryCache.Get(id.String()); ok {
 		if b, ok := cached.(*domain.Backend); ok {
 			return scopeToGateway(b, gatewayID)
@@ -51,7 +51,7 @@ func (f *finder) FindByID(ctx context.Context, gatewayID, id uuid.UUID) (*domain
 // scopeToGateway enforces that a backend belongs to the requesting gateway,
 // returning ErrNotFound (not a distinct error) for cross-gateway ids so the API
 // never confirms the existence of another gateway's resource.
-func scopeToGateway(b *domain.Backend, gatewayID uuid.UUID) (*domain.Backend, error) {
+func scopeToGateway(b *domain.Backend, gatewayID ids.GatewayID) (*domain.Backend, error) {
 	if b.GatewayID != gatewayID {
 		return nil, domain.ErrNotFound
 	}

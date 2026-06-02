@@ -2,10 +2,10 @@ package strategies
 
 import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
-func isExcluded(id uuid.UUID, exclude map[uuid.UUID]struct{}) bool {
+func isExcluded(id ids.BackendID, exclude map[ids.BackendID]struct{}) bool {
 	if len(exclude) == 0 {
 		return false
 	}
@@ -13,7 +13,7 @@ func isExcluded(id uuid.UUID, exclude map[uuid.UUID]struct{}) bool {
 	return ok
 }
 
-func filterExcluded(backends []*backend.Backend, exclude map[uuid.UUID]struct{}) []*backend.Backend {
+func filterExcluded(backends []*backend.Backend, exclude map[ids.BackendID]struct{}) []*backend.Backend {
 	if len(exclude) == 0 {
 		return backends
 	}

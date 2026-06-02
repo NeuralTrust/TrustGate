@@ -11,8 +11,8 @@ import (
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -31,7 +31,7 @@ func validConfig() domain.Config {
 func TestCreator_Create_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
 			return a.GatewayID == gwID && a.Name == "client-key" && a.Type == domain.TypeAPIKey
@@ -67,7 +67,7 @@ func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	creator := appauth.NewCreator(repo, newCacheManager(), newTestLogger())
 
 	_, err := creator.Create(context.Background(), appauth.CreateInput{
-		GatewayID: uuid.New(),
+		GatewayID: ids.New[ids.GatewayKind](),
 		Name:      "",
 		Type:      domain.TypeAPIKey,
 		Config:    validConfig(),
@@ -84,7 +84,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	creator := appauth.NewCreator(repo, newCacheManager(), newTestLogger())
 
 	_, err := creator.Create(context.Background(), appauth.CreateInput{
-		GatewayID: uuid.New(),
+		GatewayID: ids.New[ids.GatewayKind](),
 		Name:      "dupe",
 		Type:      domain.TypeAPIKey,
 		Config:    validConfig(),

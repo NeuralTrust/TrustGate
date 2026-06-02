@@ -26,7 +26,11 @@ const (
 )
 
 func main() {
-	_ = godotenv.Load()
+	// Local dev uses .env in cwd; k8s mounts GCP secrets at /etc/secrets/.env
+	// (see workingDir in deployment manifests). Distroless has no shell entrypoint.
+	for _, path := range []string{".env", "/etc/secrets/.env", "/etc/secrets/secrets"} {
+		_ = godotenv.Load(path)
+	}
 
 	c, err := container.New(modules.All()...)
 	if err != nil {

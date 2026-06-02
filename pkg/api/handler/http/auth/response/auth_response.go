@@ -4,12 +4,12 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type AuthResponse struct {
-	ID        uuid.UUID      `json:"id"`
-	GatewayID uuid.UUID      `json:"gateway_id"`
+	ID        ids.AuthID     `json:"id"`
+	GatewayID ids.GatewayID  `json:"gateway_id"`
 	Name      string         `json:"name"`
 	Type      string         `json:"type"`
 	Enabled   bool           `json:"enabled"`

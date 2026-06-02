@@ -4,9 +4,9 @@ import (
 	"sync"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
-	"github.com/google/uuid"
 )
 
 type RoundRobin struct {
@@ -19,7 +19,7 @@ func NewRoundRobin(backends []*backend.Backend) *RoundRobin {
 	return &RoundRobin{backends: backends}
 }
 
-func (rr *RoundRobin) Next(req *infracontext.RequestContext, exclude map[uuid.UUID]struct{}) *backend.Backend {
+func (rr *RoundRobin) Next(req *infracontext.RequestContext, exclude map[ids.BackendID]struct{}) *backend.Backend {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
 	n := len(rr.backends)

@@ -49,17 +49,11 @@ type ProviderResponse struct {
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
 type ProviderInvoker interface {
 	Invoke(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*ProviderResponse, error)
-	// InvokeStream performs the streaming invocation. A pre-stream non-2xx
-	// backend response is returned as a verbatim *ProviderResponse (Body set,
-	// Stream nil); a successful call returns a *ProviderResponse with Stream set.
 	InvokeStream(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*ProviderResponse, error)
 }
 
 var _ ProviderInvoker = (*providerInvoker)(nil)
 
-// providerInvoker resolves the concrete LLM provider client for a backend,
-// transforms the request payload across provider formats when needed, invokes
-// the backend, and adapts the response back to the client's source format.
 type providerInvoker struct {
 	locator  factory.ProviderLocator
 	registry *adapter.Registry

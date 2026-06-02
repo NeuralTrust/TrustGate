@@ -12,11 +12,11 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appmetricsmocks "github.com/NeuralTrust/AgentGateway/pkg/app/metrics/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domaintelemetry "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -49,7 +49,7 @@ func TestMetricsMiddleware_ProcessesNonStreamingRequest(t *testing.T) {
 
 	mw := middleware.NewMetricsMiddleware(worker, cfg)
 
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()
 	// Mimic the auth middleware: the gateway id arrives via context, not a header.
 	app.Use(func(c *fiber.Ctx) error {

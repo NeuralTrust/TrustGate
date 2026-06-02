@@ -3,12 +3,12 @@ package backend
 import (
 	"fmt"
 
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
-type Backends []uuid.UUID
+type Backends []ids.BackendID
 
-func (b Backends) Contains(id uuid.UUID) bool {
+func (b Backends) Contains(id ids.BackendID) bool {
 	for _, existing := range b {
 		if existing == id {
 			return true
@@ -17,14 +17,14 @@ func (b Backends) Contains(id uuid.UUID) bool {
 	return false
 }
 
-func (b Backends) Attach(id uuid.UUID) (Backends, bool) {
-	if id == uuid.Nil || b.Contains(id) {
+func (b Backends) Attach(id ids.BackendID) (Backends, bool) {
+	if id.IsNil() || b.Contains(id) {
 		return b, false
 	}
 	return append(b, id), true
 }
 
-func (b Backends) Detach(id uuid.UUID) (Backends, bool) {
+func (b Backends) Detach(id ids.BackendID) (Backends, bool) {
 	for i, existing := range b {
 		if existing == id {
 			return append(b[:i], b[i+1:]...), true
@@ -34,9 +34,9 @@ func (b Backends) Detach(id uuid.UUID) (Backends, bool) {
 }
 
 func (b Backends) Validate() error {
-	seen := make(map[uuid.UUID]struct{}, len(b))
+	seen := make(map[ids.BackendID]struct{}, len(b))
 	for _, id := range b {
-		if id == uuid.Nil {
+		if id.IsNil() {
 			return fmt.Errorf("%w: nil uuid", ErrInvalidBackendID)
 		}
 		if _, dup := seen[id]; dup {

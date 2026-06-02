@@ -8,13 +8,13 @@ import (
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 type CreateInput struct {
-	GatewayID       uuid.UUID
+	GatewayID       ids.GatewayID
 	Name            string
 	Type            domain.Type
 	Path            string
@@ -22,9 +22,9 @@ type CreateInput struct {
 	EmbeddingConfig *backenddomain.EmbeddingConfig
 	Headers         map[string]string
 	Active          *bool
-	BackendIDs      []uuid.UUID
-	PolicyIDs       []uuid.UUID
-	AuthIDs         []uuid.UUID
+	BackendIDs      []ids.BackendID
+	PolicyIDs       []ids.PolicyID
+	AuthIDs         []ids.AuthID
 	Fallback        *domain.Fallback
 	ModelPolicies   domain.ModelPolicies
 }
@@ -102,8 +102,11 @@ func validateAssociations(
 	backendRepo backenddomain.Repository,
 	policyRepo policydomain.Repository,
 	authRepo authdomain.Repository,
-	gatewayID uuid.UUID,
-	backendIDs, policyIDs, authIDs, fallbackChain []uuid.UUID,
+	gatewayID ids.GatewayID,
+	backendIDs []ids.BackendID,
+	policyIDs []ids.PolicyID,
+	authIDs []ids.AuthID,
+	fallbackChain []ids.BackendID,
 ) error {
 	if err := validateBackendIDsBelongToGateway(ctx, backendRepo, gatewayID, backendIDs); err != nil {
 		return err
@@ -117,31 +120,31 @@ func validateAssociations(
 	return validateAuthIDsBelongToGateway(ctx, authRepo, gatewayID, authIDs)
 }
 
-func fallbackChainIDs(f *domain.Fallback) []uuid.UUID {
+func fallbackChainIDs(f *domain.Fallback) []ids.BackendID {
 	if f == nil {
 		return nil
 	}
-	return f.Chain
+	return []ids.BackendID(f.Chain)
 }
 
 func validateBackendIDsBelongToGateway(
 	ctx context.Context,
 	backendRepo backenddomain.Repository,
-	gatewayID uuid.UUID,
-	ids []uuid.UUID,
+	gatewayID ids.GatewayID,
+	idList []ids.BackendID,
 ) error {
-	if len(ids) == 0 {
+	if len(idList) == 0 {
 		return nil
 	}
-	found, err := backendRepo.FindByIDs(ctx, gatewayID, ids)
+	found, err := backendRepo.FindByIDs(ctx, gatewayID, idList)
 	if err != nil {
 		return err
 	}
-	foundIdx := make(map[uuid.UUID]struct{}, len(found))
+	foundIdx := make(map[ids.BackendID]struct{}, len(found))
 	for _, b := range found {
 		foundIdx[b.ID] = struct{}{}
 	}
-	for _, id := range ids {
+	for _, id := range idList {
 		if _, ok := foundIdx[id]; !ok {
 			return fmt.Errorf("%w: %s not found in gateway %s",
 				backenddomain.ErrInvalidBackendID, id, gatewayID)
@@ -153,21 +156,21 @@ func validateBackendIDsBelongToGateway(
 func validatePolicyIDsBelongToGateway(
 	ctx context.Context,
 	policyRepo policydomain.Repository,
-	gatewayID uuid.UUID,
-	ids []uuid.UUID,
+	gatewayID ids.GatewayID,
+	idList []ids.PolicyID,
 ) error {
-	if len(ids) == 0 {
+	if len(idList) == 0 {
 		return nil
 	}
-	found, err := policyRepo.FindByIDs(ctx, gatewayID, ids)
+	found, err := policyRepo.FindByIDs(ctx, gatewayID, idList)
 	if err != nil {
 		return err
 	}
-	foundIdx := make(map[uuid.UUID]struct{}, len(found))
+	foundIdx := make(map[ids.PolicyID]struct{}, len(found))
 	for _, p := range found {
 		foundIdx[p.ID] = struct{}{}
 	}
-	for _, id := range ids {
+	for _, id := range idList {
 		if _, ok := foundIdx[id]; !ok {
 			return fmt.Errorf("%w: %s not found in gateway %s",
 				domain.ErrInvalidPolicyID, id, gatewayID)
@@ -179,21 +182,21 @@ func validatePolicyIDsBelongToGateway(
 func validateAuthIDsBelongToGateway(
 	ctx context.Context,
 	authRepo authdomain.Repository,
-	gatewayID uuid.UUID,
-	ids []uuid.UUID,
+	gatewayID ids.GatewayID,
+	idList []ids.AuthID,
 ) error {
-	if len(ids) == 0 {
+	if len(idList) == 0 {
 		return nil
 	}
-	found, err := authRepo.FindByIDs(ctx, gatewayID, ids)
+	found, err := authRepo.FindByIDs(ctx, gatewayID, idList)
 	if err != nil {
 		return err
 	}
-	foundIdx := make(map[uuid.UUID]struct{}, len(found))
+	foundIdx := make(map[ids.AuthID]struct{}, len(found))
 	for _, a := range found {
 		foundIdx[a.ID] = struct{}{}
 	}
-	for _, id := range ids {
+	for _, id := range idList {
 		if _, ok := foundIdx[id]; !ok {
 			return fmt.Errorf("%w: %s not found in gateway %s",
 				domain.ErrInvalidAuthID, id, gatewayID)

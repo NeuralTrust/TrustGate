@@ -10,8 +10,8 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -20,7 +20,7 @@ func TestFinder_FindByID_CacheHit(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	// repo.FindByID must NOT be called when cache hits.
 
-	id := uuid.New()
+	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	mgr := newCacheManager()
 	cached := domain.Rehydrate(id, "Prod", "active", nil, nil, nil, now, now)
@@ -39,7 +39,7 @@ func TestFinder_FindByID_CacheHit(t *testing.T) {
 func TestFinder_FindByID_CacheMiss_PopulatesCache(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
+	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	fromDB := domain.Rehydrate(id, "Prod", "active", nil, nil, nil, now, now)
 
@@ -68,7 +68,7 @@ func TestFinder_FindByID_CacheMiss_PopulatesCache(t *testing.T) {
 func TestFinder_FindByID_NotFound(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
+	id := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
 	finder := appgateway.NewFinder(repo, newCacheManager(), newTestLogger())
@@ -81,7 +81,7 @@ func TestFinder_FindByID_NotFound(t *testing.T) {
 func TestFinder_FindByID_PoisonedCache_FallsBackToDB(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
+	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	fromDB := domain.Rehydrate(id, "Prod", "active", nil, nil, nil, now, now)
 	repo.EXPECT().FindByID(mock.Anything, id).Return(fromDB, nil).Once()
@@ -111,8 +111,8 @@ func TestFinder_List_Passthrough(t *testing.T) {
 	filter := domain.ListFilter{NameContains: "prod", Page: 1, Size: 20}
 	now := time.Now().UTC()
 	items := []*domain.Gateway{
-		domain.Rehydrate(uuid.New(), "Prod-eu", "active", nil, nil, nil, now, now),
-		domain.Rehydrate(uuid.New(), "Prod-us", "active", nil, nil, nil, now, now),
+		domain.Rehydrate(ids.New[ids.GatewayKind](), "Prod-eu", "active", nil, nil, nil, now, now),
+		domain.Rehydrate(ids.New[ids.GatewayKind](), "Prod-us", "active", nil, nil, nil, now, now),
 	}
 	repo.EXPECT().List(mock.Anything, filter).Return(items, 2, nil).Once()
 

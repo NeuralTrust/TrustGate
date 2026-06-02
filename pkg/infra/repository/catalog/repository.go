@@ -7,8 +7,8 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -38,8 +38,8 @@ func (r *Repository) UpsertProvider(ctx context.Context, p *domain.Provider) err
 			updated_at   = EXCLUDED.updated_at`
 	now := time.Now().UTC()
 	id := p.ID
-	if id == uuid.Nil {
-		id = uuid.New()
+	if id.IsNil() {
+		id = ids.New[ids.ProviderKind]()
 	}
 	_, err = r.conn.Pool.Exec(ctx, query, id, p.Code, p.DisplayName, p.WireFormat, p.Source, metadata, now)
 	return err
@@ -68,8 +68,8 @@ func (r *Repository) UpsertModel(ctx context.Context, m *domain.Model) error {
 			updated_at     = EXCLUDED.updated_at`
 	now := time.Now().UTC()
 	id := m.ID
-	if id == uuid.Nil {
-		id = uuid.New()
+	if id.IsNil() {
+		id = ids.New[ids.ModelKind]()
 	}
 	_, err = r.conn.Pool.Exec(ctx, query,
 		id, m.ProviderID, m.Slug, m.ExternalID, m.DisplayName, m.ContextWindow, m.MaxOutput,
@@ -78,7 +78,7 @@ func (r *Repository) UpsertModel(ctx context.Context, m *domain.Model) error {
 	return err
 }
 
-func (r *Repository) DisableModelsExcept(ctx context.Context, providerID uuid.UUID, source string, keepSlugs []string) error {
+func (r *Repository) DisableModelsExcept(ctx context.Context, providerID ids.ProviderID, source string, keepSlugs []string) error {
 	if keepSlugs == nil {
 		keepSlugs = []string{}
 	}

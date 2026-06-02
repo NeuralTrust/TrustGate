@@ -12,12 +12,12 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
-	"github.com/google/uuid"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -27,7 +27,7 @@ var (
 )
 
 type ForwardInput struct {
-	GatewayID uuid.UUID
+	GatewayID ids.GatewayID
 	Consumer  *appconsumer.RoutableConsumer
 	Request   *infracontext.RequestContext
 }
@@ -44,6 +44,10 @@ type forwardRequestDTO struct {
 	request  *infracontext.RequestContext
 	response *infracontext.ResponseContext
 	policies []*policydomain.Policy
+	// baseHeaders are the response headers contributed by the pre_request
+	// plugin stage (e.g. CORS, rate-limit quota headers). They are preserved
+	// across failover attempts so the upstream relay does not drop them.
+	baseHeaders map[string][]string
 }
 
 //go:generate mockery --name=Forwarder --dir=. --output=./mocks --filename=forwarder_mock.go --case=underscore --with-expecter
@@ -115,7 +119,13 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return short, nil
 	}
 
-	dto := &forwardRequestDTO{backend: bk, request: in.Request, response: resp, policies: policies}
+	dto := &forwardRequestDTO{
+		backend:     bk,
+		request:     in.Request,
+		response:    resp,
+		policies:    policies,
+		baseHeaders: cloneHeaders(resp.Headers),
+	}
 	stream := DetectStream(dto.request)
 
 	return f.invokeWithFailover(ctx, lb, in.Consumer, dto, stream)
@@ -132,7 +142,7 @@ func (f *forwarder) invokeWithFailover(
 	triggers := triggersFrom(fb)
 	attemptsPerBackend := f.attemptsPerBackend()
 	budget := newFailoverBudget(fb)
-	excluded := make(map[uuid.UUID]struct{})
+	excluded := make(map[ids.BackendID]struct{})
 
 	last := failoverState{}
 	current := dto.backend
@@ -220,7 +230,7 @@ func (f *forwarder) nextCandidate(
 	lb *loadbalancer.LoadBalancer,
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
-	excluded map[uuid.UUID]struct{},
+	excluded map[ids.BackendID]struct{},
 ) (*domain.Backend, bool) {
 	if bk, err := lb.NextBackend(req, excluded); err == nil && bk != nil {
 		if _, seen := excluded[bk.ID]; !seen {
@@ -341,7 +351,7 @@ func (f *forwarder) finalizeBody(
 	providerResp *ProviderResponse,
 ) *ForwardResult {
 	pluginResp := dto.response
-	pluginResp.Headers = nil
+	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeProviderResponse(pluginResp, providerResp, false)
 	f.runPreResponse(ctx, dto.policies, dto.request, pluginResp)
 	f.firePostResponse(dto.policies, dto.request, pluginResp)
@@ -358,7 +368,7 @@ func (f *forwarder) finalizeBodyGated(
 	providerResp *ProviderResponse,
 ) (*ForwardResult, *appplugins.PluginError) {
 	pluginResp := dto.response
-	pluginResp.Headers = nil
+	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeProviderResponse(pluginResp, providerResp, false)
 	if pe := f.runPreResponseGated(ctx, dto.policies, dto.request, pluginResp); pe != nil {
 		return pluginErrorResult(pe), pe
@@ -430,6 +440,6 @@ func (f *forwarder) cachedLoadBalancer(key string) (*loadbalancer.LoadBalancer, 
 	return lb, true
 }
 
-func loadBalancerCacheKey(gatewayID, consumerID uuid.UUID) string {
+func loadBalancerCacheKey(gatewayID ids.GatewayID, consumerID ids.ConsumerID) string {
 	return gatewayID.String() + ":" + consumerID.String()
 }

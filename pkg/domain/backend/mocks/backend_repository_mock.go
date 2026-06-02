@@ -6,7 +6,7 @@ import (
 	context "context"
 
 	backend "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
-	uuid "github.com/google/uuid"
+	ids "github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -24,7 +24,7 @@ func (_m *Repository) EXPECT() *Repository_Expecter {
 }
 
 // Delete provides a mock function with given fields: ctx, id
-func (_m *Repository) Delete(ctx context.Context, id uuid.UUID) error {
+func (_m *Repository) Delete(ctx context.Context, id ids.ID[ids.BackendKind]) error {
 	ret := _m.Called(ctx, id)
 
 	if len(ret) == 0 {
@@ -32,7 +32,7 @@ func (_m *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) error); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.BackendKind]) error); ok {
 		r0 = rf(ctx, id)
 	} else {
 		r0 = ret.Error(0)
@@ -48,14 +48,14 @@ type Repository_Delete_Call struct {
 
 // Delete is a helper method to define mock.On call
 //   - ctx context.Context
-//   - id uuid.UUID
+//   - id ids.ID[ids.BackendKind]
 func (_e *Repository_Expecter) Delete(ctx interface{}, id interface{}) *Repository_Delete_Call {
 	return &Repository_Delete_Call{Call: _e.mock.On("Delete", ctx, id)}
 }
 
-func (_c *Repository_Delete_Call) Run(run func(ctx context.Context, id uuid.UUID)) *Repository_Delete_Call {
+func (_c *Repository_Delete_Call) Run(run func(ctx context.Context, id ids.ID[ids.BackendKind])) *Repository_Delete_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(uuid.UUID))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.BackendKind]))
 	})
 	return _c
 }
@@ -65,13 +65,13 @@ func (_c *Repository_Delete_Call) Return(_a0 error) *Repository_Delete_Call {
 	return _c
 }
 
-func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, uuid.UUID) error) *Repository_Delete_Call {
+func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, ids.ID[ids.BackendKind]) error) *Repository_Delete_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // FindByID provides a mock function with given fields: ctx, id
-func (_m *Repository) FindByID(ctx context.Context, id uuid.UUID) (*backend.Backend, error) {
+func (_m *Repository) FindByID(ctx context.Context, id ids.ID[ids.BackendKind]) (*backend.Backend, error) {
 	ret := _m.Called(ctx, id)
 
 	if len(ret) == 0 {
@@ -80,10 +80,10 @@ func (_m *Repository) FindByID(ctx context.Context, id uuid.UUID) (*backend.Back
 
 	var r0 *backend.Backend
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) (*backend.Backend, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.BackendKind]) (*backend.Backend, error)); ok {
 		return rf(ctx, id)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) *backend.Backend); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.BackendKind]) *backend.Backend); ok {
 		r0 = rf(ctx, id)
 	} else {
 		if ret.Get(0) != nil {
@@ -91,7 +91,7 @@ func (_m *Repository) FindByID(ctx context.Context, id uuid.UUID) (*backend.Back
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.BackendKind]) error); ok {
 		r1 = rf(ctx, id)
 	} else {
 		r1 = ret.Error(1)
@@ -107,14 +107,14 @@ type Repository_FindByID_Call struct {
 
 // FindByID is a helper method to define mock.On call
 //   - ctx context.Context
-//   - id uuid.UUID
+//   - id ids.ID[ids.BackendKind]
 func (_e *Repository_Expecter) FindByID(ctx interface{}, id interface{}) *Repository_FindByID_Call {
 	return &Repository_FindByID_Call{Call: _e.mock.On("FindByID", ctx, id)}
 }
 
-func (_c *Repository_FindByID_Call) Run(run func(ctx context.Context, id uuid.UUID)) *Repository_FindByID_Call {
+func (_c *Repository_FindByID_Call) Run(run func(ctx context.Context, id ids.ID[ids.BackendKind])) *Repository_FindByID_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(uuid.UUID))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.BackendKind]))
 	})
 	return _c
 }
@@ -124,14 +124,14 @@ func (_c *Repository_FindByID_Call) Return(_a0 *backend.Backend, _a1 error) *Rep
 	return _c
 }
 
-func (_c *Repository_FindByID_Call) RunAndReturn(run func(context.Context, uuid.UUID) (*backend.Backend, error)) *Repository_FindByID_Call {
+func (_c *Repository_FindByID_Call) RunAndReturn(run func(context.Context, ids.ID[ids.BackendKind]) (*backend.Backend, error)) *Repository_FindByID_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
-// FindByIDs provides a mock function with given fields: ctx, gatewayID, ids
-func (_m *Repository) FindByIDs(ctx context.Context, gatewayID uuid.UUID, ids []uuid.UUID) ([]*backend.Backend, error) {
-	ret := _m.Called(ctx, gatewayID, ids)
+// FindByIDs provides a mock function with given fields: ctx, gatewayID, backendIDs
+func (_m *Repository) FindByIDs(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], backendIDs []ids.ID[ids.BackendKind]) ([]*backend.Backend, error) {
+	ret := _m.Called(ctx, gatewayID, backendIDs)
 
 	if len(ret) == 0 {
 		panic("no return value specified for FindByIDs")
@@ -139,19 +139,19 @@ func (_m *Repository) FindByIDs(ctx context.Context, gatewayID uuid.UUID, ids []
 
 	var r0 []*backend.Backend
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, []uuid.UUID) ([]*backend.Backend, error)); ok {
-		return rf(ctx, gatewayID, ids)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], []ids.ID[ids.BackendKind]) ([]*backend.Backend, error)); ok {
+		return rf(ctx, gatewayID, backendIDs)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, []uuid.UUID) []*backend.Backend); ok {
-		r0 = rf(ctx, gatewayID, ids)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], []ids.ID[ids.BackendKind]) []*backend.Backend); ok {
+		r0 = rf(ctx, gatewayID, backendIDs)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]*backend.Backend)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID, []uuid.UUID) error); ok {
-		r1 = rf(ctx, gatewayID, ids)
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], []ids.ID[ids.BackendKind]) error); ok {
+		r1 = rf(ctx, gatewayID, backendIDs)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -166,15 +166,15 @@ type Repository_FindByIDs_Call struct {
 
 // FindByIDs is a helper method to define mock.On call
 //   - ctx context.Context
-//   - gatewayID uuid.UUID
-//   - ids []uuid.UUID
-func (_e *Repository_Expecter) FindByIDs(ctx interface{}, gatewayID interface{}, ids interface{}) *Repository_FindByIDs_Call {
-	return &Repository_FindByIDs_Call{Call: _e.mock.On("FindByIDs", ctx, gatewayID, ids)}
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - backendIDs []ids.ID[ids.BackendKind]
+func (_e *Repository_Expecter) FindByIDs(ctx interface{}, gatewayID interface{}, backendIDs interface{}) *Repository_FindByIDs_Call {
+	return &Repository_FindByIDs_Call{Call: _e.mock.On("FindByIDs", ctx, gatewayID, backendIDs)}
 }
 
-func (_c *Repository_FindByIDs_Call) Run(run func(ctx context.Context, gatewayID uuid.UUID, ids []uuid.UUID)) *Repository_FindByIDs_Call {
+func (_c *Repository_FindByIDs_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], backendIDs []ids.ID[ids.BackendKind])) *Repository_FindByIDs_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(uuid.UUID), args[2].([]uuid.UUID))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].([]ids.ID[ids.BackendKind]))
 	})
 	return _c
 }
@@ -184,7 +184,7 @@ func (_c *Repository_FindByIDs_Call) Return(_a0 []*backend.Backend, _a1 error) *
 	return _c
 }
 
-func (_c *Repository_FindByIDs_Call) RunAndReturn(run func(context.Context, uuid.UUID, []uuid.UUID) ([]*backend.Backend, error)) *Repository_FindByIDs_Call {
+func (_c *Repository_FindByIDs_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], []ids.ID[ids.BackendKind]) ([]*backend.Backend, error)) *Repository_FindByIDs_Call {
 	_c.Call.Return(run)
 	return _c
 }

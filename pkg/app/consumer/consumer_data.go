@@ -6,8 +6,8 @@ import (
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	"github.com/google/uuid"
 )
 
 type RoutableConsumer struct {
@@ -20,12 +20,12 @@ type RoutableConsumer struct {
 }
 
 type Data struct {
-	GatewayID uuid.UUID
+	GatewayID ids.GatewayID
 	Consumers []RoutableConsumer
 	byPath    map[string]*RoutableConsumer
 }
 
-func NewData(gatewayID uuid.UUID, consumers []RoutableConsumer) *Data {
+func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer) *Data {
 	d := &Data{GatewayID: gatewayID, Consumers: consumers}
 	d.indexByPath()
 	return d

@@ -10,6 +10,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	gwmocks "github.com/NeuralTrust/AgentGateway/pkg/app/gateway/mocks"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -23,7 +24,7 @@ func newSessionApp(t *testing.T, gw *domain.Gateway) (*fiber.App, *string) {
 	t.Helper()
 	finder := gwmocks.NewFinder(t)
 	if gw != nil {
-		finder.EXPECT().FindByID(mock.Anything, uuid.MustParse(testGatewayID)).Return(gw, nil).Maybe()
+		finder.EXPECT().FindByID(mock.Anything, ids.From[ids.GatewayKind](uuid.MustParse(testGatewayID))).Return(gw, nil).Maybe()
 	}
 	mw := middleware.NewSessionMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)), finder)
 
@@ -42,7 +43,7 @@ func newSessionApp(t *testing.T, gw *domain.Gateway) (*fiber.App, *string) {
 }
 
 func gatewayWithSession(cfg *domain.SessionConfig) *domain.Gateway {
-	return &domain.Gateway{ID: uuid.MustParse(testGatewayID), Name: "gw", SessionConfig: cfg}
+	return &domain.Gateway{ID: ids.From[ids.GatewayKind](uuid.MustParse(testGatewayID)), Name: "gw", SessionConfig: cfg}
 }
 
 func doRequest(t *testing.T, app *fiber.App, body string, headers map[string]string) {

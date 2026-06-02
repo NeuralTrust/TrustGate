@@ -8,12 +8,12 @@ import (
 
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	domainbackend "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 	factorymocks "github.com/NeuralTrust/AgentGateway/pkg/infra/providers/factory/mocks"
 	providermocks "github.com/NeuralTrust/AgentGateway/pkg/infra/providers/mocks"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -29,7 +29,7 @@ const (
 
 func apiKeyTarget(provider string) *domainbackend.Backend {
 	return &domainbackend.Backend{
-		ID:       uuid.New(),
+		ID:       ids.New[ids.BackendKind](),
 		Name:     "t1",
 		Provider: provider,
 		Auth:     domainbackend.NewAPIKeyAuth("secret"),

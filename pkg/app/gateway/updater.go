@@ -6,13 +6,13 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 type UpdateInput struct {
-	ID              uuid.UUID
+	ID              ids.GatewayID
 	Name            string
 	Status          string
 	Telemetry       *telemetry.Telemetry

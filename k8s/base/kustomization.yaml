@@ -27,11 +27,3 @@ resources:
   # service resources
   - service/agentgateway-admin.yaml
   - service/agentgateway-proxy.yaml
-
-configMapGenerator:
-  - name: agentgateway-entrypoint
-    files:
-    - entrypoint.sh
-    options:
-      labels:
-        app.kubernetes.io/instance: agentgateway

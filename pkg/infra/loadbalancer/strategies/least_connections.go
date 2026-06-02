@@ -4,9 +4,9 @@ import (
 	"sync"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
-	"github.com/google/uuid"
 )
 
 type LeastConnections struct {
@@ -18,7 +18,7 @@ func NewLeastConnections(backends []*backend.Backend) *LeastConnections {
 	return &LeastConnections{backends: backends}
 }
 
-func (lc *LeastConnections) Next(req *infracontext.RequestContext, exclude map[uuid.UUID]struct{}) *backend.Backend {
+func (lc *LeastConnections) Next(_ *infracontext.RequestContext, exclude map[ids.BackendID]struct{}) *backend.Backend {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	n := len(lc.backends)

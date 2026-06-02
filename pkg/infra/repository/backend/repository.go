@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -98,7 +99,7 @@ func (r *Repository) Update(ctx context.Context, b *domain.Backend) error {
 	})
 }
 
-func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
+func (r *Repository) Delete(ctx context.Context, id ids.BackendID) error {
 	const query = `DELETE FROM backends WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 
@@ -116,7 +117,7 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	})
 }
 
-func ensureNotInFallbackChain(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+func ensureNotInFallbackChain(ctx context.Context, tx pgx.Tx, id ids.BackendID) error {
 	const query = `
 		SELECT EXISTS (
 			SELECT 1 FROM consumers
@@ -133,7 +134,7 @@ func ensureNotInFallbackChain(ctx context.Context, tx pgx.Tx, id uuid.UUID) erro
 	return nil
 }
 
-func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Backend, error) {
+func (r *Repository) FindByID(ctx context.Context, id ids.BackendID) (*domain.Backend, error) {
 	const query = `
 		SELECT id, gateway_id, name, provider, provider_options, auth, weight, description, health_checks, created_at, updated_at
 		  FROM backends
@@ -149,8 +150,8 @@ func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Backen
 	return b, nil
 }
 
-func (r *Repository) FindByIDs(ctx context.Context, gatewayID uuid.UUID, ids []uuid.UUID) ([]*domain.Backend, error) {
-	if len(ids) == 0 {
+func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, backendIDs []ids.BackendID) ([]*domain.Backend, error) {
+	if len(backendIDs) == 0 {
 		return nil, nil
 	}
 	const query = `
@@ -158,13 +159,13 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID uuid.UUID, ids []u
 		  FROM backends
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
-	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, ids)
+	rows, err := r.conn.Pool.Query(ctx, query, gatewayID.UUID(), ids.ToUUIDs(backendIDs))
 	if err != nil {
 		return nil, fmt.Errorf("backend repository: find by ids: %w", err)
 	}
 	defer rows.Close()
 
-	out := make([]*domain.Backend, 0, len(ids))
+	out := make([]*domain.Backend, 0, len(backendIDs))
 	for rows.Next() {
 		b, err := scanBackend(rows)
 		if err != nil {
@@ -193,7 +194,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')`
 
-	gatewayParam := nullableUUID(filter.GatewayID)
+	gatewayParam := nullableUUID(filter.GatewayID.UUID())
 
 	var total int
 	if err := r.conn.Pool.QueryRow(ctx, countQuery, gatewayParam, filter.NameContains).Scan(&total); err != nil {

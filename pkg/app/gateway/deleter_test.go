@@ -10,16 +10,16 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
 func TestDeleter_Delete_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
+	id := ids.New[ids.GatewayKind]()
 	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
 
 	mgr := newCacheManager()
@@ -39,7 +39,7 @@ func TestDeleter_Delete_Success(t *testing.T) {
 func TestDeleter_Delete_NotFound(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
+	id := ids.New[ids.GatewayKind]()
 	repo.EXPECT().Delete(mock.Anything, id).Return(domain.ErrNotFound).Once()
 
 	mgr := newCacheManager()
@@ -60,7 +60,7 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 func TestDeleter_Delete_HasDependents(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
+	id := ids.New[ids.GatewayKind]()
 	repo.EXPECT().Delete(mock.Anything, id).Return(domain.ErrHasDependents).Once()
 
 	deleter := appgateway.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())

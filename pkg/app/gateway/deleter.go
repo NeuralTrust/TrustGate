@@ -5,13 +5,13 @@ import (
 	"log/slog"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 //go:generate mockery --name=Deleter --dir=. --output=./mocks --filename=gateway_deleter_mock.go --case=underscore --with-expecter
 type Deleter interface {
-	Delete(ctx context.Context, id uuid.UUID) error
+	Delete(ctx context.Context, id ids.GatewayID) error
 }
 
 var _ Deleter = (*deleter)(nil)
@@ -37,7 +37,7 @@ func NewDeleter(
 	}
 }
 
-func (d *deleter) Delete(ctx context.Context, id uuid.UUID) error {
+func (d *deleter) Delete(ctx context.Context, id ids.GatewayID) error {
 	if err := d.repo.Delete(ctx, id); err != nil {
 		return err
 	}
