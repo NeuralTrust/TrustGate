@@ -4,6 +4,7 @@ import (
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
 	authhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth"
 	backendhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/backend"
+	cataloghttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/catalog"
 	consumerhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
 	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
@@ -12,10 +13,12 @@ import (
 )
 
 const (
-	HealthPath   = "/healthz"
-	ReadyPath    = "/readyz"
-	VersionPath  = "/__/version"
-	GatewaysPath = "/v1/gateways"
+	HealthPath        = "/healthz"
+	ReadyPath         = "/readyz"
+	VersionPath       = "/__/version"
+	GatewaysPath      = "/v1/gateways"
+	ProvidersCatalog  = "/v1/providers-catalog"
+	ModelsCatalogPath = "/v1/models-catalog"
 )
 
 // AdminRouterDeps groups every handler mounted by the admin plane.
@@ -56,6 +59,9 @@ type AdminRouterDeps struct {
 	ListAuth   *authhttp.ListAuthHandler
 	UpdateAuth *authhttp.UpdateAuthHandler
 	DeleteAuth *authhttp.DeleteAuthHandler
+
+	ListProvidersCatalog *cataloghttp.ListProvidersHandler
+	ListModelsCatalog    *cataloghttp.ListModelsHandler
 }
 
 type adminRouter struct {
@@ -107,6 +113,9 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	auths.Get("/:id", r.deps.GetAuth.Handle)
 	auths.Put("/:id", r.deps.UpdateAuth.Handle)
 	auths.Delete("/:id", r.deps.DeleteAuth.Handle)
+
+	app.Get(ProvidersCatalog, r.deps.AdminAuth.Middleware(), r.deps.ListProvidersCatalog.Handle)
+	app.Get(ModelsCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListModelsCatalog.Handle)
 
 	return nil
 }

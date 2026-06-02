@@ -81,6 +81,7 @@ type Config struct {
 	Metrics   MetricsConfig
 	Upstream  UpstreamConfig
 	Provider  ProviderConfig
+	Catalog   CatalogConfig
 	CORS      CORSConfig
 	Logger    LoggerConfig
 }
@@ -156,6 +157,11 @@ type ProviderConfig struct {
 	MaxRetries     int
 }
 
+type CatalogConfig struct {
+	OpenRouterAPIKey  string
+	OpenRouterBaseURL string
+}
+
 // CORSConfig drives the CORSMiddleware applied by both admin and proxy.
 // Lists are comma-separated in env. Use "*" in AllowOrigins to allow any.
 type CORSConfig struct {
@@ -184,6 +190,7 @@ func LoadConfig() (*Config, error) {
 		Metrics:   getMetricsConfig(),
 		Upstream:  getUpstreamConfig(),
 		Provider:  getProviderConfig(),
+		Catalog:   getCatalogConfig(),
 		CORS:      getCORSConfig(),
 		Logger:    getLoggerConfig(),
 	}
@@ -272,6 +279,13 @@ func getProviderConfig() ProviderConfig {
 	return ProviderConfig{
 		RequestTimeout: getEnvDuration("PROVIDER_REQUEST_TIMEOUT", defaultProviderRequestTimeout),
 		MaxRetries:     getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
+	}
+}
+
+func getCatalogConfig() CatalogConfig {
+	return CatalogConfig{
+		OpenRouterAPIKey:  getEnv("OPENROUTER_API_KEY", ""),
+		OpenRouterBaseURL: getEnv("OPENROUTER_BASE_URL", ""),
 	}
 }
 

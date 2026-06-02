@@ -1,6 +1,7 @@
 package response
 
 import (
+	"sort"
 	"time"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
@@ -21,8 +22,15 @@ type ConsumerResponse struct {
 	PolicyIDs       []uuid.UUID              `json:"policy_ids"`
 	AuthIDs         []uuid.UUID              `json:"auth_ids"`
 	Fallback        *FallbackResponse        `json:"fallback,omitempty"`
+	ModelPolicies   []ModelPolicyResponse    `json:"model_policies,omitempty"`
 	CreatedAt       time.Time                `json:"created_at"`
 	UpdatedAt       time.Time                `json:"updated_at"`
+}
+
+type ModelPolicyResponse struct {
+	BackendID uuid.UUID `json:"backend_id"`
+	Allowed   []string  `json:"allowed,omitempty"`
+	Default   string    `json:"default,omitempty"`
 }
 
 type EmbeddingConfigResponse struct {
@@ -80,9 +88,28 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
 		Fallback:        fromFallback(c.Fallback),
+		ModelPolicies:   fromModelPolicies(c.ModelPolicies),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 	}
+}
+
+func fromModelPolicies(m domain.ModelPolicies) []ModelPolicyResponse {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]ModelPolicyResponse, 0, len(m))
+	for backendID, policy := range m {
+		out = append(out, ModelPolicyResponse{
+			BackendID: backendID,
+			Allowed:   policy.Allowed,
+			Default:   policy.Default,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].BackendID.String() < out[j].BackendID.String()
+	})
+	return out
 }
 
 func fromFallback(f *domain.Fallback) *FallbackResponse {

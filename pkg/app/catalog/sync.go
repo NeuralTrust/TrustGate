@@ -1,0 +1,136 @@
+package catalog
+
+import (
+	"context"
+	"log/slog"
+
+	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/catalog/openrouter"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
+)
+
+const sourceOpenRouter = "openrouter"
+
+type seedProvider struct {
+	code        string
+	displayName string
+	wireFormat  string
+}
+
+var seedProviders = []seedProvider{
+	{providers.ProviderOpenAI, "OpenAI", "openai"},
+	{providers.ProviderGoogle, "Google AI Studio", "google"},
+	{providers.ProviderVertex, "Google Vertex AI", "google"},
+	{providers.ProviderAnthropic, "Anthropic", "anthropic"},
+	{providers.ProviderBedrock, "AWS Bedrock", "anthropic"},
+	{providers.ProviderAzure, "Azure OpenAI", "openai"},
+	{providers.ProviderMistral, "Mistral", "openai"},
+	{providers.ProviderGroq, "Groq", "openai"},
+}
+
+var openRouterVendorToCode = map[string]string{
+	"openai":    providers.ProviderOpenAI,
+	"google":    providers.ProviderGoogle,
+	"anthropic": providers.ProviderAnthropic,
+	"mistral":   providers.ProviderMistral,
+	"mistralai": providers.ProviderMistral,
+}
+
+//go:generate mockery --name=Syncer --dir=. --output=./mocks --filename=catalog_syncer_mock.go --case=underscore --with-expecter
+type Syncer interface {
+	Sync(ctx context.Context) error
+}
+
+var _ Syncer = (*syncer)(nil)
+
+type syncer struct {
+	repo   domain.Repository
+	client *openrouter.Client
+	logger *slog.Logger
+}
+
+func NewSyncer(repo domain.Repository, client *openrouter.Client, logger *slog.Logger) Syncer {
+	return &syncer{repo: repo, client: client, logger: logger}
+}
+
+func (s *syncer) Sync(ctx context.Context) error {
+	if err := s.seedProviders(ctx); err != nil {
+		return err
+	}
+
+	codeToProvider, err := s.providerIndex(ctx)
+	if err != nil {
+		return err
+	}
+
+	models, err := s.client.ListModels(ctx)
+	if err != nil {
+		return err
+	}
+
+	keepByProvider := make(map[string][]string)
+	for _, m := range models {
+		code, ok := openRouterVendorToCode[m.ProviderCode]
+		if !ok {
+			continue
+		}
+		provider, ok := codeToProvider[code]
+		if !ok {
+			continue
+		}
+		entity := &domain.Model{
+			ProviderID:    provider.ID,
+			Slug:          m.Slug,
+			ExternalID:    m.ExternalID,
+			DisplayName:   m.DisplayName,
+			ContextWindow: m.ContextWindow,
+			MaxOutput:     m.MaxOutput,
+			InputPrice:    m.InputPrice,
+			OutputPrice:   m.OutputPrice,
+			Enabled:       true,
+			Source:        sourceOpenRouter,
+		}
+		if err := s.repo.UpsertModel(ctx, entity); err != nil {
+			return err
+		}
+		keepByProvider[code] = append(keepByProvider[code], m.Slug)
+	}
+
+	for code, provider := range codeToProvider {
+		if err := s.repo.DisableModelsExcept(ctx, provider.ID, sourceOpenRouter, keepByProvider[code]); err != nil {
+			return err
+		}
+	}
+
+	s.logger.Info("catalog sync completed",
+		slog.Int("providers", len(seedProviders)),
+		slog.Int("models", len(models)))
+	return nil
+}
+
+func (s *syncer) seedProviders(ctx context.Context) error {
+	for _, p := range seedProviders {
+		entity := &domain.Provider{
+			Code:        p.code,
+			DisplayName: p.displayName,
+			WireFormat:  p.wireFormat,
+			Source:      "seed",
+		}
+		if err := s.repo.UpsertProvider(ctx, entity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *syncer) providerIndex(ctx context.Context) (map[string]domain.Provider, error) {
+	stored, err := s.repo.ListProviders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	index := make(map[string]domain.Provider, len(stored))
+	for _, p := range stored {
+		index[p.Code] = p
+	}
+	return index, nil
+}

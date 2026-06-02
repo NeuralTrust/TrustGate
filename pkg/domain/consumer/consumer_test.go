@@ -198,6 +198,7 @@ func TestConsumer_Rehydrate(t *testing.T) {
 		true,
 		[]uuid.UUID{beID}, nil, nil,
 		nil,
+		nil,
 		now, now,
 	)
 	if c.ID != id || c.GatewayID != gwID {

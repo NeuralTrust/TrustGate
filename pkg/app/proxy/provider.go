@@ -26,6 +26,8 @@ const (
 // 400 Bad Request.
 var ErrInvalidRequestPayload = errors.New("invalid request payload")
 
+var ErrModelNotAllowed = errors.New("model not allowed")
+
 // ProviderResponse is the backend LLM response. On the synchronous path it
 // carries Body; on the streaming path it carries Stream. It is relayed to the
 // client verbatim, including non-2xx backend statuses: a 4xx/5xx from the
@@ -201,10 +203,15 @@ func (p *providerInvoker) prepare(
 
 	body = adapter.NormalizeRequestForProvider(bk.Provider, targetFormat, body)
 
-	// ValidateModel is a near no-op until the backend carries an allow-list /
-	// default model; failures are non-fatal (proceed without model override).
-	if normalized, _, verr := adapter.ValidateModel(body, nil, ""); verr != nil {
-		p.logger.Warn("model validation failed, proceeding without override",
+	normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
+	if verr != nil {
+		if errors.Is(verr, adapter.ErrModelNotAllowed) {
+			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+		}
+		if len(req.AllowedModels) > 0 {
+			return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
+		}
+		p.logger.Warn("model enforcement failed, proceeding without override",
 			slog.String("error", verr.Error()))
 	} else {
 		body = normalized

@@ -26,6 +26,7 @@ type CreateInput struct {
 	PolicyIDs       []uuid.UUID
 	AuthIDs         []uuid.UUID
 	Fallback        *domain.Fallback
+	ModelPolicies   domain.ModelPolicies
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -83,6 +84,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		PolicyIDs:       in.PolicyIDs,
 		AuthIDs:         in.AuthIDs,
 		Fallback:        in.Fallback,
+		ModelPolicies:   in.ModelPolicies,
 	})
 	if err != nil {
 		return nil, err
