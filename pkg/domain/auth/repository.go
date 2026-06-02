@@ -3,11 +3,11 @@ package auth
 import (
 	"context"
 
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type ListFilter struct {
-	GatewayID    uuid.UUID
+	GatewayID    ids.GatewayID
 	NameContains string
 	Page         int
 	Size         int
@@ -17,8 +17,8 @@ type ListFilter struct {
 type Repository interface {
 	Save(ctx context.Context, a *Auth) error
 	Update(ctx context.Context, a *Auth) error
-	Delete(ctx context.Context, id uuid.UUID) error
-	FindByID(ctx context.Context, id uuid.UUID) (*Auth, error)
-	FindByIDs(ctx context.Context, gatewayID uuid.UUID, ids []uuid.UUID) ([]*Auth, error)
+	Delete(ctx context.Context, id ids.AuthID) error
+	FindByID(ctx context.Context, id ids.AuthID) (*Auth, error)
+	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*Auth, error)
 	List(ctx context.Context, filter ListFilter) (items []*Auth, total int, err error)
 }

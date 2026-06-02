@@ -9,6 +9,7 @@ import (
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -21,7 +22,7 @@ func NewUpdateAuthHandler(updater appauth.Updater) *UpdateAuthHandler {
 }
 
 func (h *UpdateAuthHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
+	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.AuthKind](c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

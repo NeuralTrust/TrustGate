@@ -6,7 +6,7 @@ import (
 	context "context"
 
 	gateway "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	uuid "github.com/google/uuid"
+	ids "github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -24,7 +24,7 @@ func (_m *Repository) EXPECT() *Repository_Expecter {
 }
 
 // Delete provides a mock function with given fields: ctx, id
-func (_m *Repository) Delete(ctx context.Context, id uuid.UUID) error {
+func (_m *Repository) Delete(ctx context.Context, id ids.ID[ids.GatewayKind]) error {
 	ret := _m.Called(ctx, id)
 
 	if len(ret) == 0 {
@@ -32,7 +32,7 @@ func (_m *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) error); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) error); ok {
 		r0 = rf(ctx, id)
 	} else {
 		r0 = ret.Error(0)
@@ -48,14 +48,14 @@ type Repository_Delete_Call struct {
 
 // Delete is a helper method to define mock.On call
 //   - ctx context.Context
-//   - id uuid.UUID
+//   - id ids.ID[ids.GatewayKind]
 func (_e *Repository_Expecter) Delete(ctx interface{}, id interface{}) *Repository_Delete_Call {
 	return &Repository_Delete_Call{Call: _e.mock.On("Delete", ctx, id)}
 }
 
-func (_c *Repository_Delete_Call) Run(run func(ctx context.Context, id uuid.UUID)) *Repository_Delete_Call {
+func (_c *Repository_Delete_Call) Run(run func(ctx context.Context, id ids.ID[ids.GatewayKind])) *Repository_Delete_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(uuid.UUID))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]))
 	})
 	return _c
 }
@@ -65,13 +65,13 @@ func (_c *Repository_Delete_Call) Return(_a0 error) *Repository_Delete_Call {
 	return _c
 }
 
-func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, uuid.UUID) error) *Repository_Delete_Call {
+func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind]) error) *Repository_Delete_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // FindByID provides a mock function with given fields: ctx, id
-func (_m *Repository) FindByID(ctx context.Context, id uuid.UUID) (*gateway.Gateway, error) {
+func (_m *Repository) FindByID(ctx context.Context, id ids.ID[ids.GatewayKind]) (*gateway.Gateway, error) {
 	ret := _m.Called(ctx, id)
 
 	if len(ret) == 0 {
@@ -80,10 +80,10 @@ func (_m *Repository) FindByID(ctx context.Context, id uuid.UUID) (*gateway.Gate
 
 	var r0 *gateway.Gateway
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) (*gateway.Gateway, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) (*gateway.Gateway, error)); ok {
 		return rf(ctx, id)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) *gateway.Gateway); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) *gateway.Gateway); ok {
 		r0 = rf(ctx, id)
 	} else {
 		if ret.Get(0) != nil {
@@ -91,7 +91,7 @@ func (_m *Repository) FindByID(ctx context.Context, id uuid.UUID) (*gateway.Gate
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind]) error); ok {
 		r1 = rf(ctx, id)
 	} else {
 		r1 = ret.Error(1)
@@ -107,14 +107,14 @@ type Repository_FindByID_Call struct {
 
 // FindByID is a helper method to define mock.On call
 //   - ctx context.Context
-//   - id uuid.UUID
+//   - id ids.ID[ids.GatewayKind]
 func (_e *Repository_Expecter) FindByID(ctx interface{}, id interface{}) *Repository_FindByID_Call {
 	return &Repository_FindByID_Call{Call: _e.mock.On("FindByID", ctx, id)}
 }
 
-func (_c *Repository_FindByID_Call) Run(run func(ctx context.Context, id uuid.UUID)) *Repository_FindByID_Call {
+func (_c *Repository_FindByID_Call) Run(run func(ctx context.Context, id ids.ID[ids.GatewayKind])) *Repository_FindByID_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(uuid.UUID))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]))
 	})
 	return _c
 }
@@ -124,7 +124,7 @@ func (_c *Repository_FindByID_Call) Return(_a0 *gateway.Gateway, _a1 error) *Rep
 	return _c
 }
 
-func (_c *Repository_FindByID_Call) RunAndReturn(run func(context.Context, uuid.UUID) (*gateway.Gateway, error)) *Repository_FindByID_Call {
+func (_c *Repository_FindByID_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind]) (*gateway.Gateway, error)) *Repository_FindByID_Call {
 	_c.Call.Return(run)
 	return _c
 }

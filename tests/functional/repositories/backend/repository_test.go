@@ -10,11 +10,11 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/backend"
 	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -56,7 +56,7 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 	return repo.NewRepository(conn), gatewayrepo.NewRepository(conn), conn
 }
 
-func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUID {
+func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {
 	t.Helper()
 	g, err := gatewaydomain.New(name)
 	if err != nil {
@@ -68,7 +68,7 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUI
 	return g.ID
 }
 
-func validBackend(t *testing.T, gwID uuid.UUID, name string) *domain.Backend {
+func validBackend(t *testing.T, gwID ids.GatewayID, name string) *domain.Backend {
 	t.Helper()
 	b, err := domain.NewBackend(gwID, name, "openai", nil, "", 1, domain.NewAPIKeyAuth("sk-test"), nil)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestRepository_SaveAndFindByID_NullableProviderOptions(t *testing.T) {
 
 func TestRepository_FindByID_NotFound(t *testing.T) {
 	r, _, _ := setupRepo(t)
-	_, err := r.FindByID(context.Background(), uuid.New())
+	_, err := r.FindByID(context.Background(), ids.New[ids.BackendKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -163,7 +163,7 @@ func TestRepository_Save_DuplicateNameForSameGateway(t *testing.T) {
 func TestRepository_Save_InvalidGatewayID(t *testing.T) {
 	r, _, _ := setupRepo(t)
 	ctx := context.Background()
-	orphanGW := uuid.New()
+	orphanGW := ids.New[ids.GatewayKind]()
 	b := validBackend(t, orphanGW, "orphan")
 	err := r.Save(ctx, b)
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
@@ -226,7 +226,7 @@ func TestRepository_Delete(t *testing.T) {
 
 func TestRepository_Delete_NotFound(t *testing.T) {
 	r, _, _ := setupRepo(t)
-	err := r.Delete(context.Background(), uuid.New())
+	err := r.Delete(context.Background(), ids.New[ids.BackendKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}

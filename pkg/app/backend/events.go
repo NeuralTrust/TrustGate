@@ -4,9 +4,9 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
-	"github.com/google/uuid"
 )
 
 // publishBackendCacheInvalidation is best-effort: a publish error is logged, never
@@ -15,7 +15,7 @@ func publishBackendCacheInvalidation(
 	ctx context.Context,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
-	gatewayID, backendID uuid.UUID,
+	gatewayID ids.GatewayID, backendID ids.BackendID,
 ) {
 	evt := event.InvalidateBackendCacheEvent{
 		GatewayID: gatewayID.String(),

@@ -9,20 +9,20 @@ import (
 	"testing"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/catalog/openrouter"
-	"github.com/google/uuid"
 )
 
 type fakeRepo struct {
 	providers      map[string]domain.Provider
 	upsertedModels []domain.Model
-	disabledCalls  map[uuid.UUID][]string
+	disabledCalls  map[ids.ProviderID][]string
 }
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
 		providers:     make(map[string]domain.Provider),
-		disabledCalls: make(map[uuid.UUID][]string),
+		disabledCalls: make(map[ids.ProviderID][]string),
 	}
 }
 
@@ -31,7 +31,7 @@ func (f *fakeRepo) UpsertProvider(_ context.Context, p *domain.Provider) error {
 	if ok {
 		p.ID = existing.ID
 	} else {
-		p.ID = uuid.New()
+		p.ID = ids.New[ids.ProviderKind]()
 	}
 	f.providers[p.Code] = *p
 	return nil
@@ -42,7 +42,7 @@ func (f *fakeRepo) UpsertModel(_ context.Context, m *domain.Model) error {
 	return nil
 }
 
-func (f *fakeRepo) DisableModelsExcept(_ context.Context, providerID uuid.UUID, source string, keepSlugs []string) error {
+func (f *fakeRepo) DisableModelsExcept(_ context.Context, providerID ids.ProviderID, source string, keepSlugs []string) error {
 	if source != sourceOpenRouter {
 		panic("unexpected source: " + source)
 	}

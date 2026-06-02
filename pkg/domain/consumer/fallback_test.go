@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 func TestFallback_Validate(t *testing.T) {
 	t.Parallel()
-	id1, id2 := uuid.New(), uuid.New()
+	id1, id2 := ids.New[ids.BackendKind](), ids.New[ids.BackendKind]()
 
 	cases := []struct {
 		name    string
@@ -65,7 +65,7 @@ func TestFallback_Validate(t *testing.T) {
 		},
 		{
 			name:    "nil chain entry",
-			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: 1}, Chain: backend.Backends{uuid.Nil}},
+			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: 1}, Chain: backend.Backends{{}}},
 			wantErr: true,
 		},
 	}

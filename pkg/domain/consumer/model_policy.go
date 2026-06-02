@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type ModelPolicy struct {
@@ -13,7 +13,7 @@ type ModelPolicy struct {
 	Default string   `json:"default,omitempty"`
 }
 
-type ModelPolicies map[uuid.UUID]ModelPolicy
+type ModelPolicies map[ids.BackendID]ModelPolicy
 
 func (m ModelPolicies) Value() (driver.Value, error) {
 	if m == nil {
@@ -33,9 +33,9 @@ func (m *ModelPolicies) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, m)
 }
 
-func (m ModelPolicies) Validate(validBackendIDs map[uuid.UUID]struct{}) error {
+func (m ModelPolicies) Validate(validBackendIDs map[ids.BackendID]struct{}) error {
 	for backendID, policy := range m {
-		if backendID == uuid.Nil {
+		if backendID.IsNil() {
 			return fmt.Errorf("%w: nil backend_id", ErrInvalidModelPolicy)
 		}
 		if _, ok := validBackendIDs[backendID]; !ok {
@@ -48,7 +48,7 @@ func (m ModelPolicies) Validate(validBackendIDs map[uuid.UUID]struct{}) error {
 	return nil
 }
 
-func (p ModelPolicy) validate(backendID uuid.UUID) error {
+func (p ModelPolicy) validate(backendID ids.BackendID) error {
 	seen := make(map[string]struct{}, len(p.Allowed))
 	for _, model := range p.Allowed {
 		if model == "" {
@@ -67,7 +67,7 @@ func (p ModelPolicy) validate(backendID uuid.UUID) error {
 	return nil
 }
 
-func (m ModelPolicies) For(backendID uuid.UUID) (ModelPolicy, bool) {
+func (m ModelPolicies) For(backendID ids.BackendID) (ModelPolicy, bool) {
 	if m == nil {
 		return ModelPolicy{}, false
 	}

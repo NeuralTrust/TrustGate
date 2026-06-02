@@ -4,9 +4,9 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
-	"github.com/google/uuid"
 )
 
 // publishGatewayDataInvalidation is best-effort: a publish error is logged, never
@@ -15,7 +15,7 @@ func publishGatewayDataInvalidation(
 	ctx context.Context,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
-	gatewayID uuid.UUID,
+	gatewayID ids.GatewayID,
 ) {
 	evt := event.InvalidateGatewayDataEvent{GatewayID: gatewayID.String()}
 	if err := publisher.Publish(ctx, evt); err != nil {

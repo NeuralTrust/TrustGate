@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
-	"github.com/google/uuid"
 )
 
 type Gateway struct {
-	ID              uuid.UUID            `json:"id"`
+	ID              ids.GatewayID        `json:"id"`
 	Name            string               `json:"name"`
 	Status          string               `json:"status"`
 	Telemetry       *telemetry.Telemetry `json:"telemetry,omitempty"`
@@ -33,7 +33,7 @@ type SessionConfig struct {
 func New(name string) (*Gateway, error) {
 	now := time.Now().UTC()
 	g := &Gateway{
-		ID:        uuid.New(),
+		ID:        ids.New[ids.GatewayKind](),
 		Name:      name,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -45,7 +45,7 @@ func New(name string) (*Gateway, error) {
 }
 
 func Rehydrate(
-	id uuid.UUID,
+	id ids.GatewayID,
 	name, status string,
 	tel *telemetry.Telemetry,
 	clientTLS ClientTLSConfig,

@@ -13,11 +13,11 @@ import (
 	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
 	domainbackend "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	cachemocks "github.com/NeuralTrust/AgentGateway/pkg/infra/cache/mocks"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -34,10 +34,10 @@ func newPermissiveCache(t *testing.T) *cachemocks.Client {
 	return c
 }
 
-func routableConsumerWith(gatewayID uuid.UUID, backends ...*domainbackend.Backend) *appconsumer.RoutableConsumer {
+func routableConsumerWith(gatewayID ids.GatewayID, backends ...*domainbackend.Backend) *appconsumer.RoutableConsumer {
 	return &appconsumer.RoutableConsumer{
 		Consumer: &domainconsumer.Consumer{
-			ID:        uuid.New(),
+			ID:        ids.New[ids.ConsumerKind](),
 			GatewayID: gatewayID,
 			Name:      "test-consumer",
 			Path:      "/v1/chat/completions",
@@ -47,9 +47,9 @@ func routableConsumerWith(gatewayID uuid.UUID, backends ...*domainbackend.Backen
 	}
 }
 
-func backendFor(gatewayID uuid.UUID, provider string) *domainbackend.Backend {
+func backendFor(gatewayID ids.GatewayID, provider string) *domainbackend.Backend {
 	return &domainbackend.Backend{
-		ID:        uuid.New(),
+		ID:        ids.New[ids.BackendKind](),
 		GatewayID: gatewayID,
 		Name:      "test-backend",
 		Provider:  provider,
@@ -66,7 +66,7 @@ func newTestForwarder(t *testing.T, invoker appproxy.ProviderInvoker) appproxy.F
 	)
 }
 
-func enabledFallback(chain ...uuid.UUID) *domainconsumer.Fallback {
+func enabledFallback(chain ...ids.BackendID) *domainconsumer.Fallback {
 	return &domainconsumer.Fallback{
 		Enabled:  true,
 		Triggers: []domainconsumer.FallbackTrigger{domainconsumer.TriggerHTTP5xx},
@@ -76,7 +76,7 @@ func enabledFallback(chain ...uuid.UUID) *domainconsumer.Fallback {
 }
 
 func TestForward_PoolFailoverOn503(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	bk1 := backendFor(gatewayID, "openai")
 	bk2 := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, bk1, bk2)
@@ -106,7 +106,7 @@ func TestForward_PoolFailoverOn503(t *testing.T) {
 }
 
 func TestForward_FallbackChainAfterPoolExhausted(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	pool := backendFor(gatewayID, "openai")
 	fallbackBk := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, pool)
@@ -138,7 +138,7 @@ func TestForward_FallbackChainAfterPoolExhausted(t *testing.T) {
 }
 
 func TestForward_AllCandidatesFailRelaysLast5xx(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	pool := backendFor(gatewayID, "openai")
 	fallbackBk := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, pool)
@@ -165,7 +165,7 @@ func TestForward_AllCandidatesFailRelaysLast5xx(t *testing.T) {
 }
 
 func TestForward_SyncSuccess(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 
@@ -191,7 +191,7 @@ func TestForward_SyncSuccess(t *testing.T) {
 }
 
 func TestForward_BackendErrorStatusPassthrough(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 
@@ -228,7 +228,7 @@ func TestForward_BackendErrorStatusPassthrough(t *testing.T) {
 }
 
 func TestForward_StreamingRequestInvokesStream(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 
@@ -263,7 +263,7 @@ func TestForward_StreamingRequestInvokesStream(t *testing.T) {
 }
 
 func TestForward_ProviderErrorPropagates(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 
@@ -287,7 +287,7 @@ func TestForward_ProviderErrorPropagates(t *testing.T) {
 }
 
 func TestForward_NoBackendsInPool(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	rc := routableConsumerWith(gatewayID)
 
 	invoker := proxymocks.NewProviderInvoker(t)
@@ -308,7 +308,7 @@ func TestForward_NilConsumer(t *testing.T) {
 	fwd := newTestForwarder(t, invoker)
 
 	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
-		GatewayID: uuid.New(),
+		GatewayID: ids.New[ids.GatewayKind](),
 		Consumer:  nil,
 		Request:   &infracontext.RequestContext{Context: context.Background()},
 	})

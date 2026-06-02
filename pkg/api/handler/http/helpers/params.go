@@ -4,8 +4,8 @@ import (
 	"errors"
 	"strconv"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 )
 
 const (
@@ -18,34 +18,34 @@ var ErrInvalidUUIDParam = errors.New("invalid uuid path parameter")
 var ErrInvalidPage = errors.New("invalid page parameter")
 var ErrInvalidSize = errors.New("invalid size parameter")
 
-func ParseUUIDParam(c *fiber.Ctx, name string) (uuid.UUID, error) {
+func ParseUUIDParam[K ids.Kind](c *fiber.Ctx, name string) (ids.ID[K], error) {
 	raw := c.Params(name)
 	if raw == "" {
-		return uuid.Nil, ErrInvalidUUIDParam
+		return ids.ID[K]{}, ErrInvalidUUIDParam
 	}
-	id, err := uuid.Parse(raw)
+	id, err := ids.Parse[K](raw)
 	if err != nil {
-		return uuid.Nil, ErrInvalidUUIDParam
+		return ids.ID[K]{}, ErrInvalidUUIDParam
 	}
 	return id, nil
 }
 
 // ParseGatewayID parses the required :gateway_id path param shared by every
 // gateway-scoped collection handler (create/list).
-func ParseGatewayID(c *fiber.Ctx) (uuid.UUID, error) {
-	return ParseUUIDParam(c, "gateway_id")
+func ParseGatewayID(c *fiber.Ctx) (ids.GatewayID, error) {
+	return ParseUUIDParam[ids.GatewayKind](c, "gateway_id")
 }
 
 // ParseGatewayScopedID parses the required :gateway_id and :id path params
 // shared by every gateway-scoped sub-resource handler (get/update/delete).
-func ParseGatewayScopedID(c *fiber.Ctx) (gatewayID, id uuid.UUID, err error) {
-	gatewayID, err = ParseGatewayID(c)
+func ParseGatewayScopedID[K ids.Kind](c *fiber.Ctx) (ids.GatewayID, ids.ID[K], error) {
+	gatewayID, err := ParseGatewayID(c)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return ids.GatewayID{}, ids.ID[K]{}, err
 	}
-	id, err = ParseUUIDParam(c, "id")
+	id, err := ParseUUIDParam[K](c, "id")
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return ids.GatewayID{}, ids.ID[K]{}, err
 	}
 	return gatewayID, id, nil
 }

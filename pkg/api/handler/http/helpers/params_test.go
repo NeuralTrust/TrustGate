@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 )
 
 func runInCtx[T any](t *testing.T, target, route string, fn func(c *fiber.Ctx) (T, error)) (T, error) {
@@ -29,12 +29,12 @@ func runInCtx[T any](t *testing.T, target, route string, fn func(c *fiber.Ctx) (
 func TestParseUUIDParam(t *testing.T) {
 	t.Parallel()
 
-	validID := uuid.New()
+	validID := ids.New[ids.GatewayKind]()
 
 	tests := []struct {
 		name    string
 		target  string
-		want    uuid.UUID
+		want    ids.GatewayID
 		wantErr error
 	}{
 		{name: "valid uuid is parsed", target: "/test/" + validID.String(), want: validID},
@@ -45,8 +45,8 @@ func TestParseUUIDParam(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := runInCtx(t, tc.target, "/test/:id", func(c *fiber.Ctx) (uuid.UUID, error) {
-				return ParseUUIDParam(c, "id")
+			got, err := runInCtx(t, tc.target, "/test/:id", func(c *fiber.Ctx) (ids.GatewayID, error) {
+				return ParseUUIDParam[ids.GatewayKind](c, "id")
 			})
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
@@ -66,8 +66,8 @@ func TestParseUUIDParam(t *testing.T) {
 
 func TestParseUUIDParam_Missing(t *testing.T) {
 	t.Parallel()
-	_, err := runInCtx(t, "/test", "/test", func(c *fiber.Ctx) (uuid.UUID, error) {
-		return ParseUUIDParam(c, "id")
+	_, err := runInCtx(t, "/test", "/test", func(c *fiber.Ctx) (ids.GatewayID, error) {
+		return ParseUUIDParam[ids.GatewayKind](c, "id")
 	})
 	if !errors.Is(err, ErrInvalidUUIDParam) {
 		t.Fatalf("got err %v, want ErrInvalidUUIDParam", err)

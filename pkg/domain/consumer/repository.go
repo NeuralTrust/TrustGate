@@ -3,11 +3,11 @@ package consumer
 import (
 	"context"
 
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type ListFilter struct {
-	GatewayID    uuid.UUID
+	GatewayID    ids.GatewayID
 	NameContains string
 	Page         int
 	Size         int
@@ -17,10 +17,10 @@ type ListFilter struct {
 type Repository interface {
 	Save(ctx context.Context, c *Consumer) error
 	Update(ctx context.Context, c *Consumer) error
-	Delete(ctx context.Context, id uuid.UUID) error
-	FindByID(ctx context.Context, id uuid.UUID) (*Consumer, error)
+	Delete(ctx context.Context, id ids.ConsumerID) error
+	FindByID(ctx context.Context, id ids.ConsumerID) (*Consumer, error)
 	List(ctx context.Context, filter ListFilter) (items []*Consumer, total int, err error)
 	// ListByGateway returns every consumer of a gateway, unpaginated. It backs
 	// the per-gateway aggregated read model consumed on the hot path.
-	ListByGateway(ctx context.Context, gatewayID uuid.UUID) ([]*Consumer, error)
+	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Consumer, error)
 }

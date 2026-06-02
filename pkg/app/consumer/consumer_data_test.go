@@ -4,14 +4,14 @@ import (
 	"testing"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 func routable(path string, active bool) RoutableConsumer {
 	return RoutableConsumer{
 		Consumer: &domain.Consumer{
-			ID:        uuid.New(),
-			GatewayID: uuid.New(),
+			ID:        ids.New[ids.ConsumerKind](),
+			GatewayID: ids.New[ids.GatewayKind](),
 			Path:      path,
 			Active:    active,
 		},
@@ -20,7 +20,7 @@ func routable(path string, active bool) RoutableConsumer {
 
 func TestData_MatchPath_IgnoresTrailingSlash(t *testing.T) {
 	t.Parallel()
-	d := NewData(uuid.New(), []RoutableConsumer{routable("/v1/chat", true)})
+	d := NewData(ids.New[ids.GatewayKind](), []RoutableConsumer{routable("/v1/chat", true)})
 
 	for _, in := range []string{"/v1/chat", "/v1/chat/"} {
 		if _, ok := d.MatchPath(in); !ok {
@@ -34,7 +34,7 @@ func TestData_MatchPath_IgnoresTrailingSlash(t *testing.T) {
 
 func TestData_MatchPath_SkipsInactiveConsumers(t *testing.T) {
 	t.Parallel()
-	d := NewData(uuid.New(), []RoutableConsumer{routable("/v1/chat", false)})
+	d := NewData(ids.New[ids.GatewayKind](), []RoutableConsumer{routable("/v1/chat", false)})
 
 	if _, ok := d.MatchPath("/v1/chat"); ok {
 		t.Fatal("inactive consumer must not be routable")

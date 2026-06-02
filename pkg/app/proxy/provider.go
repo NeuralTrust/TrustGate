@@ -28,36 +28,21 @@ var ErrInvalidRequestPayload = errors.New("invalid request payload")
 
 var ErrModelNotAllowed = errors.New("model not allowed")
 
-// ProviderResponse is the backend LLM response. On the synchronous path it
-// carries Body; on the streaming path it carries Stream. It is relayed to the
-// client verbatim, including non-2xx backend statuses: a 4xx/5xx from the
-// backend is carried here (not as a Go error) so the backend error reaches the
-// client unchanged.
 type ProviderResponse struct {
 	StatusCode int
 	Headers    map[string][]string
 	Body       []byte
-	// Stream, when non-nil, yields SSE lines (without trailing newline) already
-	// adapted to the client's source format. The consumer writes each line + "\n"
-	// and is responsible for draining the sequence (which closes the backend
-	// body). The second value carries mid-stream errors.
-	Stream iter.Seq2[[]byte, error]
+	Stream     iter.Seq2[[]byte, error]
 }
 
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
 type ProviderInvoker interface {
 	Invoke(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*ProviderResponse, error)
-	// InvokeStream performs the streaming invocation. A pre-stream non-2xx
-	// backend response is returned as a verbatim *ProviderResponse (Body set,
-	// Stream nil); a successful call returns a *ProviderResponse with Stream set.
 	InvokeStream(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*ProviderResponse, error)
 }
 
 var _ ProviderInvoker = (*providerInvoker)(nil)
 
-// providerInvoker resolves the concrete LLM provider client for a backend,
-// transforms the request payload across provider formats when needed, invokes
-// the backend, and adapts the response back to the client's source format.
 type providerInvoker struct {
 	locator  factory.ProviderLocator
 	registry *adapter.Registry

@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
-	"github.com/google/uuid"
 )
 
 func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 	t.Parallel()
 	factory := loadbalancer.NewBaseFactory(nil, nil)
-	backends := []*backend.Backend{{ID: uuid.New(), Name: "a", Weight: 1, Provider: "openai"}}
+	backends := []*backend.Backend{{ID: ids.New[ids.BackendKind](), Name: "a", Weight: 1, Provider: "openai"}}
 
 	cases := []struct {
 		name     string

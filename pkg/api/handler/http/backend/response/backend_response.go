@@ -4,14 +4,14 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 const redacted = "***"
 
 type BackendResponse struct {
-	ID              uuid.UUID             `json:"id"`
-	GatewayID       uuid.UUID             `json:"gateway_id"`
+	ID              ids.BackendID         `json:"id"`
+	GatewayID       ids.GatewayID         `json:"gateway_id"`
 	Name            string                `json:"name"`
 	Provider        string                `json:"provider"`
 	ProviderOptions map[string]any        `json:"provider_options,omitempty"`

@@ -5,13 +5,13 @@ import (
 	"log/slog"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 //go:generate mockery --name=Finder --dir=. --output=./mocks --filename=gateway_finder_mock.go --case=underscore --with-expecter
 type Finder interface {
-	FindByID(ctx context.Context, id uuid.UUID) (*domain.Gateway, error)
+	FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gateway, error)
 	List(ctx context.Context, filter domain.ListFilter) ([]*domain.Gateway, int, error)
 }
 
@@ -31,7 +31,7 @@ func NewFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slo
 	}
 }
 
-func (f *finder) FindByID(ctx context.Context, id uuid.UUID) (*domain.Gateway, error) {
+func (f *finder) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gateway, error) {
 	if cached, ok := f.memoryCache.Get(id.String()); ok {
 		if g, ok := cached.(*domain.Gateway); ok {
 			return g, nil

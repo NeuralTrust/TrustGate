@@ -7,9 +7,9 @@ import (
 
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 )
 
 type SessionMiddleware struct {
@@ -52,7 +52,7 @@ func (m *SessionMiddleware) resolveConfig(c *fiber.Ctx) *domain.SessionConfig {
 	if rawID == "" {
 		return nil
 	}
-	gatewayID, err := uuid.Parse(rawID)
+	gatewayID, err := ids.Parse[ids.GatewayKind](rawID)
 	if err != nil {
 		m.logger.Debug("session middleware: invalid gateway id header", slog.String("gateway_id", rawID))
 		return nil

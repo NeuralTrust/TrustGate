@@ -6,17 +6,17 @@ import (
 	"time"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 func TestBackend_New_HappyPath(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	b, err := NewBackend(gwID, "openai-1", "openai", nil, "primary", 5, NewAPIKeyAuth("sk-test"), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if b.ID == uuid.Nil {
+	if b.ID.IsNil() {
 		t.Fatal("ID is zero")
 	}
 	if b.GatewayID != gwID {
@@ -47,7 +47,7 @@ func TestBackend_Validate_Rejects(t *testing.T) {
 		},
 		{
 			name:    "nil gateway id",
-			mutate:  func(b *Backend) { b.GatewayID = uuid.Nil },
+			mutate:  func(b *Backend) { b.GatewayID = ids.GatewayID{} },
 			wantErr: ErrInvalidGatewayID,
 		},
 		{
@@ -77,8 +77,8 @@ func TestBackend_Validate_Rejects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			b := &Backend{
-				ID:        uuid.New(),
-				GatewayID: uuid.New(),
+				ID:        ids.New[ids.BackendKind](),
+				GatewayID: ids.New[ids.GatewayKind](),
 				Name:      "x",
 				Provider:  "openai",
 				Auth:      NewAPIKeyAuth("sk-test"),
@@ -97,7 +97,8 @@ func TestBackend_Validate_Rejects(t *testing.T) {
 
 func TestBackend_Rehydrate(t *testing.T) {
 	t.Parallel()
-	id, gwID := uuid.New(), uuid.New()
+	id := ids.New[ids.BackendKind]()
+	gwID := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	b := Rehydrate(id, gwID, "x", "anthropic", map[string]any{"k": "v"}, "desc", 3, NewAPIKeyAuth("sk-1"), nil, now, now)
 	if b.ID != id || b.GatewayID != gwID {

@@ -12,13 +12,13 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/metric_events"
-	"github.com/google/uuid"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -28,7 +28,7 @@ var (
 )
 
 type ForwardInput struct {
-	GatewayID uuid.UUID
+	GatewayID ids.GatewayID
 	Consumer  *appconsumer.RoutableConsumer
 	Request   *infracontext.RequestContext
 }
@@ -133,7 +133,7 @@ func (f *forwarder) invokeWithFailover(
 	triggers := triggersFrom(fb)
 	attemptsPerBackend := f.attemptsPerBackend()
 	budget := newFailoverBudget(fb)
-	excluded := make(map[uuid.UUID]struct{})
+	excluded := make(map[ids.BackendID]struct{})
 
 	last := failoverState{}
 	current := dto.backend
@@ -221,7 +221,7 @@ func (f *forwarder) nextCandidate(
 	lb *loadbalancer.LoadBalancer,
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
-	excluded map[uuid.UUID]struct{},
+	excluded map[ids.BackendID]struct{},
 ) (*domain.Backend, bool) {
 	if bk, err := lb.NextBackend(req, excluded); err == nil && bk != nil {
 		if _, seen := excluded[bk.ID]; !seen {
@@ -429,6 +429,6 @@ func (f *forwarder) cachedLoadBalancer(key string) (*loadbalancer.LoadBalancer, 
 	return lb, true
 }
 
-func loadBalancerCacheKey(gatewayID, consumerID uuid.UUID) string {
+func loadBalancerCacheKey(gatewayID ids.GatewayID, consumerID ids.ConsumerID) string {
 	return gatewayID.String() + ":" + consumerID.String()
 }

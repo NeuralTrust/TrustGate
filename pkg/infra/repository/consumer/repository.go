@@ -9,6 +9,7 @@ import (
 
 	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -164,19 +165,19 @@ func pruneJoins(ctx context.Context, tx pgx.Tx, c *domain.Consumer) error {
 		prunePolicy  = `DELETE FROM consumer_policy  WHERE consumer_id = $1 AND NOT (policy_id  = ANY($2::uuid[]))`
 		pruneAuth    = `DELETE FROM consumer_auth    WHERE consumer_id = $1 AND NOT (auth_id    = ANY($2::uuid[]))`
 	)
-	if _, err := tx.Exec(ctx, pruneBackend, c.ID, c.BackendIDs); err != nil {
+	if _, err := tx.Exec(ctx, pruneBackend, c.ID, ids.ToUUIDs([]ids.BackendID(c.BackendIDs))); err != nil {
 		return mapPgError(err)
 	}
-	if _, err := tx.Exec(ctx, prunePolicy, c.ID, c.PolicyIDs); err != nil {
+	if _, err := tx.Exec(ctx, prunePolicy, c.ID, ids.ToUUIDs(c.PolicyIDs)); err != nil {
 		return mapPgError(err)
 	}
-	if _, err := tx.Exec(ctx, pruneAuth, c.ID, c.AuthIDs); err != nil {
+	if _, err := tx.Exec(ctx, pruneAuth, c.ID, ids.ToUUIDs(c.AuthIDs)); err != nil {
 		return mapPgError(err)
 	}
 	return nil
 }
 
-func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
+func (r *Repository) Delete(ctx context.Context, id ids.ConsumerID) error {
 	const query = `DELETE FROM consumers WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, id)
@@ -190,7 +191,7 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	})
 }
 
-func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Consumer, error) {
+func (r *Repository) FindByID(ctx context.Context, id ids.ConsumerID) (*domain.Consumer, error) {
 	query := consumerSelectColumns + `
 		  FROM consumers c
 		 WHERE c.id = $1`
@@ -214,7 +215,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 	offset := (filter.Page - 1) * filter.Size
 
-	gatewayParam := nullableUUID(filter.GatewayID)
+	gatewayParam := nullableUUID(filter.GatewayID.UUID())
 
 	const countQuery = `
 		SELECT COUNT(*)
@@ -252,7 +253,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	return items, total, nil
 }
 
-func (r *Repository) ListByGateway(ctx context.Context, gatewayID uuid.UUID) ([]*domain.Consumer, error) {
+func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*domain.Consumer, error) {
 	query := consumerSelectColumns + `
 		  FROM consumers c
 		 WHERE c.gateway_id = $1
@@ -289,11 +290,14 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		fallbackRaw      []byte
 		modelPoliciesRaw []byte
 		consumerType     string
+		backendIDs       []uuid.UUID
+		policyIDs        []uuid.UUID
+		authIDs          []uuid.UUID
 	)
 	if err := s.Scan(
 		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &c.Algorithm, &embeddingRaw, &fallbackRaw, &modelPoliciesRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
-		&c.BackendIDs, &c.PolicyIDs, &c.AuthIDs,
+		&backendIDs, &policyIDs, &authIDs,
 	); err != nil {
 		return nil, err
 	}
@@ -324,14 +328,17 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		}
 		c.ModelPolicies = mp
 	}
+	c.BackendIDs = backenddomain.Backends(ids.FromUUIDs[ids.BackendKind](backendIDs))
+	c.PolicyIDs = ids.FromUUIDs[ids.PolicyKind](policyIDs)
+	c.AuthIDs = ids.FromUUIDs[ids.AuthKind](authIDs)
 	if c.BackendIDs == nil {
-		c.BackendIDs = []uuid.UUID{}
+		c.BackendIDs = backenddomain.Backends{}
 	}
 	if c.PolicyIDs == nil {
-		c.PolicyIDs = []uuid.UUID{}
+		c.PolicyIDs = []ids.PolicyID{}
 	}
 	if c.AuthIDs == nil {
-		c.AuthIDs = []uuid.UUID{}
+		c.AuthIDs = []ids.AuthID{}
 	}
 	return c, nil
 }

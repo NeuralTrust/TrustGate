@@ -3,6 +3,7 @@ package consumer
 import (
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -15,7 +16,7 @@ func NewDeleteConsumerHandler(deleter appconsumer.Deleter) *DeleteConsumerHandle
 }
 
 func (h *DeleteConsumerHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
+	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.ConsumerKind](c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

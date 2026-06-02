@@ -10,6 +10,7 @@ import (
 	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
 	backendrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/backend"
@@ -68,7 +69,7 @@ func setupRepo(t *testing.T) fixture {
 	}
 }
 
-func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUID {
+func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {
 	t.Helper()
 	g, err := gatewaydomain.New(name)
 	if err != nil {
@@ -80,7 +81,7 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUI
 	return g.ID
 }
 
-func seedBackend(t *testing.T, be *backendrepo.Repository, gwID uuid.UUID, name string) uuid.UUID {
+func seedBackend(t *testing.T, be *backendrepo.Repository, gwID ids.GatewayID, name string) ids.BackendID {
 	t.Helper()
 	b, err := backenddomain.NewBackend(gwID, name, "openai", nil, "", 1, backenddomain.NewAPIKeyAuth("sk-test"), nil)
 	if err != nil {
@@ -92,7 +93,7 @@ func seedBackend(t *testing.T, be *backendrepo.Repository, gwID uuid.UUID, name 
 	return b.ID
 }
 
-func validConsumer(t *testing.T, gwID uuid.UUID, name string, beIDs ...uuid.UUID) *domain.Consumer {
+func validConsumer(t *testing.T, gwID ids.GatewayID, name string, beIDs ...ids.BackendID) *domain.Consumer {
 	t.Helper()
 	c, err := domain.New(domain.CreateParams{
 		GatewayID:  gwID,
@@ -224,7 +225,7 @@ func TestRepository_SaveAndFindByID_RoundTripsModelPolicies(t *testing.T) {
 
 func TestRepository_FindByID_NotFound(t *testing.T) {
 	f := setupRepo(t)
-	_, err := f.repo.FindByID(context.Background(), uuid.New())
+	_, err := f.repo.FindByID(context.Background(), ids.New[ids.ConsumerKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -305,8 +306,8 @@ func TestRepository_Save_SameNameDifferentGatewaysAllowed(t *testing.T) {
 func TestRepository_Save_InvalidGatewayID(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
-	orphanGW := uuid.New()
-	c := validConsumer(t, orphanGW, "orphan", uuid.New())
+	orphanGW := ids.New[ids.GatewayKind]()
+	c := validConsumer(t, orphanGW, "orphan", ids.New[ids.BackendKind]())
 	err := f.repo.Save(ctx, c)
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
 		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)
@@ -317,7 +318,7 @@ func TestRepository_Save_InvalidBackendID(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-be")
-	ghostBE := uuid.New()
+	ghostBE := ids.New[ids.BackendKind]()
 	c := validConsumer(t, gwID, "with-ghost", ghostBE)
 	err := f.repo.Save(ctx, c)
 	if !errors.Is(err, backenddomain.ErrInvalidBackendID) {
@@ -338,7 +339,7 @@ func TestRepository_Update_RebindsBackends(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	c.BackendIDs = []uuid.UUID{be2, be3}
+	c.BackendIDs = []ids.BackendID{be2, be3}
 	c.Name = "rb-v2"
 	c.UpdatedAt = time.Now().UTC()
 	if err := f.repo.Update(ctx, c); err != nil {
@@ -355,7 +356,7 @@ func TestRepository_Update_RebindsBackends(t *testing.T) {
 	if len(got.BackendIDs) != 2 {
 		t.Fatalf("BackendIDs len = %d, want 2", len(got.BackendIDs))
 	}
-	have := map[uuid.UUID]bool{got.BackendIDs[0]: true, got.BackendIDs[1]: true}
+	have := map[ids.BackendID]bool{got.BackendIDs[0]: true, got.BackendIDs[1]: true}
 	if !have[be2] || !have[be3] {
 		t.Fatalf("BackendIDs = %v, want [%s,%s]", got.BackendIDs, be2, be3)
 	}
@@ -391,7 +392,7 @@ func TestRepository_Delete(t *testing.T) {
 
 func TestRepository_Delete_NotFound(t *testing.T) {
 	f := setupRepo(t)
-	err := f.repo.Delete(context.Background(), uuid.New())
+	err := f.repo.Delete(context.Background(), ids.New[ids.ConsumerKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}

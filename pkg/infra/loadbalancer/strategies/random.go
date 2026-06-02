@@ -6,9 +6,9 @@ import (
 	"sync"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
-	"github.com/google/uuid"
 )
 
 type Random struct {
@@ -20,7 +20,7 @@ func NewRandom(backends []*backend.Backend) *Random {
 	return &Random{backends: backends}
 }
 
-func (r *Random) Next(req *infracontext.RequestContext, exclude map[uuid.UUID]struct{}) *backend.Backend {
+func (r *Random) Next(req *infracontext.RequestContext, exclude map[ids.BackendID]struct{}) *backend.Backend {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	candidates := filterExcluded(r.backends, exclude)
