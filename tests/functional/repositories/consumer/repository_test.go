@@ -92,9 +92,6 @@ func seedBackend(t *testing.T, be *backendrepo.Repository, gwID uuid.UUID, name 
 	return b.ID
 }
 
-// validConsumer builds a consumer with a path unique to this call so that the
-// per-gateway path uniqueness constraint never trips incidentally; tests that
-// exercise path uniqueness set the path explicitly.
 func validConsumer(t *testing.T, gwID uuid.UUID, name string, beIDs ...uuid.UUID) *domain.Consumer {
 	t.Helper()
 	c, err := domain.New(domain.CreateParams{
@@ -410,8 +407,6 @@ func TestRepository_DeleteBackend_FailsWhenReferencedByConsumer(t *testing.T) {
 	}
 }
 
-// A backend referenced only in a consumer's fallback chain (JSONB, no FK) must
-// still be protected from deletion by the explicit chain guard.
 func TestRepository_DeleteBackend_FailsWhenReferencedByFallbackChain(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()

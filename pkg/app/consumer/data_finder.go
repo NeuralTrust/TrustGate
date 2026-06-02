@@ -93,8 +93,6 @@ func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID uuid.UUID) (*D
 	return data, nil
 }
 
-// loadBackends batch-resolves every backend referenced by the gateway's consumers
-// in one query (no N+1), or none when no consumer references a backend.
 func (f *dataFinder) loadBackends(
 	ctx context.Context,
 	gatewayID uuid.UUID,
@@ -117,8 +115,6 @@ func (f *dataFinder) loadBackends(
 	return byID, nil
 }
 
-// loadPolicies batch-resolves the gateway's policies in one query (no N+1), or
-// none when no consumer references a policy.
 func (f *dataFinder) loadPolicies(
 	ctx context.Context,
 	gatewayID uuid.UUID,
@@ -174,10 +170,6 @@ func uniqueIDs(consumers []*domain.Consumer, pick func(*domain.Consumer) []uuid.
 	return out
 }
 
-// warnUnresolvedFallbackChain logs when a consumer's fallback chain references
-// backend IDs that no longer resolve (e.g. a backend deleted before the
-// delete-time chain guard existed). The unresolved entries are skipped at
-// routing time, so this surfaces the silent degradation for operators.
 func (f *dataFinder) warnUnresolvedFallbackChain(c *domain.Consumer, resolved []*backenddomain.Backend) {
 	chain := fallbackChainOf(c)
 	if len(chain) == len(resolved) {
@@ -190,8 +182,6 @@ func (f *dataFinder) warnUnresolvedFallbackChain(c *domain.Consumer, resolved []
 	)
 }
 
-// fallbackChainOf returns the consumer's fallback chain backend IDs, or nil when
-// no enabled fallback is configured.
 func fallbackChainOf(c *domain.Consumer) []uuid.UUID {
 	if c == nil || c.Fallback == nil || !c.Fallback.Enabled {
 		return nil

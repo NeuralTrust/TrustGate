@@ -9,8 +9,6 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 )
 
-// FallbackTrigger names a class of failure that makes a request eligible to
-// spill over to the next backend / the fallback chain.
 type FallbackTrigger string
 
 const (
@@ -29,21 +27,12 @@ func (t FallbackTrigger) IsValid() bool {
 	return false
 }
 
-// FallbackBudget bounds the failover: a hard cap on total attempts and an
-// optional wall-clock / cost ceiling across every hop. MaxAttempts == 0 means
-// "auto" (no artificial cap; bounded by candidate exhaustion). MaxCostUSD is
-// persisted for observability but not yet enforced at runtime (no per-model
-// pricing source).
 type FallbackBudget struct {
 	MaxAttempts     int           `json:"max_attempts"`
 	MaxTotalLatency time.Duration `json:"max_total_latency,omitempty"`
 	MaxCostUSD      float64       `json:"max_cost_usd,omitempty"`
 }
 
-// Fallback is the consumer-level failover chain. When enabled, after the
-// consumer's backend pool is exhausted the request walks Chain in strict
-// priority order. Triggers are additive over the always-on transient set
-// (5xx/429/timeout) and gate provider_error / plugin_rejection.
 type Fallback struct {
 	Enabled  bool              `json:"enabled"`
 	Triggers []FallbackTrigger `json:"triggers,omitempty"`
@@ -66,7 +55,6 @@ func (f *Fallback) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, f)
 }
 
-// HasTrigger reports whether t is enabled on this fallback config.
 func (f *Fallback) HasTrigger(t FallbackTrigger) bool {
 	if f == nil {
 		return false
@@ -79,8 +67,6 @@ func (f *Fallback) HasTrigger(t FallbackTrigger) bool {
 	return false
 }
 
-// Validate enforces the invariants of an enabled fallback config; a nil or
-// disabled fallback is always valid.
 func (f *Fallback) Validate() error {
 	if f == nil || !f.Enabled {
 		return nil

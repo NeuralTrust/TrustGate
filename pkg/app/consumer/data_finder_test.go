@@ -71,7 +71,7 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 	if len(data.Consumers) != 2 {
 		t.Fatalf("expected 2 consumers, got %d", len(data.Consumers))
 	}
-	// Order is preserved from the repository (no path-specificity sorting).
+
 	if data.Consumers[0].Consumer.ID != withAuth.ID {
 		t.Fatal("expected repository order to be preserved")
 	}
@@ -88,8 +88,6 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 		t.Fatal("policy-only consumer must not resolve any auth")
 	}
 
-	// Second call must be served from the in-process cache: the .Once()
-	// expectations above would fail if any repository were queried again.
 	again, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
 		t.Fatalf("second FindByGateway error: %v", err)
@@ -114,7 +112,7 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
 			Budget:   domain.FallbackBudget{MaxAttempts: 9},
-			// Chain order is fb2 then fb1 to assert order is preserved (not sorted).
+
 			Chain: []uuid.UUID{fb2, fb1},
 		},
 		now, now,
@@ -126,7 +124,7 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	backendRepo := backendmocks.NewRepository(t)
 	backendRepo.EXPECT().
 		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(ids []uuid.UUID) bool {
-			return len(ids) == 3 // pool + 2 chain entries, batched
+			return len(ids) == 3
 		})).
 		Return([]*backenddomain.Backend{
 			{ID: poolID, GatewayID: gwID, Provider: "openai"},

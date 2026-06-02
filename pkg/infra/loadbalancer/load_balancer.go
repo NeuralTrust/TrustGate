@@ -16,10 +16,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Pool is the set of backends a single consumer balances across, together with
-// the chosen algorithm and (for semantic) the embedding config. ID is the owning
-// consumer id, used to key the LB instance cache. Passive health gating is driven
-// per backend via each Backend.HealthChecks.
 type Pool struct {
 	ID              string
 	Backends        []*backend.Backend
@@ -47,10 +43,6 @@ func NewLoadBalancer(
 ) (*LoadBalancer, error) {
 	ctx := context.Background()
 
-	// Rehydrate health state from Redis (the cross-pod source of truth). Only
-	// seed the initial healthy status for backends that have no persisted state,
-	// so a backend marked unhealthy survives LB rebuilds and pod restarts instead
-	// of being reset to healthy on every reconstruction.
 	seedInitialHealth(ctx, cacheClient, pool.Backends, logger)
 
 	var embeddingCfg *embedding.Config
@@ -85,10 +77,6 @@ func healthKey(backendID string) string {
 	return fmt.Sprintf("lb:health:%s", backendID)
 }
 
-// seedInitialHealth writes a healthy status to Redis for each backend that has
-// none yet. It writes through the raw Redis client (not the local-cache path)
-// so the health namespace stays consistent with the direct Redis reads/writes
-// used by isBackendHealthy and UpdateBackendHealth.
 func seedInitialHealth(
 	ctx context.Context,
 	cacheClient cache.Client,
@@ -126,8 +114,6 @@ func (lb *LoadBalancer) processSuccessReports() {
 	}
 }
 
-// Close stops the background success-report goroutine. It is idempotent, and
-// ReportSuccess stays safe afterwards since successCh is never closed.
 func (lb *LoadBalancer) Close() {
 	lb.closeOnce.Do(func() { close(lb.done) })
 }
@@ -158,11 +144,6 @@ func (lb *LoadBalancer) performSuccessUpdate(b *backend.Backend) {
 	_, _ = pipe.Exec(ctx)
 }
 
-// NextBackend asks the strategy for a backend (skipping any in exclude, i.e.
-// already tried in this request) and skips ones currently marked unhealthy,
-// trying up to one full pass over the pool. When every eligible candidate is
-// unhealthy it falls back to the last pick rather than failing the request, so a
-// stale/incorrect health flag cannot black-hole all traffic. exclude may be nil.
 func (lb *LoadBalancer) NextBackend(
 	req *infracontext.RequestContext,
 	exclude map[uuid.UUID]struct{},
@@ -192,10 +173,6 @@ func (lb *LoadBalancer) NextBackend(
 	return nil, fmt.Errorf("no available backends")
 }
 
-// isBackendHealthy reads the backend's health flag directly from Redis (the
-// source of truth that UpdateBackendHealth writes to). It deliberately bypasses
-// the local cache so a passive-health update is never shadowed by a stale local
-// copy. An unreachable/missing/corrupt entry is treated as healthy (fail open).
 func (lb *LoadBalancer) isBackendHealthy(req *infracontext.RequestContext, backendID string) (bool, error) {
 	redisClient := lb.cache.RedisClient()
 	if redisClient == nil {

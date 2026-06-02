@@ -36,8 +36,7 @@ func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext, exclude ma
 	if len(wrr.backends) == 0 {
 		return nil
 	}
-	// Bound the scan to one full weighted cycle so an exclude set that masks
-	// every eligible backend terminates with nil instead of spinning forever.
+
 	maxIterations := len(wrr.backends)*(wrr.maxWeight+1) + 1
 	for i := 0; i < maxIterations; i++ {
 		wrr.currentIndex = (wrr.currentIndex + 1) % len(wrr.backends)

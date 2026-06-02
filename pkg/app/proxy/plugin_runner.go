@@ -13,13 +13,8 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
 )
 
-// postResponseTimeout bounds the detached PostResponse stage so a slow plugin
-// (e.g. an embedding store) cannot leak goroutines indefinitely.
 const postResponseTimeout = 30 * time.Second
 
-// runPreRequest executes the PreRequest stage. It returns a non-nil
-// *ForwardResult when the chain short-circuits (plugin rejection or cache hit),
-// in which case the caller must relay it and skip the upstream.
 func (f *forwarder) runPreRequest(
 	ctx context.Context,
 	policies []*policy.Policy,
@@ -52,8 +47,6 @@ func (f *forwarder) runPreRequest(
 	return nil, nil
 }
 
-// runPreResponse executes the PreResponse stage, merging plugin headers into the
-// response. Short-circuits are not expected at this stage and are ignored.
 func (f *forwarder) runPreResponse(
 	ctx context.Context,
 	policies []*policy.Policy,
@@ -74,11 +67,6 @@ func (f *forwarder) runPreResponse(
 	}
 }
 
-// runPreResponseGated executes the PreResponse stage and returns a non-nil
-// *PluginError when a plugin rejects the response (so the forwarder can fail
-// over to the next candidate when the plugin_rejection trigger is enabled).
-// Plugin headers are merged into resp regardless; a non-rejection short-circuit
-// or a non-plugin error is treated as "accepted" (logged) like runPreResponse.
 func (f *forwarder) runPreResponseGated(
 	ctx context.Context,
 	policies []*policy.Policy,
@@ -103,9 +91,6 @@ func (f *forwarder) runPreResponseGated(
 	return nil
 }
 
-// firePostResponse runs the PostResponse stage asynchronously against snapshots
-// of the request/response so it never races the client response that is being
-// relayed concurrently.
 func (f *forwarder) firePostResponse(
 	policies []*policy.Policy,
 	req *infracontext.RequestContext,
@@ -133,9 +118,6 @@ func (f *forwarder) firePostResponse(
 	}()
 }
 
-// wrapStreamWithPostResponse returns a stream that yields the same lines while
-// accumulating the body, firing PostResponse once the upstream stream is fully
-// drained.
 func (f *forwarder) wrapStreamWithPostResponse(
 	policies []*policy.Policy,
 	req *infracontext.RequestContext,
@@ -149,9 +131,7 @@ func (f *forwarder) wrapStreamWithPostResponse(
 		var body []byte
 		completed := true
 		for line, err := range stream {
-			// Accumulate only successful, non-empty lines so the reconstructed
-			// body mirrors the upstream payload without the SSE separator noise
-			// (matches TrustGate's stream buffering for PostResponse).
+
 			if err == nil && len(line) > 0 {
 				body = append(body, line...)
 				body = append(body, '\n')
@@ -161,8 +141,7 @@ func (f *forwarder) wrapStreamWithPostResponse(
 				break
 			}
 		}
-		// Skip PostResponse when the consumer aborted (client disconnect / write
-		// error): the stream never finished, so usage/body are incomplete.
+
 		if completed {
 			resp.Body = body
 			f.firePostResponse(policies, req, resp)
@@ -170,8 +149,6 @@ func (f *forwarder) wrapStreamWithPostResponse(
 	}
 }
 
-// pluginErrorResult turns a plugin rejection into a relayable response,
-// preserving the plugin's status and headers.
 func pluginErrorResult(pe *appplugins.PluginError) *ForwardResult {
 	body, _ := json.Marshal(map[string]string{
 		"error":   "plugin_rejected",
@@ -184,8 +161,6 @@ func pluginErrorResult(pe *appplugins.PluginError) *ForwardResult {
 	}
 }
 
-// mergeProviderResponse folds the upstream response into the plugin response
-// context so PostResponse plugins observe the final status, headers and body.
 func mergeProviderResponse(resp *infracontext.ResponseContext, provider *ProviderResponse, streaming bool) {
 	resp.StatusCode = provider.StatusCode
 	resp.Streaming = streaming
@@ -218,7 +193,7 @@ func snapshotResponse(resp *infracontext.ResponseContext) *infracontext.Response
 	clone := *resp
 	clone.Context = context.Background()
 	clone.Body = append([]byte(nil), resp.Body...)
-	clone.Headers = nil // PostResponse headers are post-hoc and not relayed.
+	clone.Headers = nil
 	clone.Metadata = copyMetadata(resp.Metadata)
 	return &clone
 }

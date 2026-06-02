@@ -28,7 +28,6 @@ type ConsumerResponse struct {
 type EmbeddingConfigResponse struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
-	// Auth is intentionally omitted from responses to avoid leaking credentials.
 }
 
 type FallbackResponse struct {
