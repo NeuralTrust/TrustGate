@@ -20,6 +20,22 @@ func NewUpdateConsumerHandler(updater appconsumer.Updater) *UpdateConsumerHandle
 	return &UpdateConsumerHandler{updater: updater}
 }
 
+// Handle godoc
+// @Summary      Update a consumer
+// @Description  Updates an existing consumer.
+// @Tags         consumers
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string                         true  "Gateway id"   format(uuid)
+// @Param        id          path      string                         true  "Consumer id"  format(uuid)
+// @Param        body        body      request.UpdateConsumerRequest  true  "Consumer fields to update"
+// @Success      200         {object}  response.ConsumerResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      409         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/consumers/{id} [put]
 func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.ConsumerKind](c)
 	if err != nil {

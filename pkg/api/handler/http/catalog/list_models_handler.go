@@ -15,6 +15,16 @@ func NewListModelsHandler(service appcatalog.Service) *ListModelsHandler {
 	return &ListModelsHandler{service: service}
 }
 
+// Handle godoc
+// @Summary      List model catalog
+// @Description  Returns the catalog of supported models, optionally filtered by provider.
+// @Tags         catalog
+// @Produce      json
+// @Security     BearerAuth
+// @Param        provider  query     string  false  "Filter by provider id"
+// @Success      200       {object}  map[string][]response.ModelResponse
+// @Failure      401       {object}  helpers.ErrorBody
+// @Router       /v1/models-catalog [get]
 func (h *ListModelsHandler) Handle(c *fiber.Ctx) error {
 	models, err := h.service.ListModels(c.UserContext(), c.Query("provider"))
 	if err != nil {

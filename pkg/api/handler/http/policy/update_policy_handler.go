@@ -20,6 +20,22 @@ func NewUpdatePolicyHandler(updater apppolicy.Updater) *UpdatePolicyHandler {
 	return &UpdatePolicyHandler{updater: updater}
 }
 
+// Handle godoc
+// @Summary      Update a policy
+// @Description  Updates an existing policy.
+// @Tags         policies
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string                       true  "Gateway id"  format(uuid)
+// @Param        id          path      string                       true  "Policy id"   format(uuid)
+// @Param        body        body      request.UpdatePolicyRequest  true  "Policy fields to update"
+// @Success      200         {object}  response.PolicyResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      409         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/policies/{id} [put]
 func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.PolicyKind](c)
 	if err != nil {

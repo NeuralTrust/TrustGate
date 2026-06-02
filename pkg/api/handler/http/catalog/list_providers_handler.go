@@ -15,6 +15,15 @@ func NewListProvidersHandler(service appcatalog.Service) *ListProvidersHandler {
 	return &ListProvidersHandler{service: service}
 }
 
+// Handle godoc
+// @Summary      List provider catalog
+// @Description  Returns the catalog of supported LLM providers.
+// @Tags         catalog
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  map[string][]response.ProviderResponse
+// @Failure      401  {object}  helpers.ErrorBody
+// @Router       /v1/providers-catalog [get]
 func (h *ListProvidersHandler) Handle(c *fiber.Ctx) error {
 	providers, err := h.service.ListProviders(c.UserContext())
 	if err != nil {

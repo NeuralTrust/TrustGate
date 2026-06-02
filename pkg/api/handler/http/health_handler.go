@@ -11,6 +11,13 @@ type HealthHandler struct{}
 
 func NewHealthHandler() *HealthHandler { return &HealthHandler{} }
 
+// Liveness godoc
+// @Summary      Liveness probe
+// @Description  Reports whether the process is alive.
+// @Tags         system
+// @Produce      json
+// @Success      200  {object}  map[string]string
+// @Router       /healthz [get]
 func (h *HealthHandler) Liveness(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"status":  "healthy",
@@ -19,6 +26,13 @@ func (h *HealthHandler) Liveness(c *fiber.Ctx) error {
 	})
 }
 
+// Readiness godoc
+// @Summary      Readiness probe
+// @Description  Reports whether the process is ready to serve traffic.
+// @Tags         system
+// @Produce      json
+// @Success      200  {object}  map[string]string
+// @Router       /readyz [get]
 func (h *HealthHandler) Readiness(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"status":  "ready",

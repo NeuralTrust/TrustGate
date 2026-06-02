@@ -1,4 +1,15 @@
 // Command agentgateway starts the admin or proxy HTTP server (argv[1], default proxy).
+//
+// @title                       AgentGateway Admin API
+// @version                     1.0
+// @description                 Administrative API for managing gateways and their backends, policies, consumers and auth credentials.
+// @contact.name                NeuralTrust
+// @contact.url                 https://neuraltrust.ai/contact
+// @contact.email               support@neuraltrust.ai
+// @BasePath                    /
+// @securityDefinitions.apikey  BearerAuth
+// @in                          header
+// @name                        Authorization
 package main
 
 import (
@@ -10,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/NeuralTrust/AgentGateway/docs"
 	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	"github.com/NeuralTrust/AgentGateway/pkg/container/modules"
