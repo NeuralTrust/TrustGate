@@ -23,7 +23,7 @@ const (
 
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
-	defaultDBUser                    = "postgres"
+	defaultDBUser                    = "agentgateway"
 	defaultDBPassword                = "postgres" // #nosec G101 -- dev default, override via env
 	defaultDBName                    = "agentgateway"
 	defaultDBSSLMode                 = "disable"
@@ -36,7 +36,7 @@ const (
 
 	defaultRedisHost = "localhost"
 	defaultRedisPort = 6379
-	defaultRedisDB   = 0
+	defaultRedisDB   = 3
 	defaultRedisTLS  = false
 
 	defaultCacheLocalTTL = 5 * time.Minute
