@@ -53,6 +53,7 @@ func TestPluginE2E_CORS(t *testing.T) {
 	})
 
 	t.Run("valid preflight short-circuits with negotiated headers", func(t *testing.T) {
+		hitsBefore := up.Hits()
 		status, headers, _ := proxyRequest(t, http.MethodOptions, gatewayID, path,
 			map[string]string{
 				"Origin":                        "https://allowed.com",
@@ -63,7 +64,7 @@ func TestPluginE2E_CORS(t *testing.T) {
 		assert.Equal(t, "https://allowed.com", headers.Get("Access-Control-Allow-Origin"))
 		assert.Contains(t, headers.Get("Access-Control-Allow-Methods"), "POST")
 		assert.Equal(t, "600s", headers.Get("Access-Control-Max-Age"))
-		assert.Equal(t, 0, up.Hits(), "a preflight must never reach the upstream")
+		assert.Equal(t, hitsBefore, up.Hits(), "a preflight must never reach the upstream")
 	})
 
 	t.Run("preflight with disallowed method is rejected", func(t *testing.T) {

@@ -45,6 +45,10 @@ type forwardRequestDTO struct {
 	request  *infracontext.RequestContext
 	response *infracontext.ResponseContext
 	policies []*policydomain.Policy
+	// baseHeaders are the response headers contributed by the pre_request
+	// plugin stage (e.g. CORS, rate-limit quota headers). They are preserved
+	// across failover attempts so the upstream relay does not drop them.
+	baseHeaders map[string][]string
 }
 
 //go:generate mockery --name=Forwarder --dir=. --output=./mocks --filename=forwarder_mock.go --case=underscore --with-expecter
@@ -116,7 +120,13 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return short, nil
 	}
 
-	dto := &forwardRequestDTO{backend: bk, request: in.Request, response: resp, policies: policies}
+	dto := &forwardRequestDTO{
+		backend:     bk,
+		request:     in.Request,
+		response:    resp,
+		policies:    policies,
+		baseHeaders: cloneHeaders(resp.Headers),
+	}
 	stream := DetectStream(dto.request)
 
 	return f.invokeWithFailover(ctx, lb, in.Consumer, dto, stream)
@@ -325,7 +335,7 @@ func (f *forwarder) finalizeBody(
 	providerResp *ProviderResponse,
 ) *ForwardResult {
 	pluginResp := dto.response
-	pluginResp.Headers = nil
+	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeProviderResponse(pluginResp, providerResp, false)
 	f.runPreResponse(ctx, dto.policies, dto.request, pluginResp)
 	f.firePostResponse(dto.policies, dto.request, pluginResp)
@@ -342,7 +352,7 @@ func (f *forwarder) finalizeBodyGated(
 	providerResp *ProviderResponse,
 ) (*ForwardResult, *appplugins.PluginError) {
 	pluginResp := dto.response
-	pluginResp.Headers = nil
+	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeProviderResponse(pluginResp, providerResp, false)
 	if pe := f.runPreResponseGated(ctx, dto.policies, dto.request, pluginResp); pe != nil {
 		return pluginErrorResult(pe), pe
