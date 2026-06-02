@@ -12,13 +12,12 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/metric_events"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -28,7 +27,7 @@ var (
 )
 
 type ForwardInput struct {
-	GatewayID uuid.UUID
+	GatewayID ids.GatewayID
 	Consumer  *appconsumer.RoutableConsumer
 	Request   *infracontext.RequestContext
 }
@@ -143,13 +142,14 @@ func (f *forwarder) invokeWithFailover(
 	triggers := triggersFrom(fb)
 	attemptsPerBackend := f.attemptsPerBackend()
 	budget := newFailoverBudget(fb)
-	excluded := make(map[uuid.UUID]struct{})
+	excluded := make(map[ids.BackendID]struct{})
 
 	last := failoverState{}
 	current := dto.backend
 	fromFallback := false
 	for current != nil {
 		f.retarget(dto, current)
+		f.stampModelPolicy(dto, rc, current)
 		for r := 0; r < attemptsPerBackend; r++ {
 			if budget.exhausted() {
 				return f.relayLast(ctx, dto, last)
@@ -160,7 +160,7 @@ func (f *forwarder) invokeWithFailover(
 			resp, err := f.invokeOnce(ctx, current, dto.request, stream)
 			elapsed := time.Since(startedAt)
 			outcome := classifyOutcome(resp, err, triggers)
-			f.emitHop(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
+			f.recordSpan(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
 			switch outcome {
 			case OutcomeSuccess:
 				lb.ReportSuccess(current)
@@ -175,6 +175,9 @@ func (f *forwarder) invokeWithFailover(
 				last = failoverState{rejection: result}
 				f.logRetry(current, pe, budget)
 			case OutcomeTerminal:
+				if resp == nil {
+					return nil, err
+				}
 				lb.ReportSuccess(current)
 				return f.finalizeBody(ctx, dto, resp), nil
 			case OutcomeRetryable:
@@ -227,7 +230,7 @@ func (f *forwarder) nextCandidate(
 	lb *loadbalancer.LoadBalancer,
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
-	excluded map[uuid.UUID]struct{},
+	excluded map[ids.BackendID]struct{},
 ) (*domain.Backend, bool) {
 	if bk, err := lb.NextBackend(req, excluded); err == nil && bk != nil {
 		if _, seen := excluded[bk.ID]; !seen {
@@ -244,7 +247,7 @@ func (f *forwarder) nextCandidate(
 	return nil, false
 }
 
-func (f *forwarder) emitHop(
+func (f *forwarder) recordSpan(
 	ctx context.Context,
 	bk *domain.Backend,
 	fromFallback bool,
@@ -253,26 +256,28 @@ func (f *forwarder) emitHop(
 	resp *ProviderResponse,
 	elapsed time.Duration,
 ) {
-	collector := metrics.CollectorFromContext(ctx)
-	if collector == nil {
+	rt := trace.FromContext(ctx)
+	if rt == nil {
 		return
 	}
-	latencyMs := elapsed.Milliseconds()
-	evt := metric_events.NewTraceEvent()
-	evt.Attempt = attempt
-	evt.Fallback = fromFallback
-	evt.BackendID = bk.ID.String()
-	evt.Outcome = outcome.String()
-	evt.EndTimestamp = time.Now().Unix()
-	evt.Latency = latencyMs
+	span := &trace.Span{
+		Type:      trace.SpanLLM,
+		Name:      bk.Provider,
+		StartedAt: time.Now().Add(-elapsed),
+		LLM: &trace.LLMAttrs{
+			BackendID: bk.ID.String(),
+			Provider:  bk.Provider,
+			Attempt:   attempt,
+			Fallback:  fromFallback,
+			Outcome:   outcome.String(),
+		},
+	}
 	if resp != nil {
-		evt.StatusCode = resp.StatusCode
+		span.SetStatusCode(resp.StatusCode)
+		span.ObserveUsage(resp.Usage)
 	}
-	if evt.Upstream != nil {
-		evt.Upstream.Target.Provider = bk.Provider
-		evt.Upstream.Target.Latency = latencyMs
-	}
-	collector.Emit(evt)
+	_ = rt.AddSpan(span)
+	span.End()
 }
 
 func (f *forwarder) logRetry(bk *domain.Backend, reason error, budget *failoverBudget) {
@@ -302,6 +307,17 @@ func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Backend) {
 	if dto.response != nil {
 		dto.response.BackendID = bk.ID.String()
 	}
+}
+
+func (f *forwarder) stampModelPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Backend) {
+	policy, ok := rc.Consumer.ModelPolicies.For(bk.ID)
+	if !ok {
+		dto.request.AllowedModels = nil
+		dto.request.DefaultModel = ""
+		return
+	}
+	dto.request.AllowedModels = policy.Allowed
+	dto.request.DefaultModel = policy.Default
 }
 
 func failureReason(resp *ProviderResponse, err error) error {
@@ -424,6 +440,6 @@ func (f *forwarder) cachedLoadBalancer(key string) (*loadbalancer.LoadBalancer, 
 	return lb, true
 }
 
-func loadBalancerCacheKey(gatewayID, consumerID uuid.UUID) string {
+func loadBalancerCacheKey(gatewayID ids.GatewayID, consumerID ids.ConsumerID) string {
 	return gatewayID.String() + ":" + consumerID.String()
 }

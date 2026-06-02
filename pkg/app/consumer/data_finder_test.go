@@ -12,20 +12,21 @@ import (
 	backendmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/backend/mocks"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	policymocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
-func routableConsumer(gwID uuid.UUID, policyIDs, authIDs []uuid.UUID) *domain.Consumer {
+func routableConsumer(gwID ids.GatewayID, policyIDs []ids.PolicyID, authIDs []ids.AuthID) *domain.Consumer {
 	now := time.Now().UTC()
 	return domain.Rehydrate(
-		uuid.New(), gwID, "c", domain.TypeLLM,
+		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
 		"/v1/chat", "round-robin", nil,
 		nil, true,
-		[]uuid.UUID{uuid.New()}, policyIDs, authIDs,
+		[]ids.BackendID{ids.New[ids.BackendKind]()}, policyIDs, authIDs,
+		nil,
 		nil,
 		now, now,
 	)
@@ -33,11 +34,11 @@ func routableConsumer(gwID uuid.UUID, policyIDs, authIDs []uuid.UUID) *domain.Co
 
 func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
-	pid := uuid.New()
-	aid := uuid.New()
-	withAuth := routableConsumer(gwID, []uuid.UUID{pid}, []uuid.UUID{aid})
-	policyOnly := routableConsumer(gwID, []uuid.UUID{pid}, nil)
+	gwID := ids.New[ids.GatewayKind]()
+	pid := ids.New[ids.PolicyKind]()
+	aid := ids.New[ids.AuthKind]()
+	withAuth := routableConsumer(gwID, []ids.PolicyID{pid}, []ids.AuthID{aid})
+	policyOnly := routableConsumer(gwID, []ids.PolicyID{pid}, nil)
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).
@@ -45,15 +46,15 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 
 	policyRepo := policymocks.NewRepository(t)
 	policyRepo.EXPECT().
-		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(ids []uuid.UUID) bool {
-			return len(ids) == 1 && ids[0] == pid
+		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(pids []ids.PolicyID) bool {
+			return len(pids) == 1 && pids[0] == pid
 		})).
 		Return([]*policydomain.Policy{{ID: pid, GatewayID: gwID}}, nil).Once()
 
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().
-		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(ids []uuid.UUID) bool {
-			return len(ids) == 1 && ids[0] == aid
+		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(aids []ids.AuthID) bool {
+			return len(aids) == 1 && aids[0] == aid
 		})).
 		Return([]*authdomain.Auth{{ID: aid, GatewayID: gwID}}, nil).Once()
 
@@ -99,22 +100,23 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 
 func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
-	poolID := uuid.New()
-	fb1, fb2 := uuid.New(), uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
+	poolID := ids.New[ids.BackendKind]()
+	fb1, fb2 := ids.New[ids.BackendKind](), ids.New[ids.BackendKind]()
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(
-		uuid.New(), gwID, "c", domain.TypeLLM,
+		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
 		"/v1/chat", "round-robin", nil,
 		nil, true,
-		[]uuid.UUID{poolID}, nil, nil,
+		[]ids.BackendID{poolID}, nil, nil,
 		&domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
 			Budget:   domain.FallbackBudget{MaxAttempts: 9},
 
-			Chain: []uuid.UUID{fb2, fb1},
+			Chain: []ids.BackendID{fb2, fb1},
 		},
+		nil,
 		now, now,
 	)
 
@@ -123,8 +125,8 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 
 	backendRepo := backendmocks.NewRepository(t)
 	backendRepo.EXPECT().
-		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(ids []uuid.UUID) bool {
-			return len(ids) == 3
+		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(bids []ids.BackendID) bool {
+			return len(bids) == 3
 		})).
 		Return([]*backenddomain.Backend{
 			{ID: poolID, GatewayID: gwID, Provider: "openai"},
@@ -156,7 +158,7 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 
 func TestDataFinder_FindByGateway_CacheHitSkipsRepositories(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	mgr := newCacheManager()
 	cached := &appconsumer.Data{GatewayID: gwID}
 	mgr.GetTTLMap(cache.ConsumerDataTTLName).Set(gwID.String(), cached)
@@ -178,7 +180,7 @@ func TestDataFinder_FindByGateway_CacheHitSkipsRepositories(t *testing.T) {
 
 func TestDataFinder_FindByGateway_RecoversFromCorruptCacheEntry(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.ConsumerDataTTLName).Set(gwID.String(), "not-a-consumer-data")
 

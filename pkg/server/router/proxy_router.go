@@ -26,9 +26,14 @@ func NewProxyRouter(
 }
 
 func (r *proxyRouter) BuildRoutes(app *fiber.App) error {
-	installMiddlewares(app, r.middlewareTransport)
+	// Health and readiness are registered before the global middleware chain so
+	// kubelet probes bypass AuthMiddleware. Fiber's app.Use only wraps routes
+	// declared after it, so probes never require gateway credentials (a 401 here
+	// would otherwise fail liveness and crash-loop the pod).
 	app.Get(HealthPath, r.healthHandler.Liveness)
 	app.Get(ReadyPath, r.healthHandler.Readiness)
+
+	installMiddlewares(app, r.middlewareTransport)
 	app.All("/v1/*", r.proxyHandler.Handle)
 	return nil
 }

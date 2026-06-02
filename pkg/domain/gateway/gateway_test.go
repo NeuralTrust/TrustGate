@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/google/uuid"
 )
 
 func TestNew(t *testing.T) {
@@ -18,7 +17,7 @@ func TestNew(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if g.ID == uuid.Nil {
+		if g.ID.IsNil() {
 			t.Fatal("ID is zero")
 		}
 		if g.Name != "alpha" {

@@ -8,6 +8,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -36,7 +37,7 @@ func NewUpdateConsumerHandler(updater appconsumer.Updater) *UpdateConsumerHandle
 // @Failure      409         {object}  helpers.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/consumers/{id} [put]
 func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
+	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.ConsumerKind](c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
@@ -65,6 +66,10 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	modelPolicies, err := req.ToModelPolicies()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 
 	cons, err := h.updater.Update(c.UserContext(), appconsumer.UpdateInput{
 		ID:              id,
@@ -80,6 +85,7 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
 		Fallback:        fallback,
+		ModelPolicies:   modelPolicies,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

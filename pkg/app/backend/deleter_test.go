@@ -8,17 +8,17 @@ import (
 	appbackend "github.com/NeuralTrust/AgentGateway/pkg/app/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/backend/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
 func TestDeleter_Delete_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
-	gwID := uuid.New()
+	id := ids.New[ids.BackendKind]()
+	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Backend{ID: id, GatewayID: gwID}, nil).Once()
 	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
 
@@ -37,11 +37,11 @@ func TestDeleter_Delete_Success(t *testing.T) {
 func TestDeleter_Delete_NotFound(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
+	id := ids.New[ids.BackendKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
 	deleter := appbackend.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-	err := deleter.Delete(context.Background(), uuid.New(), id)
+	err := deleter.Delete(context.Background(), ids.New[ids.GatewayKind](), id)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -50,11 +50,11 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 func TestDeleter_Delete_WrongGateway(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	id := uuid.New()
-	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Backend{ID: id, GatewayID: uuid.New()}, nil).Once()
+	id := ids.New[ids.BackendKind]()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Backend{ID: id, GatewayID: ids.New[ids.GatewayKind]()}, nil).Once()
 
 	deleter := appbackend.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-	err := deleter.Delete(context.Background(), uuid.New(), id)
+	err := deleter.Delete(context.Background(), ids.New[ids.GatewayKind](), id)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for cross-gateway delete", err)
 	}

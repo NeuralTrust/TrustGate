@@ -72,6 +72,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	headers := make(map[string][]string)
 
+	var evaluated *RateLimiterData
+
 	for _, limitType := range limitOrder {
 		lc, ok := cfg.Limits[limitType]
 		if !ok {
@@ -95,11 +97,20 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		}
 
 		setLimitHeaders(headers, limitType, lc.Limit, count, now.Add(window))
+		evaluated = &RateLimiterData{
+			ExceededType: limitType,
+			CurrentCount: count,
+			Limit:        lc.Limit,
+			Window:       lc.Window,
+		}
 
 		if count >= int64(lc.Limit) {
 			headers["Retry-After"] = []string{cfg.Actions.RetryAfter}
+			evaluated.RateLimitExceeded = true
+			evaluated.RetryAfter = cfg.Actions.RetryAfter
 			if in.Event != nil {
 				in.Event.SetDecision("block")
+				in.Event.SetExtras(*evaluated)
 			}
 			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusTooManyRequests,
@@ -114,6 +125,9 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	if in.Event != nil {
 		in.Event.SetStatusCode(http.StatusOK)
+		if evaluated != nil {
+			in.Event.SetExtras(*evaluated)
+		}
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 }

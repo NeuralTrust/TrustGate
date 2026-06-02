@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 func validAPIKeyConfig() Config {
@@ -14,12 +14,12 @@ func validAPIKeyConfig() Config {
 
 func TestNewAuth_Defaults(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	a, err := NewAuth(gwID, "client-key", TypeAPIKey, true, validAPIKeyConfig())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if a.ID == uuid.Nil {
+	if a.ID.IsNil() {
 		t.Fatal("expected generated id")
 	}
 	if a.GatewayID != gwID {
@@ -32,10 +32,10 @@ func TestNewAuth_Defaults(t *testing.T) {
 
 func TestNewAuth_Validation(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	tests := []struct {
 		name      string
-		gatewayID uuid.UUID
+		gatewayID ids.GatewayID
 		authName  string
 		authType  Type
 		config    Config
@@ -51,7 +51,7 @@ func TestNewAuth_Validation(t *testing.T) {
 		},
 		{
 			name:      "nil gateway",
-			gatewayID: uuid.Nil,
+			gatewayID: ids.GatewayID{},
 			authName:  "k",
 			authType:  TypeAPIKey,
 			config:    validAPIKeyConfig(),
@@ -131,7 +131,7 @@ func TestNewAuth_Validation(t *testing.T) {
 
 func TestNewAuth_ValidPerType(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	cases := map[string]struct {
 		authType Type
 		config   Config

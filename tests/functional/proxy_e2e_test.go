@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -19,21 +20,37 @@ import (
 // forwards to (via a backend whose provider_options.base_url points at it). It
 // counts the requests it serves so the tests can assert routing and retries.
 type fakeUpstream struct {
-	server *httptest.Server
-	hits   int64
+	server   *httptest.Server
+	hits     int64
+	mu       sync.Mutex
+	lastBody []byte
 }
 
 func (u *fakeUpstream) URL() string { return u.server.URL }
 
 func (u *fakeUpstream) Hits() int { return int(atomic.LoadInt64(&u.hits)) }
 
+func (u *fakeUpstream) LastBody() []byte {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.lastBody
+}
+
+func (u *fakeUpstream) record(r *http.Request) {
+	atomic.AddInt64(&u.hits, 1)
+	body, _ := io.ReadAll(r.Body)
+	u.mu.Lock()
+	u.lastBody = body
+	u.mu.Unlock()
+}
+
 // newJSONUpstream answers every request with a 200 chat-completion whose
 // assistant content is marker, so a test can tell which backend served it.
 func newJSONUpstream(t *testing.T, marker string) *fakeUpstream {
 	t.Helper()
 	u := &fakeUpstream{}
-	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt64(&u.hits, 1)
+	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.record(r)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w,
 			`{"id":"chatcmpl-test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":%q},"finish_reason":"stop"}]}`,
@@ -110,6 +127,22 @@ func chatRequest(stream bool) map[string]any {
 		body["stream"] = true
 	}
 	return body
+}
+
+// chatRequestModel returns an OpenAI chat body that requests an explicit model.
+func chatRequestModel(model string) map[string]any {
+	return map[string]any{
+		"model":    model,
+		"messages": []map[string]string{{"role": "user", "content": "Hello"}},
+	}
+}
+
+// chatRequestNoModel returns an OpenAI chat body that omits the "model" field,
+// exercising the default-injection path of the model policy.
+func chatRequestNoModel() map[string]any {
+	return map[string]any{
+		"messages": []map[string]string{{"role": "user", "content": "Hello"}},
+	}
 }
 
 // expectedAttempts is the total number of upstream calls a single request makes
@@ -264,4 +297,126 @@ func TestProxyE2E_Streaming_LB(t *testing.T) {
 	assert.Greater(t, upB.Hits(), 0, "backend B should receive streaming traffic")
 	assert.Equal(t, total, upA.Hits()+upB.Hits())
 	assert.Equal(t, total, servedByA+servedByB, "each stream must carry exactly one backend's marker")
+}
+
+// setupModelPolicyRoute wires a gateway with a single backend pointing at up and
+// a consumer that binds the given model policy to that backend, returning the
+// gateway id, the backend id and the routing path.
+func setupModelPolicyRoute(t *testing.T, up *fakeUpstream, allowed []string, defaultModel string) (string, string) {
+	t.Helper()
+	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mp-gw")})
+	backendID := CreateBackend(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
+	path := "/v1/" + uniqueName("route")
+	policy := map[string]any{"backend_id": backendID, "allowed": allowed}
+	if defaultModel != "" {
+		policy["default"] = defaultModel
+	}
+	CreateConsumer(t, gatewayID, map[string]any{
+		"name":           uniqueName("cons"),
+		"path":           path,
+		"backend_ids":    []string{backendID},
+		"model_policies": []map[string]any{policy},
+	})
+	return gatewayID, path
+}
+
+func TestProxyE2E_ModelPolicies(t *testing.T) {
+	defer Track(t, "ProxyE2E")()
+
+	t.Run("allowed model is forwarded", func(t *testing.T) {
+		up := newJSONUpstream(t, "allowed-served")
+		gatewayID, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "gpt-4o-mini")
+
+		status, _, body := proxyPost(t, gatewayID, path, chatRequestModel("gpt-4o-mini"))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "allowed-served")
+		assert.Equal(t, 1, up.Hits())
+	})
+
+	t.Run("disallowed model is rejected with 403 and never reaches upstream", func(t *testing.T) {
+		up := newJSONUpstream(t, "should-not-be-served")
+		gatewayID, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+		status, _, body := proxyPost(t, gatewayID, path, chatRequestModel("gpt-4-forbidden"))
+
+		assert.Equal(t, http.StatusForbidden, status, "a disallowed model must be rejected, body: %s", body)
+		assert.Equal(t, 0, up.Hits(), "a rejected model must never reach the upstream")
+	})
+
+	t.Run("missing model injects the configured default", func(t *testing.T) {
+		up := newJSONUpstream(t, "default-served")
+		gatewayID, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "gpt-4o-mini")
+
+		status, _, body := proxyPost(t, gatewayID, path, chatRequestNoModel())
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Equal(t, 1, up.Hits())
+		assert.Contains(t, string(up.LastBody()), `"gpt-4o-mini"`,
+			"the default model must be injected into the upstream request body")
+	})
+}
+
+// setupFallbackRoute wires a gateway whose consumer routes to primary and, when
+// fallbackEnabled, fails over to the fallback backend on 5xx responses. It
+// returns the gateway id and routing path.
+func setupFallbackRoute(t *testing.T, primary, fallback *fakeUpstream, fallbackEnabled bool) (string, string) {
+	t.Helper()
+	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("fb-gw")})
+	primaryID := CreateBackend(t, gatewayID, openaiBackendPayload(uniqueName("be-primary"), primary.URL()))
+	fallbackID := CreateBackend(t, gatewayID, openaiBackendPayload(uniqueName("be-fallback"), fallback.URL()))
+	path := "/v1/" + uniqueName("route")
+	CreateConsumer(t, gatewayID, map[string]any{
+		"name":        uniqueName("cons"),
+		"path":        path,
+		"backend_ids": []string{primaryID},
+		"fallback": map[string]any{
+			"enabled":  fallbackEnabled,
+			"triggers": []string{"http_5xx"},
+			"chain":    []string{fallbackID},
+		},
+	})
+	return gatewayID, path
+}
+
+func TestProxyE2E_Fallback(t *testing.T) {
+	defer Track(t, "ProxyE2E")()
+
+	t.Run("primary exhausts then fallback serves", func(t *testing.T) {
+		primary := newFailingUpstream(t, http.StatusInternalServerError)
+		fallback := newJSONUpstream(t, "fallback-served")
+		gatewayID, path := setupFallbackRoute(t, primary, fallback, true)
+
+		status, headers, body := proxyPost(t, gatewayID, path, chatRequest(false))
+
+		assert.Equal(t, http.StatusOK, status, "the fallback must rescue the request, body: %s", body)
+		assert.Contains(t, string(body), "fallback-served")
+		assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
+		assert.Equal(t, expectedAttempts(), primary.Hits(), "primary must exhaust its retry budget before failover")
+		assert.Equal(t, 1, fallback.Hits(), "fallback must serve exactly once")
+	})
+
+	t.Run("all backends failing relays the final error", func(t *testing.T) {
+		primary := newFailingUpstream(t, http.StatusInternalServerError)
+		fallback := newFailingUpstream(t, http.StatusBadGateway)
+		gatewayID, path := setupFallbackRoute(t, primary, fallback, true)
+
+		status, _, body := proxyPost(t, gatewayID, path, chatRequest(false))
+
+		assert.Equal(t, http.StatusBadGateway, status, "the final fallback error is relayed, body: %s", body)
+		assert.Equal(t, expectedAttempts(), primary.Hits(), "primary must be fully retried")
+		assert.Equal(t, expectedAttempts(), fallback.Hits(), "fallback must be fully retried before giving up")
+	})
+
+	t.Run("disabled fallback never fails over", func(t *testing.T) {
+		primary := newFailingUpstream(t, http.StatusInternalServerError)
+		fallback := newJSONUpstream(t, "must-not-serve")
+		gatewayID, path := setupFallbackRoute(t, primary, fallback, false)
+
+		status, _, body := proxyPost(t, gatewayID, path, chatRequest(false))
+
+		assert.Equal(t, http.StatusInternalServerError, status, "body: %s", body)
+		assert.Equal(t, expectedAttempts(), primary.Hits())
+		assert.Equal(t, 0, fallback.Hits(), "a disabled fallback chain must never be used")
+	})
 }

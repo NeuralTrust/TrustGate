@@ -8,16 +8,16 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
 func TestDeleter_Delete_Success(t *testing.T) {
 	t.Parallel()
-	id := uuid.New()
-	gwID := uuid.New()
+	id := ids.New[ids.ConsumerKind]()
+	gwID := ids.New[ids.GatewayKind]()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: gwID}, nil).Once()
 	repo.EXPECT().Delete(mock.Anything, id).Return(nil).Once()
@@ -36,32 +36,32 @@ func TestDeleter_Delete_Success(t *testing.T) {
 
 func TestDeleter_Delete_NotFound(t *testing.T) {
 	t.Parallel()
-	id := uuid.New()
+	id := ids.New[ids.ConsumerKind]()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
 	d := appconsumer.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-	if err := d.Delete(context.Background(), uuid.New(), id); !errors.Is(err, domain.ErrNotFound) {
+	if err := d.Delete(context.Background(), ids.New[ids.GatewayKind](), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestDeleter_Delete_WrongGateway(t *testing.T) {
 	t.Parallel()
-	id := uuid.New()
+	id := ids.New[ids.ConsumerKind]()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: uuid.New()}, nil).Once()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: ids.New[ids.GatewayKind]()}, nil).Once()
 
 	d := appconsumer.NewDeleter(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-	if err := d.Delete(context.Background(), uuid.New(), id); !errors.Is(err, domain.ErrNotFound) {
+	if err := d.Delete(context.Background(), ids.New[ids.GatewayKind](), id); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for cross-gateway delete", err)
 	}
 }
 
 func TestDeleter_Delete_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
-	id := uuid.New()
-	gwID := uuid.New()
+	id := ids.New[ids.ConsumerKind]()
+	gwID := ids.New[ids.GatewayKind]()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: gwID}, nil).Once()
 	repo.EXPECT().Delete(mock.Anything, id).Return(domain.ErrAlreadyExists).Once()

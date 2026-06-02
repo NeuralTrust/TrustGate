@@ -8,11 +8,11 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -49,11 +49,11 @@ func forwarderWithPlugin(t *testing.T, invoker appproxy.ProviderInvoker, p apppl
 }
 
 func TestForward_PreRequestPluginErrorShortCircuits(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{{
-		ID:   uuid.New(),
+		ID:   ids.New[ids.PolicyKind](),
 		Name: "pol",
 		Plugins: policy.Plugins{
 			{ID: "rl", Name: "rate_limiter", Enabled: true, Priority: 1},
@@ -82,11 +82,11 @@ func TestForward_PreRequestPluginErrorShortCircuits(t *testing.T) {
 }
 
 func TestForward_PreRequestStopUpstreamServesCache(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{{
-		ID:   uuid.New(),
+		ID:   ids.New[ids.PolicyKind](),
 		Name: "pol",
 		Plugins: policy.Plugins{
 			{ID: "sc", Name: "semantic_cache", Enabled: true, Priority: 1},
@@ -114,11 +114,11 @@ func TestForward_PreRequestStopUpstreamServesCache(t *testing.T) {
 }
 
 func TestForward_PostResponseRunsAfterSyncInvoke(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{{
-		ID:   uuid.New(),
+		ID:   ids.New[ids.PolicyKind](),
 		Name: "pol",
 		Plugins: policy.Plugins{
 			{ID: "tk", Name: "token_rate_limiter", Enabled: true, Priority: 1},
@@ -172,11 +172,11 @@ func (c *capturePlugin) Execute(_ context.Context, in appplugins.ExecInput) (*ap
 }
 
 func TestForward_PostResponseRunsAfterStreamDrained(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{{
-		ID:   uuid.New(),
+		ID:   ids.New[ids.PolicyKind](),
 		Name: "pol",
 		Plugins: policy.Plugins{
 			{ID: "tk", Name: "token_rate_limiter", Enabled: true, Priority: 1},
@@ -240,11 +240,11 @@ func TestForward_PostResponseRunsAfterStreamDrained(t *testing.T) {
 }
 
 func TestForward_PostResponseSkippedOnStreamAbort(t *testing.T) {
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{{
-		ID:   uuid.New(),
+		ID:   ids.New[ids.PolicyKind](),
 		Name: "pol",
 		Plugins: policy.Plugins{
 			{ID: "tk", Name: "token_rate_limiter", Enabled: true, Priority: 1},

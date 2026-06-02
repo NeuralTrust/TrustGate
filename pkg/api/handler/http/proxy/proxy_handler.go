@@ -12,9 +12,9 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 )
 
 var newline = []byte("\n")
@@ -152,23 +152,23 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 
 // resolveConsumer reads the gateway id + consumer read model attached by the
 // auth middleware and exact-matches the inbound path against a consumer's path.
-func resolveConsumer(c *fiber.Ctx) (uuid.UUID, *appconsumer.RoutableConsumer, error) {
+func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer, error) {
 	gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
 	if !ok {
-		return uuid.Nil, nil, errNotAuthenticated
+		return ids.GatewayID{}, nil, errNotAuthenticated
 	}
 	data, ok := appconsumer.DataFromContext(c.UserContext())
 	if !ok || data == nil {
-		return uuid.Nil, nil, errNotAuthenticated
+		return ids.GatewayID{}, nil, errNotAuthenticated
 	}
 	rc, ok := data.MatchPath(c.Path())
 	if !ok {
-		return uuid.Nil, nil, errPathNotFound
+		return ids.GatewayID{}, nil, errPathNotFound
 	}
 	return gatewayID, rc, nil
 }
 
-func buildRequestContext(c *fiber.Ctx, gatewayID uuid.UUID) *infracontext.RequestContext {
+func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID) *infracontext.RequestContext {
 	headers := make(map[string][]string)
 	c.Request().Header.VisitAll(func(key, value []byte) {
 		name := string(key)
@@ -226,6 +226,8 @@ func mapProxyError(err error) (int, helpers.ErrorBody) {
 		return fiber.StatusServiceUnavailable, helpers.ErrorBody{Error: "no_backend_available", Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload):
 		return fiber.StatusBadRequest, helpers.ErrorBody{Error: "invalid_request", Message: err.Error()}
+	case errors.Is(err, appproxy.ErrModelNotAllowed):
+		return fiber.StatusForbidden, helpers.ErrorBody{Error: "model_not_allowed", Message: err.Error()}
 	default:
 		return fiber.StatusBadGateway, helpers.ErrorBody{Error: "backend_error"}
 	}

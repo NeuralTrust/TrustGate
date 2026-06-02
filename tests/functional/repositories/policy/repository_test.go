@@ -9,12 +9,12 @@ import (
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
 	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
 	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/policy"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -56,7 +56,7 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 	return repo.NewRepository(conn), gatewayrepo.NewRepository(conn), conn
 }
 
-func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUID {
+func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {
 	t.Helper()
 	g, err := gatewaydomain.New(name)
 	if err != nil {
@@ -68,7 +68,7 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUI
 	return g.ID
 }
 
-func validPolicy(t *testing.T, gwID uuid.UUID, name string) *domain.Policy {
+func validPolicy(t *testing.T, gwID ids.GatewayID, name string) *domain.Policy {
 	t.Helper()
 	p, err := domain.NewPolicy(gwID, name, domain.Plugins{
 		{
@@ -136,7 +136,7 @@ func TestRepository_SaveAndFindByID_EmptyPlugins(t *testing.T) {
 
 func TestRepository_FindByID_NotFound(t *testing.T) {
 	r, _, _ := setupRepo(t)
-	_, err := r.FindByID(context.Background(), uuid.New())
+	_, err := r.FindByID(context.Background(), ids.New[ids.PolicyKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -164,7 +164,7 @@ func TestRepository_Save_DuplicateNameForSameGateway(t *testing.T) {
 func TestRepository_Save_InvalidGatewayID(t *testing.T) {
 	r, _, _ := setupRepo(t)
 	ctx := context.Background()
-	orphan := uuid.New()
+	orphan := ids.New[ids.GatewayKind]()
 	p := validPolicy(t, orphan, "orphan")
 	err := r.Save(ctx, p)
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
@@ -232,7 +232,7 @@ func TestRepository_Delete(t *testing.T) {
 
 func TestRepository_Delete_NotFound(t *testing.T) {
 	r, _, _ := setupRepo(t)
-	err := r.Delete(context.Background(), uuid.New())
+	err := r.Delete(context.Background(), ids.New[ids.PolicyKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}

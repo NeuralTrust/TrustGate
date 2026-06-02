@@ -4,6 +4,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy/response"
 	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -29,7 +30,7 @@ func NewGetPolicyHandler(finder apppolicy.Finder) *GetPolicyHandler {
 // @Failure      404         {object}  helpers.ErrorBody
 // @Router       /v1/gateways/{gateway_id}/policies/{id} [get]
 func (h *GetPolicyHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
+	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.PolicyKind](c)
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

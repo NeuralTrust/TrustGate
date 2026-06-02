@@ -8,7 +8,7 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type CreateConsumerRequest struct {
@@ -23,6 +23,13 @@ type CreateConsumerRequest struct {
 	PolicyIDs       []string                `json:"policy_ids,omitempty"`
 	AuthIDs         []string                `json:"auth_ids,omitempty"`
 	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
+	ModelPolicies   []ModelPolicyRequest    `json:"model_policies,omitempty"`
+}
+
+type ModelPolicyRequest struct {
+	BackendID string   `json:"backend_id"`
+	Allowed   []string `json:"allowed,omitempty"`
+	Default   string   `json:"default,omitempty"`
 }
 
 type FallbackRequest struct {
@@ -42,7 +49,7 @@ func (r *FallbackRequest) ToFallback() (*domain.Fallback, error) {
 	if r == nil {
 		return nil, nil
 	}
-	chain, err := parseUUIDList(r.Chain, "fallback.chain")
+	chain, err := parseUUIDList[ids.BackendKind](r.Chain, "fallback.chain")
 	if err != nil {
 		return nil, err
 	}
@@ -124,26 +131,48 @@ func (r CreateConsumerRequest) ToEmbeddingConfig() *backenddomain.EmbeddingConfi
 	return r.EmbeddingConfig.ToDomain()
 }
 
-func (r CreateConsumerRequest) ToBackendIDs() ([]uuid.UUID, error) {
-	return parseUUIDList(r.BackendIDs, "backend_ids")
+func (r CreateConsumerRequest) ToBackendIDs() ([]ids.BackendID, error) {
+	return parseUUIDList[ids.BackendKind](r.BackendIDs, "backend_ids")
 }
 
-func (r CreateConsumerRequest) ToPolicyIDs() ([]uuid.UUID, error) {
-	return parseUUIDList(r.PolicyIDs, "policy_ids")
+func (r CreateConsumerRequest) ToPolicyIDs() ([]ids.PolicyID, error) {
+	return parseUUIDList[ids.PolicyKind](r.PolicyIDs, "policy_ids")
 }
 
-func (r CreateConsumerRequest) ToAuthIDs() ([]uuid.UUID, error) {
-	return parseUUIDList(r.AuthIDs, "auth_ids")
+func (r CreateConsumerRequest) ToAuthIDs() ([]ids.AuthID, error) {
+	return parseUUIDList[ids.AuthKind](r.AuthIDs, "auth_ids")
 }
 
 func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 	return r.Fallback.ToFallback()
 }
 
-func parseUUIDList(raw []string, field string) ([]uuid.UUID, error) {
-	out := make([]uuid.UUID, 0, len(raw))
+func (r CreateConsumerRequest) ToModelPolicies() (domain.ModelPolicies, error) {
+	return parseModelPolicies(r.ModelPolicies)
+}
+
+func parseModelPolicies(raw []ModelPolicyRequest) (domain.ModelPolicies, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(domain.ModelPolicies, len(raw))
+	for i, mp := range raw {
+		id, err := ids.Parse[ids.BackendKind](mp.BackendID)
+		if err != nil {
+			return nil, fmt.Errorf("model_policies[%d]: invalid backend_id %q: %w", i, mp.BackendID, commonerrors.ErrValidation)
+		}
+		if _, dup := out[id]; dup {
+			return nil, fmt.Errorf("model_policies[%d]: duplicate backend_id %q: %w", i, mp.BackendID, commonerrors.ErrValidation)
+		}
+		out[id] = domain.ModelPolicy{Allowed: mp.Allowed, Default: mp.Default}
+	}
+	return out, nil
+}
+
+func parseUUIDList[K ids.Kind](raw []string, field string) ([]ids.ID[K], error) {
+	out := make([]ids.ID[K], 0, len(raw))
 	for i, s := range raw {
-		id, err := uuid.Parse(s)
+		id, err := ids.Parse[K](s)
 		if err != nil {
 			return nil, fmt.Errorf("%s[%d]: invalid uuid %q: %w", field, i, s, commonerrors.ErrValidation)
 		}

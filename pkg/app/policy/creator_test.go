@@ -9,10 +9,10 @@ import (
 	"time"
 
 	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -33,7 +33,7 @@ func validPlugins() domain.Plugins {
 func TestCreator_Create_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
 			return p.GatewayID == gwID && p.Name == "default" && len(p.Plugins) == 1
@@ -67,7 +67,7 @@ func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	creator := apppolicy.NewCreator(repo, newCacheManager(), newTestLogger())
 
 	_, err := creator.Create(context.Background(), apppolicy.CreateInput{
-		GatewayID: uuid.New(),
+		GatewayID: ids.New[ids.GatewayKind](),
 		Name:      "",
 		Plugins:   validPlugins(),
 	})
@@ -83,7 +83,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	creator := apppolicy.NewCreator(repo, newCacheManager(), newTestLogger())
 
 	_, err := creator.Create(context.Background(), apppolicy.CreateInput{
-		GatewayID: uuid.New(),
+		GatewayID: ids.New[ids.GatewayKind](),
 		Name:      "dupe",
 		Plugins:   validPlugins(),
 	})

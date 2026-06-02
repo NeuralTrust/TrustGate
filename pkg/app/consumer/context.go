@@ -3,7 +3,7 @@ package consumer
 import (
 	"context"
 
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 // contextKey is a private type for context keys defined in this package, to
@@ -17,12 +17,12 @@ const (
 	ConsumerDataKey contextKey = "auth.consumer_data"
 )
 
-func WithGatewayID(ctx context.Context, id uuid.UUID) context.Context {
+func WithGatewayID(ctx context.Context, id ids.GatewayID) context.Context {
 	return context.WithValue(ctx, GatewayIDKey, id)
 }
 
-func GatewayIDFromContext(ctx context.Context) (uuid.UUID, bool) {
-	id, ok := ctx.Value(GatewayIDKey).(uuid.UUID)
+func GatewayIDFromContext(ctx context.Context) (ids.GatewayID, bool) {
+	id, ok := ctx.Value(GatewayIDKey).(ids.GatewayID)
 	return id, ok
 }
 

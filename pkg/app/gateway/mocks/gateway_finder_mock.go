@@ -6,7 +6,7 @@ import (
 	context "context"
 
 	gateway "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	uuid "github.com/google/uuid"
+	ids "github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -24,7 +24,7 @@ func (_m *Finder) EXPECT() *Finder_Expecter {
 }
 
 // FindByID provides a mock function with given fields: ctx, id
-func (_m *Finder) FindByID(ctx context.Context, id uuid.UUID) (*gateway.Gateway, error) {
+func (_m *Finder) FindByID(ctx context.Context, id ids.ID[ids.GatewayKind]) (*gateway.Gateway, error) {
 	ret := _m.Called(ctx, id)
 
 	if len(ret) == 0 {
@@ -33,10 +33,10 @@ func (_m *Finder) FindByID(ctx context.Context, id uuid.UUID) (*gateway.Gateway,
 
 	var r0 *gateway.Gateway
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) (*gateway.Gateway, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) (*gateway.Gateway, error)); ok {
 		return rf(ctx, id)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) *gateway.Gateway); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) *gateway.Gateway); ok {
 		r0 = rf(ctx, id)
 	} else {
 		if ret.Get(0) != nil {
@@ -44,7 +44,7 @@ func (_m *Finder) FindByID(ctx context.Context, id uuid.UUID) (*gateway.Gateway,
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind]) error); ok {
 		r1 = rf(ctx, id)
 	} else {
 		r1 = ret.Error(1)
@@ -60,14 +60,14 @@ type Finder_FindByID_Call struct {
 
 // FindByID is a helper method to define mock.On call
 //   - ctx context.Context
-//   - id uuid.UUID
+//   - id ids.ID[ids.GatewayKind]
 func (_e *Finder_Expecter) FindByID(ctx interface{}, id interface{}) *Finder_FindByID_Call {
 	return &Finder_FindByID_Call{Call: _e.mock.On("FindByID", ctx, id)}
 }
 
-func (_c *Finder_FindByID_Call) Run(run func(ctx context.Context, id uuid.UUID)) *Finder_FindByID_Call {
+func (_c *Finder_FindByID_Call) Run(run func(ctx context.Context, id ids.ID[ids.GatewayKind])) *Finder_FindByID_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(uuid.UUID))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]))
 	})
 	return _c
 }
@@ -77,7 +77,7 @@ func (_c *Finder_FindByID_Call) Return(_a0 *gateway.Gateway, _a1 error) *Finder_
 	return _c
 }
 
-func (_c *Finder_FindByID_Call) RunAndReturn(run func(context.Context, uuid.UUID) (*gateway.Gateway, error)) *Finder_FindByID_Call {
+func (_c *Finder_FindByID_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind]) (*gateway.Gateway, error)) *Finder_FindByID_Call {
 	_c.Call.Return(run)
 	return _c
 }

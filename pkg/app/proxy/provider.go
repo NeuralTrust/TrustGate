@@ -13,6 +13,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/factory"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 )
 
 const (
@@ -25,6 +26,8 @@ const (
 // while adapting it to the target provider format. The handler maps it to a
 // 400 Bad Request.
 var ErrInvalidRequestPayload = errors.New("invalid request payload")
+
+var ErrModelNotAllowed = errors.New("model not allowed")
 
 // ProviderResponse is the backend LLM response. On the synchronous path it
 // carries Body; on the streaming path it carries Stream. It is relayed to the
@@ -40,22 +43,17 @@ type ProviderResponse struct {
 	// and is responsible for draining the sequence (which closes the backend
 	// body). The second value carries mid-stream errors.
 	Stream iter.Seq2[[]byte, error]
+	Usage  *adapter.CanonicalUsage
 }
 
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
 type ProviderInvoker interface {
 	Invoke(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*ProviderResponse, error)
-	// InvokeStream performs the streaming invocation. A pre-stream non-2xx
-	// backend response is returned as a verbatim *ProviderResponse (Body set,
-	// Stream nil); a successful call returns a *ProviderResponse with Stream set.
 	InvokeStream(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*ProviderResponse, error)
 }
 
 var _ ProviderInvoker = (*providerInvoker)(nil)
 
-// providerInvoker resolves the concrete LLM provider client for a backend,
-// transforms the request payload across provider formats when needed, invokes
-// the backend, and adapts the response back to the client's source format.
 type providerInvoker struct {
 	locator  factory.ProviderLocator
 	registry *adapter.Registry
@@ -108,6 +106,8 @@ func (p *providerInvoker) Invoke(
 		return nil, fmt.Errorf("provider completions: %w", err)
 	}
 
+	usage := p.decodeResponseUsage(respBody, prep.targetFormat)
+
 	if prep.crossFormat {
 		if adapted, aerr := p.registry.AdaptResponse(respBody, prep.sourceFormat, prep.targetFormat); aerr != nil {
 			p.logger.Warn("failed to adapt response, returning raw",
@@ -123,8 +123,17 @@ func (p *providerInvoker) Invoke(
 			headerSelectedProvider: {bk.Provider},
 			headerContentType:      {contentTypeJSON},
 		},
-		Body: respBody,
+		Body:  respBody,
+		Usage: usage,
 	}, nil
+}
+
+func (p *providerInvoker) decodeResponseUsage(body []byte, format adapter.Format) *adapter.CanonicalUsage {
+	canonical, err := p.registry.DecodeResponseFor(body, format)
+	if err != nil || canonical == nil {
+		return nil
+	}
+	return canonical.Usage
 }
 
 func (p *providerInvoker) InvokeStream(
@@ -159,7 +168,7 @@ func (p *providerInvoker) InvokeStream(
 		return nil, fmt.Errorf("provider completions stream: %w", err)
 	}
 
-	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.usageObserver(req))
+	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.usageObserver(ctx))
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
@@ -201,10 +210,15 @@ func (p *providerInvoker) prepare(
 
 	body = adapter.NormalizeRequestForProvider(bk.Provider, targetFormat, body)
 
-	// ValidateModel is a near no-op until the backend carries an allow-list /
-	// default model; failures are non-fatal (proceed without model override).
-	if normalized, _, verr := adapter.ValidateModel(body, nil, ""); verr != nil {
-		p.logger.Warn("model validation failed, proceeding without override",
+	normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
+	if verr != nil {
+		if errors.Is(verr, adapter.ErrModelNotAllowed) {
+			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+		}
+		if len(req.AllowedModels) > 0 {
+			return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
+		}
+		p.logger.Warn("model enforcement failed, proceeding without override",
 			slog.String("error", verr.Error()))
 	} else {
 		body = normalized
@@ -223,17 +237,13 @@ func (p *providerInvoker) prepare(
 	}, nil
 }
 
-// usageObserver returns a callback that records the latest canonical usage onto
-// req.Metadata["usage"] and debug-logs it. This is the chunk-level metric hook.
-func (p *providerInvoker) usageObserver(req *infracontext.RequestContext) func(*adapter.CanonicalUsage) {
+func (p *providerInvoker) usageObserver(ctx context.Context) func(*adapter.CanonicalUsage) {
+	requestTrace := trace.FromContext(ctx)
 	return func(u *adapter.CanonicalUsage) {
-		if u == nil {
+		if u == nil || requestTrace == nil {
 			return
 		}
-		if req.Metadata == nil {
-			req.Metadata = make(map[string]interface{})
-		}
-		req.Metadata[adapter.MetadataUsageKey] = u
+		requestTrace.ObserveLLMUsage(u)
 		p.logger.Debug("stream usage observed",
 			slog.Int("input_tokens", u.InputTokens),
 			slog.Int("output_tokens", u.OutputTokens),

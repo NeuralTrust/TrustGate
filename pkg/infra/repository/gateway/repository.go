@@ -7,9 +7,9 @@ import (
 	"fmt"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -97,7 +97,7 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 	})
 }
 
-func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
+func (r *Repository) Delete(ctx context.Context, id ids.GatewayID) error {
 	const query = `DELETE FROM gateways WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query, id)
@@ -111,7 +111,7 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	})
 }
 
-func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Gateway, error) {
+func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gateway, error) {
 	const query = `
 		SELECT id, name, status, telemetry, client_tls, session_config, created_at, updated_at
 		  FROM gateways

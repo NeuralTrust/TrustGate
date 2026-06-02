@@ -4,20 +4,20 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type Policy struct {
-	ID        uuid.UUID `json:"id"`
-	GatewayID uuid.UUID `json:"gateway_id"`
-	Name      string    `json:"name"`
-	Plugins   Plugins   `json:"plugins"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        ids.PolicyID  `json:"id"`
+	GatewayID ids.GatewayID `json:"gateway_id"`
+	Name      string        `json:"name"`
+	Plugins   Plugins       `json:"plugins"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
 }
 
-func NewPolicy(gatewayID uuid.UUID, name string, plugins Plugins) (*Policy, error) {
-	id, err := uuid.NewV7()
+func NewPolicy(gatewayID ids.GatewayID, name string, plugins Plugins) (*Policy, error) {
+	id, err := ids.NewV7[ids.PolicyKind]()
 	if err != nil {
 		return nil, fmt.Errorf("policy: generate uuid: %w", err)
 	}
@@ -40,7 +40,8 @@ func NewPolicy(gatewayID uuid.UUID, name string, plugins Plugins) (*Policy, erro
 }
 
 func Rehydrate(
-	id, gatewayID uuid.UUID,
+	id ids.PolicyID,
+	gatewayID ids.GatewayID,
 	name string,
 	plugins Plugins,
 	createdAt, updatedAt time.Time,
@@ -59,7 +60,7 @@ func (p *Policy) Validate() error {
 	if p.Name == "" {
 		return ErrInvalidName
 	}
-	if p.GatewayID == uuid.Nil {
+	if p.GatewayID.IsNil() {
 		return ErrInvalidGatewayID
 	}
 	if p.Plugins == nil {

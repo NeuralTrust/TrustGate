@@ -8,15 +8,15 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
 func TestFinder_FindByID_CacheHit(t *testing.T) {
 	t.Parallel()
-	id := uuid.New()
-	gwID := uuid.New()
+	id := ids.New[ids.ConsumerKind]()
+	gwID := ids.New[ids.GatewayKind]()
 	repo := repomocks.NewRepository(t)
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.ConsumerTTLName).Set(id.String(), &domain.Consumer{ID: id, GatewayID: gwID, Name: "cached"})
@@ -33,8 +33,8 @@ func TestFinder_FindByID_CacheHit(t *testing.T) {
 
 func TestFinder_FindByID_CacheMiss_DelegatesToRepo(t *testing.T) {
 	t.Parallel()
-	id := uuid.New()
-	gwID := uuid.New()
+	id := ids.New[ids.ConsumerKind]()
+	gwID := ids.New[ids.GatewayKind]()
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: gwID, Name: "fresh"}, nil).Once()
 
@@ -54,7 +54,7 @@ func TestFinder_FindByID_NotFound(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, mock.Anything).Return(nil, domain.ErrNotFound).Once()
 
 	f := appconsumer.NewFinder(repo, newCacheManager(), newTestLogger())
-	_, err := f.FindByID(context.Background(), uuid.New(), uuid.New())
+	_, err := f.FindByID(context.Background(), ids.New[ids.GatewayKind](), ids.New[ids.ConsumerKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -62,12 +62,12 @@ func TestFinder_FindByID_NotFound(t *testing.T) {
 
 func TestFinder_FindByID_WrongGateway(t *testing.T) {
 	t.Parallel()
-	id := uuid.New()
+	id := ids.New[ids.ConsumerKind]()
 	repo := repomocks.NewRepository(t)
-	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: uuid.New(), Name: "other"}, nil).Once()
+	repo.EXPECT().FindByID(mock.Anything, id).Return(&domain.Consumer{ID: id, GatewayID: ids.New[ids.GatewayKind](), Name: "other"}, nil).Once()
 
 	f := appconsumer.NewFinder(repo, newCacheManager(), newTestLogger())
-	_, err := f.FindByID(context.Background(), uuid.New(), id)
+	_, err := f.FindByID(context.Background(), ids.New[ids.GatewayKind](), id)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound for cross-gateway id", err)
 	}

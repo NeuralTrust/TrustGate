@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	cachemocks "github.com/NeuralTrust/AgentGateway/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
 	"github.com/google/uuid"
@@ -29,7 +30,7 @@ func TestLoadBalancer_Close_IdempotentAndSafe(t *testing.T) {
 	cacheClient.EXPECT().RedisClient().Return(nil).Maybe()
 
 	bk, err := backend.NewBackend(
-		uuid.New(),
+		ids.New[ids.GatewayKind](),
 		"backend-1",
 		"openai",
 		nil,

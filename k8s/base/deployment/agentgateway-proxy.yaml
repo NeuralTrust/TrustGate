@@ -24,9 +24,8 @@ spec:
       containers:
       - name: proxy
         image: agentgateway
-        command:
-        - /bin/sh
-        - /etc/entrypoint/entrypoint.sh
+        # Distroless image has no /bin/sh; secrets load via godotenv from /etc/secrets/.env.
+        workingDir: /app
         args:
         - proxy
         imagePullPolicy: Always
@@ -45,31 +44,22 @@ spec:
             memory: 2Gi
         readinessProbe:
           httpGet:
-            path: /health
+            path: /readyz
             port: http
           initialDelaySeconds: 5
           periodSeconds: 10
         livenessProbe:
           httpGet:
-            path: /health
+            path: /healthz
             port: http
           initialDelaySeconds: 15
           periodSeconds: 20
         volumeMounts:
-        - name: entrypoint
-          mountPath: /etc/entrypoint
-          readOnly: true
-        # CSI volume mounts the single GCP secret as a KEY=VALUE file that the
-        # entrypoint script loads into the environment.
         - name: agentgateway-secrets
           mountPath: /etc/secrets
           readOnly: true
       securityContext: {}
       volumes:
-      - name: entrypoint
-        configMap:
-          name: agentgateway-entrypoint
-          defaultMode: 0755
       - name: agentgateway-secrets
         csi:
           driver: secrets-store-gke.csi.k8s.io

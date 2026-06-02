@@ -11,6 +11,7 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
 )
 
 // PluginName is the catalog name used in policy configuration.
@@ -41,11 +42,14 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		return nil, fmt.Errorf("cors: %w", err)
 	}
 
+	method := methodOf(in.Request)
 	origin := header(in.Request, "Origin")
 	if origin == "" {
+		setCorsExtras(in.Event, CorsData{Method: method, AllowedMethods: cfg.AllowMethods, Allowed: false})
 		return nil, &appplugins.PluginError{StatusCode: http.StatusForbidden, Message: "invalid origin"}
 	}
 	if !cfg.isOriginAllowed(origin) {
+		setCorsExtras(in.Event, CorsData{Origin: origin, Method: method, AllowedMethods: cfg.AllowMethods, Allowed: false})
 		return nil, &appplugins.PluginError{StatusCode: http.StatusForbidden, Message: "CORS: origin not allowed"}
 	}
 
@@ -57,18 +61,21 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		headers["Access-Control-Allow-Credentials"] = []string{"true"}
 	}
 
-	if methodOf(in.Request) == http.MethodOptions {
-		return p.handlePreflight(cfg, in.Request, headers)
+	if method == http.MethodOptions {
+		return p.handlePreflight(cfg, in.Request, headers, in.Event)
 	}
 
+	setCorsExtras(in.Event, CorsData{Origin: origin, Method: method, AllowedMethods: cfg.AllowMethods, Allowed: true})
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 }
 
 // handlePreflight validates the preflight request and short-circuits with a 204
 // response carrying the negotiated CORS headers.
-func (p *Plugin) handlePreflight(cfg *config, req *infracontext.RequestContext, headers map[string][]string) (*appplugins.Result, error) {
+func (p *Plugin) handlePreflight(cfg *config, req *infracontext.RequestContext, headers map[string][]string, event *metrics.EventContext) (*appplugins.Result, error) {
+	origin := header(req, "Origin")
 	requestedMethod := header(req, "Access-Control-Request-Method")
 	if requestedMethod == "" {
+		setCorsExtras(event, CorsData{Origin: origin, Method: req.Method, AllowedMethods: cfg.AllowMethods, Preflight: true, Allowed: false})
 		return nil, &appplugins.PluginError{
 			StatusCode: http.StatusBadRequest,
 			Message:    "CORS preflight missing Access-Control-Request-Method header",
@@ -76,6 +83,7 @@ func (p *Plugin) handlePreflight(cfg *config, req *infracontext.RequestContext, 
 		}
 	}
 	if !cfg.isMethodAllowed(requestedMethod) {
+		setCorsExtras(event, CorsData{Origin: origin, Method: req.Method, RequestedMethod: requestedMethod, AllowedMethods: cfg.AllowMethods, Preflight: true, Allowed: false})
 		return nil, &appplugins.PluginError{
 			StatusCode: http.StatusMethodNotAllowed,
 			Message:    "CORS preflight: method not allowed",
@@ -96,6 +104,7 @@ func (p *Plugin) handlePreflight(cfg *config, req *infracontext.RequestContext, 
 		headers["Access-Control-Max-Age"] = []string{cfg.MaxAge}
 	}
 
+	setCorsExtras(event, CorsData{Origin: origin, Method: req.Method, RequestedMethod: requestedMethod, AllowedMethods: cfg.AllowMethods, Preflight: true, Allowed: true})
 	// A successful preflight is a short-circuit, not an error: return 204 with
 	// no body and the negotiated headers.
 	return &appplugins.Result{
@@ -103,6 +112,13 @@ func (p *Plugin) handlePreflight(cfg *config, req *infracontext.RequestContext, 
 		Headers:      headers,
 		StopUpstream: true,
 	}, nil
+}
+
+func setCorsExtras(event *metrics.EventContext, data CorsData) {
+	if event == nil {
+		return
+	}
+	event.SetExtras(data)
 }
 
 func header(req *infracontext.RequestContext, name string) string {

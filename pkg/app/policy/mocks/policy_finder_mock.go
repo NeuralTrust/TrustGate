@@ -5,8 +5,8 @@ package mocks
 import (
 	context "context"
 
+	ids "github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policy "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	uuid "github.com/google/uuid"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -24,7 +24,7 @@ func (_m *Finder) EXPECT() *Finder_Expecter {
 }
 
 // FindByID provides a mock function with given fields: ctx, gatewayID, id
-func (_m *Finder) FindByID(ctx context.Context, gatewayID uuid.UUID, id uuid.UUID) (*policy.Policy, error) {
+func (_m *Finder) FindByID(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], id ids.ID[ids.PolicyKind]) (*policy.Policy, error) {
 	ret := _m.Called(ctx, gatewayID, id)
 
 	if len(ret) == 0 {
@@ -33,10 +33,10 @@ func (_m *Finder) FindByID(ctx context.Context, gatewayID uuid.UUID, id uuid.UUI
 
 	var r0 *policy.Policy
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, uuid.UUID) (*policy.Policy, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.PolicyKind]) (*policy.Policy, error)); ok {
 		return rf(ctx, gatewayID, id)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, uuid.UUID) *policy.Policy); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.PolicyKind]) *policy.Policy); ok {
 		r0 = rf(ctx, gatewayID, id)
 	} else {
 		if ret.Get(0) != nil {
@@ -44,7 +44,7 @@ func (_m *Finder) FindByID(ctx context.Context, gatewayID uuid.UUID, id uuid.UUI
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID, uuid.UUID) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.PolicyKind]) error); ok {
 		r1 = rf(ctx, gatewayID, id)
 	} else {
 		r1 = ret.Error(1)
@@ -60,15 +60,15 @@ type Finder_FindByID_Call struct {
 
 // FindByID is a helper method to define mock.On call
 //   - ctx context.Context
-//   - gatewayID uuid.UUID
-//   - id uuid.UUID
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - id ids.ID[ids.PolicyKind]
 func (_e *Finder_Expecter) FindByID(ctx interface{}, gatewayID interface{}, id interface{}) *Finder_FindByID_Call {
 	return &Finder_FindByID_Call{Call: _e.mock.On("FindByID", ctx, gatewayID, id)}
 }
 
-func (_c *Finder_FindByID_Call) Run(run func(ctx context.Context, gatewayID uuid.UUID, id uuid.UUID)) *Finder_FindByID_Call {
+func (_c *Finder_FindByID_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], id ids.ID[ids.PolicyKind])) *Finder_FindByID_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(uuid.UUID), args[2].(uuid.UUID))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.PolicyKind]))
 	})
 	return _c
 }
@@ -78,7 +78,7 @@ func (_c *Finder_FindByID_Call) Return(_a0 *policy.Policy, _a1 error) *Finder_Fi
 	return _c
 }
 
-func (_c *Finder_FindByID_Call) RunAndReturn(run func(context.Context, uuid.UUID, uuid.UUID) (*policy.Policy, error)) *Finder_FindByID_Call {
+func (_c *Finder_FindByID_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.PolicyKind]) (*policy.Policy, error)) *Finder_FindByID_Call {
 	_c.Call.Return(run)
 	return _c
 }

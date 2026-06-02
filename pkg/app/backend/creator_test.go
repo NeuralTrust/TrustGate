@@ -11,8 +11,8 @@ import (
 	appbackend "github.com/NeuralTrust/AgentGateway/pkg/app/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/backend/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -24,7 +24,7 @@ func newCacheManager() *cache.TTLMapManager {
 	return cache.NewTTLMapManager(time.Hour)
 }
 
-func validCreateInput(gwID uuid.UUID, name string) appbackend.CreateInput {
+func validCreateInput(gwID ids.GatewayID, name string) appbackend.CreateInput {
 	return appbackend.CreateInput{
 		GatewayID: gwID,
 		Name:      name,
@@ -36,7 +36,7 @@ func validCreateInput(gwID uuid.UUID, name string) appbackend.CreateInput {
 func TestCreator_Create_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(b *domain.Backend) bool {
 			return b.GatewayID == gwID && b.Name == "backend-1" && b.Provider == "openai"
@@ -65,7 +65,7 @@ func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	creator := appbackend.NewCreator(repo, newCacheManager(), newTestLogger())
 
-	in := validCreateInput(uuid.New(), "x")
+	in := validCreateInput(ids.New[ids.GatewayKind](), "x")
 	in.Provider = ""
 	_, err := creator.Create(context.Background(), in)
 	if !errors.Is(err, domain.ErrInvalidBackend) {
@@ -79,7 +79,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
 	creator := appbackend.NewCreator(repo, newCacheManager(), newTestLogger())
 
-	_, err := creator.Create(context.Background(), validCreateInput(uuid.New(), "dupe"))
+	_, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind](), "dupe"))
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
 	}

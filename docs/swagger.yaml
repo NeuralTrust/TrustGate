@@ -473,6 +473,50 @@ definitions:
       use_basic_auth:
         type: boolean
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_catalog_response.ModelResponse:
+    properties:
+      capabilities:
+        additionalProperties: {}
+        type: object
+      context_window:
+        type: integer
+      display_name:
+        type: string
+      enabled:
+        type: boolean
+      external_id:
+        type: string
+      id:
+        type: string
+      input_price:
+        type: string
+      max_output:
+        type: integer
+      output_price:
+        type: string
+      provider_id:
+        type: string
+      slug:
+        type: string
+      source:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_catalog_response.ProviderResponse:
+    properties:
+      code:
+        type: string
+      display_name:
+        type: string
+      id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      source:
+        type: string
+      wire_format:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.APIKeyAuthRequest:
     properties:
       api_key:
@@ -511,6 +555,10 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
+        type: array
       name:
         type: string
       path:
@@ -555,6 +603,17 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest:
+    properties:
+      allowed:
+        items:
+          type: string
+        type: array
+      backend_id:
+        type: string
+      default:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.UpdateConsumerRequest:
     properties:
       active:
@@ -577,6 +636,10 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
+        type: array
       name:
         type: string
       path:
@@ -616,6 +679,10 @@ definitions:
         type: object
       id:
         type: string
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ModelPolicyResponse'
+        type: array
       name:
         type: string
       path:
@@ -672,6 +739,17 @@ definitions:
         type: integer
       total:
         type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ModelPolicyResponse:
+    properties:
+      allowed:
+        items:
+          type: string
+        type: array
+      backend_id:
+        type: string
+      default:
+        type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.CreateGatewayRequest:
     properties:
@@ -1991,6 +2069,58 @@ paths:
       summary: Update a gateway
       tags:
       - gateways
+  /v1/models-catalog:
+    get:
+      description: Returns the catalog of supported models, optionally filtered by
+        provider.
+      parameters:
+      - description: Filter by provider id
+        in: query
+        name: provider
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_catalog_response.ModelResponse'
+              type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List model catalog
+      tags:
+      - catalog
+  /v1/providers-catalog:
+    get:
+      description: Returns the catalog of supported LLM providers.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_catalog_response.ProviderResponse'
+              type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List provider catalog
+      tags:
+      - catalog
 securityDefinitions:
   BearerAuth:
     in: header
