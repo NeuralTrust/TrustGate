@@ -277,12 +277,20 @@ Notes:
 
 ## 11. Code style (hard rules)
 
-### 11.1 No comments
+### 11.1 No comments (Go doc comments included)
 
-Code in this repository **must not contain comments**. The codebase relies on
-small files, named symbols, typed signatures, and use-case-per-file layout
-(§10) to communicate intent. Comments rot, lie under refactor, and silently
-duplicate information that the diff history already captures.
+Code in this repository **must not contain comments — and that explicitly
+includes Go doc comments** (the `//` lines above packages, types, functions,
+methods, fields, and constants). There is no exception for "idiomatic Go
+doc comments": do **not** add a doc comment just because a symbol is exported.
+The codebase relies on small files, named symbols, typed signatures, and
+use-case-per-file layout (§10) to communicate intent. Comments rot, lie under
+refactor, and silently duplicate information that the diff history already
+captures.
+
+This rule is enforced by a pre-commit hook that strips comments. Don't fight
+it: write the code without comments in the first place, and when porting code
+from other repos strip the comments as part of the port (see below).
 
 **Above all: never add large comment blocks.** Do not write multi-line `//`
 runs, banner headers, or `/* … */` paragraphs that summarise a file,

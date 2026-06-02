@@ -243,7 +243,6 @@ func TestForward_StreamingRequestInvokesStream(t *testing.T) {
 
 	fwd := newTestForwarder(t, invoker)
 
-	// Streaming is auto-detected from the request body ("stream": true).
 	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,

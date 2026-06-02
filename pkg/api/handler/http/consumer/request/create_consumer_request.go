@@ -38,11 +38,6 @@ type FallbackBudgetRequest struct {
 	MaxCostUSD        float64 `json:"max_cost_usd,omitempty"`
 }
 
-// ToFallback maps the request DTO to the domain fallback config. The chain is
-// resolved to UUIDs. budget.max_attempts left unset (0) means "auto": the
-// runtime bounds the failover by candidate exhaustion (pool + chain, each
-// retried per the server's per-backend retry budget) instead of a guessed
-// ceiling.
 func (r *FallbackRequest) ToFallback() (*domain.Fallback, error) {
 	if r == nil {
 		return nil, nil

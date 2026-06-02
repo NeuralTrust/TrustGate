@@ -30,7 +30,6 @@ type Event struct {
 	IP             string            `json:"user_ip,omitempty"`
 	Params         map[string]string `json:"params,omitempty"`
 
-	// Trace Params
 	Method          string              `json:"method,omitempty"`
 	Error           string              `json:"error,omitempty"`
 	Locale          string              `json:"locale,omitempty"`
@@ -44,11 +43,6 @@ type Event struct {
 	StatusCode      int                 `json:"status_code"`
 	Streaming       bool                `json:"streaming"`
 
-	// Failover params: per-hop attribution emitted once per backend attempt.
-	// Attempt is the 1-based attempt index within the request, Fallback marks an
-	// attempt against the consumer's fallback chain (vs the primary pool),
-	// BackendID is the backend tried and Outcome is its classification
-	// (success/retryable/terminal).
 	Attempt   int    `json:"attempt,omitempty"`
 	Fallback  bool   `json:"fallback,omitempty"`
 	BackendID string `json:"backend_id,omitempty"`
@@ -63,7 +57,6 @@ type Event struct {
 	SessionID     string `json:"session_id,omitempty"`
 	FingerprintID string `json:"fingerprint_id,omitempty"`
 
-	// Plugin Params
 	Plugin *PluginDataEvent `json:"plugin,omitempty"`
 
 	RuleID   string `json:"rule_id,omitempty"`

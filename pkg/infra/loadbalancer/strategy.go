@@ -17,9 +17,6 @@ const (
 )
 
 type Strategy interface {
-	// Next picks the next backend, skipping any whose id is in exclude (the
-	// backends already tried in this request). Returns nil when no eligible
-	// backend remains.
 	Next(req *infracontext.RequestContext, exclude map[uuid.UUID]struct{}) *backend.Backend
 	Name() string
 }
