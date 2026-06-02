@@ -19,6 +19,22 @@ func NewUpdateBackendHandler(updater appbackend.Updater) *UpdateBackendHandler {
 	return &UpdateBackendHandler{updater: updater}
 }
 
+// Handle godoc
+// @Summary      Update a backend
+// @Description  Updates an existing backend.
+// @Tags         backends
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string                        true  "Gateway id"  format(uuid)
+// @Param        id          path      string                        true  "Backend id"  format(uuid)
+// @Param        body        body      request.UpdateBackendRequest  true  "Backend fields to update"
+// @Success      200         {object}  response.BackendResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      409         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/backends/{id} [put]
 func (h *UpdateBackendHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
 	if err != nil {

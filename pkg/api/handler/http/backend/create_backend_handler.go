@@ -19,6 +19,21 @@ func NewCreateBackendHandler(creator appbackend.Creator) *CreateBackendHandler {
 	return &CreateBackendHandler{creator: creator}
 }
 
+// Handle godoc
+// @Summary      Create a backend
+// @Description  Creates a new backend in a gateway.
+// @Tags         backends
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string                        true  "Gateway id"  format(uuid)
+// @Param        body        body      request.CreateBackendRequest  true  "Backend to create"
+// @Success      201         {object}  response.BackendResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      409         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/backends [post]
 func (h *CreateBackendHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, err := helpers.ParseGatewayID(c)
 	if err != nil {

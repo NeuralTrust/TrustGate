@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy run-servers test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools \
+.PHONY: help build run run-admin run-proxy run-servers test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools swagger openapi docs \
         install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -83,6 +83,23 @@ generate: ## Run go generate
 tools: ## Install Go dev tools pinned in tools/tools.go
 	@$(info $(M) Installing dev tools ...)
 	go install github.com/vektra/mockery/v2
+	go install github.com/swaggo/swag/cmd/swag
+
+swagger: ## Generate the Swagger 2.0 spec (docs/swagger.{json,yaml} + docs.go) from handler annotations
+	@$(info $(M) Generating Swagger 2.0 spec ...)
+	@command -v swag >/dev/null 2>&1 || { \
+	  echo "swag not found in PATH; run 'make tools' first" >&2; exit 1; \
+	}
+	swag init -g cmd/agentgateway/main.go --parseDependency --parseInternal --output docs
+
+openapi: swagger ## Convert the Swagger 2.0 spec into an OpenAPI 3 spec (docs/openapi.json)
+	@$(info $(M) Converting Swagger 2.0 -> OpenAPI 3 ...)
+	@command -v swagger2openapi >/dev/null 2>&1 || { \
+	  echo "swagger2openapi not found in PATH; install it with 'npm i -g swagger2openapi'" >&2; exit 1; \
+	}
+	swagger2openapi docs/swagger.json -o docs/openapi.json
+
+docs: openapi ## Regenerate all API docs (Swagger 2.0 + OpenAPI 3)
 
 gen-mocks: ## Regenerate all mockery mocks across the codebase
 	@$(info $(M) Regenerating mocks ...)

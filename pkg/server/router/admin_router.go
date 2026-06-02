@@ -9,12 +9,14 @@ import (
 	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
+	fiberSwagger "github.com/gofiber/swagger"
 )
 
 const (
 	HealthPath   = "/healthz"
 	ReadyPath    = "/readyz"
 	VersionPath  = "/__/version"
+	DocsPath     = "/docs/*"
 	GatewaysPath = "/v1/gateways"
 )
 
@@ -72,6 +74,11 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(HealthPath, r.deps.HealthHandler.Liveness)
 	app.Get(ReadyPath, r.deps.HealthHandler.Readiness)
 	app.Get(VersionPath, r.deps.VersionHandler.Handle)
+
+	// Interactive API docs (Swagger UI + spec) served from the generated
+	// `docs` package. Public on purpose so the contract is browsable without
+	// an admin token; the documented endpoints stay behind AdminAuth below.
+	app.Get(DocsPath, fiberSwagger.HandlerDefault)
 
 	gw := app.Group(GatewaysPath, r.deps.AdminAuth.Middleware())
 	gw.Post("", r.deps.CreateGateway.Handle)

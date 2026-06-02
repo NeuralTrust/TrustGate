@@ -17,6 +17,20 @@ func NewListPolicyHandler(finder apppolicy.Finder) *ListPolicyHandler {
 	return &ListPolicyHandler{finder: finder}
 }
 
+// Handle godoc
+// @Summary      List policies
+// @Description  Returns a paginated list of policies in a gateway.
+// @Tags         policies
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string  true   "Gateway id"  format(uuid)
+// @Param        name        query     string  false  "Filter by name (substring match)"
+// @Param        page        query     int     false  "Page number (1-based)"
+// @Param        size        query     int     false  "Page size"
+// @Success      200         {object}  response.ListPolicyResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/policies [get]
 func (h *ListPolicyHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, err := helpers.ParseGatewayID(c)
 	if err != nil {

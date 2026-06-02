@@ -15,6 +15,19 @@ func NewGetBackendHandler(finder appbackend.Finder) *GetBackendHandler {
 	return &GetBackendHandler{finder: finder}
 }
 
+// Handle godoc
+// @Summary      Get a backend
+// @Description  Returns a single backend by id.
+// @Tags         backends
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
+// @Param        id          path      string  true  "Backend id"  format(uuid)
+// @Success      200         {object}  response.BackendResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/backends/{id} [get]
 func (h *GetBackendHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := helpers.ParseGatewayScopedID(c)
 	if err != nil {

@@ -1,0 +1,1999 @@
+basePath: /
+definitions:
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.APIKeyConfigRequest:
+    properties:
+      in:
+        type: string
+      key:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest:
+    properties:
+      api_key:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.APIKeyConfigRequest'
+      mtls:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest'
+      oauth2:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest'
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.CreateAuthRequest:
+    properties:
+      config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest'
+      enabled:
+        type: boolean
+      name:
+        type: string
+      type:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest:
+    properties:
+      allowed_common_names:
+        items:
+          type: string
+        type: array
+      allowed_dns_names:
+        items:
+          type: string
+        type: array
+      allowed_fingerprints:
+        items:
+          type: string
+        type: array
+      ca_cert:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest:
+    properties:
+      allowed_algorithms:
+        items:
+          type: string
+        type: array
+      audiences:
+        items:
+          type: string
+        type: array
+      client_id:
+        type: string
+      client_secret:
+        type: string
+      introspection_url:
+        type: string
+      issuer:
+        type: string
+      jwks_url:
+        type: string
+      required_scopes:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.UpdateAuthRequest:
+    properties:
+      config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest'
+      enabled:
+        type: boolean
+      name:
+        type: string
+      type:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.APIKeyConfigResponse:
+    properties:
+      in:
+        type: string
+      key:
+        description: '#nosec G117'
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse:
+    properties:
+      config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse'
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      gateway_id:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      type:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse:
+    properties:
+      api_key:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.APIKeyConfigResponse'
+      mtls:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse'
+      oauth2:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse'
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ListAuthResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse'
+        type: array
+      page:
+        type: integer
+      size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse:
+    properties:
+      allowed_common_names:
+        items:
+          type: string
+        type: array
+      allowed_dns_names:
+        items:
+          type: string
+        type: array
+      allowed_fingerprints:
+        items:
+          type: string
+        type: array
+      ca_cert:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse:
+    properties:
+      allowed_algorithms:
+        items:
+          type: string
+        type: array
+      audiences:
+        items:
+          type: string
+        type: array
+      client_id:
+        type: string
+      client_secret:
+        type: string
+      introspection_url:
+        type: string
+      issuer:
+        type: string
+      jwks_url:
+        type: string
+      required_scopes:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.APIKeyAuthRequest:
+    properties:
+      api_key:
+        description: '#nosec G117'
+        type: string
+      header_name:
+        type: string
+      header_value:
+        type: string
+      param_location:
+        type: string
+      param_name:
+        type: string
+      param_value:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.AWSAuthRequest:
+    properties:
+      access_key_id:
+        type: string
+      region:
+        type: string
+      role:
+        type: string
+      secret_access_key:
+        description: '#nosec G117'
+        type: string
+      session_token:
+        description: '#nosec G117'
+        type: string
+      use_role:
+        type: boolean
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.AzureAuthRequest:
+    properties:
+      client_id:
+        type: string
+      client_secret:
+        description: '#nosec G117'
+        type: string
+      endpoint:
+        type: string
+      tenant_id:
+        type: string
+      use_managed_identity:
+        type: boolean
+      version:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.CreateBackendRequest:
+    properties:
+      auth:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.TargetAuthRequest'
+      description:
+        type: string
+      health_checks:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.HealthChecksRequest'
+      name:
+        type: string
+      provider:
+        type: string
+      provider_options:
+        additionalProperties: {}
+        type: object
+      weight:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.HealthChecksRequest:
+    properties:
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      interval:
+        type: integer
+      passive:
+        type: boolean
+      path:
+        type: string
+      threshold:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.TargetAuthRequest:
+    properties:
+      api_key:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.APIKeyAuthRequest'
+      aws:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.AWSAuthRequest'
+      azure:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.AzureAuthRequest'
+      gcp_service_account:
+        type: string
+      oauth:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.TargetOAuthConfigRequest'
+      type:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.TargetOAuthConfigRequest:
+    properties:
+      audience:
+        type: string
+      client_id:
+        type: string
+      client_secret:
+        description: '#nosec G117'
+        type: string
+      code:
+        type: string
+      code_verifier:
+        type: string
+      extra:
+        additionalProperties:
+          type: string
+        type: object
+      grant_type:
+        type: string
+      password:
+        description: '#nosec G117'
+        type: string
+      redirect_uri:
+        type: string
+      refresh_token:
+        description: '#nosec G117'
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token_url:
+        type: string
+      use_basic_auth:
+        type: boolean
+      username:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.UpdateBackendRequest:
+    properties:
+      auth:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.TargetAuthRequest'
+      description:
+        type: string
+      health_checks:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.HealthChecksRequest'
+      name:
+        type: string
+      provider:
+        type: string
+      provider_options:
+        additionalProperties: {}
+        type: object
+      weight:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.APIKeyAuthResponse:
+    properties:
+      api_key:
+        description: '#nosec G117'
+        type: string
+      header_name:
+        type: string
+      header_value:
+        type: string
+      param_location:
+        type: string
+      param_name:
+        type: string
+      param_value:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.AWSAuthResponse:
+    properties:
+      access_key_id:
+        type: string
+      region:
+        type: string
+      role:
+        type: string
+      secret_access_key:
+        description: '#nosec G117'
+        type: string
+      session_token:
+        description: '#nosec G117'
+        type: string
+      use_role:
+        type: boolean
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.AzureAuthResponse:
+    properties:
+      client_id:
+        type: string
+      client_secret:
+        description: '#nosec G117'
+        type: string
+      endpoint:
+        type: string
+      tenant_id:
+        type: string
+      use_managed_identity:
+        type: boolean
+      version:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.BackendResponse:
+    properties:
+      auth:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.TargetAuthResponse'
+      created_at:
+        type: string
+      description:
+        type: string
+      gateway_id:
+        type: string
+      health_checks:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.HealthChecksResponse'
+      id:
+        type: string
+      name:
+        type: string
+      provider:
+        type: string
+      provider_options:
+        additionalProperties: {}
+        type: object
+      updated_at:
+        type: string
+      weight:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.HealthChecksResponse:
+    properties:
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      interval:
+        type: integer
+      passive:
+        type: boolean
+      path:
+        type: string
+      threshold:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.ListBackendResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.BackendResponse'
+        type: array
+      page:
+        type: integer
+      size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.TargetAuthResponse:
+    properties:
+      api_key:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.APIKeyAuthResponse'
+      aws:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.AWSAuthResponse'
+      azure:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.AzureAuthResponse'
+      gcp_service_account:
+        type: string
+      oauth:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.TargetOAuthConfigResponse'
+      type:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.TargetOAuthConfigResponse:
+    properties:
+      audience:
+        type: string
+      client_id:
+        type: string
+      client_secret:
+        description: '#nosec G117'
+        type: string
+      extra:
+        additionalProperties:
+          type: string
+        type: object
+      grant_type:
+        type: string
+      refresh_token:
+        description: '#nosec G117'
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token_url:
+        type: string
+      use_basic_auth:
+        type: boolean
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.APIKeyAuthRequest:
+    properties:
+      api_key:
+        description: '#nosec G117'
+        type: string
+      header_name:
+        type: string
+      header_value:
+        type: string
+      param_location:
+        type: string
+      param_name:
+        type: string
+      param_value:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.CreateConsumerRequest:
+    properties:
+      active:
+        type: boolean
+      algorithm:
+        type: string
+      auth_ids:
+        items:
+          type: string
+        type: array
+      backend_ids:
+        items:
+          type: string
+        type: array
+      embedding_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest'
+      fallback:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest'
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      name:
+        type: string
+      path:
+        type: string
+      policy_ids:
+        items:
+          type: string
+        type: array
+      type:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest:
+    properties:
+      auth:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.APIKeyAuthRequest'
+      model:
+        type: string
+      provider:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackBudgetRequest:
+    properties:
+      max_attempts:
+        type: integer
+      max_cost_usd:
+        type: number
+      max_total_latency_ms:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest:
+    properties:
+      budget:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackBudgetRequest'
+      chain:
+        items:
+          type: string
+        type: array
+      enabled:
+        type: boolean
+      triggers:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.UpdateConsumerRequest:
+    properties:
+      active:
+        type: boolean
+      algorithm:
+        type: string
+      auth_ids:
+        items:
+          type: string
+        type: array
+      backend_ids:
+        items:
+          type: string
+        type: array
+      embedding_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest'
+      fallback:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest'
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      name:
+        type: string
+      path:
+        type: string
+      policy_ids:
+        items:
+          type: string
+        type: array
+      type:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ConsumerResponse:
+    properties:
+      active:
+        type: boolean
+      algorithm:
+        type: string
+      auth_ids:
+        items:
+          type: string
+        type: array
+      backend_ids:
+        items:
+          type: string
+        type: array
+      created_at:
+        type: string
+      embedding_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse'
+      fallback:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.FallbackResponse'
+      gateway_id:
+        type: string
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      id:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+      policy_ids:
+        items:
+          type: string
+        type: array
+      type:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse:
+    properties:
+      model:
+        type: string
+      provider:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.FallbackBudgetResponse:
+    properties:
+      max_attempts:
+        type: integer
+      max_cost_usd:
+        type: number
+      max_total_latency_ms:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.FallbackResponse:
+    properties:
+      budget:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.FallbackBudgetResponse'
+      chain:
+        items:
+          type: string
+        type: array
+      enabled:
+        type: boolean
+      triggers:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ListConsumerResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ConsumerResponse'
+        type: array
+      page:
+        type: integer
+      size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.CreateGatewayRequest:
+    properties:
+      client_tls:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig'
+      name:
+        type: string
+      session_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig'
+      telemetry:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry'
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.UpdateGatewayRequest:
+    properties:
+      client_tls:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig'
+      name:
+        type: string
+      session_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig'
+      status:
+        type: string
+      telemetry:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry'
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse:
+    properties:
+      client_tls:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig'
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      session_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig'
+      status:
+        type: string
+      telemetry:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry'
+      updated_at:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.ListGatewayResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse'
+        type: array
+      page:
+        type: integer
+      size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody:
+    properties:
+      error:
+        type: string
+      message:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.CreatePolicyRequest:
+    properties:
+      name:
+        type: string
+      plugins:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest'
+        type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest:
+    properties:
+      enabled:
+        type: boolean
+      id:
+        type: string
+      name:
+        type: string
+      parallel:
+        type: boolean
+      priority:
+        type: integer
+      settings:
+        additionalProperties: true
+        type: object
+      stage:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.UpdatePolicyRequest:
+    properties:
+      name:
+        type: string
+      plugins:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest'
+        type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.ListPolicyResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse'
+        type: array
+      page:
+        type: integer
+      size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PluginResponse:
+    properties:
+      enabled:
+        type: boolean
+      id:
+        type: string
+      name:
+        type: string
+      parallel:
+        type: boolean
+      priority:
+        type: integer
+      settings:
+        additionalProperties: true
+        type: object
+      stage:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse:
+    properties:
+      created_at:
+        type: string
+      gateway_id:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      plugins:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PluginResponse'
+        type: array
+      updated_at:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig:
+    additionalProperties:
+      items:
+        type: integer
+      type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig:
+    properties:
+      body_param_name:
+        type: string
+      enabled:
+        type: boolean
+      header_name:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.ExporterConfig:
+    properties:
+      name:
+        type: string
+      settings:
+        additionalProperties: true
+        type: object
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry:
+    properties:
+      enable_plugin_traces:
+        type: boolean
+      enable_request_traces:
+        type: boolean
+      exporters:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.ExporterConfig'
+        type: array
+      extra_params:
+        additionalProperties:
+          type: string
+        type: object
+      header_mapping:
+        additionalProperties:
+          type: string
+        type: object
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_version.Info:
+    properties:
+      app_name:
+        type: string
+      build_date:
+        type: string
+      commit:
+        type: string
+      go_version:
+        type: string
+      platform:
+        type: string
+      version:
+        type: string
+    type: object
+info:
+  contact:
+    email: support@neuraltrust.ai
+    name: NeuralTrust
+    url: https://neuraltrust.ai/contact
+  description: Administrative API for managing gateways and their backends, policies,
+    consumers and auth credentials.
+  title: AgentGateway Admin API
+  version: "1.0"
+paths:
+  /__/version:
+    get:
+      description: Returns build/version information for the running binary.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_version.Info'
+      summary: Build version
+      tags:
+      - system
+  /healthz:
+    get:
+      description: Reports whether the process is alive.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Liveness probe
+      tags:
+      - system
+  /readyz:
+    get:
+      description: Reports whether the process is ready to serve traffic.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Readiness probe
+      tags:
+      - system
+  /v1/gateways:
+    get:
+      description: Returns a paginated list of gateways.
+      parameters:
+      - description: Filter by name (substring match)
+        in: query
+        name: name
+        type: string
+      - description: Page number (1-based)
+        in: query
+        name: page
+        type: integer
+      - description: Page size
+        in: query
+        name: size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.ListGatewayResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List gateways
+      tags:
+      - gateways
+    post:
+      consumes:
+      - application/json
+      description: Creates a new gateway.
+      parameters:
+      - description: Gateway to create
+        in: body
+        name: gateway
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.CreateGatewayRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create a gateway
+      tags:
+      - gateways
+  /v1/gateways/{gateway_id}/auths:
+    get:
+      description: Returns a paginated list of auths in a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Filter by name (substring match)
+        in: query
+        name: name
+        type: string
+      - description: Page number (1-based)
+        in: query
+        name: page
+        type: integer
+      - description: Page size
+        in: query
+        name: size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ListAuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List auths
+      tags:
+      - auths
+    post:
+      consumes:
+      - application/json
+      description: Creates a new auth in a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Auth to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.CreateAuthRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create an auth
+      tags:
+      - auths
+  /v1/gateways/{gateway_id}/auths/{id}:
+    delete:
+      description: Deletes an auth from a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Auth id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Delete an auth
+      tags:
+      - auths
+    get:
+      description: Returns a single auth by id.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Auth id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get an auth
+      tags:
+      - auths
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing auth.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Auth id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Auth fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.UpdateAuthRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update an auth
+      tags:
+      - auths
+  /v1/gateways/{gateway_id}/backends:
+    get:
+      description: Returns a paginated list of backends in a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Filter by name (substring match)
+        in: query
+        name: name
+        type: string
+      - description: Page number (1-based)
+        in: query
+        name: page
+        type: integer
+      - description: Page size
+        in: query
+        name: size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.ListBackendResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List backends
+      tags:
+      - backends
+    post:
+      consumes:
+      - application/json
+      description: Creates a new backend in a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Backend to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.CreateBackendRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.BackendResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create a backend
+      tags:
+      - backends
+  /v1/gateways/{gateway_id}/backends/{id}:
+    delete:
+      description: Deletes a backend from a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Backend id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Delete a backend
+      tags:
+      - backends
+    get:
+      description: Returns a single backend by id.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Backend id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.BackendResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get a backend
+      tags:
+      - backends
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing backend.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Backend id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Backend fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_request.UpdateBackendRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_backend_response.BackendResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update a backend
+      tags:
+      - backends
+  /v1/gateways/{gateway_id}/consumers:
+    get:
+      description: Returns a paginated list of consumers in a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Filter by name (substring match)
+        in: query
+        name: name
+        type: string
+      - description: Page number (1-based)
+        in: query
+        name: page
+        type: integer
+      - description: Page size
+        in: query
+        name: size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ListConsumerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List consumers
+      tags:
+      - consumers
+    post:
+      consumes:
+      - application/json
+      description: Creates a new consumer in a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.CreateConsumerRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ConsumerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create a consumer
+      tags:
+      - consumers
+  /v1/gateways/{gateway_id}/consumers/{id}:
+    delete:
+      description: Deletes a consumer from a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Delete a consumer
+      tags:
+      - consumers
+    get:
+      description: Returns a single consumer by id.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ConsumerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get a consumer
+      tags:
+      - consumers
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing consumer.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Consumer fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.UpdateConsumerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ConsumerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update a consumer
+      tags:
+      - consumers
+  /v1/gateways/{gateway_id}/policies:
+    get:
+      description: Returns a paginated list of policies in a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Filter by name (substring match)
+        in: query
+        name: name
+        type: string
+      - description: Page number (1-based)
+        in: query
+        name: page
+        type: integer
+      - description: Page size
+        in: query
+        name: size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.ListPolicyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List policies
+      tags:
+      - policies
+    post:
+      consumes:
+      - application/json
+      description: Creates a new policy in a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Policy to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.CreatePolicyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create a policy
+      tags:
+      - policies
+  /v1/gateways/{gateway_id}/policies/{id}:
+    delete:
+      description: Deletes a policy from a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Policy id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Delete a policy
+      tags:
+      - policies
+    get:
+      description: Returns a single policy by id.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Policy id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get a policy
+      tags:
+      - policies
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing policy.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Policy id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Policy fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.UpdatePolicyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update a policy
+      tags:
+      - policies
+  /v1/gateways/{id}:
+    delete:
+      description: Deletes a gateway. Fails if it still has dependent resources.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Delete a gateway
+      tags:
+      - gateways
+    get:
+      description: Returns a single gateway by id.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get a gateway
+      tags:
+      - gateways
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Gateway fields to update
+        in: body
+        name: gateway
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.UpdateGatewayRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update a gateway
+      tags:
+      - gateways
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

@@ -19,6 +19,21 @@ func NewUpdateGatewayHandler(updater appgateway.Updater) *UpdateGatewayHandler {
 	return &UpdateGatewayHandler{updater: updater}
 }
 
+// Handle godoc
+// @Summary      Update a gateway
+// @Description  Updates an existing gateway.
+// @Tags         gateways
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id       path      string                        true  "Gateway id"  format(uuid)
+// @Param        gateway  body      request.UpdateGatewayRequest  true  "Gateway fields to update"
+// @Success      200      {object}  response.GatewayResponse
+// @Failure      400      {object}  helpers.ErrorBody
+// @Failure      401      {object}  helpers.ErrorBody
+// @Failure      404      {object}  helpers.ErrorBody
+// @Failure      409      {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{id} [put]
 func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 	id, err := helpers.ParseUUIDParam(c, "id")
 	if err != nil {
