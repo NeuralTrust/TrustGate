@@ -28,6 +28,11 @@ var ErrInvalidRequestPayload = errors.New("invalid request payload")
 
 var ErrModelNotAllowed = errors.New("model not allowed")
 
+// ProviderResponse is the backend LLM response. On the synchronous path it
+// carries Body; on the streaming path it carries Stream. It is relayed to the
+// client verbatim, including non-2xx backend statuses: a 4xx/5xx from the
+// backend is carried here (not as a Go error) so the backend error reaches the
+// client unchanged.
 type ProviderResponse struct {
 	StatusCode int
 	Headers    map[string][]string
