@@ -8,6 +8,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -22,11 +23,10 @@ type Executor interface {
 
 // StageInput is the per-stage execution request.
 type StageInput struct {
-	Stage     policy.Stage
-	Policies  []*policy.Policy
-	Request   *infracontext.RequestContext
-	Response  *infracontext.ResponseContext
-	Collector *metrics.Collector
+	Stage    policy.Stage
+	Policies []*policy.Policy
+	Request  *infracontext.RequestContext
+	Response *infracontext.ResponseContext
 }
 
 // StageOutcome reports whether the stage short-circuited and the synthetic
@@ -99,12 +99,14 @@ func (e *executor) runBatch(ctx context.Context, in StageInput, batch []chainEnt
 	return results, nil
 }
 
-// runOne invokes a single plugin and records a metrics event when a collector
-// is present.
 func (e *executor) runOne(ctx context.Context, in StageInput, entry chainEntry) (*Result, error) {
 	var event *metrics.EventContext
-	if in.Collector != nil {
-		event = metrics.NewEventContext(entry.plugin.Name(), string(in.Stage), in.Collector)
+	if rt := trace.FromContext(ctx); rt != nil {
+		span := rt.StartSpan(trace.SpanPlugin, entry.plugin.Name())
+		span.SetStage(string(in.Stage))
+		event = metrics.NewEventContext(span)
+		// Guarantee the span is closed even if Execute panics.
+		defer event.Publish()
 	}
 
 	start := time.Now()
@@ -127,7 +129,6 @@ func (e *executor) runOne(ctx context.Context, in StageInput, entry chainEntry) 
 		case res != nil:
 			event.SetStatusCode(res.StatusCode)
 		}
-		event.Publish()
 	}
 
 	if err != nil && e.logger != nil {

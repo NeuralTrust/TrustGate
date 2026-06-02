@@ -43,10 +43,12 @@ const (
 
 	defaultKafkaBrokers = "localhost:9092"
 
-	defaultTelemetryEnabled          = true
-	defaultTelemetryKafkaTopic       = "agentgateway.requests"
-	defaultTelemetryTrustLensEnabled = false
-	defaultTelemetryTrustLensURL     = ""
+	defaultTelemetryEnabled             = true
+	defaultTelemetryKafkaTopic          = "agentgateway.requests"
+	defaultTelemetryTrustLensEnabled    = false
+	defaultTelemetryTrustLensURL        = ""
+	defaultTelemetryEnableRequestTraces = true
+	defaultTelemetryEnablePluginTraces  = true
 
 	defaultMetricsEnabled       = true
 	defaultMetricsQueueSize     = 1000
@@ -134,10 +136,12 @@ type KafkaConfig struct {
 }
 
 type TelemetryConfig struct {
-	Enabled          bool
-	KafkaTopic       string
-	TrustLensEnabled bool
-	TrustLensURL     string
+	Enabled             bool
+	KafkaTopic          string
+	TrustLensEnabled    bool
+	TrustLensURL        string
+	EnableRequestTraces bool
+	EnablePluginTraces  bool
 }
 
 type MetricsConfig struct {
@@ -252,10 +256,12 @@ func getKafkaConfig() KafkaConfig {
 
 func getTelemetryConfig() TelemetryConfig {
 	return TelemetryConfig{
-		Enabled:          getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
-		KafkaTopic:       getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
-		TrustLensEnabled: getEnvBool("TELEMETRY_TRUSTLENS_ENABLED", defaultTelemetryTrustLensEnabled),
-		TrustLensURL:     getEnv("TELEMETRY_TRUSTLENS_URL", defaultTelemetryTrustLensURL),
+		Enabled:             getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
+		KafkaTopic:          getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
+		TrustLensEnabled:    getEnvBool("TELEMETRY_TRUSTLENS_ENABLED", defaultTelemetryTrustLensEnabled),
+		TrustLensURL:        getEnv("TELEMETRY_TRUSTLENS_URL", defaultTelemetryTrustLensURL),
+		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
+		EnablePluginTraces:  getEnvBool("TELEMETRY_ENABLE_PLUGIN_TRACES", defaultTelemetryEnablePluginTraces),
 	}
 }
 
