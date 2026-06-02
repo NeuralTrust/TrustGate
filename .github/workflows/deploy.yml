@@ -1,0 +1,43 @@
+# Build & Deploy to dev.
+# Triggered on every push to develop: builds the image, pushes it to the dev
+# Artifact Registry and bumps the dev overlay's kustomization.yaml + config.env.
+# Flux (clusters/neuraltrust-dev) reconciles the change onto the cluster.
+#
+# Uses the shared reusable workflow from NeuralTrust/workflows.
+
+name: Build & Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [develop]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.cursor/**'
+      - '.agents/**'
+      - 'k8s/**'
+      - '.github/**'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  deploy:
+    uses: NeuralTrust/workflows/.github/workflows/docker-build-deploy.yml@main
+    with:
+      image_name: agentgateway
+      gcp_project_id: ${{ vars.DEV_GCP_PROJECT_ID }}
+      build_args: |
+        VERSION=${{ github.sha }}
+        COMMIT=${{ github.sha }}
+    secrets:
+      WIF_PROVIDER: ${{ secrets.DEV_WIF_PROVIDER }}
+      WIF_SERVICE_ACCOUNT: ${{ secrets.DEV_WIF_SERVICE_ACCOUNT }}
+      BUILD_SECRETS: |
+        GITHUB_TOKEN=${{ secrets.GH_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
