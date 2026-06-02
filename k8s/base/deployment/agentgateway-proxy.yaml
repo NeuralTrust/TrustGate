@@ -24,8 +24,8 @@ spec:
       containers:
       - name: proxy
         image: agentgateway
-        # Distroless image has no /bin/sh; secrets load via godotenv from CSI mount.
-        workingDir: /etc/secrets
+        # Distroless image has no /bin/sh; secrets load via godotenv from /etc/secrets/.env.
+        workingDir: /app
         args:
         - proxy
         imagePullPolicy: Always

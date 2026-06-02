@@ -24,7 +24,7 @@ spec:
       containers:
       - name: admin
         image: agentgateway
-        workingDir: /etc/secrets
+        workingDir: /app
         args:
         - admin
         imagePullPolicy: Always
