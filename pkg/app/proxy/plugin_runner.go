@@ -198,6 +198,19 @@ func snapshotResponse(resp *infracontext.ResponseContext) *infracontext.Response
 	return &clone
 }
 
+// cloneHeaders returns a deep copy of the header map so callers can reset a
+// response's headers to a known baseline without aliasing the source slices.
+func cloneHeaders(headers map[string][]string) map[string][]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(headers))
+	for name, values := range headers {
+		out[name] = append([]string(nil), values...)
+	}
+	return out
+}
+
 func copyMetadata(in map[string]interface{}) map[string]interface{} {
 	if in == nil {
 		return nil
