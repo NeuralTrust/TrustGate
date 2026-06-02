@@ -14,7 +14,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	domaintelemetry "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	inframetrics "github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -34,7 +34,7 @@ func TestMetricsMiddleware_ProcessesNonStreamingRequest(t *testing.T) {
 	)
 	worker.EXPECT().
 		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Run(func(_ *inframetrics.Collector, _ []domaintelemetry.ExporterConfig, req *infracontext.RequestContext, resp *infracontext.ResponseContext, _ time.Time, _ time.Time) {
+		Run(func(_ []domaintelemetry.ExporterConfig, _ *trace.RequestTrace, req *infracontext.RequestContext, resp *infracontext.ResponseContext, _ time.Time, _ time.Time) {
 			mu.Lock()
 			defer mu.Unlock()
 			called = true
@@ -88,7 +88,7 @@ func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
 	)
 	worker.EXPECT().
 		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Run(func(_ *inframetrics.Collector, _ []domaintelemetry.ExporterConfig, req *infracontext.RequestContext, resp *infracontext.ResponseContext, start time.Time, _ time.Time) {
+		Run(func(_ []domaintelemetry.ExporterConfig, _ *trace.RequestTrace, req *infracontext.RequestContext, resp *infracontext.ResponseContext, start time.Time, _ time.Time) {
 			mu.Lock()
 			defer mu.Unlock()
 			calls++

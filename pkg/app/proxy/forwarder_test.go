@@ -17,8 +17,12 @@ import (
 	cachemocks "github.com/NeuralTrust/AgentGateway/pkg/infra/cache/mocks"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func newTestLogger() *slog.Logger {
@@ -188,6 +192,45 @@ func TestForward_SyncSuccess(t *testing.T) {
 	if res.StatusCode != 200 || string(res.Body) != "ok" {
 		t.Fatalf("unexpected result: %+v", res)
 	}
+}
+
+func TestForward_RecordsLLMSpanWithUsage(t *testing.T) {
+	gatewayID := uuid.New()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{
+			StatusCode: 200,
+			Body:       []byte("ok"),
+			Usage:      &adapter.CanonicalUsage{InputTokens: 8, OutputTokens: 2, TotalTokens: 10},
+		}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+
+	rt := trace.New("trace-1", trace.Metadata{})
+	ctx := trace.NewContext(context.Background(), rt)
+
+	_, err := fwd.Forward(ctx, appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Context: ctx},
+	})
+	require.NoError(t, err)
+
+	spans := rt.Spans()
+	require.Len(t, spans, 1, "one LLM span per attempt")
+	assert.Equal(t, trace.SpanLLM, spans[0].Type)
+	require.NotNil(t, spans[0].LLM)
+	assert.Equal(t, "openai", spans[0].LLM.Provider)
+	assert.Equal(t, 200, spans[0].StatusCode())
+
+	usage := rt.LLMUsage()
+	require.NotNil(t, usage, "non-streaming usage must land on the LLM span")
+	assert.Equal(t, 10, usage.TotalTokens)
 }
 
 func TestForward_BackendErrorStatusPassthrough(t *testing.T) {

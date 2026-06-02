@@ -13,6 +13,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/factory"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 )
 
 const (
@@ -42,6 +43,7 @@ type ProviderResponse struct {
 	// and is responsible for draining the sequence (which closes the backend
 	// body). The second value carries mid-stream errors.
 	Stream iter.Seq2[[]byte, error]
+	Usage  *adapter.CanonicalUsage
 }
 
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
@@ -110,6 +112,8 @@ func (p *providerInvoker) Invoke(
 		return nil, fmt.Errorf("provider completions: %w", err)
 	}
 
+	usage := p.decodeResponseUsage(respBody, prep.targetFormat)
+
 	if prep.crossFormat {
 		if adapted, aerr := p.registry.AdaptResponse(respBody, prep.sourceFormat, prep.targetFormat); aerr != nil {
 			p.logger.Warn("failed to adapt response, returning raw",
@@ -125,8 +129,17 @@ func (p *providerInvoker) Invoke(
 			headerSelectedProvider: {bk.Provider},
 			headerContentType:      {contentTypeJSON},
 		},
-		Body: respBody,
+		Body:  respBody,
+		Usage: usage,
 	}, nil
+}
+
+func (p *providerInvoker) decodeResponseUsage(body []byte, format adapter.Format) *adapter.CanonicalUsage {
+	canonical, err := p.registry.DecodeResponseFor(body, format)
+	if err != nil || canonical == nil {
+		return nil
+	}
+	return canonical.Usage
 }
 
 func (p *providerInvoker) InvokeStream(
@@ -161,7 +174,7 @@ func (p *providerInvoker) InvokeStream(
 		return nil, fmt.Errorf("provider completions stream: %w", err)
 	}
 
-	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.usageObserver(req))
+	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.usageObserver(ctx))
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
@@ -230,17 +243,13 @@ func (p *providerInvoker) prepare(
 	}, nil
 }
 
-// usageObserver returns a callback that records the latest canonical usage onto
-// req.Metadata["usage"] and debug-logs it. This is the chunk-level metric hook.
-func (p *providerInvoker) usageObserver(req *infracontext.RequestContext) func(*adapter.CanonicalUsage) {
+func (p *providerInvoker) usageObserver(ctx context.Context) func(*adapter.CanonicalUsage) {
+	requestTrace := trace.FromContext(ctx)
 	return func(u *adapter.CanonicalUsage) {
-		if u == nil {
+		if u == nil || requestTrace == nil {
 			return
 		}
-		if req.Metadata == nil {
-			req.Metadata = make(map[string]interface{})
-		}
-		req.Metadata[adapter.MetadataUsageKey] = u
+		requestTrace.ObserveLLMUsage(u)
 		p.logger.Debug("stream usage observed",
 			slog.Int("input_tokens", u.InputTokens),
 			slog.Int("output_tokens", u.OutputTokens),

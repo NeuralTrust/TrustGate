@@ -16,8 +16,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/metric_events"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/google/uuid"
 	"golang.org/x/sync/singleflight"
 )
@@ -151,7 +150,7 @@ func (f *forwarder) invokeWithFailover(
 			resp, err := f.invokeOnce(ctx, current, dto.request, stream)
 			elapsed := time.Since(startedAt)
 			outcome := classifyOutcome(resp, err, triggers)
-			f.emitHop(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
+			f.recordSpan(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
 			switch outcome {
 			case OutcomeSuccess:
 				lb.ReportSuccess(current)
@@ -238,7 +237,7 @@ func (f *forwarder) nextCandidate(
 	return nil, false
 }
 
-func (f *forwarder) emitHop(
+func (f *forwarder) recordSpan(
 	ctx context.Context,
 	bk *domain.Backend,
 	fromFallback bool,
@@ -247,26 +246,28 @@ func (f *forwarder) emitHop(
 	resp *ProviderResponse,
 	elapsed time.Duration,
 ) {
-	collector := metrics.CollectorFromContext(ctx)
-	if collector == nil {
+	rt := trace.FromContext(ctx)
+	if rt == nil {
 		return
 	}
-	latencyMs := elapsed.Milliseconds()
-	evt := metric_events.NewTraceEvent()
-	evt.Attempt = attempt
-	evt.Fallback = fromFallback
-	evt.BackendID = bk.ID.String()
-	evt.Outcome = outcome.String()
-	evt.EndTimestamp = time.Now().Unix()
-	evt.Latency = latencyMs
+	span := &trace.Span{
+		Type:      trace.SpanLLM,
+		Name:      bk.Provider,
+		StartedAt: time.Now().Add(-elapsed),
+		LLM: &trace.LLMAttrs{
+			BackendID: bk.ID.String(),
+			Provider:  bk.Provider,
+			Attempt:   attempt,
+			Fallback:  fromFallback,
+			Outcome:   outcome.String(),
+		},
+	}
 	if resp != nil {
-		evt.StatusCode = resp.StatusCode
+		span.SetStatusCode(resp.StatusCode)
+		span.ObserveUsage(resp.Usage)
 	}
-	if evt.Upstream != nil {
-		evt.Upstream.Target.Provider = bk.Provider
-		evt.Upstream.Target.Latency = latencyMs
-	}
-	collector.Emit(evt)
+	_ = rt.AddSpan(span)
+	span.End()
 }
 
 func (f *forwarder) logRetry(bk *domain.Backend, reason error, budget *failoverBudget) {

@@ -61,6 +61,50 @@ func TestProviderInvoke_SameFormatPassthrough(t *testing.T) {
 	assert.Equal(t, "openai", req.TargetFormat)
 }
 
+func TestProviderInvoke_DecodesUsageOnFinish(t *testing.T) {
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.Usage, "non-streaming usage must be decoded on finish")
+	assert.Equal(t, 1, resp.Usage.InputTokens)
+	assert.Equal(t, 1, resp.Usage.OutputTokens)
+	assert.Equal(t, 2, resp.Usage.TotalTokens)
+}
+
+func TestProviderInvoke_DecodesUsageOnFinishCrossFormat(t *testing.T) {
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return([]byte(anthropicResponseBody), nil).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("anthropic").Return(client, nil).Once()
+
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("anthropic"), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.Usage)
+	assert.Equal(t, 30, resp.Usage.InputTokens)
+	assert.Equal(t, 15, resp.Usage.OutputTokens)
+	assert.Equal(t, 45, resp.Usage.TotalTokens)
+}
+
 func TestProviderInvoke_CrossFormatAdapt(t *testing.T) {
 	var sentBody []byte
 	client := providermocks.NewClient(t)

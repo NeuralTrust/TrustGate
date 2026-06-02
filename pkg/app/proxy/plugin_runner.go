@@ -10,7 +10,7 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 )
 
 const postResponseTimeout = 30 * time.Second
@@ -25,11 +25,10 @@ func (f *forwarder) runPreRequest(
 		return nil, nil
 	}
 	outcome, err := f.executor.RunStage(ctx, appplugins.StageInput{
-		Stage:     policy.StagePreRequest,
-		Policies:  policies,
-		Request:   req,
-		Response:  resp,
-		Collector: metrics.CollectorFromContext(ctx),
+		Stage:    policy.StagePreRequest,
+		Policies: policies,
+		Request:  req,
+		Response: resp,
 	})
 	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
@@ -57,11 +56,10 @@ func (f *forwarder) runPreResponse(
 		return
 	}
 	if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
-		Stage:     policy.StagePreResponse,
-		Policies:  policies,
-		Request:   req,
-		Response:  resp,
-		Collector: metrics.CollectorFromContext(ctx),
+		Stage:    policy.StagePreResponse,
+		Policies: policies,
+		Request:  req,
+		Response: resp,
 	}); err != nil {
 		f.logger.Warn("pre_response plugin stage failed", slog.String("error", err.Error()))
 	}
@@ -77,11 +75,10 @@ func (f *forwarder) runPreResponseGated(
 		return nil
 	}
 	if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
-		Stage:     policy.StagePreResponse,
-		Policies:  policies,
-		Request:   req,
-		Response:  resp,
-		Collector: metrics.CollectorFromContext(ctx),
+		Stage:    policy.StagePreResponse,
+		Policies: policies,
+		Request:  req,
+		Response: resp,
 	}); err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
 			return pe
@@ -99,19 +96,25 @@ func (f *forwarder) firePostResponse(
 	if f.executor == nil {
 		return
 	}
-	collector := metrics.CollectorFromContext(req.Context)
+	rt := trace.FromContext(req.Context)
 	reqCopy := snapshotRequest(req)
 	respCopy := snapshotResponse(resp)
 
+	if rt != nil {
+		rt.AddAsync()
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), postResponseTimeout)
 		defer cancel()
+		if rt != nil {
+			defer rt.Done()
+			ctx = trace.NewContext(ctx, rt)
+		}
 		if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
-			Stage:     policy.StagePostResponse,
-			Policies:  policies,
-			Request:   reqCopy,
-			Response:  respCopy,
-			Collector: collector,
+			Stage:    policy.StagePostResponse,
+			Policies: policies,
+			Request:  reqCopy,
+			Response: respCopy,
 		}); err != nil {
 			f.logger.Warn("post_response plugin stage failed", slog.String("error", err.Error()))
 		}

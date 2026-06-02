@@ -9,8 +9,7 @@ import (
 	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/metric_events"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
@@ -41,20 +40,27 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 		}
 
 		startTime := time.Now()
-		collector := m.newCollector(c)
-		m.attachCollector(c, collector)
-
 		gatewayID := gatewayIDFromContext(c)
+
+		traceID := m.resolveTraceID(c)
+		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID))
+		m.attachTrace(c, requestTrace)
+
 		req := m.buildRequestContext(c, gatewayID)
 
 		streamed := false
-		c.Locals(infracontext.StreamMetricsFinalizerKey, m.streamFinalizer(collector, startTime, gatewayID))
+		c.Locals(infracontext.StreamMetricsFinalizerKey, m.streamFinalizer(requestTrace, startTime, gatewayID))
 
 		defer func() {
 			if streamed {
 				return
 			}
-			m.emit(collector, req, m.buildResponseContext(c, gatewayID), startTime, time.Now())
+			resp := m.buildResponseContext(c, gatewayID)
+			endTime := time.Now()
+			requestTrace.OnComplete(func() {
+				m.worker.Process(nil, requestTrace, req, resp, startTime, endTime)
+			})
+			requestTrace.Done()
 		}()
 
 		err := c.Next()
@@ -69,7 +75,7 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 // streamFinalizer returns the StreamMetricsFinalizer the proxy stream writer
 // calls after a streamed response is fully written.
 func (m *MetricsMiddleware) streamFinalizer(
-	collector *metrics.Collector,
+	requestTrace *trace.RequestTrace,
 	startTime time.Time,
 	gatewayID string,
 ) infracontext.StreamMetricsFinalizer {
@@ -83,50 +89,44 @@ func (m *MetricsMiddleware) streamFinalizer(
 			StatusCode: statusCode,
 			Streaming:  true,
 		}
-		m.emit(collector, req, resp, startTime, time.Now())
+		endTime := time.Now()
+		requestTrace.OnComplete(func() {
+			m.worker.Process(nil, requestTrace, req, resp, startTime, endTime)
+		})
+		requestTrace.Done()
 	}
-}
-
-// emit synthesizes a base trace event when nothing was collected and hands the
-// captured exchange to the worker for asynchronous export.
-func (m *MetricsMiddleware) emit(
-	collector *metrics.Collector,
-	req *infracontext.RequestContext,
-	resp *infracontext.ResponseContext,
-	startTime, endTime time.Time,
-) {
-	// A future forwarder/plugin emitter may populate the collector itself; only
-	// synthesize a base trace event when nothing was emitted.
-	if len(collector.GetEvents()) == 0 {
-		collector.Emit(metric_events.NewTraceEvent())
-	}
-	m.worker.Process(collector, nil, req, resp, startTime, endTime)
 }
 
 func (m *MetricsMiddleware) enabled() bool {
 	return m.telemetryEnabled || m.hasDefaultExporters
 }
 
-func (m *MetricsMiddleware) newCollector(c *fiber.Ctx) *metrics.Collector {
+func (m *MetricsMiddleware) resolveTraceID(c *fiber.Ctx) string {
 	traceID := c.Get(fiber.HeaderXRequestID)
 	if traceID == "" {
 		traceID = uuid.New().String()
 	}
-	cfg := &metrics.Config{
-		EnablePluginTraces:  false,
-		EnableRequestTraces: true,
-	}
-	opts := []metrics.Option{metrics.WithTraceID(traceID)}
-	if fpID, ok := c.Locals(string(infracontext.FingerprintIDContextKey)).(string); ok && fpID != "" {
-		opts = append(opts, metrics.WithFingerprintID(fpID))
-	}
-	return metrics.NewCollector(cfg, opts...)
+	return traceID
 }
 
-func (m *MetricsMiddleware) attachCollector(c *fiber.Ctx, collector *metrics.Collector) {
-	c.Locals(string(metrics.CollectorKey), collector)
-	ctx := context.WithValue(c.UserContext(), metrics.CollectorKey, collector)
-	c.SetUserContext(ctx)
+func (m *MetricsMiddleware) attachTrace(c *fiber.Ctx, requestTrace *trace.RequestTrace) {
+	c.SetUserContext(trace.NewContext(c.UserContext(), requestTrace))
+}
+
+func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string) trace.Metadata {
+	meta := trace.Metadata{
+		GatewayID: gatewayID,
+		Path:      c.Path(),
+		Method:    c.Method(),
+		IP:        c.IP(),
+	}
+	if sessionID, ok := c.Locals(string(infracontext.SessionContextKey)).(string); ok {
+		meta.SessionID = sessionID
+	}
+	if fpID, ok := c.Locals(string(infracontext.FingerprintIDContextKey)).(string); ok {
+		meta.FingerprintID = fpID
+	}
+	return meta
 }
 
 func (m *MetricsMiddleware) buildRequestContext(c *fiber.Ctx, gatewayID string) *infracontext.RequestContext {
