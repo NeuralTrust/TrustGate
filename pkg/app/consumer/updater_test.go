@@ -23,6 +23,7 @@ func existingConsumer(gwID, beID uuid.UUID) *domain.Consumer {
 		"/v1/chat", "round-robin", nil,
 		nil, true,
 		[]uuid.UUID{beID}, nil, nil,
+		nil,
 		now, now,
 	)
 }

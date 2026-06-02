@@ -8,6 +8,7 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
+	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	backendmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/backend/mocks"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
@@ -25,6 +26,7 @@ func routableConsumer(gwID uuid.UUID, policyIDs, authIDs []uuid.UUID) *domain.Co
 		"/v1/chat", "round-robin", nil,
 		nil, true,
 		[]uuid.UUID{uuid.New()}, policyIDs, authIDs,
+		nil,
 		now, now,
 	)
 }
@@ -94,6 +96,63 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 	}
 	if again != data {
 		t.Fatal("expected the cached aggregate to be returned on the second call")
+	}
+}
+
+func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
+	t.Parallel()
+	gwID := uuid.New()
+	poolID := uuid.New()
+	fb1, fb2 := uuid.New(), uuid.New()
+	now := time.Now().UTC()
+	cons := domain.Rehydrate(
+		uuid.New(), gwID, "c", domain.TypeLLM,
+		"/v1/chat", "round-robin", nil,
+		nil, true,
+		[]uuid.UUID{poolID}, nil, nil,
+		&domain.Fallback{
+			Enabled:  true,
+			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+			Budget:   domain.FallbackBudget{MaxAttempts: 9},
+			// Chain order is fb2 then fb1 to assert order is preserved (not sorted).
+			Chain: []uuid.UUID{fb2, fb1},
+		},
+		now, now,
+	)
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Consumer{cons}, nil).Once()
+
+	backendRepo := backendmocks.NewRepository(t)
+	backendRepo.EXPECT().
+		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(ids []uuid.UUID) bool {
+			return len(ids) == 3 // pool + 2 chain entries, batched
+		})).
+		Return([]*backenddomain.Backend{
+			{ID: poolID, GatewayID: gwID, Provider: "openai"},
+			{ID: fb1, GatewayID: gwID, Provider: "anthropic"},
+			{ID: fb2, GatewayID: gwID, Provider: "mistral"},
+		}, nil).Once()
+
+	finder := appconsumer.NewDataFinder(
+		repo, backendRepo,
+		policymocks.NewRepository(t), authmocks.NewRepository(t),
+		newCacheManager(), newTestLogger(),
+	)
+
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	if err != nil {
+		t.Fatalf("FindByGateway error: %v", err)
+	}
+	rc := data.Consumers[0]
+	if len(rc.Backends) != 1 || rc.Backends[0].ID != poolID {
+		t.Fatalf("pool backends not resolved: %+v", rc.Backends)
+	}
+	if len(rc.FallbackBackends) != 2 {
+		t.Fatalf("expected 2 fallback backends, got %d", len(rc.FallbackBackends))
+	}
+	if rc.FallbackBackends[0].ID != fb2 || rc.FallbackBackends[1].ID != fb1 {
+		t.Fatal("fallback chain order was not preserved")
 	}
 }
 

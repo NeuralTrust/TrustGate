@@ -27,7 +27,7 @@ const (
 )
 
 const consumerSelectColumns = `
-		SELECT c.id, c.gateway_id, c.name, c.type, c.path, c.algorithm, c.embedding_config, c.headers, c.active,
+		SELECT c.id, c.gateway_id, c.name, c.type, c.path, c.algorithm, c.embedding_config, c.fallback, c.headers, c.active,
 		       c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.backend_id ORDER BY cb.backend_id)
 		                   FROM consumer_backend cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS backend_ids,
@@ -58,15 +58,19 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal embedding_config: %w", err)
 	}
+	fallbackBytes, err := marshalFallback(c.Fallback)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal fallback: %w", err)
+	}
 	const insertConsumer = `
 		INSERT INTO consumers (
-			id, gateway_id, name, type, path, algorithm, embedding_config, headers, active, created_at, updated_at
+			id, gateway_id, name, type, path, algorithm, embedding_config, fallback, headers, active, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 		)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
-			c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, headersBytes,
+			c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, headersBytes,
 			c.Active, c.CreatedAt, c.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
@@ -111,6 +115,10 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal embedding_config: %w", err)
 	}
+	fallbackBytes, err := marshalFallback(c.Fallback)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal fallback: %w", err)
+	}
 	const updateConsumer = `
 		UPDATE consumers
 		   SET name             = $2,
@@ -118,13 +126,14 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		       path             = $4,
 		       algorithm        = $5,
 		       embedding_config = $6,
-		       headers          = $7,
-		       active           = $8,
-		       updated_at       = $9
+		       fallback         = $7,
+		       headers          = $8,
+		       active           = $9,
+		       updated_at       = $10
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, updateConsumer,
-			c.ID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, headersBytes,
+			c.ID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, headersBytes,
 			c.Active, c.UpdatedAt,
 		)
 		if err != nil {
@@ -268,10 +277,11 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 	var (
 		headersRaw   []byte
 		embeddingRaw []byte
+		fallbackRaw  []byte
 		consumerType string
 	)
 	if err := s.Scan(
-		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &c.Algorithm, &embeddingRaw, &headersRaw, &c.Active,
+		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &c.Algorithm, &embeddingRaw, &fallbackRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
 		&c.BackendIDs, &c.PolicyIDs, &c.AuthIDs,
 	); err != nil {
@@ -289,6 +299,13 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 			return nil, fmt.Errorf("scan embedding_config: %w", err)
 		}
 		c.EmbeddingConfig = &ec
+	}
+	if len(fallbackRaw) > 0 {
+		var fb domain.Fallback
+		if err := json.Unmarshal(fallbackRaw, &fb); err != nil {
+			return nil, fmt.Errorf("scan fallback: %w", err)
+		}
+		c.Fallback = &fb
 	}
 	if c.BackendIDs == nil {
 		c.BackendIDs = []uuid.UUID{}
@@ -314,6 +331,13 @@ func marshalEmbedding(e *backenddomain.EmbeddingConfig) ([]byte, error) {
 		return nil, nil
 	}
 	return json.Marshal(e)
+}
+
+func marshalFallback(f *domain.Fallback) ([]byte, error) {
+	if f == nil {
+		return nil, nil
+	}
+	return json.Marshal(f)
 }
 
 func nullableUUID(id uuid.UUID) any {

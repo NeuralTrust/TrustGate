@@ -16,8 +16,12 @@ import (
 type RoutableConsumer struct {
 	Consumer *domain.Consumer
 	Backends []*backenddomain.Backend
-	Policies []*policydomain.Policy
-	Auths    []*authdomain.Auth
+	// FallbackBackends is the consumer's fallback chain resolved to full
+	// backends, preserving the configured priority order. Empty when the
+	// consumer has no enabled fallback.
+	FallbackBackends []*backenddomain.Backend
+	Policies         []*policydomain.Policy
+	Auths            []*authdomain.Auth
 }
 
 // Data is the per-gateway aggregated read model: every routable consumer of a

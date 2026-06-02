@@ -197,6 +197,7 @@ func TestConsumer_Rehydrate(t *testing.T) {
 		map[string]string{"X-K": "v"},
 		true,
 		[]uuid.UUID{beID}, nil, nil,
+		nil,
 		now, now,
 	)
 	if c.ID != id || c.GatewayID != gwID {

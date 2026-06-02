@@ -24,14 +24,15 @@ spec:
       containers:
       - name: admin
         image: agentgateway
+        command:
+        - /bin/sh
+        - /etc/entrypoint/entrypoint.sh
         args:
         - admin
         imagePullPolicy: Always
         envFrom:
         - configMapRef:
             name: agentgateway-config
-        - secretRef:
-            name: agentgateway-secrets
         ports:
         - containerPort: 8080
           name: http
@@ -55,13 +56,20 @@ spec:
           initialDelaySeconds: 15
           periodSeconds: 20
         volumeMounts:
-        # Mounting the CSI volume is required to trigger the SecretProviderClass
-        # sync that materializes the agentgateway-secrets Kubernetes Secret.
+        - name: entrypoint
+          mountPath: /etc/entrypoint
+          readOnly: true
+        # CSI volume mounts the single GCP secret as a KEY=VALUE file that the
+        # entrypoint script loads into the environment.
         - name: agentgateway-secrets
           mountPath: /etc/secrets
           readOnly: true
       securityContext: {}
       volumes:
+      - name: entrypoint
+        configMap:
+          name: agentgateway-entrypoint
+          defaultMode: 0755
       - name: agentgateway-secrets
         csi:
           driver: secrets-store-gke.csi.k8s.io

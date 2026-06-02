@@ -5,6 +5,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
+	"github.com/google/uuid"
 )
 
 const (
@@ -16,7 +17,10 @@ const (
 )
 
 type Strategy interface {
-	Next(req *infracontext.RequestContext) *backend.Backend
+	// Next picks the next backend, skipping any whose id is in exclude (the
+	// backends already tried in this request). Returns nil when no eligible
+	// backend remains.
+	Next(req *infracontext.RequestContext, exclude map[uuid.UUID]struct{}) *backend.Backend
 	Name() string
 }
 

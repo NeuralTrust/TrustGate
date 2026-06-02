@@ -20,6 +20,7 @@ type ConsumerResponse struct {
 	BackendIDs      []uuid.UUID              `json:"backend_ids"`
 	PolicyIDs       []uuid.UUID              `json:"policy_ids"`
 	AuthIDs         []uuid.UUID              `json:"auth_ids"`
+	Fallback        *FallbackResponse        `json:"fallback,omitempty"`
 	CreatedAt       time.Time                `json:"created_at"`
 	UpdatedAt       time.Time                `json:"updated_at"`
 }
@@ -28,6 +29,19 @@ type EmbeddingConfigResponse struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
 	// Auth is intentionally omitted from responses to avoid leaking credentials.
+}
+
+type FallbackResponse struct {
+	Enabled  bool                   `json:"enabled"`
+	Triggers []string               `json:"triggers,omitempty"`
+	Budget   FallbackBudgetResponse `json:"budget"`
+	Chain    []uuid.UUID            `json:"chain"`
+}
+
+type FallbackBudgetResponse struct {
+	MaxAttempts       int     `json:"max_attempts"`
+	MaxTotalLatencyMs int64   `json:"max_total_latency_ms,omitempty"`
+	MaxCostUSD        float64 `json:"max_cost_usd,omitempty"`
 }
 
 func FromConsumer(c *domain.Consumer) ConsumerResponse {
@@ -66,7 +80,32 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		BackendIDs:      backendIDs,
 		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
+		Fallback:        fromFallback(c.Fallback),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
+	}
+}
+
+func fromFallback(f *domain.Fallback) *FallbackResponse {
+	if f == nil {
+		return nil
+	}
+	triggers := make([]string, 0, len(f.Triggers))
+	for _, t := range f.Triggers {
+		triggers = append(triggers, string(t))
+	}
+	chain := f.Chain
+	if chain == nil {
+		chain = []uuid.UUID{}
+	}
+	return &FallbackResponse{
+		Enabled:  f.Enabled,
+		Triggers: triggers,
+		Budget: FallbackBudgetResponse{
+			MaxAttempts:       f.Budget.MaxAttempts,
+			MaxTotalLatencyMs: f.Budget.MaxTotalLatency.Milliseconds(),
+			MaxCostUSD:        f.Budget.MaxCostUSD,
+		},
+		Chain: chain,
 	}
 }

@@ -26,6 +26,7 @@ type UpdateInput struct {
 	BackendIDs      []uuid.UUID
 	PolicyIDs       []uuid.UUID
 	AuthIDs         []uuid.UUID
+	Fallback        *domain.Fallback
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -74,7 +75,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 		return nil, domain.ErrInvalidGatewayID
 	}
 	if err := validateAssociations(ctx, u.backendRepo, u.policyRepo, u.authRepo,
-		existing.GatewayID, in.BackendIDs, in.PolicyIDs, in.AuthIDs); err != nil {
+		existing.GatewayID, in.BackendIDs, in.PolicyIDs, in.AuthIDs, fallbackChainIDs(in.Fallback)); err != nil {
 		return nil, err
 	}
 	existing.Name = in.Name
@@ -91,6 +92,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	existing.BackendIDs = in.BackendIDs
 	existing.PolicyIDs = in.PolicyIDs
 	existing.AuthIDs = in.AuthIDs
+	existing.Fallback = in.Fallback
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {
 		return nil, err

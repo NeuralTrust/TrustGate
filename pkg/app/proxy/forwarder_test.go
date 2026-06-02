@@ -66,6 +66,104 @@ func newTestForwarder(t *testing.T, invoker appproxy.ProviderInvoker) appproxy.F
 	)
 }
 
+func enabledFallback(chain ...uuid.UUID) *domainconsumer.Fallback {
+	return &domainconsumer.Fallback{
+		Enabled:  true,
+		Triggers: []domainconsumer.FallbackTrigger{domainconsumer.TriggerHTTP5xx},
+		Budget:   domainconsumer.FallbackBudget{MaxAttempts: 10},
+		Chain:    chain,
+	}
+}
+
+func TestForward_PoolFailoverOn503(t *testing.T) {
+	gatewayID := uuid.New()
+	bk1 := backendFor(gatewayID, "openai")
+	bk2 := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, bk1, bk2)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, nil).
+		Once()
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Context: context.Background()},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 || string(res.Body) != "ok" {
+		t.Fatalf("expected failover to 200/ok, got %d/%q", res.StatusCode, string(res.Body))
+	}
+}
+
+func TestForward_FallbackChainAfterPoolExhausted(t *testing.T) {
+	gatewayID := uuid.New()
+	pool := backendFor(gatewayID, "openai")
+	fallbackBk := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, pool)
+	rc.Consumer.Fallback = enabledFallback(fallbackBk.ID)
+	rc.FallbackBackends = []*domainbackend.Backend{fallbackBk}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, nil).
+		Once()
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("recovered")}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Context: context.Background()},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 || string(res.Body) != "recovered" {
+		t.Fatalf("expected fallback chain success 200/recovered, got %d/%q", res.StatusCode, string(res.Body))
+	}
+}
+
+func TestForward_AllCandidatesFailRelaysLast5xx(t *testing.T) {
+	gatewayID := uuid.New()
+	pool := backendFor(gatewayID, "openai")
+	fallbackBk := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, pool)
+	rc.Consumer.Fallback = enabledFallback(fallbackBk.ID)
+	rc.FallbackBackends = []*domainbackend.Backend{fallbackBk}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 502, Body: []byte("bad gateway")}, nil)
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Context: context.Background()},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 502 {
+		t.Fatalf("expected last 5xx relayed verbatim, got %d", res.StatusCode)
+	}
+}
+
 func TestForward_SyncSuccess(t *testing.T) {
 	gatewayID := uuid.New()
 	bk := backendFor(gatewayID, "openai")

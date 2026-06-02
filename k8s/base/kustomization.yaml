@@ -12,7 +12,6 @@ resources:
   # serviceaccount resources
   - serviceaccount/agentgateway.yaml
   # ingress resources (disabled - using Gateway API HTTPRoute instead)
-  # - ingress/agentgateway-admin.yaml
   # - ingress/agentgateway-gateway.yaml
   # poddisruptionbudget resources
   - poddisruptionbudget/agentgateway-admin.yaml
@@ -30,3 +29,11 @@ resources:
   # service resources
   - service/agentgateway-admin.yaml
   - service/agentgateway-proxy.yaml
+
+configMapGenerator:
+  - name: agentgateway-entrypoint
+    files:
+    - entrypoint.sh
+    options:
+      labels:
+        app.kubernetes.io/instance: agentgateway

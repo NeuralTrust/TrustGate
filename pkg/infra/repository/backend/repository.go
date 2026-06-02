@@ -101,6 +101,13 @@ func (r *Repository) Update(ctx context.Context, b *domain.Backend) error {
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	const query = `DELETE FROM backends WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		// Pool membership is FK-protected (consumer_backend ON DELETE RESTRICT),
+		// but fallback chains live in the consumers.fallback JSONB and have no
+		// FK. Guard the chain explicitly so deleting a backend referenced only as
+		// a fallback target fails loudly instead of silently shrinking the chain.
+		if err := ensureNotInFallbackChain(ctx, tx, id); err != nil {
+			return err
+		}
 		cmd, err := tx.Exec(ctx, query, id)
 		if err != nil {
 			return mapPgDeleteError(err)
@@ -110,6 +117,25 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 		}
 		return nil
 	})
+}
+
+// ensureNotInFallbackChain reports ErrHasDependents when any consumer's fallback
+// chain (JSONB array of backend-id strings) contains id.
+func ensureNotInFallbackChain(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	const query = `
+		SELECT EXISTS (
+			SELECT 1 FROM consumers
+			 WHERE fallback IS NOT NULL
+			   AND fallback->'chain' @> to_jsonb($1::text)
+		)`
+	var referenced bool
+	if err := tx.QueryRow(ctx, query, id.String()).Scan(&referenced); err != nil {
+		return fmt.Errorf("backend repository: fallback-chain check: %w", err)
+	}
+	if referenced {
+		return domain.ErrHasDependents
+	}
+	return nil
 }
 
 func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Backend, error) {

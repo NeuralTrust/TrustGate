@@ -21,4 +21,5 @@ var (
 	ErrInvalidEmbeddingConfig = fmt.Errorf("consumer: invalid embedding config: %w", commonerrors.ErrValidation)
 	ErrPathAlreadyExists      = fmt.Errorf("consumer: path already exists: %w", commonerrors.ErrAlreadyExists)
 	ErrNoBackends             = fmt.Errorf("consumer: at least one backend is required: %w", commonerrors.ErrValidation)
+	ErrInvalidFallback        = fmt.Errorf("consumer: invalid fallback: %w", commonerrors.ErrValidation)
 )

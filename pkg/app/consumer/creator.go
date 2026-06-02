@@ -25,6 +25,7 @@ type CreateInput struct {
 	BackendIDs      []uuid.UUID
 	PolicyIDs       []uuid.UUID
 	AuthIDs         []uuid.UUID
+	Fallback        *domain.Fallback
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -66,7 +67,7 @@ func NewCreator(
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer, error) {
 	if err := validateAssociations(ctx, c.backendRepo, c.policyRepo, c.authRepo,
-		in.GatewayID, in.BackendIDs, in.PolicyIDs, in.AuthIDs); err != nil {
+		in.GatewayID, in.BackendIDs, in.PolicyIDs, in.AuthIDs, fallbackChainIDs(in.Fallback)); err != nil {
 		return nil, err
 	}
 	cons, err := domain.New(domain.CreateParams{
@@ -81,6 +82,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		BackendIDs:      in.BackendIDs,
 		PolicyIDs:       in.PolicyIDs,
 		AuthIDs:         in.AuthIDs,
+		Fallback:        in.Fallback,
 	})
 	if err != nil {
 		return nil, err
@@ -99,15 +101,25 @@ func validateAssociations(
 	policyRepo policydomain.Repository,
 	authRepo authdomain.Repository,
 	gatewayID uuid.UUID,
-	backendIDs, policyIDs, authIDs []uuid.UUID,
+	backendIDs, policyIDs, authIDs, fallbackChain []uuid.UUID,
 ) error {
 	if err := validateBackendIDsBelongToGateway(ctx, backendRepo, gatewayID, backendIDs); err != nil {
+		return err
+	}
+	if err := validateBackendIDsBelongToGateway(ctx, backendRepo, gatewayID, fallbackChain); err != nil {
 		return err
 	}
 	if err := validatePolicyIDsBelongToGateway(ctx, policyRepo, gatewayID, policyIDs); err != nil {
 		return err
 	}
 	return validateAuthIDsBelongToGateway(ctx, authRepo, gatewayID, authIDs)
+}
+
+func fallbackChainIDs(f *domain.Fallback) []uuid.UUID {
+	if f == nil {
+		return nil
+	}
+	return f.Chain
 }
 
 func validateBackendIDsBelongToGateway(
