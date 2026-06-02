@@ -130,6 +130,24 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	return f.invokeWithFailover(ctx, lb, in.Consumer, dto, stream)
 }
 
+// invokeWithFailover runs the request through the consumer's failover policy.
+// It walks two tiers of candidate backends, giving each backend up to
+// attemptsPerBackend tries (the initial call plus MaxRetries) before moving on:
+//
+//   - Tier 1 (pool): backends picked by the load balancer, excluding ones
+//     already tried this request (so e.g. round-robin over a single backend does
+//     not loop forever).
+//   - Tier 2 (fallback chain): the consumer's Fallback.Chain in strict priority
+//     order, walked only after the pool is exhausted.
+//
+// Each attempt is classified (success / retryable / terminal). A committed
+// stream or accepted buffered success is finalized and returned immediately; a
+// terminal 4xx is relayed verbatim without failover; a retryable outcome reports
+// failure to the LB and advances. When the plugin_rejection trigger is enabled,
+// a buffered success rejected by a PreResponse plugin also fails over to the
+// next candidate. An enabled fallback's Budget (MaxAttempts, MaxTotalLatency) is
+// the global ceiling. When everything is exhausted the last result is relayed
+// (a backend 5xx, the last plugin rejection, or the last transport error).
 func (f *forwarder) invokeWithFailover(
 	ctx context.Context,
 	lb *loadbalancer.LoadBalancer,

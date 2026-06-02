@@ -18,6 +18,12 @@ type failoverBudget struct {
 	attempts    int
 }
 
+// newFailoverBudget derives the budget from a (possibly nil/disabled) fallback
+// config. With no enabled fallback the budget is unbounded by attempts/latency.
+// An enabled fallback that leaves Budget.MaxAttempts unset (<= 0) is treated as
+// "auto": no artificial attempt cap, so the loop is bounded by candidate
+// exhaustion (pool + chain, each tried attemptsPerBackend times). This avoids
+// guessing a ceiling at the HTTP layer from a retry count it does not know.
 func newFailoverBudget(fb *consumerdomain.Fallback) *failoverBudget {
 	b := &failoverBudget{}
 	if fb == nil || !fb.Enabled {
