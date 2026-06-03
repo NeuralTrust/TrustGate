@@ -39,27 +39,40 @@ var sensitiveHeaders = map[string]struct{}{
 
 // SanitizeBody returns a loggable representation of a request/response body.
 // Multipart payloads are reduced to their field names and file metadata so raw
-// file contents never reach an exporter, and oversized bodies are truncated.
+// file contents never reach an exporter, and oversized bodies are truncated to
+// maxSanitizedBodyBytes.
 func SanitizeBody(body []byte, headers map[string][]string) string {
+	return sanitizeBody(body, headers, maxSanitizedBodyBytes)
+}
+
+// SanitizeBodyFull behaves like SanitizeBody but never truncates by size, so the
+// full body is preserved (e.g. complete streamed responses). Multipart payloads
+// are still reduced to field/file metadata so raw file contents never reach an
+// exporter.
+func SanitizeBodyFull(body []byte, headers map[string][]string) string {
+	return sanitizeBody(body, headers, 0)
+}
+
+func sanitizeBody(body []byte, headers map[string][]string, maxBytes int) string {
 	if len(body) == 0 {
 		return ""
 	}
 
 	contentType := lookupHeader(headers, "Content-Type")
 	if contentType == "" {
-		return capBody(body)
+		return capBody(body, maxBytes)
 	}
 
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
-		return capBody(body)
+		return capBody(body, maxBytes)
 	}
 
 	if mediaType == "multipart/form-data" {
 		return extractMultipartFileNames(body, params["boundary"])
 	}
 
-	return capBody(body)
+	return capBody(body, maxBytes)
 }
 
 // RedactHeaders returns a copy of headers with the values of sensitive headers
@@ -79,11 +92,13 @@ func RedactHeaders(headers map[string][]string) map[string][]string {
 	return out
 }
 
-func capBody(body []byte) string {
-	if len(body) <= maxSanitizedBodyBytes {
+// capBody truncates body to maxBytes, appending a marker. A non-positive maxBytes
+// disables truncation and returns the full body.
+func capBody(body []byte, maxBytes int) string {
+	if maxBytes <= 0 || len(body) <= maxBytes {
 		return string(body)
 	}
-	return string(body[:maxSanitizedBodyBytes]) + truncatedSuffix
+	return string(body[:maxBytes]) + truncatedSuffix
 }
 
 func extractMultipartFileNames(body []byte, boundary string) string {

@@ -29,7 +29,7 @@ type Event struct {
 	Latency  Latency  `json:"latency"`
 
 	Attempts    []Attempt     `json:"attempts,omitempty"`
-	PluginChain []PluginEntry `json:"plugin_chain,omitempty"`
+	PolicyChain []PolicyEntry `json:"policy_chain,omitempty"`
 }
 
 type Consumer struct {
@@ -86,7 +86,7 @@ type Cost struct {
 type Latency struct {
 	TotalMs    int64 `json:"total_ms"`
 	ProviderMs int64 `json:"provider_ms"`
-	PluginsMs  int64 `json:"plugins_ms"`
+	PoliciesMs int64 `json:"policies_ms"`
 	RoutingMs  int64 `json:"routing_ms"`
 	GatewayMs  int64 `json:"gateway_ms"`
 }
@@ -101,7 +101,7 @@ type Attempt struct {
 	LatencyMs  int64  `json:"latency_ms"`
 }
 
-type PluginEntry struct {
+type PolicyEntry struct {
 	Name       string      `json:"name"`
 	Stage      string      `json:"stage,omitempty"`
 	Decision   string      `json:"decision,omitempty"`
