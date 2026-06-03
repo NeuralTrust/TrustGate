@@ -14,6 +14,7 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -68,6 +69,8 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return writeProxyError(c, err)
 	}
+
+	stampConsumerTrace(c, consumer)
 
 	reqCtx := buildRequestContext(c, gatewayID)
 	result, err := h.forwarder.Forward(c.UserContext(), appproxy.ForwardInput{
@@ -173,6 +176,17 @@ func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer
 		return ids.GatewayID{}, nil, errForbidden
 	}
 	return gatewayID, rc, nil
+}
+
+func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
+	if rc == nil || rc.Consumer == nil {
+		return
+	}
+	rt := trace.FromContext(c.UserContext())
+	if rt == nil {
+		return
+	}
+	rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
 }
 
 func consumerHasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {

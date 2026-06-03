@@ -4,57 +4,45 @@ import (
 	"log/slog"
 
 	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
-	apptelemetry "github.com/NeuralTrust/AgentGateway/pkg/app/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	domaintelemetry "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry/kafka"
 	"go.uber.org/dig"
 )
 
-// Telemetry wires the exporter locator (Kafka only for now), the exporters
-// builder used for per-gateway exporters, the default exporters built from
-// env config, and the metrics worker.
+// Telemetry wires the consolidated metrics pipeline (event builder + Kafka
+// exporter) and the metrics worker.
 func Telemetry(c *container.Container) error {
-	if err := c.Provide(func(logger *slog.Logger, cfg *config.Config) *apptelemetry.ExporterLocator {
-		return apptelemetry.NewExporterLocator(
-			apptelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaExporter(logger, cfg.Kafka)),
-		)
-	}); err != nil {
+	if err := c.Provide(appmetrics.NewBuilder); err != nil {
 		return err
 	}
-	if err := c.Provide(apptelemetry.NewExportersBuilder); err != nil {
-		return err
-	}
-	if err := c.Provide(buildDefaultExporters); err != nil {
+	if err := c.Provide(buildPipeline); err != nil {
 		return err
 	}
 	return c.Provide(appmetrics.NewWorker)
 }
 
-// buildDefaultExporters constructs the process-wide default exporters from env
-// config. When telemetry is disabled or an exporter cannot be initialized, it
-// returns no exporters so request forwarding is never blocked.
-func buildDefaultExporters(
+// buildPipeline constructs the metrics pipeline (builder + Kafka exporter on the
+// telemetry topic) when telemetry is enabled. When disabled, or when the
+// exporter cannot be initialized, it returns a nil pipeline so the worker
+// silently skips publishing.
+func buildPipeline(
 	logger *slog.Logger,
 	cfg *config.Config,
-	locator *apptelemetry.ExporterLocator,
-) []apptelemetry.Exporter {
+	builder *appmetrics.Builder,
+) (*appmetrics.Pipeline, error) {
 	if !cfg.Telemetry.Enabled {
-		return nil
+		return nil, nil
 	}
-	exporter, err := locator.GetExporter(domaintelemetry.ExporterConfig{
-		Name:     kafka.ExporterName,
-		Settings: map[string]interface{}{"topic": cfg.Telemetry.KafkaTopic},
-	})
+	exporter, err := kafka.NewKafkaExporter(logger, cfg.Kafka, cfg.Telemetry.KafkaTopic)
 	if err != nil {
-		logger.Warn("failed to build default kafka exporter, telemetry disabled",
+		logger.Warn("failed to build kafka exporter, telemetry disabled",
 			slog.String("error", err.Error()))
-		return nil
+		return nil, nil
 	}
-	logger.Info("default kafka telemetry exporter initialized",
+	logger.Info("metrics telemetry exporter initialized",
 		slog.String("topic", cfg.Telemetry.KafkaTopic))
-	return []apptelemetry.Exporter{exporter}
+	return appmetrics.NewPipeline(builder, exporter, logger), nil
 }
 
 // MetricsWorkerParams collects everything StartMetricsWorker needs.

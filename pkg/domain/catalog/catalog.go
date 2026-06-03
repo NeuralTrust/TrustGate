@@ -41,4 +41,5 @@ type Repository interface {
 	DisableModelsExcept(ctx context.Context, providerID ids.ProviderID, source string, keepSlugs []string) error
 	ListProviders(ctx context.Context) ([]Provider, error)
 	ListModelsByProviderCode(ctx context.Context, providerCode string) ([]Model, error)
+	FindModel(ctx context.Context, providerCode, slug string) (*Model, error)
 }

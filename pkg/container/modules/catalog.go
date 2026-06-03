@@ -35,6 +35,9 @@ func Catalog(c *container.Container) error {
 	if err := c.Provide(appcatalog.NewSyncer); err != nil {
 		return err
 	}
+	if err := c.Provide(appcatalog.NewPricingResolver); err != nil {
+		return err
+	}
 	if err := c.Provide(cataloghttp.NewListProvidersHandler); err != nil {
 		return err
 	}

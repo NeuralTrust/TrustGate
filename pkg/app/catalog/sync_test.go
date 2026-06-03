@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/catalog/openrouter"
@@ -60,6 +61,10 @@ func (f *fakeRepo) ListProviders(_ context.Context) ([]domain.Provider, error) {
 
 func (f *fakeRepo) ListModelsByProviderCode(_ context.Context, _ string) ([]domain.Model, error) {
 	return nil, nil
+}
+
+func (f *fakeRepo) FindModel(_ context.Context, _ string, _ string) (*domain.Model, error) {
+	return nil, commonerrors.ErrNotFound
 }
 
 func TestSyncer_Sync(t *testing.T) {

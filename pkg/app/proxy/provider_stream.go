@@ -106,7 +106,7 @@ func adaptStream(
 	registry *adapter.Registry,
 	source, target adapter.Format,
 	logger *slog.Logger,
-	onUsage func(*adapter.CanonicalUsage),
+	onChunk func(*adapter.CanonicalStreamChunk),
 ) iter.Seq2[[]byte, error] {
 	crossFormat := !adapter.ShouldPassthroughSameWireFormat(source, target)
 	geminiToolCalls := source == adapter.FormatGemini &&
@@ -139,7 +139,7 @@ func adaptStream(
 
 			if !crossFormat {
 				if payload, ok := dataPayload(line); ok {
-					observeUsage(registry, payload, target, onUsage)
+					observeChunk(registry, payload, target, onChunk)
 				}
 				if !yield(line, nil) {
 					return
@@ -158,7 +158,7 @@ func adaptStream(
 			if !ok {
 				continue
 			}
-			observeUsage(registry, payload, target, onUsage)
+			observeChunk(registry, payload, target, onChunk)
 
 			if geminiToolCalls {
 				if !emitGeminiToolCalls(emit, registry, payload, source, target, &acc, logger) {
@@ -207,22 +207,24 @@ func dataPayload(line []byte) ([]byte, bool) {
 	return payload, true
 }
 
-// observeUsage decodes payload for the target format and reports its usage (when
-// present) to onUsage. Decode failures are ignored: usage is best-effort.
-func observeUsage(
+// observeChunk decodes payload for the target format and reports the canonical
+// chunk to onChunk. Usage lives on the final chunk and model/finish_reason on
+// the first/last chunks; the observer accumulates them. Decode failures are
+// ignored: observation is best-effort.
+func observeChunk(
 	registry *adapter.Registry,
 	payload []byte,
 	target adapter.Format,
-	onUsage func(*adapter.CanonicalUsage),
+	onChunk func(*adapter.CanonicalStreamChunk),
 ) {
-	if onUsage == nil {
+	if onChunk == nil {
 		return
 	}
 	canonical, err := registry.DecodeStreamChunkFor(payload, target)
-	if err != nil || canonical == nil || canonical.Usage == nil {
+	if err != nil || canonical == nil {
 		return
 	}
-	onUsage(canonical.Usage)
+	onChunk(canonical)
 }
 
 // emitGeminiToolCalls decodes a backend chunk, accumulates tool-call deltas, and
