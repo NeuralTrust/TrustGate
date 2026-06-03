@@ -16,7 +16,7 @@ func TestPluginE2E_RateLimiter_Global(t *testing.T) {
 	const limit = 5
 	up := newJSONUpstream(t, "rl-upstream")
 	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("rate_limiter", "pre_request", map[string]any{
+		policyPlugin("rate_limiter", map[string]any{
 			"limits": map[string]any{
 				"global": map[string]any{"limit": limit, "window": "1m"},
 			},
@@ -44,7 +44,7 @@ func TestPluginE2E_RateLimiter_PerUserIsolation(t *testing.T) {
 	const perUser = 3
 	up := newJSONUpstream(t, "rl-user-upstream")
 	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("rate_limiter", "pre_request", map[string]any{
+		policyPlugin("rate_limiter", map[string]any{
 			"limits": map[string]any{
 				"per_user": map[string]any{"limit": perUser, "window": "1m"},
 				"global":   map[string]any{"limit": 1000, "window": "1m"},

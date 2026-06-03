@@ -82,6 +82,53 @@ func (_c *Plugin_Execute_Call) RunAndReturn(run func(context.Context, plugins.Ex
 	return _c
 }
 
+// MandatoryStages provides a mock function with no fields
+func (_m *Plugin) MandatoryStages() []policy.Stage {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for MandatoryStages")
+	}
+
+	var r0 []policy.Stage
+	if rf, ok := ret.Get(0).(func() []policy.Stage); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]policy.Stage)
+		}
+	}
+
+	return r0
+}
+
+// Plugin_MandatoryStages_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'MandatoryStages'
+type Plugin_MandatoryStages_Call struct {
+	*mock.Call
+}
+
+// MandatoryStages is a helper method to define mock.On call
+func (_e *Plugin_Expecter) MandatoryStages() *Plugin_MandatoryStages_Call {
+	return &Plugin_MandatoryStages_Call{Call: _e.mock.On("MandatoryStages")}
+}
+
+func (_c *Plugin_MandatoryStages_Call) Run(run func()) *Plugin_MandatoryStages_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Plugin_MandatoryStages_Call) Return(_a0 []policy.Stage) *Plugin_MandatoryStages_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Plugin_MandatoryStages_Call) RunAndReturn(run func() []policy.Stage) *Plugin_MandatoryStages_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Name provides a mock function with no fields
 func (_m *Plugin) Name() string {
 	ret := _m.Called()
@@ -127,12 +174,12 @@ func (_c *Plugin_Name_Call) RunAndReturn(run func() string) *Plugin_Name_Call {
 	return _c
 }
 
-// Stages provides a mock function with no fields
-func (_m *Plugin) Stages() []policy.Stage {
+// SupportedStages provides a mock function with no fields
+func (_m *Plugin) SupportedStages() []policy.Stage {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
-		panic("no return value specified for Stages")
+		panic("no return value specified for SupportedStages")
 	}
 
 	var r0 []policy.Stage
@@ -147,29 +194,29 @@ func (_m *Plugin) Stages() []policy.Stage {
 	return r0
 }
 
-// Plugin_Stages_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Stages'
-type Plugin_Stages_Call struct {
+// Plugin_SupportedStages_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SupportedStages'
+type Plugin_SupportedStages_Call struct {
 	*mock.Call
 }
 
-// Stages is a helper method to define mock.On call
-func (_e *Plugin_Expecter) Stages() *Plugin_Stages_Call {
-	return &Plugin_Stages_Call{Call: _e.mock.On("Stages")}
+// SupportedStages is a helper method to define mock.On call
+func (_e *Plugin_Expecter) SupportedStages() *Plugin_SupportedStages_Call {
+	return &Plugin_SupportedStages_Call{Call: _e.mock.On("SupportedStages")}
 }
 
-func (_c *Plugin_Stages_Call) Run(run func()) *Plugin_Stages_Call {
+func (_c *Plugin_SupportedStages_Call) Run(run func()) *Plugin_SupportedStages_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run()
 	})
 	return _c
 }
 
-func (_c *Plugin_Stages_Call) Return(_a0 []policy.Stage) *Plugin_Stages_Call {
+func (_c *Plugin_SupportedStages_Call) Return(_a0 []policy.Stage) *Plugin_SupportedStages_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *Plugin_Stages_Call) RunAndReturn(run func() []policy.Stage) *Plugin_Stages_Call {
+func (_c *Plugin_SupportedStages_Call) RunAndReturn(run func() []policy.Stage) *Plugin_SupportedStages_Call {
 	_c.Call.Return(run)
 	return _c
 }

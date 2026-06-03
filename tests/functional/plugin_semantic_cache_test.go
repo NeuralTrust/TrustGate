@@ -36,8 +36,7 @@ func TestPluginE2E_SemanticCache(t *testing.T) {
 
 	up := newJSONUpstream(t, "semantic-cache-answer")
 	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("semantic_cache", "pre_request", settings),
-		policyPlugin("semantic_cache", "post_response", settings),
+		policyPlugin("semantic_cache", settings),
 	)
 
 	ask := func(content string) map[string]any {

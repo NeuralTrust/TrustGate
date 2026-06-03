@@ -63,20 +63,15 @@ func CreatePolicy(t *testing.T, gatewayID string, payload map[string]any) string
 }
 
 // validPolicyPayload returns a minimal payload accepted by Validate() (name
-// plus one enabled rate-limiter plugin in the pre_request stage). Callers
-// may override fields.
+// plus the rate-limiter plugin slug). With the 1:1 model a policy is a single
+// configured plugin instance. Callers may override fields.
 func validPolicyPayload(name string) map[string]any {
 	return map[string]any{
-		"name": name,
-		"plugins": []map[string]any{
-			{
-				"name":     "rate_limiter",
-				"enabled":  true,
-				"stage":    "pre_request",
-				"priority": 0,
-				"settings": map[string]any{"limit": 100},
-			},
-		},
+		"name":     name,
+		"slug":     "rate_limiter",
+		"enabled":  true,
+		"priority": 0,
+		"settings": map[string]any{"limit": 100},
 	}
 }
 

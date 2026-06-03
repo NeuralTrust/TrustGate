@@ -27,7 +27,7 @@ func TestPluginE2E_CORS(t *testing.T) {
 
 	up := newJSONUpstream(t, "cors-upstream")
 	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("cors", "pre_request", corsSettings()),
+		policyPlugin("cors", corsSettings()),
 	)
 
 	t.Run("allowed origin simple request passes through", func(t *testing.T) {
@@ -102,7 +102,7 @@ func TestPluginE2E_CORS_Wildcard(t *testing.T) {
 
 	up := newJSONUpstream(t, "cors-wild-upstream")
 	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("cors", "pre_request", map[string]any{
+		policyPlugin("cors", map[string]any{
 			"allowed_origins":   []string{"*"},
 			"allowed_methods":   []string{"GET", "POST", "OPTIONS"},
 			"allow_credentials": false,

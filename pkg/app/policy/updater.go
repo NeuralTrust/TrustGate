@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
@@ -14,7 +15,12 @@ type UpdateInput struct {
 	ID        ids.PolicyID
 	GatewayID ids.GatewayID
 	Name      string
-	Plugins   domain.Plugins
+	Slug      string
+	Enabled   bool
+	Priority  int
+	Parallel  bool
+	Settings  map[string]any
+	Stages    []domain.Stage
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=policy_updater_mock.go --case=underscore --with-expecter
@@ -26,6 +32,7 @@ var _ Updater = (*updater)(nil)
 
 type updater struct {
 	repo        domain.Repository
+	registry    appplugins.Registry
 	memoryCache *cache.TTLMap
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
@@ -33,12 +40,14 @@ type updater struct {
 
 func NewUpdater(
 	repo domain.Repository,
+	registry appplugins.Registry,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 ) Updater {
 	return &updater{
 		repo:        repo,
+		registry:    registry,
 		memoryCache: manager.GetTTLMap(cache.PolicyTTLName),
 		publisher:   publisher,
 		logger:      logger,
@@ -54,9 +63,17 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 		return nil, domain.ErrInvalidGatewayID
 	}
 	existing.Name = in.Name
-	existing.Plugins = in.Plugins
+	existing.Slug = in.Slug
+	existing.Enabled = in.Enabled
+	existing.Priority = in.Priority
+	existing.Parallel = in.Parallel
+	existing.Settings = in.Settings
+	existing.Stages = in.Stages
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {
+		return nil, err
+	}
+	if err := u.registry.ValidateStages(in.Slug, in.Stages); err != nil {
 		return nil, err
 	}
 	if err := u.repo.Update(ctx, existing); err != nil {

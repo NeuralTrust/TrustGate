@@ -33,16 +33,21 @@ func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
 	if p == nil {
 		return errors.New("policy repository: nil policy")
 	}
-	pluginsBytes, err := marshalPlugins(p.Plugins)
+	settingsBytes, err := marshalSettings(p.Settings)
 	if err != nil {
-		return fmt.Errorf("policy repository: marshal plugins: %w", err)
+		return fmt.Errorf("policy repository: marshal settings: %w", err)
+	}
+	stagesBytes, err := marshalStages(p.Stages)
+	if err != nil {
+		return fmt.Errorf("policy repository: marshal stages: %w", err)
 	}
 	const query = `
-		INSERT INTO policies (id, gateway_id, name, plugins, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`
+		INSERT INTO policies (id, gateway_id, name, slug, enabled, priority, parallel, settings, stages, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			p.ID, p.GatewayID, p.Name, pluginsBytes, p.CreatedAt, p.UpdatedAt,
+			p.ID, p.GatewayID, p.Name, p.Slug, p.Enabled, p.Priority, p.Parallel,
+			settingsBytes, stagesBytes, p.CreatedAt, p.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -54,18 +59,30 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy) error {
 	if p == nil {
 		return errors.New("policy repository: nil policy")
 	}
-	pluginsBytes, err := marshalPlugins(p.Plugins)
+	settingsBytes, err := marshalSettings(p.Settings)
 	if err != nil {
-		return fmt.Errorf("policy repository: marshal plugins: %w", err)
+		return fmt.Errorf("policy repository: marshal settings: %w", err)
+	}
+	stagesBytes, err := marshalStages(p.Stages)
+	if err != nil {
+		return fmt.Errorf("policy repository: marshal stages: %w", err)
 	}
 	const query = `
 		UPDATE policies
 		   SET name       = $2,
-		       plugins    = $3,
-		       updated_at = $4
+		       slug       = $3,
+		       enabled    = $4,
+		       priority   = $5,
+		       parallel   = $6,
+		       settings   = $7,
+		       stages     = $8,
+		       updated_at = $9
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, p.ID, p.Name, pluginsBytes, p.UpdatedAt)
+		cmd, err := tx.Exec(ctx, query,
+			p.ID, p.Name, p.Slug, p.Enabled, p.Priority, p.Parallel,
+			settingsBytes, stagesBytes, p.UpdatedAt,
+		)
 		if err != nil {
 			return mapPgError(err)
 		}
@@ -92,7 +109,7 @@ func (r *Repository) Delete(ctx context.Context, id ids.PolicyID) error {
 
 func (r *Repository) FindByID(ctx context.Context, id ids.PolicyID) (*domain.Policy, error) {
 	const query = `
-		SELECT id, gateway_id, name, plugins, created_at, updated_at
+		SELECT id, gateway_id, name, slug, enabled, priority, parallel, settings, stages, created_at, updated_at
 		  FROM policies
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -111,7 +128,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, pol
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, plugins, created_at, updated_at
+		SELECT id, gateway_id, name, slug, enabled, priority, parallel, settings, stages, created_at, updated_at
 		  FROM policies
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -158,7 +175,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, gateway_id, name, plugins, created_at, updated_at
+		SELECT id, gateway_id, name, slug, enabled, priority, parallel, settings, stages, created_at, updated_at
 		  FROM policies
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
@@ -190,31 +207,41 @@ type rowScanner interface {
 
 func scanPolicy(s rowScanner) (*domain.Policy, error) {
 	p := &domain.Policy{}
-	var pluginsRaw []byte
+	var settingsRaw []byte
+	var stagesRaw []byte
 	if err := s.Scan(
-		&p.ID, &p.GatewayID, &p.Name,
-		&pluginsRaw,
+		&p.ID, &p.GatewayID, &p.Name, &p.Slug, &p.Enabled, &p.Priority, &p.Parallel,
+		&settingsRaw, &stagesRaw,
 		&p.CreatedAt, &p.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 
-	if len(pluginsRaw) > 0 {
-		if err := json.Unmarshal(pluginsRaw, &p.Plugins); err != nil {
-			return nil, fmt.Errorf("scan plugins: %w", err)
+	if len(settingsRaw) > 0 {
+		if err := json.Unmarshal(settingsRaw, &p.Settings); err != nil {
+			return nil, fmt.Errorf("scan settings: %w", err)
 		}
 	}
-	if p.Plugins == nil {
-		p.Plugins = domain.Plugins{}
+	if len(stagesRaw) > 0 {
+		if err := json.Unmarshal(stagesRaw, &p.Stages); err != nil {
+			return nil, fmt.Errorf("scan stages: %w", err)
+		}
 	}
 	return p, nil
 }
 
-func marshalPlugins(p domain.Plugins) ([]byte, error) {
-	if len(p) == 0 {
+func marshalSettings(s map[string]any) ([]byte, error) {
+	if len(s) == 0 {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(s)
+}
+
+func marshalStages(stages []domain.Stage) ([]byte, error) {
+	if len(stages) == 0 {
 		return []byte("[]"), nil
 	}
-	return json.Marshal(p)
+	return json.Marshal(stages)
 }
 
 func nullableUUID(id uuid.UUID) any {

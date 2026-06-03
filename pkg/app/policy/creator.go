@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
@@ -12,7 +13,12 @@ import (
 type CreateInput struct {
 	GatewayID ids.GatewayID
 	Name      string
-	Plugins   domain.Plugins
+	Slug      string
+	Enabled   bool
+	Priority  int
+	Parallel  bool
+	Settings  map[string]any
+	Stages    []domain.Stage
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=policy_creator_mock.go --case=underscore --with-expecter
@@ -24,21 +30,26 @@ var _ Creator = (*creator)(nil)
 
 type creator struct {
 	repo        domain.Repository
+	registry    appplugins.Registry
 	memoryCache *cache.TTLMap
 	logger      *slog.Logger
 }
 
-func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger) Creator {
+func NewCreator(repo domain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, logger *slog.Logger) Creator {
 	return &creator{
 		repo:        repo,
+		registry:    registry,
 		memoryCache: manager.GetTTLMap(cache.PolicyTTLName),
 		logger:      logger,
 	}
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, error) {
-	p, err := domain.NewPolicy(in.GatewayID, in.Name, in.Plugins)
+	p, err := domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.registry.ValidateStages(in.Slug, in.Stages); err != nil {
 		return nil, err
 	}
 	if err := c.repo.Save(ctx, p); err != nil {

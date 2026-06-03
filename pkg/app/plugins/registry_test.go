@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -8,6 +9,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type stagePlugin struct {
+	name      string
+	mandatory []policy.Stage
+	supported []policy.Stage
+}
+
+func (s *stagePlugin) Name() string                                        { return s.name }
+func (s *stagePlugin) MandatoryStages() []policy.Stage                     { return s.mandatory }
+func (s *stagePlugin) SupportedStages() []policy.Stage                     { return s.supported }
+func (s *stagePlugin) ValidateConfig(map[string]any) error                 { return nil }
+func (s *stagePlugin) Execute(context.Context, ExecInput) (*Result, error) { return nil, nil }
 
 func TestRegistry_Register(t *testing.T) {
 	tests := []struct {
@@ -75,4 +88,39 @@ func TestRegistry_Validate(t *testing.T) {
 
 	require.ErrorIs(t, reg.Validate("rate", map[string]any{}), sentinel)
 	require.ErrorIs(t, reg.Validate("missing", map[string]any{}), ErrUnknownPlugin)
+}
+
+func TestRegistry_Register_RejectsMandatoryOutsideSupported(t *testing.T) {
+	reg := NewRegistry()
+	err := reg.Register(&stagePlugin{
+		name:      "weird",
+		mandatory: []policy.Stage{policy.StagePostResponse},
+		supported: []policy.Stage{policy.StagePreRequest},
+	})
+	require.ErrorIs(t, err, ErrInvalidStages)
+}
+
+func TestRegistry_ValidateStages(t *testing.T) {
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(&stagePlugin{
+		name:      "flex",
+		mandatory: nil,
+		supported: []policy.Stage{policy.StagePreRequest, policy.StagePostResponse},
+	}))
+	require.NoError(t, reg.Register(&stagePlugin{
+		name:      "mandatoryonly",
+		mandatory: []policy.Stage{policy.StagePreRequest},
+		supported: []policy.Stage{policy.StagePreRequest},
+	}))
+
+	// Case A: no selection and no mandatory stages -> empty effective set.
+	require.ErrorIs(t, reg.ValidateStages("flex", nil), ErrNoEffectiveStages)
+	// Valid selection within supported.
+	require.NoError(t, reg.ValidateStages("flex", []policy.Stage{policy.StagePreRequest}))
+	// Case B: selecting an unsupported stage is rejected.
+	require.ErrorIs(t, reg.ValidateStages("mandatoryonly", []policy.Stage{policy.StagePostResponse}), ErrStageNotSupported)
+	// Case C: mandatory stages make an empty selection valid.
+	require.NoError(t, reg.ValidateStages("mandatoryonly", nil))
+	// Unknown plugin.
+	require.ErrorIs(t, reg.ValidateStages("missing", nil), ErrUnknownPlugin)
 }

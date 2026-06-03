@@ -15,7 +15,7 @@ import (
 func input(settings map[string]any, req *infracontext.RequestContext) appplugins.ExecInput {
 	return appplugins.ExecInput{
 		Stage:    policy.StagePreRequest,
-		Config:   policy.Plugin{ID: "cors-1", Name: PluginName, Settings: settings},
+		Config:   policy.PluginConfig{ID: "cors-1", Slug: PluginName, Name: PluginName, Settings: settings},
 		Request:  req,
 		Response: &infracontext.ResponseContext{},
 	}
@@ -30,7 +30,8 @@ func baseSettings() map[string]any {
 
 func TestPlugin_Stages(t *testing.T) {
 	p := New()
-	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, p.Stages())
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, p.MandatoryStages())
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest}, p.SupportedStages())
 	assert.Equal(t, PluginName, p.Name())
 }
 

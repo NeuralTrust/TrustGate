@@ -9,18 +9,13 @@ import (
 )
 
 type CreatePolicyRequest struct {
-	Name    string          `json:"name"`
-	Plugins []PluginRequest `json:"plugins,omitempty"`
-}
-
-type PluginRequest struct {
-	ID       string                 `json:"id,omitempty"`
-	Name     string                 `json:"name"`
-	Enabled  bool                   `json:"enabled"`
-	Stage    string                 `json:"stage"`
-	Priority int                    `json:"priority"`
-	Parallel bool                   `json:"parallel,omitempty"`
-	Settings map[string]interface{} `json:"settings,omitempty"`
+	Name     string         `json:"name"`
+	Slug     string         `json:"slug"`
+	Enabled  bool           `json:"enabled"`
+	Priority int            `json:"priority"`
+	Parallel bool           `json:"parallel,omitempty"`
+	Settings map[string]any `json:"settings,omitempty"`
+	Stages   []string       `json:"stages,omitempty"`
 }
 
 func (r CreatePolicyRequest) Validate() error {
@@ -30,25 +25,23 @@ func (r CreatePolicyRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
+	if strings.TrimSpace(r.Slug) == "" {
+		return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)
+	}
 	return nil
 }
 
-func (r CreatePolicyRequest) ToPlugins() domain.Plugins {
-	out := make(domain.Plugins, 0, len(r.Plugins))
-	for _, p := range r.Plugins {
-		out = append(out, p.ToDomain())
-	}
-	return out
+func (r CreatePolicyRequest) ToStages() []domain.Stage {
+	return toStages(r.Stages)
 }
 
-func (p PluginRequest) ToDomain() domain.Plugin {
-	return domain.Plugin{
-		ID:       p.ID,
-		Name:     p.Name,
-		Enabled:  p.Enabled,
-		Stage:    domain.Stage(p.Stage),
-		Priority: p.Priority,
-		Parallel: p.Parallel,
-		Settings: p.Settings,
+func toStages(raw []string) []domain.Stage {
+	if len(raw) == 0 {
+		return nil
 	}
+	out := make([]domain.Stage, 0, len(raw))
+	for _, s := range raw {
+		out = append(out, domain.Stage(s))
+	}
+	return out
 }

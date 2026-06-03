@@ -2584,25 +2584,8 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.CreatePolicyRequest": {
             "type": "object",
             "properties": {
-                "name": {
-                    "type": "string"
-                },
-                "plugins": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest"
-                    }
-                }
-            }
-        },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest": {
-            "type": "object",
-            "properties": {
                 "enabled": {
                     "type": "boolean"
-                },
-                "id": {
-                    "type": "string"
                 },
                 "name": {
                     "type": "string"
@@ -2615,23 +2598,45 @@ const docTemplate = `{
                 },
                 "settings": {
                     "type": "object",
-                    "additionalProperties": true
+                    "additionalProperties": {}
                 },
-                "stage": {
+                "slug": {
                     "type": "string"
+                },
+                "stages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
             "type": "object",
             "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
                 },
-                "plugins": {
+                "parallel": {
+                    "type": "boolean"
+                },
+                "priority": {
+                    "type": "integer"
+                },
+                "settings": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "stages": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest"
+                        "type": "string"
                     }
                 }
             }
@@ -2656,11 +2661,17 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PluginResponse": {
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse": {
             "type": "object",
             "properties": {
+                "created_at": {
+                    "type": "string"
+                },
                 "enabled": {
                     "type": "boolean"
+                },
+                "gateway_id": {
+                    "type": "string"
                 },
                 "id": {
                     "type": "string"
@@ -2676,32 +2687,15 @@ const docTemplate = `{
                 },
                 "settings": {
                     "type": "object",
-                    "additionalProperties": true
+                    "additionalProperties": {}
                 },
-                "stage": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse": {
-            "type": "object",
-            "properties": {
-                "created_at": {
+                "slug": {
                     "type": "string"
                 },
-                "gateway_id": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "plugins": {
+                "stages": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PluginResponse"
+                        "type": "string"
                     }
                 },
                 "updated_at": {

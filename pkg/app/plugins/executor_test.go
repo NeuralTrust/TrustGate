@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
@@ -25,7 +26,8 @@ type fakePlugin struct {
 }
 
 func (f *fakePlugin) Name() string                        { return f.name }
-func (f *fakePlugin) Stages() []policy.Stage              { return f.stages }
+func (f *fakePlugin) MandatoryStages() []policy.Stage     { return f.stages }
+func (f *fakePlugin) SupportedStages() []policy.Stage     { return f.stages }
 func (f *fakePlugin) ValidateConfig(map[string]any) error { return f.validErr }
 
 func (f *fakePlugin) Execute(ctx context.Context, _ ExecInput) (*Result, error) {
@@ -45,9 +47,29 @@ func (f *fakePlugin) Execute(ctx context.Context, _ ExecInput) (*Result, error) 
 	return f.result, f.err
 }
 
-func policyWith(t *testing.T, plugins ...policy.Plugin) *policy.Policy {
+type polSpec struct {
+	slug     string
+	enabled  bool
+	priority int
+	parallel bool
+	stages   []policy.Stage
+}
+
+func policies(t *testing.T, specs ...polSpec) []*policy.Policy {
 	t.Helper()
-	return &policy.Policy{Name: "p", Plugins: plugins}
+	out := make([]*policy.Policy, 0, len(specs))
+	for _, s := range specs {
+		out = append(out, &policy.Policy{
+			ID:       ids.New[ids.PolicyKind](),
+			Name:     s.slug,
+			Slug:     s.slug,
+			Enabled:  s.enabled,
+			Priority: s.priority,
+			Parallel: s.parallel,
+			Stages:   s.stages,
+		})
+	}
+	return out
 }
 
 func newRegistry(t *testing.T, ps ...Plugin) Registry {
@@ -85,15 +107,15 @@ func TestExecutor_RunStage_OrdersByPriority(t *testing.T) {
 	reg := newRegistry(t, mk("first"), mk("second"), mk("third"))
 	exec := NewExecutor(reg, nil)
 
-	pol := policyWith(t,
-		policy.Plugin{Name: "third", Enabled: true, Priority: 30},
-		policy.Plugin{Name: "first", Enabled: true, Priority: 10},
-		policy.Plugin{Name: "second", Enabled: true, Priority: 20},
+	pols := policies(t,
+		polSpec{slug: "third", enabled: true, priority: 30},
+		polSpec{slug: "first", enabled: true, priority: 10},
+		polSpec{slug: "second", enabled: true, priority: 20},
 	)
 
 	_, err := exec.RunStage(context.Background(), StageInput{
 		Stage:    policy.StagePreRequest,
-		Policies: []*policy.Policy{pol},
+		Policies: pols,
 		Response: &infracontext.ResponseContext{},
 	})
 	require.NoError(t, err)
@@ -117,15 +139,15 @@ func TestExecutor_RunStage_SkipsDisabledUnknownAndWrongStage(t *testing.T) {
 	reg := newRegistry(t, preReq, postOnly)
 	exec := NewExecutor(reg, nil)
 
-	pol := policyWith(t,
-		policy.Plugin{Name: "rate", Enabled: false, Priority: 1}, // disabled
-		policy.Plugin{Name: "token", Enabled: true, Priority: 2}, // wrong stage
-		policy.Plugin{Name: "ghost", Enabled: true, Priority: 3}, // unknown
+	pols := policies(t,
+		polSpec{slug: "rate", enabled: false, priority: 1}, // disabled
+		polSpec{slug: "token", enabled: true, priority: 2}, // wrong stage
+		polSpec{slug: "ghost", enabled: true, priority: 3}, // unknown
 	)
 
 	out, err := exec.RunStage(context.Background(), StageInput{
 		Stage:    policy.StagePreRequest,
-		Policies: []*policy.Policy{pol},
+		Policies: pols,
 		Response: &infracontext.ResponseContext{},
 	})
 	require.NoError(t, err)
@@ -151,14 +173,14 @@ func TestExecutor_RunStage_ShortCircuitStopsChain(t *testing.T) {
 	exec := NewExecutor(reg, nil)
 
 	resp := &infracontext.ResponseContext{}
-	pol := policyWith(t,
-		policy.Plugin{Name: "cache", Enabled: true, Priority: 1},
-		policy.Plugin{Name: "after", Enabled: true, Priority: 2},
+	pols := policies(t,
+		polSpec{slug: "cache", enabled: true, priority: 1},
+		polSpec{slug: "after", enabled: true, priority: 2},
 	)
 
 	out, err := exec.RunStage(context.Background(), StageInput{
 		Stage:    policy.StagePreRequest,
-		Policies: []*policy.Policy{pol},
+		Policies: pols,
 		Response: resp,
 	})
 	require.NoError(t, err)
@@ -180,7 +202,7 @@ func TestExecutor_RunStage_PluginErrorPropagates(t *testing.T) {
 
 	_, err := exec.RunStage(context.Background(), StageInput{
 		Stage:    policy.StagePreRequest,
-		Policies: []*policy.Policy{policyWith(t, policy.Plugin{Name: "rate", Enabled: true})},
+		Policies: policies(t, polSpec{slug: "rate", enabled: true}),
 		Response: &infracontext.ResponseContext{},
 	})
 	require.Error(t, err)
@@ -203,17 +225,17 @@ func TestExecutor_RunStage_ParallelBatchRunsConcurrently(t *testing.T) {
 	reg := newRegistry(t, mk("a"), mk("b"), mk("c"))
 	exec := NewExecutor(reg, nil)
 
-	pol := policyWith(t,
-		policy.Plugin{Name: "a", Enabled: true, Priority: 1, Parallel: true},
-		policy.Plugin{Name: "b", Enabled: true, Priority: 1, Parallel: true},
-		policy.Plugin{Name: "c", Enabled: true, Priority: 1, Parallel: true},
+	pols := policies(t,
+		polSpec{slug: "a", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "b", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "c", enabled: true, priority: 1, parallel: true},
 	)
 
 	resp := &infracontext.ResponseContext{}
 	start := time.Now()
 	_, err := exec.RunStage(context.Background(), StageInput{
 		Stage:    policy.StagePreRequest,
-		Policies: []*policy.Policy{pol},
+		Policies: pols,
 		Response: resp,
 	})
 	elapsed := time.Since(start)
@@ -232,8 +254,11 @@ func TestExecutor_RunStage_MergesHeadersInOrder(t *testing.T) {
 
 	resp := &infracontext.ResponseContext{}
 	_, err := exec.RunStage(context.Background(), StageInput{
-		Stage:    policy.StagePreResponse,
-		Policies: []*policy.Policy{policyWith(t, policy.Plugin{Name: "a", Enabled: true, Priority: 1}, policy.Plugin{Name: "b", Enabled: true, Priority: 2})},
+		Stage: policy.StagePreResponse,
+		Policies: policies(t,
+			polSpec{slug: "a", enabled: true, priority: 1},
+			polSpec{slug: "b", enabled: true, priority: 2},
+		),
 		Response: resp,
 	})
 	require.NoError(t, err)
@@ -249,7 +274,7 @@ func TestExecutor_RunStage_RecordsPluginSpanOnTrace(t *testing.T) {
 	ctx := trace.NewContext(context.Background(), rt)
 	_, err := exec.RunStage(ctx, StageInput{
 		Stage:    policy.StagePreRequest,
-		Policies: []*policy.Policy{policyWith(t, policy.Plugin{Name: "rate", Enabled: true})},
+		Policies: policies(t, polSpec{slug: "rate", enabled: true}),
 		Response: &infracontext.ResponseContext{},
 	})
 	require.NoError(t, err)

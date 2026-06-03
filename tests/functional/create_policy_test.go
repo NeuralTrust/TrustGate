@@ -27,28 +27,20 @@ func TestCreatePolicy_Success(t *testing.T) {
 	assert.NotEmpty(t, body["created_at"])
 	assert.NotEmpty(t, body["updated_at"])
 
-	plugins, ok := body["plugins"].([]any)
-	require.True(t, ok, "plugins missing or wrong type: %v", body)
-	require.Len(t, plugins, 1)
-	plugin, _ := plugins[0].(map[string]any)
-	assert.Equal(t, "rate_limiter", plugin["name"])
-	assert.Equal(t, "pre_request", plugin["stage"])
-	assert.Equal(t, true, plugin["enabled"])
+	assert.Equal(t, "rate_limiter", body["slug"])
+	assert.Equal(t, true, body["enabled"])
 }
 
-func TestCreatePolicy_DefaultsPluginsToEmptyArray(t *testing.T) {
+func TestCreatePolicy_ValidationMissingSlug(t *testing.T) {
 	defer Track(t, "CreatePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw2")})
 
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gwID)
 	status, body := sendRequest(t, http.MethodPost, url, nil, map[string]any{
-		"name": uniqueName("pol-empty"),
+		"name": uniqueName("pol-noslug"),
 	})
-	require.Equal(t, http.StatusCreated, status, "body=%v", body)
-
-	plugins, ok := body["plugins"].([]any)
-	require.True(t, ok, "plugins missing: %v", body)
-	assert.Len(t, plugins, 0)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
 }
 
 func TestCreatePolicy_Conflict(t *testing.T) {
@@ -91,13 +83,9 @@ func TestCreatePolicy_ValidationUnknownStage(t *testing.T) {
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw5")})
 
 	payload := map[string]any{
-		"name": uniqueName("pol-stage"),
-		"plugins": []map[string]any{
-			{
-				"name":  "rate_limiter",
-				"stage": "bogus_stage",
-			},
-		},
+		"name":   uniqueName("pol-stage"),
+		"slug":   "rate_limiter",
+		"stages": []string{"bogus_stage"},
 	}
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gwID)
 	status, body := sendRequest(t, http.MethodPost, url, nil, payload)

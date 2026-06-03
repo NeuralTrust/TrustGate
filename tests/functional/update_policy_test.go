@@ -22,22 +22,23 @@ func TestUpdatePolicy_Success(t *testing.T) {
 	updated := uniqueName("polu-to")
 	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s", AdminURL, gwID, id)
 	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{
-		"name": updated,
-		"plugins": []map[string]any{
-			{"name": "cors", "stage": "post_response", "enabled": false},
+		"name":    updated,
+		"slug":    "cors",
+		"enabled": false,
+		"settings": map[string]any{
+			"allowed_origins": []string{"https://example.com"},
+			"allowed_methods": []string{"GET"},
 		},
 	})
 	require.Equal(t, http.StatusOK, status, "body=%v", body)
 	assert.Equal(t, updated, body["name"])
-
-	plugins, _ := body["plugins"].([]any)
-	require.Len(t, plugins, 1)
-	plugin, _ := plugins[0].(map[string]any)
-	assert.Equal(t, "cors", plugin["name"])
+	assert.Equal(t, "cors", body["slug"])
+	assert.Equal(t, false, body["enabled"])
 
 	status, body = sendRequest(t, http.MethodGet, url, nil, nil)
 	require.Equal(t, http.StatusOK, status)
 	assert.Equal(t, updated, body["name"])
+	assert.Equal(t, "cors", body["slug"])
 }
 
 func TestUpdatePolicy_NotFound(t *testing.T) {

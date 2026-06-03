@@ -15,7 +15,7 @@ func TestPluginE2E_RequestSizeLimiter_ByteLimit(t *testing.T) {
 
 	up := newJSONUpstream(t, "size-upstream")
 	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("request_size_limiter", "pre_request", map[string]any{
+		policyPlugin("request_size_limiter", map[string]any{
 			"allowed_payload_size": 1000,
 			"size_unit":            "bytes",
 		}),
@@ -46,7 +46,7 @@ func TestPluginE2E_RequestSizeLimiter_CharLimit(t *testing.T) {
 
 	up := newJSONUpstream(t, "char-upstream")
 	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("request_size_limiter", "pre_request", map[string]any{
+		policyPlugin("request_size_limiter", map[string]any{
 			"allowed_payload_size":  10,
 			"size_unit":             "megabytes",
 			"max_chars_per_request": 10,

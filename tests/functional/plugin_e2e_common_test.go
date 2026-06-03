@@ -35,38 +35,42 @@ func newUsageUpstream(t *testing.T, marker string, totalTokens int) *fakeUpstrea
 	return u
 }
 
-// policyPlugin builds a single enabled plugin entry for a policy payload. The
-// stage only has to be a valid enum: the executor drives each plugin at the
-// stages it declares via Stages(), ignoring the configured stage.
-func policyPlugin(name, stage string, settings map[string]any) map[string]any {
+// policyPlugin builds a single enabled policy payload for the given plugin
+// slug. Stages are left to the plugin: the executor drives each plugin at its
+// mandatory stages, so callers do not need to select any.
+func policyPlugin(slug string, settings map[string]any) map[string]any {
 	return map[string]any{
-		"name":     name,
+		"slug":     slug,
 		"enabled":  true,
-		"stage":    stage,
 		"priority": 0,
 		"settings": settings,
 	}
 }
 
-// setupPolicyRoute wires a full proxy route guarded by a policy: a gateway, one
-// OpenAI-compatible backend pointing at up, a policy carrying pluginEntries and
-// a consumer that references both. It returns the gateway id and the routing
-// path to POST against the proxy plane.
+// setupPolicyRoute wires a full proxy route guarded by one or more policies: a
+// gateway, one OpenAI-compatible backend pointing at up, a policy per entry and
+// a consumer that references them all. It returns the gateway id and the
+// routing path to POST against the proxy plane.
 func setupPolicyRoute(t *testing.T, up *fakeUpstream, pluginEntries ...map[string]any) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("plugin-gw")})
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
-	policyID := CreatePolicy(t, gatewayID, map[string]any{
-		"name":    uniqueName("pol"),
-		"plugins": pluginEntries,
-	})
+
+	policyIDs := make([]string, 0, len(pluginEntries))
+	for _, entry := range pluginEntries {
+		payload := map[string]any{"name": uniqueName("pol")}
+		for k, v := range entry {
+			payload[k] = v
+		}
+		policyIDs = append(policyIDs, CreatePolicy(t, gatewayID, payload))
+	}
 
 	path := "/v1/" + uniqueName("route")
 	CreateConsumer(t, gatewayID, map[string]any{
 		"name":         uniqueName("cons"),
 		"path":         path,
 		"registry_ids": []string{backendID},
-		"policy_ids":   []string{policyID},
+		"policy_ids":   policyIDs,
 	})
 	return gatewayID, path
 }

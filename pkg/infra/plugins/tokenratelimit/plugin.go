@@ -1,6 +1,3 @@
-// Package tokenratelimit implements a Redis fixed-window token budget limiter.
-// It checks the consumed-token counter at PreRequest and records the tokens an
-// upstream response actually used at PostResponse.
 package tokenratelimit
 
 import (
@@ -54,7 +51,11 @@ func New(redisClient *redis.Client, registry *adapter.Registry) *Plugin {
 
 func (p *Plugin) Name() string { return PluginName }
 
-func (p *Plugin) Stages() []policy.Stage {
+func (p *Plugin) MandatoryStages() []policy.Stage {
+	return []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}
+}
+
+func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}
 }
 

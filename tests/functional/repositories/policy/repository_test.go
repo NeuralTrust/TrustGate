@@ -72,15 +72,8 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.Gate
 
 func validPolicy(t *testing.T, gwID ids.GatewayID, name string) *domain.Policy {
 	t.Helper()
-	p, err := domain.NewPolicy(gwID, name, domain.Plugins{
-		{
-			Name:     "rate_limiter",
-			Enabled:  true,
-			Stage:    domain.StagePreRequest,
-			Priority: 0,
-			Settings: map[string]interface{}{"limit": 100},
-		},
-	})
+	p, err := domain.NewPolicy(gwID, name, "rate_limiter", true, 0, false,
+		map[string]any{"limit": 100}, []domain.Stage{domain.StagePreRequest})
 	if err != nil {
 		t.Fatalf("policy domain.NewPolicy: %v", err)
 	}
@@ -104,20 +97,23 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.ID != p.ID || got.GatewayID != gwID || got.Name != "default" {
 		t.Fatalf("FindByID returned %+v", got)
 	}
-	if len(got.Plugins) != 1 || got.Plugins[0].Name != "rate_limiter" {
-		t.Fatalf("Plugins round-trip lost data: %+v", got.Plugins)
+	if got.Slug != "rate_limiter" {
+		t.Fatalf("Slug round-trip lost data: %+v", got)
 	}
-	if got.Plugins[0].Stage != domain.StagePreRequest {
-		t.Fatalf("Plugin stage = %q, want %q", got.Plugins[0].Stage, domain.StagePreRequest)
+	if len(got.Stages) != 1 || got.Stages[0] != domain.StagePreRequest {
+		t.Fatalf("Stages round-trip lost data: %+v", got.Stages)
+	}
+	if got.Settings["limit"] != float64(100) {
+		t.Fatalf("Settings round-trip lost data: %+v", got.Settings)
 	}
 }
 
-func TestRepository_SaveAndFindByID_EmptyPlugins(t *testing.T) {
+func TestRepository_SaveAndFindByID_EmptySettings(t *testing.T) {
 	r, gw, _ := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, gw, "pgw-empty")
 
-	p, err := domain.NewPolicy(gwID, "empty", nil)
+	p, err := domain.NewPolicy(gwID, "empty", "cors", true, 0, false, nil, nil)
 	if err != nil {
 		t.Fatalf("domain.NewPolicy: %v", err)
 	}
@@ -128,11 +124,11 @@ func TestRepository_SaveAndFindByID_EmptyPlugins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
-	if got.Plugins == nil {
-		t.Fatal("Plugins should be a non-nil empty slice")
+	if len(got.Settings) != 0 {
+		t.Fatalf("Settings len = %d, want 0", len(got.Settings))
 	}
-	if len(got.Plugins) != 0 {
-		t.Fatalf("len = %d, want 0", len(got.Plugins))
+	if len(got.Stages) != 0 {
+		t.Fatalf("Stages len = %d, want 0", len(got.Stages))
 	}
 }
 
@@ -185,9 +181,9 @@ func TestRepository_Update(t *testing.T) {
 	}
 
 	p.Name = "alpha-renamed"
-	p.Plugins = domain.Plugins{
-		{Name: "cors", Enabled: false, Stage: domain.StagePostResponse},
-	}
+	p.Slug = "cors"
+	p.Enabled = false
+	p.Stages = []domain.Stage{domain.StagePostResponse}
 	p.UpdatedAt = time.Now().UTC()
 	if err := r.Update(ctx, p); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -200,8 +196,11 @@ func TestRepository_Update(t *testing.T) {
 	if got.Name != "alpha-renamed" {
 		t.Fatalf("Name = %q, want alpha-renamed", got.Name)
 	}
-	if len(got.Plugins) != 1 || got.Plugins[0].Name != "cors" {
-		t.Fatalf("Plugins not persisted: %+v", got.Plugins)
+	if got.Slug != "cors" || got.Enabled {
+		t.Fatalf("update not persisted: %+v", got)
+	}
+	if len(got.Stages) != 1 || got.Stages[0] != domain.StagePostResponse {
+		t.Fatalf("Stages not persisted: %+v", got.Stages)
 	}
 }
 

@@ -518,19 +518,8 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.CreatePolicyRequest:
     properties:
-      name:
-        type: string
-      plugins:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest'
-        type: array
-    type: object
-  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest:
-    properties:
       enabled:
         type: boolean
-      id:
-        type: string
       name:
         type: string
       parallel:
@@ -538,18 +527,33 @@ definitions:
       priority:
         type: integer
       settings:
-        additionalProperties: true
+        additionalProperties: {}
         type: object
-      stage:
+      slug:
         type: string
+      stages:
+        items:
+          type: string
+        type: array
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.UpdatePolicyRequest:
     properties:
+      enabled:
+        type: boolean
       name:
         type: string
-      plugins:
+      parallel:
+        type: boolean
+      priority:
+        type: integer
+      settings:
+        additionalProperties: {}
+        type: object
+      slug:
+        type: string
+      stages:
         items:
-          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest'
+          type: string
         type: array
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.ListPolicyResponse:
@@ -565,10 +569,14 @@ definitions:
       total:
         type: integer
     type: object
-  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PluginResponse:
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse:
     properties:
+      created_at:
+        type: string
       enabled:
         type: boolean
+      gateway_id:
+        type: string
       id:
         type: string
       name:
@@ -578,24 +586,13 @@ definitions:
       priority:
         type: integer
       settings:
-        additionalProperties: true
+        additionalProperties: {}
         type: object
-      stage:
+      slug:
         type: string
-    type: object
-  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse:
-    properties:
-      created_at:
-        type: string
-      gateway_id:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-      plugins:
+      stages:
         items:
-          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PluginResponse'
+          type: string
         type: array
       updated_at:
         type: string

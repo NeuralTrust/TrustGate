@@ -12,16 +12,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Executor runs the plugin chain for a single stage against a request/response
-// pair, applying every plugin Result deterministically and surfacing the first
-// rejection (PluginError) or short-circuit (StopUpstream).
-//
 //go:generate mockery --name=Executor --dir=. --output=./mocks --filename=executor_mock.go --case=underscore --with-expecter
 type Executor interface {
 	RunStage(ctx context.Context, in StageInput) (*StageOutcome, error)
 }
 
-// StageInput is the per-stage execution request.
 type StageInput struct {
 	Stage    policy.Stage
 	Policies []*policy.Policy
@@ -29,8 +24,6 @@ type StageInput struct {
 	Response *infracontext.ResponseContext
 }
 
-// StageOutcome reports whether the stage short-circuited and the synthetic
-// response to relay when it did.
 type StageOutcome struct {
 	ShortCircuit bool
 	StatusCode   int

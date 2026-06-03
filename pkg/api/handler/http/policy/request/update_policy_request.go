@@ -9,8 +9,13 @@ import (
 )
 
 type UpdatePolicyRequest struct {
-	Name    string          `json:"name"`
-	Plugins []PluginRequest `json:"plugins,omitempty"`
+	Name     string         `json:"name"`
+	Slug     string         `json:"slug"`
+	Enabled  bool           `json:"enabled"`
+	Priority int            `json:"priority"`
+	Parallel bool           `json:"parallel,omitempty"`
+	Settings map[string]any `json:"settings,omitempty"`
+	Stages   []string       `json:"stages,omitempty"`
 }
 
 func (r UpdatePolicyRequest) Validate() error {
@@ -20,13 +25,12 @@ func (r UpdatePolicyRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
+	if strings.TrimSpace(r.Slug) == "" {
+		return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)
+	}
 	return nil
 }
 
-func (r UpdatePolicyRequest) ToPlugins() domain.Plugins {
-	out := make(domain.Plugins, 0, len(r.Plugins))
-	for _, p := range r.Plugins {
-		out = append(out, p.ToDomain())
-	}
-	return out
+func (r UpdatePolicyRequest) ToStages() []domain.Stage {
+	return toStages(r.Stages)
 }

@@ -20,7 +20,7 @@ func TestPluginE2E_TokenRateLimiter(t *testing.T) {
 
 	up := newUsageUpstream(t, "token-upstream", 8)
 	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("token_rate_limiter", "pre_request", map[string]any{
+		policyPlugin("token_rate_limiter", map[string]any{
 			"window": map[string]any{"unit": "minute", "max": 100},
 		}),
 	)
@@ -38,7 +38,7 @@ func TestPluginE2E_TokenRateLimiter_WithIdentifierHeader(t *testing.T) {
 
 	up := newUsageUpstream(t, "token-hdr-upstream", 8)
 	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("token_rate_limiter", "pre_request", map[string]any{
+		policyPlugin("token_rate_limiter", map[string]any{
 			"identifier_header": "X-Client-ID",
 			"window":            map[string]any{"unit": "hour", "max": 1000},
 		}),

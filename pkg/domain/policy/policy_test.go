@@ -9,20 +9,11 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
-func validPlugin() Plugin {
-	return Plugin{
-		Name:     "rate_limiter",
-		Enabled:  true,
-		Stage:    StagePreRequest,
-		Priority: 0,
-		Settings: map[string]interface{}{"limit": 100},
-	}
-}
-
 func TestPolicy_New_HappyPath(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	p, err := NewPolicy(gwID, "default", Plugins{validPlugin()})
+	p, err := NewPolicy(gwID, "default", "rate_limiter", true, 10, false,
+		map[string]any{"limit": 100}, []Stage{StagePreRequest})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -32,25 +23,25 @@ func TestPolicy_New_HappyPath(t *testing.T) {
 	if p.GatewayID != gwID {
 		t.Fatalf("GatewayID = %s, want %s", p.GatewayID, gwID)
 	}
-	if len(p.Plugins) != 1 {
-		t.Fatalf("Plugins len = %d, want 1", len(p.Plugins))
+	if p.Slug != "rate_limiter" {
+		t.Fatalf("Slug = %s, want rate_limiter", p.Slug)
+	}
+	if !p.Enabled || p.Priority != 10 {
+		t.Fatalf("unexpected enabled/priority: %+v", p)
 	}
 	if p.CreatedAt.IsZero() || p.UpdatedAt.IsZero() {
 		t.Fatal("timestamps are zero")
 	}
 }
 
-func TestPolicy_New_DefaultsPluginsToEmptySlice(t *testing.T) {
+func TestPolicy_New_AllowsEmptyStages(t *testing.T) {
 	t.Parallel()
-	p, err := NewPolicy(ids.New[ids.GatewayKind](), "no-plugins", nil)
+	p, err := NewPolicy(ids.New[ids.GatewayKind](), "no-stages", "cors", true, 0, false, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if p.Plugins == nil {
-		t.Fatal("Plugins should be a non-nil empty slice")
-	}
-	if len(p.Plugins) != 0 {
-		t.Fatalf("len = %d, want 0", len(p.Plugins))
+	if len(p.Stages) != 0 {
+		t.Fatalf("Stages len = %d, want 0", len(p.Stages))
 	}
 }
 
@@ -67,30 +58,19 @@ func TestPolicy_Validate_Rejects(t *testing.T) {
 			wantErr: ErrInvalidName,
 		},
 		{
+			name:    "empty slug",
+			mutate:  func(p *Policy) { p.Slug = "" },
+			wantErr: ErrInvalidSlug,
+		},
+		{
 			name:    "nil gateway id",
 			mutate:  func(p *Policy) { p.GatewayID = ids.GatewayID{} },
 			wantErr: ErrInvalidGatewayID,
 		},
 		{
-			name: "plugin without name",
-			mutate: func(p *Policy) {
-				p.Plugins = Plugins{{Stage: StagePreRequest}}
-			},
-			wantErr: ErrInvalidPlugin,
-		},
-		{
-			name: "plugin with unknown stage",
-			mutate: func(p *Policy) {
-				p.Plugins = Plugins{{Name: "x", Stage: Stage("bogus")}}
-			},
+			name:    "unknown stage",
+			mutate:  func(p *Policy) { p.Stages = []Stage{Stage("bogus")} },
 			wantErr: ErrInvalidStage,
-		},
-		{
-			name: "duplicate plugin name + stage",
-			mutate: func(p *Policy) {
-				p.Plugins = Plugins{validPlugin(), validPlugin()}
-			},
-			wantErr: ErrDuplicatePlugin,
 		},
 	}
 	for _, tc := range tests {
@@ -101,7 +81,7 @@ func TestPolicy_Validate_Rejects(t *testing.T) {
 				ID:        ids.New[ids.PolicyKind](),
 				GatewayID: ids.New[ids.GatewayKind](),
 				Name:      "x",
-				Plugins:   Plugins{validPlugin()},
+				Slug:      "rate_limiter",
 			}
 			tc.mutate(p)
 			err := p.Validate()
@@ -124,11 +104,12 @@ func TestPolicy_Validate_AcceptsAllKnownStages(t *testing.T) {
 		ID:        ids.New[ids.PolicyKind](),
 		GatewayID: ids.New[ids.GatewayKind](),
 		Name:      "all-stages",
-		Plugins: Plugins{
-			{Name: "a", Stage: StagePreRequest},
-			{Name: "b", Stage: StagePostRequest},
-			{Name: "c", Stage: StagePreResponse},
-			{Name: "d", Stage: StagePostResponse},
+		Slug:      "x",
+		Stages: []Stage{
+			StagePreRequest,
+			StagePostRequest,
+			StagePreResponse,
+			StagePostResponse,
 		},
 	}
 	if err := p.Validate(); err != nil {
@@ -141,72 +122,15 @@ func TestPolicy_Rehydrate(t *testing.T) {
 	id := ids.New[ids.PolicyKind]()
 	gwID := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
-	p := Rehydrate(id, gwID, "x", Plugins{validPlugin()}, now, now)
+	p := Rehydrate(id, gwID, "x", "cors", true, 5, true,
+		map[string]any{"k": "v"}, []Stage{StagePreRequest}, now, now)
 	if p.ID != id || p.GatewayID != gwID {
 		t.Fatal("identity mismatch after rehydrate")
 	}
-	if len(p.Plugins) != 1 {
-		t.Fatalf("Plugins len = %d, want 1", len(p.Plugins))
+	if p.Slug != "cors" || !p.Enabled || p.Priority != 5 || !p.Parallel {
+		t.Fatalf("unexpected fields after rehydrate: %+v", p)
 	}
 	if !p.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")
-	}
-}
-
-func TestPlugins_ValueAndScan(t *testing.T) {
-	t.Parallel()
-	original := Plugins{
-		{Name: "a", Stage: StagePreRequest, Priority: 1, Enabled: true, Settings: map[string]interface{}{"k": "v"}},
-		{Name: "b", Stage: StagePostResponse, Priority: 2},
-	}
-	v, err := original.Value()
-	if err != nil {
-		t.Fatalf("Value: %v", err)
-	}
-	bytes, ok := v.([]byte)
-	if !ok {
-		t.Fatalf("Value returned %T, want []byte", v)
-	}
-	var rt Plugins
-	if err := rt.Scan(bytes); err != nil {
-		t.Fatalf("Scan: %v", err)
-	}
-	if len(rt) != len(original) {
-		t.Fatalf("len = %d, want %d", len(rt), len(original))
-	}
-	for i := range original {
-		if rt[i].Name != original[i].Name || rt[i].Stage != original[i].Stage {
-			t.Fatalf("mismatch at %d: %+v vs %+v", i, rt[i], original[i])
-		}
-	}
-}
-
-func TestPlugins_Scan_Nil(t *testing.T) {
-	t.Parallel()
-	var ps Plugins
-	if err := ps.Scan(nil); err != nil {
-		t.Fatalf("Scan(nil): %v", err)
-	}
-	if ps == nil {
-		t.Fatal("Plugins should be a non-nil empty slice")
-	}
-	if len(ps) != 0 {
-		t.Fatalf("len = %d, want 0", len(ps))
-	}
-}
-
-func TestPlugins_Value_EmptyReturnsEmptyArray(t *testing.T) {
-	t.Parallel()
-	var ps Plugins
-	v, err := ps.Value()
-	if err != nil {
-		t.Fatalf("Value: %v", err)
-	}
-	bytes, ok := v.([]byte)
-	if !ok {
-		t.Fatalf("Value returned %T, want []byte", v)
-	}
-	if string(bytes) != "[]" {
-		t.Fatalf("got %q, want []", string(bytes))
 	}
 }

@@ -368,8 +368,11 @@ behind "for later".
 - One PR per shippable slice; the team budget is **400 changed lines**.
   See `_base.mdc` "PR review budget" and `chained-pr` skill if you need to
   split.
-- The Linear issue id (`RUN-###`) goes in the PR body. The implementation
-  branch comes from `gitBranchName` on the Linear issue.
+- The Linear issue id (`RUN-###`) goes in the PR body.
+- Branch names follow `type/short-description`, where `type` is one of
+  `feat|fix|refactor|test|chore|docs` (e.g. `feat/admin-crud-api`,
+  `fix/cors-max-age`). Do NOT use Linear's `gitBranchName` (it prefixes the
+  author's username); derive the branch from the change type instead.
 
 ## 14. References
 
