@@ -5,23 +5,23 @@ metadata:
 resources:
 - ../../base
 - secretproviderclass/agentgateway-secrets.yaml
+# - patches/hpa-patch.yaml
 patchesStrategicMerge:
 - patches/replicas-patch.yaml
 - patches/resources-patch.yaml
-# - patches/hpa-patch.yaml
 - patches/pdb-patch.yaml
 - patches/httproute-patch.yaml
 - patches/sa-annotation-patch.yaml
 commonLabels:
-  environment: dev
   app.kubernetes.io/managed-by: kustomize
+  environment: dev
 namespace: agentgateway
 images:
 - name: agentgateway
   newName: europe-west1-docker.pkg.dev/neuraltrust-app-dev/nt-docker/agentgateway
-  newTag: 17beb0d18c5710c4427f9a9ec5310fd035fd0b34
+  newTag: 9ae50a5c0f3976b0bbb97781ccb4fe59c6005dfd
 configMapGenerator:
-- name: agentgateway-config
+- behavior: create
   envs:
   - config.env
-  behavior: create
+  name: agentgateway-config
