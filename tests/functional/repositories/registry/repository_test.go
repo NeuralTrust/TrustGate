@@ -1,3 +1,5 @@
+//go:build functional
+
 package registry_test
 
 import (

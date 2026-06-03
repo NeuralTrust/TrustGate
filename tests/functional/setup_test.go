@@ -1,3 +1,5 @@
+//go:build functional
+
 // Package functional_test boots the admin server as a real process
 // against a dedicated Postgres database and exercises it through HTTP.
 // Each test file in this package is a black-box smoke test of the
