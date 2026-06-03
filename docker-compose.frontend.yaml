@@ -1,0 +1,22 @@
+name: agentgateway
+
+# Runs the admin dashboard (Next.js) alongside the gateway.
+# Combine with the base and api compose files:
+#   docker compose -f docker-compose.yaml -f docker-compose.api.yaml -f docker-compose.frontend.yaml up -d --build
+# The dashboard talks to the admin service over the shared compose network and
+# signs admin JWTs with SERVER_SECRET_KEY (loaded from .env, same as the servers).
+
+services:
+  frontend:
+    image: agentgateway-dashboard:local
+    build:
+      context: ./frontend
+    env_file:
+      - .env
+    environment:
+      ADMIN_API_URL: http://admin:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - admin
+    restart: unless-stopped

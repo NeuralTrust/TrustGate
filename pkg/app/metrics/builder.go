@@ -64,11 +64,13 @@ func (b *Builder) Build(
 
 	totalMs := endTime.Sub(startTime).Milliseconds()
 	providerMs := sumAttemptLatency(attempts)
+	routingMs := maxInt64(0, totalMs-providerMs-pluginsMs)
 	evt.Latency = events.Latency{
 		TotalMs:    totalMs,
 		ProviderMs: providerMs,
 		PluginsMs:  pluginsMs,
-		GatewayMs:  maxInt64(0, totalMs-providerMs-pluginsMs),
+		RoutingMs:  routingMs,
+		GatewayMs:  pluginsMs + routingMs,
 	}
 
 	b.fillRequest(evt, req, served)

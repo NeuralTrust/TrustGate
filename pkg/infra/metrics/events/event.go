@@ -87,6 +87,7 @@ type Latency struct {
 	TotalMs    int64 `json:"total_ms"`
 	ProviderMs int64 `json:"provider_ms"`
 	PluginsMs  int64 `json:"plugins_ms"`
+	RoutingMs  int64 `json:"routing_ms"`
 	GatewayMs  int64 `json:"gateway_ms"`
 }
 

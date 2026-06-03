@@ -127,7 +127,8 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	assert.Equal(t, int64(320), evt.Latency.TotalMs)
 	assert.Equal(t, int64(300), evt.Latency.ProviderMs)
 	assert.Equal(t, int64(6), evt.Latency.PluginsMs)
-	assert.Equal(t, int64(14), evt.Latency.GatewayMs)
+	assert.Equal(t, int64(14), evt.Latency.RoutingMs)
+	assert.Equal(t, int64(20), evt.Latency.GatewayMs)
 
 	require.Len(t, evt.Attempts, 1)
 	assert.Equal(t, "openai", evt.Attempts[0].Provider)
