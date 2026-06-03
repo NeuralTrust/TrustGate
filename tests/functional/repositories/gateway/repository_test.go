@@ -1,3 +1,5 @@
+//go:build functional
+
 package gateway_test
 
 import (

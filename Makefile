@@ -57,11 +57,11 @@ test-cover: ## Run unit tests with coverage profile
 
 test-functional: ## Run functional tests against a real admin server (requires Postgres on localhost:5432)
 	@$(info $(M) Running functional tests ...)
-	go test -v -count=1 -timeout=120s ./tests/functional/...
+	go test -tags functional -v -count=1 -timeout=120s ./tests/functional/...
 
 test-repositories: ## Run repository integration tests (requires PG_TEST_URL pointing at a disposable database)
 	@$(info $(M) Running repository integration tests ...)
-	go test -v -count=1 -p 1 -timeout=120s ./tests/functional/repositories/...
+	go test -tags functional -v -count=1 -p 1 -timeout=120s ./tests/functional/repositories/...
 
 lint: ## Run golangci-lint
 	@$(info $(M) Running golangci-lint ...)
