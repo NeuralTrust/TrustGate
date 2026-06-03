@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 )
 
 type Registry struct {
@@ -92,6 +93,9 @@ func (b *Registry) Validate() error {
 	}
 	if b.Provider == "" {
 		return fmt.Errorf("%w: provider is required", ErrInvalidRegistry)
+	}
+	if !providers.IsValidProvider(b.Provider) {
+		return fmt.Errorf("%w: unsupported provider %q", ErrInvalidRegistry, b.Provider)
 	}
 	if b.Auth == nil {
 		return fmt.Errorf("%w: auth is required", ErrInvalidRegistry)

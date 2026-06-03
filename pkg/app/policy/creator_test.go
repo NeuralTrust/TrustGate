@@ -32,6 +32,7 @@ func newRegistryMock(t *testing.T, stagesErr error) *pluginmocks.Registry {
 	t.Helper()
 	reg := pluginmocks.NewRegistry(t)
 	reg.EXPECT().ValidateStages(mock.Anything, mock.Anything).Return(stagesErr).Maybe()
+	reg.EXPECT().Validate(mock.Anything, mock.Anything).Return(nil).Maybe()
 	return reg
 }
 
@@ -51,7 +52,7 @@ func TestCreator_Create_Success(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
-			return p.GatewayID == gwID && p.Name == "default" && p.Slug == "rate_limiter"
+			return p.GatewayID == gwID && p.Name == "default" && p.Slug == "rate_limiter" && !p.Global
 		})).
 		Return(nil).
 		Once()
@@ -108,5 +109,20 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	_, err := creator.Create(context.Background(), in)
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestCreator_Create_DefaultsToNonGlobal(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+	creator := apppolicy.NewCreator(repo, newRegistryMock(t, nil), newCacheManager(), newTestLogger())
+
+	p, err := creator.Create(context.Background(), validCreateInput(ids.New[ids.GatewayKind]()))
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if p.Global {
+		t.Fatal("a freshly-created policy must not be global")
 	}
 }

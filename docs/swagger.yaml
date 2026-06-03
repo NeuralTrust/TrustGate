@@ -1,18 +1,7 @@
 basePath: /
 definitions:
-  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.APIKeyConfigRequest:
-    properties:
-      in:
-        type: string
-      key:
-        type: string
-      name:
-        type: string
-    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest:
     properties:
-      api_key:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.APIKeyConfigRequest'
       mtls:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest'
       oauth2:
@@ -82,18 +71,11 @@ definitions:
       type:
         type: string
     type: object
-  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.APIKeyConfigResponse:
-    properties:
-      in:
-        type: string
-      key:
-        description: '#nosec G117'
-        type: string
-      name:
-        type: string
-    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse:
     properties:
+      api_key:
+        description: '#nosec G101'
+        type: string
       config:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse'
       created_at:
@@ -113,8 +95,6 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse:
     properties:
-      api_key:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.APIKeyConfigResponse'
       mtls:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse'
       oauth2:
@@ -241,34 +221,16 @@ definitions:
         type: boolean
       algorithm:
         type: string
-      auth_ids:
-        items:
-          type: string
-        type: array
       embedding_config:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest'
-      fallback:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest'
       headers:
         additionalProperties:
           type: string
         type: object
-      model_policies:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
-        type: array
       name:
         type: string
       path:
         type: string
-      policy_ids:
-        items:
-          type: string
-        type: array
-      registry_ids:
-        items:
-          type: string
-        type: array
       type:
         type: string
     type: object
@@ -322,10 +284,6 @@ definitions:
         type: boolean
       algorithm:
         type: string
-      auth_ids:
-        items:
-          type: string
-        type: array
       embedding_config:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest'
       fallback:
@@ -342,14 +300,6 @@ definitions:
         type: string
       path:
         type: string
-      policy_ids:
-        items:
-          type: string
-        type: array
-      registry_ids:
-        items:
-          type: string
-        type: array
       type:
         type: string
     type: object
@@ -385,10 +335,6 @@ definitions:
         type: string
       path:
         type: string
-      policy_ids:
-        items:
-          type: string
-        type: array
       registry_ids:
         items:
           type: string
@@ -571,12 +517,18 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse:
     properties:
+      consumer_ids:
+        items:
+          type: string
+        type: array
       created_at:
         type: string
       enabled:
         type: boolean
       gateway_id:
         type: string
+      global:
+        type: boolean
       id:
         type: string
       name:
@@ -1514,6 +1466,269 @@ paths:
       summary: Update a consumer
       tags:
       - consumers
+  /v1/gateways/{gateway_id}/consumers/{id}/auths/{auth_id}:
+    delete:
+      description: Removes the association between an auth credential and a consumer
+        (idempotent).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Auth id
+        format: uuid
+        in: path
+        name: auth_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Detach an auth from a consumer
+      tags:
+      - consumers
+    post:
+      description: Associates an auth credential with a consumer (idempotent).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Auth id
+        format: uuid
+        in: path
+        name: auth_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Attach an auth to a consumer
+      tags:
+      - consumers
+  /v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}:
+    delete:
+      description: Removes the association between a policy and a consumer (idempotent).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Policy id
+        format: uuid
+        in: path
+        name: policy_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Detach a policy from a consumer
+      tags:
+      - consumers
+    post:
+      description: Associates a policy with a consumer (idempotent). Editing the policy
+        later affects every consumer it is attached to.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Policy id
+        format: uuid
+        in: path
+        name: policy_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Attach a policy to a consumer
+      tags:
+      - consumers
+  /v1/gateways/{gateway_id}/consumers/{id}/registries/{registry_id}:
+    delete:
+      description: Removes the association between a registry and a consumer (idempotent).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: registry_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Detach a registry from a consumer
+      tags:
+      - consumers
+    post:
+      description: Associates a registry with a consumer (idempotent).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: registry_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Attach a registry to a consumer
+      tags:
+      - consumers
   /v1/gateways/{gateway_id}/policies:
     get:
       description: Returns a paginated list of policies in a gateway.
@@ -1731,6 +1946,86 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a policy
+      tags:
+      - policies
+  /v1/gateways/{gateway_id}/policies/{id}/global:
+    delete:
+      description: Demotes a global policy back to consumer-scoped (applies only to
+        linked consumers).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Policy id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Clear a policy's global scope
+      tags:
+      - policies
+    post:
+      description: Promotes a policy to gateway-wide scope (applies to every consumer).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Policy id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Mark a policy as global
       tags:
       - policies
   /v1/gateways/{gateway_id}/registries:

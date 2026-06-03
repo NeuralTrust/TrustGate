@@ -14,28 +14,29 @@ type chainEntry struct {
 }
 
 func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage) []chainEntry {
-	entries := make([]chainEntry, 0)
-	seen := make(map[string]struct{})
+	entries := make([]chainEntry, 0, len(policies))
+	seen := make(map[string]struct{}, len(policies))
 
 	for _, pol := range policies {
 		if pol == nil || !pol.Enabled {
 			continue
 		}
-		if _, dup := seen[pol.ID.String()]; dup {
+		id := pol.ID.String()
+		if _, dup := seen[id]; dup {
 			continue
 		}
 		plugin, ok := reg.Get(pol.Slug)
 		if !ok {
 			continue
 		}
-		if !containsStage(EffectiveStages(plugin, pol.Stages), stage) {
+		if !isEffectiveStage(plugin, pol.Stages, stage) {
 			continue
 		}
-		seen[pol.ID.String()] = struct{}{}
+		seen[id] = struct{}{}
 		entries = append(entries, chainEntry{
 			plugin: plugin,
 			config: policy.PluginConfig{
-				ID:       pol.ID.String(),
+				ID:       id,
 				Slug:     pol.Slug,
 				Name:     pol.Name,
 				Settings: pol.Settings,
@@ -49,6 +50,20 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 		return entries[i].priority < entries[j].priority
 	})
 	return entries
+}
+
+func isEffectiveStage(p Plugin, selected []policy.Stage, stage policy.Stage) bool {
+	for _, s := range p.MandatoryStages() {
+		if s == stage {
+			return true
+		}
+	}
+	for _, s := range selected {
+		if s == stage {
+			return containsStage(p.SupportedStages(), stage)
+		}
+	}
+	return false
 }
 
 func parallelBatch(entries []chainEntry, i int) []chainEntry {

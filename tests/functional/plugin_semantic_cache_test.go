@@ -35,7 +35,7 @@ func TestPluginE2E_SemanticCache(t *testing.T) {
 	}
 
 	up := newJSONUpstream(t, "semantic-cache-answer")
-	gatewayID, path := setupPolicyRoute(t, up,
+	apiKey, path := setupPolicyRoute(t, up,
 		policyPlugin("semantic_cache", settings),
 	)
 
@@ -49,7 +49,7 @@ func TestPluginE2E_SemanticCache(t *testing.T) {
 	var firstBody []byte
 
 	t.Run("first request misses and is stored", func(t *testing.T) {
-		status, headers, body := proxyRequest(t, http.MethodPost, gatewayID, path, nil,
+		status, headers, body := proxyRequest(t, http.MethodPost, apiKey, path, nil,
 			mustJSON(t, ask("What is the capital of France?")),
 		)
 		require.Equal(t, http.StatusOK, status, "body: %s", body)
@@ -63,7 +63,7 @@ func TestPluginE2E_SemanticCache(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		hitsBefore := up.Hits()
 
-		status, headers, body := proxyRequest(t, http.MethodPost, gatewayID, path, nil,
+		status, headers, body := proxyRequest(t, http.MethodPost, apiKey, path, nil,
 			mustJSON(t, ask("What is the capital of France?")),
 		)
 		require.Equal(t, http.StatusOK, status, "body: %s", body)
@@ -74,7 +74,7 @@ func TestPluginE2E_SemanticCache(t *testing.T) {
 	})
 
 	t.Run("semantically similar request hits the cache", func(t *testing.T) {
-		status, headers, body := proxyRequest(t, http.MethodPost, gatewayID, path, nil,
+		status, headers, body := proxyRequest(t, http.MethodPost, apiKey, path, nil,
 			mustJSON(t, ask("What's the capital city of France?")),
 		)
 		require.Equal(t, http.StatusOK, status, "body: %s", body)
@@ -83,7 +83,7 @@ func TestPluginE2E_SemanticCache(t *testing.T) {
 	})
 
 	t.Run("dissimilar request misses", func(t *testing.T) {
-		status, headers, body := proxyRequest(t, http.MethodPost, gatewayID, path, nil,
+		status, headers, body := proxyRequest(t, http.MethodPost, apiKey, path, nil,
 			mustJSON(t, ask("How do you implement a binary search tree in Rust?")),
 		)
 		require.Equal(t, http.StatusOK, status, "body: %s", body)
@@ -91,7 +91,7 @@ func TestPluginE2E_SemanticCache(t *testing.T) {
 	})
 
 	t.Run("Cache-Control no-cache bypasses the cache", func(t *testing.T) {
-		status, headers, body := proxyRequest(t, http.MethodPost, gatewayID, path,
+		status, headers, body := proxyRequest(t, http.MethodPost, apiKey, path,
 			map[string]string{"Cache-Control": "no-cache"},
 			mustJSON(t, ask("What is the capital of France?")),
 		)

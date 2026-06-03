@@ -23,6 +23,150 @@ func (_m *Repository) EXPECT() *Repository_Expecter {
 	return &Repository_Expecter{mock: &_m.Mock}
 }
 
+// AttachAuth provides a mock function with given fields: ctx, consumerID, authID
+func (_m *Repository) AttachAuth(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind]) error {
+	ret := _m.Called(ctx, consumerID, authID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for AttachAuth")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind]) error); ok {
+		r0 = rf(ctx, consumerID, authID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_AttachAuth_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AttachAuth'
+type Repository_AttachAuth_Call struct {
+	*mock.Call
+}
+
+// AttachAuth is a helper method to define mock.On call
+//   - ctx context.Context
+//   - consumerID ids.ID[ids.ConsumerKind]
+//   - authID ids.ID[ids.AuthKind]
+func (_e *Repository_Expecter) AttachAuth(ctx interface{}, consumerID interface{}, authID interface{}) *Repository_AttachAuth_Call {
+	return &Repository_AttachAuth_Call{Call: _e.mock.On("AttachAuth", ctx, consumerID, authID)}
+}
+
+func (_c *Repository_AttachAuth_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind])) *Repository_AttachAuth_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.AuthKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_AttachAuth_Call) Return(_a0 error) *Repository_AttachAuth_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_AttachAuth_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind]) error) *Repository_AttachAuth_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// AttachPolicy provides a mock function with given fields: ctx, consumerID, policyID
+func (_m *Repository) AttachPolicy(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], policyID ids.ID[ids.PolicyKind]) error {
+	ret := _m.Called(ctx, consumerID, policyID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for AttachPolicy")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.PolicyKind]) error); ok {
+		r0 = rf(ctx, consumerID, policyID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_AttachPolicy_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AttachPolicy'
+type Repository_AttachPolicy_Call struct {
+	*mock.Call
+}
+
+// AttachPolicy is a helper method to define mock.On call
+//   - ctx context.Context
+//   - consumerID ids.ID[ids.ConsumerKind]
+//   - policyID ids.ID[ids.PolicyKind]
+func (_e *Repository_Expecter) AttachPolicy(ctx interface{}, consumerID interface{}, policyID interface{}) *Repository_AttachPolicy_Call {
+	return &Repository_AttachPolicy_Call{Call: _e.mock.On("AttachPolicy", ctx, consumerID, policyID)}
+}
+
+func (_c *Repository_AttachPolicy_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], policyID ids.ID[ids.PolicyKind])) *Repository_AttachPolicy_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.PolicyKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_AttachPolicy_Call) Return(_a0 error) *Repository_AttachPolicy_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_AttachPolicy_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.PolicyKind]) error) *Repository_AttachPolicy_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// AttachRegistry provides a mock function with given fields: ctx, consumerID, registryID
+func (_m *Repository) AttachRegistry(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind]) error {
+	ret := _m.Called(ctx, consumerID, registryID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for AttachRegistry")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error); ok {
+		r0 = rf(ctx, consumerID, registryID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_AttachRegistry_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AttachRegistry'
+type Repository_AttachRegistry_Call struct {
+	*mock.Call
+}
+
+// AttachRegistry is a helper method to define mock.On call
+//   - ctx context.Context
+//   - consumerID ids.ID[ids.ConsumerKind]
+//   - registryID ids.ID[ids.RegistryKind]
+func (_e *Repository_Expecter) AttachRegistry(ctx interface{}, consumerID interface{}, registryID interface{}) *Repository_AttachRegistry_Call {
+	return &Repository_AttachRegistry_Call{Call: _e.mock.On("AttachRegistry", ctx, consumerID, registryID)}
+}
+
+func (_c *Repository_AttachRegistry_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind])) *Repository_AttachRegistry_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.RegistryKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_AttachRegistry_Call) Return(_a0 error) *Repository_AttachRegistry_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_AttachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error) *Repository_AttachRegistry_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Delete provides a mock function with given fields: ctx, id
 func (_m *Repository) Delete(ctx context.Context, id ids.ID[ids.ConsumerKind]) error {
 	ret := _m.Called(ctx, id)
@@ -66,6 +210,150 @@ func (_c *Repository_Delete_Call) Return(_a0 error) *Repository_Delete_Call {
 }
 
 func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind]) error) *Repository_Delete_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DetachAuth provides a mock function with given fields: ctx, consumerID, authID
+func (_m *Repository) DetachAuth(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind]) error {
+	ret := _m.Called(ctx, consumerID, authID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DetachAuth")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind]) error); ok {
+		r0 = rf(ctx, consumerID, authID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_DetachAuth_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DetachAuth'
+type Repository_DetachAuth_Call struct {
+	*mock.Call
+}
+
+// DetachAuth is a helper method to define mock.On call
+//   - ctx context.Context
+//   - consumerID ids.ID[ids.ConsumerKind]
+//   - authID ids.ID[ids.AuthKind]
+func (_e *Repository_Expecter) DetachAuth(ctx interface{}, consumerID interface{}, authID interface{}) *Repository_DetachAuth_Call {
+	return &Repository_DetachAuth_Call{Call: _e.mock.On("DetachAuth", ctx, consumerID, authID)}
+}
+
+func (_c *Repository_DetachAuth_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], authID ids.ID[ids.AuthKind])) *Repository_DetachAuth_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.AuthKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_DetachAuth_Call) Return(_a0 error) *Repository_DetachAuth_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_DetachAuth_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.AuthKind]) error) *Repository_DetachAuth_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DetachPolicy provides a mock function with given fields: ctx, consumerID, policyID
+func (_m *Repository) DetachPolicy(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], policyID ids.ID[ids.PolicyKind]) error {
+	ret := _m.Called(ctx, consumerID, policyID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DetachPolicy")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.PolicyKind]) error); ok {
+		r0 = rf(ctx, consumerID, policyID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_DetachPolicy_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DetachPolicy'
+type Repository_DetachPolicy_Call struct {
+	*mock.Call
+}
+
+// DetachPolicy is a helper method to define mock.On call
+//   - ctx context.Context
+//   - consumerID ids.ID[ids.ConsumerKind]
+//   - policyID ids.ID[ids.PolicyKind]
+func (_e *Repository_Expecter) DetachPolicy(ctx interface{}, consumerID interface{}, policyID interface{}) *Repository_DetachPolicy_Call {
+	return &Repository_DetachPolicy_Call{Call: _e.mock.On("DetachPolicy", ctx, consumerID, policyID)}
+}
+
+func (_c *Repository_DetachPolicy_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], policyID ids.ID[ids.PolicyKind])) *Repository_DetachPolicy_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.PolicyKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_DetachPolicy_Call) Return(_a0 error) *Repository_DetachPolicy_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_DetachPolicy_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.PolicyKind]) error) *Repository_DetachPolicy_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DetachRegistry provides a mock function with given fields: ctx, consumerID, registryID
+func (_m *Repository) DetachRegistry(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind]) error {
+	ret := _m.Called(ctx, consumerID, registryID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DetachRegistry")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error); ok {
+		r0 = rf(ctx, consumerID, registryID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_DetachRegistry_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DetachRegistry'
+type Repository_DetachRegistry_Call struct {
+	*mock.Call
+}
+
+// DetachRegistry is a helper method to define mock.On call
+//   - ctx context.Context
+//   - consumerID ids.ID[ids.ConsumerKind]
+//   - registryID ids.ID[ids.RegistryKind]
+func (_e *Repository_Expecter) DetachRegistry(ctx interface{}, consumerID interface{}, registryID interface{}) *Repository_DetachRegistry_Call {
+	return &Repository_DetachRegistry_Call{Call: _e.mock.On("DetachRegistry", ctx, consumerID, registryID)}
+}
+
+func (_c *Repository_DetachRegistry_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind])) *Repository_DetachRegistry_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.RegistryKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_DetachRegistry_Call) Return(_a0 error) *Repository_DetachRegistry_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_DetachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error) *Repository_DetachRegistry_Call {
 	_c.Call.Return(run)
 	return _c
 }

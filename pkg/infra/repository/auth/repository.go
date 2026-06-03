@@ -38,11 +38,11 @@ func (r *Repository) Save(ctx context.Context, a *domain.Auth) error {
 		return fmt.Errorf("auth repository: marshal config: %w", err)
 	}
 	const query = `
-		INSERT INTO auths (id, gateway_id, name, type, enabled, config, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		INSERT INTO auths (id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes, a.CreatedAt, a.UpdatedAt,
+			a.ID, a.GatewayID, a.Name, string(a.Type), a.Enabled, configBytes, nullableString(a.KeyHash), a.CreatedAt, a.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -64,10 +64,11 @@ func (r *Repository) Update(ctx context.Context, a *domain.Auth) error {
 		       type       = $3,
 		       enabled    = $4,
 		       config     = $5,
-		       updated_at = $6
+		       key_hash   = $6,
+		       updated_at = $7
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, a.ID, a.Name, string(a.Type), a.Enabled, configBytes, a.UpdatedAt)
+		cmd, err := tx.Exec(ctx, query, a.ID, a.Name, string(a.Type), a.Enabled, configBytes, nullableString(a.KeyHash), a.UpdatedAt)
 		if err != nil {
 			return mapPgError(err)
 		}
@@ -94,7 +95,7 @@ func (r *Repository) Delete(ctx context.Context, id ids.AuthID) error {
 
 func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
 		  FROM auths
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -108,12 +109,30 @@ func (r *Repository) FindByID(ctx context.Context, id ids.AuthID) (*domain.Auth,
 	return a, nil
 }
 
+func (r *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*domain.Auth, error) {
+	const query = `
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
+		  FROM auths
+		 WHERE key_hash = $1
+		   AND type = 'api_key'
+		   AND enabled = TRUE`
+	row := r.conn.Pool.QueryRow(ctx, query, keyHash)
+	a, err := scanAuth(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("auth repository: find by api key hash: %w", err)
+	}
+	return a, nil
+}
+
 func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*domain.Auth, error) {
 	if len(authIDs) == 0 {
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, enabled, config, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
 		  FROM auths
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -160,7 +179,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, gateway_id, name, type, enabled, config, created_at, updated_at
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
 		  FROM auths
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
@@ -195,15 +214,19 @@ func scanAuth(s rowScanner) (*domain.Auth, error) {
 	var (
 		authType  string
 		configRaw []byte
+		keyHash   *string
 	)
 	if err := s.Scan(
 		&a.ID, &a.GatewayID, &a.Name, &authType, &a.Enabled,
-		&configRaw,
+		&configRaw, &keyHash,
 		&a.CreatedAt, &a.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 	a.Type = domain.Type(authType)
+	if keyHash != nil {
+		a.KeyHash = *keyHash
+	}
 	if len(configRaw) > 0 {
 		if err := json.Unmarshal(configRaw, &a.Config); err != nil {
 			return nil, fmt.Errorf("scan config: %w", err)
@@ -217,6 +240,13 @@ func nullableUUID(id uuid.UUID) any {
 		return nil
 	}
 	return id
+}
+
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func mapPgError(err error) error {

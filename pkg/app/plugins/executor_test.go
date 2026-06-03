@@ -15,14 +15,15 @@ import (
 )
 
 type fakePlugin struct {
-	name     string
-	stages   []policy.Stage
-	result   *Result
-	err      error
-	delay    time.Duration
-	calls    *int32
-	onExec   func()
-	validErr error
+	name      string
+	stages    []policy.Stage
+	result    *Result
+	err       error
+	delay     time.Duration
+	calls     *int32
+	onExec    func()
+	writeMeta bool
+	validErr  error
 }
 
 func (f *fakePlugin) Name() string                        { return f.name }
@@ -30,12 +31,21 @@ func (f *fakePlugin) MandatoryStages() []policy.Stage     { return f.stages }
 func (f *fakePlugin) SupportedStages() []policy.Stage     { return f.stages }
 func (f *fakePlugin) ValidateConfig(map[string]any) error { return f.validErr }
 
-func (f *fakePlugin) Execute(ctx context.Context, _ ExecInput) (*Result, error) {
+func (f *fakePlugin) Execute(ctx context.Context, in ExecInput) (*Result, error) {
 	if f.calls != nil {
 		atomic.AddInt32(f.calls, 1)
 	}
 	if f.onExec != nil {
 		f.onExec()
+	}
+	// Simulate a plugin that writes the shared response metadata (e.g. semantic
+	// cache). Under a parallel batch this must hit an isolated copy, never the
+	// shared map, or the race detector would flag a concurrent map write.
+	if f.writeMeta && in.Response != nil {
+		if in.Response.Metadata == nil {
+			in.Response.Metadata = make(map[string]interface{})
+		}
+		in.Response.Metadata[f.name] = true
 	}
 	if f.delay > 0 {
 		select {
@@ -244,6 +254,62 @@ func TestExecutor_RunStage_ParallelBatchRunsConcurrently(t *testing.T) {
 	// Three 50ms plugins run concurrently in well under 150ms.
 	assert.Less(t, elapsed, 120*time.Millisecond)
 	assert.Len(t, resp.Headers, 3)
+}
+
+func TestExecutor_RunStage_ParallelBatchIsolatesMetadata(t *testing.T) {
+	mk := func(name string) *fakePlugin {
+		return &fakePlugin{
+			name:      name,
+			stages:    []policy.Stage{policy.StagePreRequest},
+			result:    &Result{StatusCode: 200},
+			writeMeta: true,
+		}
+	}
+	reg := newRegistry(t, mk("a"), mk("b"), mk("c"))
+	exec := NewExecutor(reg, nil)
+
+	pols := policies(t,
+		polSpec{slug: "a", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "b", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "c", enabled: true, priority: 1, parallel: true},
+	)
+
+	resp := &infracontext.ResponseContext{}
+	_, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Request:  &infracontext.RequestContext{},
+		Response: resp,
+	})
+	require.NoError(t, err)
+	// Each parallel plugin wrote to its isolated response; mergeIsolated folds
+	// every write back into the shared map (run under -race to prove no panic).
+	assert.Equal(t, true, resp.Metadata["a"])
+	assert.Equal(t, true, resp.Metadata["b"])
+	assert.Equal(t, true, resp.Metadata["c"])
+}
+
+func TestExecutor_RunStage_UsesPrecomputedPlan(t *testing.T) {
+	calls := int32(0)
+	p := &fakePlugin{
+		name:   "rate",
+		stages: []policy.Stage{policy.StagePreRequest},
+		result: &Result{StatusCode: 200},
+		calls:  &calls,
+	}
+	reg := newRegistry(t, p)
+	exec := NewExecutor(reg, nil)
+
+	plan := NewStagePlan(reg, policies(t, polSpec{slug: "rate", enabled: true}))
+	// Policies is intentionally omitted: the executor must run purely from the
+	// precomputed plan.
+	_, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Plan:     plan,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls))
 }
 
 func TestExecutor_RunStage_MergesHeadersInOrder(t *testing.T) {

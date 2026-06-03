@@ -26,12 +26,12 @@ func TestPluginE2E_CORS(t *testing.T) {
 	defer Track(t, "PluginCORS")()
 
 	up := newJSONUpstream(t, "cors-upstream")
-	gatewayID, path := setupPolicyRoute(t, up,
+	apiKey, path := setupPolicyRoute(t, up,
 		policyPlugin("cors", corsSettings()),
 	)
 
 	t.Run("allowed origin simple request passes through", func(t *testing.T) {
-		status, _, body := proxyRequest(t, http.MethodPost, gatewayID, path,
+		status, _, body := proxyRequest(t, http.MethodPost, apiKey, path,
 			map[string]string{"Origin": "https://allowed.com"},
 			mustJSON(t, chatRequest(false)),
 		)
@@ -40,7 +40,7 @@ func TestPluginE2E_CORS(t *testing.T) {
 	})
 
 	t.Run("disallowed origin is rejected", func(t *testing.T) {
-		status, _, _ := proxyRequest(t, http.MethodPost, gatewayID, path,
+		status, _, _ := proxyRequest(t, http.MethodPost, apiKey, path,
 			map[string]string{"Origin": "https://evil.com"},
 			mustJSON(t, chatRequest(false)),
 		)
@@ -48,7 +48,7 @@ func TestPluginE2E_CORS(t *testing.T) {
 	})
 
 	t.Run("missing origin is rejected", func(t *testing.T) {
-		status, _, _ := proxyRequest(t, http.MethodPost, gatewayID, path, nil,
+		status, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil,
 			mustJSON(t, chatRequest(false)),
 		)
 		assert.Equal(t, http.StatusForbidden, status)
@@ -56,7 +56,7 @@ func TestPluginE2E_CORS(t *testing.T) {
 
 	t.Run("valid preflight short-circuits with negotiated headers", func(t *testing.T) {
 		hitsBefore := up.Hits()
-		status, headers, _ := proxyRequest(t, http.MethodOptions, gatewayID, path,
+		status, headers, _ := proxyRequest(t, http.MethodOptions, apiKey, path,
 			map[string]string{
 				"Origin":                        "https://allowed.com",
 				"Access-Control-Request-Method": "POST",
@@ -70,7 +70,7 @@ func TestPluginE2E_CORS(t *testing.T) {
 	})
 
 	t.Run("preflight with disallowed method is rejected", func(t *testing.T) {
-		status, _, _ := proxyRequest(t, http.MethodOptions, gatewayID, path,
+		status, _, _ := proxyRequest(t, http.MethodOptions, apiKey, path,
 			map[string]string{
 				"Origin":                        "https://allowed.com",
 				"Access-Control-Request-Method": "DELETE",
@@ -80,14 +80,14 @@ func TestPluginE2E_CORS(t *testing.T) {
 	})
 
 	t.Run("preflight missing requested method is a bad request", func(t *testing.T) {
-		status, _, _ := proxyRequest(t, http.MethodOptions, gatewayID, path,
+		status, _, _ := proxyRequest(t, http.MethodOptions, apiKey, path,
 			map[string]string{"Origin": "https://allowed.com"}, nil,
 		)
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 
 	t.Run("preflight from disallowed origin is rejected", func(t *testing.T) {
-		status, _, _ := proxyRequest(t, http.MethodOptions, gatewayID, path,
+		status, _, _ := proxyRequest(t, http.MethodOptions, apiKey, path,
 			map[string]string{
 				"Origin":                        "https://evil.com",
 				"Access-Control-Request-Method": "POST",
@@ -101,7 +101,7 @@ func TestPluginE2E_CORS_Wildcard(t *testing.T) {
 	defer Track(t, "PluginCORS")()
 
 	up := newJSONUpstream(t, "cors-wild-upstream")
-	gatewayID, path := setupPolicyRoute(t, up,
+	apiKey, path := setupPolicyRoute(t, up,
 		policyPlugin("cors", map[string]any{
 			"allowed_origins":   []string{"*"},
 			"allowed_methods":   []string{"GET", "POST", "OPTIONS"},
@@ -111,7 +111,7 @@ func TestPluginE2E_CORS_Wildcard(t *testing.T) {
 	)
 
 	t.Run("wildcard allows an arbitrary origin", func(t *testing.T) {
-		status, _, body := proxyRequest(t, http.MethodPost, gatewayID, path,
+		status, _, body := proxyRequest(t, http.MethodPost, apiKey, path,
 			map[string]string{"Origin": "https://anything.example.com"},
 			mustJSON(t, chatRequest(false)),
 		)
@@ -119,7 +119,7 @@ func TestPluginE2E_CORS_Wildcard(t *testing.T) {
 	})
 
 	t.Run("wildcard preflight echoes the request origin", func(t *testing.T) {
-		status, headers, _ := proxyRequest(t, http.MethodOptions, gatewayID, path,
+		status, headers, _ := proxyRequest(t, http.MethodOptions, apiKey, path,
 			map[string]string{
 				"Origin":                        "https://any.origin",
 				"Access-Control-Request-Method": "POST",

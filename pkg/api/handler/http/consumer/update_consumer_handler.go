@@ -50,18 +50,6 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		return helpers.WriteError(c, err)
 	}
 
-	registryIDs, err := req.ToRegistryIDs()
-	if err != nil {
-		return helpers.WriteError(c, err)
-	}
-	policyIDs, err := req.ToPolicyIDs()
-	if err != nil {
-		return helpers.WriteError(c, err)
-	}
-	authIDs, err := req.ToAuthIDs()
-	if err != nil {
-		return helpers.WriteError(c, err)
-	}
 	fallback, err := req.ToFallback()
 	if err != nil {
 		return helpers.WriteError(c, err)
@@ -81,9 +69,6 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		EmbeddingConfig: req.ToEmbeddingConfig(),
 		Headers:         req.Headers,
 		Active:          req.Active,
-		RegistryIDs:     registryIDs,
-		PolicyIDs:       policyIDs,
-		AuthIDs:         authIDs,
 		Fallback:        fallback,
 		ModelPolicies:   modelPolicies,
 	})

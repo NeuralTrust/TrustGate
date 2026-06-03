@@ -27,6 +27,7 @@ var _ Creator = (*creator)(nil)
 type creator struct {
 	repo        domain.Repository
 	memoryCache *cache.TTLMap
+	keyCache    *cache.TTLMap
 	logger      *slog.Logger
 }
 
@@ -34,12 +35,13 @@ func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, logger *sl
 	return &creator{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.AuthTTLName),
+		keyCache:    manager.GetTTLMap(cache.AuthKeyTTLName),
 		logger:      logger,
 	}
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Auth, error) {
-	a, err := domain.NewAuth(in.GatewayID, in.Name, in.Type, in.Enabled, in.Config)
+	a, err := c.build(in)
 	if err != nil {
 		return nil, err
 	}
@@ -47,5 +49,15 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Auth, err
 		return nil, err
 	}
 	c.memoryCache.Set(a.ID.String(), a)
+	if a.KeyHash != "" {
+		c.keyCache.Set(a.KeyHash, a)
+	}
 	return a, nil
+}
+
+func (c *creator) build(in CreateInput) (*domain.Auth, error) {
+	if in.Type == domain.TypeAPIKey {
+		return domain.NewAPIKeyAuth(in.GatewayID, in.Name, in.Enabled)
+	}
+	return domain.NewAuth(in.GatewayID, in.Name, in.Type, in.Enabled, in.Config)
 }

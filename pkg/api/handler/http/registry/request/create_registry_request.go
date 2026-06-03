@@ -89,6 +89,12 @@ func (r CreateRegistryRequest) Validate() error {
 	if strings.TrimSpace(r.Provider) == "" {
 		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
 	}
+	if r.Weight < 0 {
+		return fmt.Errorf("weight cannot be negative: %w", commonerrors.ErrValidation)
+	}
+	if r.Auth == nil {
+		return fmt.Errorf("auth is required: %w", commonerrors.ErrValidation)
+	}
 	return nil
 }
 

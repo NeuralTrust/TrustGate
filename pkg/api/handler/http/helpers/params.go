@@ -50,6 +50,18 @@ func ParseGatewayScopedID[K ids.Kind](c *fiber.Ctx) (ids.GatewayID, ids.ID[K], e
 	return gatewayID, id, nil
 }
 
+func ParseConsumerAssociationID[K ids.Kind](c *fiber.Ctx, targetParam string) (ids.GatewayID, ids.ConsumerID, ids.ID[K], error) {
+	gatewayID, consumerID, err := ParseGatewayScopedID[ids.ConsumerKind](c)
+	if err != nil {
+		return ids.GatewayID{}, ids.ConsumerID{}, ids.ID[K]{}, err
+	}
+	targetID, err := ParseUUIDParam[K](c, targetParam)
+	if err != nil {
+		return ids.GatewayID{}, ids.ConsumerID{}, ids.ID[K]{}, err
+	}
+	return gatewayID, consumerID, targetID, nil
+}
+
 func ParsePage(c *fiber.Ctx) (int, error) {
 	raw := c.Query("page")
 	if raw == "" {

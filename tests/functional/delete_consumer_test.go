@@ -15,8 +15,7 @@ import (
 func TestDeleteConsumer_Success(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-gw")})
-	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-del-be")))
-	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-ok"), beID))
+	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-ok")))
 
 	status, _ := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
@@ -70,8 +69,7 @@ func TestDeleteConsumer_InvalidConsumerUUID(t *testing.T) {
 func TestDeleteGateway_FailsWhenItHasConsumers(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-gw-cascade")})
-	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-del-gw-cascade-be")))
-	_ = CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-gw-cascade-co"), beID))
+	_ = CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-gw-cascade-co")))
 
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s", AdminURL, gwID),
@@ -85,7 +83,7 @@ func TestDeleteRegistry_FailsWhenReferencedByConsumer(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-be-ref-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-del-be-ref-be")))
-	_ = CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-be-ref"), beID))
+	_ = CreateConsumerWithRegistries(t, gwID, uniqueName("co-del-be-ref"), beID)
 
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s/registries/%s", AdminURL, gwID, beID),

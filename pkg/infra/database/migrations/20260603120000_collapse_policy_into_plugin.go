@@ -22,6 +22,7 @@ func init() {
 					name        TEXT NOT NULL,
 					slug        TEXT NOT NULL,
 					enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+					global      BOOLEAN NOT NULL DEFAULT FALSE,
 					priority    INTEGER NOT NULL DEFAULT 0,
 					parallel    BOOLEAN NOT NULL DEFAULT FALSE,
 					settings    JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -32,10 +33,11 @@ func init() {
 				);
 				CREATE INDEX policies_gateway_id_idx ON policies (gateway_id);
 				CREATE INDEX policies_name_lower_idx ON policies (lower(name));
+				CREATE INDEX policies_global_idx ON policies (gateway_id) WHERE global;
 
 				CREATE TABLE consumer_policy (
 					consumer_id UUID NOT NULL REFERENCES consumers(id) ON DELETE CASCADE,
-					policy_id   UUID NOT NULL REFERENCES policies(id) ON DELETE RESTRICT,
+					policy_id   UUID NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
 					PRIMARY KEY (consumer_id, policy_id)
 				);
 				CREATE INDEX consumer_policy_policy_idx ON consumer_policy (policy_id);`

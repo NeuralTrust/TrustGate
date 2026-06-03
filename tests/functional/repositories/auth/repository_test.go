@@ -72,11 +72,9 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.Gate
 
 func validAuth(t *testing.T, gwID ids.GatewayID, name string) *domain.Auth {
 	t.Helper()
-	a, err := domain.NewAuth(gwID, name, domain.TypeAPIKey, true, domain.Config{
-		APIKey: &domain.APIKeyConfig{Key: "super-secret-key", In: "header", Name: "X-API-Key"},
-	})
+	a, err := domain.NewAPIKeyAuth(gwID, name, true)
 	if err != nil {
-		t.Fatalf("auth domain.NewAuth: %v", err)
+		t.Fatalf("auth domain.NewAPIKeyAuth: %v", err)
 	}
 	return a
 }
@@ -98,8 +96,41 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.ID != a.ID || got.GatewayID != gwID || got.Name != "client-key" {
 		t.Fatalf("FindByID returned %+v", got)
 	}
-	if got.Type != domain.TypeAPIKey || got.Config.APIKey == nil || got.Config.APIKey.Key != "super-secret-key" {
-		t.Fatalf("config round-trip lost data: %+v", got.Config)
+	if got.Type != domain.TypeAPIKey {
+		t.Fatalf("type round-trip lost data: %+v", got)
+	}
+	if got.KeyHash == "" || got.KeyHash != a.KeyHash {
+		t.Fatalf("key_hash round-trip lost data: got %q want %q", got.KeyHash, a.KeyHash)
+	}
+}
+
+func TestRepository_FindByAPIKeyHash(t *testing.T) {
+	r, gw := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "agw-hash")
+
+	a := validAuth(t, gwID, "lookup-key")
+	if a.RawKey == "" {
+		t.Fatalf("generated auth missing raw key for assertion")
+	}
+	if err := r.Save(ctx, a); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := r.FindByAPIKeyHash(ctx, domain.HashAPIKey(a.RawKey))
+	if err != nil {
+		t.Fatalf("FindByAPIKeyHash: %v", err)
+	}
+	if got.ID != a.ID || got.Type != domain.TypeAPIKey {
+		t.Fatalf("FindByAPIKeyHash returned %+v", got)
+	}
+}
+
+func TestRepository_FindByAPIKeyHash_NotFound(t *testing.T) {
+	r, _ := setupRepo(t)
+	_, err := r.FindByAPIKeyHash(context.Background(), domain.HashAPIKey("ag_nonexistent"))
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
 

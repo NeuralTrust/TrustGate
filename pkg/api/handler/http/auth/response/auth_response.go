@@ -14,20 +14,14 @@ type AuthResponse struct {
 	Type      string         `json:"type"`
 	Enabled   bool           `json:"enabled"`
 	Config    ConfigResponse `json:"config"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	APIKey    string         `json:"api_key,omitempty"` // #nosec G101
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type ConfigResponse struct {
-	APIKey *APIKeyConfigResponse `json:"api_key,omitempty"`
 	OAuth2 *OAuth2ConfigResponse `json:"oauth2,omitempty"`
 	MTLS   *MTLSConfigResponse   `json:"mtls,omitempty"`
-}
-
-type APIKeyConfigResponse struct {
-	Key  string `json:"key,omitempty"` // #nosec G117
-	In   string `json:"in,omitempty"`
-	Name string `json:"name,omitempty"`
 }
 
 type OAuth2ConfigResponse struct {
@@ -74,15 +68,14 @@ func FromAuth(a *domain.Auth) AuthResponse {
 	}
 }
 
+func FromCreatedAuth(a *domain.Auth) AuthResponse {
+	res := FromAuth(a)
+	res.APIKey = a.RawKey
+	return res
+}
+
 func fromConfig(c domain.Config) ConfigResponse {
 	out := ConfigResponse{}
-	if c.APIKey != nil {
-		out.APIKey = &APIKeyConfigResponse{
-			Key:  maskSecret(c.APIKey.Key),
-			In:   c.APIKey.In,
-			Name: c.APIKey.Name,
-		}
-	}
 	if c.OAuth2 != nil {
 		out.OAuth2 = &OAuth2ConfigResponse{
 			Issuer:           c.OAuth2.Issuer,

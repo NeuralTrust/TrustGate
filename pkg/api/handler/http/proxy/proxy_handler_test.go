@@ -23,16 +23,34 @@ import (
 
 const proxyPath = "/v1/chat/completions"
 
-// authStub mimics the auth middleware: it attaches a resolved gateway id and a
-// consumer.Data read model (with one consumer bound to proxyPath) to the request
-// context, exactly as the real auth middleware will once credential validation
-// lands.
+// authStub mimics the auth middleware: it attaches a resolved gateway id, the
+// authenticating auth id and a consumer.Data read model (with one consumer bound
+// to proxyPath and authorized for that auth) to the request context, exactly as
+// the real api-key auth middleware does.
 func authStub(gatewayID ids.GatewayID, path string) fiber.Handler {
+	authID := ids.New[ids.AuthKind]()
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Path: path, Active: true}},
+		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Path: path, Active: true, AuthIDs: []ids.AuthID{authID}}},
 	})
 	return func(c *fiber.Ctx) error {
 		ctx := appconsumer.WithGatewayID(c.UserContext(), gatewayID)
+		ctx = appconsumer.WithAuthID(ctx, authID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	}
+}
+
+// authStubForbidden mimics the auth middleware authenticating a credential that
+// is valid for the gateway but NOT attached to the consumer that matches the
+// path, so the handler must reject the request with 403.
+func authStubForbidden(gatewayID ids.GatewayID, path string) fiber.Handler {
+	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
+		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Path: path, Active: true, AuthIDs: []ids.AuthID{ids.New[ids.AuthKind]()}}},
+	})
+	return func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithGatewayID(c.UserContext(), gatewayID)
+		ctx = appconsumer.WithAuthID(ctx, ids.New[ids.AuthKind]())
 		ctx = appconsumer.WithData(ctx, data)
 		c.SetUserContext(ctx)
 		return c.Next()
@@ -106,6 +124,25 @@ func TestHandle_PathNotFound(t *testing.T) {
 	}
 	if eb := decodeError(t, resp.Body); eb.Error != "not_found" {
 		t.Fatalf("error = %q, want not_found", eb.Error)
+	}
+}
+
+func TestHandle_Forbidden_ConsumerLacksCredential(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(authStubForbidden(ids.New[ids.GatewayKind](), proxyPath))
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/v1/*", handler.Handle)
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	if eb := decodeError(t, resp.Body); eb.Error != "forbidden" {
+		t.Fatalf("error = %q, want forbidden", eb.Error)
 	}
 }
 

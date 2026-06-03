@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
@@ -18,6 +19,11 @@ const (
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
 )
+
+const policySelectColumns = `
+		SELECT p.id, p.gateway_id, p.name, p.slug, p.enabled, p.global, p.priority, p.parallel, p.settings, p.stages, p.created_at, p.updated_at,
+		       COALESCE((SELECT array_agg(cp.consumer_id ORDER BY cp.consumer_id)
+		                   FROM consumer_policy cp WHERE cp.policy_id = p.id), '{}')::uuid[] AS consumer_ids`
 
 var _ domain.Repository = (*Repository)(nil)
 
@@ -42,17 +48,15 @@ func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
 		return fmt.Errorf("policy repository: marshal stages: %w", err)
 	}
 	const query = `
-		INSERT INTO policies (id, gateway_id, name, slug, enabled, priority, parallel, settings, stages, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, query,
-			p.ID, p.GatewayID, p.Name, p.Slug, p.Enabled, p.Priority, p.Parallel,
-			settingsBytes, stagesBytes, p.CreatedAt, p.UpdatedAt,
-		); err != nil {
-			return mapPgError(err)
-		}
-		return nil
-	})
+		INSERT INTO policies (id, gateway_id, name, slug, enabled, global, priority, parallel, settings, stages, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+	if _, err := r.conn.Pool.Exec(ctx, query,
+		p.ID, p.GatewayID, p.Name, p.Slug, p.Enabled, p.Global, p.Priority, p.Parallel,
+		settingsBytes, stagesBytes, p.CreatedAt, p.UpdatedAt,
+	); err != nil {
+		return mapPgError(err)
+	}
+	return nil
 }
 
 func (r *Repository) Update(ctx context.Context, p *domain.Policy) error {
@@ -72,25 +76,36 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy) error {
 		   SET name       = $2,
 		       slug       = $3,
 		       enabled    = $4,
-		       priority   = $5,
-		       parallel   = $6,
-		       settings   = $7,
-		       stages     = $8,
-		       updated_at = $9
+		       global     = $5,
+		       priority   = $6,
+		       parallel   = $7,
+		       settings   = $8,
+		       stages     = $9,
+		       updated_at = $10
 		 WHERE id = $1`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query,
-			p.ID, p.Name, p.Slug, p.Enabled, p.Priority, p.Parallel,
-			settingsBytes, stagesBytes, p.UpdatedAt,
-		)
-		if err != nil {
-			return mapPgError(err)
-		}
-		if cmd.RowsAffected() == 0 {
-			return domain.ErrNotFound
-		}
-		return nil
-	})
+	cmd, err := r.conn.Pool.Exec(ctx, query,
+		p.ID, p.Name, p.Slug, p.Enabled, p.Global, p.Priority, p.Parallel,
+		settingsBytes, stagesBytes, p.UpdatedAt,
+	)
+	if err != nil {
+		return mapPgError(err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) SetGlobal(ctx context.Context, id ids.PolicyID, global bool) error {
+	const query = `UPDATE policies SET global = $2, updated_at = now() WHERE id = $1`
+	cmd, err := r.conn.Pool.Exec(ctx, query, id, global)
+	if err != nil {
+		return mapPgError(err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (r *Repository) Delete(ctx context.Context, id ids.PolicyID) error {
@@ -108,10 +123,9 @@ func (r *Repository) Delete(ctx context.Context, id ids.PolicyID) error {
 }
 
 func (r *Repository) FindByID(ctx context.Context, id ids.PolicyID) (*domain.Policy, error) {
-	const query = `
-		SELECT id, gateway_id, name, slug, enabled, priority, parallel, settings, stages, created_at, updated_at
-		  FROM policies
-		 WHERE id = $1`
+	query := policySelectColumns + `
+		  FROM policies p
+		 WHERE p.id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
 	p, err := scanPolicy(row)
 	if err != nil {
@@ -127,11 +141,10 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, pol
 	if len(policyIDs) == 0 {
 		return nil, nil
 	}
-	const query = `
-		SELECT id, gateway_id, name, slug, enabled, priority, parallel, settings, stages, created_at, updated_at
-		  FROM policies
-		 WHERE gateway_id = $1
-		   AND id = ANY($2::uuid[])`
+	query := policySelectColumns + `
+		  FROM policies p
+		 WHERE p.gateway_id = $1
+		   AND p.id = ANY($2::uuid[])`
 	rows, err := r.conn.Pool.Query(ctx, query, gatewayID.UUID(), ids.ToUUIDs(policyIDs))
 	if err != nil {
 		return nil, fmt.Errorf("policy repository: find by ids: %w", err)
@@ -139,6 +152,31 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, pol
 	defer rows.Close()
 
 	out := make([]*domain.Policy, 0, len(policyIDs))
+	for rows.Next() {
+		p, err := scanPolicy(rows)
+		if err != nil {
+			return nil, fmt.Errorf("policy repository: scan: %w", err)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("policy repository: iter: %w", err)
+	}
+	return out, nil
+}
+
+func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*domain.Policy, error) {
+	query := policySelectColumns + `
+		  FROM policies p
+		 WHERE p.gateway_id = $1
+		 ORDER BY p.priority, p.created_at, p.id`
+	rows, err := r.conn.Pool.Query(ctx, query, gatewayID.UUID())
+	if err != nil {
+		return nil, fmt.Errorf("policy repository: list by gateway: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*domain.Policy, 0)
 	for rows.Next() {
 		p, err := scanPolicy(rows)
 		if err != nil {
@@ -174,12 +212,11 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 		return nil, 0, fmt.Errorf("policy repository: count: %w", err)
 	}
 
-	const listQuery = `
-		SELECT id, gateway_id, name, slug, enabled, priority, parallel, settings, stages, created_at, updated_at
-		  FROM policies
-		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
-		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
-		 ORDER BY created_at DESC, id
+	listQuery := policySelectColumns + `
+		  FROM policies p
+		 WHERE ($1::uuid IS NULL OR p.gateway_id = $1)
+		   AND ($2 = '' OR lower(p.name) LIKE '%' || lower($2) || '%')
+		 ORDER BY p.created_at DESC, p.id
 		 LIMIT $3 OFFSET $4`
 	rows, err := r.conn.Pool.Query(ctx, listQuery, gatewayParam, filter.NameContains, filter.Size, offset)
 	if err != nil {
@@ -209,13 +246,16 @@ func scanPolicy(s rowScanner) (*domain.Policy, error) {
 	p := &domain.Policy{}
 	var settingsRaw []byte
 	var stagesRaw []byte
+	var consumerIDs []uuid.UUID
 	if err := s.Scan(
-		&p.ID, &p.GatewayID, &p.Name, &p.Slug, &p.Enabled, &p.Priority, &p.Parallel,
+		&p.ID, &p.GatewayID, &p.Name, &p.Slug, &p.Enabled, &p.Global, &p.Priority, &p.Parallel,
 		&settingsRaw, &stagesRaw,
 		&p.CreatedAt, &p.UpdatedAt,
+		&consumerIDs,
 	); err != nil {
 		return nil, err
 	}
+	p.ConsumerIDs = ids.FromUUIDs[ids.ConsumerKind](consumerIDs)
 
 	if len(settingsRaw) > 0 {
 		if err := json.Unmarshal(settingsRaw, &p.Settings); err != nil {
@@ -257,6 +297,10 @@ func mapPgError(err error) error {
 		case pgUniqueViolation:
 			return domain.ErrAlreadyExists
 		case pgForeignKeyViolation:
+			if strings.Contains(pgErr.ConstraintName, "consumer_id") ||
+				strings.Contains(pgErr.Detail, "(consumer_id)") {
+				return domain.ErrInvalidConsumerID
+			}
 			return domain.ErrInvalidGatewayID
 		}
 	}

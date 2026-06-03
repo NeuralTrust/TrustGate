@@ -122,12 +122,12 @@ func TestPolicy_Rehydrate(t *testing.T) {
 	id := ids.New[ids.PolicyKind]()
 	gwID := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
-	p := Rehydrate(id, gwID, "x", "cors", true, 5, true,
+	p := Rehydrate(id, gwID, nil, "x", "cors", true, true, 5, true,
 		map[string]any{"k": "v"}, []Stage{StagePreRequest}, now, now)
 	if p.ID != id || p.GatewayID != gwID {
 		t.Fatal("identity mismatch after rehydrate")
 	}
-	if p.Slug != "cors" || !p.Enabled || p.Priority != 5 || !p.Parallel {
+	if p.Slug != "cors" || !p.Enabled || !p.Global || p.Priority != 5 || !p.Parallel {
 		t.Fatalf("unexpected fields after rehydrate: %+v", p)
 	}
 	if !p.CreatedAt.Equal(now) {

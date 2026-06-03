@@ -15,12 +15,11 @@ import (
 func TestUpdateConsumer_Success(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-gw")})
-	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-be")))
 	original := uniqueName("co-upd-from")
-	coID := CreateConsumer(t, gwID, validConsumerPayload(original, beID))
+	coID := CreateConsumer(t, gwID, validConsumerPayload(original))
 
 	updatedName := uniqueName("co-upd-to")
-	payload := validConsumerPayload(updatedName, beID)
+	payload := validConsumerPayload(updatedName)
 	payload["headers"] = map[string]string{"X-Tenant": "acme"}
 
 	status, body := sendRequest(t, http.MethodPut,
@@ -38,58 +37,41 @@ func TestUpdateConsumer_Success(t *testing.T) {
 	assert.Equal(t, updatedName, body["name"])
 }
 
-func TestUpdateConsumer_RebindsBackends(t *testing.T) {
+// TestUpdateConsumer_PreservesAssociations verifies that an update touching only
+// base config does not disturb the registry associations managed through the
+// link endpoints.
+func TestUpdateConsumer_PreservesAssociations(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-rebind-gw")})
-	be1 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-rebind-be1")))
-	be2 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-rebind-be2")))
-	be3 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-rebind-be3")))
-	name := uniqueName("co-upd-rebind")
-	coID := CreateConsumer(t, gwID, map[string]any{
-		"name":         name,
-		"path":         "/v1/" + name,
-		"registry_ids": []string{be1, be2},
-	})
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-keep-gw")})
+	be1 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-keep-be1")))
+	be2 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-keep-be2")))
+	name := uniqueName("co-upd-keep")
+	coID := CreateConsumerWithRegistries(t, gwID, name, be1, be2)
 
-	payload := map[string]any{
-		"name":         name,
-		"path":         "/v1/" + name,
-		"registry_ids": []string{be2, be3},
-	}
+	payload := validConsumerPayload(name)
+	payload["headers"] = map[string]string{"X-Env": "prod"}
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
 		nil, payload,
 	)
 	require.Equal(t, http.StatusOK, status, "body=%v", body)
 
-	status, body = sendRequest(t, http.MethodGet,
-		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
-		nil, nil,
-	)
-	require.Equal(t, http.StatusOK, status)
-	beIDs, ok := body["registry_ids"].([]any)
-	require.True(t, ok, "registry_ids missing: %v", body)
-	require.Len(t, beIDs, 2)
-	got := map[string]bool{}
-	for _, raw := range beIDs {
-		id, _ := raw.(string)
-		got[id] = true
-	}
-	assert.True(t, got[be2], "expected be2 still attached")
-	assert.True(t, got[be3], "expected be3 attached after update")
-	assert.False(t, got[be1], "be1 must have been detached")
+	got := idSet(t, getConsumer(t, gwID, coID), "registry_ids")
+	require.Len(t, got, 2, "update must not drop associations")
+	assert.Contains(t, got, be1)
+	assert.Contains(t, got, be2)
 }
 
-// TestUpdateConsumer_SetsModelPolicies attaches a model policy through an update
-// and asserts it is persisted and returned on a subsequent read.
+// TestUpdateConsumer_SetsModelPolicies attaches a registry, then binds a model
+// policy through an update and asserts it is persisted and returned.
 func TestUpdateConsumer_SetsModelPolicies(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-mp-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-mp-be")))
 	name := uniqueName("co-upd-mp")
-	coID := CreateConsumer(t, gwID, validConsumerPayload(name, beID))
+	coID := CreateConsumerWithRegistries(t, gwID, name, beID)
 
-	payload := validConsumerPayload(name, beID)
+	payload := validConsumerPayload(name)
 	payload["model_policies"] = []map[string]any{
 		{"registry_id": beID, "allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"},
 	}
@@ -114,16 +96,36 @@ func TestUpdateConsumer_SetsModelPolicies(t *testing.T) {
 	assert.Equal(t, "gpt-4o-mini", policy["default"])
 }
 
+// TestUpdateConsumer_RejectsModelPolicyForUnassociatedRegistry ensures a model
+// policy can only reference a registry already attached to the consumer.
+func TestUpdateConsumer_RejectsModelPolicyForUnassociatedRegistry(t *testing.T) {
+	defer Track(t, "UpdateConsumer")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-mp-unassoc-gw")})
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-mp-unassoc-be")))
+	name := uniqueName("co-upd-mp-unassoc")
+	coID := CreateConsumer(t, gwID, validConsumerPayload(name)) // registry NOT attached
+
+	payload := validConsumerPayload(name)
+	payload["model_policies"] = []map[string]any{
+		{"registry_id": beID, "allowed": []string{"gpt-4o-mini"}},
+	}
+	status, body := sendRequest(t, http.MethodPut,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
+		nil, payload,
+	)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
+}
+
 func TestUpdateConsumer_NotFound(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-missing-gw")})
-	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-missing-be")))
 	missing := uuid.NewString()
 
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, missing),
 		nil,
-		validConsumerPayload(uniqueName("co-upd-missing"), beID),
+		validConsumerPayload(uniqueName("co-upd-missing")),
 	)
 	require.Equal(t, http.StatusNotFound, status, "body=%v", body)
 	assert.Equal(t, "not_found", body["error"])
@@ -132,12 +134,11 @@ func TestUpdateConsumer_NotFound(t *testing.T) {
 func TestUpdateConsumer_ValidationEmptyName(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-val-gw")})
-	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-val-be")))
-	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-upd-val"), beID))
+	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-upd-val")))
 
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
-		nil, validConsumerPayload("", beID),
+		nil, validConsumerPayload(""),
 	)
 	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
 	assert.Equal(t, "validation_failed", body["error"])
@@ -146,34 +147,17 @@ func TestUpdateConsumer_ValidationEmptyName(t *testing.T) {
 func TestUpdateConsumer_NameConflictSameGateway(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-conflict-gw")})
-	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-conflict-be")))
 	a := uniqueName("co-upd-a")
 	b := uniqueName("co-upd-b")
-	_ = CreateConsumer(t, gwID, validConsumerPayload(a, beID))
-	bID := CreateConsumer(t, gwID, validConsumerPayload(b, beID))
+	_ = CreateConsumer(t, gwID, validConsumerPayload(a))
+	bID := CreateConsumer(t, gwID, validConsumerPayload(b))
 
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, bID),
-		nil, validConsumerPayload(a, beID),
+		nil, validConsumerPayload(a),
 	)
 	require.Equal(t, http.StatusConflict, status, "body=%v", body)
 	assert.Equal(t, "already_exists", body["error"])
-}
-
-func TestUpdateConsumer_RejectsCrossGatewayRegistry(t *testing.T) {
-	defer Track(t, "UpdateConsumer")()
-	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-xgw-a")})
-	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-xgw-b")})
-	beA := CreateRegistry(t, gwA, validRegistryPayload(uniqueName("co-upd-xgw-be-a")))
-	beB := CreateRegistry(t, gwB, validRegistryPayload(uniqueName("co-upd-xgw-be-b")))
-	coID := CreateConsumer(t, gwA, validConsumerPayload(uniqueName("co-upd-xgw"), beA))
-
-	status, body := sendRequest(t, http.MethodPut,
-		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwA, coID),
-		nil, validConsumerPayload(uniqueName("co-upd-xgw"), beB),
-	)
-	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
-	assert.Equal(t, "validation_failed", body["error"])
 }
 
 func TestUpdateConsumer_InvalidGatewayUUID(t *testing.T) {
@@ -181,7 +165,7 @@ func TestUpdateConsumer_InvalidGatewayUUID(t *testing.T) {
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/not-a-uuid/consumers/%s", AdminURL, uuid.NewString()),
 		nil,
-		validConsumerPayload(uniqueName("co-upd-bad-gw"), uuid.NewString()),
+		validConsumerPayload(uniqueName("co-upd-bad-gw")),
 	)
 	require.Equal(t, http.StatusBadRequest, status, "body=%v", body)
 	assert.Equal(t, "invalid_uuid", body["error"])
@@ -194,7 +178,7 @@ func TestUpdateConsumer_InvalidConsumerUUID(t *testing.T) {
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/not-a-uuid", AdminURL, gwID),
 		nil,
-		validConsumerPayload(uniqueName("co-upd-bad-co"), uuid.NewString()),
+		validConsumerPayload(uniqueName("co-upd-bad-co")),
 	)
 	require.Equal(t, http.StatusBadRequest, status, "body=%v", body)
 	assert.Equal(t, "invalid_uuid", body["error"])

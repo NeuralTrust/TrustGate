@@ -35,7 +35,12 @@ type creator struct {
 	logger      *slog.Logger
 }
 
-func NewCreator(repo domain.Repository, registry appplugins.Registry, manager *cache.TTLMapManager, logger *slog.Logger) Creator {
+func NewCreator(
+	repo domain.Repository,
+	registry appplugins.Registry,
+	manager *cache.TTLMapManager,
+	logger *slog.Logger,
+) Creator {
 	return &creator{
 		repo:        repo,
 		registry:    registry,
@@ -49,7 +54,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, e
 	if err != nil {
 		return nil, err
 	}
-	if err := c.registry.ValidateStages(in.Slug, in.Stages); err != nil {
+	if err := validatePlugin(c.registry, in.Slug, in.Stages, in.Settings); err != nil {
 		return nil, err
 	}
 	if err := c.repo.Save(ctx, p); err != nil {
