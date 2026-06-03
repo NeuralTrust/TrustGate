@@ -11,9 +11,9 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
-	domainbackend "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	cachemocks "github.com/NeuralTrust/AgentGateway/pkg/infra/cache/mocks"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
@@ -38,7 +38,7 @@ func newPermissiveCache(t *testing.T) *cachemocks.Client {
 	return c
 }
 
-func routableConsumerWith(gatewayID ids.GatewayID, backends ...*domainbackend.Backend) *appconsumer.RoutableConsumer {
+func routableConsumerWith(gatewayID ids.GatewayID, registries ...*registrydomain.Registry) *appconsumer.RoutableConsumer {
 	return &appconsumer.RoutableConsumer{
 		Consumer: &domainconsumer.Consumer{
 			ID:        ids.New[ids.ConsumerKind](),
@@ -47,18 +47,18 @@ func routableConsumerWith(gatewayID ids.GatewayID, backends ...*domainbackend.Ba
 			Path:      "/v1/chat/completions",
 			Algorithm: loadbalancer.AlgorithmRoundRobin,
 		},
-		Backends: backends,
+		Registries: registries,
 	}
 }
 
-func backendFor(gatewayID ids.GatewayID, provider string) *domainbackend.Backend {
-	return &domainbackend.Backend{
-		ID:        ids.New[ids.BackendKind](),
+func backendFor(gatewayID ids.GatewayID, provider string) *registrydomain.Registry {
+	return &registrydomain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
 		GatewayID: gatewayID,
 		Name:      "test-backend",
 		Provider:  provider,
 		Weight:    1,
-		Auth:      domainbackend.NewAPIKeyAuth("sk-1"),
+		Auth:      registrydomain.NewAPIKeyAuth("sk-1"),
 	}
 }
 
@@ -70,7 +70,7 @@ func newTestForwarder(t *testing.T, invoker appproxy.ProviderInvoker) appproxy.F
 	)
 }
 
-func enabledFallback(chain ...ids.BackendID) *domainconsumer.Fallback {
+func enabledFallback(chain ...ids.RegistryID) *domainconsumer.Fallback {
 	return &domainconsumer.Fallback{
 		Enabled:  true,
 		Triggers: []domainconsumer.FallbackTrigger{domainconsumer.TriggerHTTP5xx},
@@ -115,7 +115,7 @@ func TestForward_FallbackChainAfterPoolExhausted(t *testing.T) {
 	fallbackBk := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, pool)
 	rc.Consumer.Fallback = enabledFallback(fallbackBk.ID)
-	rc.FallbackBackends = []*domainbackend.Backend{fallbackBk}
+	rc.FallbackBackends = []*registrydomain.Registry{fallbackBk}
 
 	invoker := proxymocks.NewProviderInvoker(t)
 	invoker.EXPECT().
@@ -147,7 +147,7 @@ func TestForward_AllCandidatesFailRelaysLast5xx(t *testing.T) {
 	fallbackBk := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, pool)
 	rc.Consumer.Fallback = enabledFallback(fallbackBk.ID)
-	rc.FallbackBackends = []*domainbackend.Backend{fallbackBk}
+	rc.FallbackBackends = []*registrydomain.Registry{fallbackBk}
 
 	invoker := proxymocks.NewProviderInvoker(t)
 	invoker.EXPECT().

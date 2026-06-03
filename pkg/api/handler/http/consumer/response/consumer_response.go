@@ -18,7 +18,7 @@ type ConsumerResponse struct {
 	EmbeddingConfig *EmbeddingConfigResponse `json:"embedding_config,omitempty"`
 	Headers         map[string]string        `json:"headers,omitempty"`
 	Active          bool                     `json:"active"`
-	BackendIDs      []ids.BackendID          `json:"backend_ids"`
+	RegistryIDs     []ids.RegistryID         `json:"registry_ids"`
 	PolicyIDs       []ids.PolicyID           `json:"policy_ids"`
 	AuthIDs         []ids.AuthID             `json:"auth_ids"`
 	Fallback        *FallbackResponse        `json:"fallback,omitempty"`
@@ -28,9 +28,9 @@ type ConsumerResponse struct {
 }
 
 type ModelPolicyResponse struct {
-	BackendID ids.BackendID `json:"backend_id"`
-	Allowed   []string      `json:"allowed,omitempty"`
-	Default   string        `json:"default,omitempty"`
+	RegistryID ids.RegistryID `json:"registry_id"`
+	Allowed    []string       `json:"allowed,omitempty"`
+	Default    string         `json:"default,omitempty"`
 }
 
 type EmbeddingConfigResponse struct {
@@ -42,7 +42,7 @@ type FallbackResponse struct {
 	Enabled  bool                   `json:"enabled"`
 	Triggers []string               `json:"triggers,omitempty"`
 	Budget   FallbackBudgetResponse `json:"budget"`
-	Chain    []ids.BackendID        `json:"chain"`
+	Chain    []ids.RegistryID       `json:"chain"`
 }
 
 type FallbackBudgetResponse struct {
@@ -55,9 +55,9 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 	if c == nil {
 		return ConsumerResponse{}
 	}
-	backendIDs := []ids.BackendID(c.BackendIDs)
-	if backendIDs == nil {
-		backendIDs = []ids.BackendID{}
+	registryIDs := []ids.RegistryID(c.RegistryIDs)
+	if registryIDs == nil {
+		registryIDs = []ids.RegistryID{}
 	}
 	policyIDs := c.PolicyIDs
 	if policyIDs == nil {
@@ -84,7 +84,7 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		EmbeddingConfig: embedding,
 		Headers:         c.Headers,
 		Active:          c.Active,
-		BackendIDs:      backendIDs,
+		RegistryIDs:     registryIDs,
 		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
 		Fallback:        fromFallback(c.Fallback),
@@ -101,13 +101,13 @@ func fromModelPolicies(m domain.ModelPolicies) []ModelPolicyResponse {
 	out := make([]ModelPolicyResponse, 0, len(m))
 	for backendID, policy := range m {
 		out = append(out, ModelPolicyResponse{
-			BackendID: backendID,
-			Allowed:   policy.Allowed,
-			Default:   policy.Default,
+			RegistryID: backendID,
+			Allowed:    policy.Allowed,
+			Default:    policy.Default,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].BackendID.String() < out[j].BackendID.String()
+		return out[i].RegistryID.String() < out[j].RegistryID.String()
 	})
 	return out
 }
@@ -120,9 +120,9 @@ func fromFallback(f *domain.Fallback) *FallbackResponse {
 	for _, t := range f.Triggers {
 		triggers = append(triggers, string(t))
 	}
-	chain := []ids.BackendID(f.Chain)
+	chain := []ids.RegistryID(f.Chain)
 	if chain == nil {
-		chain = []ids.BackendID{}
+		chain = []ids.RegistryID{}
 	}
 	return &FallbackResponse{
 		Enabled:  f.Enabled,

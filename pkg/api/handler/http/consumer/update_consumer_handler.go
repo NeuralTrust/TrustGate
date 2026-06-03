@@ -50,7 +50,7 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		return helpers.WriteError(c, err)
 	}
 
-	backendIDs, err := req.ToBackendIDs()
+	registryIDs, err := req.ToRegistryIDs()
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
@@ -81,7 +81,7 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		EmbeddingConfig: req.ToEmbeddingConfig(),
 		Headers:         req.Headers,
 		Active:          req.Active,
-		BackendIDs:      backendIDs,
+		RegistryIDs:     registryIDs,
 		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
 		Fallback:        fallback,

@@ -29,16 +29,16 @@ func CacheEvents(c *container.Container) error {
 	if err := c.Provide(subscriber.NewInvalidateGatewayDataEventSubscriber); err != nil {
 		return err
 	}
-	return c.Provide(subscriber.NewInvalidateBackendCacheEventSubscriber)
+	return c.Provide(subscriber.NewInvalidateRegistryCacheEventSubscriber)
 }
 
 // CacheEventListenerParams collects everything StartCacheEventListener needs.
 type CacheEventListenerParams struct {
 	dig.In
-	Logger          *slog.Logger
-	Listener        cache.EventListener
-	GatewayDataSub  cache.EventSubscriber[event.InvalidateGatewayDataEvent]
-	BackendCacheSub cache.EventSubscriber[event.InvalidateBackendCacheEvent]
+	Logger           *slog.Logger
+	Listener         cache.EventListener
+	GatewayDataSub   cache.EventSubscriber[event.InvalidateGatewayDataEvent]
+	RegistryCacheSub cache.EventSubscriber[event.InvalidateRegistryCacheEvent]
 }
 
 // StartCacheEventListener registers the cache invalidation subscribers and
@@ -46,7 +46,7 @@ type CacheEventListenerParams struct {
 // invoked once per process (admin and proxy) at boot.
 func StartCacheEventListener(ctx context.Context, p CacheEventListenerParams) {
 	cache.RegisterEventSubscriber(p.Listener, p.GatewayDataSub)
-	cache.RegisterEventSubscriber(p.Listener, p.BackendCacheSub)
+	cache.RegisterEventSubscriber(p.Listener, p.RegistryCacheSub)
 
 	go p.Listener.Listen(ctx, channel.GatewayEventsChannel)
 	p.Logger.Info("cache event listener started", slog.String("channel", string(channel.GatewayEventsChannel)))

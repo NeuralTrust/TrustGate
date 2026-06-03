@@ -18,12 +18,12 @@ const (
 )
 
 type LLMAttrs struct {
-	BackendID string
-	Provider  string
-	Attempt   int
-	Fallback  bool
-	Outcome   string
-	Usage     *adapter.CanonicalUsage
+	RegistryID string
+	Provider   string
+	Attempt    int
+	Fallback   bool
+	Outcome    string
+	Usage      *adapter.CanonicalUsage
 }
 
 type PluginAttrs struct {

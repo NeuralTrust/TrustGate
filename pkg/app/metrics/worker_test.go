@@ -114,7 +114,7 @@ func TestWorker_ProcessBuildsEventsFromTraceSpans(t *testing.T) {
 
 	rt := trace.New("trace-1", trace.Metadata{GatewayID: "gw-1"})
 	span := rt.StartSpan(trace.SpanLLM, "openai")
-	span.LLM.BackendID = "backend-9"
+	span.LLM.RegistryID = "backend-9"
 	span.SetStatusCode(200)
 	span.ObserveUsage(&adapter.CanonicalUsage{InputTokens: 11, OutputTokens: 22, TotalTokens: 33})
 	span.End()
@@ -125,7 +125,7 @@ func TestWorker_ProcessBuildsEventsFromTraceSpans(t *testing.T) {
 	case evt := <-handled:
 		assert.True(t, evt.Streaming, "streaming flag must reach the event")
 		assert.Equal(t, "trace-1", evt.TraceID, "event correlates with the trace id")
-		assert.Equal(t, "backend-9", evt.BackendID, "span backend mapped onto the event")
+		assert.Equal(t, "backend-9", evt.RegistryID, "span backend mapped onto the event")
 		require.NotNil(t, evt.Usage, "usage must come from the LLM span")
 		assert.Equal(t, 11, evt.Usage.InputTokens)
 		assert.Equal(t, 22, evt.Usage.OutputTokens)

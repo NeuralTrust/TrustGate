@@ -36,7 +36,7 @@ const (
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
-// Plugin caches responses by request embedding similarity, scoped per backend.
+// Plugin caches responses by request embedding similarity, scoped per registry.
 type Plugin struct {
 	store     semantic.Store
 	locator   embeddingfactory.EmbeddingServiceLocator
@@ -272,14 +272,14 @@ func (p *Plugin) extractUserInput(req *infracontext.RequestContext) string {
 	return adapter.ExtractUserInputGeneric(req.Body)
 }
 
-// scopeID isolates cache entries. Backend id is preferred so identical requests
+// scopeID isolates cache entries. Registry id is preferred so identical requests
 // to different upstreams do not collide; gateway id is the fallback.
 func scopeID(req *infracontext.RequestContext) string {
 	if req == nil {
 		return ""
 	}
-	if req.BackendID != "" {
-		return req.BackendID
+	if req.RegistryID != "" {
+		return req.RegistryID
 	}
 	return req.GatewayID
 }

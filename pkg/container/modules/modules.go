@@ -14,7 +14,7 @@ func All() []container.Option {
 		container.WithModule(Plugins),
 		container.WithModule(LoadBalancer),
 		container.WithModule(Gateway),
-		container.WithModule(Backend),
+		container.WithModule(Registry),
 		container.WithModule(Consumer),
 		container.WithModule(Catalog),
 		container.WithModule(Providers),

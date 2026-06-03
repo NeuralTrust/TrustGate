@@ -8,13 +8,13 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
-	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
-	backendmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/backend/mocks"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	policymocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	backendmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/registry/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/stretchr/testify/mock"
 )
@@ -25,7 +25,7 @@ func routableConsumer(gwID ids.GatewayID, policyIDs []ids.PolicyID, authIDs []id
 		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
 		"/v1/chat", "round-robin", nil,
 		nil, true,
-		[]ids.BackendID{ids.New[ids.BackendKind]()}, policyIDs, authIDs,
+		[]ids.RegistryID{ids.New[ids.RegistryKind]()}, policyIDs, authIDs,
 		nil,
 		nil,
 		now, now,
@@ -58,12 +58,12 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 		})).
 		Return([]*authdomain.Auth{{ID: aid, GatewayID: gwID}}, nil).Once()
 
-	backendRepo := backendmocks.NewRepository(t)
-	backendRepo.EXPECT().
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().
 		FindByIDs(mock.Anything, gwID, mock.Anything).
 		Return(nil, nil).Once()
 
-	finder := appconsumer.NewDataFinder(repo, backendRepo, policyRepo, authRepo, newCacheManager(), newTestLogger())
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, newCacheManager(), newTestLogger())
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
@@ -101,20 +101,20 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	poolID := ids.New[ids.BackendKind]()
-	fb1, fb2 := ids.New[ids.BackendKind](), ids.New[ids.BackendKind]()
+	poolID := ids.New[ids.RegistryKind]()
+	fb1, fb2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(
 		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
 		"/v1/chat", "round-robin", nil,
 		nil, true,
-		[]ids.BackendID{poolID}, nil, nil,
+		[]ids.RegistryID{poolID}, nil, nil,
 		&domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
 			Budget:   domain.FallbackBudget{MaxAttempts: 9},
 
-			Chain: []ids.BackendID{fb2, fb1},
+			Chain: []ids.RegistryID{fb2, fb1},
 		},
 		nil,
 		now, now,
@@ -123,19 +123,19 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Consumer{cons}, nil).Once()
 
-	backendRepo := backendmocks.NewRepository(t)
-	backendRepo.EXPECT().
-		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(bids []ids.BackendID) bool {
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().
+		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(bids []ids.RegistryID) bool {
 			return len(bids) == 3
 		})).
-		Return([]*backenddomain.Backend{
+		Return([]*registrydomain.Registry{
 			{ID: poolID, GatewayID: gwID, Provider: "openai"},
 			{ID: fb1, GatewayID: gwID, Provider: "anthropic"},
 			{ID: fb2, GatewayID: gwID, Provider: "mistral"},
 		}, nil).Once()
 
 	finder := appconsumer.NewDataFinder(
-		repo, backendRepo,
+		repo, registryRepo,
 		policymocks.NewRepository(t), authmocks.NewRepository(t),
 		newCacheManager(), newTestLogger(),
 	)
@@ -145,11 +145,11 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 		t.Fatalf("FindByGateway error: %v", err)
 	}
 	rc := data.Consumers[0]
-	if len(rc.Backends) != 1 || rc.Backends[0].ID != poolID {
-		t.Fatalf("pool backends not resolved: %+v", rc.Backends)
+	if len(rc.Registries) != 1 || rc.Registries[0].ID != poolID {
+		t.Fatalf("pool registries not resolved: %+v", rc.Registries)
 	}
 	if len(rc.FallbackBackends) != 2 {
-		t.Fatalf("expected 2 fallback backends, got %d", len(rc.FallbackBackends))
+		t.Fatalf("expected 2 fallback registries, got %d", len(rc.FallbackBackends))
 	}
 	if rc.FallbackBackends[0].ID != fb2 || rc.FallbackBackends[1].ID != fb1 {
 		t.Fatal("fallback chain order was not preserved")

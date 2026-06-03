@@ -3,11 +3,11 @@ package router
 import (
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
 	authhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth"
-	backendhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/backend"
 	cataloghttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/catalog"
 	consumerhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
 	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
+	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
 	fiberSwagger "github.com/gofiber/swagger"
@@ -38,11 +38,11 @@ type AdminRouterDeps struct {
 	UpdateGateway *gatewayhttp.UpdateGatewayHandler
 	DeleteGateway *gatewayhttp.DeleteGatewayHandler
 
-	CreateBackend *backendhttp.CreateBackendHandler
-	GetBackend    *backendhttp.GetBackendHandler
-	ListBackend   *backendhttp.ListBackendHandler
-	UpdateBackend *backendhttp.UpdateBackendHandler
-	DeleteBackend *backendhttp.DeleteBackendHandler
+	CreateRegistry *registryhttp.CreateRegistryHandler
+	GetRegistry    *registryhttp.GetRegistryHandler
+	ListRegistry   *registryhttp.ListRegistryHandler
+	UpdateRegistry *registryhttp.UpdateRegistryHandler
+	DeleteRegistry *registryhttp.DeleteRegistryHandler
 
 	CreatePolicy *policyhttp.CreatePolicyHandler
 	GetPolicy    *policyhttp.GetPolicyHandler
@@ -93,12 +93,12 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	gw.Put("/:id", r.deps.UpdateGateway.Handle)
 	gw.Delete("/:id", r.deps.DeleteGateway.Handle)
 
-	backends := gw.Group("/:gateway_id/backends")
-	backends.Post("", r.deps.CreateBackend.Handle)
-	backends.Get("", r.deps.ListBackend.Handle)
-	backends.Get("/:id", r.deps.GetBackend.Handle)
-	backends.Put("/:id", r.deps.UpdateBackend.Handle)
-	backends.Delete("/:id", r.deps.DeleteBackend.Handle)
+	registries := gw.Group("/:gateway_id/registries")
+	registries.Post("", r.deps.CreateRegistry.Handle)
+	registries.Get("", r.deps.ListRegistry.Handle)
+	registries.Get("/:id", r.deps.GetRegistry.Handle)
+	registries.Put("/:id", r.deps.UpdateRegistry.Handle)
+	registries.Delete("/:id", r.deps.DeleteRegistry.Handle)
 
 	policies := gw.Group("/:gateway_id/policies")
 	policies.Post("", r.deps.CreatePolicy.Handle)

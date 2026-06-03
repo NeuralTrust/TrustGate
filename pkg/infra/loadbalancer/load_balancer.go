@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/go-redis/redis/v8"
@@ -18,9 +18,9 @@ import (
 
 type Pool struct {
 	ID              string
-	Backends        []*backend.Backend
+	Registries      []*registry.Registry
 	Algorithm       string
-	EmbeddingConfig *backend.EmbeddingConfig
+	EmbeddingConfig *registry.EmbeddingConfig
 }
 
 type LoadBalancer struct {
@@ -29,7 +29,7 @@ type LoadBalancer struct {
 	cache     cache.Client
 	poolID    string
 	poolSize  int
-	successCh chan *backend.Backend
+	successCh chan *registry.Registry
 	factory   Factory
 	done      chan struct{}
 	closeOnce sync.Once
@@ -43,7 +43,7 @@ func NewLoadBalancer(
 ) (*LoadBalancer, error) {
 	ctx := context.Background()
 
-	seedInitialHealth(ctx, cacheClient, pool.Backends, logger)
+	seedInitialHealth(ctx, cacheClient, pool.Registries, logger)
 
 	var embeddingCfg *embedding.Config
 	if pool.EmbeddingConfig != nil {
@@ -52,7 +52,7 @@ func NewLoadBalancer(
 
 	strategy, err := factory.CreateStrategy(StrategyInput{
 		Algorithm:       pool.Algorithm,
-		Backends:        pool.Backends,
+		Registries:      pool.Registries,
 		EmbeddingConfig: embeddingCfg,
 	})
 	if err != nil {
@@ -64,8 +64,8 @@ func NewLoadBalancer(
 		logger:    logger,
 		cache:     cacheClient,
 		poolID:    pool.ID,
-		poolSize:  len(pool.Backends),
-		successCh: make(chan *backend.Backend, 1000),
+		poolSize:  len(pool.Registries),
+		successCh: make(chan *registry.Registry, 1000),
 		factory:   factory,
 		done:      make(chan struct{}),
 	}
@@ -80,7 +80,7 @@ func healthKey(backendID string) string {
 func seedInitialHealth(
 	ctx context.Context,
 	cacheClient cache.Client,
-	backends []*backend.Backend,
+	registries []*registry.Registry,
 	logger *slog.Logger,
 ) {
 	redisClient := cacheClient.RedisClient()
@@ -88,7 +88,7 @@ func seedInitialHealth(
 		return
 	}
 	now := time.Now()
-	for _, b := range backends {
+	for _, b := range registries {
 		key := healthKey(b.ID.String())
 		if exists, err := redisClient.Exists(ctx, key).Result(); err == nil && exists > 0 {
 			continue
@@ -118,14 +118,14 @@ func (lb *LoadBalancer) Close() {
 	lb.closeOnce.Do(func() { close(lb.done) })
 }
 
-func (lb *LoadBalancer) ReportSuccess(b *backend.Backend) {
+func (lb *LoadBalancer) ReportSuccess(b *registry.Registry) {
 	select {
 	case lb.successCh <- b:
 	default:
 	}
 }
 
-func (lb *LoadBalancer) performSuccessUpdate(b *backend.Backend) {
+func (lb *LoadBalancer) performSuccessUpdate(b *registry.Registry) {
 	ctx := context.Background()
 	key := healthKey(b.ID.String())
 	redisClient := lb.cache.RedisClient()
@@ -146,13 +146,13 @@ func (lb *LoadBalancer) performSuccessUpdate(b *backend.Backend) {
 
 func (lb *LoadBalancer) NextBackend(
 	req *infracontext.RequestContext,
-	exclude map[ids.BackendID]struct{},
-) (*backend.Backend, error) {
+	exclude map[ids.RegistryID]struct{},
+) (*registry.Registry, error) {
 	attempts := lb.poolSize
 	if attempts < 1 {
 		attempts = 1
 	}
-	var last *backend.Backend
+	var last *registry.Registry
 	for i := 0; i < attempts; i++ {
 		b := lb.strategy.Next(req, exclude)
 		if b == nil {
@@ -164,13 +164,13 @@ func (lb *LoadBalancer) NextBackend(
 		}
 	}
 	if last != nil {
-		lb.logger.Info("all backends unhealthy; using last candidate as fallback",
-			slog.String("backend_id", last.ID.String()),
+		lb.logger.Info("all registries unhealthy; using last candidate as fallback",
+			slog.String("registry_id", last.ID.String()),
 			slog.String("provider", last.Provider),
 		)
 		return last, nil
 	}
-	return nil, fmt.Errorf("no available backends")
+	return nil, fmt.Errorf("no available registries")
 }
 
 func (lb *LoadBalancer) isBackendHealthy(req *infracontext.RequestContext, backendID string) (bool, error) {
@@ -193,11 +193,11 @@ func (lb *LoadBalancer) isBackendHealthy(req *infracontext.RequestContext, backe
 	return status.Healthy, nil
 }
 
-func (lb *LoadBalancer) ReportFailure(b *backend.Backend, err error) {
+func (lb *LoadBalancer) ReportFailure(b *registry.Registry, err error) {
 	lb.UpdateBackendHealth(b, false, err)
 }
 
-func (lb *LoadBalancer) UpdateBackendHealth(b *backend.Backend, healthy bool, err error) {
+func (lb *LoadBalancer) UpdateBackendHealth(b *registry.Registry, healthy bool, err error) {
 	if b.HealthChecks == nil || !b.HealthChecks.Passive {
 		return
 	}
@@ -247,7 +247,7 @@ func cacheHealthStatus(ctx context.Context, redisClient *redis.Client, key strin
 	return redisClient.Set(ctx, key, statusJSON, time.Hour).Err()
 }
 
-func backendEmbeddingToDomain(c *backend.EmbeddingConfig) *embedding.Config {
+func backendEmbeddingToDomain(c *registry.EmbeddingConfig) *embedding.Config {
 	out := &embedding.Config{
 		Provider: c.Provider,
 		Model:    c.Model,

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
-	domainbackend "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
@@ -27,12 +27,12 @@ const (
 	anthropicResponseBody = `{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":30,"output_tokens":15}}`
 )
 
-func apiKeyTarget(provider string) *domainbackend.Backend {
-	return &domainbackend.Backend{
-		ID:       ids.New[ids.BackendKind](),
+func apiKeyTarget(provider string) *registrydomain.Registry {
+	return &registrydomain.Registry{
+		ID:       ids.New[ids.RegistryKind](),
 		Name:     "t1",
 		Provider: provider,
-		Auth:     domainbackend.NewAPIKeyAuth("secret"),
+		Auth:     registrydomain.NewAPIKeyAuth("secret"),
 	}
 }
 
@@ -129,7 +129,7 @@ func TestProviderInvoke_CrossFormatAdapt(t *testing.T) {
 	assert.Equal(t, "openai", req.SourceFormat)
 	assert.Equal(t, "anthropic", req.TargetFormat)
 
-	// Request was transformed openai -> anthropic before hitting the backend.
+	// Request was transformed openai -> anthropic before hitting the registry.
 	var anthropicReq map[string]any
 	require.NoError(t, json.Unmarshal(sentBody, &anthropicReq))
 	assert.Contains(t, anthropicReq, "messages")
@@ -146,7 +146,7 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 	client := providermocks.NewClient(t)
 	client.EXPECT().
 		Completions(mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, domainbackend.NewBackendError(http.StatusTooManyRequests, errBody)).
+		Return(nil, registrydomain.NewBackendError(http.StatusTooManyRequests, errBody)).
 		Once()
 
 	locator := factorymocks.NewProviderLocator(t)

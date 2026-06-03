@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 type FallbackTrigger string
@@ -34,10 +34,10 @@ type FallbackBudget struct {
 }
 
 type Fallback struct {
-	Enabled  bool              `json:"enabled"`
-	Triggers []FallbackTrigger `json:"triggers,omitempty"`
-	Budget   FallbackBudget    `json:"budget"`
-	Chain    backend.Backends  `json:"chain,omitempty"`
+	Enabled  bool                `json:"enabled"`
+	Triggers []FallbackTrigger   `json:"triggers,omitempty"`
+	Budget   FallbackBudget      `json:"budget"`
+	Chain    registry.Registries `json:"chain,omitempty"`
 }
 
 func (f Fallback) Value() (driver.Value, error) {

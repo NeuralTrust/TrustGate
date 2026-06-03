@@ -225,7 +225,7 @@ func projectCallSpan(requestTrace *trace.RequestTrace, span *trace.Span) *metric
 	if attrs, ok := span.LLMAttrsCopy(); ok {
 		evt.Attempt = attrs.Attempt
 		evt.Fallback = attrs.Fallback
-		evt.BackendID = attrs.BackendID
+		evt.RegistryID = attrs.RegistryID
 		evt.Outcome = attrs.Outcome
 		if evt.Upstream != nil {
 			evt.Upstream.Target.Provider = attrs.Provider

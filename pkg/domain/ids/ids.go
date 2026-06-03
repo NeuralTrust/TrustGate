@@ -7,12 +7,12 @@ import (
 )
 
 type Kind interface {
-	GatewayKind | BackendKind | ConsumerKind | PolicyKind | AuthKind | ProviderKind | ModelKind
+	GatewayKind | RegistryKind | ConsumerKind | PolicyKind | AuthKind | ProviderKind | ModelKind
 }
 
 type (
 	GatewayKind  struct{}
-	BackendKind  struct{}
+	RegistryKind struct{}
 	ConsumerKind struct{}
 	PolicyKind   struct{}
 	AuthKind     struct{}
@@ -24,7 +24,7 @@ type ID[K Kind] uuid.UUID
 
 type (
 	GatewayID  = ID[GatewayKind]
-	BackendID  = ID[BackendKind]
+	RegistryID = ID[RegistryKind]
 	ConsumerID = ID[ConsumerKind]
 	PolicyID   = ID[PolicyKind]
 	AuthID     = ID[AuthKind]

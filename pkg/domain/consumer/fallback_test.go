@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 func TestFallback_Validate(t *testing.T) {
 	t.Parallel()
-	id1, id2 := ids.New[ids.BackendKind](), ids.New[ids.BackendKind]()
+	id1, id2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 
 	cases := []struct {
 		name    string
@@ -26,31 +26,31 @@ func TestFallback_Validate(t *testing.T) {
 				Enabled:  true,
 				Triggers: []FallbackTrigger{TriggerHTTP5xx},
 				Budget:   FallbackBudget{MaxAttempts: 3},
-				Chain:    backend.Backends{id1, id2},
+				Chain:    registry.Registries{id1, id2},
 			},
 		},
 		{
 			name:    "enabled without triggers",
-			fb:      &Fallback{Enabled: true, Budget: FallbackBudget{MaxAttempts: 3}, Chain: backend.Backends{id1}},
+			fb:      &Fallback{Enabled: true, Budget: FallbackBudget{MaxAttempts: 3}, Chain: registry.Registries{id1}},
 			wantErr: true,
 		},
 		{
 			name:    "unknown trigger",
-			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{"nope"}, Budget: FallbackBudget{MaxAttempts: 3}, Chain: backend.Backends{id1}},
+			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{"nope"}, Budget: FallbackBudget{MaxAttempts: 3}, Chain: registry.Registries{id1}},
 			wantErr: true,
 		},
 		{
 			name: "max attempts zero is auto (valid)",
-			fb:   &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: 0}, Chain: backend.Backends{id1}},
+			fb:   &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: 0}, Chain: registry.Registries{id1}},
 		},
 		{
 			name:    "negative max attempts",
-			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: -1}, Chain: backend.Backends{id1}},
+			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: -1}, Chain: registry.Registries{id1}},
 			wantErr: true,
 		},
 		{
 			name:    "negative latency",
-			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: 1, MaxTotalLatency: -time.Second}, Chain: backend.Backends{id1}},
+			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: 1, MaxTotalLatency: -time.Second}, Chain: registry.Registries{id1}},
 			wantErr: true,
 		},
 		{
@@ -60,12 +60,12 @@ func TestFallback_Validate(t *testing.T) {
 		},
 		{
 			name:    "duplicate chain entries",
-			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: 1}, Chain: backend.Backends{id1, id1}},
+			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: 1}, Chain: registry.Registries{id1, id1}},
 			wantErr: true,
 		},
 		{
 			name:    "nil chain entry",
-			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: 1}, Chain: backend.Backends{{}}},
+			fb:      &Fallback{Enabled: true, Triggers: []FallbackTrigger{TriggerHTTP5xx}, Budget: FallbackBudget{MaxAttempts: 1}, Chain: registry.Registries{{}}},
 			wantErr: true,
 		},
 	}

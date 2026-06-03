@@ -13,7 +13,7 @@ import (
 func TestUpdateConsumer_Success(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-upd-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-be")))
 	original := uniqueName("co-upd-from")
 	coID := CreateConsumer(t, gwID, validConsumerPayload(original, beID))
 
@@ -39,20 +39,20 @@ func TestUpdateConsumer_Success(t *testing.T) {
 func TestUpdateConsumer_RebindsBackends(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-rebind-gw")})
-	be1 := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-upd-rebind-be1")))
-	be2 := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-upd-rebind-be2")))
-	be3 := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-upd-rebind-be3")))
+	be1 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-rebind-be1")))
+	be2 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-rebind-be2")))
+	be3 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-rebind-be3")))
 	name := uniqueName("co-upd-rebind")
 	coID := CreateConsumer(t, gwID, map[string]any{
-		"name":        name,
-		"path":        "/v1/" + name,
-		"backend_ids": []string{be1, be2},
+		"name":         name,
+		"path":         "/v1/" + name,
+		"registry_ids": []string{be1, be2},
 	})
 
 	payload := map[string]any{
-		"name":        name,
-		"path":        "/v1/" + name,
-		"backend_ids": []string{be2, be3},
+		"name":         name,
+		"path":         "/v1/" + name,
+		"registry_ids": []string{be2, be3},
 	}
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
@@ -65,8 +65,8 @@ func TestUpdateConsumer_RebindsBackends(t *testing.T) {
 		nil, nil,
 	)
 	require.Equal(t, http.StatusOK, status)
-	beIDs, ok := body["backend_ids"].([]any)
-	require.True(t, ok, "backend_ids missing: %v", body)
+	beIDs, ok := body["registry_ids"].([]any)
+	require.True(t, ok, "registry_ids missing: %v", body)
 	require.Len(t, beIDs, 2)
 	got := map[string]bool{}
 	for _, raw := range beIDs {
@@ -83,13 +83,13 @@ func TestUpdateConsumer_RebindsBackends(t *testing.T) {
 func TestUpdateConsumer_SetsModelPolicies(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-mp-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-upd-mp-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-mp-be")))
 	name := uniqueName("co-upd-mp")
 	coID := CreateConsumer(t, gwID, validConsumerPayload(name, beID))
 
 	payload := validConsumerPayload(name, beID)
 	payload["model_policies"] = []map[string]any{
-		{"backend_id": beID, "allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"},
+		{"registry_id": beID, "allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"},
 	}
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
@@ -108,14 +108,14 @@ func TestUpdateConsumer_SetsModelPolicies(t *testing.T) {
 	require.Len(t, policies, 1)
 	policy, ok := policies[0].(map[string]any)
 	require.True(t, ok, "model policy entry malformed: %v", policies[0])
-	assert.Equal(t, beID, policy["backend_id"])
+	assert.Equal(t, beID, policy["registry_id"])
 	assert.Equal(t, "gpt-4o-mini", policy["default"])
 }
 
 func TestUpdateConsumer_NotFound(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-missing-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-upd-missing-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-missing-be")))
 	missing := uuid.NewString()
 
 	status, body := sendRequest(t, http.MethodPut,
@@ -130,7 +130,7 @@ func TestUpdateConsumer_NotFound(t *testing.T) {
 func TestUpdateConsumer_ValidationEmptyName(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-val-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-upd-val-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-val-be")))
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-upd-val"), beID))
 
 	status, body := sendRequest(t, http.MethodPut,
@@ -144,7 +144,7 @@ func TestUpdateConsumer_ValidationEmptyName(t *testing.T) {
 func TestUpdateConsumer_NameConflictSameGateway(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-conflict-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-upd-conflict-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upd-conflict-be")))
 	a := uniqueName("co-upd-a")
 	b := uniqueName("co-upd-b")
 	_ = CreateConsumer(t, gwID, validConsumerPayload(a, beID))
@@ -158,12 +158,12 @@ func TestUpdateConsumer_NameConflictSameGateway(t *testing.T) {
 	assert.Equal(t, "already_exists", body["error"])
 }
 
-func TestUpdateConsumer_RejectsCrossGatewayBackend(t *testing.T) {
+func TestUpdateConsumer_RejectsCrossGatewayRegistry(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-xgw-a")})
 	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-xgw-b")})
-	beA := CreateBackend(t, gwA, validBackendPayload(uniqueName("co-upd-xgw-be-a")))
-	beB := CreateBackend(t, gwB, validBackendPayload(uniqueName("co-upd-xgw-be-b")))
+	beA := CreateRegistry(t, gwA, validRegistryPayload(uniqueName("co-upd-xgw-be-a")))
+	beB := CreateRegistry(t, gwB, validRegistryPayload(uniqueName("co-upd-xgw-be-b")))
 	coID := CreateConsumer(t, gwA, validConsumerPayload(uniqueName("co-upd-xgw"), beA))
 
 	status, body := sendRequest(t, http.MethodPut,

@@ -90,7 +90,7 @@ func (m *MetricsMiddleware) streamFinalizer(
 		resp := &infracontext.ResponseContext{
 			Context:    context.Background(),
 			GatewayID:  gatewayID,
-			BackendID:  req.BackendID,
+			RegistryID: req.RegistryID,
 			Headers:    headers,
 			Body:       output,
 			StatusCode: statusCode,

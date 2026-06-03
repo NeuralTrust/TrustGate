@@ -7,15 +7,15 @@ import (
 	"testing"
 	"time"
 
-	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
-	backendrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/backend"
 	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/consumer"
 	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
+	registryrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/registry"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -23,7 +23,7 @@ import (
 type fixture struct {
 	repo *repo.Repository
 	gw   *gatewayrepo.Repository
-	be   *backendrepo.Repository
+	be   *registryrepo.Repository
 }
 
 func setupRepo(t *testing.T) fixture {
@@ -58,14 +58,14 @@ func setupRepo(t *testing.T) fixture {
 
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(),
-			"TRUNCATE TABLE consumer_backend, consumers, backends, gateways CASCADE")
+			"TRUNCATE TABLE consumer_registry, consumers, registries, gateways CASCADE")
 		pool.Close()
 	})
 
 	return fixture{
 		repo: repo.NewRepository(conn),
 		gw:   gatewayrepo.NewRepository(conn),
-		be:   backendrepo.NewRepository(conn),
+		be:   registryrepo.NewRepository(conn),
 	}
 }
 
@@ -81,11 +81,11 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.Gate
 	return g.ID
 }
 
-func seedBackend(t *testing.T, be *backendrepo.Repository, gwID ids.GatewayID, name string) ids.BackendID {
+func seedRegistry(t *testing.T, be *registryrepo.Repository, gwID ids.GatewayID, name string) ids.RegistryID {
 	t.Helper()
-	b, err := backenddomain.NewBackend(gwID, name, "openai", nil, "", 1, backenddomain.NewAPIKeyAuth("sk-test"), nil)
+	b, err := registrydomain.NewRegistry(gwID, name, "openai", nil, "", 1, registrydomain.NewAPIKeyAuth("sk-test"), nil)
 	if err != nil {
-		t.Fatalf("backend domain.NewBackend: %v", err)
+		t.Fatalf("backend domain.NewRegistry: %v", err)
 	}
 	if err := be.Save(context.Background(), b); err != nil {
 		t.Fatalf("backend Save: %v", err)
@@ -93,14 +93,14 @@ func seedBackend(t *testing.T, be *backendrepo.Repository, gwID ids.GatewayID, n
 	return b.ID
 }
 
-func validConsumer(t *testing.T, gwID ids.GatewayID, name string, beIDs ...ids.BackendID) *domain.Consumer {
+func validConsumer(t *testing.T, gwID ids.GatewayID, name string, beIDs ...ids.RegistryID) *domain.Consumer {
 	t.Helper()
 	c, err := domain.New(domain.CreateParams{
-		GatewayID:  gwID,
-		Name:       name,
-		Type:       domain.TypeLLM,
-		Path:       "/v1/" + uuid.NewString(),
-		BackendIDs: beIDs,
+		GatewayID:   gwID,
+		Name:        name,
+		Type:        domain.TypeLLM,
+		Path:        "/v1/" + uuid.NewString(),
+		RegistryIDs: beIDs,
 	})
 	if err != nil {
 		t.Fatalf("consumer domain.New: %v", err)
@@ -112,7 +112,7 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool")
-	beID := seedBackend(t, f.be, gwID, "be1")
+	beID := seedRegistry(t, f.be, gwID, "be1")
 
 	c := validConsumer(t, gwID, "openai-chat", beID)
 	c.Headers = map[string]string{"X-Tenant": "acme"}
@@ -131,8 +131,8 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.Type != domain.TypeLLM {
 		t.Fatalf("Type = %q", got.Type)
 	}
-	if len(got.BackendIDs) != 1 || got.BackendIDs[0] != beID {
-		t.Fatalf("BackendIDs = %v, want [%s]", got.BackendIDs, beID)
+	if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != beID {
+		t.Fatalf("RegistryIDs = %v, want [%s]", got.RegistryIDs, beID)
 	}
 	if got.Headers["X-Tenant"] != "acme" {
 		t.Fatalf("Headers lost data: %+v", got.Headers)
@@ -149,15 +149,15 @@ func TestRepository_SaveAndFindByID_RoundTripsFallback(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-fb")
-	poolBE := seedBackend(t, f.be, gwID, "be-pool")
-	fbBE := seedBackend(t, f.be, gwID, "be-fallback")
+	poolBE := seedRegistry(t, f.be, gwID, "be-pool")
+	fbBE := seedRegistry(t, f.be, gwID, "be-fallback")
 
 	c := validConsumer(t, gwID, "fb-consumer", poolBE)
 	c.Fallback = &domain.Fallback{
 		Enabled:  true,
 		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx, domain.TriggerHTTP429},
 		Budget:   domain.FallbackBudget{MaxAttempts: 6, MaxTotalLatency: 5 * time.Second, MaxCostUSD: 1.5},
-		Chain:    backenddomain.Backends{fbBE},
+		Chain:    registrydomain.Registries{fbBE},
 	}
 
 	if err := f.repo.Save(ctx, c); err != nil {
@@ -188,15 +188,15 @@ func TestRepository_SaveAndFindByID_RoundTripsModelPolicies(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-mp")
-	poolBE := seedBackend(t, f.be, gwID, "be-mp-pool")
-	fbBE := seedBackend(t, f.be, gwID, "be-mp-fallback")
+	poolBE := seedRegistry(t, f.be, gwID, "be-mp-pool")
+	fbBE := seedRegistry(t, f.be, gwID, "be-mp-fallback")
 
 	c := validConsumer(t, gwID, "mp-consumer", poolBE)
 	c.Fallback = &domain.Fallback{
 		Enabled:  true,
 		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
 		Budget:   domain.FallbackBudget{MaxAttempts: 3},
-		Chain:    backenddomain.Backends{fbBE},
+		Chain:    registrydomain.Registries{fbBE},
 	}
 	c.ModelPolicies = domain.ModelPolicies{
 		poolBE: {Allowed: []string{"gpt-4o", "gpt-4o-mini"}, Default: "gpt-4o"},
@@ -235,7 +235,7 @@ func TestRepository_Save_DuplicateNameForSameGateway(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool3")
-	beID := seedBackend(t, f.be, gwID, "be3")
+	beID := seedRegistry(t, f.be, gwID, "be3")
 
 	c1 := validConsumer(t, gwID, "dupe", beID)
 	if err := f.repo.Save(ctx, c1); err != nil {
@@ -252,7 +252,7 @@ func TestRepository_Save_DuplicatePathForSameGateway(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-path")
-	beID := seedBackend(t, f.be, gwID, "be-path")
+	beID := seedRegistry(t, f.be, gwID, "be-path")
 
 	c1 := validConsumer(t, gwID, "first", beID)
 	c1.Path = "/v1/shared/path"
@@ -272,8 +272,8 @@ func TestRepository_Save_SamePathDifferentGatewaysAllowed(t *testing.T) {
 	ctx := context.Background()
 	gw1 := seedGateway(t, f.gw, "g-p1")
 	gw2 := seedGateway(t, f.gw, "g-p2")
-	be1 := seedBackend(t, f.be, gw1, "be-p1")
-	be2 := seedBackend(t, f.be, gw2, "be-p2")
+	be1 := seedRegistry(t, f.be, gw1, "be-p1")
+	be2 := seedRegistry(t, f.be, gw2, "be-p2")
 
 	c1 := validConsumer(t, gw1, "c1", be1)
 	c1.Path = "/v1/chat/completions"
@@ -292,8 +292,8 @@ func TestRepository_Save_SameNameDifferentGatewaysAllowed(t *testing.T) {
 	ctx := context.Background()
 	gw1 := seedGateway(t, f.gw, "g-a")
 	gw2 := seedGateway(t, f.gw, "g-b")
-	be1 := seedBackend(t, f.be, gw1, "be-a")
-	be2 := seedBackend(t, f.be, gw2, "be-b")
+	be1 := seedRegistry(t, f.be, gw1, "be-a")
+	be2 := seedRegistry(t, f.be, gw2, "be-b")
 
 	if err := f.repo.Save(ctx, validConsumer(t, gw1, "shared", be1)); err != nil {
 		t.Fatalf("first Save: %v", err)
@@ -307,22 +307,22 @@ func TestRepository_Save_InvalidGatewayID(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	orphanGW := ids.New[ids.GatewayKind]()
-	c := validConsumer(t, orphanGW, "orphan", ids.New[ids.BackendKind]())
+	c := validConsumer(t, orphanGW, "orphan", ids.New[ids.RegistryKind]())
 	err := f.repo.Save(ctx, c)
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
 		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)
 	}
 }
 
-func TestRepository_Save_InvalidBackendID(t *testing.T) {
+func TestRepository_Save_InvalidRegistryID(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-be")
-	ghostBE := ids.New[ids.BackendKind]()
+	ghostBE := ids.New[ids.RegistryKind]()
 	c := validConsumer(t, gwID, "with-ghost", ghostBE)
 	err := f.repo.Save(ctx, c)
-	if !errors.Is(err, backenddomain.ErrInvalidBackendID) {
-		t.Fatalf("err = %v, want ErrInvalidBackendID", err)
+	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
+		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
 }
 
@@ -330,16 +330,16 @@ func TestRepository_Update_RebindsBackends(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "rebind")
-	be1 := seedBackend(t, f.be, gwID, "be-x")
-	be2 := seedBackend(t, f.be, gwID, "be-y")
-	be3 := seedBackend(t, f.be, gwID, "be-z")
+	be1 := seedRegistry(t, f.be, gwID, "be-x")
+	be2 := seedRegistry(t, f.be, gwID, "be-y")
+	be3 := seedRegistry(t, f.be, gwID, "be-z")
 
 	c := validConsumer(t, gwID, "rb", be1, be2)
 	if err := f.repo.Save(ctx, c); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	c.BackendIDs = []ids.BackendID{be2, be3}
+	c.RegistryIDs = []ids.RegistryID{be2, be3}
 	c.Name = "rb-v2"
 	c.UpdatedAt = time.Now().UTC()
 	if err := f.repo.Update(ctx, c); err != nil {
@@ -353,19 +353,19 @@ func TestRepository_Update_RebindsBackends(t *testing.T) {
 	if got.Name != "rb-v2" {
 		t.Fatalf("Name = %q", got.Name)
 	}
-	if len(got.BackendIDs) != 2 {
-		t.Fatalf("BackendIDs len = %d, want 2", len(got.BackendIDs))
+	if len(got.RegistryIDs) != 2 {
+		t.Fatalf("RegistryIDs len = %d, want 2", len(got.RegistryIDs))
 	}
-	have := map[ids.BackendID]bool{got.BackendIDs[0]: true, got.BackendIDs[1]: true}
+	have := map[ids.RegistryID]bool{got.RegistryIDs[0]: true, got.RegistryIDs[1]: true}
 	if !have[be2] || !have[be3] {
-		t.Fatalf("BackendIDs = %v, want [%s,%s]", got.BackendIDs, be2, be3)
+		t.Fatalf("RegistryIDs = %v, want [%s,%s]", got.RegistryIDs, be2, be3)
 	}
 }
 
 func TestRepository_Update_NotFound(t *testing.T) {
 	f := setupRepo(t)
 	gwID := seedGateway(t, f.gw, "pool-u2")
-	beID := seedBackend(t, f.be, gwID, "be-u2")
+	beID := seedRegistry(t, f.be, gwID, "be-u2")
 	c := validConsumer(t, gwID, "ghost", beID)
 	err := f.repo.Update(context.Background(), c)
 	if !errors.Is(err, domain.ErrNotFound) {
@@ -377,7 +377,7 @@ func TestRepository_Delete(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-d")
-	beID := seedBackend(t, f.be, gwID, "be-d")
+	beID := seedRegistry(t, f.be, gwID, "be-d")
 	c := validConsumer(t, gwID, "victim", beID)
 	if err := f.repo.Save(ctx, c); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -403,8 +403,8 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	ctx := context.Background()
 	gw1 := seedGateway(t, f.gw, "gw-l1")
 	gw2 := seedGateway(t, f.gw, "gw-l2")
-	be1 := seedBackend(t, f.be, gw1, "be-l1")
-	be2 := seedBackend(t, f.be, gw2, "be-l2")
+	be1 := seedRegistry(t, f.be, gw1, "be-l1")
+	be2 := seedRegistry(t, f.be, gw2, "be-l2")
 
 	mustSave := func(c *domain.Consumer) {
 		if err := f.repo.Save(ctx, c); err != nil {
@@ -436,14 +436,14 @@ func TestRepository_DeleteBackend_FailsWhenReferencedByConsumer(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-bd")
-	beID := seedBackend(t, f.be, gwID, "be-bd")
+	beID := seedRegistry(t, f.be, gwID, "be-bd")
 
 	if err := f.repo.Save(ctx, validConsumer(t, gwID, "uses-be", beID)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	err := f.be.Delete(ctx, beID)
-	if !errors.Is(err, backenddomain.ErrHasDependents) {
-		t.Fatalf("err = %v, want backenddomain.ErrHasDependents", err)
+	if !errors.Is(err, registrydomain.ErrHasDependents) {
+		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
 	}
 }
 
@@ -451,22 +451,22 @@ func TestRepository_DeleteBackend_FailsWhenReferencedByFallbackChain(t *testing.
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-fbd")
-	poolBE := seedBackend(t, f.be, gwID, "be-pool-fbd")
-	fbBE := seedBackend(t, f.be, gwID, "be-fallback-only")
+	poolBE := seedRegistry(t, f.be, gwID, "be-pool-fbd")
+	fbBE := seedRegistry(t, f.be, gwID, "be-fallback-only")
 
 	c := validConsumer(t, gwID, "fb-only-consumer", poolBE)
 	c.Fallback = &domain.Fallback{
 		Enabled:  true,
 		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
 		Budget:   domain.FallbackBudget{MaxAttempts: 3},
-		Chain:    backenddomain.Backends{fbBE},
+		Chain:    registrydomain.Registries{fbBE},
 	}
 	if err := f.repo.Save(ctx, c); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
 	err := f.be.Delete(ctx, fbBE)
-	if !errors.Is(err, backenddomain.ErrHasDependents) {
-		t.Fatalf("err = %v, want backenddomain.ErrHasDependents", err)
+	if !errors.Is(err, registrydomain.ErrHasDependents) {
+		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
 	}
 }
