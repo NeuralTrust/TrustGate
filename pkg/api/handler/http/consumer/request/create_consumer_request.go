@@ -3,11 +3,12 @@ package request
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 type CreateConsumerRequest struct {
@@ -18,9 +19,56 @@ type CreateConsumerRequest struct {
 	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
 	Headers         map[string]string       `json:"headers,omitempty"`
 	Active          *bool                   `json:"active,omitempty"`
-	BackendIDs      []string                `json:"backend_ids"`
+	RegistryIDs     []string                `json:"registry_ids"`
 	PolicyIDs       []string                `json:"policy_ids,omitempty"`
 	AuthIDs         []string                `json:"auth_ids,omitempty"`
+	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
+	ModelPolicies   []ModelPolicyRequest    `json:"model_policies,omitempty"`
+}
+
+type ModelPolicyRequest struct {
+	RegistryID string   `json:"registry_id"`
+	Allowed    []string `json:"allowed,omitempty"`
+	Default    string   `json:"default,omitempty"`
+}
+
+type FallbackRequest struct {
+	Enabled  bool                   `json:"enabled"`
+	Triggers []string               `json:"triggers,omitempty"`
+	Budget   *FallbackBudgetRequest `json:"budget,omitempty"`
+	Chain    []string               `json:"chain,omitempty"`
+}
+
+type FallbackBudgetRequest struct {
+	MaxAttempts       int     `json:"max_attempts,omitempty"`
+	MaxTotalLatencyMs int     `json:"max_total_latency_ms,omitempty"`
+	MaxCostUSD        float64 `json:"max_cost_usd,omitempty"`
+}
+
+func (r *FallbackRequest) ToFallback() (*domain.Fallback, error) {
+	if r == nil {
+		return nil, nil
+	}
+	chain, err := parseUUIDList[ids.RegistryKind](r.Chain, "fallback.chain")
+	if err != nil {
+		return nil, err
+	}
+	triggers := make([]domain.FallbackTrigger, 0, len(r.Triggers))
+	for _, t := range r.Triggers {
+		triggers = append(triggers, domain.FallbackTrigger(t))
+	}
+	budget := domain.FallbackBudget{}
+	if r.Budget != nil {
+		budget.MaxAttempts = r.Budget.MaxAttempts
+		budget.MaxTotalLatency = time.Duration(r.Budget.MaxTotalLatencyMs) * time.Millisecond
+		budget.MaxCostUSD = r.Budget.MaxCostUSD
+	}
+	return &domain.Fallback{
+		Enabled:  r.Enabled,
+		Triggers: triggers,
+		Budget:   budget,
+		Chain:    chain,
+	}, nil
 }
 
 type EmbeddingConfigRequest struct {
@@ -38,16 +86,16 @@ type APIKeyAuthRequest struct {
 	ParamLocation string `json:"param_location,omitempty"`
 }
 
-func (e *EmbeddingConfigRequest) ToDomain() *backenddomain.EmbeddingConfig {
+func (e *EmbeddingConfigRequest) ToDomain() *registrydomain.EmbeddingConfig {
 	if e == nil {
 		return nil
 	}
-	out := &backenddomain.EmbeddingConfig{
+	out := &registrydomain.EmbeddingConfig{
 		Provider: e.Provider,
 		Model:    e.Model,
 	}
 	if e.Auth != nil {
-		out.Auth = &backenddomain.APIKeyAuth{
+		out.Auth = &registrydomain.APIKeyAuth{
 			APIKey:        e.Auth.APIKey,
 			HeaderName:    e.Auth.HeaderName,
 			HeaderValue:   e.Auth.HeaderValue,
@@ -69,8 +117,8 @@ func (r CreateConsumerRequest) Validate() error {
 	if strings.TrimSpace(r.Path) == "" {
 		return fmt.Errorf("path is required: %w", commonerrors.ErrValidation)
 	}
-	if len(r.BackendIDs) == 0 {
-		return fmt.Errorf("at least one backend_id is required: %w", commonerrors.ErrValidation)
+	if len(r.RegistryIDs) == 0 {
+		return fmt.Errorf("at least one registry_id is required: %w", commonerrors.ErrValidation)
 	}
 	return nil
 }
@@ -79,26 +127,52 @@ func (r CreateConsumerRequest) ToType() domain.Type {
 	return domain.Type(r.Type)
 }
 
-func (r CreateConsumerRequest) ToEmbeddingConfig() *backenddomain.EmbeddingConfig {
+func (r CreateConsumerRequest) ToEmbeddingConfig() *registrydomain.EmbeddingConfig {
 	return r.EmbeddingConfig.ToDomain()
 }
 
-func (r CreateConsumerRequest) ToBackendIDs() ([]uuid.UUID, error) {
-	return parseUUIDList(r.BackendIDs, "backend_ids")
+func (r CreateConsumerRequest) ToRegistryIDs() ([]ids.RegistryID, error) {
+	return parseUUIDList[ids.RegistryKind](r.RegistryIDs, "registry_ids")
 }
 
-func (r CreateConsumerRequest) ToPolicyIDs() ([]uuid.UUID, error) {
-	return parseUUIDList(r.PolicyIDs, "policy_ids")
+func (r CreateConsumerRequest) ToPolicyIDs() ([]ids.PolicyID, error) {
+	return parseUUIDList[ids.PolicyKind](r.PolicyIDs, "policy_ids")
 }
 
-func (r CreateConsumerRequest) ToAuthIDs() ([]uuid.UUID, error) {
-	return parseUUIDList(r.AuthIDs, "auth_ids")
+func (r CreateConsumerRequest) ToAuthIDs() ([]ids.AuthID, error) {
+	return parseUUIDList[ids.AuthKind](r.AuthIDs, "auth_ids")
 }
 
-func parseUUIDList(raw []string, field string) ([]uuid.UUID, error) {
-	out := make([]uuid.UUID, 0, len(raw))
+func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
+	return r.Fallback.ToFallback()
+}
+
+func (r CreateConsumerRequest) ToModelPolicies() (domain.ModelPolicies, error) {
+	return parseModelPolicies(r.ModelPolicies)
+}
+
+func parseModelPolicies(raw []ModelPolicyRequest) (domain.ModelPolicies, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(domain.ModelPolicies, len(raw))
+	for i, mp := range raw {
+		id, err := ids.Parse[ids.RegistryKind](mp.RegistryID)
+		if err != nil {
+			return nil, fmt.Errorf("model_policies[%d]: invalid registry_id %q: %w", i, mp.RegistryID, commonerrors.ErrValidation)
+		}
+		if _, dup := out[id]; dup {
+			return nil, fmt.Errorf("model_policies[%d]: duplicate registry_id %q: %w", i, mp.RegistryID, commonerrors.ErrValidation)
+		}
+		out[id] = domain.ModelPolicy{Allowed: mp.Allowed, Default: mp.Default}
+	}
+	return out, nil
+}
+
+func parseUUIDList[K ids.Kind](raw []string, field string) ([]ids.ID[K], error) {
+	out := make([]ids.ID[K], 0, len(raw))
 	for i, s := range raw {
-		id, err := uuid.Parse(s)
+		id, err := ids.Parse[K](s)
 		if err != nil {
 			return nil, fmt.Errorf("%s[%d]: invalid uuid %q: %w", field, i, s, commonerrors.ErrValidation)
 		}

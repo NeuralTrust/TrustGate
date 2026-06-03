@@ -105,7 +105,7 @@ func TestPlugin_PreRequest_HitShortCircuits(t *testing.T) {
 	creator := &fakeCreator{emb: &embedding.Embedding{Value: []float64{0.1, 0.2}}}
 	p := New(store, locatorWith(creator), adapter.NewRegistry())
 
-	req := &infracontext.RequestContext{Provider: "openai", BackendID: "b1", Body: openAIBody()}
+	req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
 	resp := &infracontext.ResponseContext{}
 
 	res, err := p.Execute(context.Background(), newInput(policy.StagePreRequest, req, resp))
@@ -156,7 +156,7 @@ func TestPlugin_PostResponse_StoresOnMiss(t *testing.T) {
 	creator := &fakeCreator{emb: &embedding.Embedding{Value: []float64{0.1, 0.2}}}
 	p := New(store, locatorWith(creator), adapter.NewRegistry())
 
-	req := &infracontext.RequestContext{Provider: "openai", BackendID: "b1", Body: openAIBody()}
+	req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
 	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`)}
 
 	_, err := p.Execute(context.Background(), newInput(policy.StagePostResponse, req, resp))

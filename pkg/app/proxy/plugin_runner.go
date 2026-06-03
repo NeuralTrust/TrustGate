@@ -10,16 +10,11 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 )
 
-// postResponseTimeout bounds the detached PostResponse stage so a slow plugin
-// (e.g. an embedding store) cannot leak goroutines indefinitely.
 const postResponseTimeout = 30 * time.Second
 
-// runPreRequest executes the PreRequest stage. It returns a non-nil
-// *ForwardResult when the chain short-circuits (plugin rejection or cache hit),
-// in which case the caller must relay it and skip the upstream.
 func (f *forwarder) runPreRequest(
 	ctx context.Context,
 	policies []*policy.Policy,
@@ -30,11 +25,10 @@ func (f *forwarder) runPreRequest(
 		return nil, nil
 	}
 	outcome, err := f.executor.RunStage(ctx, appplugins.StageInput{
-		Stage:     policy.StagePreRequest,
-		Policies:  policies,
-		Request:   req,
-		Response:  resp,
-		Collector: metrics.CollectorFromContext(ctx),
+		Stage:    policy.StagePreRequest,
+		Policies: policies,
+		Request:  req,
+		Response: resp,
 	})
 	if err != nil {
 		if pe, ok := appplugins.AsPluginError(err); ok {
@@ -52,8 +46,6 @@ func (f *forwarder) runPreRequest(
 	return nil, nil
 }
 
-// runPreResponse executes the PreResponse stage, merging plugin headers into the
-// response. Short-circuits are not expected at this stage and are ignored.
 func (f *forwarder) runPreResponse(
 	ctx context.Context,
 	policies []*policy.Policy,
@@ -64,19 +56,38 @@ func (f *forwarder) runPreResponse(
 		return
 	}
 	if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
-		Stage:     policy.StagePreResponse,
-		Policies:  policies,
-		Request:   req,
-		Response:  resp,
-		Collector: metrics.CollectorFromContext(ctx),
+		Stage:    policy.StagePreResponse,
+		Policies: policies,
+		Request:  req,
+		Response: resp,
 	}); err != nil {
 		f.logger.Warn("pre_response plugin stage failed", slog.String("error", err.Error()))
 	}
 }
 
-// firePostResponse runs the PostResponse stage asynchronously against snapshots
-// of the request/response so it never races the client response that is being
-// relayed concurrently.
+func (f *forwarder) runPreResponseGated(
+	ctx context.Context,
+	policies []*policy.Policy,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+) *appplugins.PluginError {
+	if f.executor == nil {
+		return nil
+	}
+	if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
+		Stage:    policy.StagePreResponse,
+		Policies: policies,
+		Request:  req,
+		Response: resp,
+	}); err != nil {
+		if pe, ok := appplugins.AsPluginError(err); ok {
+			return pe
+		}
+		f.logger.Warn("pre_response plugin stage failed", slog.String("error", err.Error()))
+	}
+	return nil
+}
+
 func (f *forwarder) firePostResponse(
 	policies []*policy.Policy,
 	req *infracontext.RequestContext,
@@ -85,28 +96,31 @@ func (f *forwarder) firePostResponse(
 	if f.executor == nil {
 		return
 	}
-	collector := metrics.CollectorFromContext(req.Context)
+	rt := trace.FromContext(req.Context)
 	reqCopy := snapshotRequest(req)
 	respCopy := snapshotResponse(resp)
 
+	if rt != nil {
+		rt.AddAsync()
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), postResponseTimeout)
 		defer cancel()
+		if rt != nil {
+			defer rt.Done()
+			ctx = trace.NewContext(ctx, rt)
+		}
 		if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
-			Stage:     policy.StagePostResponse,
-			Policies:  policies,
-			Request:   reqCopy,
-			Response:  respCopy,
-			Collector: collector,
+			Stage:    policy.StagePostResponse,
+			Policies: policies,
+			Request:  reqCopy,
+			Response: respCopy,
 		}); err != nil {
 			f.logger.Warn("post_response plugin stage failed", slog.String("error", err.Error()))
 		}
 	}()
 }
 
-// wrapStreamWithPostResponse returns a stream that yields the same lines while
-// accumulating the body, firing PostResponse once the upstream stream is fully
-// drained.
 func (f *forwarder) wrapStreamWithPostResponse(
 	policies []*policy.Policy,
 	req *infracontext.RequestContext,
@@ -120,9 +134,7 @@ func (f *forwarder) wrapStreamWithPostResponse(
 		var body []byte
 		completed := true
 		for line, err := range stream {
-			// Accumulate only successful, non-empty lines so the reconstructed
-			// body mirrors the upstream payload without the SSE separator noise
-			// (matches TrustGate's stream buffering for PostResponse).
+
 			if err == nil && len(line) > 0 {
 				body = append(body, line...)
 				body = append(body, '\n')
@@ -132,8 +144,7 @@ func (f *forwarder) wrapStreamWithPostResponse(
 				break
 			}
 		}
-		// Skip PostResponse when the consumer aborted (client disconnect / write
-		// error): the stream never finished, so usage/body are incomplete.
+
 		if completed {
 			resp.Body = body
 			f.firePostResponse(policies, req, resp)
@@ -141,8 +152,6 @@ func (f *forwarder) wrapStreamWithPostResponse(
 	}
 }
 
-// pluginErrorResult turns a plugin rejection into a relayable response,
-// preserving the plugin's status and headers.
 func pluginErrorResult(pe *appplugins.PluginError) *ForwardResult {
 	body, _ := json.Marshal(map[string]string{
 		"error":   "plugin_rejected",
@@ -155,8 +164,6 @@ func pluginErrorResult(pe *appplugins.PluginError) *ForwardResult {
 	}
 }
 
-// mergeProviderResponse folds the upstream response into the plugin response
-// context so PostResponse plugins observe the final status, headers and body.
 func mergeProviderResponse(resp *infracontext.ResponseContext, provider *ProviderResponse, streaming bool) {
 	resp.StatusCode = provider.StatusCode
 	resp.Streaming = streaming
@@ -189,9 +196,22 @@ func snapshotResponse(resp *infracontext.ResponseContext) *infracontext.Response
 	clone := *resp
 	clone.Context = context.Background()
 	clone.Body = append([]byte(nil), resp.Body...)
-	clone.Headers = nil // PostResponse headers are post-hoc and not relayed.
+	clone.Headers = nil
 	clone.Metadata = copyMetadata(resp.Metadata)
 	return &clone
+}
+
+// cloneHeaders returns a deep copy of the header map so callers can reset a
+// response's headers to a known baseline without aliasing the source slices.
+func cloneHeaders(headers map[string][]string) map[string][]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(headers))
+	for name, values := range headers {
+		out[name] = append([]string(nil), values...)
+	}
+	return out
 }
 
 func copyMetadata(in map[string]interface{}) map[string]interface{} {

@@ -30,7 +30,6 @@ type Event struct {
 	IP             string            `json:"user_ip,omitempty"`
 	Params         map[string]string `json:"params,omitempty"`
 
-	// Trace Params
 	Method          string              `json:"method,omitempty"`
 	Error           string              `json:"error,omitempty"`
 	Locale          string              `json:"locale,omitempty"`
@@ -44,6 +43,11 @@ type Event struct {
 	StatusCode      int                 `json:"status_code"`
 	Streaming       bool                `json:"streaming"`
 
+	Attempt    int    `json:"attempt,omitempty"`
+	Fallback   bool   `json:"fallback,omitempty"`
+	RegistryID string `json:"registry_id,omitempty"`
+	Outcome    string `json:"outcome,omitempty"`
+
 	TeamID string `json:"team_id,omitempty"`
 	AppID  string `json:"app_id,omitempty"`
 
@@ -53,7 +57,6 @@ type Event struct {
 	SessionID     string `json:"session_id,omitempty"`
 	FingerprintID string `json:"fingerprint_id,omitempty"`
 
-	// Plugin Params
 	Plugin *PluginDataEvent `json:"plugin,omitempty"`
 
 	RuleID   string `json:"rule_id,omitempty"`

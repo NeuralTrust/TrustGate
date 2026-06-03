@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
-	domainbackend "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 	factorymocks "github.com/NeuralTrust/AgentGateway/pkg/infra/providers/factory/mocks"
 	providermocks "github.com/NeuralTrust/AgentGateway/pkg/infra/providers/mocks"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -27,12 +27,12 @@ const (
 	anthropicResponseBody = `{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":30,"output_tokens":15}}`
 )
 
-func apiKeyTarget(provider string) *domainbackend.Backend {
-	return &domainbackend.Backend{
-		ID:       uuid.New(),
+func apiKeyTarget(provider string) *registrydomain.Registry {
+	return &registrydomain.Registry{
+		ID:       ids.New[ids.RegistryKind](),
 		Name:     "t1",
 		Provider: provider,
-		Auth:     domainbackend.NewAPIKeyAuth("secret"),
+		Auth:     registrydomain.NewAPIKeyAuth("secret"),
 	}
 }
 
@@ -61,6 +61,50 @@ func TestProviderInvoke_SameFormatPassthrough(t *testing.T) {
 	assert.Equal(t, "openai", req.TargetFormat)
 }
 
+func TestProviderInvoke_DecodesUsageOnFinish(t *testing.T) {
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return([]byte(openaiResponseBody), nil).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("openai").Return(client, nil).Once()
+
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.Usage, "non-streaming usage must be decoded on finish")
+	assert.Equal(t, 1, resp.Usage.InputTokens)
+	assert.Equal(t, 1, resp.Usage.OutputTokens)
+	assert.Equal(t, 2, resp.Usage.TotalTokens)
+}
+
+func TestProviderInvoke_DecodesUsageOnFinishCrossFormat(t *testing.T) {
+	client := providermocks.NewClient(t)
+	client.EXPECT().
+		Completions(mock.Anything, mock.Anything, mock.Anything).
+		Return([]byte(anthropicResponseBody), nil).
+		Once()
+
+	locator := factorymocks.NewProviderLocator(t)
+	locator.EXPECT().Get("anthropic").Return(client, nil).Once()
+
+	inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+
+	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
+	resp, err := inv.Invoke(context.Background(), apiKeyTarget("anthropic"), req)
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.Usage)
+	assert.Equal(t, 30, resp.Usage.InputTokens)
+	assert.Equal(t, 15, resp.Usage.OutputTokens)
+	assert.Equal(t, 45, resp.Usage.TotalTokens)
+}
+
 func TestProviderInvoke_CrossFormatAdapt(t *testing.T) {
 	var sentBody []byte
 	client := providermocks.NewClient(t)
@@ -85,7 +129,7 @@ func TestProviderInvoke_CrossFormatAdapt(t *testing.T) {
 	assert.Equal(t, "openai", req.SourceFormat)
 	assert.Equal(t, "anthropic", req.TargetFormat)
 
-	// Request was transformed openai -> anthropic before hitting the backend.
+	// Request was transformed openai -> anthropic before hitting the registry.
 	var anthropicReq map[string]any
 	require.NoError(t, json.Unmarshal(sentBody, &anthropicReq))
 	assert.Contains(t, anthropicReq, "messages")
@@ -102,7 +146,7 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 	client := providermocks.NewClient(t)
 	client.EXPECT().
 		Completions(mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, domainbackend.NewBackendError(http.StatusTooManyRequests, errBody)).
+		Return(nil, registrydomain.NewBackendError(http.StatusTooManyRequests, errBody)).
 		Once()
 
 	locator := factorymocks.NewProviderLocator(t)

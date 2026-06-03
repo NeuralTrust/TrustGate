@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -51,7 +51,7 @@ func TestNewBedrockBackendError(t *testing.T) {
 		}
 
 		var wrapped error = newBedrockBackendError(err)
-		be, ok := backend.IsBackendError(wrapped)
+		be, ok := registry.IsBackendError(wrapped)
 		require.True(t, ok)
 		assert.Equal(t, http.StatusForbidden, be.StatusCode)
 	})

@@ -1,0 +1,23 @@
+# Auto-release pipeline for the main branch.
+# Uses AI to determine the semver bump (major/minor/patch) and creates a GitHub
+# Release. The published release then triggers release.yml to build/promote to prod.
+# See: https://semver.org/
+
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'k8s/**'
+      - '.github/**'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: NeuralTrust/workflows/.github/workflows/ai-release-bump.yml@main
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}

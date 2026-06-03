@@ -1,3 +1,5 @@
+//go:build functional
+
 package functional_test
 
 import (
@@ -32,16 +34,16 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 	return id
 }
 
-// CreateBackend issues a POST /v1/gateways/:gateway_id/backends and returns
+// CreateRegistry issues a POST /v1/gateways/:gateway_id/registries and returns
 // the new backend id. Aborts the calling test on any failure.
-func CreateBackend(t *testing.T, gatewayID string, payload map[string]any) string {
+func CreateRegistry(t *testing.T, gatewayID string, payload map[string]any) string {
 	t.Helper()
-	url := fmt.Sprintf("%s/v1/gateways/%s/backends", AdminURL, gatewayID)
+	url := fmt.Sprintf("%s/v1/gateways/%s/registries", AdminURL, gatewayID)
 	status, body := sendRequest(t, http.MethodPost, url, nil, payload)
-	require.Equal(t, http.StatusCreated, status, "create backend failed: %v", body)
+	require.Equal(t, http.StatusCreated, status, "create registry failed: %v", body)
 
 	id, ok := body["id"].(string)
-	require.True(t, ok, "create backend response missing id: %v", body)
+	require.True(t, ok, "create registry response missing id: %v", body)
 	require.NotEmpty(t, id)
 	return id
 }
@@ -98,9 +100,9 @@ func CreateConsumer(t *testing.T, gatewayID string, payload map[string]any) stri
 // fields.
 func validConsumerPayload(name, backendID string) map[string]any {
 	return map[string]any{
-		"name":        name,
-		"path":        "/v1/" + name,
-		"backend_ids": []string{backendID},
+		"name":         name,
+		"path":         "/v1/" + name,
+		"registry_ids": []string{backendID},
 	}
 }
 
@@ -135,10 +137,10 @@ func validAuthPayload(name string) map[string]any {
 	}
 }
 
-// validBackendPayload returns a minimal payload accepted by Validate(): a
+// validRegistryPayload returns a minimal payload accepted by Validate(): a
 // single openai target (a backend IS a target now) with api_key auth. Callers
 // may override fields.
-func validBackendPayload(name string) map[string]any {
+func validRegistryPayload(name string) map[string]any {
 	return map[string]any{
 		"name":     name,
 		"provider": "openai",

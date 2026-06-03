@@ -5,31 +5,33 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
 )
 
 type Random struct {
-	mu       sync.Mutex
-	backends []*backend.Backend
+	mu         sync.Mutex
+	registries []*registry.Registry
 }
 
-func NewRandom(backends []*backend.Backend) *Random {
-	return &Random{backends: backends}
+func NewRandom(registries []*registry.Registry) *Random {
+	return &Random{registries: registries}
 }
 
-func (r *Random) Next(req *infracontext.RequestContext) *backend.Backend {
+func (r *Random) Next(req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.backends) == 0 {
+	candidates := filterExcluded(r.registries, exclude)
+	if len(candidates) == 0 {
 		return nil
 	}
-	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(r.backends))))
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(candidates))))
 	if err != nil {
-		return r.backends[0]
+		return candidates[0]
 	}
-	return r.backends[n.Int64()]
+	return candidates[n.Int64()]
 }
 
 func (r *Random) Name() string {

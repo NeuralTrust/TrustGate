@@ -1,3 +1,5 @@
+//go:build functional
+
 package functional_test
 
 import (
@@ -13,7 +15,7 @@ import (
 func TestGetConsumer_Success(t *testing.T) {
 	defer Track(t, "GetConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-get-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-get-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-get-be")))
 	name := uniqueName("co-get-ok")
 	coID := CreateConsumer(t, gwID, validConsumerPayload(name, beID))
 

@@ -1,3 +1,5 @@
+//go:build functional
+
 package gateway_test
 
 import (
@@ -11,11 +13,11 @@ import (
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -127,7 +129,7 @@ func TestRepository_SaveAndFindByID_NullableJSONB(t *testing.T) {
 
 func TestRepository_FindByID_NotFound(t *testing.T) {
 	r, _ := setupRepo(t)
-	_, err := r.FindByID(context.Background(), uuid.New())
+	_, err := r.FindByID(context.Background(), ids.New[ids.GatewayKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}

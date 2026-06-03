@@ -1,0 +1,35 @@
+# Release to prod — triggered when a GitHub Release is published.
+# Promotes the tested dev image to prod on develop→main merges (byte-identical,
+# zero rebuild) or rebuilds on hotfixes/direct pushes. Bumps the prod overlay's
+# kustomization.yaml + config.env so Flux (clusters/neuraltrust-prod) rolls it out.
+#
+# Uses the shared reusable workflow from NeuralTrust/workflows.
+
+name: Release
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    uses: NeuralTrust/workflows/.github/workflows/release-promote.yml@main
+    with:
+      image_name: agentgateway
+      gcp_project_id: ${{ vars.PROD_GCP_PROJECT_ID }}
+      dev_gcp_project_id: ${{ vars.DEV_GCP_PROJECT_ID }}
+      build_args: |
+        VERSION=${{ github.ref_name }}
+        COMMIT=${{ github.sha }}
+    secrets:
+      WIF_PROVIDER: ${{ secrets.PROD_WIF_PROVIDER }}
+      WIF_SERVICE_ACCOUNT: ${{ secrets.PROD_WIF_SERVICE_ACCOUNT }}
+      BUILD_SECRETS: |
+        GITHUB_TOKEN=${{ secrets.GH_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

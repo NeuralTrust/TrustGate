@@ -6,17 +6,17 @@ import (
 	"time"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 func validParams() CreateParams {
 	return CreateParams{
-		GatewayID:  uuid.New(),
-		Name:       "openai-chat",
-		Type:       TypeLLM,
-		Path:       "/v1/chat/completions",
-		BackendIDs: []uuid.UUID{uuid.New()},
+		GatewayID:   ids.New[ids.GatewayKind](),
+		Name:        "openai-chat",
+		Type:        TypeLLM,
+		Path:        "/v1/chat/completions",
+		RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
 	}
 }
 
@@ -27,7 +27,7 @@ func TestConsumer_New_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.ID == uuid.Nil {
+	if c.ID.IsNil() {
 		t.Fatal("ID is zero")
 	}
 	if c.GatewayID != p.GatewayID {
@@ -85,7 +85,7 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 		},
 		{
 			name:    "nil gateway id",
-			mutate:  func(c *Consumer) { c.GatewayID = uuid.Nil },
+			mutate:  func(c *Consumer) { c.GatewayID = ids.GatewayID{} },
 			wantErr: ErrInvalidGatewayID,
 		},
 		{
@@ -109,22 +109,22 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 			wantErr: ErrInvalidEmbeddingConfig,
 		},
 		{
-			name:    "no backends",
-			mutate:  func(c *Consumer) { c.BackendIDs = nil },
+			name:    "no registries",
+			mutate:  func(c *Consumer) { c.RegistryIDs = nil },
 			wantErr: ErrNoBackends,
 		},
 		{
 			name: "duplicate backend",
 			mutate: func(c *Consumer) {
-				id := uuid.New()
-				c.BackendIDs = []uuid.UUID{id, id}
+				id := ids.New[ids.RegistryKind]()
+				c.RegistryIDs = []ids.RegistryID{id, id}
 			},
-			wantErr: backenddomain.ErrInvalidBackendID,
+			wantErr: registrydomain.ErrInvalidRegistryID,
 		},
 		{
 			name:    "nil backend uuid",
-			mutate:  func(c *Consumer) { c.BackendIDs = []uuid.UUID{uuid.Nil} },
-			wantErr: backenddomain.ErrInvalidBackendID,
+			mutate:  func(c *Consumer) { c.RegistryIDs = []ids.RegistryID{{}} },
+			wantErr: registrydomain.ErrInvalidRegistryID,
 		},
 	}
 	for _, tc := range tests {
@@ -132,12 +132,12 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := &Consumer{
-				ID:         uuid.New(),
-				GatewayID:  uuid.New(),
-				Name:       "x",
-				Type:       TypeLLM,
-				Path:       "/v1/chat",
-				BackendIDs: []uuid.UUID{uuid.New()},
+				ID:          ids.New[ids.ConsumerKind](),
+				GatewayID:   ids.New[ids.GatewayKind](),
+				Name:        "x",
+				Type:        TypeLLM,
+				Path:        "/v1/chat",
+				RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
 			}
 			tc.mutate(c)
 			err := c.Validate()
@@ -156,47 +156,51 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 
 func TestConsumer_AttachBackend(t *testing.T) {
 	t.Parallel()
-	c := &Consumer{BackendIDs: nil}
-	id1 := uuid.New()
+	c := &Consumer{RegistryIDs: nil}
+	id1 := ids.New[ids.RegistryKind]()
 	if !c.AttachBackend(id1) {
 		t.Fatal("AttachBackend should report true on new id")
 	}
 	if c.AttachBackend(id1) {
 		t.Fatal("AttachBackend should be idempotent")
 	}
-	if c.AttachBackend(uuid.Nil) {
+	if c.AttachBackend(ids.RegistryID{}) {
 		t.Fatal("AttachBackend(uuid.Nil) should be rejected")
 	}
-	if len(c.BackendIDs) != 1 || c.BackendIDs[0] != id1 {
-		t.Fatalf("BackendIDs = %v", c.BackendIDs)
+	if len(c.RegistryIDs) != 1 || c.RegistryIDs[0] != id1 {
+		t.Fatalf("RegistryIDs = %v", c.RegistryIDs)
 	}
 }
 
 func TestConsumer_DetachBackend(t *testing.T) {
 	t.Parallel()
-	id1, id2 := uuid.New(), uuid.New()
-	c := &Consumer{BackendIDs: []uuid.UUID{id1, id2}}
+	id1, id2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	c := &Consumer{RegistryIDs: []ids.RegistryID{id1, id2}}
 	if !c.DetachBackend(id1) {
 		t.Fatal("DetachBackend should report true on present id")
 	}
 	if c.DetachBackend(id1) {
 		t.Fatal("DetachBackend(missing) should report false")
 	}
-	if len(c.BackendIDs) != 1 || c.BackendIDs[0] != id2 {
-		t.Fatalf("BackendIDs = %v", c.BackendIDs)
+	if len(c.RegistryIDs) != 1 || c.RegistryIDs[0] != id2 {
+		t.Fatalf("RegistryIDs = %v", c.RegistryIDs)
 	}
 }
 
 func TestConsumer_Rehydrate(t *testing.T) {
 	t.Parallel()
-	id, gwID, beID := uuid.New(), uuid.New(), uuid.New()
+	id := ids.New[ids.ConsumerKind]()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
 	c := Rehydrate(
 		id, gwID, "x", TypeMCP,
 		"/v1/messages", "round-robin", nil,
 		map[string]string{"X-K": "v"},
 		true,
-		[]uuid.UUID{beID}, nil, nil,
+		[]ids.RegistryID{beID}, nil, nil,
+		nil,
+		nil,
 		now, now,
 	)
 	if c.ID != id || c.GatewayID != gwID {

@@ -37,7 +37,7 @@ type ExecInput struct {
 
 // Result carries the changes a plugin wants the executor to apply. Headers are
 // merged into the response; a StopUpstream result short-circuits the chain and
-// returns Body/StatusCode to the client without contacting the backend.
+// returns Body/StatusCode to the client without contacting the registry.
 type Result struct {
 	StatusCode   int
 	Body         []byte

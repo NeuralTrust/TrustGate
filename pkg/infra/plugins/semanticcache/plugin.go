@@ -16,6 +16,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/semantic"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	embeddingfactory "github.com/NeuralTrust/AgentGateway/pkg/infra/embedding/factory"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 )
 
@@ -35,7 +36,7 @@ const (
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
-// Plugin caches responses by request embedding similarity, scoped per backend.
+// Plugin caches responses by request embedding similarity, scoped per registry.
 type Plugin struct {
 	store     semantic.Store
 	locator   embeddingfactory.EmbeddingServiceLocator
@@ -101,10 +102,12 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	// Degraded pass-through: never fail the request on cache infrastructure
 	// problems.
 	if err := p.ensureIndex(ctx); err != nil {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "index_unavailable"})
 		return passThrough(), nil
 	}
 	creator, err := p.locator.GetService(cfg.Embedding.Provider)
 	if err != nil {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "embedding_service_unavailable"})
 		return passThrough(), nil
 	}
 
@@ -143,22 +146,41 @@ func (p *Plugin) preRequest(
 	text := p.extractUserInput(in.Request)
 	if text == "" {
 		markStatus(in.Response, cacheStatusMiss)
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: false})
 		return passThrough(), nil
 	}
 
 	emb, err := creator.Generate(ctx, text, cfg.Embedding.Model, cfg.embeddingDomainConfig())
 	if err != nil || emb == nil {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "embedding_failed"})
 		return passThrough(), nil
 	}
 
 	candidates, err := p.store.Lookup(ctx, scopeID(in.Request), emb, 1)
 	if err != nil || len(candidates) == 0 || candidates[0].Similarity < cfg.SimilarityThreshold {
 		markStatus(in.Response, cacheStatusMiss)
+		miss := SemanticCacheData{
+			Threshold:     cfg.SimilarityThreshold,
+			CacheHit:      false,
+			EmbeddingSize: embeddingSize(emb),
+			VectorDim:     p.dimension,
+		}
+		if err == nil && len(candidates) > 0 {
+			miss.Similarity = candidates[0].Similarity
+		}
+		setCacheExtras(in.Event, miss)
 		return passThrough(), nil
 	}
 
 	best := candidates[0]
 	markStatus(in.Response, cacheStatusHit)
+	setCacheExtras(in.Event, SemanticCacheData{
+		Threshold:     cfg.SimilarityThreshold,
+		CacheHit:      true,
+		Similarity:    best.Similarity,
+		EmbeddingSize: embeddingSize(emb),
+		VectorDim:     p.dimension,
+	})
 	return &appplugins.Result{
 		StatusCode:   http.StatusOK,
 		Body:         []byte(best.Response),
@@ -181,6 +203,7 @@ func (p *Plugin) postResponse(
 		return passThrough(), nil
 	}
 	if statusOf(resp) == cacheStatusHit {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: true, Stored: false})
 		return passThrough(), nil
 	}
 
@@ -191,6 +214,7 @@ func (p *Plugin) postResponse(
 
 	emb, err := creator.Generate(ctx, text, cfg.Embedding.Model, cfg.embeddingDomainConfig())
 	if err != nil || emb == nil {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "embedding_failed"})
 		return passThrough(), nil
 	}
 
@@ -201,9 +225,30 @@ func (p *Plugin) postResponse(
 		TTL:       cfg.parsedTTL(),
 	}); err != nil {
 		// Storing is best-effort; never fail the response.
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "store_failed", EmbeddingSize: embeddingSize(emb), VectorDim: p.dimension})
 		return passThrough(), nil
 	}
+	setCacheExtras(in.Event, SemanticCacheData{
+		Threshold:     cfg.SimilarityThreshold,
+		Stored:        true,
+		EmbeddingSize: embeddingSize(emb),
+		VectorDim:     p.dimension,
+	})
 	return passThrough(), nil
+}
+
+func embeddingSize(emb *embedding.Embedding) int {
+	if emb == nil {
+		return 0
+	}
+	return len(emb.Value)
+}
+
+func setCacheExtras(event *metrics.EventContext, data SemanticCacheData) {
+	if event == nil {
+		return
+	}
+	event.SetExtras(data)
 }
 
 // extractUserInput returns the last user message for embedding. It uses the
@@ -227,14 +272,14 @@ func (p *Plugin) extractUserInput(req *infracontext.RequestContext) string {
 	return adapter.ExtractUserInputGeneric(req.Body)
 }
 
-// scopeID isolates cache entries. Backend id is preferred so identical requests
+// scopeID isolates cache entries. Registry id is preferred so identical requests
 // to different upstreams do not collide; gateway id is the fallback.
 func scopeID(req *infracontext.RequestContext) string {
 	if req == nil {
 		return ""
 	}
-	if req.BackendID != "" {
-		return req.BackendID
+	if req.RegistryID != "" {
+		return req.RegistryID
 	}
 	return req.GatewayID
 }

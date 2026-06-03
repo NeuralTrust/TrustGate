@@ -1,3 +1,5 @@
+//go:build functional
+
 package functional_test
 
 import (
@@ -14,7 +16,7 @@ import (
 func TestListConsumers_Pagination(t *testing.T) {
 	defer Track(t, "ListConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-list-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-list-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-list-be")))
 	prefix := uniqueName("co-list-page")
 	created := make([]string, 0, 3)
 	for i := 0; i < 3; i++ {
@@ -50,7 +52,7 @@ func TestListConsumers_Pagination(t *testing.T) {
 func TestListConsumers_FilterByName(t *testing.T) {
 	defer Track(t, "ListConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-list-filter-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-list-filter-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-list-filter-be")))
 	uniq := uniqueName("co-list-needle")
 	id := CreateConsumer(t, gwID, validConsumerPayload(uniq, beID))
 
@@ -72,8 +74,8 @@ func TestListConsumers_ScopedByGateway(t *testing.T) {
 	defer Track(t, "ListConsumer")()
 	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-scope-a")})
 	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-scope-b")})
-	beA := CreateBackend(t, gwA, validBackendPayload(uniqueName("co-scope-be-a")))
-	beB := CreateBackend(t, gwB, validBackendPayload(uniqueName("co-scope-be-b")))
+	beA := CreateRegistry(t, gwA, validRegistryPayload(uniqueName("co-scope-be-a")))
+	beB := CreateRegistry(t, gwB, validRegistryPayload(uniqueName("co-scope-be-b")))
 
 	idA := CreateConsumer(t, gwA, validConsumerPayload(uniqueName("co-scope-co-a"), beA))
 	idB := CreateConsumer(t, gwB, validConsumerPayload(uniqueName("co-scope-co-b"), beB))

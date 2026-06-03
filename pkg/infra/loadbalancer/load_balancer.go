@@ -8,22 +8,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/go-redis/redis/v8"
 )
 
-// Pool is the set of backends a single consumer balances across, together with
-// the chosen algorithm and (for semantic) the embedding config. ID is the owning
-// consumer id, used to key the LB instance cache. Passive health gating is driven
-// per backend via each Backend.HealthChecks.
 type Pool struct {
 	ID              string
-	Backends        []*backend.Backend
+	Registries      []*registry.Registry
 	Algorithm       string
-	EmbeddingConfig *backend.EmbeddingConfig
+	EmbeddingConfig *registry.EmbeddingConfig
 }
 
 type LoadBalancer struct {
@@ -32,7 +29,7 @@ type LoadBalancer struct {
 	cache     cache.Client
 	poolID    string
 	poolSize  int
-	successCh chan *backend.Backend
+	successCh chan *registry.Registry
 	factory   Factory
 	done      chan struct{}
 	closeOnce sync.Once
@@ -46,11 +43,7 @@ func NewLoadBalancer(
 ) (*LoadBalancer, error) {
 	ctx := context.Background()
 
-	// Rehydrate health state from Redis (the cross-pod source of truth). Only
-	// seed the initial healthy status for backends that have no persisted state,
-	// so a backend marked unhealthy survives LB rebuilds and pod restarts instead
-	// of being reset to healthy on every reconstruction.
-	seedInitialHealth(ctx, cacheClient, pool.Backends, logger)
+	seedInitialHealth(ctx, cacheClient, pool.Registries, logger)
 
 	var embeddingCfg *embedding.Config
 	if pool.EmbeddingConfig != nil {
@@ -59,7 +52,7 @@ func NewLoadBalancer(
 
 	strategy, err := factory.CreateStrategy(StrategyInput{
 		Algorithm:       pool.Algorithm,
-		Backends:        pool.Backends,
+		Registries:      pool.Registries,
 		EmbeddingConfig: embeddingCfg,
 	})
 	if err != nil {
@@ -71,8 +64,8 @@ func NewLoadBalancer(
 		logger:    logger,
 		cache:     cacheClient,
 		poolID:    pool.ID,
-		poolSize:  len(pool.Backends),
-		successCh: make(chan *backend.Backend, 1000),
+		poolSize:  len(pool.Registries),
+		successCh: make(chan *registry.Registry, 1000),
 		factory:   factory,
 		done:      make(chan struct{}),
 	}
@@ -84,14 +77,10 @@ func healthKey(backendID string) string {
 	return fmt.Sprintf("lb:health:%s", backendID)
 }
 
-// seedInitialHealth writes a healthy status to Redis for each backend that has
-// none yet. It writes through the raw Redis client (not the local-cache path)
-// so the health namespace stays consistent with the direct Redis reads/writes
-// used by isBackendHealthy and UpdateBackendHealth.
 func seedInitialHealth(
 	ctx context.Context,
 	cacheClient cache.Client,
-	backends []*backend.Backend,
+	registries []*registry.Registry,
 	logger *slog.Logger,
 ) {
 	redisClient := cacheClient.RedisClient()
@@ -99,7 +88,7 @@ func seedInitialHealth(
 		return
 	}
 	now := time.Now()
-	for _, b := range backends {
+	for _, b := range registries {
 		key := healthKey(b.ID.String())
 		if exists, err := redisClient.Exists(ctx, key).Result(); err == nil && exists > 0 {
 			continue
@@ -125,20 +114,18 @@ func (lb *LoadBalancer) processSuccessReports() {
 	}
 }
 
-// Close stops the background success-report goroutine. It is idempotent, and
-// ReportSuccess stays safe afterwards since successCh is never closed.
 func (lb *LoadBalancer) Close() {
 	lb.closeOnce.Do(func() { close(lb.done) })
 }
 
-func (lb *LoadBalancer) ReportSuccess(b *backend.Backend) {
+func (lb *LoadBalancer) ReportSuccess(b *registry.Registry) {
 	select {
 	case lb.successCh <- b:
 	default:
 	}
 }
 
-func (lb *LoadBalancer) performSuccessUpdate(b *backend.Backend) {
+func (lb *LoadBalancer) performSuccessUpdate(b *registry.Registry) {
 	ctx := context.Background()
 	key := healthKey(b.ID.String())
 	redisClient := lb.cache.RedisClient()
@@ -157,18 +144,17 @@ func (lb *LoadBalancer) performSuccessUpdate(b *backend.Backend) {
 	_, _ = pipe.Exec(ctx)
 }
 
-// NextBackend asks the strategy for a backend and skips ones currently marked
-// unhealthy, trying up to one full pass over the pool. When every candidate is
-// unhealthy it falls back to the last pick rather than failing the request, so a
-// stale/incorrect health flag cannot black-hole all traffic.
-func (lb *LoadBalancer) NextBackend(req *infracontext.RequestContext) (*backend.Backend, error) {
+func (lb *LoadBalancer) NextBackend(
+	req *infracontext.RequestContext,
+	exclude map[ids.RegistryID]struct{},
+) (*registry.Registry, error) {
 	attempts := lb.poolSize
 	if attempts < 1 {
 		attempts = 1
 	}
-	var last *backend.Backend
+	var last *registry.Registry
 	for i := 0; i < attempts; i++ {
-		b := lb.strategy.Next(req)
+		b := lb.strategy.Next(req, exclude)
 		if b == nil {
 			break
 		}
@@ -178,19 +164,15 @@ func (lb *LoadBalancer) NextBackend(req *infracontext.RequestContext) (*backend.
 		}
 	}
 	if last != nil {
-		lb.logger.Info("all backends unhealthy; using last candidate as fallback",
-			slog.String("backend_id", last.ID.String()),
+		lb.logger.Info("all registries unhealthy; using last candidate as fallback",
+			slog.String("registry_id", last.ID.String()),
 			slog.String("provider", last.Provider),
 		)
 		return last, nil
 	}
-	return nil, fmt.Errorf("no available backends")
+	return nil, fmt.Errorf("no available registries")
 }
 
-// isBackendHealthy reads the backend's health flag directly from Redis (the
-// source of truth that UpdateBackendHealth writes to). It deliberately bypasses
-// the local cache so a passive-health update is never shadowed by a stale local
-// copy. An unreachable/missing/corrupt entry is treated as healthy (fail open).
 func (lb *LoadBalancer) isBackendHealthy(req *infracontext.RequestContext, backendID string) (bool, error) {
 	redisClient := lb.cache.RedisClient()
 	if redisClient == nil {
@@ -211,11 +193,11 @@ func (lb *LoadBalancer) isBackendHealthy(req *infracontext.RequestContext, backe
 	return status.Healthy, nil
 }
 
-func (lb *LoadBalancer) ReportFailure(b *backend.Backend, err error) {
+func (lb *LoadBalancer) ReportFailure(b *registry.Registry, err error) {
 	lb.UpdateBackendHealth(b, false, err)
 }
 
-func (lb *LoadBalancer) UpdateBackendHealth(b *backend.Backend, healthy bool, err error) {
+func (lb *LoadBalancer) UpdateBackendHealth(b *registry.Registry, healthy bool, err error) {
 	if b.HealthChecks == nil || !b.HealthChecks.Passive {
 		return
 	}
@@ -265,7 +247,7 @@ func cacheHealthStatus(ctx context.Context, redisClient *redis.Client, key strin
 	return redisClient.Set(ctx, key, statusJSON, time.Hour).Err()
 }
 
-func backendEmbeddingToDomain(c *backend.EmbeddingConfig) *embedding.Config {
+func backendEmbeddingToDomain(c *registry.EmbeddingConfig) *embedding.Config {
 	out := &embedding.Config{
 		Provider: c.Provider,
 		Model:    c.Model,

@@ -12,11 +12,11 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appmetricsmocks "github.com/NeuralTrust/AgentGateway/pkg/app/metrics/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domaintelemetry "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	inframetrics "github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -34,7 +34,7 @@ func TestMetricsMiddleware_ProcessesNonStreamingRequest(t *testing.T) {
 	)
 	worker.EXPECT().
 		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Run(func(_ *inframetrics.Collector, _ []domaintelemetry.ExporterConfig, req *infracontext.RequestContext, resp *infracontext.ResponseContext, _ time.Time, _ time.Time) {
+		Run(func(_ []domaintelemetry.ExporterConfig, _ *trace.RequestTrace, req *infracontext.RequestContext, resp *infracontext.ResponseContext, _ time.Time, _ time.Time) {
 			mu.Lock()
 			defer mu.Unlock()
 			called = true
@@ -49,7 +49,7 @@ func TestMetricsMiddleware_ProcessesNonStreamingRequest(t *testing.T) {
 
 	mw := middleware.NewMetricsMiddleware(worker, cfg)
 
-	gatewayID := uuid.New()
+	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()
 	// Mimic the auth middleware: the gateway id arrives via context, not a header.
 	app.Use(func(c *fiber.Ctx) error {
@@ -88,7 +88,7 @@ func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
 	)
 	worker.EXPECT().
 		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Run(func(_ *inframetrics.Collector, _ []domaintelemetry.ExporterConfig, req *infracontext.RequestContext, resp *infracontext.ResponseContext, start time.Time, _ time.Time) {
+		Run(func(_ []domaintelemetry.ExporterConfig, _ *trace.RequestTrace, req *infracontext.RequestContext, resp *infracontext.ResponseContext, start time.Time, _ time.Time) {
 			mu.Lock()
 			defer mu.Unlock()
 			calls++
@@ -105,8 +105,8 @@ func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
 	// streamReq stands in for the request context the proxy handler retains and
 	// passes to the finalizer; its Metadata carries the observed usage.
 	streamReq := &infracontext.RequestContext{
-		GatewayID: "gw-1",
-		BackendID: "bk-1",
+		GatewayID:  "gw-1",
+		RegistryID: "bk-1",
 		Metadata: map[string]interface{}{
 			"usage": "recorded",
 		},

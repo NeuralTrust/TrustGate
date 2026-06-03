@@ -1,3 +1,5 @@
+//go:build functional
+
 package auth_test
 
 import (
@@ -10,11 +12,11 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/auth"
 	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -56,7 +58,7 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository) {
 	return repo.NewRepository(conn), gatewayrepo.NewRepository(conn)
 }
 
-func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUID {
+func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {
 	t.Helper()
 	g, err := gatewaydomain.New(name)
 	if err != nil {
@@ -68,7 +70,7 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) uuid.UUI
 	return g.ID
 }
 
-func validAuth(t *testing.T, gwID uuid.UUID, name string) *domain.Auth {
+func validAuth(t *testing.T, gwID ids.GatewayID, name string) *domain.Auth {
 	t.Helper()
 	a, err := domain.NewAuth(gwID, name, domain.TypeAPIKey, true, domain.Config{
 		APIKey: &domain.APIKeyConfig{Key: "super-secret-key", In: "header", Name: "X-API-Key"},
@@ -103,7 +105,7 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 
 func TestRepository_FindByID_NotFound(t *testing.T) {
 	r, _ := setupRepo(t)
-	_, err := r.FindByID(context.Background(), uuid.New())
+	_, err := r.FindByID(context.Background(), ids.New[ids.AuthKind]())
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -128,7 +130,7 @@ func TestRepository_Save_DuplicateNameForSameGateway(t *testing.T) {
 
 func TestRepository_Save_InvalidGatewayID(t *testing.T) {
 	r, _ := setupRepo(t)
-	err := r.Save(context.Background(), validAuth(t, uuid.New(), "orphan"))
+	err := r.Save(context.Background(), validAuth(t, ids.New[ids.GatewayKind](), "orphan"))
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
 		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)
 	}
@@ -205,7 +207,7 @@ func TestRepository_FindByIDs(t *testing.T) {
 			t.Fatalf("Save: %v", err)
 		}
 	}
-	found, err := r.FindByIDs(ctx, gwID, []uuid.UUID{a1.ID, a2.ID})
+	found, err := r.FindByIDs(ctx, gwID, []ids.AuthID{a1.ID, a2.ID})
 	if err != nil {
 		t.Fatalf("FindByIDs: %v", err)
 	}

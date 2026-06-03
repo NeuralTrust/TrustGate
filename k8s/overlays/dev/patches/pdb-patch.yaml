@@ -1,0 +1,14 @@
+# PDB patch for dev environment - agentgateway
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agentgateway-admin
+spec:
+  minAvailable: 0
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agentgateway-proxy
+spec:
+  minAvailable: 0

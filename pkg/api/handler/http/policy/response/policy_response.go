@@ -3,13 +3,13 @@ package response
 import (
 	"time"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	"github.com/google/uuid"
 )
 
 type PolicyResponse struct {
-	ID        uuid.UUID        `json:"id"`
-	GatewayID uuid.UUID        `json:"gateway_id"`
+	ID        ids.PolicyID     `json:"id"`
+	GatewayID ids.GatewayID    `json:"gateway_id"`
 	Name      string           `json:"name"`
 	Plugins   []PluginResponse `json:"plugins"`
 	CreatedAt time.Time        `json:"created_at"`

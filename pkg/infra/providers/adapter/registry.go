@@ -125,10 +125,6 @@ func (r *Registry) DecodeRequestFor(body []byte, providerFormat Format) (*Canoni
 	return cr, nil
 }
 
-// AdaptRequest transforms a request body from source format to target format
-// via the canonical internal model: source.Decode → canonical → target.Encode.
-//
-// If the two formats are wire-compatible the body is returned unmodified.
 func (r *Registry) AdaptRequest(body []byte, source, target Format) ([]byte, error) {
 	if IsSameWireFormat(source, target) {
 		return body, nil

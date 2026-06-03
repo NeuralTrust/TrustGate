@@ -112,9 +112,7 @@ jobs:
       - name: Run Functional tests
         env:
           PG_TEST_URL: postgres://postgres:postgres@localhost:5432/agentgateway_repo_test?sslmode=disable
-        # -p 1 serialises packages: the repository suites share PG_TEST_URL and
-        # TRUNCATE/migrate it, so they must not run concurrently with each other.
-        run: go test -v -race -count=1 -p 1 ./tests/functional/...
+        run: go test -tags functional -v -race -count=1 -p 1 ./tests/functional/...
 
   security:
     uses: NeuralTrust/workflows/.github/workflows/sast.yml@main

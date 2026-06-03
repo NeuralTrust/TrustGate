@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -109,7 +109,7 @@ func TestRawPost_BackendErrorPassthrough(t *testing.T) {
 	_, err := c.rawPost(context.Background(), srv.URL, "k", false, []byte(`{}`))
 	require.Error(t, err)
 
-	be, ok := backend.IsBackendError(err)
+	be, ok := registry.IsBackendError(err)
 	require.True(t, ok)
 	assert.Equal(t, http.StatusInternalServerError, be.StatusCode)
 }

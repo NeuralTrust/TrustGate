@@ -1,3 +1,5 @@
+//go:build functional
+
 package functional_test
 
 import (
@@ -13,7 +15,7 @@ import (
 func TestCreateConsumer_WithPolicyAndAuthJoins(t *testing.T) {
 	defer Track(t, "ConsumerJoins")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-joins-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-joins-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-joins-be")))
 	policyID := CreatePolicy(t, gwID, validPolicyPayload(uniqueName("co-joins-pol")))
 	authID := CreateAuth(t, gwID, validAuthPayload(uniqueName("co-joins-auth")))
 
@@ -42,7 +44,7 @@ func TestCreateConsumer_PolicyFromDifferentGatewayRejected(t *testing.T) {
 	defer Track(t, "ConsumerJoins")()
 	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-xpol-a")})
 	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-xpol-b")})
-	beB := CreateBackend(t, gwB, validBackendPayload(uniqueName("co-xpol-be")))
+	beB := CreateRegistry(t, gwB, validRegistryPayload(uniqueName("co-xpol-be")))
 	policyA := CreatePolicy(t, gwA, validPolicyPayload(uniqueName("co-xpol-pol")))
 
 	payload := validConsumerPayload(uniqueName("co-xpol"), beB)
@@ -59,7 +61,7 @@ func TestCreateConsumer_PolicyFromDifferentGatewayRejected(t *testing.T) {
 func TestCreateConsumer_UnknownAuthRejected(t *testing.T) {
 	defer Track(t, "ConsumerJoins")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-ghostauth-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-ghostauth-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-ghostauth-be")))
 
 	payload := validConsumerPayload(uniqueName("co-ghostauth"), beID)
 	payload["auth_ids"] = []string{uuid.NewString()}
@@ -75,7 +77,7 @@ func TestCreateConsumer_UnknownAuthRejected(t *testing.T) {
 func TestUpdateConsumer_ReplacesJoins(t *testing.T) {
 	defer Track(t, "ConsumerJoins")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upjoin-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-upjoin-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-upjoin-be")))
 	authID := CreateAuth(t, gwID, validAuthPayload(uniqueName("co-upjoin-auth")))
 
 	id := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-upjoin"), beID))

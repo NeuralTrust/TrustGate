@@ -5,48 +5,48 @@ import (
 	"log/slog"
 
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 //go:generate mockery --name=DataFinder --dir=. --output=./mocks --filename=data_finder_mock.go --case=underscore --with-expecter
 type DataFinder interface {
-	FindByGateway(ctx context.Context, gatewayID uuid.UUID) (*Data, error)
+	FindByGateway(ctx context.Context, gatewayID ids.GatewayID) (*Data, error)
 }
 
 var _ DataFinder = (*dataFinder)(nil)
 
 type dataFinder struct {
-	repo        domain.Repository
-	backendRepo backenddomain.Repository
-	policyRepo  policydomain.Repository
-	authRepo    authdomain.Repository
-	memoryCache *cache.TTLMap
-	logger      *slog.Logger
+	repo         domain.Repository
+	registryRepo registrydomain.Repository
+	policyRepo   policydomain.Repository
+	authRepo     authdomain.Repository
+	memoryCache  *cache.TTLMap
+	logger       *slog.Logger
 }
 
 func NewDataFinder(
 	repo domain.Repository,
-	backendRepo backenddomain.Repository,
+	registryRepo registrydomain.Repository,
 	policyRepo policydomain.Repository,
 	authRepo authdomain.Repository,
 	manager *cache.TTLMapManager,
 	logger *slog.Logger,
 ) DataFinder {
 	return &dataFinder{
-		repo:        repo,
-		backendRepo: backendRepo,
-		policyRepo:  policyRepo,
-		authRepo:    authRepo,
-		memoryCache: manager.GetTTLMap(cache.ConsumerDataTTLName),
-		logger:      logger,
+		repo:         repo,
+		registryRepo: registryRepo,
+		policyRepo:   policyRepo,
+		authRepo:     authRepo,
+		memoryCache:  manager.GetTTLMap(cache.ConsumerDataTTLName),
+		logger:       logger,
 	}
 }
 
-func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID uuid.UUID) (*Data, error) {
+func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID ids.GatewayID) (*Data, error) {
 	key := gatewayID.String()
 	if cached, ok := f.memoryCache.Get(key); ok {
 		if data, ok := cached.(*Data); ok {
@@ -77,11 +77,14 @@ func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID uuid.UUID) (*D
 
 	routable := make([]RoutableConsumer, 0, len(consumers))
 	for _, c := range consumers {
+		fallbackBackends := collectBackends(fallbackChainOf(c), backendByID)
+		f.warnUnresolvedFallbackChain(c, fallbackBackends)
 		routable = append(routable, RoutableConsumer{
-			Consumer: c,
-			Backends: collectBackends(c.BackendIDs, backendByID),
-			Policies: collectPolicies(c.PolicyIDs, policyByID),
-			Auths:    collectAuths(c.AuthIDs, authByID),
+			Consumer:         c,
+			Registries:       collectBackends(c.RegistryIDs, backendByID),
+			FallbackBackends: fallbackBackends,
+			Policies:         collectPolicies(c.PolicyIDs, policyByID),
+			Auths:            collectAuths(c.AuthIDs, authByID),
 		})
 	}
 
@@ -90,44 +93,42 @@ func (f *dataFinder) FindByGateway(ctx context.Context, gatewayID uuid.UUID) (*D
 	return data, nil
 }
 
-// loadBackends batch-resolves every backend referenced by the gateway's consumers
-// in one query (no N+1), or none when no consumer references a backend.
 func (f *dataFinder) loadBackends(
 	ctx context.Context,
-	gatewayID uuid.UUID,
+	gatewayID ids.GatewayID,
 	consumers []*domain.Consumer,
-) (map[uuid.UUID]*backenddomain.Backend, error) {
-	ids := uniqueIDs(consumers, func(c *domain.Consumer) []uuid.UUID { return c.BackendIDs })
-	if len(ids) == 0 {
-		return map[uuid.UUID]*backenddomain.Backend{}, nil
+) (map[ids.RegistryID]*registrydomain.Registry, error) {
+	idList := uniqueIDs(consumers, func(c *domain.Consumer) []ids.RegistryID {
+		return append(append([]ids.RegistryID{}, c.RegistryIDs...), fallbackChainOf(c)...)
+	})
+	if len(idList) == 0 {
+		return map[ids.RegistryID]*registrydomain.Registry{}, nil
 	}
-	found, err := f.backendRepo.FindByIDs(ctx, gatewayID, ids)
+	found, err := f.registryRepo.FindByIDs(ctx, gatewayID, idList)
 	if err != nil {
 		return nil, err
 	}
-	byID := make(map[uuid.UUID]*backenddomain.Backend, len(found))
+	byID := make(map[ids.RegistryID]*registrydomain.Registry, len(found))
 	for _, b := range found {
 		byID[b.ID] = b
 	}
 	return byID, nil
 }
 
-// loadPolicies batch-resolves the gateway's policies in one query (no N+1), or
-// none when no consumer references a policy.
 func (f *dataFinder) loadPolicies(
 	ctx context.Context,
-	gatewayID uuid.UUID,
+	gatewayID ids.GatewayID,
 	consumers []*domain.Consumer,
-) (map[uuid.UUID]*policydomain.Policy, error) {
-	ids := uniqueIDs(consumers, func(c *domain.Consumer) []uuid.UUID { return c.PolicyIDs })
-	if len(ids) == 0 {
-		return map[uuid.UUID]*policydomain.Policy{}, nil
+) (map[ids.PolicyID]*policydomain.Policy, error) {
+	idList := uniqueIDs(consumers, func(c *domain.Consumer) []ids.PolicyID { return c.PolicyIDs })
+	if len(idList) == 0 {
+		return map[ids.PolicyID]*policydomain.Policy{}, nil
 	}
-	found, err := f.policyRepo.FindByIDs(ctx, gatewayID, ids)
+	found, err := f.policyRepo.FindByIDs(ctx, gatewayID, idList)
 	if err != nil {
 		return nil, err
 	}
-	byID := make(map[uuid.UUID]*policydomain.Policy, len(found))
+	byID := make(map[ids.PolicyID]*policydomain.Policy, len(found))
 	for _, p := range found {
 		byID[p.ID] = p
 	}
@@ -136,27 +137,27 @@ func (f *dataFinder) loadPolicies(
 
 func (f *dataFinder) loadAuths(
 	ctx context.Context,
-	gatewayID uuid.UUID,
+	gatewayID ids.GatewayID,
 	consumers []*domain.Consumer,
-) (map[uuid.UUID]*authdomain.Auth, error) {
-	ids := uniqueIDs(consumers, func(c *domain.Consumer) []uuid.UUID { return c.AuthIDs })
-	if len(ids) == 0 {
-		return map[uuid.UUID]*authdomain.Auth{}, nil
+) (map[ids.AuthID]*authdomain.Auth, error) {
+	idList := uniqueIDs(consumers, func(c *domain.Consumer) []ids.AuthID { return c.AuthIDs })
+	if len(idList) == 0 {
+		return map[ids.AuthID]*authdomain.Auth{}, nil
 	}
-	found, err := f.authRepo.FindByIDs(ctx, gatewayID, ids)
+	found, err := f.authRepo.FindByIDs(ctx, gatewayID, idList)
 	if err != nil {
 		return nil, err
 	}
-	byID := make(map[uuid.UUID]*authdomain.Auth, len(found))
+	byID := make(map[ids.AuthID]*authdomain.Auth, len(found))
 	for _, a := range found {
 		byID[a.ID] = a
 	}
 	return byID, nil
 }
 
-func uniqueIDs(consumers []*domain.Consumer, pick func(*domain.Consumer) []uuid.UUID) []uuid.UUID {
-	seen := make(map[uuid.UUID]struct{})
-	out := make([]uuid.UUID, 0)
+func uniqueIDs[T comparable](consumers []*domain.Consumer, pick func(*domain.Consumer) []T) []T {
+	seen := make(map[T]struct{})
+	out := make([]T, 0)
 	for _, c := range consumers {
 		for _, id := range pick(c) {
 			if _, ok := seen[id]; ok {
@@ -169,9 +170,28 @@ func uniqueIDs(consumers []*domain.Consumer, pick func(*domain.Consumer) []uuid.
 	return out
 }
 
-func collectBackends(ids []uuid.UUID, byID map[uuid.UUID]*backenddomain.Backend) []*backenddomain.Backend {
-	out := make([]*backenddomain.Backend, 0, len(ids))
-	for _, id := range ids {
+func (f *dataFinder) warnUnresolvedFallbackChain(c *domain.Consumer, resolved []*registrydomain.Registry) {
+	chain := fallbackChainOf(c)
+	if len(chain) == len(resolved) {
+		return
+	}
+	f.logger.Warn("consumer fallback chain references unknown backend(s); skipping them",
+		slog.String("consumer_id", c.ID.String()),
+		slog.Int("chain_size", len(chain)),
+		slog.Int("resolved", len(resolved)),
+	)
+}
+
+func fallbackChainOf(c *domain.Consumer) []ids.RegistryID {
+	if c == nil || c.Fallback == nil || !c.Fallback.Enabled {
+		return nil
+	}
+	return []ids.RegistryID(c.Fallback.Chain)
+}
+
+func collectBackends(idList []ids.RegistryID, byID map[ids.RegistryID]*registrydomain.Registry) []*registrydomain.Registry {
+	out := make([]*registrydomain.Registry, 0, len(idList))
+	for _, id := range idList {
 		if b, ok := byID[id]; ok {
 			out = append(out, b)
 		}
@@ -179,9 +199,9 @@ func collectBackends(ids []uuid.UUID, byID map[uuid.UUID]*backenddomain.Backend)
 	return out
 }
 
-func collectPolicies(ids []uuid.UUID, byID map[uuid.UUID]*policydomain.Policy) []*policydomain.Policy {
-	out := make([]*policydomain.Policy, 0, len(ids))
-	for _, id := range ids {
+func collectPolicies(idList []ids.PolicyID, byID map[ids.PolicyID]*policydomain.Policy) []*policydomain.Policy {
+	out := make([]*policydomain.Policy, 0, len(idList))
+	for _, id := range idList {
 		if p, ok := byID[id]; ok {
 			out = append(out, p)
 		}
@@ -189,9 +209,9 @@ func collectPolicies(ids []uuid.UUID, byID map[uuid.UUID]*policydomain.Policy) [
 	return out
 }
 
-func collectAuths(ids []uuid.UUID, byID map[uuid.UUID]*authdomain.Auth) []*authdomain.Auth {
-	out := make([]*authdomain.Auth, 0, len(ids))
-	for _, id := range ids {
+func collectAuths(idList []ids.AuthID, byID map[ids.AuthID]*authdomain.Auth) []*authdomain.Auth {
+	out := make([]*authdomain.Auth, 0, len(idList))
+	for _, id := range idList {
 		if a, ok := byID[id]; ok {
 			out = append(out, a)
 		}

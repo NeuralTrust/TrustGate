@@ -3,19 +3,24 @@ package router
 import (
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
 	authhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth"
-	backendhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/backend"
+	cataloghttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/catalog"
 	consumerhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
 	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
+	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
+	fiberSwagger "github.com/gofiber/swagger"
 )
 
 const (
-	HealthPath   = "/healthz"
-	ReadyPath    = "/readyz"
-	VersionPath  = "/__/version"
-	GatewaysPath = "/v1/gateways"
+	HealthPath        = "/healthz"
+	ReadyPath         = "/readyz"
+	VersionPath       = "/__/version"
+	DocsPath          = "/docs/*"
+	GatewaysPath      = "/v1/gateways"
+	ProvidersCatalog  = "/v1/providers-catalog"
+	ModelsCatalogPath = "/v1/models-catalog"
 )
 
 // AdminRouterDeps groups every handler mounted by the admin plane.
@@ -33,11 +38,11 @@ type AdminRouterDeps struct {
 	UpdateGateway *gatewayhttp.UpdateGatewayHandler
 	DeleteGateway *gatewayhttp.DeleteGatewayHandler
 
-	CreateBackend *backendhttp.CreateBackendHandler
-	GetBackend    *backendhttp.GetBackendHandler
-	ListBackend   *backendhttp.ListBackendHandler
-	UpdateBackend *backendhttp.UpdateBackendHandler
-	DeleteBackend *backendhttp.DeleteBackendHandler
+	CreateRegistry *registryhttp.CreateRegistryHandler
+	GetRegistry    *registryhttp.GetRegistryHandler
+	ListRegistry   *registryhttp.ListRegistryHandler
+	UpdateRegistry *registryhttp.UpdateRegistryHandler
+	DeleteRegistry *registryhttp.DeleteRegistryHandler
 
 	CreatePolicy *policyhttp.CreatePolicyHandler
 	GetPolicy    *policyhttp.GetPolicyHandler
@@ -56,6 +61,9 @@ type AdminRouterDeps struct {
 	ListAuth   *authhttp.ListAuthHandler
 	UpdateAuth *authhttp.UpdateAuthHandler
 	DeleteAuth *authhttp.DeleteAuthHandler
+
+	ListProvidersCatalog *cataloghttp.ListProvidersHandler
+	ListModelsCatalog    *cataloghttp.ListModelsHandler
 }
 
 type adminRouter struct {
@@ -73,6 +81,11 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(ReadyPath, r.deps.HealthHandler.Readiness)
 	app.Get(VersionPath, r.deps.VersionHandler.Handle)
 
+	// Interactive API docs (Swagger UI + spec) served from the generated
+	// `docs` package. Public on purpose so the contract is browsable without
+	// an admin token; the documented endpoints stay behind AdminAuth below.
+	app.Get(DocsPath, fiberSwagger.HandlerDefault)
+
 	gw := app.Group(GatewaysPath, r.deps.AdminAuth.Middleware())
 	gw.Post("", r.deps.CreateGateway.Handle)
 	gw.Get("", r.deps.ListGateway.Handle)
@@ -80,12 +93,12 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	gw.Put("/:id", r.deps.UpdateGateway.Handle)
 	gw.Delete("/:id", r.deps.DeleteGateway.Handle)
 
-	backends := gw.Group("/:gateway_id/backends")
-	backends.Post("", r.deps.CreateBackend.Handle)
-	backends.Get("", r.deps.ListBackend.Handle)
-	backends.Get("/:id", r.deps.GetBackend.Handle)
-	backends.Put("/:id", r.deps.UpdateBackend.Handle)
-	backends.Delete("/:id", r.deps.DeleteBackend.Handle)
+	registries := gw.Group("/:gateway_id/registries")
+	registries.Post("", r.deps.CreateRegistry.Handle)
+	registries.Get("", r.deps.ListRegistry.Handle)
+	registries.Get("/:id", r.deps.GetRegistry.Handle)
+	registries.Put("/:id", r.deps.UpdateRegistry.Handle)
+	registries.Delete("/:id", r.deps.DeleteRegistry.Handle)
 
 	policies := gw.Group("/:gateway_id/policies")
 	policies.Post("", r.deps.CreatePolicy.Handle)
@@ -107,6 +120,9 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	auths.Get("/:id", r.deps.GetAuth.Handle)
 	auths.Put("/:id", r.deps.UpdateAuth.Handle)
 	auths.Delete("/:id", r.deps.DeleteAuth.Handle)
+
+	app.Get(ProvidersCatalog, r.deps.AdminAuth.Middleware(), r.deps.ListProvidersCatalog.Handle)
+	app.Get(ModelsCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListModelsCatalog.Handle)
 
 	return nil
 }

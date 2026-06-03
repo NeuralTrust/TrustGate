@@ -1,8 +1,9 @@
 package loadbalancer
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
 )
@@ -16,13 +17,13 @@ const (
 )
 
 type Strategy interface {
-	Next(req *infracontext.RequestContext) *backend.Backend
+	Next(req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry
 	Name() string
 }
 
 type StrategyInput struct {
 	Algorithm       string
-	Backends        []*backend.Backend
+	Registries      []*registry.Registry
 	EmbeddingConfig *embedding.Config
 }
 

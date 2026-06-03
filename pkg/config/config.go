@@ -23,7 +23,7 @@ const (
 
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
-	defaultDBUser                    = "postgres"
+	defaultDBUser                    = "agentgateway"
 	defaultDBPassword                = "postgres" // #nosec G101 -- dev default, override via env
 	defaultDBName                    = "agentgateway"
 	defaultDBSSLMode                 = "disable"
@@ -36,17 +36,19 @@ const (
 
 	defaultRedisHost = "localhost"
 	defaultRedisPort = 6379
-	defaultRedisDB   = 0
+	defaultRedisDB   = 3
 	defaultRedisTLS  = false
 
 	defaultCacheLocalTTL = 5 * time.Minute
 
 	defaultKafkaBrokers = "localhost:9092"
 
-	defaultTelemetryEnabled          = true
-	defaultTelemetryKafkaTopic       = "agentgateway.requests"
-	defaultTelemetryTrustLensEnabled = false
-	defaultTelemetryTrustLensURL     = ""
+	defaultTelemetryEnabled             = true
+	defaultTelemetryKafkaTopic          = "agentgateway.requests"
+	defaultTelemetryTrustLensEnabled    = false
+	defaultTelemetryTrustLensURL        = ""
+	defaultTelemetryEnableRequestTraces = true
+	defaultTelemetryEnablePluginTraces  = true
 
 	defaultMetricsEnabled       = true
 	defaultMetricsQueueSize     = 1000
@@ -81,6 +83,7 @@ type Config struct {
 	Metrics   MetricsConfig
 	Upstream  UpstreamConfig
 	Provider  ProviderConfig
+	Catalog   CatalogConfig
 	CORS      CORSConfig
 	Logger    LoggerConfig
 }
@@ -133,10 +136,12 @@ type KafkaConfig struct {
 }
 
 type TelemetryConfig struct {
-	Enabled          bool
-	KafkaTopic       string
-	TrustLensEnabled bool
-	TrustLensURL     string
+	Enabled             bool
+	KafkaTopic          string
+	TrustLensEnabled    bool
+	TrustLensURL        string
+	EnableRequestTraces bool
+	EnablePluginTraces  bool
 }
 
 type MetricsConfig struct {
@@ -154,6 +159,11 @@ type UpstreamConfig struct {
 type ProviderConfig struct {
 	RequestTimeout time.Duration
 	MaxRetries     int
+}
+
+type CatalogConfig struct {
+	OpenRouterAPIKey  string
+	OpenRouterBaseURL string
 }
 
 // CORSConfig drives the CORSMiddleware applied by both admin and proxy.
@@ -184,6 +194,7 @@ func LoadConfig() (*Config, error) {
 		Metrics:   getMetricsConfig(),
 		Upstream:  getUpstreamConfig(),
 		Provider:  getProviderConfig(),
+		Catalog:   getCatalogConfig(),
 		CORS:      getCORSConfig(),
 		Logger:    getLoggerConfig(),
 	}
@@ -245,10 +256,12 @@ func getKafkaConfig() KafkaConfig {
 
 func getTelemetryConfig() TelemetryConfig {
 	return TelemetryConfig{
-		Enabled:          getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
-		KafkaTopic:       getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
-		TrustLensEnabled: getEnvBool("TELEMETRY_TRUSTLENS_ENABLED", defaultTelemetryTrustLensEnabled),
-		TrustLensURL:     getEnv("TELEMETRY_TRUSTLENS_URL", defaultTelemetryTrustLensURL),
+		Enabled:             getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
+		KafkaTopic:          getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
+		TrustLensEnabled:    getEnvBool("TELEMETRY_TRUSTLENS_ENABLED", defaultTelemetryTrustLensEnabled),
+		TrustLensURL:        getEnv("TELEMETRY_TRUSTLENS_URL", defaultTelemetryTrustLensURL),
+		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
+		EnablePluginTraces:  getEnvBool("TELEMETRY_ENABLE_PLUGIN_TRACES", defaultTelemetryEnablePluginTraces),
 	}
 }
 
@@ -272,6 +285,13 @@ func getProviderConfig() ProviderConfig {
 	return ProviderConfig{
 		RequestTimeout: getEnvDuration("PROVIDER_REQUEST_TIMEOUT", defaultProviderRequestTimeout),
 		MaxRetries:     getEnvInt("PROVIDER_MAX_RETRIES", defaultProviderMaxRetries),
+	}
+}
+
+func getCatalogConfig() CatalogConfig {
+	return CatalogConfig{
+		OpenRouterAPIKey:  getEnv("OPENROUTER_API_KEY", ""),
+		OpenRouterBaseURL: getEnv("OPENROUTER_BASE_URL", ""),
 	}
 }
 

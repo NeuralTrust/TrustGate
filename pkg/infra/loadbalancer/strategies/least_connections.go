@@ -3,29 +3,36 @@ package strategies
 import (
 	"sync"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
 )
 
 type LeastConnections struct {
-	mu       sync.Mutex
-	backends []*backend.Backend
+	mu         sync.Mutex
+	registries []*registry.Registry
 }
 
-func NewLeastConnections(backends []*backend.Backend) *LeastConnections {
-	return &LeastConnections{backends: backends}
+func NewLeastConnections(registries []*registry.Registry) *LeastConnections {
+	return &LeastConnections{registries: registries}
 }
 
-func (lc *LeastConnections) Next(req *infracontext.RequestContext) *backend.Backend {
+func (lc *LeastConnections) Next(_ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	if len(lc.backends) == 0 {
+	n := len(lc.registries)
+	if n == 0 {
 		return nil
 	}
-	selected := lc.backends[0]
-	lc.backends = append(lc.backends[1:], lc.backends[0])
-	return selected
+	for i := 0; i < n; i++ {
+		selected := lc.registries[0]
+		lc.registries = append(lc.registries[1:], lc.registries[0])
+		if !isExcluded(selected.ID, exclude) {
+			return selected
+		}
+	}
+	return nil
 }
 
 func (lc *LeastConnections) Name() string {

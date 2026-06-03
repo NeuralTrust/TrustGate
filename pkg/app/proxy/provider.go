@@ -8,11 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/factory"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 )
 
 const (
@@ -25,6 +26,8 @@ const (
 // while adapting it to the target provider format. The handler maps it to a
 // 400 Bad Request.
 var ErrInvalidRequestPayload = errors.New("invalid request payload")
+
+var ErrModelNotAllowed = errors.New("model not allowed")
 
 // ProviderResponse is the backend LLM response. On the synchronous path it
 // carries Body; on the streaming path it carries Stream. It is relayed to the
@@ -40,22 +43,17 @@ type ProviderResponse struct {
 	// and is responsible for draining the sequence (which closes the backend
 	// body). The second value carries mid-stream errors.
 	Stream iter.Seq2[[]byte, error]
+	Usage  *adapter.CanonicalUsage
 }
 
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
 type ProviderInvoker interface {
-	Invoke(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*ProviderResponse, error)
-	// InvokeStream performs the streaming invocation. A pre-stream non-2xx
-	// backend response is returned as a verbatim *ProviderResponse (Body set,
-	// Stream nil); a successful call returns a *ProviderResponse with Stream set.
-	InvokeStream(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*ProviderResponse, error)
+	Invoke(ctx context.Context, bk *registry.Registry, req *infracontext.RequestContext) (*ProviderResponse, error)
+	InvokeStream(ctx context.Context, bk *registry.Registry, req *infracontext.RequestContext) (*ProviderResponse, error)
 }
 
 var _ ProviderInvoker = (*providerInvoker)(nil)
 
-// providerInvoker resolves the concrete LLM provider client for a backend,
-// transforms the request payload across provider formats when needed, invokes
-// the backend, and adapts the response back to the client's source format.
 type providerInvoker struct {
 	locator  factory.ProviderLocator
 	registry *adapter.Registry
@@ -88,7 +86,7 @@ type preparedInvocation struct {
 
 func (p *providerInvoker) Invoke(
 	ctx context.Context,
-	bk *backend.Backend,
+	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
 	prep, err := p.prepare(bk, req)
@@ -98,7 +96,7 @@ func (p *providerInvoker) Invoke(
 
 	respBody, err := prep.client.Completions(ctx, prep.cfg, prep.body)
 	if err != nil {
-		if be, ok := backend.IsBackendError(err); ok {
+		if be, ok := registry.IsBackendError(err); ok {
 			return &ProviderResponse{
 				StatusCode: be.StatusCode,
 				Headers:    be.PassthroughHeaders(),
@@ -107,6 +105,8 @@ func (p *providerInvoker) Invoke(
 		}
 		return nil, fmt.Errorf("provider completions: %w", err)
 	}
+
+	usage := p.decodeResponseUsage(respBody, prep.targetFormat)
 
 	if prep.crossFormat {
 		if adapted, aerr := p.registry.AdaptResponse(respBody, prep.sourceFormat, prep.targetFormat); aerr != nil {
@@ -123,13 +123,22 @@ func (p *providerInvoker) Invoke(
 			headerSelectedProvider: {bk.Provider},
 			headerContentType:      {contentTypeJSON},
 		},
-		Body: respBody,
+		Body:  respBody,
+		Usage: usage,
 	}, nil
+}
+
+func (p *providerInvoker) decodeResponseUsage(body []byte, format adapter.Format) *adapter.CanonicalUsage {
+	canonical, err := p.registry.DecodeResponseFor(body, format)
+	if err != nil || canonical == nil {
+		return nil
+	}
+	return canonical.Usage
 }
 
 func (p *providerInvoker) InvokeStream(
 	ctx context.Context,
-	bk *backend.Backend,
+	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
 	prep, err := p.prepare(bk, req)
@@ -138,7 +147,7 @@ func (p *providerInvoker) InvokeStream(
 	}
 
 	body := prep.body
-	// Backends speaking the OpenAI-style API need an explicit "stream": true even
+	// Registries speaking the OpenAI-style API need an explicit "stream": true even
 	// when the source format (e.g. Gemini) does not carry it in the body.
 	if adapter.IsSameWireFormat(prep.targetFormat, adapter.FormatOpenAI) ||
 		prep.targetFormat == adapter.FormatOpenAIResponses ||
@@ -149,7 +158,7 @@ func (p *providerInvoker) InvokeStream(
 
 	seq, err := prep.client.CompletionsStream(ctx, prep.cfg, body)
 	if err != nil {
-		if be, ok := backend.IsBackendError(err); ok {
+		if be, ok := registry.IsBackendError(err); ok {
 			return &ProviderResponse{
 				StatusCode: be.StatusCode,
 				Headers:    be.PassthroughHeaders(),
@@ -159,7 +168,7 @@ func (p *providerInvoker) InvokeStream(
 		return nil, fmt.Errorf("provider completions stream: %w", err)
 	}
 
-	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.usageObserver(req))
+	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.usageObserver(ctx))
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
@@ -171,7 +180,7 @@ func (p *providerInvoker) InvokeStream(
 // prepare resolves the provider client and transforms the request payload across
 // provider formats when needed, mutating req with the resolved format metadata.
 func (p *providerInvoker) prepare(
-	bk *backend.Backend,
+	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*preparedInvocation, error) {
 	client, err := p.locator.Get(bk.Provider)
@@ -201,10 +210,15 @@ func (p *providerInvoker) prepare(
 
 	body = adapter.NormalizeRequestForProvider(bk.Provider, targetFormat, body)
 
-	// ValidateModel is a near no-op until the backend carries an allow-list /
-	// default model; failures are non-fatal (proceed without model override).
-	if normalized, _, verr := adapter.ValidateModel(body, nil, ""); verr != nil {
-		p.logger.Warn("model validation failed, proceeding without override",
+	normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
+	if verr != nil {
+		if errors.Is(verr, adapter.ErrModelNotAllowed) {
+			return nil, fmt.Errorf("%w: %s", ErrModelNotAllowed, verr.Error())
+		}
+		if len(req.AllowedModels) > 0 {
+			return nil, fmt.Errorf("%w: model enforcement could not parse request body: %s", ErrModelNotAllowed, verr.Error())
+		}
+		p.logger.Warn("model enforcement failed, proceeding without override",
 			slog.String("error", verr.Error()))
 	} else {
 		body = normalized
@@ -223,17 +237,13 @@ func (p *providerInvoker) prepare(
 	}, nil
 }
 
-// usageObserver returns a callback that records the latest canonical usage onto
-// req.Metadata["usage"] and debug-logs it. This is the chunk-level metric hook.
-func (p *providerInvoker) usageObserver(req *infracontext.RequestContext) func(*adapter.CanonicalUsage) {
+func (p *providerInvoker) usageObserver(ctx context.Context) func(*adapter.CanonicalUsage) {
+	requestTrace := trace.FromContext(ctx)
 	return func(u *adapter.CanonicalUsage) {
-		if u == nil {
+		if u == nil || requestTrace == nil {
 			return
 		}
-		if req.Metadata == nil {
-			req.Metadata = make(map[string]interface{})
-		}
-		req.Metadata[adapter.MetadataUsageKey] = u
+		requestTrace.ObserveLLMUsage(u)
 		p.logger.Debug("stream usage observed",
 			slog.Int("input_tokens", u.InputTokens),
 			slog.Int("output_tokens", u.OutputTokens),
@@ -273,17 +283,17 @@ func (p *providerInvoker) resolveSourceFormat(req *infracontext.RequestContext) 
 // buildCredentials maps a target's auth configuration to provider credentials.
 // API key, AWS and Azure are mapped now; OAuth2 and GCP service accounts are
 // deferred to the auth multi-type work (B.7).
-func buildCredentials(auth *backend.TargetAuth) providers.Credentials {
+func buildCredentials(auth *registry.TargetAuth) providers.Credentials {
 	creds := providers.Credentials{}
 	if auth == nil {
 		return creds
 	}
 	switch auth.Type {
-	case backend.AuthTypeAPIKey:
+	case registry.AuthTypeAPIKey:
 		if auth.APIKey != nil {
 			creds.ApiKey = auth.APIKey.APIKey
 		}
-	case backend.AuthTypeAWS:
+	case registry.AuthTypeAWS:
 		if auth.AWS != nil {
 			creds.AwsBedrock = &providers.AwsBedrock{
 				Region:       auth.AWS.Region,
@@ -294,7 +304,7 @@ func buildCredentials(auth *backend.TargetAuth) providers.Credentials {
 				RoleARN:      auth.AWS.Role,
 			}
 		}
-	case backend.AuthTypeAzure:
+	case registry.AuthTypeAzure:
 		if auth.Azure != nil {
 			creds.Azure = &providers.Azure{
 				Endpoint:    auth.Azure.Endpoint,
@@ -302,7 +312,7 @@ func buildCredentials(auth *backend.TargetAuth) providers.Credentials {
 				UseIdentity: auth.Azure.UseManagedIdentity,
 			}
 		}
-	case backend.AuthTypeOAuth2, backend.AuthTypeGCPServiceAccount:
+	case registry.AuthTypeOAuth2, registry.AuthTypeGCPServiceAccount:
 		// Deferred to B.7.
 	}
 	return creds

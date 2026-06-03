@@ -8,7 +8,7 @@ import (
 type ResponseContext struct {
 	Context       context.Context
 	GatewayID     string
-	BackendID     string
+	RegistryID    string
 	Headers       map[string][]string
 	Body          []byte
 	StatusCode    int

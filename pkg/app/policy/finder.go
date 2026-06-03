@@ -4,14 +4,14 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 //go:generate mockery --name=Finder --dir=. --output=./mocks --filename=policy_finder_mock.go --case=underscore --with-expecter
 type Finder interface {
-	FindByID(ctx context.Context, gatewayID, id uuid.UUID) (*domain.Policy, error)
+	FindByID(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID) (*domain.Policy, error)
 	List(ctx context.Context, filter domain.ListFilter) ([]*domain.Policy, int, error)
 }
 
@@ -31,7 +31,7 @@ func NewFinder(repo domain.Repository, manager *cache.TTLMapManager, logger *slo
 	}
 }
 
-func (f *finder) FindByID(ctx context.Context, gatewayID, id uuid.UUID) (*domain.Policy, error) {
+func (f *finder) FindByID(ctx context.Context, gatewayID ids.GatewayID, id ids.PolicyID) (*domain.Policy, error) {
 	if cached, ok := f.memoryCache.Get(id.String()); ok {
 		if p, ok := cached.(*domain.Policy); ok {
 			return scopeToGateway(p, gatewayID)
@@ -51,7 +51,7 @@ func (f *finder) FindByID(ctx context.Context, gatewayID, id uuid.UUID) (*domain
 // scopeToGateway enforces that a policy belongs to the requesting gateway,
 // returning ErrNotFound for cross-gateway ids so the API never confirms the
 // existence of another gateway's resource.
-func scopeToGateway(p *domain.Policy, gatewayID uuid.UUID) (*domain.Policy, error) {
+func scopeToGateway(p *domain.Policy, gatewayID ids.GatewayID) (*domain.Policy, error) {
 	if p.GatewayID != gatewayID {
 		return nil, domain.ErrNotFound
 	}

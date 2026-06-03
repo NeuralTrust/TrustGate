@@ -11,9 +11,8 @@ import (
 	apptelemetry "github.com/NeuralTrust/AgentGateway/pkg/app/telemetry"
 	domaintelemetry "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/metric_events"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 )
 
 const (
@@ -29,8 +28,8 @@ type Worker interface {
 	Shutdown()
 	HasDefaultExporters() bool
 	Process(
-		collector *metrics.Collector,
 		exporters []domaintelemetry.ExporterConfig,
+		requestTrace *trace.RequestTrace,
 		req *infracontext.RequestContext,
 		resp *infracontext.ResponseContext,
 		startTime time.Time,
@@ -148,24 +147,24 @@ func (w *worker) closeExporters() {
 }
 
 func (w *worker) Process(
-	collector *metrics.Collector,
 	exporters []domaintelemetry.ExporterConfig,
+	requestTrace *trace.RequestTrace,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 	startTime,
 	endTime time.Time,
 ) {
-	if collector == nil || req == nil || resp == nil {
+	if req == nil || resp == nil {
 		return
 	}
 	w.enqueueTask(func() {
-		w.export(collector, exporters, req, resp, startTime, endTime)
+		w.export(exporters, requestTrace, req, resp, startTime, endTime)
 	}, req.GatewayID)
 }
 
 func (w *worker) export(
-	collector *metrics.Collector,
 	exporters []domaintelemetry.ExporterConfig,
+	requestTrace *trace.RequestTrace,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 	startTime,
@@ -176,9 +175,16 @@ func (w *worker) export(
 		return
 	}
 
-	events := collector.Flush()
+	events := projectTrace(requestTrace)
 	if len(events) == 0 {
-		return
+		// A nil trace still yields a base request event (its trace id is empty);
+		// a present trace with request traces gated off emits nothing.
+		if requestTrace != nil && !requestTrace.RequestTracesEnabled() {
+			return
+		}
+		base := metric_events.NewTraceEvent()
+		stampTrace(base, requestTrace)
+		events = []*metric_events.Event{base}
 	}
 
 	exchange := exchangeFrom(req, resp, startTime, endTime)
@@ -187,6 +193,80 @@ func (w *worker) export(
 	}
 
 	w.dispatch(targets, events, req.GatewayID)
+}
+
+// projectTrace turns the request trace into the wire-format events the
+// exporters consume. Every span (downstream call or plugin) becomes one event
+// correlated by trace id, gated by the trace's telemetry flags.
+func projectTrace(requestTrace *trace.RequestTrace) []*metric_events.Event {
+	if requestTrace == nil {
+		return nil
+	}
+	var events []*metric_events.Event
+	for _, span := range requestTrace.Spans() {
+		switch span.Type {
+		case trace.SpanPlugin:
+			if !requestTrace.PluginTracesEnabled() {
+				continue
+			}
+			events = append(events, projectPluginSpan(requestTrace, span))
+		default:
+			if !requestTrace.RequestTracesEnabled() {
+				continue
+			}
+			events = append(events, projectCallSpan(requestTrace, span))
+		}
+	}
+	return events
+}
+
+func projectCallSpan(requestTrace *trace.RequestTrace, span *trace.Span) *metric_events.Event {
+	evt := metric_events.NewTraceEvent()
+	if attrs, ok := span.LLMAttrsCopy(); ok {
+		evt.Attempt = attrs.Attempt
+		evt.Fallback = attrs.Fallback
+		evt.RegistryID = attrs.RegistryID
+		evt.Outcome = attrs.Outcome
+		if evt.Upstream != nil {
+			evt.Upstream.Target.Provider = attrs.Provider
+			evt.Upstream.Target.Latency = span.Latency().Milliseconds()
+		}
+		evt.Usage = metric_events.UsageEventFromCanonical(attrs.Usage)
+	}
+	evt.StatusCode = span.StatusCode()
+	if errMsg := span.Error(); errMsg != "" {
+		evt.Error = errMsg
+	}
+	stampTrace(evt, requestTrace)
+	return evt
+}
+
+func projectPluginSpan(requestTrace *trace.RequestTrace, span *trace.Span) *metric_events.Event {
+	attrs := span.PluginAttrsCopy()
+	errMsg := span.Error()
+	evt := metric_events.NewPluginEvent()
+	evt.Plugin = &metric_events.PluginDataEvent{
+		PluginName:   span.Name,
+		Stage:        attrs.Stage,
+		Mode:         attrs.Mode,
+		Decision:     attrs.Decision,
+		Extras:       attrs.Extras,
+		Error:        errMsg != "",
+		ErrorMessage: errMsg,
+		StatusCode:   span.StatusCode(),
+		Latency:      span.Latency().Microseconds(),
+		LatencyUnit:  "μs",
+	}
+	stampTrace(evt, requestTrace)
+	return evt
+}
+
+func stampTrace(evt *metric_events.Event, requestTrace *trace.RequestTrace) {
+	if requestTrace == nil {
+		return
+	}
+	evt.TraceID = requestTrace.TraceID()
+	evt.FingerprintID = requestTrace.Metadata().FingerprintID
 }
 
 // resolveExporters returns the default exporters (minus those overridden by an
@@ -297,23 +377,9 @@ func exchangeFrom(
 		StatusCode:      resp.StatusCode,
 		Streaming:       resp.Streaming,
 		TargetLatency:   resp.TargetLatency,
-		Usage:           usageFromMetadata(req.Metadata),
 		StartTime:       startTime,
 		EndTime:         endTime,
 	}
-}
-
-// usageFromMetadata extracts the canonical token usage recorded by the streaming
-// usage observer, returning nil when no usage was observed.
-func usageFromMetadata(metadata map[string]interface{}) *adapter.CanonicalUsage {
-	if metadata == nil {
-		return nil
-	}
-	usage, ok := metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage)
-	if !ok {
-		return nil
-	}
-	return usage
 }
 
 func createExportersCacheKey(exporters []domaintelemetry.ExporterConfig) string {

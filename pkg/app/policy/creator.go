@@ -4,13 +4,13 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 type CreateInput struct {
-	GatewayID uuid.UUID
+	GatewayID ids.GatewayID
 	Name      string
 	Plugins   domain.Plugins
 }

@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-proxy
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: proxy
+    component: proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: agentgateway
+      app.kubernetes.io/component: proxy
+      component: proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: agentgateway
+        app.kubernetes.io/component: proxy
+        component: proxy
+    spec:
+      serviceAccountName: agentgateway
+      containers:
+      - name: proxy
+        image: agentgateway
+        # Distroless image has no /bin/sh; secrets load via godotenv from /etc/secrets/.env.
+        workingDir: /app
+        args:
+        - proxy
+        imagePullPolicy: Always
+        envFrom:
+        - configMapRef:
+            name: agentgateway-config
+        ports:
+        - containerPort: 8081
+          name: http
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        volumeMounts:
+        - name: agentgateway-secrets
+          mountPath: /etc/secrets
+          readOnly: true
+      securityContext: {}
+      volumes:
+      - name: agentgateway-secrets
+        csi:
+          driver: secrets-store-gke.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: agentgateway-secrets
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - agentgateway-proxy
+            topologyKey: kubernetes.io/hostname

@@ -8,34 +8,37 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	authmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
-	backendmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/backend/mocks"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	policymocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	backendmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/registry/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
-func routableConsumer(gwID uuid.UUID, policyIDs, authIDs []uuid.UUID) *domain.Consumer {
+func routableConsumer(gwID ids.GatewayID, policyIDs []ids.PolicyID, authIDs []ids.AuthID) *domain.Consumer {
 	now := time.Now().UTC()
 	return domain.Rehydrate(
-		uuid.New(), gwID, "c", domain.TypeLLM,
+		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
 		"/v1/chat", "round-robin", nil,
 		nil, true,
-		[]uuid.UUID{uuid.New()}, policyIDs, authIDs,
+		[]ids.RegistryID{ids.New[ids.RegistryKind]()}, policyIDs, authIDs,
+		nil,
+		nil,
 		now, now,
 	)
 }
 
 func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
-	pid := uuid.New()
-	aid := uuid.New()
-	withAuth := routableConsumer(gwID, []uuid.UUID{pid}, []uuid.UUID{aid})
-	policyOnly := routableConsumer(gwID, []uuid.UUID{pid}, nil)
+	gwID := ids.New[ids.GatewayKind]()
+	pid := ids.New[ids.PolicyKind]()
+	aid := ids.New[ids.AuthKind]()
+	withAuth := routableConsumer(gwID, []ids.PolicyID{pid}, []ids.AuthID{aid})
+	policyOnly := routableConsumer(gwID, []ids.PolicyID{pid}, nil)
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).
@@ -43,24 +46,24 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 
 	policyRepo := policymocks.NewRepository(t)
 	policyRepo.EXPECT().
-		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(ids []uuid.UUID) bool {
-			return len(ids) == 1 && ids[0] == pid
+		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(pids []ids.PolicyID) bool {
+			return len(pids) == 1 && pids[0] == pid
 		})).
 		Return([]*policydomain.Policy{{ID: pid, GatewayID: gwID}}, nil).Once()
 
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().
-		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(ids []uuid.UUID) bool {
-			return len(ids) == 1 && ids[0] == aid
+		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(aids []ids.AuthID) bool {
+			return len(aids) == 1 && aids[0] == aid
 		})).
 		Return([]*authdomain.Auth{{ID: aid, GatewayID: gwID}}, nil).Once()
 
-	backendRepo := backendmocks.NewRepository(t)
-	backendRepo.EXPECT().
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().
 		FindByIDs(mock.Anything, gwID, mock.Anything).
 		Return(nil, nil).Once()
 
-	finder := appconsumer.NewDataFinder(repo, backendRepo, policyRepo, authRepo, newCacheManager(), newTestLogger())
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, newCacheManager(), newTestLogger())
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
@@ -69,7 +72,7 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 	if len(data.Consumers) != 2 {
 		t.Fatalf("expected 2 consumers, got %d", len(data.Consumers))
 	}
-	// Order is preserved from the repository (no path-specificity sorting).
+
 	if data.Consumers[0].Consumer.ID != withAuth.ID {
 		t.Fatal("expected repository order to be preserved")
 	}
@@ -86,8 +89,6 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 		t.Fatal("policy-only consumer must not resolve any auth")
 	}
 
-	// Second call must be served from the in-process cache: the .Once()
-	// expectations above would fail if any repository were queried again.
 	again, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
 		t.Fatalf("second FindByGateway error: %v", err)
@@ -97,9 +98,67 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 	}
 }
 
+func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	poolID := ids.New[ids.RegistryKind]()
+	fb1, fb2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	now := time.Now().UTC()
+	cons := domain.Rehydrate(
+		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
+		"/v1/chat", "round-robin", nil,
+		nil, true,
+		[]ids.RegistryID{poolID}, nil, nil,
+		&domain.Fallback{
+			Enabled:  true,
+			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+			Budget:   domain.FallbackBudget{MaxAttempts: 9},
+
+			Chain: []ids.RegistryID{fb2, fb1},
+		},
+		nil,
+		now, now,
+	)
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Consumer{cons}, nil).Once()
+
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().
+		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(bids []ids.RegistryID) bool {
+			return len(bids) == 3
+		})).
+		Return([]*registrydomain.Registry{
+			{ID: poolID, GatewayID: gwID, Provider: "openai"},
+			{ID: fb1, GatewayID: gwID, Provider: "anthropic"},
+			{ID: fb2, GatewayID: gwID, Provider: "mistral"},
+		}, nil).Once()
+
+	finder := appconsumer.NewDataFinder(
+		repo, registryRepo,
+		policymocks.NewRepository(t), authmocks.NewRepository(t),
+		newCacheManager(), newTestLogger(),
+	)
+
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	if err != nil {
+		t.Fatalf("FindByGateway error: %v", err)
+	}
+	rc := data.Consumers[0]
+	if len(rc.Registries) != 1 || rc.Registries[0].ID != poolID {
+		t.Fatalf("pool registries not resolved: %+v", rc.Registries)
+	}
+	if len(rc.FallbackBackends) != 2 {
+		t.Fatalf("expected 2 fallback registries, got %d", len(rc.FallbackBackends))
+	}
+	if rc.FallbackBackends[0].ID != fb2 || rc.FallbackBackends[1].ID != fb1 {
+		t.Fatal("fallback chain order was not preserved")
+	}
+}
+
 func TestDataFinder_FindByGateway_CacheHitSkipsRepositories(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	mgr := newCacheManager()
 	cached := &appconsumer.Data{GatewayID: gwID}
 	mgr.GetTTLMap(cache.ConsumerDataTTLName).Set(gwID.String(), cached)
@@ -121,7 +180,7 @@ func TestDataFinder_FindByGateway_CacheHitSkipsRepositories(t *testing.T) {
 
 func TestDataFinder_FindByGateway_RecoversFromCorruptCacheEntry(t *testing.T) {
 	t.Parallel()
-	gwID := uuid.New()
+	gwID := ids.New[ids.GatewayKind]()
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.ConsumerDataTTLName).Set(gwID.String(), "not-a-consumer-data")
 

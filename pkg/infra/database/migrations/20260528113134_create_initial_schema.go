@@ -50,6 +50,7 @@ func init() {
 					path              TEXT NOT NULL,
 					algorithm         TEXT NOT NULL DEFAULT 'round-robin',
 					embedding_config  JSONB,
+					fallback          JSONB,
 					headers           JSONB NOT NULL DEFAULT '{}'::jsonb,
 					active            BOOLEAN NOT NULL DEFAULT TRUE,
 					created_at        TIMESTAMPTZ NOT NULL,

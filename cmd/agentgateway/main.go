@@ -1,4 +1,15 @@
 // Command agentgateway starts the admin or proxy HTTP server (argv[1], default proxy).
+//
+// @title                       AgentGateway Admin API
+// @version                     1.0
+// @description                 Administrative API for managing gateways and their registries, policies, consumers and auth credentials.
+// @contact.name                NeuralTrust
+// @contact.url                 https://neuraltrust.ai/contact
+// @contact.email               support@neuraltrust.ai
+// @BasePath                    /
+// @securityDefinitions.apikey  BearerAuth
+// @in                          header
+// @name                        Authorization
 package main
 
 import (
@@ -10,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/NeuralTrust/AgentGateway/docs"
 	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	"github.com/NeuralTrust/AgentGateway/pkg/container/modules"
@@ -26,7 +38,11 @@ const (
 )
 
 func main() {
-	_ = godotenv.Load()
+	// Local dev uses .env in cwd; k8s mounts GCP secrets at /etc/secrets/.env
+	// (see workingDir in deployment manifests). Distroless has no shell entrypoint.
+	for _, path := range []string{".env", "/etc/secrets/.env", "/etc/secrets/secrets"} {
+		_ = godotenv.Load(path)
+	}
 
 	c, err := container.New(modules.All()...)
 	if err != nil {
@@ -42,6 +58,9 @@ func main() {
 	}
 
 	if serverType() == serverAdmin {
+		if err := c.Invoke(modules.StartCatalogSync); err != nil {
+			log.Fatalf("failed to start catalog sync: %v", err)
+		}
 		if err := c.Invoke(runAdmin); err != nil {
 			log.Fatalf("failed to start application: %v", err)
 		}

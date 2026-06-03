@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type MultiHandler struct {
@@ -229,14 +230,29 @@ func NewLoggerWithFormat(level slog.Level, format LogFormat) *slog.Logger {
 	consoleHandler := NewSourceFilterHandler(consoleBaseHandler)
 	asyncConsoleHandler := NewAsyncHandler(consoleHandler, 1000)
 
+	if !fileLogEnabled() {
+		return slog.New(asyncConsoleHandler)
+	}
+
 	fileHandler, err := createFileHandler(handlerOpts)
 	if err != nil {
-		slog.Warn("Failed to create file handler", "error", err)
+		slog.Warn("file log sink unavailable, falling back to console-only", slog.String("error", err.Error()))
 		return slog.New(asyncConsoleHandler)
 	}
 
 	multiHandler := NewMultiHandler(asyncConsoleHandler, fileHandler)
 	return slog.New(multiHandler)
+}
+
+// fileLogEnabled gates the on-disk var/log.log sink. Containers should keep this
+// off (stdout JSON only); enable locally with LOG_FILE_ENABLED=true.
+func fileLogEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_FILE_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func createFileHandler(opts *slog.HandlerOptions) (slog.Handler, error) {

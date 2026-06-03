@@ -15,9 +15,9 @@ import (
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
 	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -27,9 +27,9 @@ const proxyPath = "/v1/chat/completions"
 // consumer.Data read model (with one consumer bound to proxyPath) to the request
 // context, exactly as the real auth middleware will once credential validation
 // lands.
-func authStub(gatewayID uuid.UUID, path string) fiber.Handler {
+func authStub(gatewayID ids.GatewayID, path string) fiber.Handler {
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{ID: uuid.New(), GatewayID: gatewayID, Path: path, Active: true}},
+		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Path: path, Active: true}},
 	})
 	return func(c *fiber.Ctx) error {
 		ctx := appconsumer.WithGatewayID(c.UserContext(), gatewayID)
@@ -43,7 +43,7 @@ func newTestApp(t *testing.T) (*fiber.App, *proxymocks.Forwarder) {
 	t.Helper()
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
-	app.Use(authStub(uuid.New(), proxyPath))
+	app.Use(authStub(ids.New[ids.GatewayKind](), proxyPath))
 	handler := proxyhttp.NewForwardedHandler(fwd)
 	app.All("/v1/*", handler.Handle)
 	return app, fwd
@@ -93,7 +93,7 @@ func TestHandle_Unauthenticated(t *testing.T) {
 func TestHandle_PathNotFound(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
-	app.Use(authStub(uuid.New(), "/v1/some/other/path"))
+	app.Use(authStub(ids.New[ids.GatewayKind](), "/v1/some/other/path"))
 	handler := proxyhttp.NewForwardedHandler(fwd)
 	app.All("/v1/*", handler.Handle)
 
@@ -215,7 +215,7 @@ func TestHandle_Streaming_InvokesFinalizerWithCapturedOutput(t *testing.T) {
 		owned      bool
 	)
 	app := fiber.New()
-	app.Use(authStub(uuid.New(), proxyPath))
+	app.Use(authStub(ids.New[ids.GatewayKind](), proxyPath))
 	app.Use(func(c *fiber.Ctx) error {
 		c.Locals(infracontext.StreamMetricsFinalizerKey, infracontext.StreamMetricsFinalizer(
 			func(req *infracontext.RequestContext, output []byte, statusCode int, _ map[string][]string) {

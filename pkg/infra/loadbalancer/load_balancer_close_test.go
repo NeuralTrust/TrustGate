@@ -5,7 +5,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	cachemocks "github.com/NeuralTrust/AgentGateway/pkg/infra/cache/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
 	"github.com/google/uuid"
@@ -28,24 +29,24 @@ func TestLoadBalancer_Close_IdempotentAndSafe(t *testing.T) {
 	// it observes done; performSuccessUpdate bails out on a nil client.
 	cacheClient.EXPECT().RedisClient().Return(nil).Maybe()
 
-	bk, err := backend.NewBackend(
-		uuid.New(),
+	bk, err := registry.NewRegistry(
+		ids.New[ids.GatewayKind](),
 		"backend-1",
 		"openai",
 		nil,
 		"",
 		1,
-		backend.NewAPIKeyAuth("sk-1"),
+		registry.NewAPIKeyAuth("sk-1"),
 		nil,
 	)
 	if err != nil {
-		t.Fatalf("NewBackend error: %v", err)
+		t.Fatalf("NewRegistry error: %v", err)
 	}
 
 	lb, err := loadbalancer.NewLoadBalancer(loadbalancer.NewBaseFactory(nil, nil), loadbalancer.Pool{
-		ID:        uuid.New().String(),
-		Backends:  []*backend.Backend{bk},
-		Algorithm: loadbalancer.AlgorithmRoundRobin,
+		ID:         uuid.New().String(),
+		Registries: []*registry.Registry{bk},
+		Algorithm:  loadbalancer.AlgorithmRoundRobin,
 	}, newTestLogger(), cacheClient)
 	if err != nil {
 		t.Fatalf("NewLoadBalancer error: %v", err)

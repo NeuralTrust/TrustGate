@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: agentgateway
+
+namespace: agentgateway
+
+resources:
+  # namespace resources
+  - namespace.yaml
+  # serviceaccount resources
+  - serviceaccount/agentgateway.yaml
+  # poddisruptionbudget resources
+  - poddisruptionbudget/agentgateway-admin.yaml
+  - poddisruptionbudget/agentgateway-proxy.yaml
+  # horizontalpodautoscaler resources
+  # - horizontalpodautoscaler/agentgateway-admin.yaml
+  # - horizontalpodautoscaler/agentgateway-proxy.yaml
+  # httproute resources
+  - httproute/agentgateway-routes.yaml
+  # healthcheckpolicy resources
+  - healthcheckpolicy/agentgateway-healthchecks.yaml
+  # deployment resources
+  - deployment/agentgateway-admin.yaml
+  - deployment/agentgateway-proxy.yaml
+  # service resources
+  - service/agentgateway-admin.yaml
+  - service/agentgateway-proxy.yaml

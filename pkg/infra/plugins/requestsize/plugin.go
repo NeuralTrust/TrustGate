@@ -12,6 +12,7 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
 )
 
 // PluginName is the catalog name used in policy configuration.
@@ -56,21 +57,45 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 
 	maxBytes := cfg.maxSizeBytes()
 	byteSize := len(body)
+	charCount := utf8.RuneCount(body)
+
 	if byteSize > maxBytes {
+		setSizeExtras(in.Event, RequestSizeLimiterData{
+			RequestSizeBytes:   byteSize,
+			RequestSizeChars:   charCount,
+			MaxSizeBytes:       maxBytes,
+			MaxCharsPerRequest: int(cfg.MaxCharsPerRequest),
+			LimitExceeded:      true,
+			ExceededType:       "bytes",
+		})
 		return nil, &appplugins.PluginError{
 			StatusCode: http.StatusRequestEntityTooLarge,
 			Message:    fmt.Sprintf("request size limit exceeded: received %d bytes", byteSize),
 		}
 	}
 
-	charCount := utf8.RuneCount(body)
 	if int64(charCount) > cfg.MaxCharsPerRequest {
+		setSizeExtras(in.Event, RequestSizeLimiterData{
+			RequestSizeBytes:   byteSize,
+			RequestSizeChars:   charCount,
+			MaxSizeBytes:       maxBytes,
+			MaxCharsPerRequest: int(cfg.MaxCharsPerRequest),
+			LimitExceeded:      true,
+			ExceededType:       "chars",
+		})
 		return nil, &appplugins.PluginError{
 			StatusCode: http.StatusRequestEntityTooLarge,
 			Message:    fmt.Sprintf("character limit exceeded: received %d characters", charCount),
 		}
 	}
 
+	setSizeExtras(in.Event, RequestSizeLimiterData{
+		RequestSizeBytes:   byteSize,
+		RequestSizeChars:   charCount,
+		MaxSizeBytes:       maxBytes,
+		MaxCharsPerRequest: int(cfg.MaxCharsPerRequest),
+		LimitExceeded:      false,
+	})
 	return &appplugins.Result{
 		StatusCode: http.StatusOK,
 		Headers: map[string][]string{
@@ -80,6 +105,13 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 			"X-Size-Limit-Chars":   {strconv.FormatInt(cfg.MaxCharsPerRequest, 10)},
 		},
 	}, nil
+}
+
+func setSizeExtras(event *metrics.EventContext, data RequestSizeLimiterData) {
+	if event == nil {
+		return
+	}
+	event.SetExtras(data)
 }
 
 func contentLength(req *infracontext.RequestContext) string {

@@ -20,6 +20,21 @@ func NewCreateAuthHandler(creator appauth.Creator) *CreateAuthHandler {
 	return &CreateAuthHandler{creator: creator}
 }
 
+// Handle godoc
+// @Summary      Create an auth
+// @Description  Creates a new auth in a gateway.
+// @Tags         auths
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string                     true  "Gateway id"  format(uuid)
+// @Param        body        body      request.CreateAuthRequest  true  "Auth to create"
+// @Success      201         {object}  response.AuthResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      409         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/auths [post]
 func (h *CreateAuthHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, err := helpers.ParseGatewayID(c)
 	if err != nil {

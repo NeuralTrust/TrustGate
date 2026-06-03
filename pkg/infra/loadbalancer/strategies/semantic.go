@@ -7,8 +7,9 @@ import (
 	"math"
 	"sync"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/embedding"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
@@ -16,7 +17,7 @@ import (
 
 type Semantic struct {
 	mu              sync.RWMutex
-	backends        []*backend.Backend
+	registries      []*registry.Registry
 	embeddingRepo   embedding.Repository
 	serviceLocator  factory.EmbeddingServiceLocator
 	embeddingConfig *embedding.Config
@@ -24,41 +25,42 @@ type Semantic struct {
 
 func NewSemantic(
 	embeddingCfg *embedding.Config,
-	backends []*backend.Backend,
+	registries []*registry.Registry,
 	embeddingRepo embedding.Repository,
 	serviceLocator factory.EmbeddingServiceLocator,
 ) *Semantic {
 	return &Semantic{
-		backends:        backends,
+		registries:      registries,
 		embeddingRepo:   embeddingRepo,
 		serviceLocator:  serviceLocator,
 		embeddingConfig: embeddingCfg,
 	}
 }
 
-func (s *Semantic) Next(req *infracontext.RequestContext) *backend.Backend {
+func (s *Semantic) Next(req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if len(s.backends) == 0 {
+	candidates := filterExcluded(s.registries, exclude)
+	if len(candidates) == 0 {
 		return nil
 	}
-	if len(s.backends) == 1 {
-		return s.backends[0]
+	if len(candidates) == 1 {
+		return candidates[0]
 	}
 	if s.embeddingConfig == nil || s.serviceLocator == nil || s.embeddingRepo == nil || req == nil {
-		return s.backends[0]
+		return candidates[0]
 	}
 
 	prompt, err := extractPromptFromRequest(req.Body)
 	if err != nil {
-		return s.backends[0]
+		return candidates[0]
 	}
 	promptEmbedding, err := s.generateEmbedding(req.Context, prompt)
 	if err != nil {
-		return s.backends[0]
+		return candidates[0]
 	}
-	return s.findBestBackend(req.Context, promptEmbedding)
+	return s.findBestRegistry(req.Context, promptEmbedding, candidates)
 }
 
 func (s *Semantic) Name() string {
@@ -103,10 +105,14 @@ func (s *Semantic) generateEmbedding(ctx context.Context, text string) ([]float6
 	return emb.Value, nil
 }
 
-func (s *Semantic) findBestBackend(ctx context.Context, promptEmbedding []float64) *backend.Backend {
-	var bestBackend *backend.Backend
+func (s *Semantic) findBestRegistry(
+	ctx context.Context,
+	promptEmbedding []float64,
+	candidates []*registry.Registry,
+) *registry.Registry {
+	var bestBackend *registry.Registry
 	bestSimilarity := -1.0
-	for _, b := range s.backends {
+	for _, b := range candidates {
 		if b.Description == "" {
 			continue
 		}
@@ -121,7 +127,7 @@ func (s *Semantic) findBestBackend(ctx context.Context, promptEmbedding []float6
 		}
 	}
 	if bestBackend == nil {
-		return s.backends[0]
+		return candidates[0]
 	}
 	return bestBackend
 }

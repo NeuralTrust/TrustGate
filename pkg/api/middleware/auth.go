@@ -5,8 +5,8 @@ import (
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 )
 
 // ErrUnauthenticated is returned by an IdentityResolver when a request carries
@@ -19,7 +19,7 @@ var ErrUnauthenticated = errors.New("unauthenticated")
 // JWT claim, or the mTLS client certificate. The interim skeleton reads the
 // X-Gateway-Id header so the routing contract can be exercised end to end.
 type IdentityResolver interface {
-	ResolveGatewayID(c *fiber.Ctx) (uuid.UUID, error)
+	ResolveGatewayID(c *fiber.Ctx) (ids.GatewayID, error)
 }
 
 type headerIdentityResolver struct{}
@@ -29,10 +29,10 @@ type headerIdentityResolver struct{}
 // JWT claim, and mTLS client-cert resolution.
 func NewHeaderIdentityResolver() IdentityResolver { return headerIdentityResolver{} }
 
-func (headerIdentityResolver) ResolveGatewayID(c *fiber.Ctx) (uuid.UUID, error) {
-	id, err := uuid.Parse(c.Get(headerGatewayID))
+func (headerIdentityResolver) ResolveGatewayID(c *fiber.Ctx) (ids.GatewayID, error) {
+	id, err := ids.Parse[ids.GatewayKind](c.Get(headerGatewayID))
 	if err != nil {
-		return uuid.Nil, ErrUnauthenticated
+		return ids.GatewayID{}, ErrUnauthenticated
 	}
 	return id, nil
 }
@@ -77,7 +77,7 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 	}
 }
 
-func (m *AuthMiddleware) attach(c *fiber.Ctx, gatewayID uuid.UUID, data *appconsumer.Data) {
+func (m *AuthMiddleware) attach(c *fiber.Ctx, gatewayID ids.GatewayID, data *appconsumer.Data) {
 	c.Locals(string(appconsumer.GatewayIDKey), gatewayID)
 	c.Locals(string(appconsumer.ConsumerDataKey), data)
 	ctx := appconsumer.WithGatewayID(c.UserContext(), gatewayID)

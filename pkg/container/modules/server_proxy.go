@@ -19,7 +19,6 @@ type proxyMiddlewares struct {
 	RequestID       *middleware.RequestIDMiddleware
 	PanicRecover    *middleware.PanicRecoverMiddleware
 	AccessLog       *middleware.AccessLogMiddleware
-	CORS            *middleware.CORSMiddleware
 	SecurityHeaders *middleware.SecurityHeadersMiddleware
 	Session         *middleware.SessionMiddleware
 	FingerPrint     *middleware.FingerPrintMiddleware
@@ -27,11 +26,15 @@ type proxyMiddlewares struct {
 	Metrics         *middleware.MetricsMiddleware
 }
 
+// proxyTransport intentionally omits the gateway-wide CORS middleware: on the
+// proxy plane CORS is owned per-route by the `cors` policy plugin, which
+// negotiates origins/methods and short-circuits preflight requests. Mounting
+// the global middleware here would intercept OPTIONS preflights before the
+// plugin runs and apply the gateway-wide defaults instead of the route policy.
 func proxyTransport(m proxyMiddlewares) *middleware.Transport {
 	return middleware.NewTransport(
 		m.RequestID,
 		m.SecurityHeaders,
-		m.CORS,
 		m.PanicRecover,
 		m.AccessLog,
 		m.Session,

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
-	"github.com/google/uuid"
 )
 
 type Type string
@@ -31,38 +31,42 @@ func IsValidType(t Type) bool {
 }
 
 type Consumer struct {
-	ID              uuid.UUID                `json:"id"`
-	GatewayID       uuid.UUID                `json:"gateway_id"`
-	Name            string                   `json:"name"`
-	Type            Type                     `json:"type"`
-	Path            string                   `json:"path"`
-	Algorithm       string                   `json:"algorithm"`
-	EmbeddingConfig *backend.EmbeddingConfig `json:"embedding_config,omitempty"`
-	Headers         map[string]string        `json:"headers,omitempty"`
-	Active          bool                     `json:"active"`
-	BackendIDs      backend.Backends         `json:"backend_ids"`
-	PolicyIDs       []uuid.UUID              `json:"policy_ids"`
-	AuthIDs         []uuid.UUID              `json:"auth_ids"`
-	CreatedAt       time.Time                `json:"created_at"`
-	UpdatedAt       time.Time                `json:"updated_at"`
+	ID              ids.ConsumerID            `json:"id"`
+	GatewayID       ids.GatewayID             `json:"gateway_id"`
+	Name            string                    `json:"name"`
+	Type            Type                      `json:"type"`
+	Path            string                    `json:"path"`
+	Algorithm       string                    `json:"algorithm"`
+	EmbeddingConfig *registry.EmbeddingConfig `json:"embedding_config,omitempty"`
+	Headers         map[string]string         `json:"headers,omitempty"`
+	Active          bool                      `json:"active"`
+	RegistryIDs     registry.Registries       `json:"registry_ids"`
+	PolicyIDs       []ids.PolicyID            `json:"policy_ids"`
+	AuthIDs         []ids.AuthID              `json:"auth_ids"`
+	Fallback        *Fallback                 `json:"fallback,omitempty"`
+	ModelPolicies   ModelPolicies             `json:"model_policies,omitempty"`
+	CreatedAt       time.Time                 `json:"created_at"`
+	UpdatedAt       time.Time                 `json:"updated_at"`
 }
 
 type CreateParams struct {
-	GatewayID       uuid.UUID
+	GatewayID       ids.GatewayID
 	Name            string
 	Type            Type
 	Path            string
 	Algorithm       string
-	EmbeddingConfig *backend.EmbeddingConfig
+	EmbeddingConfig *registry.EmbeddingConfig
 	Headers         map[string]string
 	Active          *bool
-	BackendIDs      []uuid.UUID
-	PolicyIDs       []uuid.UUID
-	AuthIDs         []uuid.UUID
+	RegistryIDs     []ids.RegistryID
+	PolicyIDs       []ids.PolicyID
+	AuthIDs         []ids.AuthID
+	Fallback        *Fallback
+	ModelPolicies   ModelPolicies
 }
 
 func New(params CreateParams) (*Consumer, error) {
-	id, err := uuid.NewV7()
+	id, err := ids.NewV7[ids.ConsumerKind]()
 	if err != nil {
 		return nil, fmt.Errorf("consumer: generate uuid: %w", err)
 	}
@@ -81,9 +85,11 @@ func New(params CreateParams) (*Consumer, error) {
 		EmbeddingConfig: params.EmbeddingConfig,
 		Headers:         params.Headers,
 		Active:          active,
-		BackendIDs:      params.BackendIDs,
+		RegistryIDs:     params.RegistryIDs,
 		PolicyIDs:       params.PolicyIDs,
 		AuthIDs:         params.AuthIDs,
+		Fallback:        params.Fallback,
+		ModelPolicies:   params.ModelPolicies,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -94,14 +100,19 @@ func New(params CreateParams) (*Consumer, error) {
 }
 
 func Rehydrate(
-	id, gatewayID uuid.UUID,
+	id ids.ConsumerID,
+	gatewayID ids.GatewayID,
 	name string,
 	consumerType Type,
 	path, algo string,
-	embeddingConfig *backend.EmbeddingConfig,
+	embeddingConfig *registry.EmbeddingConfig,
 	headers map[string]string,
 	active bool,
-	backendIDs, policyIDs, authIDs []uuid.UUID,
+	registryIDs []ids.RegistryID,
+	policyIDs []ids.PolicyID,
+	authIDs []ids.AuthID,
+	fallback *Fallback,
+	modelPolicies ModelPolicies,
 	createdAt, updatedAt time.Time,
 ) *Consumer {
 	return &Consumer{
@@ -114,9 +125,11 @@ func Rehydrate(
 		EmbeddingConfig: embeddingConfig,
 		Headers:         headers,
 		Active:          active,
-		BackendIDs:      backendIDs,
+		RegistryIDs:     registryIDs,
 		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
+		Fallback:        fallback,
+		ModelPolicies:   modelPolicies,
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
 	}
@@ -126,7 +139,7 @@ func (c *Consumer) Validate() error {
 	if strings.TrimSpace(c.Name) == "" {
 		return fmt.Errorf("%w: name is required", ErrInvalidName)
 	}
-	if c.GatewayID == uuid.Nil {
+	if c.GatewayID.IsNil() {
 		return ErrInvalidGatewayID
 	}
 	if c.Type == "" {
@@ -152,10 +165,10 @@ func (c *Consumer) Validate() error {
 			return err
 		}
 	}
-	if len(c.BackendIDs) == 0 {
+	if len(c.RegistryIDs) == 0 {
 		return ErrNoBackends
 	}
-	if err := c.BackendIDs.Validate(); err != nil {
+	if err := c.RegistryIDs.Validate(); err != nil {
 		return err
 	}
 	if err := validateUniqueIDs(c.PolicyIDs, ErrInvalidPolicyID, "policy"); err != nil {
@@ -164,13 +177,41 @@ func (c *Consumer) Validate() error {
 	if err := validateUniqueIDs(c.AuthIDs, ErrInvalidAuthID, "auth"); err != nil {
 		return err
 	}
+	if err := c.Fallback.Validate(); err != nil {
+		return err
+	}
+	if err := c.ModelPolicies.Validate(c.knownRegistryIDs()); err != nil {
+		return err
+	}
 	return nil
 }
 
-func validateUniqueIDs(ids []uuid.UUID, invalidErr error, label string) error {
-	seen := make(map[uuid.UUID]struct{}, len(ids))
-	for _, id := range ids {
-		if id == uuid.Nil {
+func (c *Consumer) knownRegistryIDs() map[ids.RegistryID]struct{} {
+	known := make(map[ids.RegistryID]struct{}, len(c.RegistryIDs))
+	for _, id := range c.RegistryIDs {
+		known[id] = struct{}{}
+	}
+	if c.Fallback != nil {
+		for _, id := range c.Fallback.Chain {
+			known[id] = struct{}{}
+		}
+	}
+	return known
+}
+
+// identifier constrains the strongly typed domain IDs that share comparison,
+// nil-detection and string rendering. It lets the slice helpers below stay
+// generic across PolicyID, AuthID, etc.
+type identifier interface {
+	comparable
+	fmt.Stringer
+	IsNil() bool
+}
+
+func validateUniqueIDs[T identifier](list []T, invalidErr error, label string) error {
+	seen := make(map[T]struct{}, len(list))
+	for _, id := range list {
+		if id.IsNil() {
 			return fmt.Errorf("%w: nil uuid", invalidErr)
 		}
 		if _, dup := seen[id]; dup {
@@ -181,59 +222,59 @@ func validateUniqueIDs(ids []uuid.UUID, invalidErr error, label string) error {
 	return nil
 }
 
-func (c *Consumer) AttachBackend(id uuid.UUID) bool {
-	out, ok := c.BackendIDs.Attach(id)
-	c.BackendIDs = out
+func (c *Consumer) AttachBackend(id ids.RegistryID) bool {
+	out, ok := c.RegistryIDs.Attach(id)
+	c.RegistryIDs = out
 	return ok
 }
 
-func (c *Consumer) DetachBackend(id uuid.UUID) bool {
-	out, ok := c.BackendIDs.Detach(id)
-	c.BackendIDs = out
+func (c *Consumer) DetachBackend(id ids.RegistryID) bool {
+	out, ok := c.RegistryIDs.Detach(id)
+	c.RegistryIDs = out
 	return ok
 }
 
-func (c *Consumer) AttachPolicy(id uuid.UUID) bool {
+func (c *Consumer) AttachPolicy(id ids.PolicyID) bool {
 	out, ok := attachID(c.PolicyIDs, id)
 	c.PolicyIDs = out
 	return ok
 }
 
-func (c *Consumer) DetachPolicy(id uuid.UUID) bool {
+func (c *Consumer) DetachPolicy(id ids.PolicyID) bool {
 	out, ok := detachID(c.PolicyIDs, id)
 	c.PolicyIDs = out
 	return ok
 }
 
-func (c *Consumer) AttachAuth(id uuid.UUID) bool {
+func (c *Consumer) AttachAuth(id ids.AuthID) bool {
 	out, ok := attachID(c.AuthIDs, id)
 	c.AuthIDs = out
 	return ok
 }
 
-func (c *Consumer) DetachAuth(id uuid.UUID) bool {
+func (c *Consumer) DetachAuth(id ids.AuthID) bool {
 	out, ok := detachID(c.AuthIDs, id)
 	c.AuthIDs = out
 	return ok
 }
 
-func attachID(ids []uuid.UUID, id uuid.UUID) ([]uuid.UUID, bool) {
-	if id == uuid.Nil {
-		return ids, false
+func attachID[T identifier](list []T, id T) ([]T, bool) {
+	if id.IsNil() {
+		return list, false
 	}
-	for _, existing := range ids {
+	for _, existing := range list {
 		if existing == id {
-			return ids, false
+			return list, false
 		}
 	}
-	return append(ids, id), true
+	return append(list, id), true
 }
 
-func detachID(ids []uuid.UUID, id uuid.UUID) ([]uuid.UUID, bool) {
-	for i, existing := range ids {
+func detachID[T identifier](list []T, id T) ([]T, bool) {
+	for i, existing := range list {
 		if existing == id {
-			return append(ids[:i], ids[i+1:]...), true
+			return append(list[:i], list[i+1:]...), true
 		}
 	}
-	return ids, false
+	return list, false
 }

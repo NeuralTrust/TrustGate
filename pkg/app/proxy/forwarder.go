@@ -6,36 +6,32 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"golang.org/x/sync/singleflight"
 )
 
 var (
 	ErrNoBackendAvailable = errors.New("no backend available")
-	ErrNoBackendsInPool   = errors.New("consumer has no backends in pool")
+	ErrNoBackendsInPool   = errors.New("consumer has no registries in pool")
 )
 
-// ForwardInput carries the resolved routing identity (gateway + routable
-// consumer) plus the proxy request context built from the inbound HTTP request.
-// The consumer's backends form the load-balancing pool.
 type ForwardInput struct {
-	GatewayID uuid.UUID
+	GatewayID ids.GatewayID
 	Consumer  *appconsumer.RoutableConsumer
 	Request   *infracontext.RequestContext
 }
 
-// ForwardResult is the backend response to relay back to the client. Stream is
-// set instead of Body for streaming targets; the handler writes the SSE
-// sequence and is responsible for draining it.
 type ForwardResult struct {
 	StatusCode int
 	Headers    map[string][]string
@@ -44,10 +40,14 @@ type ForwardResult struct {
 }
 
 type forwardRequestDTO struct {
-	backend  *domain.Backend
+	backend  *domain.Registry
 	request  *infracontext.RequestContext
 	response *infracontext.ResponseContext
 	policies []*policydomain.Policy
+	// baseHeaders are the response headers contributed by the pre_request
+	// plugin stage (e.g. CORS, rate-limit quota headers). They are preserved
+	// across failover attempts so the upstream relay does not drop them.
+	baseHeaders map[string][]string
 }
 
 //go:generate mockery --name=Forwarder --dir=. --output=./mocks --filename=forwarder_mock.go --case=underscore --with-expecter
@@ -88,8 +88,6 @@ func NewForwarder(
 	}
 }
 
-// maxRetriesFromConfig reads the provider retry budget, tolerating a nil config
-// (used by some unit tests) and clamping negatives to zero.
 func maxRetriesFromConfig(cfg *config.Config) int {
 	if cfg == nil || cfg.Provider.MaxRetries < 0 {
 		return 0
@@ -98,7 +96,7 @@ func maxRetriesFromConfig(cfg *config.Config) int {
 }
 
 func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error) {
-	if in.Consumer == nil || in.Consumer.Consumer == nil || len(in.Consumer.Backends) == 0 {
+	if in.Consumer == nil || in.Consumer.Consumer == nil || len(in.Consumer.Registries) == 0 {
 		return nil, ErrNoBackendsInPool
 	}
 
@@ -107,11 +105,11 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return nil, err
 	}
 
-	in.Request.BackendID = bk.ID.String()
+	in.Request.RegistryID = bk.ID.String()
 	resp := &infracontext.ResponseContext{
-		Context:   ctx,
-		GatewayID: in.Request.GatewayID,
-		BackendID: in.Request.BackendID,
+		Context:    ctx,
+		GatewayID:  in.Request.GatewayID,
+		RegistryID: in.Request.RegistryID,
 	}
 	policies := in.Consumer.Policies
 
@@ -121,89 +119,179 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return short, nil
 	}
 
-	dto := &forwardRequestDTO{backend: bk, request: in.Request, response: resp, policies: policies}
+	dto := &forwardRequestDTO{
+		backend:     bk,
+		request:     in.Request,
+		response:    resp,
+		policies:    policies,
+		baseHeaders: cloneHeaders(resp.Headers),
+	}
 	stream := DetectStream(dto.request)
 
-	providerResp, err := f.invokeWithFailover(ctx, lb, dto, stream)
-	if err != nil {
-		return nil, err
-	}
-
-	// A streaming request that actually opened a stream is finalized on the
-	// streaming path; a pre-stream non-2xx response (Stream nil) is finalized as
-	// a body so PreResponse/PostResponse still run.
-	if stream && providerResp.Stream != nil {
-		return f.finalizeStream(ctx, dto, providerResp), nil
-	}
-	return f.finalizeBody(ctx, dto, providerResp), nil
+	return f.invokeWithFailover(ctx, lb, in.Consumer, dto, stream)
 }
 
-// invokeWithFailover invokes the selected backend and, on a retryable failure
-// (transport error or a backend failure status: 5xx/429/408), reports the
-// failure to the load balancer, asks it for the next backend and retries, up to
-// 1+maxRetries attempts. A streaming response that already opened a stream is
-// committed and never retried. When all attempts are exhausted it relays the
-// last backend response verbatim (e.g. a 5xx the client should see) or returns
-// the last transport error.
 func (f *forwarder) invokeWithFailover(
 	ctx context.Context,
 	lb *loadbalancer.LoadBalancer,
+	rc *appconsumer.RoutableConsumer,
 	dto *forwardRequestDTO,
 	stream bool,
-) (*ProviderResponse, error) {
-	attempts := f.maxRetries + 1
-	if attempts < 1 {
-		attempts = 1
-	}
+) (*ForwardResult, error) {
+	fb := rc.Consumer.Fallback
+	triggers := triggersFrom(fb)
+	attemptsPerBackend := f.attemptsPerBackend()
+	budget := newFailoverBudget(fb)
+	excluded := make(map[ids.RegistryID]struct{})
 
-	var (
-		resp *ProviderResponse
-		err  error
-	)
-	for attempt := 0; attempt < attempts; attempt++ {
-		if attempt > 0 {
-			next, selErr := lb.NextBackend(dto.request)
-			if selErr != nil {
-				break
+	last := failoverState{}
+	current := dto.backend
+	fromFallback := false
+	for current != nil {
+		f.retarget(dto, current)
+		f.stampModelPolicy(dto, rc, current)
+		for r := 0; r < attemptsPerBackend; r++ {
+			if budget.exhausted() {
+				return f.relayLast(ctx, dto, last)
 			}
-			f.retarget(dto, next)
-		}
+			budget.recordAttempt()
 
-		resp, err = f.invokeOnce(ctx, dto.backend, dto.request, stream)
-		if err == nil && !isRetryableResponse(resp, stream) {
-			lb.ReportSuccess(dto.backend)
-			return resp, nil
-		}
+			startedAt := time.Now()
+			resp, err := f.invokeOnce(ctx, current, dto.request, stream)
+			elapsed := time.Since(startedAt)
+			outcome := classifyOutcome(resp, err, triggers)
+			f.recordSpan(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
+			switch outcome {
+			case OutcomeSuccess:
+				lb.ReportSuccess(current)
+				if stream && resp.Stream != nil {
+					return f.finalizeStream(ctx, dto, resp), nil
+				}
+				result, pe := f.finalizeBodyGated(ctx, dto, resp)
+				if pe == nil || !triggers.pluginRejection {
+					return result, nil
+				}
 
-		reason := failureReason(resp, err)
-		lb.ReportFailure(dto.backend, reason)
-		if attempt < attempts-1 {
-			f.logger.Warn("backend invocation failed; retrying with next backend",
-				slog.String("backend_id", dto.backend.ID.String()),
-				slog.String("provider", dto.backend.Provider),
-				slog.Int("attempt", attempt+1),
-				slog.Int("max_attempts", attempts),
-				slog.String("reason", reason.Error()),
-			)
+				last = failoverState{rejection: result}
+				f.logRetry(current, pe, budget)
+			case OutcomeTerminal:
+				if resp == nil {
+					return nil, err
+				}
+				lb.ReportSuccess(current)
+				return f.finalizeBody(ctx, dto, resp), nil
+			case OutcomeRetryable:
+				reason := failureReason(resp, err)
+				lb.ReportFailure(current, reason)
+				last = failoverState{resp: resp, err: err}
+				f.logRetry(current, reason, budget)
+				continue
+			}
+			break
 		}
+		excluded[current.ID] = struct{}{}
+		current, fromFallback = f.nextCandidate(lb, rc, dto.request, excluded)
 	}
 
-	// Exhausted: relay the last backend response (e.g. a 5xx) verbatim, or
-	// surface the last transport error when no response was produced.
-	if resp != nil {
-		return resp, nil
-	}
-	if err == nil {
-		err = ErrNoBackendAvailable
-	}
-	return nil, err
+	return f.relayLast(ctx, dto, last)
 }
 
-// invokeOnce performs a single backend call on the streaming or synchronous
-// path. Both invoker methods share the (*ProviderResponse, error) contract.
+type failoverState struct {
+	resp      *ProviderResponse
+	err       error
+	rejection *ForwardResult
+}
+
+func (f *forwarder) relayLast(
+	ctx context.Context,
+	dto *forwardRequestDTO,
+	last failoverState,
+) (*ForwardResult, error) {
+	if last.resp != nil {
+		return f.finalizeBody(ctx, dto, last.resp), nil
+	}
+	if last.rejection != nil {
+		return last.rejection, nil
+	}
+	if last.err != nil {
+		return nil, last.err
+	}
+	return nil, ErrNoBackendAvailable
+}
+
+func (f *forwarder) attemptsPerBackend() int {
+	if f.maxRetries < 0 {
+		return 1
+	}
+	return f.maxRetries + 1
+}
+
+func (f *forwarder) nextCandidate(
+	lb *loadbalancer.LoadBalancer,
+	rc *appconsumer.RoutableConsumer,
+	req *infracontext.RequestContext,
+	excluded map[ids.RegistryID]struct{},
+) (*domain.Registry, bool) {
+	if bk, err := lb.NextBackend(req, excluded); err == nil && bk != nil {
+		if _, seen := excluded[bk.ID]; !seen {
+			return bk, false
+		}
+	}
+	if fb := rc.Consumer.Fallback; fb != nil && fb.Enabled {
+		for _, bk := range rc.FallbackBackends {
+			if _, seen := excluded[bk.ID]; !seen {
+				return bk, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func (f *forwarder) recordSpan(
+	ctx context.Context,
+	bk *domain.Registry,
+	fromFallback bool,
+	attempt int,
+	outcome Outcome,
+	resp *ProviderResponse,
+	elapsed time.Duration,
+) {
+	rt := trace.FromContext(ctx)
+	if rt == nil {
+		return
+	}
+	span := &trace.Span{
+		Type:      trace.SpanLLM,
+		Name:      bk.Provider,
+		StartedAt: time.Now().Add(-elapsed),
+		LLM: &trace.LLMAttrs{
+			RegistryID: bk.ID.String(),
+			Provider:   bk.Provider,
+			Attempt:    attempt,
+			Fallback:   fromFallback,
+			Outcome:    outcome.String(),
+		},
+	}
+	if resp != nil {
+		span.SetStatusCode(resp.StatusCode)
+		span.ObserveUsage(resp.Usage)
+	}
+	_ = rt.AddSpan(span)
+	span.End()
+}
+
+func (f *forwarder) logRetry(bk *domain.Registry, reason error, budget *failoverBudget) {
+	f.logger.Warn("backend invocation failed; failing over",
+		slog.String("registry_id", bk.ID.String()),
+		slog.String("provider", bk.Provider),
+		slog.Int("attempt", budget.attempts),
+		slog.String("reason", reason.Error()),
+	)
+}
+
 func (f *forwarder) invokeOnce(
 	ctx context.Context,
-	bk *domain.Backend,
+	bk *domain.Registry,
 	req *infracontext.RequestContext,
 	stream bool,
 ) (*ProviderResponse, error) {
@@ -213,32 +301,25 @@ func (f *forwarder) invokeOnce(
 	return f.invoker.Invoke(ctx, bk, req)
 }
 
-// retarget points the in-flight request at a different backend for a retry so
-// downstream metadata (request/response BackendID) reflects the backend used.
-func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Backend) {
+func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Registry) {
 	dto.backend = bk
-	dto.request.BackendID = bk.ID.String()
+	dto.request.RegistryID = bk.ID.String()
 	if dto.response != nil {
-		dto.response.BackendID = bk.ID.String()
+		dto.response.RegistryID = bk.ID.String()
 	}
 }
 
-// isRetryableResponse reports whether a (non-error) provider response should be
-// retried. A response that already carries a stream is committed and never
-// retried; otherwise a backend failure status (5xx/429/408) is retryable while
-// 2xx and other 4xx are terminal.
-func isRetryableResponse(resp *ProviderResponse, stream bool) bool {
-	if resp == nil {
-		return false
+func (f *forwarder) stampModelPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Registry) {
+	policy, ok := rc.Consumer.ModelPolicies.For(bk.ID)
+	if !ok {
+		dto.request.AllowedModels = nil
+		dto.request.DefaultModel = ""
+		return
 	}
-	if stream && resp.Stream != nil {
-		return false
-	}
-	return backendFailureStatus(resp.StatusCode)
+	dto.request.AllowedModels = policy.Allowed
+	dto.request.DefaultModel = policy.Default
 }
 
-// failureReason builds the error recorded against the backend's passive health,
-// preferring the transport error and falling back to the HTTP status.
 func failureReason(resp *ProviderResponse, err error) error {
 	if err != nil {
 		return err
@@ -249,8 +330,6 @@ func failureReason(resp *ProviderResponse, err error) error {
 	return ErrNoBackendAvailable
 }
 
-// finalizeStream runs the response plugins and wraps the backend stream with the
-// post-response hook.
 func (f *forwarder) finalizeStream(
 	ctx context.Context,
 	dto *forwardRequestDTO,
@@ -266,14 +345,13 @@ func (f *forwarder) finalizeStream(
 	}
 }
 
-// finalizeBody runs the response plugins for a buffered backend response (the
-// synchronous path or a pre-stream non-2xx response on the streaming path).
 func (f *forwarder) finalizeBody(
 	ctx context.Context,
 	dto *forwardRequestDTO,
 	providerResp *ProviderResponse,
 ) *ForwardResult {
 	pluginResp := dto.response
+	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeProviderResponse(pluginResp, providerResp, false)
 	f.runPreResponse(ctx, dto.policies, dto.request, pluginResp)
 	f.firePostResponse(dto.policies, dto.request, pluginResp)
@@ -284,30 +362,40 @@ func (f *forwarder) finalizeBody(
 	}
 }
 
-// selectBackend resolves the load balancer for the consumer's pool and asks it
-// for the next backend in a single step. Wraps the LB lookup error verbatim and
-// the strategy error with ErrNoBackendAvailable so callers only need a single
-// error check.
+func (f *forwarder) finalizeBodyGated(
+	ctx context.Context,
+	dto *forwardRequestDTO,
+	providerResp *ProviderResponse,
+) (*ForwardResult, *appplugins.PluginError) {
+	pluginResp := dto.response
+	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
+	mergeProviderResponse(pluginResp, providerResp, false)
+	if pe := f.runPreResponseGated(ctx, dto.policies, dto.request, pluginResp); pe != nil {
+		return pluginErrorResult(pe), pe
+	}
+	f.firePostResponse(dto.policies, dto.request, pluginResp)
+	return &ForwardResult{
+		StatusCode: pluginResp.StatusCode,
+		Headers:    pluginResp.Headers,
+		Body:       pluginResp.Body,
+	}, nil
+}
+
 func (f *forwarder) selectBackend(
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
-) (*loadbalancer.LoadBalancer, *domain.Backend, error) {
+) (*loadbalancer.LoadBalancer, *domain.Registry, error) {
 	lb, err := f.loadBalancerFor(rc)
 	if err != nil {
 		return nil, nil, err
 	}
-	bk, err := lb.NextBackend(req)
+	bk, err := lb.NextBackend(req, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
 	}
 	return lb, bk, nil
 }
 
-// loadBalancerFor returns a cached load balancer for the consumer's pool or
-// builds and caches a new one. The instance is keyed by "<gatewayID>:<consumerID>"
-// in the shared "lb" TTL map so concurrent requests reuse the same balancer state
-// and gateway-scoped invalidation can evict every consumer's balancer by prefix.
-// singleflight collapses concurrent cache-miss builds onto a single construction.
 func (f *forwarder) loadBalancerFor(rc *appconsumer.RoutableConsumer) (*loadbalancer.LoadBalancer, error) {
 	key := loadBalancerCacheKey(rc.Consumer.GatewayID, rc.Consumer.ID)
 	if lb, ok := f.cachedLoadBalancer(key); ok {
@@ -320,7 +408,7 @@ func (f *forwarder) loadBalancerFor(rc *appconsumer.RoutableConsumer) (*loadbala
 		}
 		pool := loadbalancer.Pool{
 			ID:              key,
-			Backends:        rc.Backends,
+			Registries:      rc.Registries,
 			Algorithm:       rc.Consumer.Algorithm,
 			EmbeddingConfig: rc.Consumer.EmbeddingConfig,
 		}
@@ -337,8 +425,6 @@ func (f *forwarder) loadBalancerFor(rc *appconsumer.RoutableConsumer) (*loadbala
 	return built.(*loadbalancer.LoadBalancer), nil
 }
 
-// cachedLoadBalancer returns the cached balancer for key, dropping and reporting
-// a malformed entry so the caller rebuilds it.
 func (f *forwarder) cachedLoadBalancer(key string) (*loadbalancer.LoadBalancer, bool) {
 	cached, ok := f.lbCache.Get(key)
 	if !ok {
@@ -354,8 +440,6 @@ func (f *forwarder) cachedLoadBalancer(key string) (*loadbalancer.LoadBalancer, 
 	return lb, true
 }
 
-// loadBalancerCacheKey scopes the cached balancer to its gateway so a gateway
-// configuration change can evict all of its consumers' balancers by prefix.
-func loadBalancerCacheKey(gatewayID, consumerID uuid.UUID) string {
+func loadBalancerCacheKey(gatewayID ids.GatewayID, consumerID ids.ConsumerID) string {
 	return gatewayID.String() + ":" + consumerID.String()
 }

@@ -19,6 +19,19 @@ func NewCreateGatewayHandler(creator appgateway.Creator) *CreateGatewayHandler {
 	return &CreateGatewayHandler{creator: creator}
 }
 
+// Handle godoc
+// @Summary      Create a gateway
+// @Description  Creates a new gateway.
+// @Tags         gateways
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway  body      request.CreateGatewayRequest  true  "Gateway to create"
+// @Success      201      {object}  response.GatewayResponse
+// @Failure      400      {object}  helpers.ErrorBody
+// @Failure      401      {object}  helpers.ErrorBody
+// @Failure      409      {object}  helpers.ErrorBody
+// @Router       /v1/gateways [post]
 func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 	var req request.CreateGatewayRequest
 	if err := c.BodyParser(&req); err != nil {

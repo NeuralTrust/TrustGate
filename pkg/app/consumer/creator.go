@@ -6,25 +6,27 @@ import (
 	"log/slog"
 
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/google/uuid"
 )
 
 type CreateInput struct {
-	GatewayID       uuid.UUID
+	GatewayID       ids.GatewayID
 	Name            string
 	Type            domain.Type
 	Path            string
 	Algorithm       string
-	EmbeddingConfig *backenddomain.EmbeddingConfig
+	EmbeddingConfig *registrydomain.EmbeddingConfig
 	Headers         map[string]string
 	Active          *bool
-	BackendIDs      []uuid.UUID
-	PolicyIDs       []uuid.UUID
-	AuthIDs         []uuid.UUID
+	RegistryIDs     []ids.RegistryID
+	PolicyIDs       []ids.PolicyID
+	AuthIDs         []ids.AuthID
+	Fallback        *domain.Fallback
+	ModelPolicies   domain.ModelPolicies
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -35,18 +37,18 @@ type Creator interface {
 var _ Creator = (*creator)(nil)
 
 type creator struct {
-	repo        domain.Repository
-	backendRepo backenddomain.Repository
-	policyRepo  policydomain.Repository
-	authRepo    authdomain.Repository
-	memoryCache *cache.TTLMap
-	publisher   cache.EventPublisher
-	logger      *slog.Logger
+	repo         domain.Repository
+	registryRepo registrydomain.Repository
+	policyRepo   policydomain.Repository
+	authRepo     authdomain.Repository
+	memoryCache  *cache.TTLMap
+	publisher    cache.EventPublisher
+	logger       *slog.Logger
 }
 
 func NewCreator(
 	repo domain.Repository,
-	backendRepo backenddomain.Repository,
+	registryRepo registrydomain.Repository,
 	policyRepo policydomain.Repository,
 	authRepo authdomain.Repository,
 	manager *cache.TTLMapManager,
@@ -54,19 +56,19 @@ func NewCreator(
 	logger *slog.Logger,
 ) Creator {
 	return &creator{
-		repo:        repo,
-		backendRepo: backendRepo,
-		policyRepo:  policyRepo,
-		authRepo:    authRepo,
-		memoryCache: manager.GetTTLMap(cache.ConsumerTTLName),
-		publisher:   publisher,
-		logger:      logger,
+		repo:         repo,
+		registryRepo: registryRepo,
+		policyRepo:   policyRepo,
+		authRepo:     authRepo,
+		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
+		publisher:    publisher,
+		logger:       logger,
 	}
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer, error) {
-	if err := validateAssociations(ctx, c.backendRepo, c.policyRepo, c.authRepo,
-		in.GatewayID, in.BackendIDs, in.PolicyIDs, in.AuthIDs); err != nil {
+	if err := validateAssociations(ctx, c.registryRepo, c.policyRepo, c.authRepo,
+		in.GatewayID, in.RegistryIDs, in.PolicyIDs, in.AuthIDs, fallbackChainIDs(in.Fallback)); err != nil {
 		return nil, err
 	}
 	cons, err := domain.New(domain.CreateParams{
@@ -78,9 +80,11 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		EmbeddingConfig: in.EmbeddingConfig,
 		Headers:         in.Headers,
 		Active:          in.Active,
-		BackendIDs:      in.BackendIDs,
+		RegistryIDs:     in.RegistryIDs,
 		PolicyIDs:       in.PolicyIDs,
 		AuthIDs:         in.AuthIDs,
+		Fallback:        in.Fallback,
+		ModelPolicies:   in.ModelPolicies,
 	})
 	if err != nil {
 		return nil, err
@@ -95,13 +99,19 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 
 func validateAssociations(
 	ctx context.Context,
-	backendRepo backenddomain.Repository,
+	registryRepo registrydomain.Repository,
 	policyRepo policydomain.Repository,
 	authRepo authdomain.Repository,
-	gatewayID uuid.UUID,
-	backendIDs, policyIDs, authIDs []uuid.UUID,
+	gatewayID ids.GatewayID,
+	registryIDs []ids.RegistryID,
+	policyIDs []ids.PolicyID,
+	authIDs []ids.AuthID,
+	fallbackChain []ids.RegistryID,
 ) error {
-	if err := validateBackendIDsBelongToGateway(ctx, backendRepo, gatewayID, backendIDs); err != nil {
+	if err := validateRegistryIDsBelongToGateway(ctx, registryRepo, gatewayID, registryIDs); err != nil {
+		return err
+	}
+	if err := validateRegistryIDsBelongToGateway(ctx, registryRepo, gatewayID, fallbackChain); err != nil {
 		return err
 	}
 	if err := validatePolicyIDsBelongToGateway(ctx, policyRepo, gatewayID, policyIDs); err != nil {
@@ -110,27 +120,34 @@ func validateAssociations(
 	return validateAuthIDsBelongToGateway(ctx, authRepo, gatewayID, authIDs)
 }
 
-func validateBackendIDsBelongToGateway(
-	ctx context.Context,
-	backendRepo backenddomain.Repository,
-	gatewayID uuid.UUID,
-	ids []uuid.UUID,
-) error {
-	if len(ids) == 0 {
+func fallbackChainIDs(f *domain.Fallback) []ids.RegistryID {
+	if f == nil {
 		return nil
 	}
-	found, err := backendRepo.FindByIDs(ctx, gatewayID, ids)
+	return []ids.RegistryID(f.Chain)
+}
+
+func validateRegistryIDsBelongToGateway(
+	ctx context.Context,
+	registryRepo registrydomain.Repository,
+	gatewayID ids.GatewayID,
+	idList []ids.RegistryID,
+) error {
+	if len(idList) == 0 {
+		return nil
+	}
+	found, err := registryRepo.FindByIDs(ctx, gatewayID, idList)
 	if err != nil {
 		return err
 	}
-	foundIdx := make(map[uuid.UUID]struct{}, len(found))
+	foundIdx := make(map[ids.RegistryID]struct{}, len(found))
 	for _, b := range found {
 		foundIdx[b.ID] = struct{}{}
 	}
-	for _, id := range ids {
+	for _, id := range idList {
 		if _, ok := foundIdx[id]; !ok {
 			return fmt.Errorf("%w: %s not found in gateway %s",
-				backenddomain.ErrInvalidBackendID, id, gatewayID)
+				registrydomain.ErrInvalidRegistryID, id, gatewayID)
 		}
 	}
 	return nil
@@ -139,21 +156,21 @@ func validateBackendIDsBelongToGateway(
 func validatePolicyIDsBelongToGateway(
 	ctx context.Context,
 	policyRepo policydomain.Repository,
-	gatewayID uuid.UUID,
-	ids []uuid.UUID,
+	gatewayID ids.GatewayID,
+	idList []ids.PolicyID,
 ) error {
-	if len(ids) == 0 {
+	if len(idList) == 0 {
 		return nil
 	}
-	found, err := policyRepo.FindByIDs(ctx, gatewayID, ids)
+	found, err := policyRepo.FindByIDs(ctx, gatewayID, idList)
 	if err != nil {
 		return err
 	}
-	foundIdx := make(map[uuid.UUID]struct{}, len(found))
+	foundIdx := make(map[ids.PolicyID]struct{}, len(found))
 	for _, p := range found {
 		foundIdx[p.ID] = struct{}{}
 	}
-	for _, id := range ids {
+	for _, id := range idList {
 		if _, ok := foundIdx[id]; !ok {
 			return fmt.Errorf("%w: %s not found in gateway %s",
 				domain.ErrInvalidPolicyID, id, gatewayID)
@@ -165,21 +182,21 @@ func validatePolicyIDsBelongToGateway(
 func validateAuthIDsBelongToGateway(
 	ctx context.Context,
 	authRepo authdomain.Repository,
-	gatewayID uuid.UUID,
-	ids []uuid.UUID,
+	gatewayID ids.GatewayID,
+	idList []ids.AuthID,
 ) error {
-	if len(ids) == 0 {
+	if len(idList) == 0 {
 		return nil
 	}
-	found, err := authRepo.FindByIDs(ctx, gatewayID, ids)
+	found, err := authRepo.FindByIDs(ctx, gatewayID, idList)
 	if err != nil {
 		return err
 	}
-	foundIdx := make(map[uuid.UUID]struct{}, len(found))
+	foundIdx := make(map[ids.AuthID]struct{}, len(found))
 	for _, a := range found {
 		foundIdx[a.ID] = struct{}{}
 	}
-	for _, id := range ids {
+	for _, id := range idList {
 		if _, ok := foundIdx[id]; !ok {
 			return fmt.Errorf("%w: %s not found in gateway %s",
 				domain.ErrInvalidAuthID, id, gatewayID)

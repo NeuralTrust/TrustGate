@@ -1,3 +1,5 @@
+//go:build functional
+
 package functional_test
 
 import (
@@ -13,7 +15,7 @@ import (
 func TestDeleteConsumer_Success(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-del-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-del-be")))
 	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-ok"), beID))
 
 	status, _ := sendRequest(t, http.MethodDelete,
@@ -68,7 +70,7 @@ func TestDeleteConsumer_InvalidConsumerUUID(t *testing.T) {
 func TestDeleteGateway_FailsWhenItHasConsumers(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-gw-cascade")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-del-gw-cascade-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-del-gw-cascade-be")))
 	_ = CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-gw-cascade-co"), beID))
 
 	status, body := sendRequest(t, http.MethodDelete,
@@ -79,14 +81,14 @@ func TestDeleteGateway_FailsWhenItHasConsumers(t *testing.T) {
 	assert.Equal(t, "has_dependents", body["error"])
 }
 
-func TestDeleteBackend_FailsWhenReferencedByConsumer(t *testing.T) {
+func TestDeleteRegistry_FailsWhenReferencedByConsumer(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-be-ref-gw")})
-	beID := CreateBackend(t, gwID, validBackendPayload(uniqueName("co-del-be-ref-be")))
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-del-be-ref-be")))
 	_ = CreateConsumer(t, gwID, validConsumerPayload(uniqueName("co-del-be-ref"), beID))
 
 	status, body := sendRequest(t, http.MethodDelete,
-		fmt.Sprintf("%s/v1/gateways/%s/backends/%s", AdminURL, gwID, beID),
+		fmt.Sprintf("%s/v1/gateways/%s/registries/%s", AdminURL, gwID, beID),
 		nil, nil,
 	)
 	require.Equal(t, http.StatusConflict, status, "body=%v", body)

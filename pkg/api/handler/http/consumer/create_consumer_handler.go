@@ -19,6 +19,21 @@ func NewCreateConsumerHandler(creator appconsumer.Creator) *CreateConsumerHandle
 	return &CreateConsumerHandler{creator: creator}
 }
 
+// Handle godoc
+// @Summary      Create a consumer
+// @Description  Creates a new consumer in a gateway.
+// @Tags         consumers
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string                         true  "Gateway id"  format(uuid)
+// @Param        body        body      request.CreateConsumerRequest  true  "Consumer to create"
+// @Success      201         {object}  response.ConsumerResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      409         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/consumers [post]
 func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, err := helpers.ParseGatewayID(c)
 	if err != nil {
@@ -33,7 +48,7 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 		return helpers.WriteError(c, err)
 	}
 
-	backendIDs, err := req.ToBackendIDs()
+	registryIDs, err := req.ToRegistryIDs()
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
@@ -42,6 +57,14 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 		return helpers.WriteError(c, err)
 	}
 	authIDs, err := req.ToAuthIDs()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	fallback, err := req.ToFallback()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	modelPolicies, err := req.ToModelPolicies()
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
@@ -55,9 +78,11 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 		EmbeddingConfig: req.ToEmbeddingConfig(),
 		Headers:         req.Headers,
 		Active:          req.Active,
-		BackendIDs:      backendIDs,
+		RegistryIDs:     registryIDs,
 		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
+		Fallback:        fallback,
+		ModelPolicies:   modelPolicies,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

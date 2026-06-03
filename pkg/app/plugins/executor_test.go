@@ -8,7 +8,7 @@ import (
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -240,18 +240,25 @@ func TestExecutor_RunStage_MergesHeadersInOrder(t *testing.T) {
 	assert.Equal(t, []string{"Origin", "Accept"}, resp.Headers["Vary"])
 }
 
-func TestExecutor_RunStage_EmitsMetricsWhenCollectorPresent(t *testing.T) {
+func TestExecutor_RunStage_RecordsPluginSpanOnTrace(t *testing.T) {
 	p := &fakePlugin{name: "rate", stages: []policy.Stage{policy.StagePreRequest}, result: &Result{StatusCode: 200}}
 	reg := newRegistry(t, p)
 	exec := NewExecutor(reg, nil)
 
-	collector := metrics.NewCollector(&metrics.Config{EnablePluginTraces: true})
-	_, err := exec.RunStage(context.Background(), StageInput{
-		Stage:     policy.StagePreRequest,
-		Policies:  []*policy.Policy{policyWith(t, policy.Plugin{Name: "rate", Enabled: true})},
-		Response:  &infracontext.ResponseContext{},
-		Collector: collector,
+	rt := trace.New("t", trace.Metadata{})
+	ctx := trace.NewContext(context.Background(), rt)
+	_, err := exec.RunStage(ctx, StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: []*policy.Policy{policyWith(t, policy.Plugin{Name: "rate", Enabled: true})},
+		Response: &infracontext.ResponseContext{},
 	})
 	require.NoError(t, err)
-	assert.Len(t, collector.GetEvents(), 1)
+
+	spans := rt.Spans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, trace.SpanPlugin, spans[0].Type)
+	assert.Equal(t, "rate", spans[0].Name)
+	require.NotNil(t, spans[0].Plugin)
+	assert.Equal(t, string(policy.StagePreRequest), spans[0].Plugin.Stage)
+	assert.Equal(t, 200, spans[0].StatusCode())
 }

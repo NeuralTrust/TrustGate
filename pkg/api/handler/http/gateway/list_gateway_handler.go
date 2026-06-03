@@ -17,6 +17,19 @@ func NewListGatewayHandler(finder appgateway.Finder) *ListGatewayHandler {
 	return &ListGatewayHandler{finder: finder}
 }
 
+// Handle godoc
+// @Summary      List gateways
+// @Description  Returns a paginated list of gateways.
+// @Tags         gateways
+// @Produce      json
+// @Security     BearerAuth
+// @Param        name  query     string  false  "Filter by name (substring match)"
+// @Param        page  query     int     false  "Page number (1-based)"
+// @Param        size  query     int     false  "Page size"
+// @Success      200   {object}  response.ListGatewayResponse
+// @Failure      400   {object}  helpers.ErrorBody
+// @Failure      401   {object}  helpers.ErrorBody
+// @Router       /v1/gateways [get]
 func (h *ListGatewayHandler) Handle(c *fiber.Ctx) error {
 	page, err := helpers.ParsePage(c)
 	if err != nil {

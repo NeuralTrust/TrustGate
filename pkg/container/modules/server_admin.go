@@ -6,10 +6,11 @@ import (
 
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
 	authhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/auth"
-	backendhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/backend"
+	cataloghttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/catalog"
 	consumerhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
 	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
+	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
@@ -50,11 +51,11 @@ type adminRouterParams struct {
 	UpdateGateway *gatewayhttp.UpdateGatewayHandler
 	DeleteGateway *gatewayhttp.DeleteGatewayHandler
 
-	CreateBackend *backendhttp.CreateBackendHandler
-	GetBackend    *backendhttp.GetBackendHandler
-	ListBackend   *backendhttp.ListBackendHandler
-	UpdateBackend *backendhttp.UpdateBackendHandler
-	DeleteBackend *backendhttp.DeleteBackendHandler
+	CreateRegistry *registryhttp.CreateRegistryHandler
+	GetRegistry    *registryhttp.GetRegistryHandler
+	ListRegistry   *registryhttp.ListRegistryHandler
+	UpdateRegistry *registryhttp.UpdateRegistryHandler
+	DeleteRegistry *registryhttp.DeleteRegistryHandler
 
 	CreatePolicy *policyhttp.CreatePolicyHandler
 	GetPolicy    *policyhttp.GetPolicyHandler
@@ -73,6 +74,9 @@ type adminRouterParams struct {
 	ListAuth   *authhttp.ListAuthHandler
 	UpdateAuth *authhttp.UpdateAuthHandler
 	DeleteAuth *authhttp.DeleteAuthHandler
+
+	ListProvidersCatalog *cataloghttp.ListProvidersHandler
+	ListModelsCatalog    *cataloghttp.ListModelsHandler
 }
 
 type adminServerParams struct {
@@ -98,11 +102,11 @@ func ServerAdmin(c *container.Container) error {
 				ListGateway:         p.ListGateway,
 				UpdateGateway:       p.UpdateGateway,
 				DeleteGateway:       p.DeleteGateway,
-				CreateBackend:       p.CreateBackend,
-				GetBackend:          p.GetBackend,
-				ListBackend:         p.ListBackend,
-				UpdateBackend:       p.UpdateBackend,
-				DeleteBackend:       p.DeleteBackend,
+				CreateRegistry:      p.CreateRegistry,
+				GetRegistry:         p.GetRegistry,
+				ListRegistry:        p.ListRegistry,
+				UpdateRegistry:      p.UpdateRegistry,
+				DeleteRegistry:      p.DeleteRegistry,
 				CreatePolicy:        p.CreatePolicy,
 				GetPolicy:           p.GetPolicy,
 				ListPolicy:          p.ListPolicy,
@@ -118,6 +122,9 @@ func ServerAdmin(c *container.Container) error {
 				ListAuth:            p.ListAuth,
 				UpdateAuth:          p.UpdateAuth,
 				DeleteAuth:          p.DeleteAuth,
+
+				ListProvidersCatalog: p.ListProvidersCatalog,
+				ListModelsCatalog:    p.ListModelsCatalog,
 			})
 		},
 		dig.Name("admin"),

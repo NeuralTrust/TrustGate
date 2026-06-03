@@ -8,7 +8,7 @@ import (
 	"iter"
 	"net/http"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 )
 
@@ -61,11 +61,11 @@ func (c *client) CompletionsStream(
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
-	if backend.IsHTTPError(resp.StatusCode) {
+	if registry.IsHTTPError(resp.StatusCode) {
 		var preview bytes.Buffer
 		_, _ = io.CopyN(&preview, resp.Body, 64*1024)
 		providers.DrainBody(resp.Body)
-		return nil, backend.NewBackendHTTPError(resp.StatusCode, preview.Bytes(), resp.Header)
+		return nil, registry.NewBackendHTTPError(resp.StatusCode, preview.Bytes(), resp.Header)
 	}
 
 	return providers.StreamResponse(ctx, resp.Body), nil
@@ -96,8 +96,8 @@ func (c *client) rawPost(
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if backend.IsHTTPError(resp.StatusCode) {
-		return nil, backend.NewBackendHTTPError(resp.StatusCode, body.Bytes(), resp.Header)
+	if registry.IsHTTPError(resp.StatusCode) {
+		return nil, registry.NewBackendHTTPError(resp.StatusCode, body.Bytes(), resp.Header)
 	}
 
 	return body.Bytes(), nil

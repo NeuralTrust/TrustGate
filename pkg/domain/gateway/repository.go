@@ -3,7 +3,7 @@ package gateway
 import (
 	"context"
 
-	"github.com/google/uuid"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type ListFilter struct {
@@ -16,7 +16,7 @@ type ListFilter struct {
 type Repository interface {
 	Save(ctx context.Context, g *Gateway) error
 	Update(ctx context.Context, g *Gateway) error
-	Delete(ctx context.Context, id uuid.UUID) error
-	FindByID(ctx context.Context, id uuid.UUID) (*Gateway, error)
+	Delete(ctx context.Context, id ids.GatewayID) error
+	FindByID(ctx context.Context, id ids.GatewayID) (*Gateway, error)
 	List(ctx context.Context, filter ListFilter) (items []*Gateway, total int, err error)
 }

@@ -7,11 +7,12 @@ import (
 	"testing"
 
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
-	domainbackend "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 	factorymocks "github.com/NeuralTrust/AgentGateway/pkg/infra/providers/factory/mocks"
 	providermocks "github.com/NeuralTrust/AgentGateway/pkg/infra/providers/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -77,7 +78,7 @@ func TestInvokeStream_PassthroughStream(t *testing.T) {
 }
 
 func TestInvokeStream_CrossFormatAdapt(t *testing.T) {
-	// Backend (anthropic) emits an anthropic content delta; the client speaks
+	// Registry (anthropic) emits an anthropic content delta; the client speaks
 	// openai, so adaptStream converts anthropic -> openai.
 	anthropicChunk := []byte(`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`)
 	client := providermocks.NewClient(t)
@@ -133,7 +134,7 @@ func TestInvokeStream_PreStreamBackendErrorPassthrough(t *testing.T) {
 	client := providermocks.NewClient(t)
 	client.EXPECT().
 		CompletionsStream(mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, domainbackend.NewBackendError(429, errBody)).
+		Return(nil, registrydomain.NewBackendError(429, errBody)).
 		Once()
 
 	inv := newStreamInvoker(t, "openai", client)
@@ -161,15 +162,17 @@ func TestInvokeStream_UsageObserverRecordsFinalUsage(t *testing.T) {
 	inv := newStreamInvoker(t, "openai", client)
 	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
 
-	resp, err := inv.InvokeStream(context.Background(), apiKeyTarget("openai"), req)
+	rt := trace.New("trace-1", trace.Metadata{})
+	_ = rt.StartSpan(trace.SpanLLM, "openai")
+	ctx := trace.NewContext(context.Background(), rt)
+
+	resp, err := inv.InvokeStream(ctx, apiKeyTarget("openai"), req)
 	require.NoError(t, err)
 
-	// Usage is observed as the stream is consumed.
 	_ = collectStream(t, resp.Stream)
 
-	require.NotNil(t, req.Metadata)
-	usage, ok := req.Metadata["usage"].(*adapter.CanonicalUsage)
-	require.True(t, ok, "expected usage to be recorded as *adapter.CanonicalUsage")
+	usage := rt.LLMUsage()
+	require.NotNil(t, usage, "expected streamed usage to land on the LLM span")
 	assert.Equal(t, 10, usage.InputTokens)
 	assert.Equal(t, 5, usage.OutputTokens)
 	assert.Equal(t, 15, usage.TotalTokens)
