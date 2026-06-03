@@ -15,7 +15,7 @@ type Attachment struct {
 type RequestContext struct {
 	Context       context.Context
 	GatewayID     string
-	BackendID     string
+	RegistryID    string
 	Headers       map[string][]string
 	Method        string
 	Path          string

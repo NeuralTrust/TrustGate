@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 type UpdateConsumerRequest struct {
@@ -18,7 +18,7 @@ type UpdateConsumerRequest struct {
 	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
 	Headers         map[string]string       `json:"headers,omitempty"`
 	Active          *bool                   `json:"active,omitempty"`
-	BackendIDs      []string                `json:"backend_ids"`
+	RegistryIDs     []string                `json:"registry_ids"`
 	PolicyIDs       []string                `json:"policy_ids,omitempty"`
 	AuthIDs         []string                `json:"auth_ids,omitempty"`
 	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
@@ -35,8 +35,8 @@ func (r UpdateConsumerRequest) Validate() error {
 	if strings.TrimSpace(r.Path) == "" {
 		return fmt.Errorf("path is required: %w", commonerrors.ErrValidation)
 	}
-	if len(r.BackendIDs) == 0 {
-		return fmt.Errorf("at least one backend_id is required: %w", commonerrors.ErrValidation)
+	if len(r.RegistryIDs) == 0 {
+		return fmt.Errorf("at least one registry_id is required: %w", commonerrors.ErrValidation)
 	}
 	return nil
 }
@@ -45,12 +45,12 @@ func (r UpdateConsumerRequest) ToType() domain.Type {
 	return domain.Type(r.Type)
 }
 
-func (r UpdateConsumerRequest) ToEmbeddingConfig() *backenddomain.EmbeddingConfig {
+func (r UpdateConsumerRequest) ToEmbeddingConfig() *registrydomain.EmbeddingConfig {
 	return r.EmbeddingConfig.ToDomain()
 }
 
-func (r UpdateConsumerRequest) ToBackendIDs() ([]ids.BackendID, error) {
-	return parseUUIDList[ids.BackendKind](r.BackendIDs, "backend_ids")
+func (r UpdateConsumerRequest) ToRegistryIDs() ([]ids.RegistryID, error) {
+	return parseUUIDList[ids.RegistryKind](r.RegistryIDs, "registry_ids")
 }
 
 func (r UpdateConsumerRequest) ToPolicyIDs() ([]ids.PolicyID, error) {

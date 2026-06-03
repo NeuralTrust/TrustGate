@@ -53,7 +53,7 @@ func policyPlugin(name, stage string, settings map[string]any) map[string]any {
 func setupPolicyRoute(t *testing.T, up *fakeUpstream, pluginEntries ...map[string]any) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("plugin-gw")})
-	backendID := CreateBackend(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
+	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 	policyID := CreatePolicy(t, gatewayID, map[string]any{
 		"name":    uniqueName("pol"),
 		"plugins": pluginEntries,
@@ -61,10 +61,10 @@ func setupPolicyRoute(t *testing.T, up *fakeUpstream, pluginEntries ...map[strin
 
 	path := "/v1/" + uniqueName("route")
 	CreateConsumer(t, gatewayID, map[string]any{
-		"name":        uniqueName("cons"),
-		"path":        path,
-		"backend_ids": []string{backendID},
-		"policy_ids":  []string{policyID},
+		"name":         uniqueName("cons"),
+		"path":         path,
+		"registry_ids": []string{backendID},
+		"policy_ids":   []string{policyID},
 	})
 	return gatewayID, path
 }

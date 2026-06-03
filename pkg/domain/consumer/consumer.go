@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
 )
 
@@ -31,22 +31,22 @@ func IsValidType(t Type) bool {
 }
 
 type Consumer struct {
-	ID              ids.ConsumerID           `json:"id"`
-	GatewayID       ids.GatewayID            `json:"gateway_id"`
-	Name            string                   `json:"name"`
-	Type            Type                     `json:"type"`
-	Path            string                   `json:"path"`
-	Algorithm       string                   `json:"algorithm"`
-	EmbeddingConfig *backend.EmbeddingConfig `json:"embedding_config,omitempty"`
-	Headers         map[string]string        `json:"headers,omitempty"`
-	Active          bool                     `json:"active"`
-	BackendIDs      backend.Backends         `json:"backend_ids"`
-	PolicyIDs       []ids.PolicyID           `json:"policy_ids"`
-	AuthIDs         []ids.AuthID             `json:"auth_ids"`
-	Fallback        *Fallback                `json:"fallback,omitempty"`
-	ModelPolicies   ModelPolicies            `json:"model_policies,omitempty"`
-	CreatedAt       time.Time                `json:"created_at"`
-	UpdatedAt       time.Time                `json:"updated_at"`
+	ID              ids.ConsumerID            `json:"id"`
+	GatewayID       ids.GatewayID             `json:"gateway_id"`
+	Name            string                    `json:"name"`
+	Type            Type                      `json:"type"`
+	Path            string                    `json:"path"`
+	Algorithm       string                    `json:"algorithm"`
+	EmbeddingConfig *registry.EmbeddingConfig `json:"embedding_config,omitempty"`
+	Headers         map[string]string         `json:"headers,omitempty"`
+	Active          bool                      `json:"active"`
+	RegistryIDs     registry.Registries       `json:"registry_ids"`
+	PolicyIDs       []ids.PolicyID            `json:"policy_ids"`
+	AuthIDs         []ids.AuthID              `json:"auth_ids"`
+	Fallback        *Fallback                 `json:"fallback,omitempty"`
+	ModelPolicies   ModelPolicies             `json:"model_policies,omitempty"`
+	CreatedAt       time.Time                 `json:"created_at"`
+	UpdatedAt       time.Time                 `json:"updated_at"`
 }
 
 type CreateParams struct {
@@ -55,10 +55,10 @@ type CreateParams struct {
 	Type            Type
 	Path            string
 	Algorithm       string
-	EmbeddingConfig *backend.EmbeddingConfig
+	EmbeddingConfig *registry.EmbeddingConfig
 	Headers         map[string]string
 	Active          *bool
-	BackendIDs      []ids.BackendID
+	RegistryIDs     []ids.RegistryID
 	PolicyIDs       []ids.PolicyID
 	AuthIDs         []ids.AuthID
 	Fallback        *Fallback
@@ -85,7 +85,7 @@ func New(params CreateParams) (*Consumer, error) {
 		EmbeddingConfig: params.EmbeddingConfig,
 		Headers:         params.Headers,
 		Active:          active,
-		BackendIDs:      params.BackendIDs,
+		RegistryIDs:     params.RegistryIDs,
 		PolicyIDs:       params.PolicyIDs,
 		AuthIDs:         params.AuthIDs,
 		Fallback:        params.Fallback,
@@ -105,10 +105,10 @@ func Rehydrate(
 	name string,
 	consumerType Type,
 	path, algo string,
-	embeddingConfig *backend.EmbeddingConfig,
+	embeddingConfig *registry.EmbeddingConfig,
 	headers map[string]string,
 	active bool,
-	backendIDs []ids.BackendID,
+	registryIDs []ids.RegistryID,
 	policyIDs []ids.PolicyID,
 	authIDs []ids.AuthID,
 	fallback *Fallback,
@@ -125,7 +125,7 @@ func Rehydrate(
 		EmbeddingConfig: embeddingConfig,
 		Headers:         headers,
 		Active:          active,
-		BackendIDs:      backendIDs,
+		RegistryIDs:     registryIDs,
 		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
 		Fallback:        fallback,
@@ -165,10 +165,10 @@ func (c *Consumer) Validate() error {
 			return err
 		}
 	}
-	if len(c.BackendIDs) == 0 {
+	if len(c.RegistryIDs) == 0 {
 		return ErrNoBackends
 	}
-	if err := c.BackendIDs.Validate(); err != nil {
+	if err := c.RegistryIDs.Validate(); err != nil {
 		return err
 	}
 	if err := validateUniqueIDs(c.PolicyIDs, ErrInvalidPolicyID, "policy"); err != nil {
@@ -180,15 +180,15 @@ func (c *Consumer) Validate() error {
 	if err := c.Fallback.Validate(); err != nil {
 		return err
 	}
-	if err := c.ModelPolicies.Validate(c.knownBackendIDs()); err != nil {
+	if err := c.ModelPolicies.Validate(c.knownRegistryIDs()); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c *Consumer) knownBackendIDs() map[ids.BackendID]struct{} {
-	known := make(map[ids.BackendID]struct{}, len(c.BackendIDs))
-	for _, id := range c.BackendIDs {
+func (c *Consumer) knownRegistryIDs() map[ids.RegistryID]struct{} {
+	known := make(map[ids.RegistryID]struct{}, len(c.RegistryIDs))
+	for _, id := range c.RegistryIDs {
 		known[id] = struct{}{}
 	}
 	if c.Fallback != nil {
@@ -222,15 +222,15 @@ func validateUniqueIDs[T identifier](list []T, invalidErr error, label string) e
 	return nil
 }
 
-func (c *Consumer) AttachBackend(id ids.BackendID) bool {
-	out, ok := c.BackendIDs.Attach(id)
-	c.BackendIDs = out
+func (c *Consumer) AttachBackend(id ids.RegistryID) bool {
+	out, ok := c.RegistryIDs.Attach(id)
+	c.RegistryIDs = out
 	return ok
 }
 
-func (c *Consumer) DetachBackend(id ids.BackendID) bool {
-	out, ok := c.BackendIDs.Detach(id)
-	c.BackendIDs = out
+func (c *Consumer) DetachBackend(id ids.RegistryID) bool {
+	out, ok := c.RegistryIDs.Detach(id)
+	c.RegistryIDs = out
 	return ok
 }
 

@@ -35,7 +35,7 @@ func Cache(c *container.Container) error {
 
 func initializeMemoryCache(mgr *cache.TTLMapManager) {
 	mgr.CreateTTLMap(cache.GatewayTTLName, cache.GatewayCacheTTL)
-	mgr.CreateTTLMap(cache.BackendTTLName, cache.BackendCacheTTL)
+	mgr.CreateTTLMap(cache.RegistryTTLName, cache.RegistryCacheTTL)
 	mgr.CreateTTLMap(cache.ConsumerTTLName, cache.ConsumerCacheTTL)
 	mgr.CreateTTLMap(cache.ConsumerDataTTLName, cache.ConsumerDataCacheTTL)
 	mgr.CreateTTLMap(cache.PolicyTTLName, cache.PolicyCacheTTL)

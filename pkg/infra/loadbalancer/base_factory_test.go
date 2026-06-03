@@ -4,15 +4,15 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
 )
 
 func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 	t.Parallel()
 	factory := loadbalancer.NewBaseFactory(nil, nil)
-	backends := []*backend.Backend{{ID: ids.New[ids.BackendKind](), Name: "a", Weight: 1, Provider: "openai"}}
+	registries := []*registry.Registry{{ID: ids.New[ids.RegistryKind](), Name: "a", Weight: 1, Provider: "openai"}}
 
 	cases := []struct {
 		name     string
@@ -30,8 +30,8 @@ func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s, err := factory.CreateStrategy(loadbalancer.StrategyInput{
-				Algorithm: tc.alg,
-				Backends:  backends,
+				Algorithm:  tc.alg,
+				Registries: registries,
 			})
 			if err != nil {
 				t.Fatalf("CreateStrategy(%s) returned error: %v", tc.alg, err)

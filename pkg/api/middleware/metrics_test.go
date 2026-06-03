@@ -105,8 +105,8 @@ func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
 	// streamReq stands in for the request context the proxy handler retains and
 	// passes to the finalizer; its Metadata carries the observed usage.
 	streamReq := &infracontext.RequestContext{
-		GatewayID: "gw-1",
-		BackendID: "bk-1",
+		GatewayID:  "gw-1",
+		RegistryID: "bk-1",
 		Metadata: map[string]interface{}{
 			"usage": "recorded",
 		},

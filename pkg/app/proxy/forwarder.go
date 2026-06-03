@@ -11,9 +11,9 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
@@ -23,7 +23,7 @@ import (
 
 var (
 	ErrNoBackendAvailable = errors.New("no backend available")
-	ErrNoBackendsInPool   = errors.New("consumer has no backends in pool")
+	ErrNoBackendsInPool   = errors.New("consumer has no registries in pool")
 )
 
 type ForwardInput struct {
@@ -40,7 +40,7 @@ type ForwardResult struct {
 }
 
 type forwardRequestDTO struct {
-	backend  *domain.Backend
+	backend  *domain.Registry
 	request  *infracontext.RequestContext
 	response *infracontext.ResponseContext
 	policies []*policydomain.Policy
@@ -96,7 +96,7 @@ func maxRetriesFromConfig(cfg *config.Config) int {
 }
 
 func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error) {
-	if in.Consumer == nil || in.Consumer.Consumer == nil || len(in.Consumer.Backends) == 0 {
+	if in.Consumer == nil || in.Consumer.Consumer == nil || len(in.Consumer.Registries) == 0 {
 		return nil, ErrNoBackendsInPool
 	}
 
@@ -105,11 +105,11 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return nil, err
 	}
 
-	in.Request.BackendID = bk.ID.String()
+	in.Request.RegistryID = bk.ID.String()
 	resp := &infracontext.ResponseContext{
-		Context:   ctx,
-		GatewayID: in.Request.GatewayID,
-		BackendID: in.Request.BackendID,
+		Context:    ctx,
+		GatewayID:  in.Request.GatewayID,
+		RegistryID: in.Request.RegistryID,
 	}
 	policies := in.Consumer.Policies
 
@@ -142,7 +142,7 @@ func (f *forwarder) invokeWithFailover(
 	triggers := triggersFrom(fb)
 	attemptsPerBackend := f.attemptsPerBackend()
 	budget := newFailoverBudget(fb)
-	excluded := make(map[ids.BackendID]struct{})
+	excluded := make(map[ids.RegistryID]struct{})
 
 	last := failoverState{}
 	current := dto.backend
@@ -230,8 +230,8 @@ func (f *forwarder) nextCandidate(
 	lb *loadbalancer.LoadBalancer,
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
-	excluded map[ids.BackendID]struct{},
-) (*domain.Backend, bool) {
+	excluded map[ids.RegistryID]struct{},
+) (*domain.Registry, bool) {
 	if bk, err := lb.NextBackend(req, excluded); err == nil && bk != nil {
 		if _, seen := excluded[bk.ID]; !seen {
 			return bk, false
@@ -249,7 +249,7 @@ func (f *forwarder) nextCandidate(
 
 func (f *forwarder) recordSpan(
 	ctx context.Context,
-	bk *domain.Backend,
+	bk *domain.Registry,
 	fromFallback bool,
 	attempt int,
 	outcome Outcome,
@@ -265,11 +265,11 @@ func (f *forwarder) recordSpan(
 		Name:      bk.Provider,
 		StartedAt: time.Now().Add(-elapsed),
 		LLM: &trace.LLMAttrs{
-			BackendID: bk.ID.String(),
-			Provider:  bk.Provider,
-			Attempt:   attempt,
-			Fallback:  fromFallback,
-			Outcome:   outcome.String(),
+			RegistryID: bk.ID.String(),
+			Provider:   bk.Provider,
+			Attempt:    attempt,
+			Fallback:   fromFallback,
+			Outcome:    outcome.String(),
 		},
 	}
 	if resp != nil {
@@ -280,9 +280,9 @@ func (f *forwarder) recordSpan(
 	span.End()
 }
 
-func (f *forwarder) logRetry(bk *domain.Backend, reason error, budget *failoverBudget) {
+func (f *forwarder) logRetry(bk *domain.Registry, reason error, budget *failoverBudget) {
 	f.logger.Warn("backend invocation failed; failing over",
-		slog.String("backend_id", bk.ID.String()),
+		slog.String("registry_id", bk.ID.String()),
 		slog.String("provider", bk.Provider),
 		slog.Int("attempt", budget.attempts),
 		slog.String("reason", reason.Error()),
@@ -291,7 +291,7 @@ func (f *forwarder) logRetry(bk *domain.Backend, reason error, budget *failoverB
 
 func (f *forwarder) invokeOnce(
 	ctx context.Context,
-	bk *domain.Backend,
+	bk *domain.Registry,
 	req *infracontext.RequestContext,
 	stream bool,
 ) (*ProviderResponse, error) {
@@ -301,15 +301,15 @@ func (f *forwarder) invokeOnce(
 	return f.invoker.Invoke(ctx, bk, req)
 }
 
-func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Backend) {
+func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Registry) {
 	dto.backend = bk
-	dto.request.BackendID = bk.ID.String()
+	dto.request.RegistryID = bk.ID.String()
 	if dto.response != nil {
-		dto.response.BackendID = bk.ID.String()
+		dto.response.RegistryID = bk.ID.String()
 	}
 }
 
-func (f *forwarder) stampModelPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Backend) {
+func (f *forwarder) stampModelPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Registry) {
 	policy, ok := rc.Consumer.ModelPolicies.For(bk.ID)
 	if !ok {
 		dto.request.AllowedModels = nil
@@ -384,7 +384,7 @@ func (f *forwarder) finalizeBodyGated(
 func (f *forwarder) selectBackend(
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
-) (*loadbalancer.LoadBalancer, *domain.Backend, error) {
+) (*loadbalancer.LoadBalancer, *domain.Registry, error) {
 	lb, err := f.loadBalancerFor(rc)
 	if err != nil {
 		return nil, nil, err
@@ -408,7 +408,7 @@ func (f *forwarder) loadBalancerFor(rc *appconsumer.RoutableConsumer) (*loadbala
 		}
 		pool := loadbalancer.Pool{
 			ID:              key,
-			Backends:        rc.Backends,
+			Registries:      rc.Registries,
 			Algorithm:       rc.Consumer.Algorithm,
 			EmbeddingConfig: rc.Consumer.EmbeddingConfig,
 		}

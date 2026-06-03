@@ -8,7 +8,7 @@ import (
 	"iter"
 	"net/http"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 )
@@ -68,7 +68,7 @@ func (c *client) rawPost(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if backend.IsHTTPError(resp.StatusCode) {
+	if registry.IsHTTPError(resp.StatusCode) {
 		return nil, readBackendError(resp)
 	}
 
@@ -108,11 +108,11 @@ func (c *client) CompletionsStream(
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
-	if backend.IsHTTPError(resp.StatusCode) {
+	if registry.IsHTTPError(resp.StatusCode) {
 		var preview bytes.Buffer
 		_, _ = io.CopyN(&preview, resp.Body, 64*1024)
 		providers.DrainBody(resp.Body)
-		return nil, backend.NewBackendHTTPError(resp.StatusCode, preview.Bytes(), resp.Header)
+		return nil, registry.NewBackendHTTPError(resp.StatusCode, preview.Bytes(), resp.Header)
 	}
 
 	return providers.StreamResponse(ctx, resp.Body), nil
@@ -131,9 +131,9 @@ func (c *client) extractModel(reqBody []byte) (string, error) {
 	return model, nil
 }
 
-func readBackendError(resp *http.Response) *backend.BackendError {
+func readBackendError(resp *http.Response) *registry.BackendError {
 	var preview bytes.Buffer
 	_, _ = io.CopyN(&preview, resp.Body, 64*1024)
 	providers.DrainBody(resp.Body)
-	return backend.NewBackendHTTPError(resp.StatusCode, preview.Bytes(), resp.Header)
+	return registry.NewBackendHTTPError(resp.StatusCode, preview.Bytes(), resp.Header)
 }

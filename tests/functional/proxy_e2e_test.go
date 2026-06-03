@@ -101,7 +101,7 @@ func newFailingUpstream(t *testing.T, status int) *fakeUpstream {
 	return u
 }
 
-// openaiBackendPayload builds a CreateBackend body for an OpenAI-compatible
+// openaiBackendPayload builds a CreateRegistry body for an OpenAI-compatible
 // target whose base_url is overridden to a fake upstream.
 func openaiBackendPayload(name, baseURL string) map[string]any {
 	return map[string]any{
@@ -174,21 +174,21 @@ func proxyPost(t *testing.T, gatewayID, path string, body any) (int, http.Header
 }
 
 // setupRoute creates a gateway, one backend per upstream and a consumer routing
-// path to those backends, returning the gateway id and the routing path.
+// path to those registries, returning the gateway id and the routing path.
 func setupRoute(t *testing.T, algorithm string, upstreams ...*fakeUpstream) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("proxy-gw")})
 
-	backendIDs := make([]string, 0, len(upstreams))
+	registryIDs := make([]string, 0, len(upstreams))
 	for _, up := range upstreams {
-		backendIDs = append(backendIDs, CreateBackend(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL())))
+		registryIDs = append(registryIDs, CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL())))
 	}
 
 	path := "/v1/" + uniqueName("route")
 	consumer := map[string]any{
-		"name":        uniqueName("cons"),
-		"path":        path,
-		"backend_ids": backendIDs,
+		"name":         uniqueName("cons"),
+		"path":         path,
+		"registry_ids": registryIDs,
 	}
 	if algorithm != "" {
 		consumer["algorithm"] = algorithm
@@ -305,16 +305,16 @@ func TestProxyE2E_Streaming_LB(t *testing.T) {
 func setupModelPolicyRoute(t *testing.T, up *fakeUpstream, allowed []string, defaultModel string) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mp-gw")})
-	backendID := CreateBackend(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
+	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 	path := "/v1/" + uniqueName("route")
-	policy := map[string]any{"backend_id": backendID, "allowed": allowed}
+	policy := map[string]any{"registry_id": backendID, "allowed": allowed}
 	if defaultModel != "" {
 		policy["default"] = defaultModel
 	}
 	CreateConsumer(t, gatewayID, map[string]any{
 		"name":           uniqueName("cons"),
 		"path":           path,
-		"backend_ids":    []string{backendID},
+		"registry_ids":   []string{backendID},
 		"model_policies": []map[string]any{policy},
 	})
 	return gatewayID, path
@@ -363,13 +363,13 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 func setupFallbackRoute(t *testing.T, primary, fallback *fakeUpstream, fallbackEnabled bool) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("fb-gw")})
-	primaryID := CreateBackend(t, gatewayID, openaiBackendPayload(uniqueName("be-primary"), primary.URL()))
-	fallbackID := CreateBackend(t, gatewayID, openaiBackendPayload(uniqueName("be-fallback"), fallback.URL()))
+	primaryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-primary"), primary.URL()))
+	fallbackID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-fallback"), fallback.URL()))
 	path := "/v1/" + uniqueName("route")
 	CreateConsumer(t, gatewayID, map[string]any{
-		"name":        uniqueName("cons"),
-		"path":        path,
-		"backend_ids": []string{primaryID},
+		"name":         uniqueName("cons"),
+		"path":         path,
+		"registry_ids": []string{primaryID},
 		"fallback": map[string]any{
 			"enabled":  fallbackEnabled,
 			"triggers": []string{"http_5xx"},
@@ -396,7 +396,7 @@ func TestProxyE2E_Fallback(t *testing.T) {
 		assert.Equal(t, 1, fallback.Hits(), "fallback must serve exactly once")
 	})
 
-	t.Run("all backends failing relays the final error", func(t *testing.T) {
+	t.Run("all registries failing relays the final error", func(t *testing.T) {
 		primary := newFailingUpstream(t, http.StatusInternalServerError)
 		fallback := newFailingUpstream(t, http.StatusBadGateway)
 		gatewayID, path := setupFallbackRoute(t, primary, fallback, true)

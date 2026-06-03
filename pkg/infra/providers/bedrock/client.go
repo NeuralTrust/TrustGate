@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	domainBackend "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	bedrockClient "github.com/NeuralTrust/AgentGateway/pkg/infra/bedrock"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
@@ -127,7 +127,7 @@ func (c *client) CompletionsStream(
 	}, nil
 }
 
-func newBedrockBackendError(err error) *domainBackend.BackendError {
+func newBedrockBackendError(err error) *registrydomain.BackendError {
 	var statusErr interface {
 		HTTPStatusCode() int
 	}
@@ -136,7 +136,7 @@ func newBedrockBackendError(err error) *domainBackend.BackendError {
 	}
 
 	statusCode := statusErr.HTTPStatusCode()
-	if !domainBackend.IsHTTPError(statusCode) {
+	if !registrydomain.IsHTTPError(statusCode) {
 		return nil
 	}
 
@@ -144,7 +144,7 @@ func newBedrockBackendError(err error) *domainBackend.BackendError {
 	if marshalErr != nil {
 		body = []byte(http.StatusText(statusCode))
 	}
-	return domainBackend.NewBackendError(statusCode, body)
+	return registrydomain.NewBackendError(statusCode, body)
 }
 
 func bedrockErrorPayload(err error) map[string]string {

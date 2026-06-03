@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -147,7 +147,7 @@ func TestCompletionsStream_BackendErrorPassthrough(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, seq, "no stream must be opened on a non-2xx response")
 
-	be, ok := backend.IsBackendError(err)
+	be, ok := registry.IsBackendError(err)
 	require.True(t, ok, "expected a BackendError")
 	assert.Equal(t, http.StatusTooManyRequests, be.StatusCode)
 	assert.Equal(t, "3", be.RetryAfter)
@@ -171,7 +171,7 @@ func TestChatCompletions_BackendErrorPassthrough(t *testing.T) {
 	)
 	require.Error(t, err)
 
-	be, ok := backend.IsBackendError(err)
+	be, ok := registry.IsBackendError(err)
 	require.True(t, ok, "expected a BackendError")
 	assert.Equal(t, http.StatusTooManyRequests, be.StatusCode)
 	assert.Equal(t, "7", be.RetryAfter)

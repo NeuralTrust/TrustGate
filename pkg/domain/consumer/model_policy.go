@@ -13,7 +13,7 @@ type ModelPolicy struct {
 	Default string   `json:"default,omitempty"`
 }
 
-type ModelPolicies map[ids.BackendID]ModelPolicy
+type ModelPolicies map[ids.RegistryID]ModelPolicy
 
 func (m ModelPolicies) Value() (driver.Value, error) {
 	if m == nil {
@@ -33,12 +33,12 @@ func (m *ModelPolicies) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, m)
 }
 
-func (m ModelPolicies) Validate(validBackendIDs map[ids.BackendID]struct{}) error {
+func (m ModelPolicies) Validate(validRegistryIDs map[ids.RegistryID]struct{}) error {
 	for backendID, policy := range m {
 		if backendID.IsNil() {
-			return fmt.Errorf("%w: nil backend_id", ErrInvalidModelPolicy)
+			return fmt.Errorf("%w: nil registry_id", ErrInvalidModelPolicy)
 		}
-		if _, ok := validBackendIDs[backendID]; !ok {
+		if _, ok := validRegistryIDs[backendID]; !ok {
 			return fmt.Errorf("%w: backend %s is not in pool or fallback chain", ErrInvalidModelPolicy, backendID)
 		}
 		if err := policy.validate(backendID); err != nil {
@@ -48,7 +48,7 @@ func (m ModelPolicies) Validate(validBackendIDs map[ids.BackendID]struct{}) erro
 	return nil
 }
 
-func (p ModelPolicy) validate(backendID ids.BackendID) error {
+func (p ModelPolicy) validate(backendID ids.RegistryID) error {
 	seen := make(map[string]struct{}, len(p.Allowed))
 	for _, model := range p.Allowed {
 		if model == "" {
@@ -67,7 +67,7 @@ func (p ModelPolicy) validate(backendID ids.BackendID) error {
 	return nil
 }
 
-func (m ModelPolicies) For(backendID ids.BackendID) (ModelPolicy, bool) {
+func (m ModelPolicies) For(backendID ids.RegistryID) (ModelPolicy, bool) {
 	if m == nil {
 		return ModelPolicy{}, false
 	}

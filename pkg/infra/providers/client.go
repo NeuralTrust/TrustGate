@@ -59,7 +59,7 @@ type Client interface {
 		reqBody []byte,
 	) ([]byte, error)
 	// CompletionsStream performs the streaming request. The outer error carries
-	// pre-stream failures (e.g. a backend.BackendError on a non-2xx response, for
+	// pre-stream failures (e.g. a registry.BackendError on a non-2xx response, for
 	// verbatim passthrough). The returned sequence yields raw SSE lines and
 	// surfaces mid-stream read errors as the second value.
 	CompletionsStream(

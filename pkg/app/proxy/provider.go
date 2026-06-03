@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
@@ -48,8 +48,8 @@ type ProviderResponse struct {
 
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
 type ProviderInvoker interface {
-	Invoke(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*ProviderResponse, error)
-	InvokeStream(ctx context.Context, bk *backend.Backend, req *infracontext.RequestContext) (*ProviderResponse, error)
+	Invoke(ctx context.Context, bk *registry.Registry, req *infracontext.RequestContext) (*ProviderResponse, error)
+	InvokeStream(ctx context.Context, bk *registry.Registry, req *infracontext.RequestContext) (*ProviderResponse, error)
 }
 
 var _ ProviderInvoker = (*providerInvoker)(nil)
@@ -86,7 +86,7 @@ type preparedInvocation struct {
 
 func (p *providerInvoker) Invoke(
 	ctx context.Context,
-	bk *backend.Backend,
+	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
 	prep, err := p.prepare(bk, req)
@@ -96,7 +96,7 @@ func (p *providerInvoker) Invoke(
 
 	respBody, err := prep.client.Completions(ctx, prep.cfg, prep.body)
 	if err != nil {
-		if be, ok := backend.IsBackendError(err); ok {
+		if be, ok := registry.IsBackendError(err); ok {
 			return &ProviderResponse{
 				StatusCode: be.StatusCode,
 				Headers:    be.PassthroughHeaders(),
@@ -138,7 +138,7 @@ func (p *providerInvoker) decodeResponseUsage(body []byte, format adapter.Format
 
 func (p *providerInvoker) InvokeStream(
 	ctx context.Context,
-	bk *backend.Backend,
+	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*ProviderResponse, error) {
 	prep, err := p.prepare(bk, req)
@@ -147,7 +147,7 @@ func (p *providerInvoker) InvokeStream(
 	}
 
 	body := prep.body
-	// Backends speaking the OpenAI-style API need an explicit "stream": true even
+	// Registries speaking the OpenAI-style API need an explicit "stream": true even
 	// when the source format (e.g. Gemini) does not carry it in the body.
 	if adapter.IsSameWireFormat(prep.targetFormat, adapter.FormatOpenAI) ||
 		prep.targetFormat == adapter.FormatOpenAIResponses ||
@@ -158,7 +158,7 @@ func (p *providerInvoker) InvokeStream(
 
 	seq, err := prep.client.CompletionsStream(ctx, prep.cfg, body)
 	if err != nil {
-		if be, ok := backend.IsBackendError(err); ok {
+		if be, ok := registry.IsBackendError(err); ok {
 			return &ProviderResponse{
 				StatusCode: be.StatusCode,
 				Headers:    be.PassthroughHeaders(),
@@ -180,7 +180,7 @@ func (p *providerInvoker) InvokeStream(
 // prepare resolves the provider client and transforms the request payload across
 // provider formats when needed, mutating req with the resolved format metadata.
 func (p *providerInvoker) prepare(
-	bk *backend.Backend,
+	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*preparedInvocation, error) {
 	client, err := p.locator.Get(bk.Provider)
@@ -283,17 +283,17 @@ func (p *providerInvoker) resolveSourceFormat(req *infracontext.RequestContext) 
 // buildCredentials maps a target's auth configuration to provider credentials.
 // API key, AWS and Azure are mapped now; OAuth2 and GCP service accounts are
 // deferred to the auth multi-type work (B.7).
-func buildCredentials(auth *backend.TargetAuth) providers.Credentials {
+func buildCredentials(auth *registry.TargetAuth) providers.Credentials {
 	creds := providers.Credentials{}
 	if auth == nil {
 		return creds
 	}
 	switch auth.Type {
-	case backend.AuthTypeAPIKey:
+	case registry.AuthTypeAPIKey:
 		if auth.APIKey != nil {
 			creds.ApiKey = auth.APIKey.APIKey
 		}
-	case backend.AuthTypeAWS:
+	case registry.AuthTypeAWS:
 		if auth.AWS != nil {
 			creds.AwsBedrock = &providers.AwsBedrock{
 				Region:       auth.AWS.Region,
@@ -304,7 +304,7 @@ func buildCredentials(auth *backend.TargetAuth) providers.Credentials {
 				RoleARN:      auth.AWS.Role,
 			}
 		}
-	case backend.AuthTypeAzure:
+	case registry.AuthTypeAzure:
 		if auth.Azure != nil {
 			creds.Azure = &providers.Azure{
 				Endpoint:    auth.Azure.Endpoint,
@@ -312,7 +312,7 @@ func buildCredentials(auth *backend.TargetAuth) providers.Credentials {
 				UseIdentity: auth.Azure.UseManagedIdentity,
 			}
 		}
-	case backend.AuthTypeOAuth2, backend.AuthTypeGCPServiceAccount:
+	case registry.AuthTypeOAuth2, registry.AuthTypeGCPServiceAccount:
 		// Deferred to B.7.
 	}
 	return creds

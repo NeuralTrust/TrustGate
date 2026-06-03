@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -20,18 +20,18 @@ const (
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
 
-	gatewayFKConstraint         = "consumers_gateway_id_fkey"
-	consumerBackendFKConstraint = "consumer_backend_backend_id_fkey"
-	consumerPolicyFKConstraint  = "consumer_policy_policy_id_fkey"
-	consumerAuthFKConstraint    = "consumer_auth_auth_id_fkey"
-	consumerPathUniqueIndex     = "consumers_gateway_path_unique"
+	gatewayFKConstraint          = "consumers_gateway_id_fkey"
+	consumerRegistryFKConstraint = "consumer_registry_registry_id_fkey"
+	consumerPolicyFKConstraint   = "consumer_policy_policy_id_fkey"
+	consumerAuthFKConstraint     = "consumer_auth_auth_id_fkey"
+	consumerPathUniqueIndex      = "consumers_gateway_path_unique"
 )
 
 const consumerSelectColumns = `
 		SELECT c.id, c.gateway_id, c.name, c.type, c.path, c.algorithm, c.embedding_config, c.fallback, c.model_policies, c.headers, c.active,
 		       c.created_at, c.updated_at,
-		       COALESCE((SELECT array_agg(cb.backend_id ORDER BY cb.backend_id)
-		                   FROM consumer_backend cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS backend_ids,
+		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.registry_id)
+		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
 		       COALESCE((SELECT array_agg(cp.policy_id ORDER BY cp.policy_id)
 		                   FROM consumer_policy cp WHERE cp.consumer_id = c.id), '{}')::uuid[] AS policy_ids,
 		       COALESCE((SELECT array_agg(ca.auth_id ORDER BY ca.auth_id)
@@ -86,12 +86,12 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 
 func insertJoins(ctx context.Context, tx pgx.Tx, c *domain.Consumer) error {
 	const (
-		insertBackend = `INSERT INTO consumer_backend (consumer_id, backend_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-		insertPolicy  = `INSERT INTO consumer_policy (consumer_id, policy_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-		insertAuth    = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+		insertRegistry = `INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+		insertPolicy   = `INSERT INTO consumer_policy (consumer_id, policy_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+		insertAuth     = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
 	)
-	for _, id := range c.BackendIDs {
-		if _, err := tx.Exec(ctx, insertBackend, c.ID, id); err != nil {
+	for _, id := range c.RegistryIDs {
+		if _, err := tx.Exec(ctx, insertRegistry, c.ID, id); err != nil {
 			return mapPgError(err)
 		}
 	}
@@ -161,11 +161,11 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 
 func pruneJoins(ctx context.Context, tx pgx.Tx, c *domain.Consumer) error {
 	const (
-		pruneBackend = `DELETE FROM consumer_backend WHERE consumer_id = $1 AND NOT (backend_id = ANY($2::uuid[]))`
-		prunePolicy  = `DELETE FROM consumer_policy  WHERE consumer_id = $1 AND NOT (policy_id  = ANY($2::uuid[]))`
-		pruneAuth    = `DELETE FROM consumer_auth    WHERE consumer_id = $1 AND NOT (auth_id    = ANY($2::uuid[]))`
+		pruneRegistry = `DELETE FROM consumer_registry WHERE consumer_id = $1 AND NOT (registry_id = ANY($2::uuid[]))`
+		prunePolicy   = `DELETE FROM consumer_policy  WHERE consumer_id = $1 AND NOT (policy_id  = ANY($2::uuid[]))`
+		pruneAuth     = `DELETE FROM consumer_auth    WHERE consumer_id = $1 AND NOT (auth_id    = ANY($2::uuid[]))`
 	)
-	if _, err := tx.Exec(ctx, pruneBackend, c.ID, ids.ToUUIDs([]ids.BackendID(c.BackendIDs))); err != nil {
+	if _, err := tx.Exec(ctx, pruneRegistry, c.ID, ids.ToUUIDs([]ids.RegistryID(c.RegistryIDs))); err != nil {
 		return mapPgError(err)
 	}
 	if _, err := tx.Exec(ctx, prunePolicy, c.ID, ids.ToUUIDs(c.PolicyIDs)); err != nil {
@@ -290,14 +290,14 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		fallbackRaw      []byte
 		modelPoliciesRaw []byte
 		consumerType     string
-		backendIDs       []uuid.UUID
+		registryIDs      []uuid.UUID
 		policyIDs        []uuid.UUID
 		authIDs          []uuid.UUID
 	)
 	if err := s.Scan(
 		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &c.Algorithm, &embeddingRaw, &fallbackRaw, &modelPoliciesRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
-		&backendIDs, &policyIDs, &authIDs,
+		&registryIDs, &policyIDs, &authIDs,
 	); err != nil {
 		return nil, err
 	}
@@ -308,7 +308,7 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		}
 	}
 	if len(embeddingRaw) > 0 {
-		var ec backenddomain.EmbeddingConfig
+		var ec registrydomain.EmbeddingConfig
 		if err := json.Unmarshal(embeddingRaw, &ec); err != nil {
 			return nil, fmt.Errorf("scan embedding_config: %w", err)
 		}
@@ -328,11 +328,11 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		}
 		c.ModelPolicies = mp
 	}
-	c.BackendIDs = backenddomain.Backends(ids.FromUUIDs[ids.BackendKind](backendIDs))
+	c.RegistryIDs = registrydomain.Registries(ids.FromUUIDs[ids.RegistryKind](registryIDs))
 	c.PolicyIDs = ids.FromUUIDs[ids.PolicyKind](policyIDs)
 	c.AuthIDs = ids.FromUUIDs[ids.AuthKind](authIDs)
-	if c.BackendIDs == nil {
-		c.BackendIDs = backenddomain.Backends{}
+	if c.RegistryIDs == nil {
+		c.RegistryIDs = registrydomain.Registries{}
 	}
 	if c.PolicyIDs == nil {
 		c.PolicyIDs = []ids.PolicyID{}
@@ -350,7 +350,7 @@ func marshalHeaders(v map[string]string) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-func marshalEmbedding(e *backenddomain.EmbeddingConfig) ([]byte, error) {
+func marshalEmbedding(e *registrydomain.EmbeddingConfig) ([]byte, error) {
 	if e == nil {
 		return nil, nil
 	}
@@ -391,9 +391,9 @@ func mapPgError(err error) error {
 				strings.Contains(pgErr.Detail, "(gateway_id)") {
 				return domain.ErrInvalidGatewayID
 			}
-			if strings.Contains(pgErr.ConstraintName, consumerBackendFKConstraint) ||
-				strings.Contains(pgErr.Detail, "(backend_id)") {
-				return backenddomain.ErrInvalidBackendID
+			if strings.Contains(pgErr.ConstraintName, consumerRegistryFKConstraint) ||
+				strings.Contains(pgErr.Detail, "(registry_id)") {
+				return registrydomain.ErrInvalidRegistryID
 			}
 			if strings.Contains(pgErr.ConstraintName, consumerPolicyFKConstraint) ||
 				strings.Contains(pgErr.Detail, "(policy_id)") {

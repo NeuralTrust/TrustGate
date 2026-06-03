@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,7 +49,7 @@ func TestReadBackendError(t *testing.T) {
 	}
 	var err error = readBackendError(resp)
 
-	be, ok := backend.IsBackendError(err)
+	be, ok := registry.IsBackendError(err)
 	require.True(t, ok)
 	assert.Equal(t, http.StatusTooManyRequests, be.StatusCode)
 	assert.JSONEq(t, body, string(be.Body))
@@ -83,7 +83,7 @@ func TestRawPost_BackendErrorPassthrough(t *testing.T) {
 	_, err := c.rawPost(context.Background(), srv.URL, "k", []byte(`{}`))
 	require.Error(t, err)
 
-	be, ok := backend.IsBackendError(err)
+	be, ok := registry.IsBackendError(err)
 	require.True(t, ok)
 	assert.Equal(t, http.StatusBadRequest, be.StatusCode)
 }

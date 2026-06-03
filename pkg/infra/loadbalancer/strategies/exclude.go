@@ -1,11 +1,11 @@
 package strategies
 
 import (
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
-func isExcluded(id ids.BackendID, exclude map[ids.BackendID]struct{}) bool {
+func isExcluded(id ids.RegistryID, exclude map[ids.RegistryID]struct{}) bool {
 	if len(exclude) == 0 {
 		return false
 	}
@@ -13,12 +13,12 @@ func isExcluded(id ids.BackendID, exclude map[ids.BackendID]struct{}) bool {
 	return ok
 }
 
-func filterExcluded(backends []*backend.Backend, exclude map[ids.BackendID]struct{}) []*backend.Backend {
+func filterExcluded(registries []*registry.Registry, exclude map[ids.RegistryID]struct{}) []*registry.Registry {
 	if len(exclude) == 0 {
-		return backends
+		return registries
 	}
-	out := make([]*backend.Backend, 0, len(backends))
-	for _, b := range backends {
+	out := make([]*registry.Registry, 0, len(registries))
+	for _, b := range registries {
 		if !isExcluded(b.ID, exclude) {
 			out = append(out, b)
 		}

@@ -15,7 +15,7 @@ var (
 	sseDoneMarker = []byte("[DONE]")
 )
 
-// injectStreamTrue sets "stream": true in a JSON request body so backends using
+// injectStreamTrue sets "stream": true in a JSON request body so registries using
 // the OpenAI-style API (openai, azure, anthropic, mistral) actually stream when
 // the source format (e.g. Gemini) does not carry "stream" in the body.
 func injectStreamTrue(body []byte) []byte {

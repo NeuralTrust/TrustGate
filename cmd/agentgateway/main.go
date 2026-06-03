@@ -2,7 +2,7 @@
 //
 // @title                       AgentGateway Admin API
 // @version                     1.0
-// @description                 Administrative API for managing gateways and their backends, policies, consumers and auth credentials.
+// @description                 Administrative API for managing gateways and their registries, policies, consumers and auth credentials.
 // @contact.name                NeuralTrust
 // @contact.url                 https://neuraltrust.ai/contact
 // @contact.email               support@neuraltrust.ai

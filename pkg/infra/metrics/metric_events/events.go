@@ -43,10 +43,10 @@ type Event struct {
 	StatusCode      int                 `json:"status_code"`
 	Streaming       bool                `json:"streaming"`
 
-	Attempt   int    `json:"attempt,omitempty"`
-	Fallback  bool   `json:"fallback,omitempty"`
-	BackendID string `json:"backend_id,omitempty"`
-	Outcome   string `json:"outcome,omitempty"`
+	Attempt    int    `json:"attempt,omitempty"`
+	Fallback   bool   `json:"fallback,omitempty"`
+	RegistryID string `json:"registry_id,omitempty"`
+	Outcome    string `json:"outcome,omitempty"`
 
 	TeamID string `json:"team_id,omitempty"`
 	AppID  string `json:"app_id,omitempty"`

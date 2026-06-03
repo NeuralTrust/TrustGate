@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/openai"
 	"github.com/stretchr/testify/assert"
@@ -124,7 +124,7 @@ func TestCompletions_RateLimitRetryAfter(t *testing.T) {
 	)
 	require.Error(t, err)
 
-	be, ok := backend.IsBackendError(err)
+	be, ok := registry.IsBackendError(err)
 	require.True(t, ok)
 	assert.Equal(t, http.StatusTooManyRequests, be.StatusCode)
 	assert.Equal(t, "2", be.RetryAfter)

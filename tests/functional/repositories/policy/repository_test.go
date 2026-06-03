@@ -49,7 +49,7 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 	}
 
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "TRUNCATE TABLE policies, backends, gateways CASCADE")
+		_, _ = pool.Exec(context.Background(), "TRUNCATE TABLE policies, registries, gateways CASCADE")
 		pool.Close()
 	})
 

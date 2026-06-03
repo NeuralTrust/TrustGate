@@ -4,17 +4,17 @@ import (
 	"strings"
 
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	backenddomain "github.com/NeuralTrust/AgentGateway/pkg/domain/backend"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 type RoutableConsumer struct {
-	Consumer *domain.Consumer
-	Backends []*backenddomain.Backend
+	Consumer   *domain.Consumer
+	Registries []*registrydomain.Registry
 
-	FallbackBackends []*backenddomain.Backend
+	FallbackBackends []*registrydomain.Registry
 	Policies         []*policydomain.Policy
 	Auths            []*authdomain.Auth
 }
