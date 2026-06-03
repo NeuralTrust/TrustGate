@@ -126,15 +126,15 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 
 	assert.Equal(t, int64(320), evt.Latency.TotalMs)
 	assert.Equal(t, int64(300), evt.Latency.ProviderMs)
-	assert.Equal(t, int64(6), evt.Latency.PluginsMs)
+	assert.Equal(t, int64(6), evt.Latency.PoliciesMs)
 	assert.Equal(t, int64(14), evt.Latency.RoutingMs)
 	assert.Equal(t, int64(20), evt.Latency.GatewayMs)
 
 	require.Len(t, evt.Attempts, 1)
 	assert.Equal(t, "openai", evt.Attempts[0].Provider)
-	require.Len(t, evt.PluginChain, 1)
-	assert.Equal(t, "rate_limiter", evt.PluginChain[0].Name)
-	assert.False(t, evt.PluginChain[0].Flagged)
+	require.Len(t, evt.PolicyChain, 1)
+	assert.Equal(t, "rate_limiter", evt.PolicyChain[0].Name)
+	assert.False(t, evt.PolicyChain[0].Flagged)
 	assert.False(t, evt.IsFlagged)
 }
 
@@ -184,8 +184,8 @@ func TestBuilder_FailoverAttemptsAndFlaggedPlugin(t *testing.T) {
 	assert.True(t, evt.Attempts[1].Fallback)
 	assert.Equal(t, int64(300), evt.Latency.ProviderMs)
 
-	require.Len(t, evt.PluginChain, 1)
-	assert.True(t, evt.PluginChain[0].Flagged)
+	require.Len(t, evt.PolicyChain, 1)
+	assert.True(t, evt.PolicyChain[0].Flagged)
 	assert.True(t, evt.IsFlagged)
 	assert.Equal(t, []string{"toxicity"}, evt.Security)
 

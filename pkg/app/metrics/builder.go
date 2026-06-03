@@ -58,7 +58,7 @@ func (b *Builder) Build(
 	served, attempts := b.foldLLMSpans(requestTrace)
 	chain, pluginsMs, flagged, security := b.foldPluginSpans(requestTrace)
 	evt.Attempts = attempts
-	evt.PluginChain = chain
+	evt.PolicyChain = chain
 	evt.IsFlagged = flagged
 	evt.Security = security
 
@@ -68,7 +68,7 @@ func (b *Builder) Build(
 	evt.Latency = events.Latency{
 		TotalMs:    totalMs,
 		ProviderMs: providerMs,
-		PluginsMs:  pluginsMs,
+		PoliciesMs: pluginsMs,
 		RoutingMs:  routingMs,
 		GatewayMs:  pluginsMs + routingMs,
 	}
@@ -110,11 +110,11 @@ func (b *Builder) foldLLMSpans(requestTrace *trace.RequestTrace) (*trace.LLMAttr
 	return served, attempts
 }
 
-func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.PluginEntry, int64, bool, []string) {
+func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.PolicyEntry, int64, bool, []string) {
 	if requestTrace == nil {
 		return nil, 0, false, nil
 	}
-	var chain []events.PluginEntry
+	var chain []events.PolicyEntry
 	var pluginsMs int64
 	anyFlagged := false
 	seenLabels := make(map[string]struct{})
@@ -138,7 +138,7 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.Pl
 				}
 			}
 		}
-		chain = append(chain, events.PluginEntry{
+		chain = append(chain, events.PolicyEntry{
 			Name:       span.Name,
 			Stage:      attrs.Stage,
 			Decision:   attrs.Decision,
@@ -204,7 +204,7 @@ func (b *Builder) fillResponse(evt *events.Event, resp *infracontext.ResponseCon
 		evt.Response.FinishReason = served.FinishReason
 	}
 	if len(resp.Body) > 0 {
-		body := events.SanitizeBody(resp.Body, resp.Headers)
+		body := events.SanitizeBodyFull(resp.Body, resp.Headers)
 		evt.Response.Body = &body
 	}
 }
