@@ -160,12 +160,17 @@ func (f *forwarder) invokeWithFailover(
 			resp, err := f.invokeOnce(ctx, current, dto.request, stream)
 			elapsed := time.Since(startedAt)
 			outcome := classifyOutcome(resp, err, triggers)
-			f.recordSpan(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
+			span := f.recordSpan(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
 			switch outcome {
 			case OutcomeSuccess:
 				lb.ReportSuccess(current)
 				if stream && resp.Stream != nil {
-					return f.finalizeStream(ctx, dto, resp), nil
+					// The provider stream is lazy: invokeOnce only measured
+					// time-to-first-byte. Keep the LLM span open and re-time it
+					// once the stream is fully consumed so provider_ms reflects
+					// the real token-generation duration instead of leaking into
+					// gateway_ms.
+					return f.finalizeStream(ctx, dto, resp, span, startedAt), nil
 				}
 				result, pe := f.finalizeBodyGated(ctx, dto, resp)
 				if pe == nil || !triggers.pluginRejection {
@@ -255,10 +260,10 @@ func (f *forwarder) recordSpan(
 	outcome Outcome,
 	resp *ProviderResponse,
 	elapsed time.Duration,
-) {
+) *trace.Span {
 	rt := trace.FromContext(ctx)
 	if rt == nil {
-		return
+		return nil
 	}
 	span := &trace.Span{
 		Type:      trace.SpanLLM,
@@ -275,9 +280,12 @@ func (f *forwarder) recordSpan(
 	if resp != nil {
 		span.SetStatusCode(resp.StatusCode)
 		span.ObserveUsage(resp.Usage)
+		span.LLM.Model = resp.Model
+		span.LLM.FinishReason = resp.FinishReason
 	}
 	_ = rt.AddSpan(span)
 	span.End()
+	return span
 }
 
 func (f *forwarder) logRetry(bk *domain.Registry, reason error, budget *failoverBudget) {
@@ -339,6 +347,8 @@ func (f *forwarder) finalizeStream(
 	ctx context.Context,
 	dto *forwardRequestDTO,
 	providerResp *ProviderResponse,
+	span *trace.Span,
+	startedAt time.Time,
 ) *ForwardResult {
 	pluginResp := dto.response
 	mergeProviderResponse(pluginResp, providerResp, true)
@@ -346,10 +356,34 @@ func (f *forwarder) finalizeStream(
 		go drainStream(providerResp.Stream)
 		return pluginErrorResult(pe)
 	}
+	out := f.wrapStreamWithPostResponse(dto.policies, dto.plan, dto.request, pluginResp, providerResp.Stream)
+	out = retimeSpanOnStreamEnd(out, span, startedAt)
 	return &ForwardResult{
 		StatusCode: providerResp.StatusCode,
 		Headers:    pluginResp.Headers,
-		Stream:     f.wrapStreamWithPostResponse(dto.policies, dto.plan, dto.request, pluginResp, providerResp.Stream),
+		Stream:     out,
+	}
+}
+
+// retimeSpanOnStreamEnd re-times the provider LLM span so its latency spans the
+// full stream lifetime (token generation), not just the time-to-first-byte that
+// invokeOnce measured. The latency is overwritten when the consumer finishes
+// draining the stream, which happens before the metrics finalizer reads it.
+func retimeSpanOnStreamEnd(
+	stream iter.Seq2[[]byte, error],
+	span *trace.Span,
+	startedAt time.Time,
+) iter.Seq2[[]byte, error] {
+	if span == nil || stream == nil {
+		return stream
+	}
+	return func(yield func([]byte, error) bool) {
+		defer func() { span.SetLatency(time.Since(startedAt)) }()
+		for line, err := range stream {
+			if !yield(line, err) {
+				return
+			}
+		}
 	}
 }
 

@@ -14,6 +14,10 @@ const (
 	AuthTTLName         = "auth"
 	AuthKeyTTLName      = "auth_key"
 	LoadBalancerTTLName = "lb"
+	// CatalogModelTTLName indexes catalog models by "providerCode:slug" for the
+	// proxy plane's cost computation, so pricing avoids a DB round-trip on the
+	// hot path after the first lookup.
+	CatalogModelTTLName = "catalog_model"
 )
 
 const (
@@ -25,6 +29,7 @@ const (
 	AuthCacheTTL         = 5 * time.Minute
 	AuthKeyCacheTTL      = 5 * time.Minute
 	LoadBalancerCacheTTL = 5 * time.Minute
+	CatalogModelCacheTTL = 24 * time.Hour
 )
 
 type TTLMapManager struct {

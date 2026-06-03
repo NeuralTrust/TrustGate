@@ -23,6 +23,15 @@ func TestNew_KeepsProvidedTraceID(t *testing.T) {
 	assert.Equal(t, "trace-123", rt.TraceID())
 }
 
+func TestSetConsumer_StampsMetadata(t *testing.T) {
+	rt := trace.New("t", trace.Metadata{GatewayID: "gw"})
+	rt.SetConsumer("consumer-1", "support-bot-eu")
+	meta := rt.Metadata()
+	assert.Equal(t, "consumer-1", meta.ConsumerID)
+	assert.Equal(t, "support-bot-eu", meta.ConsumerName)
+	assert.Equal(t, "gw", meta.GatewayID)
+}
+
 func TestStartSpan_RecordsTypedSpansInOrder(t *testing.T) {
 	rt := trace.New("t", trace.Metadata{})
 	llm := rt.StartSpan(trace.SpanLLM, "openai")
@@ -66,6 +75,56 @@ func TestObserveLLMUsage_TargetsMostRecentLLMSpan(t *testing.T) {
 	assert.Equal(t, 7, usage.TotalTokens)
 	assert.Nil(t, rt.Spans()[0].Usage())
 	assert.NotNil(t, rt.Spans()[1].Usage())
+}
+
+func TestObserveLLMResult_TargetsMostRecentLLMSpanAndAccumulates(t *testing.T) {
+	rt := trace.New("t", trace.Metadata{})
+	rt.StartSpan(trace.SpanLLM, "openai").End()
+	_ = rt.StartSpan(trace.SpanLLM, "openai")
+
+	rt.ObserveLLMResult("gpt-4o-2024-08-06", "")
+	rt.ObserveLLMResult("", "stop")
+
+	served, ok := rt.Spans()[1].LLMAttrsCopy()
+	require.True(t, ok)
+	assert.Equal(t, "gpt-4o-2024-08-06", served.Model)
+	assert.Equal(t, "stop", served.FinishReason)
+
+	first, ok := rt.Spans()[0].LLMAttrsCopy()
+	require.True(t, ok)
+	assert.Empty(t, first.Model)
+	assert.Empty(t, first.FinishReason)
+}
+
+func TestObserveLLMResult_NoopWithoutLLMSpanOrEmpty(t *testing.T) {
+	rt := trace.New("t", trace.Metadata{})
+	_ = rt.StartSpan(trace.SpanMCP, "tool")
+	rt.ObserveLLMResult("gpt-4o", "stop")
+	rt.ObserveLLMResult("", "")
+	mcp, ok := rt.Spans()[0].LLMAttrsCopy()
+	require.True(t, ok)
+	assert.Empty(t, mcp.Model)
+}
+
+func TestSpan_SetLLMResultIgnoresEmptyValues(t *testing.T) {
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanLLM, "openai")
+	span.SetLLMResult("claude-3-5-sonnet", "tool_calls")
+	span.SetLLMResult("", "")
+	attrs, ok := span.LLMAttrsCopy()
+	require.True(t, ok)
+	assert.Equal(t, "claude-3-5-sonnet", attrs.Model)
+	assert.Equal(t, "tool_calls", attrs.FinishReason)
+}
+
+func TestSpan_SetScore(t *testing.T) {
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, "prompt_guard")
+	span.SetScore(0.93, "prompt-injection")
+	attrs := span.PluginAttrsCopy()
+	require.NotNil(t, attrs.Score)
+	assert.InDelta(t, 0.93, *attrs.Score, 1e-9)
+	assert.Equal(t, "prompt-injection", attrs.ScoreLabel)
 }
 
 func TestObserveLLMUsage_NoopWithoutLLMSpanOrNil(t *testing.T) {

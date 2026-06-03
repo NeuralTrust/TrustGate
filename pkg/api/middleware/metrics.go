@@ -17,7 +17,6 @@ import (
 type MetricsMiddleware struct {
 	worker              appmetrics.Worker
 	telemetryEnabled    bool
-	hasDefaultExporters bool
 	enableRequestTraces bool
 	enablePluginTraces  bool
 }
@@ -26,7 +25,6 @@ func NewMetricsMiddleware(worker appmetrics.Worker, cfg *config.Config) *Metrics
 	return &MetricsMiddleware{
 		worker:              worker,
 		telemetryEnabled:    cfg.Telemetry.Enabled,
-		hasDefaultExporters: worker.HasDefaultExporters(),
 		enableRequestTraces: cfg.Telemetry.EnableRequestTraces,
 		enablePluginTraces:  cfg.Telemetry.EnablePluginTraces,
 	}
@@ -60,7 +58,7 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 			resp := m.buildResponseContext(c, gatewayID)
 			endTime := time.Now()
 			requestTrace.OnComplete(func() {
-				m.worker.Process(nil, requestTrace, req, resp, startTime, endTime)
+				m.worker.Process(requestTrace, req, resp, startTime, endTime)
 			})
 			requestTrace.Done()
 		}()
@@ -93,14 +91,14 @@ func (m *MetricsMiddleware) streamFinalizer(
 		}
 		endTime := time.Now()
 		requestTrace.OnComplete(func() {
-			m.worker.Process(nil, requestTrace, req, resp, startTime, endTime)
+			m.worker.Process(requestTrace, req, resp, startTime, endTime)
 		})
 		requestTrace.Done()
 	}
 }
 
 func (m *MetricsMiddleware) enabled() bool {
-	return m.telemetryEnabled || m.hasDefaultExporters
+	return m.telemetryEnabled
 }
 
 func (m *MetricsMiddleware) resolveTraceID(c *fiber.Ctx) string {
