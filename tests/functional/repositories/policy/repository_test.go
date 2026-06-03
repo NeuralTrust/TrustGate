@@ -65,7 +65,7 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 func seedConsumer(t *testing.T, conn *database.Connection, gwID ids.GatewayID, name string) ids.ConsumerID {
 	t.Helper()
 	ctx := context.Background()
-	reg, err := registrydomain.NewRegistry(gwID, name+"-reg", "openai", nil, "", 1, nil, nil)
+	reg, err := registrydomain.NewRegistry(gwID, name+"-reg", "openai", nil, "", 1, registrydomain.NewAPIKeyAuth("sk-test"), nil)
 	if err != nil {
 		t.Fatalf("registry domain.NewRegistry: %v", err)
 	}
@@ -76,7 +76,7 @@ func seedConsumer(t *testing.T, conn *database.Connection, gwID ids.GatewayID, n
 		GatewayID:   gwID,
 		Name:        name,
 		Type:        consumerdomain.TypeLLM,
-		Path:        "/v1/chat/completions",
+		Path:        "/v1/" + name,
 		RegistryIDs: []ids.RegistryID{reg.ID},
 	})
 	if err != nil {
