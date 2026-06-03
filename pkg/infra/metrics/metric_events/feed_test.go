@@ -103,8 +103,9 @@ func TestEvent_FeedRedactsSensitiveHeaders(t *testing.T) {
 		RequestHeaders: map[string][]string{
 			"Authorization": {"Bearer super-secret-token"},
 			"X-Api-Key":     {"sk-12345"},
+			"X-AG-API-Key":  {"ag_supersecret"},
 			"cookie":        {"session=abc"},
-			"X-Gateway-Id":  {"gw-1"},
+			"X-Request-Id":  {"req-1"},
 		},
 		ResponseHeaders: map[string][]string{
 			"Set-Cookie":   {"session=abc; HttpOnly"},
@@ -116,8 +117,9 @@ func TestEvent_FeedRedactsSensitiveHeaders(t *testing.T) {
 
 	assert.Equal(t, []string{"[REDACTED]"}, evt.RequestHeaders["Authorization"])
 	assert.Equal(t, []string{"[REDACTED]"}, evt.RequestHeaders["X-Api-Key"])
+	assert.Equal(t, []string{"[REDACTED]"}, evt.RequestHeaders["X-AG-API-Key"], "the ingress api key must be redacted")
 	assert.Equal(t, []string{"[REDACTED]"}, evt.RequestHeaders["cookie"], "redaction is case-insensitive")
-	assert.Equal(t, []string{"gw-1"}, evt.RequestHeaders["X-Gateway-Id"], "non-sensitive headers preserved")
+	assert.Equal(t, []string{"req-1"}, evt.RequestHeaders["X-Request-Id"], "non-sensitive headers preserved")
 	assert.Equal(t, []string{"[REDACTED]"}, evt.ResponseHeaders["Set-Cookie"])
 	assert.Equal(t, []string{"application/json"}, evt.ResponseHeaders["Content-Type"])
 }

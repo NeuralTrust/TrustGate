@@ -40,13 +40,11 @@ type ForwardResult struct {
 }
 
 type forwardRequestDTO struct {
-	backend  *domain.Registry
-	request  *infracontext.RequestContext
-	response *infracontext.ResponseContext
-	policies []*policydomain.Policy
-	// baseHeaders are the response headers contributed by the pre_request
-	// plugin stage (e.g. CORS, rate-limit quota headers). They are preserved
-	// across failover attempts so the upstream relay does not drop them.
+	backend     *domain.Registry
+	request     *infracontext.RequestContext
+	response    *infracontext.ResponseContext
+	policies    []*policydomain.Policy
+	plan        *appplugins.StagePlan
 	baseHeaders map[string][]string
 }
 
@@ -105,15 +103,16 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return nil, err
 	}
 
-	in.Request.RegistryID = bk.ID.String()
+	stampTarget(in.Request, bk)
 	resp := &infracontext.ResponseContext{
 		Context:    ctx,
 		GatewayID:  in.Request.GatewayID,
 		RegistryID: in.Request.RegistryID,
 	}
 	policies := in.Consumer.Policies
+	plan := in.Consumer.PolicyPlan
 
-	if short, err := f.runPreRequest(ctx, policies, in.Request, resp); err != nil {
+	if short, err := f.runPreRequest(ctx, policies, plan, in.Request, resp); err != nil {
 		return nil, err
 	} else if short != nil {
 		return short, nil
@@ -124,6 +123,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		request:     in.Request,
 		response:    resp,
 		policies:    policies,
+		plan:        plan,
 		baseHeaders: cloneHeaders(resp.Headers),
 	}
 	stream := DetectStream(dto.request)
@@ -303,10 +303,15 @@ func (f *forwarder) invokeOnce(
 
 func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Registry) {
 	dto.backend = bk
-	dto.request.RegistryID = bk.ID.String()
+	stampTarget(dto.request, bk)
 	if dto.response != nil {
 		dto.response.RegistryID = bk.ID.String()
 	}
+}
+
+func stampTarget(req *infracontext.RequestContext, bk *domain.Registry) {
+	req.RegistryID = bk.ID.String()
+	req.Provider = bk.Provider
 }
 
 func (f *forwarder) stampModelPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Registry) {
@@ -337,11 +342,14 @@ func (f *forwarder) finalizeStream(
 ) *ForwardResult {
 	pluginResp := dto.response
 	mergeProviderResponse(pluginResp, providerResp, true)
-	f.runPreResponse(ctx, dto.policies, dto.request, pluginResp)
+	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
+		go drainStream(providerResp.Stream)
+		return pluginErrorResult(pe)
+	}
 	return &ForwardResult{
 		StatusCode: providerResp.StatusCode,
 		Headers:    pluginResp.Headers,
-		Stream:     f.wrapStreamWithPostResponse(dto.policies, dto.request, pluginResp, providerResp.Stream),
+		Stream:     f.wrapStreamWithPostResponse(dto.policies, dto.plan, dto.request, pluginResp, providerResp.Stream),
 	}
 }
 
@@ -353,8 +361,8 @@ func (f *forwarder) finalizeBody(
 	pluginResp := dto.response
 	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeProviderResponse(pluginResp, providerResp, false)
-	f.runPreResponse(ctx, dto.policies, dto.request, pluginResp)
-	f.firePostResponse(dto.policies, dto.request, pluginResp)
+	f.runPreResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
+	f.firePostResponse(dto.policies, dto.plan, dto.request, pluginResp)
 	return &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,
@@ -370,10 +378,10 @@ func (f *forwarder) finalizeBodyGated(
 	pluginResp := dto.response
 	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeProviderResponse(pluginResp, providerResp, false)
-	if pe := f.runPreResponseGated(ctx, dto.policies, dto.request, pluginResp); pe != nil {
+	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
 		return pluginErrorResult(pe), pe
 	}
-	f.firePostResponse(dto.policies, dto.request, pluginResp)
+	f.firePostResponse(dto.policies, dto.plan, dto.request, pluginResp)
 	return &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,

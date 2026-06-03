@@ -49,12 +49,14 @@ type AdminRouterDeps struct {
 	ListPolicy   *policyhttp.ListPolicyHandler
 	UpdatePolicy *policyhttp.UpdatePolicyHandler
 	DeletePolicy *policyhttp.DeletePolicyHandler
+	GlobalPolicy *policyhttp.GlobalPolicyHandler
 
-	CreateConsumer *consumerhttp.CreateConsumerHandler
-	GetConsumer    *consumerhttp.GetConsumerHandler
-	ListConsumer   *consumerhttp.ListConsumerHandler
-	UpdateConsumer *consumerhttp.UpdateConsumerHandler
-	DeleteConsumer *consumerhttp.DeleteConsumerHandler
+	CreateConsumer      *consumerhttp.CreateConsumerHandler
+	GetConsumer         *consumerhttp.GetConsumerHandler
+	ListConsumer        *consumerhttp.ListConsumerHandler
+	UpdateConsumer      *consumerhttp.UpdateConsumerHandler
+	DeleteConsumer      *consumerhttp.DeleteConsumerHandler
+	ConsumerAssociation *consumerhttp.AssociationHandler
 
 	CreateAuth *authhttp.CreateAuthHandler
 	GetAuth    *authhttp.GetAuthHandler
@@ -106,6 +108,8 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	policies.Get("/:id", r.deps.GetPolicy.Handle)
 	policies.Put("/:id", r.deps.UpdatePolicy.Handle)
 	policies.Delete("/:id", r.deps.DeletePolicy.Handle)
+	policies.Post("/:id/global", r.deps.GlobalPolicy.SetGlobal)
+	policies.Delete("/:id/global", r.deps.GlobalPolicy.UnsetGlobal)
 
 	consumers := gw.Group("/:gateway_id/consumers")
 	consumers.Post("", r.deps.CreateConsumer.Handle)
@@ -113,6 +117,12 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	consumers.Get("/:id", r.deps.GetConsumer.Handle)
 	consumers.Put("/:id", r.deps.UpdateConsumer.Handle)
 	consumers.Delete("/:id", r.deps.DeleteConsumer.Handle)
+	consumers.Post("/:id/registries/:registry_id", r.deps.ConsumerAssociation.AttachRegistry)
+	consumers.Delete("/:id/registries/:registry_id", r.deps.ConsumerAssociation.DetachRegistry)
+	consumers.Post("/:id/auths/:auth_id", r.deps.ConsumerAssociation.AttachAuth)
+	consumers.Delete("/:id/auths/:auth_id", r.deps.ConsumerAssociation.DetachAuth)
+	consumers.Post("/:id/policies/:policy_id", r.deps.ConsumerAssociation.AttachPolicy)
+	consumers.Delete("/:id/policies/:policy_id", r.deps.ConsumerAssociation.DetachPolicy)
 
 	auths := gw.Group("/:gateway_id/auths")
 	auths.Post("", r.deps.CreateAuth.Handle)

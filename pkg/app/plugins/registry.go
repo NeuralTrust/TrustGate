@@ -7,25 +7,16 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 )
 
-// ErrUnknownPlugin is returned when a configuration references a plugin name
-// that is not present in the catalog.
 var ErrUnknownPlugin = fmt.Errorf("plugin: unknown plugin")
-
-// ErrDuplicatePlugin is returned when two plugins register under the same name.
 var ErrDuplicatePlugin = fmt.Errorf("plugin: duplicate registration")
-
-// ErrInvalidStages is returned when a plugin declares no stages or an unknown
-// stage at registration time.
 var ErrInvalidStages = fmt.Errorf("plugin: invalid declared stages")
 
-// Registry is the plugin catalog: it maps a plugin name to its implementation
-// and validates configuration settings against the matching plugin.
-//
 //go:generate mockery --name=Registry --dir=. --output=./mocks --filename=registry_mock.go --case=underscore --with-expecter
 type Registry interface {
 	Register(p Plugin) error
 	Get(name string) (Plugin, bool)
 	Validate(name string, settings map[string]any) error
+	ValidateStages(name string, selected []policy.Stage) error
 	Names() []string
 }
 
@@ -35,7 +26,6 @@ type registry struct {
 	plugins map[string]Plugin
 }
 
-// NewRegistry returns an empty catalog ready for Register calls.
 func NewRegistry() Registry {
 	return &registry{plugins: make(map[string]Plugin)}
 }
@@ -51,13 +41,21 @@ func (r *registry) Register(p Plugin) error {
 	if _, exists := r.plugins[name]; exists {
 		return fmt.Errorf("%w: %s", ErrDuplicatePlugin, name)
 	}
-	stages := p.Stages()
-	if len(stages) == 0 {
-		return fmt.Errorf("%w: %s declares no stages", ErrInvalidStages, name)
+	supported := p.SupportedStages()
+	if len(supported) == 0 {
+		return fmt.Errorf("%w: %s declares no supported stages", ErrInvalidStages, name)
 	}
-	for _, s := range stages {
+	for _, s := range supported {
 		if !s.IsValid() {
-			return fmt.Errorf("%w: %s declares %q", ErrInvalidStages, name, s)
+			return fmt.Errorf("%w: %s supports %q", ErrInvalidStages, name, s)
+		}
+	}
+	for _, s := range p.MandatoryStages() {
+		if !s.IsValid() {
+			return fmt.Errorf("%w: %s requires %q", ErrInvalidStages, name, s)
+		}
+		if !containsStage(supported, s) {
+			return fmt.Errorf("%w: %s requires %q outside its supported stages", ErrInvalidStages, name, s)
 		}
 	}
 	r.plugins[name] = p
@@ -77,6 +75,14 @@ func (r *registry) Validate(name string, settings map[string]any) error {
 	return p.ValidateConfig(settings)
 }
 
+func (r *registry) ValidateStages(name string, selected []policy.Stage) error {
+	p, ok := r.plugins[name]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnknownPlugin, name)
+	}
+	return ValidateStages(p, selected)
+}
+
 func (r *registry) Names() []string {
 	names := make([]string, 0, len(r.plugins))
 	for name := range r.plugins {
@@ -86,9 +92,8 @@ func (r *registry) Names() []string {
 	return names
 }
 
-// pluginRunsAtStage reports whether the plugin's fixed stages include stage.
-func pluginRunsAtStage(p Plugin, stage policy.Stage) bool {
-	for _, s := range p.Stages() {
+func containsStage(stages []policy.Stage, stage policy.Stage) bool {
+	for _, s := range stages {
 		if s == stage {
 			return true
 		}

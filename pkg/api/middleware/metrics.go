@@ -14,11 +14,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// headerGatewayID is the interim gateway identity header read by the auth
-// middleware's skeleton IdentityResolver. The metrics middleware sources the
-// gateway from the request context (attached by the auth middleware) instead.
-const headerGatewayID = "X-Gateway-Id"
-
 type MetricsMiddleware struct {
 	worker              appmetrics.Worker
 	telemetryEnabled    bool

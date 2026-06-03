@@ -35,49 +35,61 @@ func newUsageUpstream(t *testing.T, marker string, totalTokens int) *fakeUpstrea
 	return u
 }
 
-// policyPlugin builds a single enabled plugin entry for a policy payload. The
-// stage only has to be a valid enum: the executor drives each plugin at the
-// stages it declares via Stages(), ignoring the configured stage.
-func policyPlugin(name, stage string, settings map[string]any) map[string]any {
+// policyPlugin builds a single enabled policy payload for the given plugin
+// slug. Stages are left to the plugin: the executor drives each plugin at its
+// mandatory stages, so callers do not need to select any.
+func policyPlugin(slug string, settings map[string]any) map[string]any {
 	return map[string]any{
-		"name":     name,
+		"slug":     slug,
 		"enabled":  true,
-		"stage":    stage,
 		"priority": 0,
 		"settings": settings,
 	}
 }
 
-// setupPolicyRoute wires a full proxy route guarded by a policy: a gateway, one
-// OpenAI-compatible backend pointing at up, a policy carrying pluginEntries and
-// a consumer that references both. It returns the gateway id and the routing
-// path to POST against the proxy plane.
+// proxyAPIKeyHeader is the fixed ingress header the proxy plane reads the client
+// api key from. It mirrors middleware.HeaderAPIKey.
+const proxyAPIKeyHeader = "X-AG-API-Key"
+
+// setupPolicyRoute wires a full proxy route guarded by one or more policies: a
+// gateway, one OpenAI-compatible backend pointing at up, a policy per entry and
+// a consumer that references them all, plus an api_key credential attached to
+// that consumer. It returns that credential's key and the routing path to POST
+// against the proxy plane.
 func setupPolicyRoute(t *testing.T, up *fakeUpstream, pluginEntries ...map[string]any) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("plugin-gw")})
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
-	policyID := CreatePolicy(t, gatewayID, map[string]any{
-		"name":    uniqueName("pol"),
-		"plugins": pluginEntries,
-	})
 
-	path := "/v1/" + uniqueName("route")
-	CreateConsumer(t, gatewayID, map[string]any{
-		"name":         uniqueName("cons"),
-		"path":         path,
-		"registry_ids": []string{backendID},
-		"policy_ids":   []string{policyID},
-	})
-	return gatewayID, path
+	policyIDs := make([]string, 0, len(pluginEntries))
+	for _, entry := range pluginEntries {
+		payload := map[string]any{"name": uniqueName("pol")}
+		for k, v := range entry {
+			payload[k] = v
+		}
+		policyIDs = append(policyIDs, CreatePolicy(t, gatewayID, payload))
+	}
+
+	// The consumer's routing path is derived from its name by
+	// validConsumerPayload, so the returned path must match that exact name or
+	// MatchPath would 404 on the proxy plane.
+	name := uniqueName("cons")
+	path := "/v1/" + name
+	coID := CreateConsumerWithRegistries(t, gatewayID, name, backendID)
+	for _, policyID := range policyIDs {
+		AttachPolicy(t, gatewayID, coID, policyID)
+	}
+	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+	return apiKey, path
 }
 
-// proxyRequest forwards an arbitrary-method request through the proxy plane for
-// gatewayID at path, applying extra headers. body may be nil (no payload). It
-// identifies the gateway with the interim X-Gateway-Id header and returns the
-// status, response headers and the full body.
+// proxyRequest forwards an arbitrary-method request through the proxy plane
+// authenticating with apiKey at path, applying extra headers. body may be nil
+// (no payload). It presents the key in the fixed X-AG-API-Key header and returns
+// the status, response headers and the full body.
 func proxyRequest(
 	t *testing.T,
-	method, gatewayID, path string,
+	method, apiKey, path string,
 	headers map[string]string,
 	body []byte,
 ) (int, http.Header, []byte) {
@@ -89,7 +101,7 @@ func proxyRequest(
 	}
 	req, err := http.NewRequest(method, ProxyURL+path, reader)
 	require.NoError(t, err)
-	req.Header.Set("X-Gateway-Id", gatewayID)
+	req.Header.Set(proxyAPIKeyHeader, apiKey)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

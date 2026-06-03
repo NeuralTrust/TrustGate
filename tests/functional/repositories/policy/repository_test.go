@@ -10,13 +10,17 @@ import (
 	"time"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
+	consumerrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/consumer"
 	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
 	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/policy"
+	registryrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/registry"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -51,11 +55,37 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 	}
 
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "TRUNCATE TABLE policies, registries, gateways CASCADE")
+		_, _ = pool.Exec(context.Background(), "TRUNCATE TABLE consumer_policy, policies, consumers, registries, gateways CASCADE")
 		pool.Close()
 	})
 
 	return repo.NewRepository(conn), gatewayrepo.NewRepository(conn), conn
+}
+
+func seedConsumer(t *testing.T, conn *database.Connection, gwID ids.GatewayID, name string) ids.ConsumerID {
+	t.Helper()
+	ctx := context.Background()
+	reg, err := registrydomain.NewRegistry(gwID, name+"-reg", "openai", nil, "", 1, nil, nil)
+	if err != nil {
+		t.Fatalf("registry domain.NewRegistry: %v", err)
+	}
+	if err := registryrepo.NewRepository(conn).Save(ctx, reg); err != nil {
+		t.Fatalf("registry Save: %v", err)
+	}
+	cons, err := consumerdomain.New(consumerdomain.CreateParams{
+		GatewayID:   gwID,
+		Name:        name,
+		Type:        consumerdomain.TypeLLM,
+		Path:        "/v1/chat/completions",
+		RegistryIDs: []ids.RegistryID{reg.ID},
+	})
+	if err != nil {
+		t.Fatalf("consumer domain.New: %v", err)
+	}
+	if err := consumerrepo.NewRepository(conn).Save(ctx, cons); err != nil {
+		t.Fatalf("consumer Save: %v", err)
+	}
+	return cons.ID
 }
 
 func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.GatewayID {
@@ -72,15 +102,8 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.Gate
 
 func validPolicy(t *testing.T, gwID ids.GatewayID, name string) *domain.Policy {
 	t.Helper()
-	p, err := domain.NewPolicy(gwID, name, domain.Plugins{
-		{
-			Name:     "rate_limiter",
-			Enabled:  true,
-			Stage:    domain.StagePreRequest,
-			Priority: 0,
-			Settings: map[string]interface{}{"limit": 100},
-		},
-	})
+	p, err := domain.NewPolicy(gwID, name, "rate_limiter", true, 0, false,
+		map[string]any{"limit": 100}, []domain.Stage{domain.StagePreRequest})
 	if err != nil {
 		t.Fatalf("policy domain.NewPolicy: %v", err)
 	}
@@ -104,20 +127,23 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.ID != p.ID || got.GatewayID != gwID || got.Name != "default" {
 		t.Fatalf("FindByID returned %+v", got)
 	}
-	if len(got.Plugins) != 1 || got.Plugins[0].Name != "rate_limiter" {
-		t.Fatalf("Plugins round-trip lost data: %+v", got.Plugins)
+	if got.Slug != "rate_limiter" {
+		t.Fatalf("Slug round-trip lost data: %+v", got)
 	}
-	if got.Plugins[0].Stage != domain.StagePreRequest {
-		t.Fatalf("Plugin stage = %q, want %q", got.Plugins[0].Stage, domain.StagePreRequest)
+	if len(got.Stages) != 1 || got.Stages[0] != domain.StagePreRequest {
+		t.Fatalf("Stages round-trip lost data: %+v", got.Stages)
+	}
+	if got.Settings["limit"] != float64(100) {
+		t.Fatalf("Settings round-trip lost data: %+v", got.Settings)
 	}
 }
 
-func TestRepository_SaveAndFindByID_EmptyPlugins(t *testing.T) {
+func TestRepository_SaveAndFindByID_EmptySettings(t *testing.T) {
 	r, gw, _ := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, gw, "pgw-empty")
 
-	p, err := domain.NewPolicy(gwID, "empty", nil)
+	p, err := domain.NewPolicy(gwID, "empty", "cors", true, 0, false, nil, nil)
 	if err != nil {
 		t.Fatalf("domain.NewPolicy: %v", err)
 	}
@@ -128,11 +154,11 @@ func TestRepository_SaveAndFindByID_EmptyPlugins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
-	if got.Plugins == nil {
-		t.Fatal("Plugins should be a non-nil empty slice")
+	if len(got.Settings) != 0 {
+		t.Fatalf("Settings len = %d, want 0", len(got.Settings))
 	}
-	if len(got.Plugins) != 0 {
-		t.Fatalf("len = %d, want 0", len(got.Plugins))
+	if len(got.Stages) != 0 {
+		t.Fatalf("Stages len = %d, want 0", len(got.Stages))
 	}
 }
 
@@ -185,9 +211,9 @@ func TestRepository_Update(t *testing.T) {
 	}
 
 	p.Name = "alpha-renamed"
-	p.Plugins = domain.Plugins{
-		{Name: "cors", Enabled: false, Stage: domain.StagePostResponse},
-	}
+	p.Slug = "cors"
+	p.Enabled = false
+	p.Stages = []domain.Stage{domain.StagePostResponse}
 	p.UpdatedAt = time.Now().UTC()
 	if err := r.Update(ctx, p); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -200,8 +226,11 @@ func TestRepository_Update(t *testing.T) {
 	if got.Name != "alpha-renamed" {
 		t.Fatalf("Name = %q, want alpha-renamed", got.Name)
 	}
-	if len(got.Plugins) != 1 || got.Plugins[0].Name != "cors" {
-		t.Fatalf("Plugins not persisted: %+v", got.Plugins)
+	if got.Slug != "cors" || got.Enabled {
+		t.Fatalf("update not persisted: %+v", got)
+	}
+	if len(got.Stages) != 1 || got.Stages[0] != domain.StagePostResponse {
+		t.Fatalf("Stages not persisted: %+v", got.Stages)
 	}
 }
 
@@ -277,5 +306,124 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	}
 	if total != 3 || len(items) != 3 {
 		t.Fatalf("List all total=%d len=%d, want 3/3", total, len(items))
+	}
+}
+
+func TestRepository_GlobalFlag_RoundTripAndListByGateway(t *testing.T) {
+	r, gw, _ := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-global")
+
+	global := validPolicy(t, gwID, "global-pol")
+	if err := r.Save(ctx, global); err != nil {
+		t.Fatalf("Save global: %v", err)
+	}
+	if err := r.SetGlobal(ctx, global.ID, true); err != nil {
+		t.Fatalf("SetGlobal: %v", err)
+	}
+
+	scoped := validPolicy(t, gwID, "scoped-pol")
+	if err := r.Save(ctx, scoped); err != nil {
+		t.Fatalf("Save scoped: %v", err)
+	}
+
+	got, err := r.FindByID(ctx, global.ID)
+	if err != nil {
+		t.Fatalf("FindByID global: %v", err)
+	}
+	if !got.IsGlobal() {
+		t.Fatal("policy promoted via SetGlobal should report global")
+	}
+
+	all, err := r.ListByGateway(ctx, gwID)
+	if err != nil {
+		t.Fatalf("ListByGateway: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("ListByGateway len = %d, want 2", len(all))
+	}
+	var globals, scopedCount int
+	for _, p := range all {
+		if p.IsGlobal() {
+			globals++
+		} else {
+			scopedCount++
+		}
+	}
+	if globals != 1 || scopedCount != 1 {
+		t.Fatalf("expected 1 global + 1 scoped, got %d/%d", globals, scopedCount)
+	}
+}
+
+func TestRepository_ConsumerPolicyJunction_AttachDetachRoundTrip(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-junction")
+	c1 := seedConsumer(t, conn, gwID, "junction-a")
+	c2 := seedConsumer(t, conn, gwID, "junction-b")
+	consumers := consumerrepo.NewRepository(conn)
+
+	p := validPolicy(t, gwID, "linked")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Junctions are written exclusively through the consumer repository.
+	if err := consumers.AttachPolicy(ctx, c1, p.ID); err != nil {
+		t.Fatalf("AttachPolicy c1: %v", err)
+	}
+	if err := consumers.AttachPolicy(ctx, c2, p.ID); err != nil {
+		t.Fatalf("AttachPolicy c2: %v", err)
+	}
+	// Idempotent re-attach must not error.
+	if err := consumers.AttachPolicy(ctx, c1, p.ID); err != nil {
+		t.Fatalf("AttachPolicy c1 (idempotent): %v", err)
+	}
+
+	got, err := r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.ConsumerIDs) != 2 {
+		t.Fatalf("ConsumerIDs projection lost data: %+v", got.ConsumerIDs)
+	}
+
+	if err := consumers.DetachPolicy(ctx, c1, p.ID); err != nil {
+		t.Fatalf("DetachPolicy c1: %v", err)
+	}
+	got, err = r.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after detach: %v", err)
+	}
+	if len(got.ConsumerIDs) != 1 || got.ConsumerIDs[0] != c2 {
+		t.Fatalf("detach did not leave exactly c2: %+v", got.ConsumerIDs)
+	}
+}
+
+func TestRepository_DeletePolicy_CascadesJunction(t *testing.T) {
+	r, gw, conn := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "pgw-cascade")
+	c1 := seedConsumer(t, conn, gwID, "cascade-a")
+	consumers := consumerrepo.NewRepository(conn)
+
+	p := validPolicy(t, gwID, "cascade")
+	if err := r.Save(ctx, p); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := consumers.AttachPolicy(ctx, c1, p.ID); err != nil {
+		t.Fatalf("AttachPolicy: %v", err)
+	}
+	if err := r.Delete(ctx, p.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	var count int
+	if err := conn.Pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM consumer_policy WHERE policy_id = $1", p.ID).Scan(&count); err != nil {
+		t.Fatalf("count junction: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected junction rows to be cascaded on policy delete, got %d", count)
 	}
 }

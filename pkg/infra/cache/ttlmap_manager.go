@@ -12,6 +12,7 @@ const (
 	ConsumerDataTTLName = "consumer_data"
 	PolicyTTLName       = "policy"
 	AuthTTLName         = "auth"
+	AuthKeyTTLName      = "auth_key"
 	LoadBalancerTTLName = "lb"
 )
 
@@ -22,6 +23,7 @@ const (
 	ConsumerDataCacheTTL = 1 * time.Hour
 	PolicyCacheTTL       = 5 * time.Minute
 	AuthCacheTTL         = 5 * time.Minute
+	AuthKeyCacheTTL      = 5 * time.Minute
 	LoadBalancerCacheTTL = 5 * time.Minute
 )
 

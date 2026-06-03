@@ -23,4 +23,11 @@ type Repository interface {
 	// ListByGateway returns every consumer of a gateway, unpaginated. It backs
 	// the per-gateway aggregated read model consumed on the hot path.
 	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Consumer, error)
+
+	AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error
+	DetachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error
+	AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error
+	DetachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error
+	AttachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error
+	DetachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error
 }

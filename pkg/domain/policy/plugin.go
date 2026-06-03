@@ -1,11 +1,5 @@
 package policy
 
-import (
-	"database/sql/driver"
-	"encoding/json"
-	"fmt"
-)
-
 type Stage string
 
 const (
@@ -24,62 +18,9 @@ func (s Stage) IsValid() bool {
 	}
 }
 
-type Plugin struct {
-	ID       string                 `json:"id,omitempty"`
-	Name     string                 `json:"name"`
-	Enabled  bool                   `json:"enabled"`
-	Stage    Stage                  `json:"stage"`
-	Priority int                    `json:"priority"`
-	Parallel bool                   `json:"parallel"`
-	Settings map[string]interface{} `json:"settings,omitempty"`
-}
-
-func (p *Plugin) Validate() error {
-	if p.Name == "" {
-		return fmt.Errorf("%w: name is required", ErrInvalidPlugin)
-	}
-	if !p.Stage.IsValid() {
-		return fmt.Errorf("%w: %q", ErrInvalidStage, p.Stage)
-	}
-	return nil
-}
-
-type Plugins []Plugin
-
-func (p Plugins) Validate() error {
-	seen := make(map[string]struct{}, len(p))
-	for i := range p {
-		if err := p[i].Validate(); err != nil {
-			return fmt.Errorf("plugin %d: %w", i, err)
-		}
-		key := p[i].Name + "|" + string(p[i].Stage)
-		if _, dup := seen[key]; dup {
-			return fmt.Errorf("%w: %s at stage %s", ErrDuplicatePlugin, p[i].Name, p[i].Stage)
-		}
-		seen[key] = struct{}{}
-	}
-	return nil
-}
-
-func (p Plugins) Value() (driver.Value, error) {
-	if len(p) == 0 {
-		return []byte("[]"), nil
-	}
-	return json.Marshal(p)
-}
-
-func (p *Plugins) Scan(value interface{}) error {
-	if value == nil {
-		*p = make(Plugins, 0)
-		return nil
-	}
-	bytes, ok := value.([]byte)
-	if !ok {
-		return fmt.Errorf("expected []byte, got %T", value)
-	}
-	if len(bytes) == 0 {
-		*p = make(Plugins, 0)
-		return nil
-	}
-	return json.Unmarshal(bytes, p)
+type PluginConfig struct {
+	ID       string
+	Slug     string
+	Name     string
+	Settings map[string]any
 }

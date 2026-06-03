@@ -22,6 +22,7 @@ var sensitiveHeaders = map[string]struct{}{
 	"cookie":               {},
 	"set-cookie":           {},
 	"x-api-key":            {},
+	"x-ag-api-key":         {},
 	"api-key":              {},
 	"x-auth-token":         {},
 	"x-access-token":       {},

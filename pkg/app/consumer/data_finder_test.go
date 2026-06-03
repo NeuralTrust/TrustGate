@@ -19,37 +19,55 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-func routableConsumer(gwID ids.GatewayID, policyIDs []ids.PolicyID, authIDs []ids.AuthID) *domain.Consumer {
+func routableConsumer(gwID ids.GatewayID, authIDs []ids.AuthID) *domain.Consumer {
 	now := time.Now().UTC()
 	return domain.Rehydrate(
 		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
 		"/v1/chat", "round-robin", nil,
 		nil, true,
-		[]ids.RegistryID{ids.New[ids.RegistryKind]()}, policyIDs, authIDs,
+		[]ids.RegistryID{ids.New[ids.RegistryKind]()}, authIDs,
 		nil,
 		nil,
 		now, now,
 	)
 }
 
-func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
+func hasPolicySlug(policies []*policydomain.Policy, slug string) bool {
+	for _, p := range policies {
+		if p.Slug == slug {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	pid := ids.New[ids.PolicyKind]()
 	aid := ids.New[ids.AuthKind]()
-	withAuth := routableConsumer(gwID, []ids.PolicyID{pid}, []ids.AuthID{aid})
-	policyOnly := routableConsumer(gwID, []ids.PolicyID{pid}, nil)
+	withAuth := routableConsumer(gwID, []ids.AuthID{aid})
+	plain := routableConsumer(gwID, nil)
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).
-		Return([]*domain.Consumer{withAuth, policyOnly}, nil).Once()
+		Return([]*domain.Consumer{withAuth, plain}, nil).Once()
+
+	// audit + ratelimit are gateway-global (explicit Global flag); ratelimitC1
+	// overrides ratelimit for withAuth by slug; multi is scoped to both consumers.
+	globalAudit := &policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "audit", Global: true}
+	globalRate := &policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "ratelimit", Global: true}
+	rateForC1 := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "ratelimit",
+		ConsumerIDs: []ids.ConsumerID{withAuth.ID},
+	}
+	multi := &policydomain.Policy{
+		ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "multi",
+		ConsumerIDs: []ids.ConsumerID{withAuth.ID, plain.ID},
+	}
 
 	policyRepo := policymocks.NewRepository(t)
-	policyRepo.EXPECT().
-		FindByIDs(mock.Anything, gwID, mock.MatchedBy(func(pids []ids.PolicyID) bool {
-			return len(pids) == 1 && pids[0] == pid
-		})).
-		Return([]*policydomain.Policy{{ID: pid, GatewayID: gwID}}, nil).Once()
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).
+		Return([]*policydomain.Policy{globalAudit, globalRate, rateForC1, multi}, nil).Once()
 
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().
@@ -63,7 +81,7 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 		FindByIDs(mock.Anything, gwID, mock.Anything).
 		Return(nil, nil).Once()
 
-	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, newCacheManager(), newTestLogger())
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, newCacheManager(), newTestLogger())
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
@@ -73,20 +91,44 @@ func TestDataFinder_FindByGateway_BuildsAggregateAndCaches(t *testing.T) {
 		t.Fatalf("expected 2 consumers, got %d", len(data.Consumers))
 	}
 
-	if data.Consumers[0].Consumer.ID != withAuth.ID {
+	c1 := data.Consumers[0]
+	if c1.Consumer.ID != withAuth.ID {
 		t.Fatal("expected repository order to be preserved")
 	}
-	if data.Consumers[1].Consumer.ID != policyOnly.ID {
-		t.Fatal("expected repository order to be preserved")
+	// withAuth: ratelimitC1 (override) + multi (scoped) + audit (global), ratelimit global dropped.
+	if len(c1.Policies) != 3 {
+		t.Fatalf("withAuth expected 3 policies, got %d", len(c1.Policies))
 	}
-	if len(data.Consumers[0].Policies) != 1 || data.Consumers[0].Policies[0].ID != pid {
-		t.Fatal("consumer did not resolve its policy")
+	for _, p := range c1.Policies {
+		if p.Slug == "ratelimit" && p.ID != rateForC1.ID {
+			t.Fatal("global ratelimit should have been overridden by the consumer-scoped one")
+		}
 	}
-	if len(data.Consumers[0].Auths) != 1 || data.Consumers[0].Auths[0].ID != aid {
+	if !hasPolicySlug(c1.Policies, "audit") || !hasPolicySlug(c1.Policies, "multi") {
+		t.Fatalf("withAuth missing expected policies: %+v", c1.Policies)
+	}
+	if len(c1.Auths) != 1 || c1.Auths[0].ID != aid {
 		t.Fatal("consumer did not resolve its auth")
 	}
-	if len(data.Consumers[1].Auths) != 0 {
-		t.Fatal("policy-only consumer must not resolve any auth")
+
+	c2 := data.Consumers[1]
+	if c2.Consumer.ID != plain.ID {
+		t.Fatal("expected repository order to be preserved")
+	}
+	// plain: multi (scoped) + audit + ratelimit (both globals, none overridden).
+	if len(c2.Policies) != 3 {
+		t.Fatalf("plain expected 3 policies, got %d", len(c2.Policies))
+	}
+	if !hasPolicySlug(c2.Policies, "audit") || !hasPolicySlug(c2.Policies, "ratelimit") || !hasPolicySlug(c2.Policies, "multi") {
+		t.Fatalf("plain missing expected policies: %+v", c2.Policies)
+	}
+	for _, p := range c2.Policies {
+		if p.Slug == "ratelimit" && p.ID != globalRate.ID {
+			t.Fatal("plain should keep the global ratelimit policy")
+		}
+	}
+	if len(c2.Auths) != 0 {
+		t.Fatal("plain consumer must not resolve any auth")
 	}
 
 	again, err := finder.FindByGateway(context.Background(), gwID)
@@ -108,7 +150,7 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
 		"/v1/chat", "round-robin", nil,
 		nil, true,
-		[]ids.RegistryID{poolID}, nil, nil,
+		[]ids.RegistryID{poolID}, nil,
 		&domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
@@ -134,10 +176,13 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 			{ID: fb2, GatewayID: gwID, Provider: "mistral"},
 		}, nil).Once()
 
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Once()
+
 	finder := appconsumer.NewDataFinder(
 		repo, registryRepo,
-		policymocks.NewRepository(t), authmocks.NewRepository(t),
-		newCacheManager(), newTestLogger(),
+		policyRepo, authmocks.NewRepository(t),
+		nil, newCacheManager(), newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
@@ -166,7 +211,7 @@ func TestDataFinder_FindByGateway_CacheHitSkipsRepositories(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repomocks.NewRepository(t), backendmocks.NewRepository(t),
 		policymocks.NewRepository(t), authmocks.NewRepository(t),
-		mgr, newTestLogger(),
+		nil, mgr, newTestLogger(),
 	)
 
 	got, err := finder.FindByGateway(context.Background(), gwID)
@@ -187,10 +232,13 @@ func TestDataFinder_FindByGateway_RecoversFromCorruptCacheEntry(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Consumer{}, nil).Once()
 
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Once()
+
 	finder := appconsumer.NewDataFinder(
 		repo, backendmocks.NewRepository(t),
-		policymocks.NewRepository(t), authmocks.NewRepository(t),
-		mgr, newTestLogger(),
+		policyRepo, authmocks.NewRepository(t),
+		nil, mgr, newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)

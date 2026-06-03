@@ -40,6 +40,7 @@ func initializeMemoryCache(mgr *cache.TTLMapManager) {
 	mgr.CreateTTLMap(cache.ConsumerDataTTLName, cache.ConsumerDataCacheTTL)
 	mgr.CreateTTLMap(cache.PolicyTTLName, cache.PolicyCacheTTL)
 	mgr.CreateTTLMap(cache.AuthTTLName, cache.AuthCacheTTL)
+	mgr.CreateTTLMap(cache.AuthKeyTTLName, cache.AuthKeyCacheTTL)
 
 	lbMap := mgr.CreateTTLMap(cache.LoadBalancerTTLName, cache.LoadBalancerCacheTTL)
 	// Cached load balancers own a background goroutine; close it when the entry

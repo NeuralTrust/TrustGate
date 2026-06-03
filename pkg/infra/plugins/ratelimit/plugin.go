@@ -14,33 +14,26 @@ import (
 	"github.com/google/uuid"
 )
 
-// PluginName is the catalog name used in policy configuration.
 const PluginName = "rate_limiter"
 
 var _ appplugins.Plugin = (*Plugin)(nil)
 
-// Plugin enforces request-count limits per fingerprint, IP, user, or globally
-// using a Redis sorted-set sliding window.
 type Plugin struct {
 	redis *redis.Client
 	now   func() time.Time
 	newID func() string
 }
 
-// Option customizes the plugin; used mainly to make tests deterministic.
 type Option func(*Plugin)
 
-// WithClock overrides the time source.
 func WithClock(now func() time.Time) Option {
 	return func(p *Plugin) { p.now = now }
 }
 
-// WithIDGenerator overrides the sorted-set member id source.
 func WithIDGenerator(newID func() string) Option {
 	return func(p *Plugin) { p.newID = newID }
 }
 
-// New builds a rate limiter backed by the given Redis client.
 func New(redisClient *redis.Client, opts ...Option) *Plugin {
 	p := &Plugin{
 		redis: redisClient,
@@ -55,7 +48,11 @@ func New(redisClient *redis.Client, opts ...Option) *Plugin {
 
 func (p *Plugin) Name() string { return PluginName }
 
-func (p *Plugin) Stages() []policy.Stage {
+func (p *Plugin) MandatoryStages() []policy.Stage {
+	return []policy.Stage{policy.StagePreRequest}
+}
+
+func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest}
 }
 

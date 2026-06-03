@@ -65,7 +65,7 @@ func openAIBody() []byte {
 func newInput(stage policy.Stage, req *infracontext.RequestContext, resp *infracontext.ResponseContext) appplugins.ExecInput {
 	return appplugins.ExecInput{
 		Stage:    stage,
-		Config:   policy.Plugin{ID: "sc-1", Name: PluginName, Settings: baseSettings()},
+		Config:   policy.PluginConfig{ID: "sc-1", Slug: PluginName, Name: PluginName, Settings: baseSettings()},
 		Request:  req,
 		Response: resp,
 	}
@@ -73,7 +73,8 @@ func newInput(stage policy.Stage, req *infracontext.RequestContext, resp *infrac
 
 func TestPlugin_StagesAndName(t *testing.T) {
 	p := New(nil, nil, nil)
-	assert.Equal(t, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, p.Stages())
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, p.MandatoryStages())
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, p.SupportedStages())
 	assert.Equal(t, PluginName, p.Name())
 }
 

@@ -128,7 +128,6 @@ func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/v1/chat/completions", nil)
-	req.Header.Set("X-Gateway-Id", "gw-1")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)

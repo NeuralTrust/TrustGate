@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
+	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	gwmocks "github.com/NeuralTrust/AgentGateway/pkg/app/gateway/mocks"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
@@ -20,16 +21,27 @@ import (
 
 const testGatewayID = "11111111-1111-1111-1111-111111111111"
 
+// newSessionApp builds a fiber app whose session middleware reads the gateway
+// from the request context. When gw is non-nil, a preceding middleware injects
+// the gateway id onto the context exactly as the auth middleware would; when it
+// is nil, nothing is injected so the session middleware sees no gateway.
 func newSessionApp(t *testing.T, gw *domain.Gateway) (*fiber.App, *string) {
 	t.Helper()
 	finder := gwmocks.NewFinder(t)
+	gwID := ids.From[ids.GatewayKind](uuid.MustParse(testGatewayID))
 	if gw != nil {
-		finder.EXPECT().FindByID(mock.Anything, ids.From[ids.GatewayKind](uuid.MustParse(testGatewayID))).Return(gw, nil).Maybe()
+		finder.EXPECT().FindByID(mock.Anything, gwID).Return(gw, nil).Maybe()
 	}
 	mw := middleware.NewSessionMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)), finder)
 
 	captured := new(string)
 	app := fiber.New()
+	if gw != nil {
+		app.Use(func(c *fiber.Ctx) error {
+			c.SetUserContext(appconsumer.WithGatewayID(c.UserContext(), gwID))
+			return c.Next()
+		})
+	}
 	app.Post("/", mw.Middleware(), func(c *fiber.Ctx) error {
 		if v, ok := c.UserContext().Value(infracontext.SessionContextKey).(string); ok {
 			*captured = v
@@ -58,7 +70,7 @@ func doRequest(t *testing.T, app *fiber.App, body string, headers map[string]str
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
-func TestSession_NoGatewayHeader_Passthrough(t *testing.T) {
+func TestSession_NoGatewayInContext_Passthrough(t *testing.T) {
 	app, captured := newSessionApp(t, nil)
 	doRequest(t, app, `{}`, nil)
 	require.Empty(t, *captured)
@@ -66,36 +78,36 @@ func TestSession_NoGatewayHeader_Passthrough(t *testing.T) {
 
 func TestSession_NoConfig_Passthrough(t *testing.T) {
 	app, captured := newSessionApp(t, gatewayWithSession(nil))
-	doRequest(t, app, `{}`, map[string]string{"X-Gateway-Id": testGatewayID})
+	doRequest(t, app, `{}`, nil)
 	require.Empty(t, *captured)
 }
 
 func TestSession_Disabled_Passthrough(t *testing.T) {
 	app, captured := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: false, HeaderName: "X-Session-Id"}))
-	doRequest(t, app, `{}`, map[string]string{"X-Gateway-Id": testGatewayID, "X-Session-Id": "abc"})
+	doRequest(t, app, `{}`, map[string]string{"X-Session-Id": "abc"})
 	require.Empty(t, *captured)
 }
 
 func TestSession_FromHeader(t *testing.T) {
 	app, captured := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: true, HeaderName: "X-Session-Id"}))
-	doRequest(t, app, `{}`, map[string]string{"X-Gateway-Id": testGatewayID, "X-Session-Id": "sess-header"})
+	doRequest(t, app, `{}`, map[string]string{"X-Session-Id": "sess-header"})
 	require.Equal(t, "sess-header", *captured)
 }
 
 func TestSession_FromBody(t *testing.T) {
 	app, captured := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: true, BodyParamName: "session_id"}))
-	doRequest(t, app, `{"session_id":"sess-body"}`, map[string]string{"X-Gateway-Id": testGatewayID})
+	doRequest(t, app, `{"session_id":"sess-body"}`, nil)
 	require.Equal(t, "sess-body", *captured)
 }
 
 func TestSession_HeaderTakesPrecedenceOverBody(t *testing.T) {
 	app, captured := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: true, HeaderName: "X-Session-Id", BodyParamName: "session_id"}))
-	doRequest(t, app, `{"session_id":"sess-body"}`, map[string]string{"X-Gateway-Id": testGatewayID, "X-Session-Id": "sess-header"})
+	doRequest(t, app, `{"session_id":"sess-body"}`, map[string]string{"X-Session-Id": "sess-header"})
 	require.Equal(t, "sess-header", *captured)
 }
 
 func TestSession_InvalidJSONBody_Passthrough(t *testing.T) {
 	app, captured := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: true, BodyParamName: "session_id"}))
-	doRequest(t, app, `not-json`, map[string]string{"X-Gateway-Id": testGatewayID})
+	doRequest(t, app, `not-json`, nil)
 	require.Empty(t, *captured)
 }

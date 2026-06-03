@@ -153,10 +153,10 @@ func expectedAttempts() int {
 	return GlobalConfig.Provider.MaxRetries + 1
 }
 
-// proxyPost forwards body through the proxy plane for gatewayID at path. It
-// identifies the gateway with the interim X-Gateway-Id header and returns the
+// proxyPost forwards body through the proxy plane authenticating with apiKey at
+// path. It presents the key in the fixed X-AG-API-Key header and returns the
 // status, response headers and the full (buffered or streamed) body.
-func proxyPost(t *testing.T, gatewayID, path string, body any) (int, http.Header, []byte) {
+func proxyPost(t *testing.T, apiKey, path string, body any) (int, http.Header, []byte) {
 	t.Helper()
 	buf, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -164,7 +164,7 @@ func proxyPost(t *testing.T, gatewayID, path string, body any) (int, http.Header
 	req, err := http.NewRequest(http.MethodPost, ProxyURL+path, bytes.NewReader(buf))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Gateway-Id", gatewayID)
+	req.Header.Set(proxyAPIKeyHeader, apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -176,7 +176,10 @@ func proxyPost(t *testing.T, gatewayID, path string, body any) (int, http.Header
 }
 
 // setupRoute creates a gateway, one backend per upstream and a consumer routing
-// path to those registries, returning the gateway id and the routing path.
+// path to those registries, plus an api_key credential attached to the consumer.
+// It returns that credential's key (to authenticate at the proxy) and the
+// routing path. Registries are bound through the association endpoints after the
+// consumer is created (the link sub-resource flow).
 func setupRoute(t *testing.T, algorithm string, upstreams ...*fakeUpstream) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("proxy-gw")})
@@ -188,15 +191,18 @@ func setupRoute(t *testing.T, algorithm string, upstreams ...*fakeUpstream) (str
 
 	path := "/v1/" + uniqueName("route")
 	consumer := map[string]any{
-		"name":         uniqueName("cons"),
-		"path":         path,
-		"registry_ids": registryIDs,
+		"name": uniqueName("cons"),
+		"path": path,
 	}
 	if algorithm != "" {
 		consumer["algorithm"] = algorithm
 	}
-	CreateConsumer(t, gatewayID, consumer)
-	return gatewayID, path
+	coID := CreateConsumer(t, gatewayID, consumer)
+	for _, registryID := range registryIDs {
+		AttachRegistry(t, gatewayID, coID, registryID)
+	}
+	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+	return apiKey, path
 }
 
 func TestProxyE2E_NonStreaming_NoLB(t *testing.T) {
@@ -204,9 +210,9 @@ func TestProxyE2E_NonStreaming_NoLB(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		up := newJSONUpstream(t, "hello-from-upstream")
-		gatewayID, path := setupRoute(t, "", up)
+		apiKey, path := setupRoute(t, "", up)
 
-		status, headers, body := proxyPost(t, gatewayID, path, chatRequest(false))
+		status, headers, body := proxyPost(t, apiKey, path, chatRequest(false))
 
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
@@ -216,9 +222,9 @@ func TestProxyE2E_NonStreaming_NoLB(t *testing.T) {
 
 	t.Run("retries exhausted", func(t *testing.T) {
 		up := newFailingUpstream(t, http.StatusInternalServerError)
-		gatewayID, path := setupRoute(t, "", up)
+		apiKey, path := setupRoute(t, "", up)
 
-		status, _, body := proxyPost(t, gatewayID, path, chatRequest(false))
+		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
 
 		assert.Equal(t, http.StatusInternalServerError, status, "the final upstream error is relayed, body: %s", body)
 		assert.Equal(t, expectedAttempts(), up.Hits(), "every attempt (first + retries) must reach the upstream")
@@ -230,9 +236,9 @@ func TestProxyE2E_Streaming_NoLB(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		up := newStreamUpstream(t, "streamed-token")
-		gatewayID, path := setupRoute(t, "", up)
+		apiKey, path := setupRoute(t, "", up)
 
-		status, headers, body := proxyPost(t, gatewayID, path, chatRequest(true))
+		status, headers, body := proxyPost(t, apiKey, path, chatRequest(true))
 
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
@@ -243,9 +249,9 @@ func TestProxyE2E_Streaming_NoLB(t *testing.T) {
 
 	t.Run("retries exhausted", func(t *testing.T) {
 		up := newFailingUpstream(t, http.StatusInternalServerError)
-		gatewayID, path := setupRoute(t, "", up)
+		apiKey, path := setupRoute(t, "", up)
 
-		status, _, body := proxyPost(t, gatewayID, path, chatRequest(true))
+		status, _, body := proxyPost(t, apiKey, path, chatRequest(true))
 
 		// A pre-stream failure never opens a stream, so the budget is exhausted
 		// exactly like the synchronous path and the final error is relayed.
@@ -259,11 +265,11 @@ func TestProxyE2E_NonStreaming_LB(t *testing.T) {
 
 	upA := newJSONUpstream(t, "upstream-A")
 	upB := newJSONUpstream(t, "upstream-B")
-	gatewayID, path := setupRoute(t, "round-robin", upA, upB)
+	apiKey, path := setupRoute(t, "round-robin", upA, upB)
 
 	const total = 6
 	for i := 0; i < total; i++ {
-		status, headers, body := proxyPost(t, gatewayID, path, chatRequest(false))
+		status, headers, body := proxyPost(t, apiKey, path, chatRequest(false))
 		assert.Equal(t, http.StatusOK, status, "request %d body: %s", i, body)
 		assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
 	}
@@ -278,12 +284,12 @@ func TestProxyE2E_Streaming_LB(t *testing.T) {
 
 	upA := newStreamUpstream(t, "stream-A")
 	upB := newStreamUpstream(t, "stream-B")
-	gatewayID, path := setupRoute(t, "round-robin", upA, upB)
+	apiKey, path := setupRoute(t, "round-robin", upA, upB)
 
 	const total = 6
 	servedByA, servedByB := 0, 0
 	for i := 0; i < total; i++ {
-		status, headers, body := proxyPost(t, gatewayID, path, chatRequest(true))
+		status, headers, body := proxyPost(t, apiKey, path, chatRequest(true))
 		assert.Equal(t, http.StatusOK, status, "request %d body: %s", i, body)
 		assert.Equal(t, "openai", headers.Get("X-Selected-Provider"))
 		assert.Contains(t, string(body), "[DONE]", "request %d must yield a terminated stream", i)
@@ -303,23 +309,29 @@ func TestProxyE2E_Streaming_LB(t *testing.T) {
 
 // setupModelPolicyRoute wires a gateway with a single backend pointing at up and
 // a consumer that binds the given model policy to that backend, returning the
-// gateway id, the backend id and the routing path.
+// api key attached to that consumer and the routing path.
 func setupModelPolicyRoute(t *testing.T, up *fakeUpstream, allowed []string, defaultModel string) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mp-gw")})
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
+	name := uniqueName("cons")
 	path := "/v1/" + uniqueName("route")
+	coID := CreateConsumer(t, gatewayID, map[string]any{"name": name, "path": path})
+	AttachRegistry(t, gatewayID, coID, backendID)
+
 	policy := map[string]any{"registry_id": backendID, "allowed": allowed}
 	if defaultModel != "" {
 		policy["default"] = defaultModel
 	}
-	CreateConsumer(t, gatewayID, map[string]any{
-		"name":           uniqueName("cons"),
+	// model_policies reference an already-attached registry, so they are set on
+	// update once the association exists.
+	UpdateConsumer(t, gatewayID, coID, map[string]any{
+		"name":           name,
 		"path":           path,
-		"registry_ids":   []string{backendID},
 		"model_policies": []map[string]any{policy},
 	})
-	return gatewayID, path
+	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+	return apiKey, path
 }
 
 func TestProxyE2E_ModelPolicies(t *testing.T) {
@@ -327,9 +339,9 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 
 	t.Run("allowed model is forwarded", func(t *testing.T) {
 		up := newJSONUpstream(t, "allowed-served")
-		gatewayID, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "gpt-4o-mini")
+		apiKey, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "gpt-4o-mini")
 
-		status, _, body := proxyPost(t, gatewayID, path, chatRequestModel("gpt-4o-mini"))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("gpt-4o-mini"))
 
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Contains(t, string(body), "allowed-served")
@@ -338,9 +350,9 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 
 	t.Run("disallowed model is rejected with 403 and never reaches upstream", func(t *testing.T) {
 		up := newJSONUpstream(t, "should-not-be-served")
-		gatewayID, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "")
+		apiKey, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "")
 
-		status, _, body := proxyPost(t, gatewayID, path, chatRequestModel("gpt-4-forbidden"))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("gpt-4-forbidden"))
 
 		assert.Equal(t, http.StatusForbidden, status, "a disallowed model must be rejected, body: %s", body)
 		assert.Equal(t, 0, up.Hits(), "a rejected model must never reach the upstream")
@@ -348,9 +360,9 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 
 	t.Run("missing model injects the configured default", func(t *testing.T) {
 		up := newJSONUpstream(t, "default-served")
-		gatewayID, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "gpt-4o-mini")
+		apiKey, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "gpt-4o-mini")
 
-		status, _, body := proxyPost(t, gatewayID, path, chatRequestNoModel())
+		status, _, body := proxyPost(t, apiKey, path, chatRequestNoModel())
 
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Equal(t, 1, up.Hits())
@@ -361,24 +373,40 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 
 // setupFallbackRoute wires a gateway whose consumer routes to primary and, when
 // fallbackEnabled, fails over to the fallback backend on 5xx responses. It
-// returns the gateway id and routing path.
+// returns the api key attached to that consumer and the routing path.
 func setupFallbackRoute(t *testing.T, primary, fallback *fakeUpstream, fallbackEnabled bool) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("fb-gw")})
 	primaryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-primary"), primary.URL()))
 	fallbackID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-fallback"), fallback.URL()))
+	name := uniqueName("cons")
 	path := "/v1/" + uniqueName("route")
-	CreateConsumer(t, gatewayID, map[string]any{
-		"name":         uniqueName("cons"),
-		"path":         path,
-		"registry_ids": []string{primaryID},
+	coID := CreateConsumer(t, gatewayID, map[string]any{"name": name, "path": path})
+	AttachRegistry(t, gatewayID, coID, primaryID)
+	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+
+	if !fallbackEnabled {
+		// A disabled fallback is modeled by simply never wiring the fallback
+		// target: attaching it would fold it into the primary pool. The consumer
+		// routes only to the primary, so the upstream error is relayed as-is.
+		_ = fallbackID
+		return apiKey, path
+	}
+
+	// The fallback chain may only reference associated registries, so the
+	// fallback target is attached too; the data plane keeps it out of the
+	// primary pool so the failover ordering is preserved.
+	AttachRegistry(t, gatewayID, coID, fallbackID)
+	UpdateConsumer(t, gatewayID, coID, map[string]any{
+		"name": name,
+		"path": path,
 		"fallback": map[string]any{
-			"enabled":  fallbackEnabled,
+			"enabled":  true,
 			"triggers": []string{"http_5xx"},
 			"chain":    []string{fallbackID},
 		},
 	})
-	return gatewayID, path
+	return apiKey, path
 }
 
 func TestProxyE2E_Fallback(t *testing.T) {
@@ -387,9 +415,9 @@ func TestProxyE2E_Fallback(t *testing.T) {
 	t.Run("primary exhausts then fallback serves", func(t *testing.T) {
 		primary := newFailingUpstream(t, http.StatusInternalServerError)
 		fallback := newJSONUpstream(t, "fallback-served")
-		gatewayID, path := setupFallbackRoute(t, primary, fallback, true)
+		apiKey, path := setupFallbackRoute(t, primary, fallback, true)
 
-		status, headers, body := proxyPost(t, gatewayID, path, chatRequest(false))
+		status, headers, body := proxyPost(t, apiKey, path, chatRequest(false))
 
 		assert.Equal(t, http.StatusOK, status, "the fallback must rescue the request, body: %s", body)
 		assert.Contains(t, string(body), "fallback-served")
@@ -401,9 +429,9 @@ func TestProxyE2E_Fallback(t *testing.T) {
 	t.Run("all registries failing relays the final error", func(t *testing.T) {
 		primary := newFailingUpstream(t, http.StatusInternalServerError)
 		fallback := newFailingUpstream(t, http.StatusBadGateway)
-		gatewayID, path := setupFallbackRoute(t, primary, fallback, true)
+		apiKey, path := setupFallbackRoute(t, primary, fallback, true)
 
-		status, _, body := proxyPost(t, gatewayID, path, chatRequest(false))
+		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
 
 		assert.Equal(t, http.StatusBadGateway, status, "the final fallback error is relayed, body: %s", body)
 		assert.Equal(t, expectedAttempts(), primary.Hits(), "primary must be fully retried")
@@ -413,9 +441,9 @@ func TestProxyE2E_Fallback(t *testing.T) {
 	t.Run("disabled fallback never fails over", func(t *testing.T) {
 		primary := newFailingUpstream(t, http.StatusInternalServerError)
 		fallback := newJSONUpstream(t, "must-not-serve")
-		gatewayID, path := setupFallbackRoute(t, primary, fallback, false)
+		apiKey, path := setupFallbackRoute(t, primary, fallback, false)
 
-		status, _, body := proxyPost(t, gatewayID, path, chatRequest(false))
+		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
 
 		assert.Equal(t, http.StatusInternalServerError, status, "body: %s", body)
 		assert.Equal(t, expectedAttempts(), primary.Hits())

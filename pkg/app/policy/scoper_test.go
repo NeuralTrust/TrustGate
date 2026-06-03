@@ -1,0 +1,90 @@
+package policy_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
+	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+	"github.com/stretchr/testify/mock"
+)
+
+func TestScoper_SetGlobal_Success(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	existing := existingPolicy(t)
+	existing.GatewayID = gwID
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().SetGlobal(mock.Anything, existing.ID, true).Return(nil).Once()
+
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := scoper.SetGlobal(context.Background(), gwID, existing.ID)
+	if err != nil {
+		t.Fatalf("SetGlobal error: %v", err)
+	}
+	if !got.Global {
+		t.Fatal("policy should be global after SetGlobal")
+	}
+}
+
+func TestScoper_SetGlobal_AlreadyGlobalIsNoop(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	existing := existingPolicy(t)
+	existing.GatewayID = gwID
+	existing.Global = true
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	// No SetGlobal call expected: the state is unchanged.
+
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := scoper.SetGlobal(context.Background(), gwID, existing.ID)
+	if err != nil {
+		t.Fatalf("SetGlobal error: %v", err)
+	}
+	if !got.Global {
+		t.Fatal("policy should remain global")
+	}
+}
+
+func TestScoper_SetGlobal_RejectsForeignGateway(t *testing.T) {
+	t.Parallel()
+	existing := existingPolicy(t)
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	_, err := scoper.SetGlobal(context.Background(), ids.New[ids.GatewayKind](), existing.ID)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestScoper_UnsetGlobal_Success(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	existing := existingPolicy(t)
+	existing.GatewayID = gwID
+	existing.Global = true
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().SetGlobal(mock.Anything, existing.ID, false).Return(nil).Once()
+
+	scoper := apppolicy.NewScoper(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := scoper.UnsetGlobal(context.Background(), gwID, existing.ID)
+	if err != nil {
+		t.Fatalf("UnsetGlobal error: %v", err)
+	}
+	if got.Global {
+		t.Fatal("policy should not be global after UnsetGlobal")
+	}
+}

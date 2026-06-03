@@ -16,15 +16,8 @@ type CreateAuthRequest struct {
 }
 
 type ConfigRequest struct {
-	APIKey *APIKeyConfigRequest `json:"api_key,omitempty"`
 	OAuth2 *OAuth2ConfigRequest `json:"oauth2,omitempty"`
 	MTLS   *MTLSConfigRequest   `json:"mtls,omitempty"`
-}
-
-type APIKeyConfigRequest struct {
-	Key  string `json:"key"`
-	In   string `json:"in,omitempty"`
-	Name string `json:"name,omitempty"`
 }
 
 type OAuth2ConfigRequest struct {
@@ -67,13 +60,6 @@ func (r CreateAuthRequest) IsEnabled() bool {
 
 func (c ConfigRequest) ToDomain() domain.Config {
 	out := domain.Config{}
-	if c.APIKey != nil {
-		out.APIKey = &domain.APIKeyConfig{
-			Key:  c.APIKey.Key,
-			In:   c.APIKey.In,
-			Name: c.APIKey.Name,
-		}
-	}
 	if c.OAuth2 != nil {
 		out.OAuth2 = &domain.OAuth2Config{
 			Issuer:           c.OAuth2.Issuer,

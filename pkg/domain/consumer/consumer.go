@@ -41,7 +41,6 @@ type Consumer struct {
 	Headers         map[string]string         `json:"headers,omitempty"`
 	Active          bool                      `json:"active"`
 	RegistryIDs     registry.Registries       `json:"registry_ids"`
-	PolicyIDs       []ids.PolicyID            `json:"policy_ids"`
 	AuthIDs         []ids.AuthID              `json:"auth_ids"`
 	Fallback        *Fallback                 `json:"fallback,omitempty"`
 	ModelPolicies   ModelPolicies             `json:"model_policies,omitempty"`
@@ -59,7 +58,6 @@ type CreateParams struct {
 	Headers         map[string]string
 	Active          *bool
 	RegistryIDs     []ids.RegistryID
-	PolicyIDs       []ids.PolicyID
 	AuthIDs         []ids.AuthID
 	Fallback        *Fallback
 	ModelPolicies   ModelPolicies
@@ -86,7 +84,6 @@ func New(params CreateParams) (*Consumer, error) {
 		Headers:         params.Headers,
 		Active:          active,
 		RegistryIDs:     params.RegistryIDs,
-		PolicyIDs:       params.PolicyIDs,
 		AuthIDs:         params.AuthIDs,
 		Fallback:        params.Fallback,
 		ModelPolicies:   params.ModelPolicies,
@@ -109,7 +106,6 @@ func Rehydrate(
 	headers map[string]string,
 	active bool,
 	registryIDs []ids.RegistryID,
-	policyIDs []ids.PolicyID,
 	authIDs []ids.AuthID,
 	fallback *Fallback,
 	modelPolicies ModelPolicies,
@@ -126,7 +122,6 @@ func Rehydrate(
 		Headers:         headers,
 		Active:          active,
 		RegistryIDs:     registryIDs,
-		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
 		Fallback:        fallback,
 		ModelPolicies:   modelPolicies,
@@ -164,14 +159,10 @@ func (c *Consumer) Validate() error {
 		if err := c.EmbeddingConfig.Validate(); err != nil {
 			return err
 		}
-	}
-	if len(c.RegistryIDs) == 0 {
-		return ErrNoBackends
+	} else if c.EmbeddingConfig != nil {
+		return fmt.Errorf("%w: embedding_config is only valid for the semantic algorithm", ErrInvalidEmbeddingConfig)
 	}
 	if err := c.RegistryIDs.Validate(); err != nil {
-		return err
-	}
-	if err := validateUniqueIDs(c.PolicyIDs, ErrInvalidPolicyID, "policy"); err != nil {
 		return err
 	}
 	if err := validateUniqueIDs(c.AuthIDs, ErrInvalidAuthID, "auth"); err != nil {
@@ -199,9 +190,6 @@ func (c *Consumer) knownRegistryIDs() map[ids.RegistryID]struct{} {
 	return known
 }
 
-// identifier constrains the strongly typed domain IDs that share comparison,
-// nil-detection and string rendering. It lets the slice helpers below stay
-// generic across PolicyID, AuthID, etc.
 type identifier interface {
 	comparable
 	fmt.Stringer
@@ -220,61 +208,4 @@ func validateUniqueIDs[T identifier](list []T, invalidErr error, label string) e
 		seen[id] = struct{}{}
 	}
 	return nil
-}
-
-func (c *Consumer) AttachBackend(id ids.RegistryID) bool {
-	out, ok := c.RegistryIDs.Attach(id)
-	c.RegistryIDs = out
-	return ok
-}
-
-func (c *Consumer) DetachBackend(id ids.RegistryID) bool {
-	out, ok := c.RegistryIDs.Detach(id)
-	c.RegistryIDs = out
-	return ok
-}
-
-func (c *Consumer) AttachPolicy(id ids.PolicyID) bool {
-	out, ok := attachID(c.PolicyIDs, id)
-	c.PolicyIDs = out
-	return ok
-}
-
-func (c *Consumer) DetachPolicy(id ids.PolicyID) bool {
-	out, ok := detachID(c.PolicyIDs, id)
-	c.PolicyIDs = out
-	return ok
-}
-
-func (c *Consumer) AttachAuth(id ids.AuthID) bool {
-	out, ok := attachID(c.AuthIDs, id)
-	c.AuthIDs = out
-	return ok
-}
-
-func (c *Consumer) DetachAuth(id ids.AuthID) bool {
-	out, ok := detachID(c.AuthIDs, id)
-	c.AuthIDs = out
-	return ok
-}
-
-func attachID[T identifier](list []T, id T) ([]T, bool) {
-	if id.IsNil() {
-		return list, false
-	}
-	for _, existing := range list {
-		if existing == id {
-			return list, false
-		}
-	}
-	return append(list, id), true
-}
-
-func detachID[T identifier](list []T, id T) ([]T, bool) {
-	for i, existing := range list {
-		if existing == id {
-			return append(list[:i], list[i+1:]...), true
-		}
-	}
-	return list, false
 }
