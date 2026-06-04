@@ -31,6 +31,21 @@ func TestCreatePolicy_Success(t *testing.T) {
 	assert.Equal(t, true, body["enabled"])
 }
 
+func TestCreatePolicy_WithDescription(t *testing.T) {
+	defer Track(t, "CreatePolicy")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw-desc")})
+
+	name := uniqueName("pol-desc")
+	payload := validPolicyPayload(name)
+	payload["description"] = "limits requests per minute"
+
+	url := fmt.Sprintf("%s/v1/gateways/%s/policies", AdminURL, gwID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, payload)
+
+	require.Equal(t, http.StatusCreated, status, "body=%v", body)
+	assert.Equal(t, "limits requests per minute", body["description"])
+}
+
 func TestCreatePolicy_ValidationMissingSlug(t *testing.T) {
 	defer Track(t, "CreatePolicy")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("pol-gw2")})

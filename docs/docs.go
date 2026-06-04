@@ -3110,6 +3110,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.CreatePolicyRequest": {
             "type": "object",
             "properties": {
+                "description": {
+                    "type": "string"
+                },
                 "enabled": {
                     "type": "boolean"
                 },
@@ -3140,6 +3143,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
             "type": "object",
             "properties": {
+                "description": {
+                    "type": "string"
+                },
                 "enabled": {
                     "type": "boolean"
                 },
@@ -3197,6 +3203,9 @@ const docTemplate = `{
                     }
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "description": {
                     "type": "string"
                 },
                 "enabled": {

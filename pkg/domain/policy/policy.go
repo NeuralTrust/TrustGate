@@ -12,6 +12,7 @@ type Policy struct {
 	GatewayID   ids.GatewayID    `json:"gateway_id"`
 	ConsumerIDs []ids.ConsumerID `json:"consumer_ids,omitempty"`
 	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
 	Slug        string           `json:"slug"`
 	Enabled     bool             `json:"enabled"`
 	Global      bool             `json:"global"`
@@ -36,6 +37,7 @@ func NewPolicy(
 	parallel bool,
 	settings map[string]any,
 	stages []Stage,
+	description string,
 ) (*Policy, error) {
 	id, err := ids.NewV7[ids.PolicyKind]()
 	if err != nil {
@@ -43,17 +45,18 @@ func NewPolicy(
 	}
 	now := time.Now().UTC()
 	p := &Policy{
-		ID:        id,
-		GatewayID: gatewayID,
-		Name:      name,
-		Slug:      slug,
-		Enabled:   enabled,
-		Priority:  priority,
-		Parallel:  parallel,
-		Settings:  settings,
-		Stages:    stages,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          id,
+		GatewayID:   gatewayID,
+		Name:        name,
+		Description: description,
+		Slug:        slug,
+		Enabled:     enabled,
+		Priority:    priority,
+		Parallel:    parallel,
+		Settings:    settings,
+		Stages:      stages,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if err := p.Validate(); err != nil {
 		return nil, err
@@ -66,6 +69,7 @@ func Rehydrate(
 	gatewayID ids.GatewayID,
 	consumerIDs []ids.ConsumerID,
 	name string,
+	description string,
 	slug string,
 	enabled bool,
 	global bool,
@@ -80,6 +84,7 @@ func Rehydrate(
 		GatewayID:   gatewayID,
 		ConsumerIDs: consumerIDs,
 		Name:        name,
+		Description: description,
 		Slug:        slug,
 		Enabled:     enabled,
 		Global:      global,

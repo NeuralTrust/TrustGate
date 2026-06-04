@@ -19,6 +19,7 @@ func sourcePolicy(gwID ids.GatewayID, name string) *domain.Policy {
 		GatewayID:   gwID,
 		ConsumerIDs: []ids.ConsumerID{ids.New[ids.ConsumerKind]()},
 		Name:        name,
+		Description: "rate limit policy",
 		Slug:        "rate_limiter",
 		Enabled:     true,
 		Global:      true,
@@ -33,6 +34,7 @@ func createInputMatcher(want apppolicy.CreateInput) interface{} {
 	return mock.MatchedBy(func(in apppolicy.CreateInput) bool {
 		return in.GatewayID == want.GatewayID &&
 			in.Name == want.Name &&
+			in.Description == want.Description &&
 			in.Slug == want.Slug &&
 			in.Enabled == want.Enabled &&
 			in.Priority == want.Priority &&
@@ -43,7 +45,7 @@ func createInputMatcher(want apppolicy.CreateInput) interface{} {
 }
 
 func createFromInput(_ context.Context, in apppolicy.CreateInput) (*domain.Policy, error) {
-	return domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages)
+	return domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description)
 }
 
 func TestDuplicator_CopiesConfigWithFirstFreeSuffix(t *testing.T) {
@@ -63,14 +65,15 @@ func TestDuplicator_CopiesConfigWithFirstFreeSuffix(t *testing.T) {
 	creator := policymocks.NewCreator(t)
 	creator.EXPECT().
 		Create(mock.Anything, createInputMatcher(apppolicy.CreateInput{
-			GatewayID: gwID,
-			Name:      "Foo 2",
-			Slug:      "rate_limiter",
-			Enabled:   true,
-			Priority:  5,
-			Parallel:  true,
-			Settings:  map[string]any{"limit": 100},
-			Stages:    []domain.Stage{domain.StagePreRequest},
+			GatewayID:   gwID,
+			Name:        "Foo 2",
+			Description: "rate limit policy",
+			Slug:        "rate_limiter",
+			Enabled:     true,
+			Priority:    5,
+			Parallel:    true,
+			Settings:    map[string]any{"limit": 100},
+			Stages:      []domain.Stage{domain.StagePreRequest},
 		})).
 		RunAndReturn(createFromInput).
 		Once()
@@ -97,6 +100,9 @@ func TestDuplicator_CopiesConfigWithFirstFreeSuffix(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Stages, src.Stages) {
 		t.Fatalf("stages = %v, want %v", got.Stages, src.Stages)
+	}
+	if got.Description != src.Description {
+		t.Fatalf("description = %q, want %q", got.Description, src.Description)
 	}
 }
 

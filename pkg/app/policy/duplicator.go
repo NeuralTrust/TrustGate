@@ -56,14 +56,15 @@ func (d *duplicator) Duplicate(ctx context.Context, gatewayID ids.GatewayID, id 
 	n := nextSuffix(base, start, taken)
 	for attempt := 0; attempt < duplicateMaxAttempts; attempt++ {
 		p, createErr := d.creator.Create(ctx, CreateInput{
-			GatewayID: gatewayID,
-			Name:      composeName(base, n),
-			Slug:      src.Slug,
-			Enabled:   src.Enabled,
-			Priority:  src.Priority,
-			Parallel:  src.Parallel,
-			Settings:  cloneSettings(src.Settings),
-			Stages:    cloneStages(src.Stages),
+			GatewayID:   gatewayID,
+			Name:        composeName(base, n),
+			Description: src.Description,
+			Slug:        src.Slug,
+			Enabled:     src.Enabled,
+			Priority:    src.Priority,
+			Parallel:    src.Parallel,
+			Settings:    cloneSettings(src.Settings),
+			Stages:      cloneStages(src.Stages),
 		})
 		if createErr == nil {
 			return p, nil

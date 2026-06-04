@@ -12,15 +12,16 @@ import (
 )
 
 type UpdateInput struct {
-	ID        ids.PolicyID
-	GatewayID ids.GatewayID
-	Name      string
-	Slug      string
-	Enabled   bool
-	Priority  int
-	Parallel  bool
-	Settings  map[string]any
-	Stages    []domain.Stage
+	ID          ids.PolicyID
+	GatewayID   ids.GatewayID
+	Name        string
+	Description string
+	Slug        string
+	Enabled     bool
+	Priority    int
+	Parallel    bool
+	Settings    map[string]any
+	Stages      []domain.Stage
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=policy_updater_mock.go --case=underscore --with-expecter
@@ -63,6 +64,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 		return nil, domain.ErrInvalidGatewayID
 	}
 	existing.Name = in.Name
+	existing.Description = in.Description
 	existing.Slug = in.Slug
 	existing.Enabled = in.Enabled
 	existing.Priority = in.Priority

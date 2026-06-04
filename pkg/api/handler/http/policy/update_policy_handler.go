@@ -51,15 +51,16 @@ func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	p, err := h.updater.Update(c.UserContext(), apppolicy.UpdateInput{
-		ID:        id,
-		GatewayID: gatewayID,
-		Name:      req.Name,
-		Slug:      req.Slug,
-		Enabled:   req.Enabled,
-		Priority:  req.Priority,
-		Parallel:  req.Parallel,
-		Settings:  req.Settings,
-		Stages:    req.ToStages(),
+		ID:          id,
+		GatewayID:   gatewayID,
+		Name:        req.Name,
+		Description: req.Description,
+		Slug:        req.Slug,
+		Enabled:     req.Enabled,
+		Priority:    req.Priority,
+		Parallel:    req.Parallel,
+		Settings:    req.Settings,
+		Stages:      req.ToStages(),
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

@@ -15,7 +15,7 @@ import (
 
 func existingPolicy(t *testing.T) *domain.Policy {
 	t.Helper()
-	p, err := domain.NewPolicy(ids.New[ids.GatewayKind](), "old", "rate_limiter", true, 0, false, nil, nil)
+	p, err := domain.NewPolicy(ids.New[ids.GatewayKind](), "old", "rate_limiter", true, 0, false, nil, nil, "old description")
 	if err != nil {
 		t.Fatalf("NewPolicy: %v", err)
 	}
@@ -24,10 +24,11 @@ func existingPolicy(t *testing.T) *domain.Policy {
 
 func validUpdateInput(id ids.PolicyID) apppolicy.UpdateInput {
 	return apppolicy.UpdateInput{
-		ID:      id,
-		Name:    "new",
-		Slug:    "rate_limiter",
-		Enabled: true,
+		ID:          id,
+		Name:        "new",
+		Description: "new description",
+		Slug:        "rate_limiter",
+		Enabled:     true,
 	}
 }
 
@@ -37,7 +38,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 	existing := existingPolicy(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
-		return p.ID == existing.ID && p.Name == "new"
+		return p.ID == existing.ID && p.Name == "new" && p.Description == "new description"
 	})).Return(nil).Once()
 
 	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
@@ -47,6 +48,9 @@ func TestUpdater_Update_Success(t *testing.T) {
 	}
 	if got.Name != "new" {
 		t.Fatalf("Name = %q, want %q", got.Name, "new")
+	}
+	if got.Description != "new description" {
+		t.Fatalf("Description = %q, want %q", got.Description, "new description")
 	}
 }
 
