@@ -45,7 +45,7 @@ func forwarderWithPlugin(t *testing.T, invoker appproxy.ProviderInvoker, p apppl
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, exec, nil, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, exec, nil, nil, newTestLogger(),
 	)
 }
 

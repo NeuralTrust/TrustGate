@@ -51,6 +51,9 @@ func TestCreator_Create_Success(t *testing.T) {
 	if g.Name != "Prod" || g.Status != "active" {
 		t.Fatalf("Create returned unexpected gateway: %+v", g)
 	}
+	if !g.SessionConfig.IsEnabled() {
+		t.Fatal("expected default session config to be enabled when none is provided")
+	}
 
 	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get(g.ID.String())
 	if !ok {
@@ -58,6 +61,27 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 	if cached.(*domain.Gateway).ID != g.ID {
 		t.Fatal("cached gateway ID mismatch")
+	}
+}
+
+func TestCreator_Create_PreservesExplicitSessionConfig(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	disabled := false
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+
+	mgr := newCacheManager()
+	creator := appgateway.NewCreator(repo, mgr, newTestLogger())
+
+	g, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Name:          "Prod",
+		SessionConfig: &domain.SessionConfig{Enabled: &disabled},
+	})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if g.SessionConfig.IsEnabled() {
+		t.Fatal("explicit enabled=false must be preserved")
 	}
 }
 

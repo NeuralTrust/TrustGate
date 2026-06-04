@@ -21,13 +21,25 @@ type Gateway struct {
 	UpdatedAt       time.Time            `json:"updated_at"`
 }
 
-// SessionConfig controls how the session middleware resolves a session
-// identifier for requests routed through the gateway. When nil (or Enabled is
-// false), session resolution is skipped.
 type SessionConfig struct {
-	Enabled       bool   `json:"enabled"`
+	Enabled       *bool  `json:"enabled,omitempty"`
 	HeaderName    string `json:"header_name,omitempty"`
 	BodyParamName string `json:"body_param_name,omitempty"`
+}
+
+func (s *SessionConfig) IsEnabled() bool {
+	if s == nil {
+		return true
+	}
+	if s.Enabled == nil {
+		return true
+	}
+	return *s.Enabled
+}
+
+func DefaultSessionConfig() *SessionConfig {
+	enabled := true
+	return &SessionConfig{Enabled: &enabled}
 }
 
 func New(name string) (*Gateway, error) {
