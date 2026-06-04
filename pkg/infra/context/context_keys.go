@@ -8,7 +8,8 @@ type ContextKey string
 const (
 	// SessionContextKey holds the session identifier resolved by the session
 	// middleware from the per-gateway session configuration.
-	SessionContextKey ContextKey = "session_id"
+	SessionContextKey          ContextKey = "session_id"
+	SessionGeneratedContextKey ContextKey = "session_id_generated"
 	// FingerprintIDContextKey holds the fingerprint identifier computed by the
 	// fingerprint middleware.
 	FingerprintIDContextKey ContextKey = "fingerprint_id"

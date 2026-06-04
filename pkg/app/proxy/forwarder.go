@@ -10,6 +10,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
+	appsession "github.com/NeuralTrust/AgentGateway/pkg/app/session"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
@@ -62,6 +63,7 @@ type forwarder struct {
 	lbGroup    singleflight.Group
 	invoker    ProviderInvoker
 	executor   appplugins.Executor
+	sessions   appsession.Store
 	maxRetries int
 	logger     *slog.Logger
 }
@@ -72,6 +74,7 @@ func NewForwarder(
 	manager *cache.TTLMapManager,
 	invoker ProviderInvoker,
 	executor appplugins.Executor,
+	sessions appsession.Store,
 	cfg *config.Config,
 	logger *slog.Logger,
 ) Forwarder {
@@ -81,6 +84,7 @@ func NewForwarder(
 		lbCache:    manager.GetTTLMap(cache.LoadBalancerTTLName),
 		invoker:    invoker,
 		executor:   executor,
+		sessions:   sessions,
 		maxRetries: maxRetriesFromConfig(cfg),
 		logger:     logger,
 	}
@@ -97,6 +101,8 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	if in.Consumer == nil || in.Consumer.Consumer == nil || len(in.Consumer.Registries) == 0 {
 		return nil, ErrNoBackendsInPool
 	}
+
+	f.stampContinuation(ctx, in.Request)
 
 	lb, bk, err := f.selectBackend(in.Consumer, in.Request)
 	if err != nil {
@@ -282,10 +288,63 @@ func (f *forwarder) recordSpan(
 		span.ObserveUsage(resp.Usage)
 		span.LLM.Model = resp.Model
 		span.LLM.FinishReason = resp.FinishReason
+		span.LLM.TurnID = resp.ResponseID
 	}
 	_ = rt.AddSpan(span)
 	span.End()
 	return span
+}
+
+func (f *forwarder) stampContinuation(ctx context.Context, req *infracontext.RequestContext) {
+	if f.sessions == nil || req == nil || req.SessionID == "" {
+		return
+	}
+	req.PreviousResponseID = f.sessions.LastTurnID(ctx, req.GatewayID, req.SessionID)
+}
+
+func (f *forwarder) recordSession(
+	ctx context.Context,
+	req *infracontext.RequestContext,
+	turnID, provider, model string,
+	statusCode int,
+) {
+	if f.sessions == nil || req == nil || req.SessionID == "" || turnID == "" {
+		return
+	}
+	if statusCode < 200 || statusCode >= 300 {
+		return
+	}
+	f.sessions.Record(ctx, appsession.RecordInput{
+		GatewayID: req.GatewayID,
+		SessionID: req.SessionID,
+		TurnID:    turnID,
+		Provider:  provider,
+		Model:     model,
+	})
+}
+
+func (f *forwarder) recordSessionOnStreamEnd(
+	ctx context.Context,
+	req *infracontext.RequestContext,
+	span *trace.Span,
+	statusCode int,
+	stream iter.Seq2[[]byte, error],
+) iter.Seq2[[]byte, error] {
+	if f.sessions == nil || span == nil || stream == nil || req == nil || req.SessionID == "" {
+		return stream
+	}
+	return func(yield func([]byte, error) bool) {
+		defer func() {
+			if attrs, ok := span.LLMAttrsCopy(); ok {
+				f.recordSession(ctx, req, attrs.TurnID, attrs.Provider, attrs.Model, statusCode)
+			}
+		}()
+		for line, err := range stream {
+			if !yield(line, err) {
+				return
+			}
+		}
+	}
 }
 
 func (f *forwarder) logRetry(bk *domain.Registry, reason error, budget *failoverBudget) {
@@ -358,6 +417,7 @@ func (f *forwarder) finalizeStream(
 	}
 	out := f.wrapStreamWithPostResponse(dto.policies, dto.plan, dto.request, pluginResp, providerResp.Stream)
 	out = retimeSpanOnStreamEnd(out, span, startedAt)
+	out = f.recordSessionOnStreamEnd(ctx, dto.request, span, providerResp.StatusCode, out)
 	return &ForwardResult{
 		StatusCode: providerResp.StatusCode,
 		Headers:    pluginResp.Headers,
@@ -397,6 +457,7 @@ func (f *forwarder) finalizeBody(
 	mergeProviderResponse(pluginResp, providerResp, false)
 	f.runPreResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
 	f.firePostResponse(dto.policies, dto.plan, dto.request, pluginResp)
+	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider, providerResp.Model, providerResp.StatusCode)
 	return &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,
@@ -416,6 +477,7 @@ func (f *forwarder) finalizeBodyGated(
 		return pluginErrorResult(pe), pe
 	}
 	f.firePostResponse(dto.policies, dto.plan, dto.request, pluginResp)
+	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider, providerResp.Model, providerResp.StatusCode)
 	return &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,

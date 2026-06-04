@@ -1,5 +1,3 @@
-// Package openai implements the embedding.Creator port against the OpenAI
-// embeddings API.
 package openai
 
 import (
@@ -15,7 +13,6 @@ import (
 )
 
 const (
-	// ProviderName is the embedding provider key used in the factory registry.
 	ProviderName = "openai"
 
 	defaultEmbeddingsURL = "https://api.openai.com/v1/embeddings"
@@ -24,16 +21,13 @@ const (
 
 var _ embedding.Creator = (*Creator)(nil)
 
-// Creator generates embeddings via the OpenAI embeddings API.
 type Creator struct {
 	httpClient *http.Client
 	baseURL    string
 }
 
-// Option customizes the Creator.
 type Option func(*Creator)
 
-// WithHTTPClient overrides the HTTP client.
 func WithHTTPClient(client *http.Client) Option {
 	return func(c *Creator) {
 		if client != nil {
@@ -42,7 +36,6 @@ func WithHTTPClient(client *http.Client) Option {
 	}
 }
 
-// WithBaseURL overrides the embeddings endpoint (used in tests).
 func WithBaseURL(url string) Option {
 	return func(c *Creator) {
 		if url != "" {
@@ -51,7 +44,6 @@ func WithBaseURL(url string) Option {
 	}
 }
 
-// NewCreator builds an OpenAI embedding creator.
 func NewCreator(opts ...Option) *Creator {
 	c := &Creator{
 		httpClient: &http.Client{Timeout: defaultTimeout},
@@ -74,7 +66,6 @@ type embeddingResponse struct {
 	} `json:"data"`
 }
 
-// Generate returns a normalized embedding for the given text.
 func (c *Creator) Generate(ctx context.Context, text, model string, cfg *embedding.Config) (*embedding.Embedding, error) {
 	if cfg == nil || cfg.Credentials.APIKey == "" {
 		return nil, fmt.Errorf("openai embedding: missing api key")
@@ -115,7 +106,6 @@ func (c *Creator) Generate(ctx context.Context, text, model string, cfg *embeddi
 	return &embedding.Embedding{Value: vector, CreatedAt: time.Now().UTC()}, nil
 }
 
-// normalize scales the vector to unit length so cosine similarity is stable.
 func normalize(v []float64) {
 	var sumSquares float64
 	for _, x := range v {

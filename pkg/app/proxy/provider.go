@@ -2,11 +2,13 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
@@ -20,6 +22,9 @@ const (
 	headerSelectedProvider = "X-Selected-Provider"
 	headerContentType      = "Content-Type"
 	contentTypeJSON        = "application/json"
+
+	responsesTurnIDPrefix = "resp_"
+	fieldPreviousResponse = "previous_response_id"
 )
 
 // ErrInvalidRequestPayload signals that the inbound body could not be decoded
@@ -46,6 +51,7 @@ type ProviderResponse struct {
 	Usage        *adapter.CanonicalUsage
 	Model        string
 	FinishReason string
+	ResponseID   string
 }
 
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
@@ -108,7 +114,7 @@ func (p *providerInvoker) Invoke(
 		return nil, fmt.Errorf("provider completions: %w", err)
 	}
 
-	usage, model, finishReason := p.decodeResponseMeta(respBody, prep.targetFormat)
+	usage, model, finishReason, responseID := p.decodeResponseMeta(respBody, prep.targetFormat)
 
 	if prep.crossFormat {
 		if adapted, aerr := p.registry.AdaptResponse(respBody, prep.sourceFormat, prep.targetFormat); aerr != nil {
@@ -129,15 +135,16 @@ func (p *providerInvoker) Invoke(
 		Usage:        usage,
 		Model:        model,
 		FinishReason: finishReason,
+		ResponseID:   responseID,
 	}, nil
 }
 
-func (p *providerInvoker) decodeResponseMeta(body []byte, format adapter.Format) (*adapter.CanonicalUsage, string, string) {
+func (p *providerInvoker) decodeResponseMeta(body []byte, format adapter.Format) (*adapter.CanonicalUsage, string, string, string) {
 	canonical, err := p.registry.DecodeResponseFor(body, format)
 	if err != nil || canonical == nil {
-		return nil, "", ""
+		return nil, "", "", ""
 	}
-	return canonical.Usage, canonical.Model, canonical.FinishReason
+	return canonical.Usage, canonical.Model, canonical.FinishReason, canonical.ID
 }
 
 func (p *providerInvoker) InvokeStream(
@@ -228,6 +235,8 @@ func (p *providerInvoker) prepare(
 		body = normalized
 	}
 
+	body = injectPreviousResponseID(body, targetFormat, req.PreviousResponseID)
+
 	return &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
@@ -241,6 +250,31 @@ func (p *providerInvoker) prepare(
 	}, nil
 }
 
+func injectPreviousResponseID(body []byte, targetFormat adapter.Format, previousResponseID string) []byte {
+	if previousResponseID == "" ||
+		targetFormat != adapter.FormatOpenAIResponses ||
+		!strings.HasPrefix(previousResponseID, responsesTurnIDPrefix) {
+		return body
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return body
+	}
+	if _, exists := obj[fieldPreviousResponse]; exists {
+		return body
+	}
+	raw, err := json.Marshal(previousResponseID)
+	if err != nil {
+		return body
+	}
+	obj[fieldPreviousResponse] = raw
+	merged, err := json.Marshal(obj)
+	if err != nil {
+		return body
+	}
+	return merged
+}
+
 func (p *providerInvoker) streamObserver(ctx context.Context) func(*adapter.CanonicalStreamChunk) {
 	requestTrace := trace.FromContext(ctx)
 	return func(chunk *adapter.CanonicalStreamChunk) {
@@ -248,6 +282,7 @@ func (p *providerInvoker) streamObserver(ctx context.Context) func(*adapter.Cano
 			return
 		}
 		requestTrace.ObserveLLMResult(chunk.Model, chunk.FinishReason)
+		requestTrace.ObserveLLMTurnID(chunk.ID)
 		if chunk.Usage == nil {
 			return
 		}

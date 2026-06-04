@@ -89,6 +89,9 @@ func (p *tracker) getUserAgent(ctx *fiber.Ctx) string {
 }
 
 func (p *tracker) getSessionID(ctx *fiber.Ctx) string {
+	if p.sessionGenerated(ctx) {
+		return ""
+	}
 	if v, ok := ctx.Locals(string(infracontext.SessionContextKey)).(string); ok && v != "" {
 		return v
 	}
@@ -96,4 +99,14 @@ func (p *tracker) getSessionID(ctx *fiber.Ctx) string {
 		return v
 	}
 	return ""
+}
+
+func (p *tracker) sessionGenerated(ctx *fiber.Ctx) bool {
+	if v, ok := ctx.Locals(string(infracontext.SessionGeneratedContextKey)).(bool); ok && v {
+		return true
+	}
+	if v, ok := ctx.Context().Value(infracontext.SessionGeneratedContextKey).(bool); ok && v {
+		return true
+	}
+	return false
 }

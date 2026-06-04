@@ -48,6 +48,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	g.Telemetry = in.Telemetry
 	g.ClientTLSConfig = in.ClientTLSConfig
 	g.SessionConfig = in.SessionConfig
+	if g.SessionConfig == nil {
+		g.SessionConfig = domain.DefaultSessionConfig()
+	}
 	if err := c.repo.Save(ctx, g); err != nil {
 		return nil, err
 	}

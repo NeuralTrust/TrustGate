@@ -80,7 +80,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"my-gateway\",\n  \"session_config\": {\n    \"enabled\": false,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"name\": \"my-gateway\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": { "raw": "{{base_url}}/v1/gateways", "host": ["{{base_url}}"], "path": ["v1", "gateways"] }
           }
@@ -559,7 +559,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"e2e-gateway\",\n  \"session_config\": {\n    \"enabled\": false,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"name\": \"e2e-gateway\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": { "raw": "{{base_url}}/v1/gateways", "host": ["{{base_url}}"], "path": ["v1", "gateways"] }
           }

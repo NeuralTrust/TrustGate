@@ -181,6 +181,20 @@ func (t *RequestTrace) ObserveLLMResult(model, finishReason string) {
 	}
 }
 
+func (t *RequestTrace) ObserveLLMTurnID(turnID string) {
+	if turnID == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i := len(t.spans) - 1; i >= 0; i-- {
+		if t.spans[i].Type == SpanLLM {
+			t.spans[i].SetTurnID(turnID)
+			return
+		}
+	}
+}
+
 func (t *RequestTrace) LLMUsage() *adapter.CanonicalUsage {
 	t.mu.Lock()
 	defer t.mu.Unlock()

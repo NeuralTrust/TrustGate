@@ -3,6 +3,7 @@ package middleware_test
 import (
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -19,13 +20,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testGatewayID = "11111111-1111-1111-1111-111111111111"
+const (
+	testGatewayID        = "11111111-1111-1111-1111-111111111111"
+	defaultSessionHeader = "X-Session-Id"
+)
 
-// newSessionApp builds a fiber app whose session middleware reads the gateway
-// from the request context. When gw is non-nil, a preceding middleware injects
-// the gateway id onto the context exactly as the auth middleware would; when it
-// is nil, nothing is injected so the session middleware sees no gateway.
-func newSessionApp(t *testing.T, gw *domain.Gateway) (*fiber.App, *string) {
+type sessionCapture struct {
+	sessionID string
+	generated bool
+}
+
+func newSessionApp(t *testing.T, gw *domain.Gateway) (*fiber.App, *sessionCapture) {
 	t.Helper()
 	finder := gwmocks.NewFinder(t)
 	gwID := ids.From[ids.GatewayKind](uuid.MustParse(testGatewayID))
@@ -34,7 +39,7 @@ func newSessionApp(t *testing.T, gw *domain.Gateway) (*fiber.App, *string) {
 	}
 	mw := middleware.NewSessionMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)), finder)
 
-	captured := new(string)
+	capt := &sessionCapture{}
 	app := fiber.New()
 	if gw != nil {
 		app.Use(func(c *fiber.Ctx) error {
@@ -44,21 +49,26 @@ func newSessionApp(t *testing.T, gw *domain.Gateway) (*fiber.App, *string) {
 	}
 	app.Post("/", mw.Middleware(), func(c *fiber.Ctx) error {
 		if v, ok := c.UserContext().Value(infracontext.SessionContextKey).(string); ok {
-			*captured = v
+			capt.sessionID = v
 		}
-		if v, ok := c.Locals(string(infracontext.SessionContextKey)).(string); ok && *captured == "" {
-			*captured = v
+		if v, ok := c.Locals(string(infracontext.SessionContextKey)).(string); ok && capt.sessionID == "" {
+			capt.sessionID = v
+		}
+		if v, ok := c.UserContext().Value(infracontext.SessionGeneratedContextKey).(bool); ok && v {
+			capt.generated = true
 		}
 		return c.SendStatus(fiber.StatusOK)
 	})
-	return app, captured
+	return app, capt
 }
 
 func gatewayWithSession(cfg *domain.SessionConfig) *domain.Gateway {
 	return &domain.Gateway{ID: ids.From[ids.GatewayKind](uuid.MustParse(testGatewayID)), Name: "gw", SessionConfig: cfg}
 }
 
-func doRequest(t *testing.T, app *fiber.App, body string, headers map[string]string) {
+func boolPtr(b bool) *bool { return &b }
+
+func doRequest(t *testing.T, app *fiber.App, body string, headers map[string]string) *http.Response {
 	t.Helper()
 	req := httptest.NewRequest(fiber.MethodPost, "/", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -68,46 +78,82 @@ func doRequest(t *testing.T, app *fiber.App, body string, headers map[string]str
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	return resp
 }
 
-func TestSession_NoGatewayInContext_Passthrough(t *testing.T) {
-	app, captured := newSessionApp(t, nil)
-	doRequest(t, app, `{}`, nil)
-	require.Empty(t, *captured)
+func requireValidUUID(t *testing.T, s string) {
+	t.Helper()
+	require.NotEmpty(t, s)
+	_, err := uuid.Parse(s)
+	require.NoError(t, err)
 }
 
-func TestSession_NoConfig_Passthrough(t *testing.T) {
-	app, captured := newSessionApp(t, gatewayWithSession(nil))
-	doRequest(t, app, `{}`, nil)
-	require.Empty(t, *captured)
+func TestSession_NoGatewayInContext_Generates(t *testing.T) {
+	app, capt := newSessionApp(t, nil)
+	resp := doRequest(t, app, `{}`, nil)
+	require.True(t, capt.generated)
+	requireValidUUID(t, capt.sessionID)
+	require.Equal(t, capt.sessionID, resp.Header.Get(defaultSessionHeader))
+}
+
+func TestSession_NoConfig_Generates(t *testing.T) {
+	app, capt := newSessionApp(t, gatewayWithSession(nil))
+	resp := doRequest(t, app, `{}`, nil)
+	require.True(t, capt.generated)
+	requireValidUUID(t, capt.sessionID)
+	require.Equal(t, capt.sessionID, resp.Header.Get(defaultSessionHeader))
 }
 
 func TestSession_Disabled_Passthrough(t *testing.T) {
-	app, captured := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: false, HeaderName: "X-Session-Id"}))
-	doRequest(t, app, `{}`, map[string]string{"X-Session-Id": "abc"})
-	require.Empty(t, *captured)
+	app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: boolPtr(false), HeaderName: defaultSessionHeader}))
+	resp := doRequest(t, app, `{}`, map[string]string{defaultSessionHeader: "abc"})
+	require.Empty(t, capt.sessionID)
+	require.False(t, capt.generated)
+	require.Empty(t, resp.Header.Get(defaultSessionHeader))
 }
 
-func TestSession_FromHeader(t *testing.T) {
-	app, captured := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: true, HeaderName: "X-Session-Id"}))
-	doRequest(t, app, `{}`, map[string]string{"X-Session-Id": "sess-header"})
-	require.Equal(t, "sess-header", *captured)
+func TestSession_ConfigWithoutEnabled_DefaultsOn(t *testing.T) {
+	app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{HeaderName: defaultSessionHeader}))
+	resp := doRequest(t, app, `{}`, map[string]string{defaultSessionHeader: "sess-header"})
+	require.Equal(t, "sess-header", capt.sessionID)
+	require.False(t, capt.generated)
+	require.Equal(t, "sess-header", resp.Header.Get(defaultSessionHeader))
+}
+
+func TestSession_DefaultHeader(t *testing.T) {
+	app, capt := newSessionApp(t, gatewayWithSession(nil))
+	resp := doRequest(t, app, `{}`, map[string]string{defaultSessionHeader: "sess-default"})
+	require.Equal(t, "sess-default", capt.sessionID)
+	require.False(t, capt.generated)
+	require.Equal(t, "sess-default", resp.Header.Get(defaultSessionHeader))
+}
+
+func TestSession_FromCustomHeader(t *testing.T) {
+	app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: boolPtr(true), HeaderName: "X-Custom-Session"}))
+	resp := doRequest(t, app, `{}`, map[string]string{"X-Custom-Session": "sess-header"})
+	require.Equal(t, "sess-header", capt.sessionID)
+	require.False(t, capt.generated)
+	require.Equal(t, "sess-header", resp.Header.Get(defaultSessionHeader))
 }
 
 func TestSession_FromBody(t *testing.T) {
-	app, captured := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: true, BodyParamName: "session_id"}))
+	app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: boolPtr(true), BodyParamName: "session_id"}))
 	doRequest(t, app, `{"session_id":"sess-body"}`, nil)
-	require.Equal(t, "sess-body", *captured)
+	require.Equal(t, "sess-body", capt.sessionID)
+	require.False(t, capt.generated)
 }
 
 func TestSession_HeaderTakesPrecedenceOverBody(t *testing.T) {
-	app, captured := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: true, HeaderName: "X-Session-Id", BodyParamName: "session_id"}))
-	doRequest(t, app, `{"session_id":"sess-body"}`, map[string]string{"X-Session-Id": "sess-header"})
-	require.Equal(t, "sess-header", *captured)
+	app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: boolPtr(true), HeaderName: defaultSessionHeader, BodyParamName: "session_id"}))
+	doRequest(t, app, `{"session_id":"sess-body"}`, map[string]string{defaultSessionHeader: "sess-header"})
+	require.Equal(t, "sess-header", capt.sessionID)
+	require.False(t, capt.generated)
 }
 
-func TestSession_InvalidJSONBody_Passthrough(t *testing.T) {
-	app, captured := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: true, BodyParamName: "session_id"}))
-	doRequest(t, app, `not-json`, nil)
-	require.Empty(t, *captured)
+func TestSession_NoClientValue_Generates(t *testing.T) {
+	app, capt := newSessionApp(t, gatewayWithSession(&domain.SessionConfig{Enabled: boolPtr(true), BodyParamName: "session_id"}))
+	resp := doRequest(t, app, `not-json`, nil)
+	require.True(t, capt.generated)
+	requireValidUUID(t, capt.sessionID)
+	require.Equal(t, capt.sessionID, resp.Header.Get(defaultSessionHeader))
 }

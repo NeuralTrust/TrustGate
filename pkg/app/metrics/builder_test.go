@@ -64,6 +64,7 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 			Provider:     "openai",
 			Model:        "gpt-4o-2024-08-06",
 			FinishReason: "stop",
+			TurnID:       "chatcmpl-abc",
 			Attempt:      1,
 			Outcome:      "success",
 			Usage:        &adapter.CanonicalUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
@@ -75,7 +76,6 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 		Path:         "/v1/chat/completions",
 		Body:         []byte(openAIRequestBody),
 		SourceFormat: string(adapter.FormatOpenAI),
-		Headers:      map[string][]string{"X-Conversation-Id": {"conv-9"}},
 	}
 	respBody := `{"id":"x","choices":[]}`
 	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(respBody)}
@@ -97,7 +97,7 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	assert.Equal(t, "c-1", evt.Consumer.ID)
 	assert.Equal(t, "support-bot", evt.Consumer.Name)
 	assert.Equal(t, "sess-1", evt.SessionID)
-	assert.Equal(t, "conv-9", evt.ConversationID)
+	assert.Equal(t, "chatcmpl-abc", evt.TurnID)
 
 	assert.Equal(t, "openai", evt.Request.Provider)
 	assert.Equal(t, "reg-1", evt.Request.RegistryID)
