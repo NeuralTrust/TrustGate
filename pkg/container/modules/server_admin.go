@@ -57,12 +57,13 @@ type adminRouterParams struct {
 	UpdateRegistry *registryhttp.UpdateRegistryHandler
 	DeleteRegistry *registryhttp.DeleteRegistryHandler
 
-	CreatePolicy *policyhttp.CreatePolicyHandler
-	GetPolicy    *policyhttp.GetPolicyHandler
-	ListPolicy   *policyhttp.ListPolicyHandler
-	UpdatePolicy *policyhttp.UpdatePolicyHandler
-	DeletePolicy *policyhttp.DeletePolicyHandler
-	GlobalPolicy *policyhttp.GlobalPolicyHandler
+	CreatePolicy    *policyhttp.CreatePolicyHandler
+	GetPolicy       *policyhttp.GetPolicyHandler
+	ListPolicy      *policyhttp.ListPolicyHandler
+	UpdatePolicy    *policyhttp.UpdatePolicyHandler
+	DeletePolicy    *policyhttp.DeletePolicyHandler
+	GlobalPolicy    *policyhttp.GlobalPolicyHandler
+	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
 
 	CreateConsumer      *consumerhttp.CreateConsumerHandler
 	GetConsumer         *consumerhttp.GetConsumerHandler
@@ -116,6 +117,7 @@ func ServerAdmin(c *container.Container) error {
 				UpdatePolicy:        p.UpdatePolicy,
 				DeletePolicy:        p.DeletePolicy,
 				GlobalPolicy:        p.GlobalPolicy,
+				DuplicatePolicy:     p.DuplicatePolicy,
 				CreateConsumer:      p.CreateConsumer,
 				GetConsumer:         p.GetConsumer,
 				ListConsumer:        p.ListConsumer,

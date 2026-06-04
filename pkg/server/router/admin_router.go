@@ -45,12 +45,13 @@ type AdminRouterDeps struct {
 	UpdateRegistry *registryhttp.UpdateRegistryHandler
 	DeleteRegistry *registryhttp.DeleteRegistryHandler
 
-	CreatePolicy *policyhttp.CreatePolicyHandler
-	GetPolicy    *policyhttp.GetPolicyHandler
-	ListPolicy   *policyhttp.ListPolicyHandler
-	UpdatePolicy *policyhttp.UpdatePolicyHandler
-	DeletePolicy *policyhttp.DeletePolicyHandler
-	GlobalPolicy *policyhttp.GlobalPolicyHandler
+	CreatePolicy    *policyhttp.CreatePolicyHandler
+	GetPolicy       *policyhttp.GetPolicyHandler
+	ListPolicy      *policyhttp.ListPolicyHandler
+	UpdatePolicy    *policyhttp.UpdatePolicyHandler
+	DeletePolicy    *policyhttp.DeletePolicyHandler
+	GlobalPolicy    *policyhttp.GlobalPolicyHandler
+	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
 
 	CreateConsumer      *consumerhttp.CreateConsumerHandler
 	GetConsumer         *consumerhttp.GetConsumerHandler
@@ -112,6 +113,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	policies.Delete("/:id", r.deps.DeletePolicy.Handle)
 	policies.Post("/:id/global", r.deps.GlobalPolicy.SetGlobal)
 	policies.Delete("/:id/global", r.deps.GlobalPolicy.UnsetGlobal)
+	policies.Post("/:id/duplicate", r.deps.DuplicatePolicy.Handle)
 
 	consumers := gw.Group("/:gateway_id/consumers")
 	consumers.Post("", r.deps.CreateConsumer.Handle)

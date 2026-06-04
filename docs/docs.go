@@ -1589,6 +1589,73 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/gateways/{gateway_id}/policies/{id}/duplicate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is not global.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Duplicate a policy",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Policy id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/gateways/{gateway_id}/policies/{id}/global": {
             "post": {
                 "security": [
