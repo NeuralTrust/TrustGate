@@ -19,7 +19,7 @@ jobs:
     uses: NeuralTrust/workflows/.github/workflows/tests.yml@main
     with:
       language: go
-      language_version: "1.26"
+      language_version: "1.26.4"
       go_private_modules: true
       lint_enabled: true
       coverage_enabled: true
@@ -59,7 +59,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: "1.26.4"
           check-latest: true
           cache: true
 
