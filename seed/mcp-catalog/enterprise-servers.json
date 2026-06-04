@@ -1,6 +1,26 @@
 {
   "servers": [
     {
+      "name": "io.aha/mcp",
+      "vendor": "Aha!",
+      "category": "Product Management",
+      "description": "Roadmaps, ideas, features, and records across the Aha! suite (per-domain).",
+      "transport": "streamable-http",
+      "server_url": "https://{domain}.aha.io/api/v1/mcp",
+      "url_variables": [
+        {
+          "name": "domain",
+          "description": "Your Aha! domain subdomain.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.ahrefs/mcp",
       "vendor": "Ahrefs",
       "category": "Marketing",
@@ -38,6 +58,27 @@
         "required": true,
         "resource_metadata": true
       }
+    },
+    {
+      "name": "com.algolia/mcp",
+      "vendor": "Algolia",
+      "category": "Search",
+      "description": "Per-application Algolia search/Recommend MCP (public, no auth; up to 5 indices).",
+      "transport": "streamable-http",
+      "server_url": "https://{app_id}.algolia.net/mcp/1/{uniq_id}/mcp",
+      "url_variables": [
+        {
+          "name": "app_id",
+          "description": "Your Algolia Application ID.",
+          "required": true
+        },
+        {
+          "name": "uniq_id",
+          "description": "Unique MCP instance ID from the Algolia dashboard.",
+          "required": true
+        }
+      ],
+      "requires_auth": false
     },
     {
       "name": "com.amplitude/mcp",
@@ -79,12 +120,57 @@
       }
     },
     {
+      "name": "dev.arcade/mcp",
+      "vendor": "Arcade",
+      "category": "Automation",
+      "description": "Arcade MCP Gateway: tool calls across integrations (Bearer key + Arcade-User-ID).",
+      "transport": "streamable-http",
+      "server_url": "https://api.arcade.dev/mcp",
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <Arcade API key>.",
+          "required": true,
+          "secret": true
+        },
+        {
+          "name": "Arcade-User-ID",
+          "description": "End-user ID for tool authorization.",
+          "required": true,
+          "secret": false
+        }
+      ]
+    },
+    {
       "name": "com.asana/mcp",
       "vendor": "Asana",
       "category": "Project Management",
       "description": "Tasks, projects, and reporting via the Asana Work Graph.",
       "transport": "streamable-http",
       "server_url": "https://mcp.asana.com/v2/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "com.assemblyai/docs",
+      "vendor": "AssemblyAI",
+      "category": "AI & Audio",
+      "description": "AssemblyAI documentation and API reference lookup (public docs server, no auth).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.assemblyai.com/docs",
+      "requires_auth": false
+    },
+    {
+      "name": "com.atlan/mcp",
+      "vendor": "Atlan",
+      "category": "Data Governance",
+      "description": "Atlan metadata, lineage, and catalog (OAuth or API key; per-tenant roles).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.atlan.com/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
@@ -118,6 +204,19 @@
       }
     },
     {
+      "name": "co.axiom/mcp",
+      "vendor": "Axiom",
+      "category": "Observability",
+      "description": "Query events and logs; observability prompts (US-hosted; OAuth or PAT+org-id).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.axiom.co/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.betterstack/mcp",
       "vendor": "Better Stack",
       "category": "Observability",
@@ -144,6 +243,23 @@
       }
     },
     {
+      "name": "dev.braintrust/mcp",
+      "vendor": "Braintrust",
+      "category": "AI & ML",
+      "description": "LLM evals, experiments, and logs (US; EU api-eu.braintrust.dev/mcp).",
+      "transport": "streamable-http",
+      "server_url": "https://api.braintrust.dev/mcp",
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <Braintrust API key>.",
+          "required": true,
+          "secret": true
+        }
+      ]
+    },
+    {
       "name": "com.brex/mcp",
       "vendor": "Brex",
       "category": "Finance",
@@ -155,6 +271,22 @@
         "required": true,
         "resource_metadata": true
       }
+    },
+    {
+      "name": "com.brightdata/mcp",
+      "vendor": "Bright Data",
+      "category": "Web Scraping & Data",
+      "description": "Web search, scraping, and Web Unlocker; token passed as query parameter.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.brightdata.com/mcp?token={token}",
+      "url_variables": [
+        {
+          "name": "token",
+          "description": "Bright Data API token.",
+          "required": true
+        }
+      ],
+      "requires_auth": true
     },
     {
       "name": "com.browserbase/mcp",
@@ -171,6 +303,23 @@
         }
       ],
       "requires_auth": true
+    },
+    {
+      "name": "io.builder/cms-mcp",
+      "vendor": "Builder.io",
+      "category": "Web & CMS",
+      "description": "Builder Publish/Hybrid Space content (Private API key).",
+      "transport": "streamable-http",
+      "server_url": "https://cdn.builder.io/api/v1/mcp/builder-content",
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <Builder Private API key>.",
+          "required": true,
+          "secret": true
+        }
+      ]
     },
     {
       "name": "com.buildkite/mcp",
@@ -225,12 +374,50 @@
       }
     },
     {
+      "name": "com.chargebee/mcp",
+      "vendor": "Chargebee",
+      "category": "Billing & Payments",
+      "description": "Per-site Chargebee agents (knowledge_base_agent, data_lookup_agent, onboarding_agent); regional hosts.",
+      "transport": "streamable-http",
+      "server_url": "https://{subdomain}.mcp.chargebee.com/{agent}",
+      "url_variables": [
+        {
+          "name": "subdomain",
+          "description": "Your Chargebee site subdomain.",
+          "required": true
+        },
+        {
+          "name": "agent",
+          "description": "Agent path, e.g. data_lookup_agent (EU/AU: mcp.eu/mcp.au).",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.checkr/mcp",
       "vendor": "Checkr",
       "category": "HR & Recruiting",
       "description": "Background checks: manage and retrieve screening reports (OAuth Dynamic Client Registration).",
       "transport": "streamable-http",
       "server_url": "https://mcp.checkr.com",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "com.clickhouse/cloud-mcp",
+      "vendor": "ClickHouse",
+      "category": "Data & Analytics",
+      "description": "ClickHouse Cloud: list databases/tables, schemas, read-only queries, service mgmt (enable per service).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.clickhouse.cloud/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
@@ -270,6 +457,19 @@
       "description": "Search logs and configure Cloudflare AI Gateway.",
       "transport": "streamable-http",
       "server_url": "https://ai-gateway.mcp.cloudflare.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "com.cloudflare/api-mcp",
+      "vendor": "Cloudflare",
+      "category": "Cloud Platform",
+      "description": "Token-efficient MCP for the full Cloudflare API (2500+ endpoints; OAuth or API token).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.cloudflare.com/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
@@ -346,6 +546,19 @@
       ]
     },
     {
+      "name": "io.coda/mcp",
+      "vendor": "Coda",
+      "category": "Productivity & Docs",
+      "description": "Read and write Coda docs, tables, and pages (OAuth or API key).",
+      "transport": "streamable-http",
+      "server_url": "https://coda.io/apis/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.coinbase/bazaar",
       "vendor": "Coinbase",
       "category": "Payments",
@@ -355,12 +568,58 @@
       "requires_auth": false
     },
     {
+      "name": "app.rube/mcp",
+      "vendor": "Composio",
+      "category": "Automation",
+      "description": "Composio Rube: universal MCP across 500+ apps (Bearer token or OAuth).",
+      "transport": "streamable-http",
+      "server_url": "https://rube.app/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.contentful/mcp",
       "vendor": "Contentful",
       "category": "CMS",
       "description": "Manage Contentful spaces, content types, and entries (Beta).",
       "transport": "streamable-http",
       "server_url": "https://mcp.contentful.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "dev.cube/mcp",
+      "vendor": "Cube",
+      "category": "Data & Analytics",
+      "description": "Semantic layer queries via Cube Cloud (OAuth + PKCE; per-tenant host).",
+      "transport": "streamable-http",
+      "server_url": "https://{cube_host}/api/mcp",
+      "url_variables": [
+        {
+          "name": "cube_host",
+          "description": "Your Cube MCP server host.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "com.customer.io/mcp",
+      "vendor": "Customer.io",
+      "category": "Marketing",
+      "description": "Customer engagement: campaigns, segments, people, and workspace data (US; EU mcp-eu.customer.io).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.customer.io/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
@@ -546,6 +805,19 @@
       ]
     },
     {
+      "name": "com.docusign/mcp",
+      "vendor": "DocuSign",
+      "category": "E-signature & Legal",
+      "description": "Intelligent Agreement Management: eSignature, Maestro, Navigator (developer endpoint; production via beta).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp-d.docusign.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.dropbox/mcp",
       "vendor": "Dropbox",
       "category": "Productivity & Docs",
@@ -559,6 +831,30 @@
       }
     },
     {
+      "name": "com.dynatrace/mcp",
+      "vendor": "Dynatrace",
+      "category": "Observability",
+      "description": "Observability: DQL queries, problems, vulnerabilities, and Davis insights (Platform Token, not OAuth).",
+      "transport": "streamable-http",
+      "server_url": "https://{environment_name}.apps.dynatrace.com/platform-reserved/mcp-gateway/v0.1/servers/dynatrace-mcp/mcp",
+      "url_variables": [
+        {
+          "name": "environment_name",
+          "description": "Dynatrace environment/tenant ID, e.g. abc12345.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <Dynatrace Platform Token> with mcp-gateway:servers:invoke and :read scopes.",
+          "required": true,
+          "secret": true
+        }
+      ]
+    },
+    {
       "name": "com.egnyte/mcp",
       "vendor": "Egnyte",
       "category": "File Management",
@@ -570,6 +866,39 @@
         "required": true,
         "resource_metadata": true
       }
+    },
+    {
+      "name": "co.elastic/agent-builder-mcp",
+      "vendor": "Elastic",
+      "category": "Search & Observability",
+      "description": "Elastic Agent Builder tools per Kibana deployment (custom space: /s/{space}/api/agent_builder/mcp).",
+      "transport": "streamable-http",
+      "server_url": "https://{kibana_url}/api/agent_builder/mcp",
+      "url_variables": [
+        {
+          "name": "kibana_url",
+          "description": "Your Kibana host.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "ApiKey <Elastic API key> with Agent Builder privileges.",
+          "required": true,
+          "secret": true
+        }
+      ]
+    },
+    {
+      "name": "com.endorlabs/docs-mcp",
+      "vendor": "Endor Labs",
+      "category": "Security",
+      "description": "Endor Labs documentation search (public docs server, no auth).",
+      "transport": "streamable-http",
+      "server_url": "https://docs.endorlabs.com/mcp",
+      "requires_auth": false
     },
     {
       "name": "ai.exa/exa",
@@ -598,12 +927,38 @@
       "requires_auth": false
     },
     {
+      "name": "io.fibery/mcp",
+      "vendor": "Fibery",
+      "category": "Project Management",
+      "description": "Fibery work-management workspace: entities, databases, and relations (OAuth).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.fibery.io/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.figma/mcp",
       "vendor": "Figma",
       "category": "Design",
       "description": "Design-to-code, design tokens, and FigJam.",
       "transport": "streamable-http",
       "server_url": "https://mcp.figma.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "dev.firecrawl/mcp",
+      "vendor": "Firecrawl",
+      "category": "Web Scraping & Data",
+      "description": "Web scraping, crawling, and extraction (OAuth keyless; or API key in path).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.firecrawl.dev/v2/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
@@ -648,6 +1003,19 @@
       }
     },
     {
+      "name": "com.frontapp/mcp",
+      "vendor": "Front",
+      "category": "Customer Support",
+      "description": "Act on Front conversations (OAuth 2.1 + PKCE; per-user scopes read/write/send).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.frontapp.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.github/copilot-mcp",
       "vendor": "GitHub",
       "category": "Dev & Source Control",
@@ -674,6 +1042,31 @@
       }
     },
     {
+      "name": "com.glean/mcp",
+      "vendor": "Glean",
+      "category": "Enterprise Search",
+      "description": "Per-tenant Glean work AI: search and knowledge across connected apps.",
+      "transport": "streamable-http",
+      "server_url": "https://{tenant}-be.glean.com/mcp/{server}",
+      "url_variables": [
+        {
+          "name": "tenant",
+          "description": "Glean backend host prefix from app.glean.com/admin/about-glean (Server instance).",
+          "required": true
+        },
+        {
+          "name": "server",
+          "description": "Configured server path, e.g. default or eng.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "io.globalping/mcp",
       "vendor": "Globalping",
       "category": "Observability",
@@ -681,6 +1074,35 @@
       "transport": "streamable-http",
       "server_url": "https://mcp.globalping.dev/mcp",
       "requires_auth": false
+    },
+    {
+      "name": "ai.gooddata/mcp",
+      "vendor": "GoodData",
+      "category": "Data & Analytics",
+      "description": "GoodData Cloud analytics per workspace (Bearer API token).",
+      "transport": "streamable-http",
+      "server_url": "https://{gooddata_host}/api/v1/actions/workspaces/{workspace_id}/ai/mcp",
+      "url_variables": [
+        {
+          "name": "gooddata_host",
+          "description": "Your GoodData Cloud host.",
+          "required": true
+        },
+        {
+          "name": "workspace_id",
+          "description": "GoodData workspace ID.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <GoodData API token>.",
+          "required": true,
+          "secret": true
+        }
+      ]
     },
     {
       "name": "com.google.cloud/androidmanagement",
@@ -885,6 +1307,26 @@
       }
     },
     {
+      "name": "com.gorgias/mcp",
+      "vendor": "Gorgias",
+      "category": "Customer Support",
+      "description": "Helpdesk tickets and customers; subdomain passed as query parameter.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.gorgias.com/mcp?gorgias_subdomain={subdomain}",
+      "url_variables": [
+        {
+          "name": "subdomain",
+          "description": "Your Gorgias subdomain.",
+          "required": true
+        }
+      ],
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.grafana/mcp",
       "vendor": "Grafana",
       "category": "Observability",
@@ -904,6 +1346,19 @@
       "description": "Connect AI tools to your Guru knowledge base.",
       "transport": "streamable-http",
       "server_url": "https://mcp.api.getguru.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "tech.hex/mcp",
+      "vendor": "Hex",
+      "category": "Data & Analytics",
+      "description": "Hex notebooks, data apps, and projects (custom tenant: <org>.hex.tech).",
+      "transport": "streamable-http",
+      "server_url": "https://app.hex.tech/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
@@ -943,6 +1398,19 @@
       "description": "Search models, datasets, and Spaces on Hugging Face.",
       "transport": "streamable-http",
       "server_url": "https://huggingface.co/mcp?login",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "com.incident/mcp",
+      "vendor": "incident.io",
+      "category": "Incident Management",
+      "description": "Incidents, on-call, and follow-ups (OAuth user permissions or API key).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.incident.io/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
@@ -1069,6 +1537,23 @@
       }
     },
     {
+      "name": "com.langfuse/mcp",
+      "vendor": "Langfuse",
+      "category": "LLM Observability",
+      "description": "Langfuse data platform: traces, prompts, datasets (EU; US us.cloud.langfuse.com).",
+      "transport": "streamable-http",
+      "server_url": "https://cloud.langfuse.com/api/public/mcp",
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Basic <Base64(public_key:secret_key)> project credentials.",
+          "required": true,
+          "secret": true
+        }
+      ]
+    },
+    {
       "name": "com.launchdarkly/mcp",
       "vendor": "LaunchDarkly",
       "category": "Feature Flags",
@@ -1093,6 +1578,15 @@
         "required": true,
         "resource_metadata": true
       }
+    },
+    {
+      "name": "com.lithic/mcp",
+      "vendor": "Lithic",
+      "category": "Finance",
+      "description": "Card issuing API and docs: explore endpoints and run live requests.",
+      "transport": "streamable-http",
+      "server_url": "https://docs.lithic.com/mcp",
+      "requires_auth": false
     },
     {
       "name": "com.mailchimp/transactional",
@@ -1140,6 +1634,19 @@
           "secret": true
         }
       ]
+    },
+    {
+      "name": "com.mercury/mcp",
+      "vendor": "Mercury",
+      "category": "Finance",
+      "description": "Banking data: accounts, transactions (read-only; OAuth 2.0 DCR).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.mercury.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
     },
     {
       "name": "com.microsoft/learn",
@@ -1190,12 +1697,64 @@
       }
     },
     {
+      "name": "com.moderntreasury/mcp",
+      "vendor": "Modern Treasury",
+      "category": "Finance",
+      "description": "Platform API access and documentation (auth optional via headers/query).",
+      "transport": "streamable-http",
+      "server_url": "https://docs.moderntreasury.com/mcp",
+      "requires_auth": false
+    },
+    {
+      "name": "com.mollie/mcp",
+      "vendor": "Mollie",
+      "category": "Payments",
+      "description": "Payments and balances via Mollie (proxy to public API).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.mollie.com/mcp",
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <Mollie Advanced access token>.",
+          "required": true,
+          "secret": true
+        }
+      ]
+    },
+    {
       "name": "com.monday/mcp",
       "vendor": "monday.com",
       "category": "Project Management",
       "description": "Boards, items, and workflows in monday.com.",
       "transport": "streamable-http",
       "server_url": "https://mcp.monday.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "com.getmontecarlo/mcp",
+      "vendor": "Monte Carlo",
+      "category": "Data Observability",
+      "description": "Data observability: incidents, monitors, and assets (OAuth 2.1 or API key).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.getmontecarlo.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "com.motherduck/mcp",
+      "vendor": "MotherDuck",
+      "category": "Data & Analytics",
+      "description": "Query and modify MotherDuck cloud data, create Dives (OAuth or Bearer token).",
+      "transport": "streamable-http",
+      "server_url": "https://api.motherduck.com/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
@@ -1288,6 +1847,23 @@
       }
     },
     {
+      "name": "com.paddle/mcp",
+      "vendor": "Paddle",
+      "category": "Billing & Payments",
+      "description": "Subscriptions, transactions, and products (live; sandbox sandbox-mcp.paddle.com).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.paddle.com/mcp",
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <Paddle API key>.",
+          "required": true,
+          "secret": true
+        }
+      ]
+    },
+    {
       "name": "com.pagerduty/mcp",
       "vendor": "PagerDuty",
       "category": "Incident Management",
@@ -1301,12 +1877,38 @@
       }
     },
     {
+      "name": "com.pandadoc/mcp",
+      "vendor": "PandaDoc",
+      "category": "E-signature & Legal",
+      "description": "Documents, templates, contacts, and webhooks via PandaDoc.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.pandadoc.com/v1/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.paypal/mcp",
       "vendor": "PayPal",
       "category": "Payments",
       "description": "Invoices, payments, and transactions via PayPal.",
       "transport": "streamable-http",
       "server_url": "https://mcp.paypal.com/http",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "io.pendo/mcp",
+      "vendor": "Pendo",
+      "category": "Product Analytics",
+      "description": "Product analytics, guides, and usage data (US; regional hosts us1/eu/jpn/au).",
+      "transport": "streamable-http",
+      "server_url": "https://app.pendo.io/mcp/v0/shttp",
       "requires_auth": true,
       "oauth": {
         "required": true,
@@ -1434,6 +2036,19 @@
       }
     },
     {
+      "name": "io.prismic/mcp",
+      "vendor": "Prismic",
+      "category": "Web & CMS",
+      "description": "Manage Prismic content types and documents.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.prismic.io/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.railway/mcp",
       "vendor": "Railway",
       "category": "Cloud Platform",
@@ -1460,6 +2075,23 @@
       }
     },
     {
+      "name": "com.razorpay/mcp",
+      "vendor": "Razorpay",
+      "category": "Payments",
+      "description": "Payments, orders, refunds, and settlements via Razorpay.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.razorpay.com/mcp",
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Basic <Base64(key_id:key_secret)> merchant token.",
+          "required": true,
+          "secret": true
+        }
+      ]
+    },
+    {
       "name": "com.render/mcp",
       "vendor": "Render",
       "category": "Cloud Platform",
@@ -1475,6 +2107,19 @@
           "secret": true
         }
       ]
+    },
+    {
+      "name": "com.replicate/mcp",
+      "vendor": "Replicate",
+      "category": "AI & ML",
+      "description": "Discover, compare, and run thousands of AI models on Replicate.",
+      "transport": "sse",
+      "server_url": "https://mcp.replicate.com/sse",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
     },
     {
       "name": "com.rootly/mcp",
@@ -1637,6 +2282,19 @@
       "requires_auth": false
     },
     {
+      "name": "com.shortcut/mcp",
+      "vendor": "Shortcut",
+      "category": "Project Management",
+      "description": "Stories, epics, and iterations via Shortcut (OAuth, no token needed).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.shortcut.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "com.smartbear/mcp",
       "vendor": "SmartBear",
       "category": "Dev & APIs",
@@ -1696,6 +2354,38 @@
         "required": true,
         "resource_metadata": true
       }
+    },
+    {
+      "name": "dev.socket/mcp",
+      "vendor": "Socket",
+      "category": "Security",
+      "description": "Dependency/package supply-chain risk lookup (public server, no auth).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.socket.dev/",
+      "requires_auth": false
+    },
+    {
+      "name": "com.sonarsource/cloud-mcp",
+      "vendor": "SonarQube",
+      "category": "Code Quality",
+      "description": "SonarQube Cloud code quality and security findings (US: api.sonarqube.us/mcp).",
+      "transport": "streamable-http",
+      "server_url": "https://api.sonarcloud.io/mcp",
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <SonarQube user token>.",
+          "required": true,
+          "secret": true
+        },
+        {
+          "name": "SONARQUBE_ORG",
+          "description": "Your SonarQube Cloud organization key.",
+          "required": true,
+          "secret": false
+        }
+      ]
     },
     {
       "name": "com.sonatype/mcp",
@@ -1780,6 +2470,53 @@
       }
     },
     {
+      "name": "com.tavily/mcp",
+      "vendor": "Tavily",
+      "category": "Search",
+      "description": "Web search and extraction for agents (OAuth keyless; API key also supported).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.tavily.com/mcp/",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
+      "name": "com.teamwork/mcp",
+      "vendor": "Teamwork",
+      "category": "Project Management",
+      "description": "Teamwork.com projects, tasks, and time (enable MCP under Settings > AI).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.ai.teamwork.com",
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <Teamwork API key>.",
+          "required": true,
+          "secret": true
+        }
+      ]
+    },
+    {
+      "name": "com.telnyx/mcp",
+      "vendor": "Telnyx",
+      "category": "Communications",
+      "description": "Telnyx API actions: messaging, voice, numbers (canonical API MCP endpoint).",
+      "transport": "streamable-http",
+      "server_url": "https://api.telnyx.com/v2/mcp",
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <Telnyx API key>.",
+          "required": true,
+          "secret": true
+        }
+      ]
+    },
+    {
       "name": "app.thoughtspot/mcp",
       "vendor": "ThoughtSpot",
       "category": "Analytics",
@@ -1791,6 +2528,22 @@
         "required": true,
         "resource_metadata": true
       }
+    },
+    {
+      "name": "co.tinybird/mcp",
+      "vendor": "Tinybird",
+      "category": "Data & Analytics",
+      "description": "Query workspaces and published API endpoints; token passed as query parameter.",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.tinybird.co?token={token}",
+      "url_variables": [
+        {
+          "name": "token",
+          "description": "Tinybird token (includes API host for new tokens).",
+          "required": true
+        }
+      ],
+      "requires_auth": true
     },
     {
       "name": "net.todoist/mcp",
@@ -1841,6 +2594,19 @@
       }
     },
     {
+      "name": "com.vimeo/mcp",
+      "vendor": "Vimeo",
+      "category": "Media & Video",
+      "description": "Manage and query Vimeo videos (Claude; ChatGPT uses mcp.vimeo.com/sse).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.vimeo.com/mcp",
+      "requires_auth": true,
+      "oauth": {
+        "required": true,
+        "resource_metadata": true
+      }
+    },
+    {
       "name": "dev.vonage/docs-mcp",
       "vendor": "Vonage",
       "category": "Communication",
@@ -1861,6 +2627,23 @@
         "required": true,
         "resource_metadata": true
       }
+    },
+    {
+      "name": "ai.wandb/mcp",
+      "vendor": "Weights & Biases",
+      "category": "AI & ML",
+      "description": "W&B runs, sweeps, and Weave traces (multi-tenant; dedicated/self-managed use your instance host).",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.withwandb.com/mcp",
+      "requires_auth": true,
+      "auth_headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <W&B API key>.",
+          "required": true,
+          "secret": true
+        }
+      ]
     },
     {
       "name": "com.wix/mcp",
