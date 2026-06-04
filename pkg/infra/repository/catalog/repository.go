@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
@@ -117,6 +118,28 @@ func (r *Repository) ListModelsByProviderCode(ctx context.Context, providerCode 
 	}
 	defer rows.Close()
 	return scanModels(rows)
+}
+
+func (r *Repository) FindModel(ctx context.Context, providerCode, slug string) (*domain.Model, error) {
+	const query = `
+		SELECT m.id, m.provider_id, m.slug, m.external_id, m.display_name, m.context_window, m.max_output,
+		       m.input_price, m.output_price, m.capabilities, m.enabled, m.source, m.created_at, m.updated_at
+		  FROM models_catalog m
+		  JOIN providers_catalog p ON p.id = m.provider_id
+		 WHERE p.code = $1 AND m.slug = $2`
+	rows, err := r.conn.Pool.Query(ctx, query, providerCode, slug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	models, err := scanModels(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(models) == 0 {
+		return nil, commonerrors.ErrNotFound
+	}
+	return &models[0], nil
 }
 
 func scanProviders(rows pgx.Rows) ([]domain.Provider, error) {

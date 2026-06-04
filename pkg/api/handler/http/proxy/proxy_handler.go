@@ -14,6 +14,7 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -38,6 +39,8 @@ var errNotAuthenticated = errors.New("request is not authenticated")
 // errPathNotFound means no consumer of the resolved gateway has a path that
 // exactly matches the inbound request path.
 var errPathNotFound = errors.New("no consumer matches the request path")
+
+var errForbidden = errors.New("credential is not authorized for the matched consumer")
 
 // hopByHopHeaders are connection-scoped headers that must not be relayed from
 // the backend response back to the client.
@@ -66,6 +69,8 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return writeProxyError(c, err)
 	}
+
+	stampConsumerTrace(c, consumer)
 
 	reqCtx := buildRequestContext(c, gatewayID)
 	result, err := h.forwarder.Forward(c.UserContext(), appproxy.ForwardInput{
@@ -150,10 +155,12 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 	return nil
 }
 
-// resolveConsumer reads the gateway id + consumer read model attached by the
-// auth middleware and exact-matches the inbound path against a consumer's path.
 func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer, error) {
 	gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
+	if !ok {
+		return ids.GatewayID{}, nil, errNotAuthenticated
+	}
+	authID, ok := appconsumer.AuthIDFromContext(c.UserContext())
 	if !ok {
 		return ids.GatewayID{}, nil, errNotAuthenticated
 	}
@@ -165,7 +172,33 @@ func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer
 	if !ok {
 		return ids.GatewayID{}, nil, errPathNotFound
 	}
+	if !consumerHasAuth(rc, authID) {
+		return ids.GatewayID{}, nil, errForbidden
+	}
 	return gatewayID, rc, nil
+}
+
+func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
+	if rc == nil || rc.Consumer == nil {
+		return
+	}
+	rt := trace.FromContext(c.UserContext())
+	if rt == nil {
+		return
+	}
+	rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
+}
+
+func consumerHasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {
+	if rc == nil || rc.Consumer == nil {
+		return false
+	}
+	for _, id := range rc.Consumer.AuthIDs {
+		if id == authID {
+			return true
+		}
+	}
+	return false
 }
 
 func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID) *infracontext.RequestContext {
@@ -218,6 +251,8 @@ func mapProxyError(err error) (int, helpers.ErrorBody) {
 	switch {
 	case errors.Is(err, errNotAuthenticated):
 		return fiber.StatusUnauthorized, helpers.ErrorBody{Error: "unauthenticated", Message: err.Error()}
+	case errors.Is(err, errForbidden):
+		return fiber.StatusForbidden, helpers.ErrorBody{Error: "forbidden", Message: err.Error()}
 	case errors.Is(err, errPathNotFound),
 		errors.Is(err, commonerrors.ErrNotFound):
 		return fiber.StatusNotFound, helpers.ErrorBody{Error: "not_found"}

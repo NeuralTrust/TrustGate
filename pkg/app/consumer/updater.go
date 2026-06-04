@@ -2,13 +2,12 @@ package consumer
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
-	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
@@ -23,9 +22,6 @@ type UpdateInput struct {
 	EmbeddingConfig *registrydomain.EmbeddingConfig
 	Headers         map[string]string
 	Active          *bool
-	RegistryIDs     []ids.RegistryID
-	PolicyIDs       []ids.PolicyID
-	AuthIDs         []ids.AuthID
 	Fallback        *domain.Fallback
 	ModelPolicies   domain.ModelPolicies
 }
@@ -38,32 +34,23 @@ type Updater interface {
 var _ Updater = (*updater)(nil)
 
 type updater struct {
-	repo         domain.Repository
-	registryRepo registrydomain.Repository
-	policyRepo   policydomain.Repository
-	authRepo     authdomain.Repository
-	memoryCache  *cache.TTLMap
-	publisher    cache.EventPublisher
-	logger       *slog.Logger
+	repo        domain.Repository
+	memoryCache *cache.TTLMap
+	publisher   cache.EventPublisher
+	logger      *slog.Logger
 }
 
 func NewUpdater(
 	repo domain.Repository,
-	registryRepo registrydomain.Repository,
-	policyRepo policydomain.Repository,
-	authRepo authdomain.Repository,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 ) Updater {
 	return &updater{
-		repo:         repo,
-		registryRepo: registryRepo,
-		policyRepo:   policyRepo,
-		authRepo:     authRepo,
-		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
-		publisher:    publisher,
-		logger:       logger,
+		repo:        repo,
+		memoryCache: manager.GetTTLMap(cache.ConsumerTTLName),
+		publisher:   publisher,
+		logger:      logger,
 	}
 }
 
@@ -74,10 +61,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	}
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
-	}
-	if err := validateAssociations(ctx, u.registryRepo, u.policyRepo, u.authRepo,
-		existing.GatewayID, in.RegistryIDs, in.PolicyIDs, in.AuthIDs, fallbackChainIDs(in.Fallback)); err != nil {
-		return nil, err
 	}
 	existing.Name = in.Name
 	if in.Type != "" {
@@ -90,12 +73,12 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if in.Active != nil {
 		existing.Active = *in.Active
 	}
-	existing.RegistryIDs = in.RegistryIDs
-	existing.PolicyIDs = in.PolicyIDs
-	existing.AuthIDs = in.AuthIDs
 	existing.Fallback = in.Fallback
 	existing.ModelPolicies = in.ModelPolicies
 	existing.UpdatedAt = time.Now().UTC()
+	if err := validateRegistryRefsAssociated(existing); err != nil {
+		return nil, err
+	}
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}
@@ -105,4 +88,26 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	u.memoryCache.Set(existing.ID.String(), existing)
 	publishGatewayDataInvalidation(ctx, u.publisher, u.logger, existing.GatewayID)
 	return existing, nil
+}
+
+func validateRegistryRefsAssociated(c *domain.Consumer) error {
+	associated := make(map[ids.RegistryID]struct{}, len(c.RegistryIDs))
+	for _, id := range c.RegistryIDs {
+		associated[id] = struct{}{}
+	}
+	if c.Fallback != nil {
+		for _, id := range c.Fallback.Chain {
+			if _, ok := associated[id]; !ok {
+				return fmt.Errorf("%w: fallback chain registry %s is not associated with the consumer",
+					registrydomain.ErrInvalidRegistryID, id)
+			}
+		}
+	}
+	for id := range c.ModelPolicies {
+		if _, ok := associated[id]; !ok {
+			return fmt.Errorf("%w: model_policies registry %s is not associated with the consumer",
+				registrydomain.ErrInvalidRegistryID, id)
+		}
+	}
+	return nil
 }

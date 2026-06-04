@@ -14,15 +14,15 @@ func TestPluginE2E_RequestSizeLimiter_ByteLimit(t *testing.T) {
 	defer Track(t, "PluginRequestSize")()
 
 	up := newJSONUpstream(t, "size-upstream")
-	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("request_size_limiter", "pre_request", map[string]any{
+	apiKey, path := setupPolicyRoute(t, up,
+		policyPlugin("request_size_limiter", map[string]any{
 			"allowed_payload_size": 1000,
 			"size_unit":            "bytes",
 		}),
 	)
 
 	t.Run("payload within the limit passes through", func(t *testing.T) {
-		status, _, raw := proxyRequest(t, http.MethodPost, gatewayID, path, nil,
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil,
 			mustJSON(t, chatRequest(false)),
 		)
 		assert.Equal(t, http.StatusOK, status, "body: %s", raw)
@@ -35,7 +35,7 @@ func TestPluginE2E_RequestSizeLimiter_ByteLimit(t *testing.T) {
 			"messages": []map[string]string{{"role": "user", "content": strings.Repeat("a", 4000)}},
 		}
 		hitsBefore := up.Hits()
-		status, _, _ := proxyRequest(t, http.MethodPost, gatewayID, path, nil, mustJSON(t, oversized))
+		status, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, mustJSON(t, oversized))
 		assert.Equal(t, http.StatusRequestEntityTooLarge, status)
 		assert.Equal(t, hitsBefore, up.Hits(), "an oversized request must not reach the upstream")
 	})
@@ -45,15 +45,15 @@ func TestPluginE2E_RequestSizeLimiter_CharLimit(t *testing.T) {
 	defer Track(t, "PluginRequestSize")()
 
 	up := newJSONUpstream(t, "char-upstream")
-	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("request_size_limiter", "pre_request", map[string]any{
+	apiKey, path := setupPolicyRoute(t, up,
+		policyPlugin("request_size_limiter", map[string]any{
 			"allowed_payload_size":  10,
 			"size_unit":             "megabytes",
 			"max_chars_per_request": 10,
 		}),
 	)
 
-	status, _, _ := proxyRequest(t, http.MethodPost, gatewayID, path, nil,
+	status, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil,
 		mustJSON(t, chatRequest(false)),
 	)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, status,

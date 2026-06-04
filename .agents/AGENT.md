@@ -368,10 +368,84 @@ behind "for later".
 - One PR per shippable slice; the team budget is **400 changed lines**.
   See `_base.mdc` "PR review budget" and `chained-pr` skill if you need to
   split.
-- The Linear issue id (`RUN-###`) goes in the PR body. The implementation
-  branch comes from `gitBranchName` on the Linear issue.
+- The Linear issue id (`RUN-###`) goes in the PR body.
+- Branch names follow `type/short-description`, where `type` is one of
+  `feat|fix|refactor|test|chore|docs` (e.g. `feat/admin-crud-api`,
+  `fix/cors-max-age`). Do NOT use Linear's `gitBranchName` (it prefixes the
+  author's username); derive the branch from the change type instead.
 
-## 14. References
+## 14. Data-plane policy execution & caching (hard rules)
+
+Learned invariants for the proxy hot path, the plugin executor, and the
+control-plane caches. Diverging from these has caused real bugs (404s, stale
+projections, concurrent-map panics, dead gates), so treat them as contracts.
+
+### 14.1 Stamp the request target before `pre_request`
+
+`RequestContext.RegistryID` and `RequestContext.Provider` must be set at
+backend selection (and re-set on every failover retarget) **before** the
+`pre_request` stage runs. Provider-aware `pre_request` plugins read
+`req.Provider` (e.g. `token_rate_limiter`, whose budget gate short-circuits when
+the provider is empty). The provider invoker only sets `req.Provider` during
+upstream invocation, which is too late for `pre_request`. Use the single
+`stampTarget(req, backend)` helper in `forwarder.go`; do not stamp `RegistryID`
+/ `Provider` ad hoc in more than one place.
+
+### 14.2 Parallel plugins never share mutable maps
+
+A parallel batch (`policy.Parallel == true`, same priority) runs each plugin on
+an **isolated clone** of the Request/Response context; per-plugin mutations are
+merged back sequentially, in deterministic batch order, after `errgroup.Wait()`.
+Plugins must not write the shared `Headers` / `Metadata` maps concurrently — Go
+will panic on a concurrent map write. Single-plugin batches skip the clone.
+
+### 14.3 Policy chains are precomputed (`StagePlan`), not per-request
+
+The ordered, per-stage plugin chain for a consumer's effective policy set is
+precomputed once as a `StagePlan` and cached inside the per-gateway
+consumer-data aggregate (`RoutableConsumer.PolicyPlan`). The executor consumes
+the plan; it must not resolve, dedup, or sort the chain on every request. When
+no `post_response` plugin exists in the plan, skip post_response snapshotting,
+goroutine spawning, and stream buffering entirely.
+
+### 14.4 Invalidate every cache whose read projection changed
+
+When you mutate a junction (`consumer_registry`, `consumer_auth`,
+`consumer_policy`), invalidate **all** entity caches whose read model reflects
+that change — not just the consumer. Concretely: attaching/detaching a
+policy↔consumer link changes the policy's `consumer_ids` reverse projection, so
+the associator drops the policy entity cache (`PolicyTTLName`) on attach and
+detach. Only the policy exposes a reverse projection today; auth and registry
+do not, so they need no extra invalidation. The admin plane runs as a single
+replica, so an in-process `TTLMap.Delete` is sufficient (no pub/sub needed for
+entity caches).
+
+### 14.5 Cache invalidation is gateway-level
+
+Any update/delete/associate on a consumer, policy, registry, auth, or
+association invalidates the **whole gateway's** consumer-data aggregate
+(`InvalidateGatewayDataEvent` / `InvalidateRegistryCacheEvent`), which forces
+the `RoutableConsumer` set and every `StagePlan` to recompute. Per-consumer
+invalidation is unsafe because path routing and global policies make consumers
+interdependent. `create` operations do **not** publish invalidation — nothing is
+cached for a resource that does not yet participate in any aggregate.
+
+### 14.6 Global vs consumer-scoped policy composition
+
+A policy is gateway-wide when its `global` flag is set (via the `/global`
+endpoint), not by attachment. Composition rule: consumer-scoped policies come
+first, then globals, and a **consumer-scoped policy overrides a global one with
+the same slug** (the global is dropped). When changing this logic, keep the
+override keyed on slug.
+
+### 14.7 Functional proxy routes: path must match the consumer name
+
+A consumer's routing path is derived from its name (`/v1/<name>` in
+`validConsumerPayload`). In functional tests, the path you POST to the proxy
+must match the consumer's name exactly, or `MatchPath` returns 404. Wire setup
+helpers so the returned path and the created consumer's name stay in sync.
+
+## 15. References
 
 - Platform shape: `/home/edu/.cursor/rules/neuraltrust-platform.mdc`
 - Domain glossary: `/home/edu/.cursor/rules/neuraltrust-domain.mdc`
@@ -385,3 +459,5 @@ behind "for later".
   - `TrustGate/pkg/app/apikey/finder.go` — canonical use-case shape (interface + `//go:generate mockery` + impl in one file).
   - `TrustGate/pkg/app/upstream/mocks/upstream_creator_mock.go` — what mockery output should look like.
   - `TrustGate/pkg/handlers/http/request/create_gateway_request.go` — canonical request DTO shape (one DTO per file).
+
+NO CODE COMMENTS!!!!

@@ -40,13 +40,11 @@ type ForwardResult struct {
 }
 
 type forwardRequestDTO struct {
-	backend  *domain.Registry
-	request  *infracontext.RequestContext
-	response *infracontext.ResponseContext
-	policies []*policydomain.Policy
-	// baseHeaders are the response headers contributed by the pre_request
-	// plugin stage (e.g. CORS, rate-limit quota headers). They are preserved
-	// across failover attempts so the upstream relay does not drop them.
+	backend     *domain.Registry
+	request     *infracontext.RequestContext
+	response    *infracontext.ResponseContext
+	policies    []*policydomain.Policy
+	plan        *appplugins.StagePlan
 	baseHeaders map[string][]string
 }
 
@@ -105,15 +103,16 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return nil, err
 	}
 
-	in.Request.RegistryID = bk.ID.String()
+	stampTarget(in.Request, bk)
 	resp := &infracontext.ResponseContext{
 		Context:    ctx,
 		GatewayID:  in.Request.GatewayID,
 		RegistryID: in.Request.RegistryID,
 	}
 	policies := in.Consumer.Policies
+	plan := in.Consumer.PolicyPlan
 
-	if short, err := f.runPreRequest(ctx, policies, in.Request, resp); err != nil {
+	if short, err := f.runPreRequest(ctx, policies, plan, in.Request, resp); err != nil {
 		return nil, err
 	} else if short != nil {
 		return short, nil
@@ -124,6 +123,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		request:     in.Request,
 		response:    resp,
 		policies:    policies,
+		plan:        plan,
 		baseHeaders: cloneHeaders(resp.Headers),
 	}
 	stream := DetectStream(dto.request)
@@ -160,12 +160,17 @@ func (f *forwarder) invokeWithFailover(
 			resp, err := f.invokeOnce(ctx, current, dto.request, stream)
 			elapsed := time.Since(startedAt)
 			outcome := classifyOutcome(resp, err, triggers)
-			f.recordSpan(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
+			span := f.recordSpan(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
 			switch outcome {
 			case OutcomeSuccess:
 				lb.ReportSuccess(current)
 				if stream && resp.Stream != nil {
-					return f.finalizeStream(ctx, dto, resp), nil
+					// The provider stream is lazy: invokeOnce only measured
+					// time-to-first-byte. Keep the LLM span open and re-time it
+					// once the stream is fully consumed so provider_ms reflects
+					// the real token-generation duration instead of leaking into
+					// gateway_ms.
+					return f.finalizeStream(ctx, dto, resp, span, startedAt), nil
 				}
 				result, pe := f.finalizeBodyGated(ctx, dto, resp)
 				if pe == nil || !triggers.pluginRejection {
@@ -255,10 +260,10 @@ func (f *forwarder) recordSpan(
 	outcome Outcome,
 	resp *ProviderResponse,
 	elapsed time.Duration,
-) {
+) *trace.Span {
 	rt := trace.FromContext(ctx)
 	if rt == nil {
-		return
+		return nil
 	}
 	span := &trace.Span{
 		Type:      trace.SpanLLM,
@@ -275,9 +280,12 @@ func (f *forwarder) recordSpan(
 	if resp != nil {
 		span.SetStatusCode(resp.StatusCode)
 		span.ObserveUsage(resp.Usage)
+		span.LLM.Model = resp.Model
+		span.LLM.FinishReason = resp.FinishReason
 	}
 	_ = rt.AddSpan(span)
 	span.End()
+	return span
 }
 
 func (f *forwarder) logRetry(bk *domain.Registry, reason error, budget *failoverBudget) {
@@ -303,10 +311,15 @@ func (f *forwarder) invokeOnce(
 
 func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Registry) {
 	dto.backend = bk
-	dto.request.RegistryID = bk.ID.String()
+	stampTarget(dto.request, bk)
 	if dto.response != nil {
 		dto.response.RegistryID = bk.ID.String()
 	}
+}
+
+func stampTarget(req *infracontext.RequestContext, bk *domain.Registry) {
+	req.RegistryID = bk.ID.String()
+	req.Provider = bk.Provider
 }
 
 func (f *forwarder) stampModelPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Registry) {
@@ -334,14 +347,43 @@ func (f *forwarder) finalizeStream(
 	ctx context.Context,
 	dto *forwardRequestDTO,
 	providerResp *ProviderResponse,
+	span *trace.Span,
+	startedAt time.Time,
 ) *ForwardResult {
 	pluginResp := dto.response
 	mergeProviderResponse(pluginResp, providerResp, true)
-	f.runPreResponse(ctx, dto.policies, dto.request, pluginResp)
+	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
+		go drainStream(providerResp.Stream)
+		return pluginErrorResult(pe)
+	}
+	out := f.wrapStreamWithPostResponse(dto.policies, dto.plan, dto.request, pluginResp, providerResp.Stream)
+	out = retimeSpanOnStreamEnd(out, span, startedAt)
 	return &ForwardResult{
 		StatusCode: providerResp.StatusCode,
 		Headers:    pluginResp.Headers,
-		Stream:     f.wrapStreamWithPostResponse(dto.policies, dto.request, pluginResp, providerResp.Stream),
+		Stream:     out,
+	}
+}
+
+// retimeSpanOnStreamEnd re-times the provider LLM span so its latency spans the
+// full stream lifetime (token generation), not just the time-to-first-byte that
+// invokeOnce measured. The latency is overwritten when the consumer finishes
+// draining the stream, which happens before the metrics finalizer reads it.
+func retimeSpanOnStreamEnd(
+	stream iter.Seq2[[]byte, error],
+	span *trace.Span,
+	startedAt time.Time,
+) iter.Seq2[[]byte, error] {
+	if span == nil || stream == nil {
+		return stream
+	}
+	return func(yield func([]byte, error) bool) {
+		defer func() { span.SetLatency(time.Since(startedAt)) }()
+		for line, err := range stream {
+			if !yield(line, err) {
+				return
+			}
+		}
 	}
 }
 
@@ -353,8 +395,8 @@ func (f *forwarder) finalizeBody(
 	pluginResp := dto.response
 	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeProviderResponse(pluginResp, providerResp, false)
-	f.runPreResponse(ctx, dto.policies, dto.request, pluginResp)
-	f.firePostResponse(dto.policies, dto.request, pluginResp)
+	f.runPreResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
+	f.firePostResponse(dto.policies, dto.plan, dto.request, pluginResp)
 	return &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,
@@ -370,10 +412,10 @@ func (f *forwarder) finalizeBodyGated(
 	pluginResp := dto.response
 	pluginResp.Headers = cloneHeaders(dto.baseHeaders)
 	mergeProviderResponse(pluginResp, providerResp, false)
-	if pe := f.runPreResponseGated(ctx, dto.policies, dto.request, pluginResp); pe != nil {
+	if pe := f.runPreResponseGated(ctx, dto.policies, dto.plan, dto.request, pluginResp); pe != nil {
 		return pluginErrorResult(pe), pe
 	}
-	f.firePostResponse(dto.policies, dto.request, pluginResp)
+	f.firePostResponse(dto.policies, dto.plan, dto.request, pluginResp)
 	return &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,

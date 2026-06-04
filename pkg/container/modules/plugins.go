@@ -3,6 +3,7 @@ package modules
 import (
 	"log/slog"
 
+	cataloghttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/catalog"
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
@@ -29,9 +30,15 @@ func Plugins(c *container.Container) error {
 	if err := c.Provide(newPluginRegistry); err != nil {
 		return err
 	}
-	return c.Provide(func(reg appplugins.Registry, logger *slog.Logger) appplugins.Executor {
+	if err := c.Provide(func(reg appplugins.Registry, logger *slog.Logger) appplugins.Executor {
 		return appplugins.NewExecutor(reg, logger)
-	})
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(appplugins.NewCatalogService); err != nil {
+		return err
+	}
+	return c.Provide(cataloghttp.NewListPolicyCatalogHandler)
 }
 
 // newPluginRegistry builds the plugin catalog and registers every built-in

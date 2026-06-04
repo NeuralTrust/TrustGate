@@ -14,7 +14,7 @@ import (
 func TestUpdateAuth_Success(t *testing.T) {
 	defer Track(t, "UpdateAuth")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd")})
-	id := CreateAuth(t, gwID, validAuthPayload(uniqueName("api-key")))
+	id, _ := CreateAPIKeyAuth(t, gwID, uniqueName("api-key"))
 
 	newName := uniqueName("renamed")
 	status, body := sendRequest(t, http.MethodPut,
@@ -23,19 +23,19 @@ func TestUpdateAuth_Success(t *testing.T) {
 			"name":    newName,
 			"type":    "api_key",
 			"enabled": false,
-			"config": map[string]any{
-				"api_key": map[string]any{"key": "sk-rotatedsecretvalue"},
-			},
 		},
 	)
 	require.Equal(t, http.StatusOK, status, "body=%v", body)
 	assert.Equal(t, newName, body["name"])
 	assert.Equal(t, false, body["enabled"])
 
+	// Update never rotates or re-reveals the key: no plaintext and no config
+	// secret come back.
+	_, hasTopLevelKey := body["api_key"]
+	assert.False(t, hasTopLevelKey, "update must not re-reveal the api_key: %v", body)
 	cfg, _ := body["config"].(map[string]any)
-	apiKey, ok := cfg["api_key"].(map[string]any)
-	require.True(t, ok, "api_key config missing: %v", cfg)
-	assert.Equal(t, "sk...lue", apiKey["key"], "rotated secret must be masked")
+	_, hasAPIKeyCfg := cfg["api_key"]
+	assert.False(t, hasAPIKeyCfg, "api_key auth must not carry a config.api_key block: %v", cfg)
 }
 
 func TestUpdateAuth_Validation(t *testing.T) {

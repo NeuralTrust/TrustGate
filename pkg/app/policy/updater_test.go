@@ -13,21 +13,35 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+func existingPolicy(t *testing.T) *domain.Policy {
+	t.Helper()
+	p, err := domain.NewPolicy(ids.New[ids.GatewayKind](), "old", "rate_limiter", true, 0, false, nil, nil)
+	if err != nil {
+		t.Fatalf("NewPolicy: %v", err)
+	}
+	return p
+}
+
+func validUpdateInput(id ids.PolicyID) apppolicy.UpdateInput {
+	return apppolicy.UpdateInput{
+		ID:      id,
+		Name:    "new",
+		Slug:    "rate_limiter",
+		Enabled: true,
+	}
+}
+
 func TestUpdater_Update_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	existing, _ := domain.NewPolicy(ids.New[ids.GatewayKind](), "old", validPlugins())
+	existing := existingPolicy(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
 		return p.ID == existing.ID && p.Name == "new"
 	})).Return(nil).Once()
 
-	updater := apppolicy.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{
-		ID:      existing.ID,
-		Name:    "new",
-		Plugins: validPlugins(),
-	})
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), validUpdateInput(existing.ID))
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
@@ -39,16 +53,13 @@ func TestUpdater_Update_Success(t *testing.T) {
 func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	existing, _ := domain.NewPolicy(ids.New[ids.GatewayKind](), "x", validPlugins())
+	existing := existingPolicy(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
-	updater := apppolicy.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
-		ID:        existing.ID,
-		GatewayID: ids.New[ids.GatewayKind](),
-		Name:      "x",
-		Plugins:   validPlugins(),
-	})
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	in := validUpdateInput(existing.ID)
+	in.GatewayID = ids.New[ids.GatewayKind]()
+	_, err := updater.Update(context.Background(), in)
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
 		t.Fatalf("err = %v, want ErrInvalidGatewayID", err)
 	}
@@ -60,12 +71,8 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	id := ids.New[ids.PolicyKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	updater := apppolicy.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-	_, err := updater.Update(context.Background(), apppolicy.UpdateInput{
-		ID:      id,
-		Name:    "x",
-		Plugins: validPlugins(),
-	})
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	_, err := updater.Update(context.Background(), validUpdateInput(id))
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}

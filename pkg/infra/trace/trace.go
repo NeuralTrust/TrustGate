@@ -12,6 +12,7 @@ import (
 type Metadata struct {
 	GatewayID     string
 	ConsumerID    string
+	ConsumerName  string
 	Path          string
 	Method        string
 	IP            string
@@ -85,7 +86,18 @@ func (t *RequestTrace) Done() {
 
 func (t *RequestTrace) TraceID() string { return t.traceID }
 
-func (t *RequestTrace) Metadata() Metadata { return t.meta }
+func (t *RequestTrace) Metadata() Metadata {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.meta
+}
+
+func (t *RequestTrace) SetConsumer(id, name string) {
+	t.mu.Lock()
+	t.meta.ConsumerID = id
+	t.meta.ConsumerName = name
+	t.mu.Unlock()
+}
 
 func (t *RequestTrace) StartedAt() time.Time { return t.startedAt }
 
@@ -150,6 +162,20 @@ func (t *RequestTrace) ObserveLLMUsage(u *adapter.CanonicalUsage) {
 	for i := len(t.spans) - 1; i >= 0; i-- {
 		if t.spans[i].Type == SpanLLM {
 			t.spans[i].ObserveUsage(u)
+			return
+		}
+	}
+}
+
+func (t *RequestTrace) ObserveLLMResult(model, finishReason string) {
+	if model == "" && finishReason == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i := len(t.spans) - 1; i >= 0; i-- {
+		if t.spans[i].Type == SpanLLM {
+			t.spans[i].SetLLMResult(model, finishReason)
 			return
 		}
 	}

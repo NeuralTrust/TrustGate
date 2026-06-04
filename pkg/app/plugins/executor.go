@@ -12,25 +12,26 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Executor runs the plugin chain for a single stage against a request/response
-// pair, applying every plugin Result deterministically and surfacing the first
-// rejection (PluginError) or short-circuit (StopUpstream).
-//
 //go:generate mockery --name=Executor --dir=. --output=./mocks --filename=executor_mock.go --case=underscore --with-expecter
 type Executor interface {
 	RunStage(ctx context.Context, in StageInput) (*StageOutcome, error)
 }
 
-// StageInput is the per-stage execution request.
 type StageInput struct {
 	Stage    policy.Stage
 	Policies []*policy.Policy
+	Plan     *StagePlan
 	Request  *infracontext.RequestContext
 	Response *infracontext.ResponseContext
 }
 
-// StageOutcome reports whether the stage short-circuited and the synthetic
-// response to relay when it did.
+func (in StageInput) chainFor(reg Registry) []chainEntry {
+	if in.Plan != nil {
+		return in.Plan.entriesFor(in.Stage)
+	}
+	return buildStageChain(reg, in.Policies, in.Stage)
+}
+
 type StageOutcome struct {
 	ShortCircuit bool
 	StatusCode   int
@@ -50,7 +51,7 @@ func NewExecutor(registry Registry, logger *slog.Logger) Executor {
 }
 
 func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, error) {
-	entries := buildStageChain(e.registry, in.Policies, in.Stage)
+	entries := in.chainFor(e.registry)
 	outcome := &StageOutcome{}
 	if len(entries) == 0 {
 		return outcome, nil
@@ -58,7 +59,7 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 
 	for i := 0; i < len(entries); {
 		batch := parallelBatch(entries, i)
-		results, err := e.runBatch(ctx, in, batch)
+		results, err := e.runBatch(ctx, in.Stage, in.Request, in.Response, batch)
 		if err != nil {
 			return nil, err
 		}
@@ -72,9 +73,15 @@ func (e *executor) RunStage(ctx context.Context, in StageInput) (*StageOutcome, 
 	return outcome, nil
 }
 
-func (e *executor) runBatch(ctx context.Context, in StageInput, batch []chainEntry) ([]*Result, error) {
+func (e *executor) runBatch(
+	ctx context.Context,
+	stage policy.Stage,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+	batch []chainEntry,
+) ([]*Result, error) {
 	if len(batch) == 1 {
-		res, err := e.runOne(ctx, in, batch[0])
+		res, err := e.runOne(ctx, stage, req, resp, batch[0])
 		if err != nil {
 			return nil, err
 		}
@@ -82,10 +89,14 @@ func (e *executor) runBatch(ctx context.Context, in StageInput, batch []chainEnt
 	}
 
 	results := make([]*Result, len(batch))
+	reqs := make([]*infracontext.RequestContext, len(batch))
+	resps := make([]*infracontext.ResponseContext, len(batch))
 	g, gctx := errgroup.WithContext(ctx)
 	for idx := range batch {
+		reqs[idx] = isolateRequest(req)
+		resps[idx] = isolateResponse(resp)
 		g.Go(func() error {
-			res, err := e.runOne(gctx, in, batch[idx])
+			res, err := e.runOne(gctx, stage, reqs[idx], resps[idx], batch[idx])
 			if err != nil {
 				return err
 			}
@@ -96,14 +107,23 @@ func (e *executor) runBatch(ctx context.Context, in StageInput, batch []chainEnt
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
+	for idx := range batch {
+		mergeIsolated(req, reqs[idx], resp, resps[idx])
+	}
 	return results, nil
 }
 
-func (e *executor) runOne(ctx context.Context, in StageInput, entry chainEntry) (*Result, error) {
+func (e *executor) runOne(
+	ctx context.Context,
+	stage policy.Stage,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+	entry chainEntry,
+) (*Result, error) {
 	var event *metrics.EventContext
 	if rt := trace.FromContext(ctx); rt != nil {
 		span := rt.StartSpan(trace.SpanPlugin, entry.plugin.Name())
-		span.SetStage(string(in.Stage))
+		span.SetStage(string(stage))
 		event = metrics.NewEventContext(span)
 		// Guarantee the span is closed even if Execute panics.
 		defer event.Publish()
@@ -111,10 +131,10 @@ func (e *executor) runOne(ctx context.Context, in StageInput, entry chainEntry) 
 
 	start := time.Now()
 	res, err := entry.plugin.Execute(ctx, ExecInput{
-		Stage:    in.Stage,
+		Stage:    stage,
 		Config:   entry.config,
-		Request:  in.Request,
-		Response: in.Response,
+		Request:  req,
+		Response: resp,
 		Event:    event,
 	})
 
@@ -134,10 +154,81 @@ func (e *executor) runOne(ctx context.Context, in StageInput, entry chainEntry) 
 	if err != nil && e.logger != nil {
 		e.logger.Debug("plugin returned error",
 			slog.String("plugin", entry.plugin.Name()),
-			slog.String("stage", string(in.Stage)),
+			slog.String("stage", string(stage)),
 			slog.String("error", err.Error()))
 	}
 	return res, err
+}
+
+func isolateRequest(src *infracontext.RequestContext) *infracontext.RequestContext {
+	if src == nil {
+		return nil
+	}
+	clone := *src
+	clone.Headers = cloneHeaders(src.Headers)
+	clone.Metadata = copyAnyMap(src.Metadata)
+	return &clone
+}
+
+func isolateResponse(src *infracontext.ResponseContext) *infracontext.ResponseContext {
+	if src == nil {
+		return nil
+	}
+	clone := *src
+	clone.Headers = cloneHeaders(src.Headers)
+	clone.Metadata = copyAnyMap(src.Metadata)
+	return &clone
+}
+
+func mergeIsolated(
+	req, isoReq *infracontext.RequestContext,
+	resp, isoResp *infracontext.ResponseContext,
+) {
+	if req != nil && isoReq != nil {
+		req.Metadata = mergeAnyMap(req.Metadata, isoReq.Metadata)
+		req.Headers = mergeHeaderMap(req.Headers, isoReq.Headers)
+	}
+	if resp != nil && isoResp != nil {
+		resp.Metadata = mergeAnyMap(resp.Metadata, isoResp.Metadata)
+		resp.Headers = mergeHeaderMap(resp.Headers, isoResp.Headers)
+	}
+}
+
+func copyAnyMap(in map[string]interface{}) map[string]interface{} {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func mergeAnyMap(dst, src map[string]interface{}) map[string]interface{} {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		dst = make(map[string]interface{}, len(src))
+	}
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func mergeHeaderMap(dst, src map[string][]string) map[string][]string {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		dst = make(map[string][]string, len(src))
+	}
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func (e *executor) applyResult(resp *infracontext.ResponseContext, outcome *StageOutcome, res *Result) bool {

@@ -13,7 +13,6 @@ import (
 	appmetricsmocks "github.com/NeuralTrust/AgentGateway/pkg/app/metrics/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	domaintelemetry "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
@@ -24,7 +23,6 @@ import (
 
 func TestMetricsMiddleware_ProcessesNonStreamingRequest(t *testing.T) {
 	worker := appmetricsmocks.NewWorker(t)
-	worker.EXPECT().HasDefaultExporters().Return(false)
 
 	var (
 		mu      sync.Mutex
@@ -33,8 +31,8 @@ func TestMetricsMiddleware_ProcessesNonStreamingRequest(t *testing.T) {
 		called  bool
 	)
 	worker.EXPECT().
-		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Run(func(_ []domaintelemetry.ExporterConfig, _ *trace.RequestTrace, req *infracontext.RequestContext, resp *infracontext.ResponseContext, _ time.Time, _ time.Time) {
+		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ *trace.RequestTrace, req *infracontext.RequestContext, resp *infracontext.ResponseContext, _ time.Time, _ time.Time) {
 			mu.Lock()
 			defer mu.Unlock()
 			called = true
@@ -77,7 +75,6 @@ func TestMetricsMiddleware_ProcessesNonStreamingRequest(t *testing.T) {
 
 func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
 	worker := appmetricsmocks.NewWorker(t)
-	worker.EXPECT().HasDefaultExporters().Return(false)
 
 	var (
 		mu       sync.Mutex
@@ -87,8 +84,8 @@ func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
 		gotStart time.Time
 	)
 	worker.EXPECT().
-		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Run(func(_ []domaintelemetry.ExporterConfig, _ *trace.RequestTrace, req *infracontext.RequestContext, resp *infracontext.ResponseContext, start time.Time, _ time.Time) {
+		Process(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ *trace.RequestTrace, req *infracontext.RequestContext, resp *infracontext.ResponseContext, start time.Time, _ time.Time) {
 			mu.Lock()
 			defer mu.Unlock()
 			calls++
@@ -128,7 +125,6 @@ func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(fiber.MethodPost, "/v1/chat/completions", nil)
-	req.Header.Set("X-Gateway-Id", "gw-1")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -147,7 +143,6 @@ func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {
 
 func TestMetricsMiddleware_DisabledSkipsWorker(t *testing.T) {
 	worker := appmetricsmocks.NewWorker(t)
-	worker.EXPECT().HasDefaultExporters().Return(false)
 
 	cfg := &config.Config{}
 	cfg.Telemetry.Enabled = false
@@ -163,5 +158,5 @@ func TestMetricsMiddleware_DisabledSkipsWorker(t *testing.T) {
 	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/v1/x", nil))
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
-	worker.AssertNotCalled(t, "Process", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	worker.AssertNotCalled(t, "Process", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }

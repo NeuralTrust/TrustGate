@@ -1,125 +1,277 @@
 # AgentGateway
 
-NeuralTrust **AgentGateway** is the data-plane runtime that fronts LLM and agent traffic. It exposes an **admin** plane and a **proxy** plane, each run as a separate process.
+<div align="center">
 
-> Architectural scaffolding only — this repo currently ships **B.0**. Business behaviour (routes, services, upstreams, plugins, policies) lands in B.x.
+<img src="assets/agentgateway-hero.png" alt="AgentGateway" width="100%"/>
 
-## Quickstart
+*The high-performance data-plane gateway for LLM and agent traffic — built from scratch in Go*
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/NeuralTrust/AgentGateway.svg)](https://pkg.go.dev/github.com/NeuralTrust/AgentGateway)
+[![Go Report Card](https://goreportcard.com/badge/github.com/NeuralTrust/AgentGateway)](https://goreportcard.com/report/github.com/NeuralTrust/AgentGateway)
+[![Go Version](https://img.shields.io/badge/go-1.26-00ADD8.svg?logo=go)](go.mod)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Docker Pulls](https://img.shields.io/docker/pulls/neuraltrust/agentgateway.svg)](https://hub.docker.com/r/neuraltrust/agentgateway)
+[![CI](https://github.com/NeuralTrust/AgentGateway/actions/workflows/ci.yml/badge.svg)](https://github.com/NeuralTrust/AgentGateway/actions/workflows/ci.yml)
+[![Release](https://github.com/NeuralTrust/AgentGateway/actions/workflows/release.yml/badge.svg)](https://github.com/NeuralTrust/AgentGateway/actions/workflows/release.yml)
+
+[Documentation](https://docs.neuraltrust.ai) &nbsp;|&nbsp;
+[Quick Start](#-quick-start) &nbsp;|&nbsp;
+[Architecture](#%EF%B8%8F-architecture) &nbsp;|&nbsp;
+[Community](https://join.slack.com/t/neuraltrustcommunity/shared_invite/zt-2xl47cag6-_HFNpltIULnA3wh4R6AqBg)
+
+</div>
+
+---
+
+## ✨ Features
+
+- 🚀 **High Performance** — Built in Go on top of [Fiber](https://gofiber.io), tuned for low latency and high concurrency.
+- 🌍 **Multi-Provider** — First-class adapters for OpenAI, Anthropic, Azure OpenAI, AWS Bedrock, Google Gemini, Vertex AI, Groq and Mistral.
+- 🧭 **Smart Routing & Load Balancing** — Round-robin, weighted round-robin and IP-hash strategies with health checks and fallback targets.
+- 🔌 **Plugin System** — Policy stages with built-in plugins: rate limiting, token rate limiting, request size guard, semantic cache and CORS.
+- 🧠 **Semantic Cache** — Embedding-based response caching to cut cost and latency on repeated prompts.
+- 🔒 **Security & Multi-Tenancy** — Per-gateway consumers, API-key auth, and policies scoped globally or per consumer.
+- 📊 **Observability** — Built-in metrics, request telemetry streamed to Kafka and optional [TrustLens](https://neuraltrust.ai) integration.
+- ⚙️ **Two Independent Planes** — Admin and Proxy run as separate processes so you can scale them independently.
+- ☁️ **Cloud Agnostic** — Single static binary, Docker image and Kubernetes manifests. Deploy anywhere.
+
+## 🚀 Quick Start
+
+### Using Docker Compose
 
 ```bash
-# 1. Copy the env template and adjust as needed.
+# Clone the repository
+git clone https://github.com/NeuralTrust/AgentGateway.git
+cd AgentGateway
+
+# Copy the env template and adjust as needed
 cp .env.example .env
 
-# 2. Boot the local dev infra (Postgres, Redis, Kafka, Zookeeper).
+# Build and start the full stack (Postgres, Redis, Kafka, Zookeeper) + admin & proxy
+make run-servers
+
+# Tail the logs
+docker compose -f docker-compose.yaml -f docker-compose.api.yaml logs -f
+```
+
+Then hit the health probes:
+
+```bash
+curl localhost:8080/healthz       # admin
+curl localhost:8081/healthz       # proxy
+curl localhost:8080/__/version    # build info (version, commit, build date)
+```
+
+> The image is pinned to `linux/amd64` because `confluent-kafka-go` only bundles
+> an amd64 `librdkafka`; on Apple Silicon the build runs under emulation out of the box.
+
+### Local Development
+
+Run the infra in Docker and the binary on your machine so you can attach a debugger:
+
+```bash
+# 1. Boot the local dev infra (Postgres, Redis, Kafka, Zookeeper)
 make compose-up
 
-# 3. Run the admin and the proxy in two separate terminals.
+# 2. Run the admin and the proxy in two separate terminals
 make run-admin      # terminal 1 — applies migrations, starts admin on :8080
 make run-proxy      # terminal 2 — applies migrations, starts proxy on :8081
 
-# 4. Hit the health probes.
-curl localhost:8080/healthz   # admin
-curl localhost:8081/healthz   # proxy
-curl localhost:8080/__/version
+# 3. Stop the infra (add -v to wipe volumes)
+make compose-down
 ```
 
-The `agentgateway` binary itself runs from your local machine so you can
-attach a debugger and iterate without rebuilding the docker image. `make
-compose-down` stops the infra stack (and `-v` wipes the volumes).
+### Using Kubernetes
 
-### Run everything in Docker
-
-To run the admin and proxy servers as containers alongside the infra stack
-(no local Go toolchain needed), use `make run-servers`. It combines
-`docker-compose.yaml` (Postgres, Redis, Kafka, Zookeeper) with
-`docker-compose.api.yaml` (admin on :8080, proxy on :8081):
+Manifests live under [`k8s/`](k8s).
 
 ```bash
-make run-servers              # build + start the full stack and both servers
-docker compose -f docker-compose.yaml -f docker-compose.api.yaml logs -f
-docker compose -f docker-compose.yaml -f docker-compose.api.yaml down
+kubectl apply -k k8s/
 ```
 
-The server containers load `.env` and override the host-based defaults
-(`DB_HOST`, `REDIS_HOST`, `KAFKA_BROKERS`) so they reach the compose services
-by hostname. If your private NeuralTrust modules need auth at build time,
-export `GITHUB_TOKEN` before running.
-
-> The image is pinned to `linux/amd64`: `confluent-kafka-go` v1.9.2 only
-> bundles an amd64 `librdkafka`, so on Apple Silicon the build/run happens
-> under emulation (slower first build, but it works out of the box).
-
-## Boot sequence
-
-`agentgateway` has no subcommands. Each invocation runs **one** HTTP server,
-selected by `argv[1]` (default: `proxy`):
+### Run Tests
 
 ```bash
-./agentgateway              # → proxy (default, matches TrustGate)
+make test            # unit tests
+make test-race       # unit tests with the race detector
+make test-cover      # unit tests with coverage profile
+make test-functional # functional tests against a real admin server
+```
+
+## 🏗️ Architecture
+
+AgentGateway ships a **single binary** that boots **one** HTTP server, selected by `argv[1]`
+(default: `proxy`). In production each pod runs one container with the appropriate argument,
+so the **Admin** and **Proxy** planes scale independently.
+
+```bash
+./agentgateway              # → proxy (default)
 ./agentgateway proxy        # → proxy
 ./agentgateway admin        # → admin
 ```
 
-In production each pod runs one container with the appropriate argument so
-admin and proxy can scale independently.
+```mermaid
+flowchart LR
+    subgraph Clients["Clients & Agents"]
+        APP["Apps / SDKs / Agents"]
+    end
 
-Boot sequence (identical for both servers):
+    subgraph AG["AgentGateway"]
+        direction TB
+        ADMIN["Admin Plane :8080\nGateways · Registries · Consumers\nAuth · Policies · Catalog"]
+        PROXY["Proxy Plane :8081\nRouting · Load Balancing\nPolicy Stages · Plugins"]
+    end
 
-1. Load `.env` if present (silently ignored otherwise).
-2. Build the DI container from `modules.All()`.
-3. Apply pending database migrations (30s timeout).
-4. Start the selected HTTP server in its own goroutine.
-5. On SIGINT/SIGTERM, call `Shutdown()` on the server and exit.
+    subgraph Plugins["Policy Plugins"]
+        RL["Rate Limit"]
+        TRL["Token Rate Limit"]
+        RS["Request Size"]
+        SC["Semantic Cache"]
+        CORS["CORS"]
+    end
 
-Any failure in steps 1–3 exits non-zero with a `log.Fatal` line; failures
-inside the server goroutine log via slog and exit non-zero.
+    subgraph Providers["LLM Providers"]
+        P1["OpenAI · Anthropic\nAzure · Bedrock"]
+        P2["Gemini · Vertex\nGroq · Mistral"]
+    end
 
-## Local development
+    subgraph Infra["Infrastructure"]
+        PG[("Postgres")]
+        RD[("Redis")]
+        KFK[["Kafka → TrustLens"]]
+    end
+
+    APP -->|API key| PROXY
+    PROXY --> Plugins
+    PROXY -->|load balance| Providers
+    ADMIN -. config .-> PROXY
+    ADMIN --- PG
+    PROXY --- PG
+    PROXY --- RD
+    PROXY -->|telemetry| KFK
+```
+
+### Request lifecycle
+
+1. A client calls the **Proxy** with a consumer API key.
+2. The gateway resolves the consumer, gateway config and applicable **policies**.
+3. Policy **stages** run their **plugins** (rate limit, token rate limit, request size, semantic cache, CORS).
+4. The **load balancer** picks a healthy upstream target (round-robin / weighted / IP-hash) with fallback.
+5. The request is forwarded to the selected **provider adapter** (OpenAI, Anthropic, Bedrock, …), streaming when supported.
+6. The response is returned, the semantic cache is populated, and **telemetry** is emitted to Kafka.
+
+### Two planes
+
+| Plane | Port | Responsibilities |
+|-------|------|------------------|
+| **Admin** | `8080` | Gateway, registry, consumer, auth, policy and catalog management. Applies DB migrations. |
+| **Proxy** | `8081` | Request routing, load balancing, policy & plugin execution, provider forwarding, telemetry. |
+
+## 🔌 Plugins
+
+Plugins run inside ordered **policy stages** and can execute sequentially or in parallel.
+
+| Plugin | Description |
+|--------|-------------|
+| `ratelimit` | Per-consumer / per-gateway request rate limiting. |
+| `tokenratelimit` | Token-based rate limiting for LLM cost control. |
+| `requestsize` | Rejects requests above a configured body size. |
+| `semanticcache` | Embedding-based response caching for repeated prompts. |
+| `cors` | Cross-origin resource sharing for browser clients. |
+
+## 🌍 Providers
+
+| Provider | Provider | Provider | Provider |
+|----------|----------|----------|----------|
+| OpenAI | Anthropic | Azure OpenAI | AWS Bedrock |
+| Google Gemini | Vertex AI | Groq | Mistral |
+
+## ⚙️ Configuration
+
+All configuration is read from **environment variables**. In development, copy `.env.example`
+to `.env` and `godotenv` loads it automatically. Production deployments inject env vars directly
+(Helm values, ECS task definitions, k8s ConfigMap + Secret).
 
 ```bash
-make build           # compile bin/agentgateway with version ldflags
-make run             # build + run proxy (alias for run-proxy)
-make run-admin       # build + run admin server
-make run-proxy       # build + run proxy server
-make run-servers     # build + run full stack and both servers in docker
-make test            # go test ./pkg/...
-make test-race       # with -race
-make test-cover      # with coverage profile
-make lint            # golangci-lint
-make fmt             # gofmt + go vet
+# Server (HTTP listeners)
+SERVER_ADMIN_PORT=8080
+SERVER_PROXY_PORT=8081
+
+# Database (Postgres via pgx/pgxpool)
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=agentgateway
+
+# Redis & Kafka
+REDIS_HOST=localhost
+KAFKA_BROKERS=localhost:9092
+
+# Telemetry & Metrics
+TELEMETRY_ENABLED=true
+TELEMETRY_KAFKA_TOPIC=agentgateway.requests
+METRICS_ENABLED=true
 ```
 
-The full target list is in the `Makefile`; `make help` prints it.
+See [`.env.example`](.env.example) for the full set with safe defaults.
 
-## Repository layout
+### Migrations
+
+Migrations are **in-code Go files** under `pkg/infra/database/migrations/`. Each file is named
+`<unix_timestamp>_<snake_name>.go` and registers itself via `database.RegisterMigration` in its
+`init()`. The `pgx`-backed runner commits each migration's DDL plus its `migration_version` row in
+a single transaction, applying any pending migrations automatically on boot.
+
+## 📚 API Docs
+
+The Admin API is fully annotated and ships Swagger 2.0 and OpenAPI 3 specs:
+
+```bash
+make swagger   # generate docs/swagger.{json,yaml} + docs.go
+make openapi   # convert to docs/openapi.json (OpenAPI 3)
+make docs      # regenerate everything
+```
+
+Specs live under [`docs/`](docs) (`swagger.json`, `swagger.yaml`, `openapi.json`).
+
+## 🗂️ Repository layout
 
 ```
-cmd/agentgateway/      # entry point
+cmd/agentgateway/      # entry point (single binary: proxy | admin)
 pkg/version/           # ldflag-fed build info
-pkg/common/errors/     # cross-package sentinel errors
 pkg/config/            # env-only config loader (.env via godotenv in dev)
 pkg/domain/            # domain entities, value objects and port interfaces
 pkg/app/               # application services (use cases)
-pkg/infra/logger/      # log/slog multi/async/source-filter/colored handlers
-pkg/infra/database/    # pgx/v5 pgxpool + in-code Go migrations registry
-pkg/api/handler/http/  # per-route HTTP handlers (health, version)
-pkg/api/middleware/    # request_id, access_log, panic_recover (slog-based)
-pkg/server/            # Server interface + BaseServer (Fiber tuning) + httpServer
-pkg/server/router/     # ServerRouter contract + admin / proxy routers
-pkg/container/         # dig wrapper + Module contract
-pkg/container/modules/ # one file per DI context (core, api, server_admin, ...)
+pkg/infra/providers/   # provider adapters (openai, anthropic, bedrock, …)
+pkg/infra/plugins/     # policy plugins (ratelimit, semanticcache, …)
+pkg/infra/loadbalancer/# routing strategies + health checks
+pkg/infra/database/    # pgxpool + in-code Go migrations registry
+pkg/infra/telemetry/   # Kafka + TrustLens telemetry
+pkg/api/handler/http/  # per-route HTTP handlers
+pkg/server/            # Server interface + admin / proxy routers
+pkg/container/         # dig DI container + one module per context
 ```
 
-## Configuration
+## 🤝 Contributing
 
-All configuration is read from environment variables. In development copy `.env.example` to `.env`; `godotenv` loads it automatically. Production deployments inject env vars directly (Helm values, ECS task def, k8s ConfigMap+Secret).
+We love contributions! To get started:
 
-See `.env.example` for the full set with safe defaults.
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feat/my-feature`)
+3. Run `make lint && make test` before committing
+4. Push to your branch and open a Pull Request
 
-## Migrations
+## 📜 License
 
-Migrations are **in-code Go files** under `pkg/infra/database/migrations/`. Each file is named `<unix_timestamp>_<snake_name>.go` and calls `database.RegisterMigration` from its `init()`. The runner is `pgx`-backed and commits each migration's DDL plus its `migration_version` row in a single transaction. The pattern is a direct port of the NeuralTrust AgentGuardian system.
+AgentGateway is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
 
-## License
+## 📫 Community & Support
 
-Copyright © NeuralTrust. All rights reserved.
+- [Documentation](https://docs.neuraltrust.ai)
+- [Slack Community](https://join.slack.com/t/neuraltrustcommunity/shared_invite/zt-2xl47cag6-_HFNpltIULnA3wh4R6AqBg)
+- [GitHub Issues](https://github.com/NeuralTrust/AgentGateway/issues)
+- [Twitter](https://twitter.com/neuraltrust)
+- [Blog](https://neuraltrust.ai/en/resources/blog)
+
+<div align="center">
+Made with ❤️ by <a href="https://neuraltrust.ai">NeuralTrust</a>
+</div>

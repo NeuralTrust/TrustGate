@@ -1,31 +1,26 @@
-version: 2
+version: "2"
 
 run:
-  timeout: 10m
   tests: true
 
 linters:
+  default: none
   enable:
     - errcheck
     - govet
     - ineffassign
     - staticcheck
     - unused
-  disable:
-    - gosec
-
-linters-settings:
-  errcheck:
-    check-type-assertions: false
-    check-blank: false
-
-issues:
-  exclude-dirs:
-    - vendor
-  exclude-files:
-    - ".*\\.pb\\.go$"
-    - ".*_gen\\.go$"
-  exclude-rules:
-    - linters:
-        - errcheck
-      text: "Error return value of `.*Close` is not checked"
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+  exclusions:
+    paths:
+      - vendor
+      - ".*\\.pb\\.go$"
+      - ".*_gen\\.go$"
+    rules:
+      - linters:
+          - errcheck
+        text: "Error return value of `.*Close` is not checked"

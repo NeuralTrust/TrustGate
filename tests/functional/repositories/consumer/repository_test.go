@@ -110,6 +110,19 @@ func validConsumer(t *testing.T, gwID ids.GatewayID, name string, beIDs ...ids.R
 	return c
 }
 
+func saveWithRegistries(t *testing.T, f fixture, c *domain.Consumer) {
+	t.Helper()
+	ctx := context.Background()
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for _, rid := range c.RegistryIDs {
+		if err := f.repo.AttachRegistry(ctx, c.ID, rid); err != nil {
+			t.Fatalf("AttachRegistry: %v", err)
+		}
+	}
+}
+
 func TestRepository_SaveAndFindByID(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
@@ -119,9 +132,7 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	c := validConsumer(t, gwID, "openai-chat", beID)
 	c.Headers = map[string]string{"X-Tenant": "acme"}
 
-	if err := f.repo.Save(ctx, c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
+	saveWithRegistries(t, f, c)
 
 	got, err := f.repo.FindByID(ctx, c.ID)
 	if err != nil {
@@ -316,19 +327,22 @@ func TestRepository_Save_InvalidGatewayID(t *testing.T) {
 	}
 }
 
-func TestRepository_Save_InvalidRegistryID(t *testing.T) {
+func TestRepository_AttachRegistry_InvalidRegistryID(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-be")
+	c := validConsumer(t, gwID, "with-ghost")
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 	ghostBE := ids.New[ids.RegistryKind]()
-	c := validConsumer(t, gwID, "with-ghost", ghostBE)
-	err := f.repo.Save(ctx, c)
+	err := f.repo.AttachRegistry(ctx, c.ID, ghostBE)
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
 		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
 }
 
-func TestRepository_Update_RebindsBackends(t *testing.T) {
+func TestRepository_RebindsBackendsViaAttachDetach(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "rebind")
@@ -337,23 +351,18 @@ func TestRepository_Update_RebindsBackends(t *testing.T) {
 	be3 := seedRegistry(t, f.be, gwID, "be-z")
 
 	c := validConsumer(t, gwID, "rb", be1, be2)
-	if err := f.repo.Save(ctx, c); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
+	saveWithRegistries(t, f, c)
 
-	c.RegistryIDs = []ids.RegistryID{be2, be3}
-	c.Name = "rb-v2"
-	c.UpdatedAt = time.Now().UTC()
-	if err := f.repo.Update(ctx, c); err != nil {
-		t.Fatalf("Update: %v", err)
+	if err := f.repo.DetachRegistry(ctx, c.ID, be1); err != nil {
+		t.Fatalf("DetachRegistry: %v", err)
+	}
+	if err := f.repo.AttachRegistry(ctx, c.ID, be3); err != nil {
+		t.Fatalf("AttachRegistry: %v", err)
 	}
 
 	got, err := f.repo.FindByID(ctx, c.ID)
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
-	}
-	if got.Name != "rb-v2" {
-		t.Fatalf("Name = %q", got.Name)
 	}
 	if len(got.RegistryIDs) != 2 {
 		t.Fatalf("RegistryIDs len = %d, want 2", len(got.RegistryIDs))
@@ -440,9 +449,7 @@ func TestRepository_DeleteBackend_FailsWhenReferencedByConsumer(t *testing.T) {
 	gwID := seedGateway(t, f.gw, "pool-bd")
 	beID := seedRegistry(t, f.be, gwID, "be-bd")
 
-	if err := f.repo.Save(ctx, validConsumer(t, gwID, "uses-be", beID)); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
+	saveWithRegistries(t, f, validConsumer(t, gwID, "uses-be", beID))
 	err := f.be.Delete(ctx, beID)
 	if !errors.Is(err, registrydomain.ErrHasDependents) {
 		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)

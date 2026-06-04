@@ -42,8 +42,10 @@ type ProviderResponse struct {
 	// adapted to the client's source format. The consumer writes each line + "\n"
 	// and is responsible for draining the sequence (which closes the backend
 	// body). The second value carries mid-stream errors.
-	Stream iter.Seq2[[]byte, error]
-	Usage  *adapter.CanonicalUsage
+	Stream       iter.Seq2[[]byte, error]
+	Usage        *adapter.CanonicalUsage
+	Model        string
+	FinishReason string
 }
 
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
@@ -106,7 +108,7 @@ func (p *providerInvoker) Invoke(
 		return nil, fmt.Errorf("provider completions: %w", err)
 	}
 
-	usage := p.decodeResponseUsage(respBody, prep.targetFormat)
+	usage, model, finishReason := p.decodeResponseMeta(respBody, prep.targetFormat)
 
 	if prep.crossFormat {
 		if adapted, aerr := p.registry.AdaptResponse(respBody, prep.sourceFormat, prep.targetFormat); aerr != nil {
@@ -123,17 +125,19 @@ func (p *providerInvoker) Invoke(
 			headerSelectedProvider: {bk.Provider},
 			headerContentType:      {contentTypeJSON},
 		},
-		Body:  respBody,
-		Usage: usage,
+		Body:         respBody,
+		Usage:        usage,
+		Model:        model,
+		FinishReason: finishReason,
 	}, nil
 }
 
-func (p *providerInvoker) decodeResponseUsage(body []byte, format adapter.Format) *adapter.CanonicalUsage {
+func (p *providerInvoker) decodeResponseMeta(body []byte, format adapter.Format) (*adapter.CanonicalUsage, string, string) {
 	canonical, err := p.registry.DecodeResponseFor(body, format)
 	if err != nil || canonical == nil {
-		return nil
+		return nil, "", ""
 	}
-	return canonical.Usage
+	return canonical.Usage, canonical.Model, canonical.FinishReason
 }
 
 func (p *providerInvoker) InvokeStream(
@@ -168,7 +172,7 @@ func (p *providerInvoker) InvokeStream(
 		return nil, fmt.Errorf("provider completions stream: %w", err)
 	}
 
-	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.usageObserver(ctx))
+	stream := adaptStream(seq, p.registry, prep.sourceFormat, prep.targetFormat, p.logger, p.streamObserver(ctx))
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
@@ -237,17 +241,21 @@ func (p *providerInvoker) prepare(
 	}, nil
 }
 
-func (p *providerInvoker) usageObserver(ctx context.Context) func(*adapter.CanonicalUsage) {
+func (p *providerInvoker) streamObserver(ctx context.Context) func(*adapter.CanonicalStreamChunk) {
 	requestTrace := trace.FromContext(ctx)
-	return func(u *adapter.CanonicalUsage) {
-		if u == nil || requestTrace == nil {
+	return func(chunk *adapter.CanonicalStreamChunk) {
+		if chunk == nil || requestTrace == nil {
 			return
 		}
-		requestTrace.ObserveLLMUsage(u)
+		requestTrace.ObserveLLMResult(chunk.Model, chunk.FinishReason)
+		if chunk.Usage == nil {
+			return
+		}
+		requestTrace.ObserveLLMUsage(chunk.Usage)
 		p.logger.Debug("stream usage observed",
-			slog.Int("input_tokens", u.InputTokens),
-			slog.Int("output_tokens", u.OutputTokens),
-			slog.Int("total_tokens", u.TotalTokens))
+			slog.Int("input_tokens", chunk.Usage.InputTokens),
+			slog.Int("output_tokens", chunk.Usage.OutputTokens),
+			slog.Int("total_tokens", chunk.Usage.TotalTokens))
 	}
 }
 

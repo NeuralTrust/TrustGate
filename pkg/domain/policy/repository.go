@@ -17,8 +17,10 @@ type ListFilter struct {
 type Repository interface {
 	Save(ctx context.Context, p *Policy) error
 	Update(ctx context.Context, p *Policy) error
+	SetGlobal(ctx context.Context, id ids.PolicyID, global bool) error
 	Delete(ctx context.Context, id ids.PolicyID) error
 	FindByID(ctx context.Context, id ids.PolicyID) (*Policy, error)
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, policyIDs []ids.PolicyID) ([]*Policy, error)
+	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Policy, error)
 	List(ctx context.Context, filter ListFilter) (items []*Policy, total int, err error)
 }

@@ -19,7 +19,6 @@ type ConsumerResponse struct {
 	Headers         map[string]string        `json:"headers,omitempty"`
 	Active          bool                     `json:"active"`
 	RegistryIDs     []ids.RegistryID         `json:"registry_ids"`
-	PolicyIDs       []ids.PolicyID           `json:"policy_ids"`
 	AuthIDs         []ids.AuthID             `json:"auth_ids"`
 	Fallback        *FallbackResponse        `json:"fallback,omitempty"`
 	ModelPolicies   []ModelPolicyResponse    `json:"model_policies,omitempty"`
@@ -59,10 +58,6 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 	if registryIDs == nil {
 		registryIDs = []ids.RegistryID{}
 	}
-	policyIDs := c.PolicyIDs
-	if policyIDs == nil {
-		policyIDs = []ids.PolicyID{}
-	}
 	authIDs := c.AuthIDs
 	if authIDs == nil {
 		authIDs = []ids.AuthID{}
@@ -85,7 +80,6 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		Headers:         c.Headers,
 		Active:          c.Active,
 		RegistryIDs:     registryIDs,
-		PolicyIDs:       policyIDs,
 		AuthIDs:         authIDs,
 		Fallback:        fromFallback(c.Fallback),
 		ModelPolicies:   fromModelPolicies(c.ModelPolicies),

@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"log/slog"
 
+	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
 )
@@ -48,13 +48,14 @@ func (m *SessionMiddleware) Middleware() fiber.Handler {
 }
 
 func (m *SessionMiddleware) resolveConfig(c *fiber.Ctx) *domain.SessionConfig {
-	rawID := c.Get(headerGatewayID)
-	if rawID == "" {
-		return nil
+	if gw, ok := appgateway.FromContext(c.UserContext()); ok {
+		if gw == nil {
+			return nil
+		}
+		return gw.SessionConfig
 	}
-	gatewayID, err := ids.Parse[ids.GatewayKind](rawID)
-	if err != nil {
-		m.logger.Debug("session middleware: invalid gateway id header", slog.String("gateway_id", rawID))
+	gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
+	if !ok {
 		return nil
 	}
 	gw, err := m.finder.FindByID(c.UserContext(), gatewayID)
@@ -74,16 +75,19 @@ func (m *SessionMiddleware) extractFromBody(c *fiber.Ctx, paramName string) stri
 		return ""
 	}
 
-	var raw map[string]interface{}
+	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
 		m.logger.Debug("session middleware: body is not valid JSON, skipping body param lookup")
 		return ""
 	}
 
-	if v, ok := raw[paramName]; ok && v != nil {
-		if s, ok := v.(string); ok && s != "" {
-			return s
-		}
+	value, ok := raw[paramName]
+	if !ok {
+		return ""
 	}
-	return ""
+	var s string
+	if err := json.Unmarshal(value, &s); err != nil {
+		return ""
+	}
+	return s
 }

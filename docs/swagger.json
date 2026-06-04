@@ -858,6 +858,396 @@
                 }
             }
         },
+        "/v1/gateways/{gateway_id}/consumers/{id}/auths/{auth_id}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Associates an auth credential with a consumer (idempotent).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "consumers"
+                ],
+                "summary": "Attach an auth to a consumer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Consumer id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Auth id",
+                        "name": "auth_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the association between an auth credential and a consumer (idempotent).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "consumers"
+                ],
+                "summary": "Detach an auth from a consumer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Consumer id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Auth id",
+                        "name": "auth_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/gateways/{gateway_id}/consumers/{id}/policies/{policy_id}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Associates a policy with a consumer (idempotent). Editing the policy later affects every consumer it is attached to.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "consumers"
+                ],
+                "summary": "Attach a policy to a consumer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Consumer id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Policy id",
+                        "name": "policy_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the association between a policy and a consumer (idempotent).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "consumers"
+                ],
+                "summary": "Detach a policy from a consumer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Consumer id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Policy id",
+                        "name": "policy_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/gateways/{gateway_id}/consumers/{id}/registries/{registry_id}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Associates a registry with a consumer (idempotent).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "consumers"
+                ],
+                "summary": "Attach a registry to a consumer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Consumer id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "registry_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the association between a registry and a consumer (idempotent).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "consumers"
+                ],
+                "summary": "Detach a registry from a consumer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Consumer id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Registry id",
+                        "name": "registry_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/gateways/{gateway_id}/policies": {
             "get": {
                 "security": [
@@ -1185,6 +1575,126 @@
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/gateways/{gateway_id}/policies/{id}/global": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Promotes a policy to gateway-wide scope (applies to every consumer).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Mark a policy as global",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Policy id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Demotes a global policy back to consumer-scoped (applies only to linked consumers).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Clear a policy's global scope",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Policy id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
                         }
@@ -1747,6 +2257,37 @@
                 }
             }
         },
+        "/v1/policies-catalog": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the catalog of available policies grouped by type. Each entry includes the settings schema needed to render its configuration form dynamically.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List policy catalog",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/providers-catalog": {
             "get": {
                 "security": [
@@ -1786,26 +2327,9 @@
         }
     },
     "definitions": {
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.APIKeyConfigRequest": {
-            "type": "object",
-            "properties": {
-                "in": {
-                    "type": "string"
-                },
-                "key": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest": {
             "type": "object",
             "properties": {
-                "api_key": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.APIKeyConfigRequest"
-                },
                 "mtls": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest"
                 },
@@ -1912,24 +2436,13 @@
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.APIKeyConfigResponse": {
-            "type": "object",
-            "properties": {
-                "in": {
-                    "type": "string"
-                },
-                "key": {
-                    "description": "#nosec G117",
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.AuthResponse": {
             "type": "object",
             "properties": {
+                "api_key": {
+                    "description": "#nosec G101",
+                    "type": "string"
+                },
                 "config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse"
                 },
@@ -1959,9 +2472,6 @@
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse": {
             "type": "object",
             "properties": {
-                "api_key": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.APIKeyConfigResponse"
-                },
                 "mtls": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse"
                 },
@@ -2153,17 +2663,8 @@
                 "algorithm": {
                     "type": "string"
                 },
-                "auth_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
                 "embedding_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest"
-                },
-                "fallback": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest"
                 },
                 "headers": {
                     "type": "object",
@@ -2171,29 +2672,11 @@
                         "type": "string"
                     }
                 },
-                "model_policies": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest"
-                    }
-                },
                 "name": {
                     "type": "string"
                 },
                 "path": {
                     "type": "string"
-                },
-                "policy_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "registry_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
                 "type": {
                     "type": "string"
@@ -2277,12 +2760,6 @@
                 "algorithm": {
                     "type": "string"
                 },
-                "auth_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
                 "embedding_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest"
                 },
@@ -2306,18 +2783,6 @@
                 },
                 "path": {
                     "type": "string"
-                },
-                "policy_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "registry_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
                 "type": {
                     "type": "string"
@@ -2371,12 +2836,6 @@
                 },
                 "path": {
                     "type": "string"
-                },
-                "policy_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
                 "registry_ids": {
                     "type": "array",
@@ -2577,25 +3036,8 @@
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.CreatePolicyRequest": {
             "type": "object",
             "properties": {
-                "name": {
-                    "type": "string"
-                },
-                "plugins": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest"
-                    }
-                }
-            }
-        },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest": {
-            "type": "object",
-            "properties": {
                 "enabled": {
                     "type": "boolean"
-                },
-                "id": {
-                    "type": "string"
                 },
                 "name": {
                     "type": "string"
@@ -2608,23 +3050,45 @@
                 },
                 "settings": {
                     "type": "object",
-                    "additionalProperties": true
+                    "additionalProperties": {}
                 },
-                "stage": {
+                "slug": {
                     "type": "string"
+                },
+                "stages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
             "type": "object",
             "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
                 },
-                "plugins": {
+                "parallel": {
+                    "type": "boolean"
+                },
+                "priority": {
+                    "type": "integer"
+                },
+                "settings": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "stages": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.PluginRequest"
+                        "type": "string"
                     }
                 }
             }
@@ -2649,10 +3113,25 @@
                 }
             }
         },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PluginResponse": {
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse": {
             "type": "object",
             "properties": {
+                "consumer_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
                 "enabled": {
+                    "type": "boolean"
+                },
+                "gateway_id": {
+                    "type": "string"
+                },
+                "global": {
                     "type": "boolean"
                 },
                 "id": {
@@ -2669,32 +3148,15 @@
                 },
                 "settings": {
                     "type": "object",
-                    "additionalProperties": true
+                    "additionalProperties": {}
                 },
-                "stage": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse": {
-            "type": "object",
-            "properties": {
-                "created_at": {
+                "slug": {
                     "type": "string"
                 },
-                "gateway_id": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "plugins": {
+                "stages": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PluginResponse"
+                        "type": "string"
                     }
                 },
                 "updated_at": {
@@ -3149,6 +3611,153 @@
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog": {
+            "type": "object",
+            "properties": {
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogGroup"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "mandatory_stages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "settings_schema": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.SettingsSchema"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "supported_stages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage"
+                    }
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogGroup": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field": {
+            "type": "object",
+            "properties": {
+                "default": {},
+                "description": {
+                    "type": "string"
+                },
+                "enum": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "fields": {
+                    "description": "Fields lists the child fields of an object.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                    }
+                },
+                "item": {
+                    "description": "Item describes the element schema of an array.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                        }
+                    ]
+                },
+                "key": {
+                    "type": "string"
+                },
+                "key_options": {
+                    "description": "KeyOptions lists the well-known keys of a map. Empty means free-form keys.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "label": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.FieldType"
+                },
+                "value": {
+                    "description": "Value describes the value schema of a map.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                        }
+                    ]
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.FieldType": {
+            "type": "string",
+            "enum": [
+                "string",
+                "integer",
+                "number",
+                "boolean",
+                "duration",
+                "enum",
+                "object",
+                "array",
+                "map"
+            ],
+            "x-enum-varnames": [
+                "FieldTypeString",
+                "FieldTypeInteger",
+                "FieldTypeNumber",
+                "FieldTypeBoolean",
+                "FieldTypeDuration",
+                "FieldTypeEnum",
+                "FieldTypeObject",
+                "FieldTypeArray",
+                "FieldTypeMap"
+            ]
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.SettingsSchema": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                    }
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig": {
             "type": "object",
             "additionalProperties": {
@@ -3171,6 +3780,21 @@
                     "type": "string"
                 }
             }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage": {
+            "type": "string",
+            "enum": [
+                "pre_request",
+                "post_request",
+                "pre_response",
+                "post_response"
+            ],
+            "x-enum-varnames": [
+                "StagePreRequest",
+                "StagePostRequest",
+                "StagePreResponse",
+                "StagePostResponse"
+            ]
         },
         "github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.ExporterConfig": {
             "type": "object",

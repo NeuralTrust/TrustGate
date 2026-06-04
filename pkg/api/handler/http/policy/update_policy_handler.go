@@ -54,7 +54,12 @@ func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 		ID:        id,
 		GatewayID: gatewayID,
 		Name:      req.Name,
-		Plugins:   req.ToPlugins(),
+		Slug:      req.Slug,
+		Enabled:   req.Enabled,
+		Priority:  req.Priority,
+		Parallel:  req.Parallel,
+		Settings:  req.Settings,
+		Stages:    req.ToStages(),
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

@@ -19,6 +19,7 @@ var _ Deleter = (*deleter)(nil)
 type deleter struct {
 	repo        domain.Repository
 	memoryCache *cache.TTLMap
+	keyCache    *cache.TTLMap
 	publisher   cache.EventPublisher
 	logger      *slog.Logger
 }
@@ -32,6 +33,7 @@ func NewDeleter(
 	return &deleter{
 		repo:        repo,
 		memoryCache: manager.GetTTLMap(cache.AuthTTLName),
+		keyCache:    manager.GetTTLMap(cache.AuthKeyTTLName),
 		publisher:   publisher,
 		logger:      logger,
 	}
@@ -49,6 +51,9 @@ func (d *deleter) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.Au
 		return err
 	}
 	d.memoryCache.Delete(id.String())
+	if existing.KeyHash != "" {
+		d.keyCache.Delete(existing.KeyHash)
+	}
 	publishGatewayDataInvalidation(ctx, d.publisher, d.logger, existing.GatewayID)
 	return nil
 }

@@ -9,13 +9,9 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	authmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	policymocks "github.com/NeuralTrust/AgentGateway/pkg/domain/policy/mocks"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	backendmocks "github.com/NeuralTrust/AgentGateway/pkg/domain/registry/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
@@ -29,27 +25,9 @@ func newCacheManager() *cache.TTLMapManager {
 	return cache.NewTTLMapManager(time.Hour)
 }
 
-func newBackendStub(gwID ids.GatewayID, beID ids.RegistryID) *backendmocks.Repository {
-	t := &backendmocks.Repository{}
-	t.EXPECT().
-		FindByIDs(mock.Anything, gwID, mock.Anything).
-		Return([]*registrydomain.Registry{{ID: beID, GatewayID: gwID}}, nil).
-		Maybe()
-	return t
-}
-
-func newPolicyStub() *policymocks.Repository {
-	return &policymocks.Repository{}
-}
-
-func newAuthStub() *authmocks.Repository {
-	return &authmocks.Repository{}
-}
-
 func TestCreator_Create_Success(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	beID := ids.New[ids.RegistryKind]()
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().
@@ -59,19 +37,21 @@ func TestCreator_Create_Success(t *testing.T) {
 		Return(nil).
 		Once()
 
-	beRepo := newBackendStub(gwID, beID)
 	mgr := newCacheManager()
-	creator := appconsumer.NewCreator(repo, beRepo, newPolicyStub(), newAuthStub(), mgr, cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
 
 	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
-		GatewayID:   gwID,
-		Name:        "chat",
-		Type:        domain.TypeLLM,
-		Path:        "/v1/chat/completions",
-		RegistryIDs: []ids.RegistryID{beID},
+		GatewayID: gwID,
+		Name:      "chat",
+		Type:      domain.TypeLLM,
+		Path:      "/v1/chat/completions",
 	})
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
+	}
+	// Consumers are created bare; registries are attached afterwards.
+	if len(c.RegistryIDs) != 0 {
+		t.Fatalf("RegistryIDs = %v, want empty at creation", c.RegistryIDs)
 	}
 	cached, ok := mgr.GetTTLMap(cache.ConsumerTTLName).Get(c.ID.String())
 	if !ok {
@@ -82,44 +62,15 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 }
 
-func TestCreator_Create_RejectsBackendFromOtherGateway(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	beID := ids.New[ids.RegistryKind]()
-
-	repo := repomocks.NewRepository(t)
-	beRepo := &backendmocks.Repository{}
-	beRepo.EXPECT().
-		FindByIDs(mock.Anything, gwID, mock.Anything).
-		Return([]*registrydomain.Registry{}, nil).
-		Once()
-
-	creator := appconsumer.NewCreator(repo, beRepo, newPolicyStub(), newAuthStub(), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-
-	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
-		GatewayID:   gwID,
-		Name:        "x",
-		Type:        domain.TypeLLM,
-		RegistryIDs: []ids.RegistryID{beID},
-	})
-	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
-		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
-	}
-}
-
 func TestCreator_Create_RejectsInvalidDomain(t *testing.T) {
 	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	beID := ids.New[ids.RegistryKind]()
-	beRepo := newBackendStub(gwID, beID)
-
-	creator := appconsumer.NewCreator(repomocks.NewRepository(t), beRepo, newPolicyStub(), newAuthStub(), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repomocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
-		GatewayID:   gwID,
-		Name:        "",
-		Type:        domain.TypeLLM,
-		RegistryIDs: []ids.RegistryID{beID},
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "",
+		Type:      domain.TypeLLM,
+		Path:      "/v1/chat/completions",
 	})
 	if !errors.Is(err, domain.ErrInvalidName) {
 		t.Fatalf("err = %v, want ErrInvalidName", err)
@@ -128,21 +79,16 @@ func TestCreator_Create_RejectsInvalidDomain(t *testing.T) {
 
 func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	beID := ids.New[ids.RegistryKind]()
-	beRepo := newBackendStub(gwID, beID)
-
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
 
-	creator := appconsumer.NewCreator(repo, beRepo, newPolicyStub(), newAuthStub(), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
-		GatewayID:   gwID,
-		Name:        "dupe",
-		Type:        domain.TypeLLM,
-		Path:        "/v1/chat/completions",
-		RegistryIDs: []ids.RegistryID{beID},
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "dupe",
+		Type:      domain.TypeLLM,
+		Path:      "/v1/chat/completions",
 	})
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)

@@ -3,6 +3,7 @@ package consumer
 import (
 	"strings"
 
+	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
@@ -17,6 +18,7 @@ type RoutableConsumer struct {
 	FallbackBackends []*registrydomain.Registry
 	Policies         []*policydomain.Policy
 	Auths            []*authdomain.Auth
+	PolicyPlan       *appplugins.StagePlan
 }
 
 type Data struct {

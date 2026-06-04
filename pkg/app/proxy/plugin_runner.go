@@ -18,6 +18,7 @@ const postResponseTimeout = 30 * time.Second
 func (f *forwarder) runPreRequest(
 	ctx context.Context,
 	policies []*policy.Policy,
+	plan *appplugins.StagePlan,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 ) (*ForwardResult, error) {
@@ -27,6 +28,7 @@ func (f *forwarder) runPreRequest(
 	outcome, err := f.executor.RunStage(ctx, appplugins.StageInput{
 		Stage:    policy.StagePreRequest,
 		Policies: policies,
+		Plan:     plan,
 		Request:  req,
 		Response: resp,
 	})
@@ -49,6 +51,7 @@ func (f *forwarder) runPreRequest(
 func (f *forwarder) runPreResponse(
 	ctx context.Context,
 	policies []*policy.Policy,
+	plan *appplugins.StagePlan,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 ) {
@@ -58,6 +61,7 @@ func (f *forwarder) runPreResponse(
 	if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
 		Stage:    policy.StagePreResponse,
 		Policies: policies,
+		Plan:     plan,
 		Request:  req,
 		Response: resp,
 	}); err != nil {
@@ -68,6 +72,7 @@ func (f *forwarder) runPreResponse(
 func (f *forwarder) runPreResponseGated(
 	ctx context.Context,
 	policies []*policy.Policy,
+	plan *appplugins.StagePlan,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 ) *appplugins.PluginError {
@@ -77,6 +82,7 @@ func (f *forwarder) runPreResponseGated(
 	if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
 		Stage:    policy.StagePreResponse,
 		Policies: policies,
+		Plan:     plan,
 		Request:  req,
 		Response: resp,
 	}); err != nil {
@@ -88,12 +94,20 @@ func (f *forwarder) runPreResponseGated(
 	return nil
 }
 
+func hasPostResponse(plan *appplugins.StagePlan) bool {
+	if plan == nil {
+		return true
+	}
+	return plan.Has(policy.StagePostResponse)
+}
+
 func (f *forwarder) firePostResponse(
 	policies []*policy.Policy,
+	plan *appplugins.StagePlan,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 ) {
-	if f.executor == nil {
+	if f.executor == nil || !hasPostResponse(plan) {
 		return
 	}
 	rt := trace.FromContext(req.Context)
@@ -113,6 +127,7 @@ func (f *forwarder) firePostResponse(
 		if _, err := f.executor.RunStage(ctx, appplugins.StageInput{
 			Stage:    policy.StagePostResponse,
 			Policies: policies,
+			Plan:     plan,
 			Request:  reqCopy,
 			Response: respCopy,
 		}); err != nil {
@@ -123,11 +138,12 @@ func (f *forwarder) firePostResponse(
 
 func (f *forwarder) wrapStreamWithPostResponse(
 	policies []*policy.Policy,
+	plan *appplugins.StagePlan,
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 	stream iter.Seq2[[]byte, error],
 ) iter.Seq2[[]byte, error] {
-	if f.executor == nil {
+	if f.executor == nil || !hasPostResponse(plan) {
 		return stream
 	}
 	return func(yield func([]byte, error) bool) {
@@ -147,8 +163,17 @@ func (f *forwarder) wrapStreamWithPostResponse(
 
 		if completed {
 			resp.Body = body
-			f.firePostResponse(policies, req, resp)
+			f.firePostResponse(policies, plan, req, resp)
 		}
+	}
+}
+
+func drainStream(stream iter.Seq2[[]byte, error]) {
+	if stream == nil {
+		return
+	}
+	for range stream {
+		break
 	}
 }
 

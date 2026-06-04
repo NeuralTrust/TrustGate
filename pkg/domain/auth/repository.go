@@ -20,5 +20,6 @@ type Repository interface {
 	Delete(ctx context.Context, id ids.AuthID) error
 	FindByID(ctx context.Context, id ids.AuthID) (*Auth, error)
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*Auth, error)
+	FindByAPIKeyHash(ctx context.Context, keyHash string) (*Auth, error)
 	List(ctx context.Context, filter ListFilter) (items []*Auth, total int, err error)
 }

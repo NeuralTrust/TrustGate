@@ -25,7 +25,7 @@ func newTestPlugin(t *testing.T) *Plugin {
 func input(stage policy.Stage, settings map[string]any, req *infracontext.RequestContext, resp *infracontext.ResponseContext) appplugins.ExecInput {
 	return appplugins.ExecInput{
 		Stage:    stage,
-		Config:   policy.Plugin{ID: "tk-1", Name: PluginName, Settings: settings},
+		Config:   policy.PluginConfig{ID: "tk-1", Slug: PluginName, Name: PluginName, Settings: settings},
 		Request:  req,
 		Response: resp,
 	}
@@ -33,7 +33,8 @@ func input(stage policy.Stage, settings map[string]any, req *infracontext.Reques
 
 func TestPlugin_Stages(t *testing.T) {
 	p := New(nil, nil)
-	assert.Equal(t, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, p.Stages())
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, p.MandatoryStages())
+	assert.Equal(t, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, p.SupportedStages())
 	assert.Equal(t, PluginName, p.Name())
 }
 

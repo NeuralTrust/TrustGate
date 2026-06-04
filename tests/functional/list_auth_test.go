@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestListAuths_MasksSecrets(t *testing.T) {
+func TestListAuths_NeverReturnsSecrets(t *testing.T) {
 	defer Track(t, "ListAuth")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-list")})
 	prefix := uniqueName("listed")
@@ -35,11 +35,11 @@ func TestListAuths_MasksSecrets(t *testing.T) {
 	for _, raw := range items {
 		obj, ok := raw.(map[string]any)
 		require.True(t, ok)
+		_, hasTopLevelKey := obj["api_key"]
+		assert.False(t, hasTopLevelKey, "list must never return plaintext keys: %v", obj)
 		cfg, _ := obj["config"].(map[string]any)
-		apiKey, ok := cfg["api_key"].(map[string]any)
-		require.True(t, ok, "api_key config missing in list item: %v", obj)
-		assert.Equal(t, "sk...key", apiKey["key"], "list must mask secrets")
-		assert.NotEqual(t, "sk-supersecretclientkey", apiKey["key"])
+		_, hasAPIKeyCfg := cfg["api_key"]
+		assert.False(t, hasAPIKeyCfg, "api_key auth must not carry a config.api_key block: %v", obj)
 	}
 }
 
