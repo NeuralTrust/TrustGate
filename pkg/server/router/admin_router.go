@@ -14,13 +14,14 @@ import (
 )
 
 const (
-	HealthPath        = "/healthz"
-	ReadyPath         = "/readyz"
-	VersionPath       = "/__/version"
-	DocsPath          = "/docs/*"
-	GatewaysPath      = "/v1/gateways"
-	ProvidersCatalog  = "/v1/providers-catalog"
-	ModelsCatalogPath = "/v1/models-catalog"
+	HealthPath          = "/healthz"
+	ReadyPath           = "/readyz"
+	VersionPath         = "/__/version"
+	DocsPath            = "/docs/*"
+	GatewaysPath        = "/v1/gateways"
+	ProvidersCatalog    = "/v1/providers-catalog"
+	ModelsCatalogPath   = "/v1/models-catalog"
+	PoliciesCatalogPath = "/v1/policies-catalog"
 )
 
 // AdminRouterDeps groups every handler mounted by the admin plane.
@@ -66,6 +67,7 @@ type AdminRouterDeps struct {
 
 	ListProvidersCatalog *cataloghttp.ListProvidersHandler
 	ListModelsCatalog    *cataloghttp.ListModelsHandler
+	ListPoliciesCatalog  *cataloghttp.ListPolicyCatalogHandler
 }
 
 type adminRouter struct {
@@ -133,6 +135,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 
 	app.Get(ProvidersCatalog, r.deps.AdminAuth.Middleware(), r.deps.ListProvidersCatalog.Handle)
 	app.Get(ModelsCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListModelsCatalog.Handle)
+	app.Get(PoliciesCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListPoliciesCatalog.Handle)
 
 	return nil
 }

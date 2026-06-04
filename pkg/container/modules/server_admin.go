@@ -79,6 +79,7 @@ type adminRouterParams struct {
 
 	ListProvidersCatalog *cataloghttp.ListProvidersHandler
 	ListModelsCatalog    *cataloghttp.ListModelsHandler
+	ListPoliciesCatalog  *cataloghttp.ListPolicyCatalogHandler
 }
 
 type adminServerParams struct {
@@ -129,6 +130,7 @@ func ServerAdmin(c *container.Container) error {
 
 				ListProvidersCatalog: p.ListProvidersCatalog,
 				ListModelsCatalog:    p.ListModelsCatalog,
+				ListPoliciesCatalog:  p.ListPoliciesCatalog,
 			})
 		},
 		dig.Name("admin"),

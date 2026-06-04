@@ -2819,6 +2819,42 @@
                 }
             }
         },
+        "/v1/policies-catalog": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the catalog of available policies grouped by type. Each entry includes the settings schema needed to render its configuration form dynamically.",
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List policy catalog",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/providers-catalog": {
             "get": {
                 "security": [
@@ -4160,6 +4196,153 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog": {
+                "type": "object",
+                "properties": {
+                    "groups": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogGroup"
+                        }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string"
+                    },
+                    "mandatory_stages": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage"
+                        }
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "settings_schema": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.SettingsSchema"
+                    },
+                    "slug": {
+                        "type": "string"
+                    },
+                    "supported_stages": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage"
+                        }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogGroup": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry"
+                        }
+                    },
+                    "type": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field": {
+                "type": "object",
+                "properties": {
+                    "default": {},
+                    "description": {
+                        "type": "string"
+                    },
+                    "enum": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "fields": {
+                        "description": "Fields lists the child fields of an object.",
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                        }
+                    },
+                    "item": {
+                        "description": "Item describes the element schema of an array.",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                            }
+                        ]
+                    },
+                    "key": {
+                        "type": "string"
+                    },
+                    "key_options": {
+                        "description": "KeyOptions lists the well-known keys of a map. Empty means free-form keys.",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "label": {
+                        "type": "string"
+                    },
+                    "required": {
+                        "type": "boolean"
+                    },
+                    "type": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.FieldType"
+                    },
+                    "value": {
+                        "description": "Value describes the value schema of a map.",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                            }
+                        ]
+                    }
+                }
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.FieldType": {
+                "type": "string",
+                "enum": [
+                    "string",
+                    "integer",
+                    "number",
+                    "boolean",
+                    "duration",
+                    "enum",
+                    "object",
+                    "array",
+                    "map"
+                ],
+                "x-enum-varnames": [
+                    "FieldTypeString",
+                    "FieldTypeInteger",
+                    "FieldTypeNumber",
+                    "FieldTypeBoolean",
+                    "FieldTypeDuration",
+                    "FieldTypeEnum",
+                    "FieldTypeObject",
+                    "FieldTypeArray",
+                    "FieldTypeMap"
+                ]
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.SettingsSchema": {
+                "type": "object",
+                "properties": {
+                    "fields": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field"
+                        }
+                    }
+                }
+            },
             "github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig": {
                 "type": "object",
                 "additionalProperties": {
@@ -4182,6 +4365,21 @@
                         "type": "string"
                     }
                 }
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage": {
+                "type": "string",
+                "enum": [
+                    "pre_request",
+                    "post_request",
+                    "pre_response",
+                    "post_response"
+                ],
+                "x-enum-varnames": [
+                    "StagePreRequest",
+                    "StagePostRequest",
+                    "StagePreResponse",
+                    "StagePostResponse"
+                ]
             },
             "github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.ExporterConfig": {
                 "type": "object",
