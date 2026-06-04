@@ -31,6 +31,9 @@ func Policy(c *container.Container) error {
 	if err := c.Provide(apppolicy.NewScoper); err != nil {
 		return err
 	}
+	if err := c.Provide(apppolicy.NewDuplicator); err != nil {
+		return err
+	}
 
 	if err := c.Provide(policyhttp.NewCreatePolicyHandler); err != nil {
 		return err
@@ -48,6 +51,9 @@ func Policy(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(policyhttp.NewGlobalPolicyHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(policyhttp.NewDuplicatePolicyHandler); err != nil {
 		return err
 	}
 	return nil

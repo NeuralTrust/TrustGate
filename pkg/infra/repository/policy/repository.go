@@ -21,7 +21,7 @@ const (
 )
 
 const policySelectColumns = `
-		SELECT p.id, p.gateway_id, p.name, p.slug, p.enabled, p.global, p.priority, p.parallel, p.settings, p.stages, p.created_at, p.updated_at,
+		SELECT p.id, p.gateway_id, p.name, p.slug, p.enabled, p.global, p.priority, p.parallel, p.settings, p.stages, p.created_at, p.updated_at, p.description,
 		       COALESCE((SELECT array_agg(cp.consumer_id ORDER BY cp.consumer_id)
 		                   FROM consumer_policy cp WHERE cp.policy_id = p.id), '{}')::uuid[] AS consumer_ids`
 
@@ -48,11 +48,11 @@ func (r *Repository) Save(ctx context.Context, p *domain.Policy) error {
 		return fmt.Errorf("policy repository: marshal stages: %w", err)
 	}
 	const query = `
-		INSERT INTO policies (id, gateway_id, name, slug, enabled, global, priority, parallel, settings, stages, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+		INSERT INTO policies (id, gateway_id, name, slug, enabled, global, priority, parallel, settings, stages, created_at, updated_at, description)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	if _, err := r.conn.Pool.Exec(ctx, query,
 		p.ID, p.GatewayID, p.Name, p.Slug, p.Enabled, p.Global, p.Priority, p.Parallel,
-		settingsBytes, stagesBytes, p.CreatedAt, p.UpdatedAt,
+		settingsBytes, stagesBytes, p.CreatedAt, p.UpdatedAt, p.Description,
 	); err != nil {
 		return mapPgError(err)
 	}
@@ -73,19 +73,20 @@ func (r *Repository) Update(ctx context.Context, p *domain.Policy) error {
 	}
 	const query = `
 		UPDATE policies
-		   SET name       = $2,
-		       slug       = $3,
-		       enabled    = $4,
-		       global     = $5,
-		       priority   = $6,
-		       parallel   = $7,
-		       settings   = $8,
-		       stages     = $9,
-		       updated_at = $10
+		   SET name        = $2,
+		       slug        = $3,
+		       enabled     = $4,
+		       global      = $5,
+		       priority    = $6,
+		       parallel    = $7,
+		       settings    = $8,
+		       stages      = $9,
+		       updated_at  = $10,
+		       description = $11
 		 WHERE id = $1`
 	cmd, err := r.conn.Pool.Exec(ctx, query,
 		p.ID, p.Name, p.Slug, p.Enabled, p.Global, p.Priority, p.Parallel,
-		settingsBytes, stagesBytes, p.UpdatedAt,
+		settingsBytes, stagesBytes, p.UpdatedAt, p.Description,
 	)
 	if err != nil {
 		return mapPgError(err)
@@ -250,7 +251,7 @@ func scanPolicy(s rowScanner) (*domain.Policy, error) {
 	if err := s.Scan(
 		&p.ID, &p.GatewayID, &p.Name, &p.Slug, &p.Enabled, &p.Global, &p.Priority, &p.Parallel,
 		&settingsRaw, &stagesRaw,
-		&p.CreatedAt, &p.UpdatedAt,
+		&p.CreatedAt, &p.UpdatedAt, &p.Description,
 		&consumerIDs,
 	); err != nil {
 		return nil, err

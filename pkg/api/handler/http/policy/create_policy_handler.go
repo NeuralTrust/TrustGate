@@ -49,14 +49,15 @@ func (h *CreatePolicyHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	p, err := h.creator.Create(c.UserContext(), apppolicy.CreateInput{
-		GatewayID: gatewayID,
-		Name:      req.Name,
-		Slug:      req.Slug,
-		Enabled:   req.Enabled,
-		Priority:  req.Priority,
-		Parallel:  req.Parallel,
-		Settings:  req.Settings,
-		Stages:    req.ToStages(),
+		GatewayID:   gatewayID,
+		Name:        req.Name,
+		Description: req.Description,
+		Slug:        req.Slug,
+		Enabled:     req.Enabled,
+		Priority:    req.Priority,
+		Parallel:    req.Parallel,
+		Settings:    req.Settings,
+		Stages:      req.ToStages(),
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

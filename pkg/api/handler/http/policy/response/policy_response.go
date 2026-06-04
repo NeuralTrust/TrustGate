@@ -12,6 +12,7 @@ type PolicyResponse struct {
 	GatewayID   ids.GatewayID    `json:"gateway_id"`
 	ConsumerIDs []ids.ConsumerID `json:"consumer_ids,omitempty"`
 	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
 	Slug        string           `json:"slug"`
 	Enabled     bool             `json:"enabled"`
 	Global      bool             `json:"global"`
@@ -29,6 +30,7 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 		GatewayID:   p.GatewayID,
 		ConsumerIDs: p.ConsumerIDs,
 		Name:        p.Name,
+		Description: p.Description,
 		Slug:        p.Slug,
 		Enabled:     p.Enabled,
 		Global:      p.Global,

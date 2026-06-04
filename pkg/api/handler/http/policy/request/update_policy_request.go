@@ -9,13 +9,14 @@ import (
 )
 
 type UpdatePolicyRequest struct {
-	Name     string         `json:"name"`
-	Slug     string         `json:"slug"`
-	Enabled  bool           `json:"enabled"`
-	Priority int            `json:"priority"`
-	Parallel bool           `json:"parallel,omitempty"`
-	Settings map[string]any `json:"settings,omitempty"`
-	Stages   []string       `json:"stages,omitempty"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Slug        string         `json:"slug"`
+	Enabled     bool           `json:"enabled"`
+	Priority    int            `json:"priority"`
+	Parallel    bool           `json:"parallel,omitempty"`
+	Settings    map[string]any `json:"settings,omitempty"`
+	Stages      []string       `json:"stages,omitempty"`
 }
 
 func (r UpdatePolicyRequest) Validate() error {
@@ -24,6 +25,9 @@ func (r UpdatePolicyRequest) Validate() error {
 	}
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
+	}
+	if len(r.Description) > maxPolicyDescriptionLen {
+		return fmt.Errorf("description too long (max %d): %w", maxPolicyDescriptionLen, commonerrors.ErrValidation)
 	}
 	if strings.TrimSpace(r.Slug) == "" {
 		return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)

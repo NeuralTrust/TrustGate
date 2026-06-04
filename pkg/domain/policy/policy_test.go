@@ -13,7 +13,7 @@ func TestPolicy_New_HappyPath(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	p, err := NewPolicy(gwID, "default", "rate_limiter", true, 10, false,
-		map[string]any{"limit": 100}, []Stage{StagePreRequest})
+		map[string]any{"limit": 100}, []Stage{StagePreRequest}, "my description")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -26,6 +26,9 @@ func TestPolicy_New_HappyPath(t *testing.T) {
 	if p.Slug != "rate_limiter" {
 		t.Fatalf("Slug = %s, want rate_limiter", p.Slug)
 	}
+	if p.Description != "my description" {
+		t.Fatalf("Description = %q, want %q", p.Description, "my description")
+	}
 	if !p.Enabled || p.Priority != 10 {
 		t.Fatalf("unexpected enabled/priority: %+v", p)
 	}
@@ -36,7 +39,7 @@ func TestPolicy_New_HappyPath(t *testing.T) {
 
 func TestPolicy_New_AllowsEmptyStages(t *testing.T) {
 	t.Parallel()
-	p, err := NewPolicy(ids.New[ids.GatewayKind](), "no-stages", "cors", true, 0, false, nil, nil)
+	p, err := NewPolicy(ids.New[ids.GatewayKind](), "no-stages", "cors", true, 0, false, nil, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,13 +125,16 @@ func TestPolicy_Rehydrate(t *testing.T) {
 	id := ids.New[ids.PolicyKind]()
 	gwID := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
-	p := Rehydrate(id, gwID, nil, "x", "cors", true, true, 5, true,
+	p := Rehydrate(id, gwID, nil, "x", "rehydrated description", "cors", true, true, 5, true,
 		map[string]any{"k": "v"}, []Stage{StagePreRequest}, now, now)
 	if p.ID != id || p.GatewayID != gwID {
 		t.Fatal("identity mismatch after rehydrate")
 	}
 	if p.Slug != "cors" || !p.Enabled || !p.Global || p.Priority != 5 || !p.Parallel {
 		t.Fatalf("unexpected fields after rehydrate: %+v", p)
+	}
+	if p.Description != "rehydrated description" {
+		t.Fatalf("Description = %q, want %q", p.Description, "rehydrated description")
 	}
 	if !p.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")
