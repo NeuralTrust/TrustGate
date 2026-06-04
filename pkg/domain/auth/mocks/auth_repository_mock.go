@@ -129,6 +129,65 @@ func (_c *Repository_FindByID_Call) RunAndReturn(run func(context.Context, ids.I
 	return _c
 }
 
+// FindByAPIKeyHash provides a mock function with given fields: ctx, keyHash
+func (_m *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*auth.Auth, error) {
+	ret := _m.Called(ctx, keyHash)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindByAPIKeyHash")
+	}
+
+	var r0 *auth.Auth
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (*auth.Auth, error)); ok {
+		return rf(ctx, keyHash)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) *auth.Auth); ok {
+		r0 = rf(ctx, keyHash)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*auth.Auth)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, keyHash)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_FindByAPIKeyHash_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindByAPIKeyHash'
+type Repository_FindByAPIKeyHash_Call struct {
+	*mock.Call
+}
+
+// FindByAPIKeyHash is a helper method to define mock.On call
+//   - ctx context.Context
+//   - keyHash string
+func (_e *Repository_Expecter) FindByAPIKeyHash(ctx interface{}, keyHash interface{}) *Repository_FindByAPIKeyHash_Call {
+	return &Repository_FindByAPIKeyHash_Call{Call: _e.mock.On("FindByAPIKeyHash", ctx, keyHash)}
+}
+
+func (_c *Repository_FindByAPIKeyHash_Call) Run(run func(ctx context.Context, keyHash string)) *Repository_FindByAPIKeyHash_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_FindByAPIKeyHash_Call) Return(_a0 *auth.Auth, _a1 error) *Repository_FindByAPIKeyHash_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_FindByAPIKeyHash_Call) RunAndReturn(run func(context.Context, string) (*auth.Auth, error)) *Repository_FindByAPIKeyHash_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // FindByIDs provides a mock function with given fields: ctx, gatewayID, authIDs
 func (_m *Repository) FindByIDs(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], authIDs []ids.ID[ids.AuthKind]) ([]*auth.Auth, error) {
 	ret := _m.Called(ctx, gatewayID, authIDs)

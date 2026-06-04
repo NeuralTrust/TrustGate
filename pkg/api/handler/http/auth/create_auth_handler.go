@@ -59,5 +59,5 @@ func (h *CreateAuthHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
-	return helpers.WriteCreated(c, response.FromAuth(a))
+	return helpers.WriteCreated(c, response.FromCreatedAuth(a))
 }

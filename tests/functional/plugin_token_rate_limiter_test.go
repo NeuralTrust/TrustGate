@@ -19,15 +19,15 @@ func TestPluginE2E_TokenRateLimiter(t *testing.T) {
 	defer Track(t, "PluginTokenRateLimiter")()
 
 	up := newUsageUpstream(t, "token-upstream", 8)
-	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("token_rate_limiter", "pre_request", map[string]any{
+	apiKey, path := setupPolicyRoute(t, up,
+		policyPlugin("token_rate_limiter", map[string]any{
 			"window": map[string]any{"unit": "minute", "max": 100},
 		}),
 	)
 
 	body := mustJSON(t, chatRequest(false))
 	for i := 0; i < 5; i++ {
-		status, _, raw := proxyRequest(t, http.MethodPost, gatewayID, path, nil, body)
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
 		require.Equal(t, http.StatusOK, status, "request %d should pass through, body: %s", i, raw)
 	}
 	assert.Equal(t, 5, up.Hits())
@@ -37,8 +37,8 @@ func TestPluginE2E_TokenRateLimiter_WithIdentifierHeader(t *testing.T) {
 	defer Track(t, "PluginTokenRateLimiter")()
 
 	up := newUsageUpstream(t, "token-hdr-upstream", 8)
-	gatewayID, path := setupPolicyRoute(t, up,
-		policyPlugin("token_rate_limiter", "pre_request", map[string]any{
+	apiKey, path := setupPolicyRoute(t, up,
+		policyPlugin("token_rate_limiter", map[string]any{
 			"identifier_header": "X-Client-ID",
 			"window":            map[string]any{"unit": "hour", "max": 1000},
 		}),
@@ -46,7 +46,7 @@ func TestPluginE2E_TokenRateLimiter_WithIdentifierHeader(t *testing.T) {
 
 	body := mustJSON(t, chatRequest(false))
 	for _, clientID := range []string{"client-a", "client-b"} {
-		status, _, raw := proxyRequest(t, http.MethodPost, gatewayID, path,
+		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path,
 			map[string]string{"X-Client-ID": clientID}, body)
 		assert.Equal(t, http.StatusOK, status, "client %s should pass through, body: %s", clientID, raw)
 	}

@@ -4,6 +4,7 @@ package mocks
 
 import (
 	plugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
+	policy "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -214,6 +215,53 @@ func (_c *Registry_Validate_Call) Return(_a0 error) *Registry_Validate_Call {
 }
 
 func (_c *Registry_Validate_Call) RunAndReturn(run func(string, map[string]interface{}) error) *Registry_Validate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ValidateStages provides a mock function with given fields: name, selected
+func (_m *Registry) ValidateStages(name string, selected []policy.Stage) error {
+	ret := _m.Called(name, selected)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ValidateStages")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(string, []policy.Stage) error); ok {
+		r0 = rf(name, selected)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Registry_ValidateStages_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ValidateStages'
+type Registry_ValidateStages_Call struct {
+	*mock.Call
+}
+
+// ValidateStages is a helper method to define mock.On call
+//   - name string
+//   - selected []policy.Stage
+func (_e *Registry_Expecter) ValidateStages(name interface{}, selected interface{}) *Registry_ValidateStages_Call {
+	return &Registry_ValidateStages_Call{Call: _e.mock.On("ValidateStages", name, selected)}
+}
+
+func (_c *Registry_ValidateStages_Call) Run(run func(name string, selected []policy.Stage)) *Registry_ValidateStages_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].([]policy.Stage))
+	})
+	return _c
+}
+
+func (_c *Registry_ValidateStages_Call) Return(_a0 error) *Registry_ValidateStages_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Registry_ValidateStages_Call) RunAndReturn(run func(string, []policy.Stage) error) *Registry_ValidateStages_Call {
 	_c.Call.Return(run)
 	return _c
 }

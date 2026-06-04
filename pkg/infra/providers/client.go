@@ -18,6 +18,37 @@ const (
 	ProviderGroq      = "groq"
 )
 
+// SupportedProviders returns every provider name the gateway can route to.
+func SupportedProviders() []string {
+	return []string{
+		ProviderOpenAI,
+		ProviderGoogle,
+		ProviderVertex,
+		ProviderAnthropic,
+		ProviderBedrock,
+		ProviderAzure,
+		ProviderMistral,
+		ProviderGroq,
+	}
+}
+
+// IsValidProvider reports whether name is a supported provider.
+func IsValidProvider(name string) bool {
+	switch name {
+	case ProviderOpenAI,
+		ProviderGoogle,
+		ProviderVertex,
+		ProviderAnthropic,
+		ProviderBedrock,
+		ProviderAzure,
+		ProviderMistral,
+		ProviderGroq:
+		return true
+	default:
+		return false
+	}
+}
+
 type Config struct {
 	Credentials   Credentials    `json:"credentials"`
 	AllowedModels []string       `json:"allowed_models"`

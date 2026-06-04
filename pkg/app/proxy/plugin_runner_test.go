@@ -27,7 +27,8 @@ type stubPlugin struct {
 }
 
 func (s *stubPlugin) Name() string                        { return s.name }
-func (s *stubPlugin) Stages() []policy.Stage              { return s.stages }
+func (s *stubPlugin) MandatoryStages() []policy.Stage     { return s.stages }
+func (s *stubPlugin) SupportedStages() []policy.Stage     { return s.stages }
 func (s *stubPlugin) ValidateConfig(map[string]any) error { return nil }
 func (s *stubPlugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	if s.ran != nil {
@@ -53,11 +54,11 @@ func TestForward_PreRequestPluginErrorShortCircuits(t *testing.T) {
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{{
-		ID:   ids.New[ids.PolicyKind](),
-		Name: "pol",
-		Plugins: policy.Plugins{
-			{ID: "rl", Name: "rate_limiter", Enabled: true, Priority: 1},
-		},
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     "pol",
+		Slug:     "rate_limiter",
+		Enabled:  true,
+		Priority: 1,
 	}}
 
 	invoker := proxymocks.NewProviderInvoker(t)
@@ -86,11 +87,11 @@ func TestForward_PreRequestStopUpstreamServesCache(t *testing.T) {
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{{
-		ID:   ids.New[ids.PolicyKind](),
-		Name: "pol",
-		Plugins: policy.Plugins{
-			{ID: "sc", Name: "semantic_cache", Enabled: true, Priority: 1},
-		},
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     "pol",
+		Slug:     "semantic_cache",
+		Enabled:  true,
+		Priority: 1,
 	}}
 
 	invoker := proxymocks.NewProviderInvoker(t)
@@ -113,16 +114,60 @@ func TestForward_PreRequestStopUpstreamServesCache(t *testing.T) {
 	assert.Equal(t, []string{"HIT"}, res.Headers["X-Cache-Status"])
 }
 
+func TestForward_PreResponsePluginRejectsStream(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
+	rc.Policies = []*policy.Policy{{
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     "pol",
+		Slug:     "guardrail",
+		Enabled:  true,
+		Priority: 1,
+	}}
+
+	// The stream is drained internally for cleanup, so guard the shared flag and
+	// only assert that no bytes are surfaced to the client (res.Stream is nil).
+	stream := func(yield func([]byte, error) bool) {
+		yield([]byte("data: leak"), nil)
+	}
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		InvokeStream(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Stream: stream}, nil).
+		Once()
+
+	p := &stubPlugin{
+		name:   "guardrail",
+		stages: []policy.Stage{policy.StagePreResponse},
+		err:    &appplugins.PluginError{StatusCode: 451, Message: "blocked"},
+	}
+	fwd := forwarderWithPlugin(t, invoker, p)
+
+	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(`{"stream":true}`)}
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   req,
+	})
+	require.NoError(t, err)
+	// A pre_response rejection must short-circuit the streaming success path:
+	// the client receives the rejection body, not the upstream stream.
+	assert.Nil(t, res.Stream, "rejected stream must not be relayed to the client")
+	assert.Equal(t, 451, res.StatusCode)
+	assert.Contains(t, string(res.Body), "blocked")
+}
+
 func TestForward_PostResponseRunsAfterSyncInvoke(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{{
-		ID:   ids.New[ids.PolicyKind](),
-		Name: "pol",
-		Plugins: policy.Plugins{
-			{ID: "tk", Name: "token_rate_limiter", Enabled: true, Priority: 1},
-		},
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     "pol",
+		Slug:     "token_rate_limiter",
+		Enabled:  true,
+		Priority: 1,
 	}}
 
 	invoker := proxymocks.NewProviderInvoker(t)
@@ -162,7 +207,8 @@ type capturePlugin struct {
 }
 
 func (c *capturePlugin) Name() string                        { return c.name }
-func (c *capturePlugin) Stages() []policy.Stage              { return c.stages }
+func (c *capturePlugin) MandatoryStages() []policy.Stage     { return c.stages }
+func (c *capturePlugin) SupportedStages() []policy.Stage     { return c.stages }
 func (c *capturePlugin) ValidateConfig(map[string]any) error { return nil }
 func (c *capturePlugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	if in.Stage == policy.StagePostResponse && c.seen != nil {
@@ -176,11 +222,11 @@ func TestForward_PostResponseRunsAfterStreamDrained(t *testing.T) {
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{{
-		ID:   ids.New[ids.PolicyKind](),
-		Name: "pol",
-		Plugins: policy.Plugins{
-			{ID: "tk", Name: "token_rate_limiter", Enabled: true, Priority: 1},
-		},
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     "pol",
+		Slug:     "token_rate_limiter",
+		Enabled:  true,
+		Priority: 1,
 	}}
 
 	streamLines := [][]byte{[]byte("data: {\"a\":1}"), {}, []byte("data: {\"b\":2}")}
@@ -244,11 +290,11 @@ func TestForward_PostResponseSkippedOnStreamAbort(t *testing.T) {
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
 	rc.Policies = []*policy.Policy{{
-		ID:   ids.New[ids.PolicyKind](),
-		Name: "pol",
-		Plugins: policy.Plugins{
-			{ID: "tk", Name: "token_rate_limiter", Enabled: true, Priority: 1},
-		},
+		ID:       ids.New[ids.PolicyKind](),
+		Name:     "pol",
+		Slug:     "token_rate_limiter",
+		Enabled:  true,
+		Priority: 1,
 	}}
 
 	stream := func(yield func([]byte, error) bool) {

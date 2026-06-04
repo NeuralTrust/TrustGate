@@ -1,0 +1,758 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-0001-4a00-9000-agentgatewayadm",
+    "name": "AgentGateway",
+    "description": "Admin API for AgentGateway. Manage gateways and their registries, policies, consumers and auth credentials. Set the `base_url` and `admin_token` collection variables before running. IDs captured from create responses are stored automatically into `gateway_id`, `registry_id`, `policy_id`, `consumer_id` and `auth_id`. Creating an `api_key` auth returns the generated key exactly once; it is captured into `consumer_api_key` and the proxy plane authenticates with it via the fixed `X-AG-API-Key` header.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{admin_token}}", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8080", "type": "string" },
+    { "key": "proxy_url", "value": "http://localhost:8081", "type": "string" },
+    { "key": "admin_token", "value": "", "type": "string" },
+    { "key": "openai_api_key", "value": "sk-replace-with-real-openai-key", "type": "string" },
+    { "key": "consumer_api_key", "value": "", "type": "string" },
+    { "key": "consumer_path", "value": "/v1/chat/completions", "type": "string" },
+    { "key": "gateway_id", "value": "", "type": "string" },
+    { "key": "registry_id", "value": "", "type": "string" },
+    { "key": "policy_id", "value": "", "type": "string" },
+    { "key": "consumer_id", "value": "", "type": "string" },
+    { "key": "auth_id", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Health & Version",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/healthz", "host": ["{{base_url}}"], "path": ["healthz"] }
+          }
+        },
+        {
+          "name": "Readiness",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/readyz", "host": ["{{base_url}}"], "path": ["readyz"] }
+          }
+        },
+        {
+          "name": "Version",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/__/version", "host": ["{{base_url}}"], "path": ["__", "version"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gateways",
+      "item": [
+        {
+          "name": "Create Gateway",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('gateway_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"my-gateway\",\n  \"session_config\": {\n    \"enabled\": false,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways", "host": ["{{base_url}}"], "path": ["v1", "gateways"] }
+          }
+        },
+        {
+          "name": "List Gateways",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways?page=1&size=20",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "gateways"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" },
+                { "key": "name", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Gateway",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}"] }
+          }
+        },
+        {
+          "name": "Update Gateway",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"my-gateway\",\n  \"status\": \"active\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}"] }
+          }
+        },
+        {
+          "name": "Delete Gateway",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Registries",
+      "item": [
+        {
+          "name": "Create Registry",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"openai-primary\",\n  \"provider\": \"openai\",\n  \"description\": \"Primary OpenAI target\",\n  \"weight\": 1,\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"sk-replace-me\" }\n  },\n  \"health_checks\": {\n    \"passive\": true,\n    \"threshold\": 3,\n    \"interval\": 30\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries"] }
+          }
+        },
+        {
+          "name": "List Registries",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries?page=1&size=20",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "gateways", "{{gateway_id}}", "registries"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" },
+                { "key": "name", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Registry",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "{{registry_id}}"] }
+          }
+        },
+        {
+          "name": "Update Registry",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"openai-primary\",\n  \"provider\": \"openai\",\n  \"description\": \"Updated description\",\n  \"weight\": 2,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"sk-replace-me\" }\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "{{registry_id}}"] }
+          }
+        },
+        {
+          "name": "Delete Registry",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "{{registry_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Policies",
+      "item": [
+        {
+          "name": "Create Policy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('policy_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"rate-limit-global\",\n  \"slug\": \"rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 0,\n  \"parallel\": false,\n  \"stages\": [],\n  \"settings\": {\n    \"limits\": {\n      \"global\": { \"limit\": 100, \"window\": \"1m\" }\n    },\n    \"actions\": { \"type\": \"reject\", \"retry_after\": \"60\" }\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies"] }
+          }
+        },
+        {
+          "name": "List Policies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies?page=1&size=20",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "gateways", "{{gateway_id}}", "policies"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" },
+                { "key": "name", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies", "{{policy_id}}"] }
+          }
+        },
+        {
+          "name": "Update Policy",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"cors-policy\",\n  \"slug\": \"cors\",\n  \"enabled\": true,\n  \"priority\": 0,\n  \"settings\": {\n    \"allowed_origins\": [\"https://example.com\"],\n    \"allowed_methods\": [\"GET\", \"POST\"],\n    \"allow_credentials\": false,\n    \"max_age\": \"600s\"\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies", "{{policy_id}}"] }
+          }
+        },
+        {
+          "name": "Delete Policy",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies", "{{policy_id}}"] }
+          }
+        },
+        {
+          "name": "Set Policy Global",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}/global", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies", "{{policy_id}}", "global"] }
+          }
+        },
+        {
+          "name": "Unset Policy Global",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}/global", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies", "{{policy_id}}", "global"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Consumers",
+      "item": [
+        {
+          "name": "Create Consumer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('consumer_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"team-a\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"headers\": {}\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers"] }
+          }
+        },
+        {
+          "name": "List Consumers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers?page=1&size=20",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "gateways", "{{gateway_id}}", "consumers"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" },
+                { "key": "name", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Consumer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}"] }
+          }
+        },
+        {
+          "name": "Update Consumer",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"team-a\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\"gpt-4o\"],\n      \"default\": \"gpt-4o\"\n    }\n  ],\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\"5xx\"],\n    \"chain\": [\"{{registry_id}}\"],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000,\n      \"max_cost_usd\": 0.5\n    }\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}"] }
+          }
+        },
+        {
+          "name": "Delete Consumer",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Consumer Associations",
+      "item": [
+        {
+          "name": "Attach Registry",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "registries", "{{registry_id}}"] }
+          }
+        },
+        {
+          "name": "Detach Registry",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "registries", "{{registry_id}}"] }
+          }
+        },
+        {
+          "name": "Attach Auth",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "auths", "{{auth_id}}"] }
+          }
+        },
+        {
+          "name": "Detach Auth",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "auths", "{{auth_id}}"] }
+          }
+        },
+        {
+          "name": "Attach Policy",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "policies", "{{policy_id}}"] }
+          }
+        },
+        {
+          "name": "Detach Policy",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "policies", "{{policy_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth Credentials",
+      "item": [
+        {
+          "name": "Create Auth",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('auth_id', body.id);",
+                  "  // The plaintext key is generated server-side and shown ONLY here.",
+                  "  if (body.api_key) {",
+                  "    pm.collectionVariables.set('consumer_api_key', body.api_key);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"client-key\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "auths"] }
+          }
+        },
+        {
+          "name": "List Auths",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths?page=1&size=20",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "gateways", "{{gateway_id}}", "auths"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" },
+                { "key": "name", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Auth",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "auths", "{{auth_id}}"] }
+          }
+        },
+        {
+          "name": "Update Auth",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"client-key\",\n  \"type\": \"api_key\",\n  \"enabled\": false\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "auths", "{{auth_id}}"] }
+          }
+        },
+        {
+          "name": "Delete Auth",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "auths", "{{auth_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Catalog",
+      "item": [
+        {
+          "name": "List Providers Catalog",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/providers-catalog", "host": ["{{base_url}}"], "path": ["v1", "providers-catalog"] }
+          }
+        },
+        {
+          "name": "List Models Catalog",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/models-catalog?provider=openai",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "models-catalog"],
+              "query": [
+                { "key": "provider", "value": "openai" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "E2E Flow",
+      "description": "End-to-end flow that provisions a gateway with an OpenAI backend, a policy, an API-key credential and a consumer, then sends a real chat-completion through the proxy plane (:8081). Run the requests top-to-bottom (Collection Runner runs them in order). Set the `openai_api_key` variable to a real OpenAI key before running. Step 4 generates the consumer API key server-side and captures it into `consumer_api_key`; step 6 sends it in the fixed `X-AG-API-Key` header (no `X-Gateway-Id` is used).",
+      "item": [
+        {
+          "name": "1. Create Gateway",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('gateway created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('gateway_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"e2e-gateway\",\n  \"session_config\": {\n    \"enabled\": false,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways", "host": ["{{base_url}}"], "path": ["v1", "gateways"] }
+          }
+        },
+        {
+          "name": "2. Create Registry (OpenAI)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"openai-primary\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"weight\": 1,\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries"] }
+          }
+        },
+        {
+          "name": "3. Create Policy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('policy created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('policy_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"rate-limit-global\",\n  \"slug\": \"rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 0,\n  \"parallel\": false,\n  \"stages\": [],\n  \"settings\": {\n    \"limits\": {\n      \"global\": { \"limit\": 100, \"window\": \"1m\" }\n    },\n    \"actions\": { \"type\": \"reject\", \"retry_after\": \"60\" }\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies"] }
+          }
+        },
+        {
+          "name": "4. Create Auth API Key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('auth created', () => pm.response.code === 201);",
+                  "pm.test('api key returned once', () => !!pm.response.json().api_key);",
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('auth_id', body.id);",
+                  "  // The key is generated server-side and only surfaced here; the proxy",
+                  "  // step authenticates with it via the fixed X-AG-API-Key header.",
+                  "  pm.collectionVariables.set('consumer_api_key', body.api_key);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"client-key\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "auths"] }
+          }
+        },
+        {
+          "name": "5a. Create Consumer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('consumer created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('consumer_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"e2e-consumer\",\n  \"type\": \"LLM\",\n  \"path\": \"{{consumer_path}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"headers\": {}\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers"] }
+          }
+        },
+        {
+          "name": "5b. Attach Registry to Consumer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('registry attached', () => [200, 201, 204].includes(pm.response.code));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "registries", "{{registry_id}}"] }
+          }
+        },
+        {
+          "name": "5c. Attach Policy to Consumer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('policy attached', () => [200, 201, 204].includes(pm.response.code));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "policies", "{{policy_id}}"] }
+          }
+        },
+        {
+          "name": "5d. Attach Auth to Consumer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('auth attached', () => [200, 201, 204].includes(pm.response.code));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "auths", "{{auth_id}}"] }
+          }
+        },
+        {
+          "name": "6. Run Proxy (Chat Completion)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('proxy returned 200', () => pm.response.code === 200);",
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-AG-API-Key", "value": "{{consumer_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from AgentGateway\" }\n  ]\n}"
+            },
+            "url": { "raw": "{{proxy_url}}{{consumer_path}}", "host": ["{{proxy_url}}"], "path": ["v1", "chat", "completions"] }
+          }
+        }
+      ]
+    }
+  ]
+}

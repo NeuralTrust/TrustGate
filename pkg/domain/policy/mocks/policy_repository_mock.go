@@ -255,6 +255,65 @@ func (_c *Repository_List_Call) RunAndReturn(run func(context.Context, policy.Li
 	return _c
 }
 
+// ListByGateway provides a mock function with given fields: ctx, gatewayID
+func (_m *Repository) ListByGateway(ctx context.Context, gatewayID ids.ID[ids.GatewayKind]) ([]*policy.Policy, error) {
+	ret := _m.Called(ctx, gatewayID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListByGateway")
+	}
+
+	var r0 []*policy.Policy
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) ([]*policy.Policy, error)); ok {
+		return rf(ctx, gatewayID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind]) []*policy.Policy); ok {
+		r0 = rf(ctx, gatewayID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*policy.Policy)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind]) error); ok {
+		r1 = rf(ctx, gatewayID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_ListByGateway_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListByGateway'
+type Repository_ListByGateway_Call struct {
+	*mock.Call
+}
+
+// ListByGateway is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+func (_e *Repository_Expecter) ListByGateway(ctx interface{}, gatewayID interface{}) *Repository_ListByGateway_Call {
+	return &Repository_ListByGateway_Call{Call: _e.mock.On("ListByGateway", ctx, gatewayID)}
+}
+
+func (_c *Repository_ListByGateway_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind])) *Repository_ListByGateway_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_ListByGateway_Call) Return(_a0 []*policy.Policy, _a1 error) *Repository_ListByGateway_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_ListByGateway_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind]) ([]*policy.Policy, error)) *Repository_ListByGateway_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Save provides a mock function with given fields: ctx, p
 func (_m *Repository) Save(ctx context.Context, p *policy.Policy) error {
 	ret := _m.Called(ctx, p)
@@ -298,6 +357,54 @@ func (_c *Repository_Save_Call) Return(_a0 error) *Repository_Save_Call {
 }
 
 func (_c *Repository_Save_Call) RunAndReturn(run func(context.Context, *policy.Policy) error) *Repository_Save_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SetGlobal provides a mock function with given fields: ctx, id, global
+func (_m *Repository) SetGlobal(ctx context.Context, id ids.ID[ids.PolicyKind], global bool) error {
+	ret := _m.Called(ctx, id, global)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetGlobal")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.PolicyKind], bool) error); ok {
+		r0 = rf(ctx, id, global)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_SetGlobal_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetGlobal'
+type Repository_SetGlobal_Call struct {
+	*mock.Call
+}
+
+// SetGlobal is a helper method to define mock.On call
+//   - ctx context.Context
+//   - id ids.ID[ids.PolicyKind]
+//   - global bool
+func (_e *Repository_Expecter) SetGlobal(ctx interface{}, id interface{}, global interface{}) *Repository_SetGlobal_Call {
+	return &Repository_SetGlobal_Call{Call: _e.mock.On("SetGlobal", ctx, id, global)}
+}
+
+func (_c *Repository_SetGlobal_Call) Run(run func(ctx context.Context, id ids.ID[ids.PolicyKind], global bool)) *Repository_SetGlobal_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.PolicyKind]), args[2].(bool))
+	})
+	return _c
+}
+
+func (_c *Repository_SetGlobal_Call) Return(_a0 error) *Repository_SetGlobal_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_SetGlobal_Call) RunAndReturn(run func(context.Context, ids.ID[ids.PolicyKind], bool) error) *Repository_SetGlobal_Call {
 	_c.Call.Return(run)
 	return _c
 }

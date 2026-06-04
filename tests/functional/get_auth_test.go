@@ -12,11 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetAuth_Success_MasksSecret(t *testing.T) {
+func TestGetAuth_Success_NeverReturnsSecret(t *testing.T) {
 	defer Track(t, "GetAuth")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-get")})
 	name := uniqueName("api-key")
-	id := CreateAuth(t, gwID, validAuthPayload(name))
+	id, _ := CreateAPIKeyAuth(t, gwID, name)
 
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/auths/%s", AdminURL, gwID, id), nil, nil,
@@ -25,10 +25,13 @@ func TestGetAuth_Success_MasksSecret(t *testing.T) {
 	assert.Equal(t, id, body["id"])
 	assert.Equal(t, name, body["name"])
 
+	// The key is hash-only storage: GET never returns the plaintext, neither at
+	// the top level nor inside a config block.
+	_, hasTopLevelKey := body["api_key"]
+	assert.False(t, hasTopLevelKey, "GET must not return the api_key (shown only once at creation): %v", body)
 	cfg, _ := body["config"].(map[string]any)
-	apiKey, ok := cfg["api_key"].(map[string]any)
-	require.True(t, ok, "api_key config missing: %v", cfg)
-	assert.Equal(t, "sk...key", apiKey["key"], "GET must also mask the secret")
+	_, hasAPIKeyCfg := cfg["api_key"]
+	assert.False(t, hasAPIKeyCfg, "api_key auth must not carry a config.api_key block: %v", cfg)
 }
 
 func TestGetAuth_NotFound(t *testing.T) {

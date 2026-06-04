@@ -109,11 +109,6 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 			wantErr: ErrInvalidEmbeddingConfig,
 		},
 		{
-			name:    "no registries",
-			mutate:  func(c *Consumer) { c.RegistryIDs = nil },
-			wantErr: ErrNoBackends,
-		},
-		{
 			name: "duplicate backend",
 			mutate: func(c *Consumer) {
 				id := ids.New[ids.RegistryKind]()
@@ -154,36 +149,18 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 	}
 }
 
-func TestConsumer_AttachBackend(t *testing.T) {
+func TestConsumer_New_AllowsZeroRegistries(t *testing.T) {
 	t.Parallel()
-	c := &Consumer{RegistryIDs: nil}
-	id1 := ids.New[ids.RegistryKind]()
-	if !c.AttachBackend(id1) {
-		t.Fatal("AttachBackend should report true on new id")
+	// Registries are attached after creation via the association endpoints, so a
+	// freshly-created consumer is allowed to have none.
+	p := validParams()
+	p.RegistryIDs = nil
+	c, err := New(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.AttachBackend(id1) {
-		t.Fatal("AttachBackend should be idempotent")
-	}
-	if c.AttachBackend(ids.RegistryID{}) {
-		t.Fatal("AttachBackend(uuid.Nil) should be rejected")
-	}
-	if len(c.RegistryIDs) != 1 || c.RegistryIDs[0] != id1 {
-		t.Fatalf("RegistryIDs = %v", c.RegistryIDs)
-	}
-}
-
-func TestConsumer_DetachBackend(t *testing.T) {
-	t.Parallel()
-	id1, id2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
-	c := &Consumer{RegistryIDs: []ids.RegistryID{id1, id2}}
-	if !c.DetachBackend(id1) {
-		t.Fatal("DetachBackend should report true on present id")
-	}
-	if c.DetachBackend(id1) {
-		t.Fatal("DetachBackend(missing) should report false")
-	}
-	if len(c.RegistryIDs) != 1 || c.RegistryIDs[0] != id2 {
-		t.Fatalf("RegistryIDs = %v", c.RegistryIDs)
+	if len(c.RegistryIDs) != 0 {
+		t.Fatalf("RegistryIDs = %v, want empty", c.RegistryIDs)
 	}
 }
 
@@ -198,7 +175,7 @@ func TestConsumer_Rehydrate(t *testing.T) {
 		"/v1/messages", "round-robin", nil,
 		map[string]string{"X-K": "v"},
 		true,
-		[]ids.RegistryID{beID}, nil, nil,
+		[]ids.RegistryID{beID}, nil,
 		nil,
 		nil,
 		now, now,

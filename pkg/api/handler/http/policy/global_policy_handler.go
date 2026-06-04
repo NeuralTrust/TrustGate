@@ -1,0 +1,67 @@
+package policy
+
+import (
+	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy/response"
+	apppolicy "github.com/NeuralTrust/AgentGateway/pkg/app/policy"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/gofiber/fiber/v2"
+)
+
+type GlobalPolicyHandler struct {
+	scoper apppolicy.Scoper
+}
+
+func NewGlobalPolicyHandler(scoper apppolicy.Scoper) *GlobalPolicyHandler {
+	return &GlobalPolicyHandler{scoper: scoper}
+}
+
+// SetGlobal godoc
+// @Summary      Mark a policy as global
+// @Description  Promotes a policy to gateway-wide scope (applies to every consumer).
+// @Tags         policies
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
+// @Param        id          path      string  true  "Policy id"   format(uuid)
+// @Success      200         {object}  response.PolicyResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/policies/{id}/global [post]
+func (h *GlobalPolicyHandler) SetGlobal(c *fiber.Ctx) error {
+	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.PolicyKind](c)
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	p, err := h.scoper.SetGlobal(c.UserContext(), gatewayID, id)
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	return helpers.WriteOK(c, response.FromPolicy(p))
+}
+
+// UnsetGlobal godoc
+// @Summary      Clear a policy's global scope
+// @Description  Demotes a global policy back to consumer-scoped (applies only to linked consumers).
+// @Tags         policies
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string  true  "Gateway id"  format(uuid)
+// @Param        id          path      string  true  "Policy id"   format(uuid)
+// @Success      200         {object}  response.PolicyResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/policies/{id}/global [delete]
+func (h *GlobalPolicyHandler) UnsetGlobal(c *fiber.Ctx) error {
+	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.PolicyKind](c)
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	p, err := h.scoper.UnsetGlobal(c.UserContext(), gatewayID, id)
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	return helpers.WriteOK(c, response.FromPolicy(p))
+}

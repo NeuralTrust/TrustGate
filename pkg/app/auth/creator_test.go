@@ -24,8 +24,10 @@ func newCacheManager() *cache.TTLMapManager {
 	return cache.NewTTLMapManager(time.Hour)
 }
 
+// validConfig is the empty config an api_key credential carries: its secret is
+// generated server-side, so no config payload is supplied.
 func validConfig() domain.Config {
-	return domain.Config{APIKey: &domain.APIKeyConfig{Key: "super-secret-key"}}
+	return domain.Config{}
 }
 
 func TestCreator_Create_Success(t *testing.T) {
@@ -58,6 +60,44 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 	if cached.(*domain.Auth).ID != a.ID {
 		t.Fatal("cached auth ID mismatch")
+	}
+}
+
+func TestCreator_Create_APIKey_GeneratesKeyAndWarmsKeyCache(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	gwID := ids.New[ids.GatewayKind]()
+	var saved *domain.Auth
+	repo.EXPECT().
+		Save(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
+			saved = a
+			return a.Type == domain.TypeAPIKey && a.KeyHash != "" && a.RawKey != ""
+		})).
+		Return(nil).
+		Once()
+
+	mgr := newCacheManager()
+	creator := appauth.NewCreator(repo, mgr, newTestLogger())
+
+	a, err := creator.Create(context.Background(), appauth.CreateInput{
+		GatewayID: gwID,
+		Name:      "client-key",
+		Type:      domain.TypeAPIKey,
+		Enabled:   true,
+	})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if a.RawKey == "" {
+		t.Fatal("create must surface the generated plaintext key once")
+	}
+	if domain.HashAPIKey(a.RawKey) != a.KeyHash {
+		t.Fatal("stored hash must be the hash of the generated key")
+	}
+	// The reverse-lookup cache must be warmed by key hash so the proxy plane can
+	// resolve the new key without a database round-trip.
+	if _, ok := mgr.GetTTLMap(cache.AuthKeyTTLName).Get(saved.KeyHash); !ok {
+		t.Fatal("created api key was not pre-warmed in the key-hash cache")
 	}
 }
 

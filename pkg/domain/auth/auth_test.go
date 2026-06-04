@@ -8,14 +8,10 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
-func validAPIKeyConfig() Config {
-	return Config{APIKey: &APIKeyConfig{Key: "super-secret-key"}}
-}
-
-func TestNewAuth_Defaults(t *testing.T) {
+func TestNewAPIKeyAuth_GeneratesKey(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	a, err := NewAuth(gwID, "client-key", TypeAPIKey, true, validAPIKeyConfig())
+	a, err := NewAPIKeyAuth(gwID, "client-key", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -25,8 +21,55 @@ func TestNewAuth_Defaults(t *testing.T) {
 	if a.GatewayID != gwID {
 		t.Fatalf("expected gateway id %s, got %s", gwID, a.GatewayID)
 	}
+	if a.Type != TypeAPIKey {
+		t.Fatalf("expected api_key type, got %s", a.Type)
+	}
+	if a.RawKey == "" {
+		t.Fatal("expected a generated plaintext key")
+	}
+	if a.KeyHash != HashAPIKey(a.RawKey) {
+		t.Fatal("KeyHash must be the hash of RawKey")
+	}
 	if a.CreatedAt.IsZero() || a.UpdatedAt.IsZero() {
 		t.Fatal("expected timestamps to be set")
+	}
+}
+
+func TestNewAPIKeyAuth_RejectsEmptyName(t *testing.T) {
+	t.Parallel()
+	_, err := NewAPIKeyAuth(ids.New[ids.GatewayKind](), "  ", true)
+	if !errors.Is(err, ErrInvalidName) {
+		t.Fatalf("err = %v, want ErrInvalidName", err)
+	}
+}
+
+func TestGenerateAPIKey_UniqueAndPrefixed(t *testing.T) {
+	t.Parallel()
+	k1, err := GenerateAPIKey()
+	if err != nil {
+		t.Fatalf("GenerateAPIKey: %v", err)
+	}
+	k2, err := GenerateAPIKey()
+	if err != nil {
+		t.Fatalf("GenerateAPIKey: %v", err)
+	}
+	if k1 == k2 {
+		t.Fatal("two generated keys must differ")
+	}
+	if len(k1) < len(apiKeyPrefix)+10 || k1[:len(apiKeyPrefix)] != apiKeyPrefix {
+		t.Fatalf("generated key %q must carry the %q prefix", k1, apiKeyPrefix)
+	}
+}
+
+func TestHashAPIKey_Deterministic(t *testing.T) {
+	t.Parallel()
+	h1 := HashAPIKey("ag_secret")
+	h2 := HashAPIKey("ag_secret")
+	if h1 != h2 {
+		t.Fatal("hash must be deterministic")
+	}
+	if HashAPIKey("ag_a") == HashAPIKey("ag_b") {
+		t.Fatal("different keys must hash differently")
 	}
 }
 
@@ -46,7 +89,7 @@ func TestNewAuth_Validation(t *testing.T) {
 			gatewayID: gwID,
 			authName:  "  ",
 			authType:  TypeAPIKey,
-			config:    validAPIKeyConfig(),
+			config:    Config{},
 			wantErr:   ErrInvalidName,
 		},
 		{
@@ -54,7 +97,7 @@ func TestNewAuth_Validation(t *testing.T) {
 			gatewayID: ids.GatewayID{},
 			authName:  "k",
 			authType:  TypeAPIKey,
-			config:    validAPIKeyConfig(),
+			config:    Config{},
 			wantErr:   ErrInvalidGatewayID,
 		},
 		{
@@ -62,15 +105,15 @@ func TestNewAuth_Validation(t *testing.T) {
 			gatewayID: gwID,
 			authName:  "k",
 			authType:  Type("bogus"),
-			config:    validAPIKeyConfig(),
+			config:    Config{},
 			wantErr:   ErrInvalidType,
 		},
 		{
-			name:      "api_key missing key",
+			name:      "api_key must not carry a config payload",
 			gatewayID: gwID,
 			authName:  "k",
 			authType:  TypeAPIKey,
-			config:    Config{APIKey: &APIKeyConfig{}},
+			config:    Config{OAuth2: &OAuth2Config{Issuer: "https://issuer", JWKSURL: "https://x/jwks"}},
 			wantErr:   ErrInvalidConfig,
 		},
 		{
@@ -98,19 +141,11 @@ func TestNewAuth_Validation(t *testing.T) {
 			wantErr:   ErrInvalidConfig,
 		},
 		{
-			name:      "config type mismatch",
+			name:      "oauth2 with extra mtls payload",
 			gatewayID: gwID,
 			authName:  "k",
-			authType:  TypeAPIKey,
-			config:    Config{OAuth2: &OAuth2Config{Issuer: "https://issuer", JWKSURL: "https://x/jwks"}},
-			wantErr:   ErrInvalidConfig,
-		},
-		{
-			name:      "more than one payload",
-			gatewayID: gwID,
-			authName:  "k",
-			authType:  TypeAPIKey,
-			config:    Config{APIKey: &APIKeyConfig{Key: "k"}, MTLS: &MTLSConfig{CACert: "pem"}},
+			authType:  TypeOAuth2,
+			config:    Config{OAuth2: &OAuth2Config{Issuer: "https://issuer", JWKSURL: "https://x/jwks"}, MTLS: &MTLSConfig{CACert: "pem"}},
 			wantErr:   ErrInvalidConfig,
 		},
 	}
@@ -136,7 +171,7 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 		authType Type
 		config   Config
 	}{
-		"api_key": {TypeAPIKey, validAPIKeyConfig()},
+		"api_key": {TypeAPIKey, Config{}},
 		"oauth2": {TypeOAuth2, Config{OAuth2: &OAuth2Config{
 			Issuer:  "https://issuer",
 			JWKSURL: "https://issuer/.well-known/jwks.json",
@@ -160,14 +195,17 @@ func TestConfig_ScanNil(t *testing.T) {
 	if err := c.Scan(nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.APIKey != nil || c.OAuth2 != nil || c.MTLS != nil {
+	if c.OAuth2 != nil || c.MTLS != nil {
 		t.Fatal("expected empty config after scanning nil")
 	}
 }
 
 func TestConfig_ValueRoundTrip(t *testing.T) {
 	t.Parallel()
-	original := validAPIKeyConfig()
+	original := Config{OAuth2: &OAuth2Config{
+		Issuer:  "https://issuer",
+		JWKSURL: "https://issuer/.well-known/jwks.json",
+	}}
 	v, err := original.Value()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -180,7 +218,7 @@ func TestConfig_ValueRoundTrip(t *testing.T) {
 	if err := got.Scan(raw); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.APIKey == nil || got.APIKey.Key != original.APIKey.Key {
+	if got.OAuth2 == nil || got.OAuth2.Issuer != original.OAuth2.Issuer {
 		t.Fatalf("round trip mismatch: %+v", got)
 	}
 }

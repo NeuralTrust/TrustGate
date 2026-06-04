@@ -16,11 +16,10 @@ import (
 func TestListConsumers_Pagination(t *testing.T) {
 	defer Track(t, "ListConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-list-gw")})
-	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-list-be")))
 	prefix := uniqueName("co-list-page")
 	created := make([]string, 0, 3)
 	for i := 0; i < 3; i++ {
-		id := CreateConsumer(t, gwID, validConsumerPayload(fmt.Sprintf("%s-%d", prefix, i), beID))
+		id := CreateConsumer(t, gwID, validConsumerPayload(fmt.Sprintf("%s-%d", prefix, i)))
 		created = append(created, id)
 	}
 
@@ -52,9 +51,8 @@ func TestListConsumers_Pagination(t *testing.T) {
 func TestListConsumers_FilterByName(t *testing.T) {
 	defer Track(t, "ListConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-list-filter-gw")})
-	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-list-filter-be")))
 	uniq := uniqueName("co-list-needle")
-	id := CreateConsumer(t, gwID, validConsumerPayload(uniq, beID))
+	id := CreateConsumer(t, gwID, validConsumerPayload(uniq))
 
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers?name=%s",
@@ -74,11 +72,9 @@ func TestListConsumers_ScopedByGateway(t *testing.T) {
 	defer Track(t, "ListConsumer")()
 	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-scope-a")})
 	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-scope-b")})
-	beA := CreateRegistry(t, gwA, validRegistryPayload(uniqueName("co-scope-be-a")))
-	beB := CreateRegistry(t, gwB, validRegistryPayload(uniqueName("co-scope-be-b")))
 
-	idA := CreateConsumer(t, gwA, validConsumerPayload(uniqueName("co-scope-co-a"), beA))
-	idB := CreateConsumer(t, gwB, validConsumerPayload(uniqueName("co-scope-co-b"), beB))
+	idA := CreateConsumer(t, gwA, validConsumerPayload(uniqueName("co-scope-co-a")))
+	idB := CreateConsumer(t, gwB, validConsumerPayload(uniqueName("co-scope-co-b")))
 
 	status, body := sendRequest(t, http.MethodGet,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwA),

@@ -18,19 +18,23 @@ const (
 )
 
 type LLMAttrs struct {
-	RegistryID string
-	Provider   string
-	Attempt    int
-	Fallback   bool
-	Outcome    string
-	Usage      *adapter.CanonicalUsage
+	RegistryID   string
+	Provider     string
+	Model        string
+	FinishReason string
+	Attempt      int
+	Fallback     bool
+	Outcome      string
+	Usage        *adapter.CanonicalUsage
 }
 
 type PluginAttrs struct {
-	Stage    string
-	Mode     string
-	Decision string
-	Extras   any
+	Stage      string
+	Mode       string
+	Decision   string
+	Score      *float64
+	ScoreLabel string
+	Extras     any
 }
 
 type Span struct {
@@ -144,6 +148,20 @@ func (s *Span) Usage() *adapter.CanonicalUsage {
 	return s.LLM.Usage
 }
 
+func (s *Span) SetLLMResult(model, finishReason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.LLM == nil {
+		s.LLM = &LLMAttrs{}
+	}
+	if model != "" {
+		s.LLM.Model = model
+	}
+	if finishReason != "" {
+		s.LLM.FinishReason = finishReason
+	}
+}
+
 func (s *Span) SetStage(stage string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -176,6 +194,14 @@ func (s *Span) SetExtras(extras any) {
 	defer s.mu.Unlock()
 	s.ensurePlugin()
 	s.Plugin.Extras = extras
+}
+
+func (s *Span) SetScore(score float64, label string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensurePlugin()
+	s.Plugin.Score = &score
+	s.Plugin.ScoreLabel = label
 }
 
 func (s *Span) ensurePlugin() {

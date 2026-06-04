@@ -7,7 +7,6 @@ import (
 
 	time "time"
 
-	telemetry "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	trace "github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -25,54 +24,9 @@ func (_m *Worker) EXPECT() *Worker_Expecter {
 	return &Worker_Expecter{mock: &_m.Mock}
 }
 
-// HasDefaultExporters provides a mock function with no fields
-func (_m *Worker) HasDefaultExporters() bool {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for HasDefaultExporters")
-	}
-
-	var r0 bool
-	if rf, ok := ret.Get(0).(func() bool); ok {
-		r0 = rf()
-	} else {
-		r0 = ret.Get(0).(bool)
-	}
-
-	return r0
-}
-
-// Worker_HasDefaultExporters_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'HasDefaultExporters'
-type Worker_HasDefaultExporters_Call struct {
-	*mock.Call
-}
-
-// HasDefaultExporters is a helper method to define mock.On call
-func (_e *Worker_Expecter) HasDefaultExporters() *Worker_HasDefaultExporters_Call {
-	return &Worker_HasDefaultExporters_Call{Call: _e.mock.On("HasDefaultExporters")}
-}
-
-func (_c *Worker_HasDefaultExporters_Call) Run(run func()) *Worker_HasDefaultExporters_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *Worker_HasDefaultExporters_Call) Return(_a0 bool) *Worker_HasDefaultExporters_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *Worker_HasDefaultExporters_Call) RunAndReturn(run func() bool) *Worker_HasDefaultExporters_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// Process provides a mock function with given fields: exporters, requestTrace, req, resp, startTime, endTime
-func (_m *Worker) Process(exporters []telemetry.ExporterConfig, requestTrace *trace.RequestTrace, req *context.RequestContext, resp *context.ResponseContext, startTime time.Time, endTime time.Time) {
-	_m.Called(exporters, requestTrace, req, resp, startTime, endTime)
+// Process provides a mock function with given fields: requestTrace, req, resp, startTime, endTime
+func (_m *Worker) Process(requestTrace *trace.RequestTrace, req *context.RequestContext, resp *context.ResponseContext, startTime time.Time, endTime time.Time) {
+	_m.Called(requestTrace, req, resp, startTime, endTime)
 }
 
 // Worker_Process_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Process'
@@ -81,19 +35,18 @@ type Worker_Process_Call struct {
 }
 
 // Process is a helper method to define mock.On call
-//   - exporters []telemetry.ExporterConfig
 //   - requestTrace *trace.RequestTrace
 //   - req *context.RequestContext
 //   - resp *context.ResponseContext
 //   - startTime time.Time
 //   - endTime time.Time
-func (_e *Worker_Expecter) Process(exporters interface{}, requestTrace interface{}, req interface{}, resp interface{}, startTime interface{}, endTime interface{}) *Worker_Process_Call {
-	return &Worker_Process_Call{Call: _e.mock.On("Process", exporters, requestTrace, req, resp, startTime, endTime)}
+func (_e *Worker_Expecter) Process(requestTrace interface{}, req interface{}, resp interface{}, startTime interface{}, endTime interface{}) *Worker_Process_Call {
+	return &Worker_Process_Call{Call: _e.mock.On("Process", requestTrace, req, resp, startTime, endTime)}
 }
 
-func (_c *Worker_Process_Call) Run(run func(exporters []telemetry.ExporterConfig, requestTrace *trace.RequestTrace, req *context.RequestContext, resp *context.ResponseContext, startTime time.Time, endTime time.Time)) *Worker_Process_Call {
+func (_c *Worker_Process_Call) Run(run func(requestTrace *trace.RequestTrace, req *context.RequestContext, resp *context.ResponseContext, startTime time.Time, endTime time.Time)) *Worker_Process_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].([]telemetry.ExporterConfig), args[1].(*trace.RequestTrace), args[2].(*context.RequestContext), args[3].(*context.ResponseContext), args[4].(time.Time), args[5].(time.Time))
+		run(args[0].(*trace.RequestTrace), args[1].(*context.RequestContext), args[2].(*context.ResponseContext), args[3].(time.Time), args[4].(time.Time))
 	})
 	return _c
 }
@@ -103,7 +56,7 @@ func (_c *Worker_Process_Call) Return() *Worker_Process_Call {
 	return _c
 }
 
-func (_c *Worker_Process_Call) RunAndReturn(run func([]telemetry.ExporterConfig, *trace.RequestTrace, *context.RequestContext, *context.ResponseContext, time.Time, time.Time)) *Worker_Process_Call {
+func (_c *Worker_Process_Call) RunAndReturn(run func(*trace.RequestTrace, *context.RequestContext, *context.ResponseContext, time.Time, time.Time)) *Worker_Process_Call {
 	_c.Run(run)
 	return _c
 }

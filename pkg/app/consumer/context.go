@@ -15,6 +15,7 @@ const (
 	GatewayIDKey contextKey = "auth.gateway_id"
 	// ConsumerDataKey carries the per-gateway *Data read model for the request.
 	ConsumerDataKey contextKey = "auth.consumer_data"
+	AuthIDKey       contextKey = "auth.auth_id"
 )
 
 func WithGatewayID(ctx context.Context, id ids.GatewayID) context.Context {
@@ -23,6 +24,15 @@ func WithGatewayID(ctx context.Context, id ids.GatewayID) context.Context {
 
 func GatewayIDFromContext(ctx context.Context) (ids.GatewayID, bool) {
 	id, ok := ctx.Value(GatewayIDKey).(ids.GatewayID)
+	return id, ok
+}
+
+func WithAuthID(ctx context.Context, id ids.AuthID) context.Context {
+	return context.WithValue(ctx, AuthIDKey, id)
+}
+
+func AuthIDFromContext(ctx context.Context) (ids.AuthID, bool) {
+	id, ok := ctx.Value(AuthIDKey).(ids.AuthID)
 	return id, ok
 }
 

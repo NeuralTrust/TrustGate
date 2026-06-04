@@ -9,6 +9,7 @@ import (
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	"github.com/google/uuid"
@@ -22,8 +23,8 @@ const (
 
 	gatewayFKConstraint          = "consumers_gateway_id_fkey"
 	consumerRegistryFKConstraint = "consumer_registry_registry_id_fkey"
-	consumerPolicyFKConstraint   = "consumer_policy_policy_id_fkey"
 	consumerAuthFKConstraint     = "consumer_auth_auth_id_fkey"
+	consumerPolicyFKConstraint   = "consumer_policy_policy_id_fkey"
 	consumerPathUniqueIndex      = "consumers_gateway_path_unique"
 )
 
@@ -32,8 +33,6 @@ const consumerSelectColumns = `
 		       c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
-		       COALESCE((SELECT array_agg(cp.policy_id ORDER BY cp.policy_id)
-		                   FROM consumer_policy cp WHERE cp.consumer_id = c.id), '{}')::uuid[] AS policy_ids,
 		       COALESCE((SELECT array_agg(ca.auth_id ORDER BY ca.auth_id)
 		                   FROM consumer_auth ca WHERE ca.consumer_id = c.id), '{}')::uuid[] AS auth_ids`
 
@@ -73,37 +72,11 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 		)`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, insertConsumer,
-			c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
-			headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
-		); err != nil {
-			return mapPgError(err)
-		}
-		return insertJoins(ctx, tx, c)
-	})
-}
-
-func insertJoins(ctx context.Context, tx pgx.Tx, c *domain.Consumer) error {
-	const (
-		insertRegistry = `INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-		insertPolicy   = `INSERT INTO consumer_policy (consumer_id, policy_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-		insertAuth     = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	)
-	for _, id := range c.RegistryIDs {
-		if _, err := tx.Exec(ctx, insertRegistry, c.ID, id); err != nil {
-			return mapPgError(err)
-		}
-	}
-	for _, id := range c.PolicyIDs {
-		if _, err := tx.Exec(ctx, insertPolicy, c.ID, id); err != nil {
-			return mapPgError(err)
-		}
-	}
-	for _, id := range c.AuthIDs {
-		if _, err := tx.Exec(ctx, insertAuth, c.ID, id); err != nil {
-			return mapPgError(err)
-		}
+	if _, err := r.conn.Pool.Exec(ctx, insertConsumer,
+		c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
+		headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
+	); err != nil {
+		return mapPgError(err)
 	}
 	return nil
 }
@@ -141,37 +114,62 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		       active           = $10,
 		       updated_at       = $11
 		 WHERE id = $1`
-	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, updateConsumer,
-			c.ID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
-			headersBytes, c.Active, c.UpdatedAt,
-		)
-		if err != nil {
-			return mapPgError(err)
-		}
-		if cmd.RowsAffected() == 0 {
-			return domain.ErrNotFound
-		}
-		if err := pruneJoins(ctx, tx, c); err != nil {
-			return err
-		}
-		return insertJoins(ctx, tx, c)
-	})
+	cmd, err := r.conn.Pool.Exec(ctx, updateConsumer,
+		c.ID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
+		headersBytes, c.Active, c.UpdatedAt,
+	)
+	if err != nil {
+		return mapPgError(err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
-func pruneJoins(ctx context.Context, tx pgx.Tx, c *domain.Consumer) error {
-	const (
-		pruneRegistry = `DELETE FROM consumer_registry WHERE consumer_id = $1 AND NOT (registry_id = ANY($2::uuid[]))`
-		prunePolicy   = `DELETE FROM consumer_policy  WHERE consumer_id = $1 AND NOT (policy_id  = ANY($2::uuid[]))`
-		pruneAuth     = `DELETE FROM consumer_auth    WHERE consumer_id = $1 AND NOT (auth_id    = ANY($2::uuid[]))`
-	)
-	if _, err := tx.Exec(ctx, pruneRegistry, c.ID, ids.ToUUIDs([]ids.RegistryID(c.RegistryIDs))); err != nil {
+func (r *Repository) AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
+	const query = `INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, registryID); err != nil {
 		return mapPgError(err)
 	}
-	if _, err := tx.Exec(ctx, prunePolicy, c.ID, ids.ToUUIDs(c.PolicyIDs)); err != nil {
+	return nil
+}
+
+func (r *Repository) DetachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
+	const query = `DELETE FROM consumer_registry WHERE consumer_id = $1 AND registry_id = $2`
+	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, registryID); err != nil {
 		return mapPgError(err)
 	}
-	if _, err := tx.Exec(ctx, pruneAuth, c.ID, ids.ToUUIDs(c.AuthIDs)); err != nil {
+	return nil
+}
+
+func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error {
+	const query = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, authID); err != nil {
+		return mapPgError(err)
+	}
+	return nil
+}
+
+func (r *Repository) DetachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error {
+	const query = `DELETE FROM consumer_auth WHERE consumer_id = $1 AND auth_id = $2`
+	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, authID); err != nil {
+		return mapPgError(err)
+	}
+	return nil
+}
+
+func (r *Repository) AttachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
+	const query = `INSERT INTO consumer_policy (consumer_id, policy_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, policyID); err != nil {
+		return mapPgError(err)
+	}
+	return nil
+}
+
+func (r *Repository) DetachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error {
+	const query = `DELETE FROM consumer_policy WHERE consumer_id = $1 AND policy_id = $2`
+	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, policyID); err != nil {
 		return mapPgError(err)
 	}
 	return nil
@@ -291,13 +289,12 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		modelPoliciesRaw []byte
 		consumerType     string
 		registryIDs      []uuid.UUID
-		policyIDs        []uuid.UUID
 		authIDs          []uuid.UUID
 	)
 	if err := s.Scan(
 		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &c.Algorithm, &embeddingRaw, &fallbackRaw, &modelPoliciesRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
-		&registryIDs, &policyIDs, &authIDs,
+		&registryIDs, &authIDs,
 	); err != nil {
 		return nil, err
 	}
@@ -329,13 +326,9 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		c.ModelPolicies = mp
 	}
 	c.RegistryIDs = registrydomain.Registries(ids.FromUUIDs[ids.RegistryKind](registryIDs))
-	c.PolicyIDs = ids.FromUUIDs[ids.PolicyKind](policyIDs)
 	c.AuthIDs = ids.FromUUIDs[ids.AuthKind](authIDs)
 	if c.RegistryIDs == nil {
 		c.RegistryIDs = registrydomain.Registries{}
-	}
-	if c.PolicyIDs == nil {
-		c.PolicyIDs = []ids.PolicyID{}
 	}
 	if c.AuthIDs == nil {
 		c.AuthIDs = []ids.AuthID{}
@@ -395,13 +388,13 @@ func mapPgError(err error) error {
 				strings.Contains(pgErr.Detail, "(registry_id)") {
 				return registrydomain.ErrInvalidRegistryID
 			}
-			if strings.Contains(pgErr.ConstraintName, consumerPolicyFKConstraint) ||
-				strings.Contains(pgErr.Detail, "(policy_id)") {
-				return domain.ErrInvalidPolicyID
-			}
 			if strings.Contains(pgErr.ConstraintName, consumerAuthFKConstraint) ||
 				strings.Contains(pgErr.Detail, "(auth_id)") {
 				return domain.ErrInvalidAuthID
+			}
+			if strings.Contains(pgErr.ConstraintName, consumerPolicyFKConstraint) ||
+				strings.Contains(pgErr.Detail, "(policy_id)") {
+				return policydomain.ErrNotFound
 			}
 			return domain.ErrInvalidGatewayID
 		}

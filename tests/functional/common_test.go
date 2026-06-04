@@ -63,18 +63,17 @@ func CreatePolicy(t *testing.T, gatewayID string, payload map[string]any) string
 }
 
 // validPolicyPayload returns a minimal payload accepted by Validate() (name
-// plus one enabled rate-limiter plugin in the pre_request stage). Callers
-// may override fields.
+// plus the rate-limiter plugin slug). With the 1:1 model a policy is a single
+// configured plugin instance. Callers may override fields.
 func validPolicyPayload(name string) map[string]any {
 	return map[string]any{
-		"name": name,
-		"plugins": []map[string]any{
-			{
-				"name":     "rate_limiter",
-				"enabled":  true,
-				"stage":    "pre_request",
-				"priority": 0,
-				"settings": map[string]any{"limit": 100},
+		"name":     name,
+		"slug":     "rate_limiter",
+		"enabled":  true,
+		"priority": 0,
+		"settings": map[string]any{
+			"limits": map[string]any{
+				"global": map[string]any{"limit": 100, "window": "1m"},
 			},
 		},
 	}
@@ -94,16 +93,77 @@ func CreateConsumer(t *testing.T, gatewayID string, payload map[string]any) stri
 	return id
 }
 
-// validConsumerPayload returns a minimal payload accepted by Validate()
-// (name, exact-match path, one backend reference). The path is derived from the
-// (already unique) name so it stays unique per gateway. Callers may override
-// fields.
-func validConsumerPayload(name, backendID string) map[string]any {
+// validConsumerPayload returns a minimal payload accepted by Validate() (name
+// plus an exact-match path). Associations (registries, auths, policies) are
+// attached after creation via the dedicated link endpoints. The path is derived
+// from the (already unique) name so it stays unique per gateway. Callers may
+// override fields.
+func validConsumerPayload(name string) map[string]any {
 	return map[string]any{
-		"name":         name,
-		"path":         "/v1/" + name,
-		"registry_ids": []string{backendID},
+		"name": name,
+		"path": "/v1/" + name,
 	}
+}
+
+// CreateConsumerWithRegistries creates a base consumer and attaches each
+// registry through the association endpoint, returning the consumer id. This is
+// the common multi-step setup now that registries live outside the create body.
+func CreateConsumerWithRegistries(t *testing.T, gatewayID, name string, registryIDs ...string) string {
+	t.Helper()
+	id := CreateConsumer(t, gatewayID, validConsumerPayload(name))
+	for _, registryID := range registryIDs {
+		AttachRegistry(t, gatewayID, id, registryID)
+	}
+	return id
+}
+
+// AttachRegistry links a registry to a consumer via the association endpoint,
+// asserting the idempotent 204 contract.
+func AttachRegistry(t *testing.T, gatewayID, consumerID, registryID string) {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/registries/%s",
+		AdminURL, gatewayID, consumerID, registryID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, nil)
+	require.Equal(t, http.StatusNoContent, status, "attach registry failed: %v", body)
+}
+
+// AttachAuth links an auth credential to a consumer via the association
+// endpoint, asserting the idempotent 204 contract.
+func AttachAuth(t *testing.T, gatewayID, consumerID, authID string) {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/auths/%s",
+		AdminURL, gatewayID, consumerID, authID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, nil)
+	require.Equal(t, http.StatusNoContent, status, "attach auth failed: %v", body)
+}
+
+// AttachPolicy links a policy to a consumer via the association endpoint,
+// asserting the idempotent 204 contract.
+func AttachPolicy(t *testing.T, gatewayID, consumerID, policyID string) {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/policies/%s",
+		AdminURL, gatewayID, consumerID, policyID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, nil)
+	require.Equal(t, http.StatusNoContent, status, "attach policy failed: %v", body)
+}
+
+// SetPolicyGlobal promotes a policy to gateway-wide scope, asserting the 200
+// contract that echoes the updated policy.
+func SetPolicyGlobal(t *testing.T, gatewayID, policyID string) {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/policies/%s/global", AdminURL, gatewayID, policyID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, nil)
+	require.Equal(t, http.StatusOK, status, "set policy global failed: %v", body)
+}
+
+// UpdateConsumer issues a PUT /v1/gateways/:gateway_id/consumers/:id, asserting
+// the 200 contract. Registry-referencing config (model_policies, fallback) is
+// configured here, after the registries have been attached.
+func UpdateConsumer(t *testing.T, gatewayID, consumerID string, payload map[string]any) {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gatewayID, consumerID)
+	status, body := sendRequest(t, http.MethodPut, url, nil, payload)
+	require.Equal(t, http.StatusOK, status, "update consumer failed: %v", body)
 }
 
 // CreateAuth issues a POST /v1/gateways/:gateway_id/auths and returns the
@@ -120,21 +180,40 @@ func CreateAuth(t *testing.T, gatewayID string, payload map[string]any) string {
 	return id
 }
 
-// validAuthPayload returns a minimal api_key auth payload accepted by
-// Validate(). The secret is long enough to exercise partial masking.
+// validAuthPayload returns a minimal api_key auth payload. The key is generated
+// server-side, so the body carries no config block.
 func validAuthPayload(name string) map[string]any {
 	return map[string]any{
 		"name":    name,
 		"type":    "api_key",
 		"enabled": true,
-		"config": map[string]any{
-			"api_key": map[string]any{
-				"key":  "sk-supersecretclientkey",
-				"in":   "header",
-				"name": "X-API-Key",
-			},
-		},
 	}
+}
+
+// CreateAPIKeyAuth creates an api_key credential and returns both its id and the
+// one-time plaintext key the create response surfaces.
+func CreateAPIKeyAuth(t *testing.T, gatewayID, name string) (string, string) {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gatewayID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, validAuthPayload(name))
+	require.Equal(t, http.StatusCreated, status, "create api_key auth failed: %v", body)
+
+	id, ok := body["id"].(string)
+	require.True(t, ok, "create auth response missing id: %v", body)
+	require.NotEmpty(t, id)
+	key, ok := body["api_key"].(string)
+	require.True(t, ok, "create auth response missing generated api_key: %v", body)
+	require.NotEmpty(t, key)
+	return id, key
+}
+
+// createAndAttachAPIKey creates an api_key credential, attaches it to consumerID
+// and returns the plaintext key the proxy plane must present in HeaderAPIKey.
+func createAndAttachAPIKey(t *testing.T, gatewayID, consumerID string) string {
+	t.Helper()
+	authID, key := CreateAPIKeyAuth(t, gatewayID, uniqueName("proxy-key"))
+	AttachAuth(t, gatewayID, consumerID, authID)
+	return key
 }
 
 // validRegistryPayload returns a minimal payload accepted by Validate(): a

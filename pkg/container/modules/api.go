@@ -51,7 +51,7 @@ func API(c *container.Container) error {
 	if err := c.Provide(middleware.NewSessionMiddleware); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewHeaderIdentityResolver); err != nil {
+	if err := c.Provide(middleware.NewAPIKeyIdentityResolver); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewAuthMiddleware); err != nil {

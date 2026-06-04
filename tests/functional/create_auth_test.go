@@ -5,13 +5,14 @@ package functional_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateAuth_Success_MasksSecret(t *testing.T) {
+func TestCreateAuth_Success_GeneratesKey(t *testing.T) {
 	defer Track(t, "CreateAuth")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-create")})
 	name := uniqueName("api-key")
@@ -26,12 +27,16 @@ func TestCreateAuth_Success_MasksSecret(t *testing.T) {
 	assert.Equal(t, true, body["enabled"])
 	assert.NotEmpty(t, body["id"])
 
+	// The plaintext key is generated server-side and returned exactly once.
+	key, ok := body["api_key"].(string)
+	require.True(t, ok, "create must surface the generated api_key: %v", body)
+	assert.True(t, strings.HasPrefix(key, "ag_"), "generated key must carry the ag_ prefix: %q", key)
+
+	// The secret never lives inside config: api_key auth carries no config block.
 	cfg, ok := body["config"].(map[string]any)
 	require.True(t, ok, "config missing: %v", body)
-	apiKey, ok := cfg["api_key"].(map[string]any)
-	require.True(t, ok, "api_key config missing: %v", cfg)
-	assert.Equal(t, "sk...key", apiKey["key"], "secret must be partially masked")
-	assert.NotEqual(t, "sk-supersecretclientkey", apiKey["key"], "full secret must never be returned")
+	_, hasAPIKeyCfg := cfg["api_key"]
+	assert.False(t, hasAPIKeyCfg, "api_key auth must not echo a config.api_key block: %v", cfg)
 }
 
 func TestCreateAuth_OAuth2(t *testing.T) {
@@ -75,13 +80,13 @@ func TestCreateAuth_Conflict(t *testing.T) {
 	assert.Equal(t, "already_exists", body["error"])
 }
 
-func TestCreateAuth_ValidationMissingConfig(t *testing.T) {
+func TestCreateAuth_InvalidType(t *testing.T) {
 	defer Track(t, "CreateAuth")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-val")})
 
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gwID), nil,
-		map[string]any{"name": uniqueName("bad"), "type": "api_key"},
+		map[string]any{"name": uniqueName("bad"), "type": "bogus"},
 	)
 	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
 	assert.Equal(t, "validation_failed", body["error"])
