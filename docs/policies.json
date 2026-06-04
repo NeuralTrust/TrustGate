@@ -1,0 +1,332 @@
+{
+  "groups": [
+    {
+      "type": "Traffic Control",
+      "items": [
+        {
+          "slug": "cors",
+          "name": "CORS",
+          "description": "Validate request origins and apply Cross-Origin Resource Sharing response headers.",
+          "mandatory_stages": [
+            "pre_request"
+          ],
+          "supported_stages": [
+            "pre_request"
+          ],
+          "settings_schema": {
+            "fields": [
+              {
+                "key": "allowed_origins",
+                "label": "Allowed Origins",
+                "type": "array",
+                "description": "Origins permitted to access the resource. Use * to allow any origin.",
+                "required": true,
+                "item": {
+                  "key": "origin",
+                  "label": "Origin",
+                  "type": "string"
+                }
+              },
+              {
+                "key": "allowed_methods",
+                "label": "Allowed Methods",
+                "type": "array",
+                "description": "HTTP methods permitted in cross-origin requests.",
+                "item": {
+                  "key": "method",
+                  "label": "Method",
+                  "type": "enum",
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PUT",
+                    "PATCH",
+                    "DELETE",
+                    "OPTIONS",
+                    "HEAD"
+                  ]
+                }
+              },
+              {
+                "key": "allow_credentials",
+                "label": "Allow Credentials",
+                "type": "boolean",
+                "description": "Allow cookies and credentials in cross-origin requests.",
+                "default": false
+              },
+              {
+                "key": "expose_headers",
+                "label": "Expose Headers",
+                "type": "array",
+                "description": "Response headers exposed to the browser.",
+                "item": {
+                  "key": "header",
+                  "label": "Header",
+                  "type": "string"
+                }
+              },
+              {
+                "key": "max_age",
+                "label": "Max Age",
+                "type": "duration",
+                "description": "How long the preflight response may be cached (e.g. 1h)."
+              },
+              {
+                "key": "log_violations",
+                "label": "Log Violations",
+                "type": "boolean",
+                "description": "Log requests from disallowed origins.",
+                "default": false
+              }
+            ]
+          }
+        },
+        {
+          "slug": "rate_limiter",
+          "name": "Rate Limiter",
+          "description": "Limit request volume using sliding windows scoped globally or per user, IP or fingerprint.",
+          "mandatory_stages": [
+            "pre_request"
+          ],
+          "supported_stages": [
+            "pre_request"
+          ],
+          "settings_schema": {
+            "fields": [
+              {
+                "key": "limits",
+                "label": "Limits",
+                "type": "map",
+                "description": "Per-scope request limits. At least one scope must be configured.",
+                "required": true,
+                "key_options": [
+                  "global",
+                  "per_user",
+                  "per_ip",
+                  "per_fingerprint"
+                ],
+                "value": {
+                  "key": "limit",
+                  "label": "Limit",
+                  "type": "object",
+                  "fields": [
+                    {
+                      "key": "limit",
+                      "label": "Max Requests",
+                      "type": "integer",
+                      "description": "Maximum number of requests allowed within the window.",
+                      "required": true
+                    },
+                    {
+                      "key": "window",
+                      "label": "Window",
+                      "type": "duration",
+                      "description": "Sliding window duration (e.g. 1s, 1m, 1h).",
+                      "required": true
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "actions",
+                "label": "Actions",
+                "type": "object",
+                "description": "Behaviour applied when a limit is exceeded.",
+                "fields": [
+                  {
+                    "key": "type",
+                    "label": "Action Type",
+                    "type": "enum",
+                    "description": "How to respond when the limit is exceeded.",
+                    "default": "reject",
+                    "enum": [
+                      "reject",
+                      "block"
+                    ]
+                  },
+                  {
+                    "key": "retry_after",
+                    "label": "Retry After",
+                    "type": "string",
+                    "description": "Value sent in the Retry-After header, in seconds.",
+                    "default": "60"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "slug": "request_size_limiter",
+          "name": "Request Size Limiter",
+          "description": "Reject requests whose body exceeds configured byte or character limits.",
+          "mandatory_stages": [
+            "pre_request"
+          ],
+          "supported_stages": [
+            "pre_request"
+          ],
+          "settings_schema": {
+            "fields": [
+              {
+                "key": "allowed_payload_size",
+                "label": "Allowed Payload Size",
+                "type": "integer",
+                "description": "Maximum payload size expressed in the selected size unit.",
+                "required": true,
+                "default": 10
+              },
+              {
+                "key": "size_unit",
+                "label": "Size Unit",
+                "type": "enum",
+                "description": "Unit used to interpret the allowed payload size.",
+                "default": "megabytes",
+                "enum": [
+                  "bytes",
+                  "kilobytes",
+                  "megabytes"
+                ]
+              },
+              {
+                "key": "max_chars_per_request",
+                "label": "Max Characters Per Request",
+                "type": "integer",
+                "description": "Maximum number of UTF-8 characters allowed in the request body.",
+                "default": 100000
+              },
+              {
+                "key": "require_content_length",
+                "label": "Require Content-Length",
+                "type": "boolean",
+                "description": "Reject requests that do not declare a Content-Length header.",
+                "default": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "Quota",
+      "items": [
+        {
+          "slug": "token_rate_limiter",
+          "name": "Token Rate Limiter",
+          "description": "Enforce an LLM token budget per identifier over a fixed time window.",
+          "mandatory_stages": [
+            "pre_request",
+            "post_response"
+          ],
+          "supported_stages": [
+            "pre_request",
+            "post_response"
+          ],
+          "settings_schema": {
+            "fields": [
+              {
+                "key": "identifier_header",
+                "label": "Identifier Header",
+                "type": "string",
+                "description": "Request header used to identify the caller. Falls back to a shared budget when empty."
+              },
+              {
+                "key": "window",
+                "label": "Window",
+                "type": "object",
+                "required": true,
+                "fields": [
+                  {
+                    "key": "unit",
+                    "label": "Unit",
+                    "type": "enum",
+                    "description": "Time unit of the budget window.",
+                    "required": true,
+                    "enum": [
+                      "second",
+                      "minute",
+                      "hour",
+                      "day"
+                    ]
+                  },
+                  {
+                    "key": "max",
+                    "label": "Max Tokens",
+                    "type": "integer",
+                    "description": "Maximum number of tokens allowed within the window.",
+                    "required": true
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "Routing",
+      "items": [
+        {
+          "slug": "semantic_cache",
+          "name": "Semantic Cache",
+          "description": "Serve cached responses for semantically similar requests, scoped per registry.",
+          "mandatory_stages": [
+            "pre_request",
+            "post_response"
+          ],
+          "supported_stages": [
+            "pre_request",
+            "post_response"
+          ],
+          "settings_schema": {
+            "fields": [
+              {
+                "key": "similarity_threshold",
+                "label": "Similarity Threshold",
+                "type": "number",
+                "description": "Cosine similarity threshold in (0, 1] required to serve a cache hit.",
+                "default": 0.85
+              },
+              {
+                "key": "ttl",
+                "label": "TTL",
+                "type": "duration",
+                "description": "How long cached responses remain valid (e.g. 24h).",
+                "default": "24h"
+              },
+              {
+                "key": "embedding",
+                "label": "Embedding",
+                "type": "object",
+                "required": true,
+                "fields": [
+                  {
+                    "key": "provider",
+                    "label": "Provider",
+                    "type": "string",
+                    "description": "Embedding provider used to vectorize requests.",
+                    "default": "openai"
+                  },
+                  {
+                    "key": "model",
+                    "label": "Model",
+                    "type": "string",
+                    "description": "Embedding model name.",
+                    "default": "text-embedding-ada-002"
+                  },
+                  {
+                    "key": "api_key",
+                    "label": "API Key",
+                    "type": "string",
+                    "description": "Credential for the embedding provider.",
+                    "required": true
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

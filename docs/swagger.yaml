@@ -847,6 +847,107 @@ definitions:
       use_basic_auth:
         type: boolean
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog:
+    properties:
+      groups:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogGroup'
+        type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry:
+    properties:
+      description:
+        type: string
+      mandatory_stages:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage'
+        type: array
+      name:
+        type: string
+      settings_schema:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.SettingsSchema'
+      slug:
+        type: string
+      supported_stages:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage'
+        type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogGroup:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry'
+        type: array
+      type:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field:
+    properties:
+      default: {}
+      description:
+        type: string
+      enum:
+        items:
+          type: string
+        type: array
+      fields:
+        description: Fields lists the child fields of an object.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field'
+        type: array
+      item:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field'
+        description: Item describes the element schema of an array.
+      key:
+        type: string
+      key_options:
+        description: KeyOptions lists the well-known keys of a map. Empty means free-form
+          keys.
+        items:
+          type: string
+        type: array
+      label:
+        type: string
+      required:
+        type: boolean
+      type:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.FieldType'
+      value:
+        allOf:
+        - $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field'
+        description: Value describes the value schema of a map.
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_app_plugins.FieldType:
+    enum:
+    - string
+    - integer
+    - number
+    - boolean
+    - duration
+    - enum
+    - object
+    - array
+    - map
+    type: string
+    x-enum-varnames:
+    - FieldTypeString
+    - FieldTypeInteger
+    - FieldTypeNumber
+    - FieldTypeBoolean
+    - FieldTypeDuration
+    - FieldTypeEnum
+    - FieldTypeObject
+    - FieldTypeArray
+    - FieldTypeMap
+  github_com_NeuralTrust_AgentGateway_pkg_app_plugins.SettingsSchema:
+    properties:
+      fields:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field'
+        type: array
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig:
     additionalProperties:
       items:
@@ -862,6 +963,18 @@ definitions:
       header_name:
         type: string
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage:
+    enum:
+    - pre_request
+    - post_request
+    - pre_response
+    - post_response
+    type: string
+    x-enum-varnames:
+    - StagePreRequest
+    - StagePostRequest
+    - StagePreResponse
+    - StagePostResponse
   github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.ExporterConfig:
     properties:
       name:
@@ -2388,6 +2501,27 @@ paths:
       security:
       - BearerAuth: []
       summary: List model catalog
+      tags:
+      - catalog
+  /v1/policies-catalog:
+    get:
+      description: Returns the catalog of available policies grouped by type. Each
+        entry includes the settings schema needed to render its configuration form
+        dynamically.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List policy catalog
       tags:
       - catalog
   /v1/providers-catalog:
