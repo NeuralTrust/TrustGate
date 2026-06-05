@@ -30,6 +30,7 @@ const (
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
 type ProviderLocator interface {
 	Get(provider string) (providers.Client, error)
+	GetTester(provider string) (providers.ConnectionTester, error)
 }
 
 type providerLocator struct {
@@ -62,4 +63,16 @@ func (f *providerLocator) Get(provider string) (providers.Client, error) {
 		return c, nil
 	}
 	return nil, fmt.Errorf("unsupported provider: %s", provider)
+}
+
+func (f *providerLocator) GetTester(provider string) (providers.ConnectionTester, error) {
+	c, ok := f.clients[provider]
+	if !ok {
+		return nil, fmt.Errorf("unsupported provider: %s", provider)
+	}
+	tester, ok := c.(providers.ConnectionTester)
+	if !ok {
+		return nil, fmt.Errorf("provider %q does not support connection testing", provider)
+	}
+	return tester, nil
 }

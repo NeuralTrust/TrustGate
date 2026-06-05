@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildCredentials_AzureAPIKey(t *testing.T) {
+func TestProviderCredentials_AzureAPIKey(t *testing.T) {
 	auth := &registrydomain.TargetAuth{
 		Type: registrydomain.AuthTypeAzure,
 		Azure: &registrydomain.AzureAuth{
@@ -18,17 +18,15 @@ func TestBuildCredentials_AzureAPIKey(t *testing.T) {
 		},
 	}
 
-	creds := buildCredentials(auth)
+	creds := auth.ProviderCredentials()
 
 	require.NotNil(t, creds.Azure)
 	assert.Equal(t, "https://example.openai.azure.com", creds.Azure.Endpoint)
 	assert.False(t, creds.Azure.UseIdentity)
-	// The Azure client reads the api-key from Credentials.ApiKey when not using
-	// managed identity; this mapping is the fix for Azure + API key auth.
 	assert.Equal(t, "az-secret-key", creds.ApiKey)
 }
 
-func TestBuildCredentials_AzureManagedIdentity(t *testing.T) {
+func TestProviderCredentials_AzureManagedIdentity(t *testing.T) {
 	auth := &registrydomain.TargetAuth{
 		Type: registrydomain.AuthTypeAzure,
 		Azure: &registrydomain.AzureAuth{
@@ -37,7 +35,7 @@ func TestBuildCredentials_AzureManagedIdentity(t *testing.T) {
 		},
 	}
 
-	creds := buildCredentials(auth)
+	creds := auth.ProviderCredentials()
 
 	require.NotNil(t, creds.Azure)
 	assert.True(t, creds.Azure.UseIdentity)

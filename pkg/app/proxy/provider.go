@@ -241,7 +241,7 @@ func (p *providerInvoker) prepare(
 		client: client,
 		cfg: &providers.Config{
 			Options:     bk.ProviderOptions,
-			Credentials: buildCredentials(bk.Auth),
+			Credentials: bk.Auth.ProviderCredentials(),
 		},
 		body:         body,
 		sourceFormat: sourceFormat,
@@ -321,43 +321,4 @@ func (p *providerInvoker) resolveSourceFormat(req *infracontext.RequestContext) 
 		return trusted
 	}
 	return adapter.DetectFormat(req.Body)
-}
-
-// buildCredentials maps a target's auth configuration to provider credentials.
-// API key, AWS and Azure are mapped now; OAuth2 and GCP service accounts are
-// deferred to the auth multi-type work (B.7).
-func buildCredentials(auth *registry.TargetAuth) providers.Credentials {
-	creds := providers.Credentials{}
-	if auth == nil {
-		return creds
-	}
-	switch auth.Type {
-	case registry.AuthTypeAPIKey:
-		if auth.APIKey != nil {
-			creds.ApiKey = auth.APIKey.APIKey
-		}
-	case registry.AuthTypeAWS:
-		if auth.AWS != nil {
-			creds.AwsBedrock = &providers.AwsBedrock{
-				Region:       auth.AWS.Region,
-				AccessKey:    auth.AWS.AccessKeyID,
-				SecretKey:    auth.AWS.SecretAccessKey,
-				SessionToken: auth.AWS.SessionToken,
-				UseRole:      auth.AWS.UseRole,
-				RoleARN:      auth.AWS.Role,
-			}
-		}
-	case registry.AuthTypeAzure:
-		if auth.Azure != nil {
-			creds.ApiKey = auth.Azure.APIKey
-			creds.Azure = &providers.Azure{
-				Endpoint:    auth.Azure.Endpoint,
-				ApiVersion:  auth.Azure.Version,
-				UseIdentity: auth.Azure.UseManagedIdentity,
-			}
-		}
-	case registry.AuthTypeOAuth2, registry.AuthTypeGCPServiceAccount:
-		// Deferred to B.7.
-	}
-	return creds
 }

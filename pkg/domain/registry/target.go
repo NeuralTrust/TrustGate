@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 )
 
 type AuthType string
@@ -154,6 +155,42 @@ func (a *TargetAuth) secretValues() []string {
 		v = append(v, *a.GCPServiceAccount)
 	}
 	return v
+}
+
+func (a *TargetAuth) ProviderCredentials() providers.Credentials {
+	creds := providers.Credentials{}
+	if a == nil {
+		return creds
+	}
+	switch a.Type {
+	case AuthTypeAPIKey:
+		if a.APIKey != nil {
+			creds.ApiKey = a.APIKey.APIKey
+		}
+	case AuthTypeAWS:
+		if a.AWS != nil {
+			creds.AwsBedrock = &providers.AwsBedrock{
+				Region:       a.AWS.Region,
+				AccessKey:    a.AWS.AccessKeyID,
+				SecretKey:    a.AWS.SecretAccessKey,
+				SessionToken: a.AWS.SessionToken,
+				UseRole:      a.AWS.UseRole,
+				RoleARN:      a.AWS.Role,
+			}
+		}
+	case AuthTypeAzure:
+		if a.Azure != nil {
+			creds.ApiKey = a.Azure.APIKey
+			creds.Azure = &providers.Azure{
+				Endpoint:    a.Azure.Endpoint,
+				ApiVersion:  a.Azure.Version,
+				UseIdentity: a.Azure.UseManagedIdentity,
+			}
+		}
+	case AuthTypeOAuth2, AuthTypeGCPServiceAccount:
+		// Deferred to B.7.
+	}
+	return creds
 }
 
 func (a *TargetAuth) Validate() error {

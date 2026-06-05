@@ -2377,6 +2377,95 @@
                 }
             }
         },
+        "/v1/gateways/{gateway_id}/registries/test-connection": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Validates connectivity and credentials against the provider's API with a lightweight, auth-only request. Test either a stored registry (registry_id) or an inline candidate configuration (provider + auth). Always returns 200; inspect \"ok\" and \"stage\" for the outcome.",
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Test a backend connection",
+                "parameters": [
+                    {
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TestConnectionRequest"
+                            }
+                        }
+                    },
+                    "description": "Connection to test",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TestConnectionResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/gateways/{gateway_id}/registries/{id}": {
             "get": {
                 "security": [
@@ -4052,6 +4141,24 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TestConnectionRequest": {
+                "type": "object",
+                "properties": {
+                    "auth": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetAuthRequest"
+                    },
+                    "provider": {
+                        "type": "string"
+                    },
+                    "provider_options": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    },
+                    "registry_id": {
+                        "type": "string"
+                    }
+                }
+            },
             "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.UpdateRegistryRequest": {
                 "type": "object",
                 "properties": {
@@ -4298,6 +4405,29 @@
                     },
                     "use_basic_auth": {
                         "type": "boolean"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TestConnectionResponse": {
+                "type": "object",
+                "properties": {
+                    "latency_ms": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "ok": {
+                        "type": "boolean"
+                    },
+                    "provider": {
+                        "type": "string"
+                    },
+                    "stage": {
+                        "type": "string"
+                    },
+                    "status_code": {
+                        "type": "integer"
                     }
                 }
             },

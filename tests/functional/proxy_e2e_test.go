@@ -175,11 +175,6 @@ func proxyPost(t *testing.T, apiKey, path string, body any) (int, http.Header, [
 	return resp.StatusCode, resp.Header, raw
 }
 
-// setupRoute creates a gateway, one backend per upstream and a consumer routing
-// path to those registries, plus an api_key credential attached to the consumer.
-// It returns that credential's key (to authenticate at the proxy) and the
-// routing path. Registries are bound through the association endpoints after the
-// consumer is created (the link sub-resource flow).
 func setupRoute(t *testing.T, algorithm string, upstreams ...*fakeUpstream) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("proxy-gw")})
@@ -253,8 +248,6 @@ func TestProxyE2E_Streaming_NoLB(t *testing.T) {
 
 		status, _, body := proxyPost(t, apiKey, path, chatRequest(true))
 
-		// A pre-stream failure never opens a stream, so the budget is exhausted
-		// exactly like the synchronous path and the final error is relayed.
 		assert.Equal(t, http.StatusInternalServerError, status, "body: %s", body)
 		assert.Equal(t, expectedAttempts(), up.Hits())
 	})
@@ -386,16 +379,10 @@ func setupFallbackRoute(t *testing.T, primary, fallback *fakeUpstream, fallbackE
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
 
 	if !fallbackEnabled {
-		// A disabled fallback is modeled by simply never wiring the fallback
-		// target: attaching it would fold it into the primary pool. The consumer
-		// routes only to the primary, so the upstream error is relayed as-is.
 		_ = fallbackID
 		return apiKey, path
 	}
 
-	// The fallback chain may only reference associated registries, so the
-	// fallback target is attached too; the data plane keeps it out of the
-	// primary pool so the failover ordering is preserved.
 	AttachRegistry(t, gatewayID, coID, fallbackID)
 	UpdateConsumer(t, gatewayID, coID, map[string]any{
 		"name": name,

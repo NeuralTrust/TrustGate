@@ -21,7 +21,6 @@ type proxyMiddlewares struct {
 	AccessLog       *middleware.AccessLogMiddleware
 	SecurityHeaders *middleware.SecurityHeadersMiddleware
 	Session         *middleware.SessionMiddleware
-	FingerPrint     *middleware.FingerPrintMiddleware
 	Auth            *middleware.AuthMiddleware
 	Metrics         *middleware.MetricsMiddleware
 }
@@ -34,7 +33,6 @@ func proxyTransport(m proxyMiddlewares) *middleware.Transport {
 		m.AccessLog,
 		m.Auth,
 		m.Session,
-		m.FingerPrint,
 		m.Metrics,
 	)
 }

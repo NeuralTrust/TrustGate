@@ -13,8 +13,8 @@ type UpdatePolicyRequest struct {
 	Description string         `json:"description,omitempty"`
 	Slug        string         `json:"slug"`
 	Enabled     bool           `json:"enabled"`
-	Priority    int            `json:"priority"`
-	Parallel    bool           `json:"parallel,omitempty"`
+	Priority    int            `json:"priority,omitempty"`
+	Parallel    *bool          `json:"parallel,omitempty"`
 	Settings    map[string]any `json:"settings,omitempty"`
 	Stages      []string       `json:"stages,omitempty"`
 }
@@ -37,4 +37,11 @@ func (r UpdatePolicyRequest) Validate() error {
 
 func (r UpdatePolicyRequest) ToStages() []domain.Stage {
 	return toStages(r.Stages)
+}
+
+func (r UpdatePolicyRequest) ParallelOrDefault() bool {
+	if r.Parallel == nil {
+		return true
+	}
+	return *r.Parallel
 }

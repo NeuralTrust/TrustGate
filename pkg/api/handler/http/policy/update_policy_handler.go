@@ -58,7 +58,7 @@ func (h *UpdatePolicyHandler) Handle(c *fiber.Ctx) error {
 		Slug:        req.Slug,
 		Enabled:     req.Enabled,
 		Priority:    req.Priority,
-		Parallel:    req.Parallel,
+		Parallel:    req.ParallelOrDefault(),
 		Settings:    req.Settings,
 		Stages:      req.ToStages(),
 	})
