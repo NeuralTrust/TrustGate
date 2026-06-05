@@ -3299,6 +3299,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.AzureAuthRequest": {
             "type": "object",
             "properties": {
+                "api_key": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
                 "client_id": {
                     "type": "string"
                 },
@@ -3528,6 +3532,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.AzureAuthResponse": {
             "type": "object",
             "properties": {
+                "api_key": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
                 "client_id": {
                     "type": "string"
                 },
