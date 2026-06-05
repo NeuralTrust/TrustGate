@@ -349,6 +349,7 @@ func buildCredentials(auth *registry.TargetAuth) providers.Credentials {
 		}
 	case registry.AuthTypeAzure:
 		if auth.Azure != nil {
+			creds.ApiKey = auth.Azure.APIKey
 			creds.Azure = &providers.Azure{
 				Endpoint:    auth.Azure.Endpoint,
 				ApiVersion:  auth.Azure.Version,

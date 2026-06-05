@@ -590,6 +590,9 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.AzureAuthRequest:
     properties:
+      api_key:
+        description: '#nosec G117'
+        type: string
       client_id:
         type: string
       client_secret:
@@ -743,6 +746,9 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.AzureAuthResponse:
     properties:
+      api_key:
+        description: '#nosec G117'
+        type: string
       client_id:
         type: string
       client_secret:
