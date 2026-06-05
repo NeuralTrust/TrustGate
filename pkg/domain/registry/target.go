@@ -38,6 +38,7 @@ type AzureAuth struct {
 	UseManagedIdentity bool   `json:"use_managed_identity,omitempty"`
 	Endpoint           string `json:"endpoint,omitempty"`
 	Version            string `json:"version,omitempty"`
+	APIKey             string `json:"api_key,omitempty"` // #nosec G117 -- Azure OpenAI api-key credential
 	ClientID           string `json:"client_id,omitempty"`
 	ClientSecret       string `json:"client_secret,omitempty"` // #nosec G117 -- Azure client secret
 	TenantID           string `json:"tenant_id,omitempty"`
@@ -114,6 +115,7 @@ func (a *TargetAuth) ProviderCredentials() providers.Credentials {
 		}
 	case AuthTypeAzure:
 		if a.Azure != nil {
+			creds.ApiKey = a.Azure.APIKey
 			creds.Azure = &providers.Azure{
 				Endpoint:    a.Azure.Endpoint,
 				ApiVersion:  a.Azure.Version,
@@ -139,6 +141,9 @@ func (a *TargetAuth) Validate() error {
 	case AuthTypeAzure:
 		if a.Azure == nil {
 			return fmt.Errorf("%w: azure payload required for type azure", ErrInvalidRegistry)
+		}
+		if !a.Azure.UseManagedIdentity && a.Azure.APIKey == "" {
+			return fmt.Errorf("%w: azure requires api_key or use_managed_identity", ErrInvalidRegistry)
 		}
 	case AuthTypeAWS:
 		if a.AWS == nil {
