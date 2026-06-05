@@ -51,7 +51,6 @@ func FromAuth(a *domain.Auth) AuthResponse {
 		Type:      string(a.Type),
 		Enabled:   a.Enabled,
 		Config:    fromConfig(a.Config),
-		APIKey:    secret.Mask(a.KeyHash),
 		CreatedAt: a.CreatedAt,
 		UpdatedAt: a.UpdatedAt,
 	}
