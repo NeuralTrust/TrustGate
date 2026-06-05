@@ -63,7 +63,7 @@ func TestCreateAuth_OAuth2(t *testing.T) {
 	oauth, ok := cfg["oauth2"].(map[string]any)
 	require.True(t, ok, "oauth2 config missing: %v", cfg)
 	assert.Equal(t, "https://issuer.example.com", oauth["issuer"])
-	assert.Equal(t, "***", oauth["client_secret"], "client_secret must be masked")
+	assert.Equal(t, "***alue", oauth["client_secret"], "client_secret must be masked with a short tail")
 }
 
 func TestCreateAuth_Conflict(t *testing.T) {

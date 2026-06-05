@@ -131,7 +131,7 @@ func (a *TargetAuth) ResolveSecretsFrom(prev *TargetAuth) {
 }
 
 func blankSecretPtr(s *string) bool {
-	return s == nil || *s == "" || *s == secret.Redacted
+	return s == nil || *s == "" || secret.IsMasked(*s)
 }
 
 // secretValues returns every secret field that the API masks in responses, so
@@ -158,9 +158,9 @@ func (a *TargetAuth) secretValues() []string {
 
 func (a *TargetAuth) Validate() error {
 	for _, v := range a.secretValues() {
-		if secret.IsRedacted(v) {
-			return fmt.Errorf("%w: secret cannot be the redaction placeholder %q; omit the field to keep the stored value",
-				ErrInvalidRegistry, secret.Redacted)
+		if secret.IsMasked(v) {
+			return fmt.Errorf("%w: secret cannot be a masked value; omit the field to keep the stored value",
+				ErrInvalidRegistry)
 		}
 	}
 	switch a.Type {

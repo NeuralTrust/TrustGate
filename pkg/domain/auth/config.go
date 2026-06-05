@@ -63,8 +63,8 @@ func (c Config) Validate(t Type) error {
 }
 
 func (c OAuth2Config) validate() error {
-	if secret.IsRedacted(c.ClientSecret) {
-		return fmt.Errorf("%w: oauth2.client_secret cannot be the redaction placeholder; omit it to keep the stored value", ErrInvalidConfig)
+	if secret.IsMasked(c.ClientSecret) {
+		return fmt.Errorf("%w: oauth2.client_secret cannot be a masked value; omit it to keep the stored value", ErrInvalidConfig)
 	}
 	if strings.TrimSpace(c.Issuer) == "" {
 		return fmt.Errorf("%w: oauth2.issuer is required", ErrInvalidConfig)

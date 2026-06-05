@@ -47,8 +47,8 @@ func (e *EmbeddingConfig) Validate() error {
 	if e.Auth == nil {
 		return fmt.Errorf("%w: auth is required", ErrInvalidEmbeddingConfig)
 	}
-	if secret.IsRedacted(e.Auth.APIKey) || secret.IsRedacted(e.Auth.HeaderValue) || secret.IsRedacted(e.Auth.ParamValue) {
-		return fmt.Errorf("%w: secret cannot be the redaction placeholder; omit it to keep the stored value", ErrInvalidEmbeddingConfig)
+	if secret.IsMasked(e.Auth.APIKey) || secret.IsMasked(e.Auth.HeaderValue) || secret.IsMasked(e.Auth.ParamValue) {
+		return fmt.Errorf("%w: secret cannot be a masked value; omit it to keep the stored value", ErrInvalidEmbeddingConfig)
 	}
 	if e.Auth.APIKey == "" {
 		if e.Auth.HeaderName == "" {
