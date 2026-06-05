@@ -41,9 +41,6 @@ const (
 
 	defaultCacheLocalTTL = 5 * time.Minute
 
-	defaultSessionStoreEnabled = true
-	defaultSessionStoreTTL     = time.Hour
-
 	defaultKafkaBrokers = "localhost:9092"
 
 	defaultTelemetryEnabled             = true
@@ -76,20 +73,19 @@ const (
 )
 
 type Config struct {
-	AppEnv       string
-	Server       ServerConfig
-	Database     DatabaseConfig
-	Redis        RedisConfig
-	Cache        CacheConfig
-	SessionStore SessionStoreConfig
-	Kafka        KafkaConfig
-	Telemetry    TelemetryConfig
-	Metrics      MetricsConfig
-	Upstream     UpstreamConfig
-	Provider     ProviderConfig
-	Catalog      CatalogConfig
-	CORS         CORSConfig
-	Logger       LoggerConfig
+	AppEnv    string
+	Server    ServerConfig
+	Database  DatabaseConfig
+	Redis     RedisConfig
+	Cache     CacheConfig
+	Kafka     KafkaConfig
+	Telemetry TelemetryConfig
+	Metrics   MetricsConfig
+	Upstream  UpstreamConfig
+	Provider  ProviderConfig
+	Catalog   CatalogConfig
+	CORS      CORSConfig
+	Logger    LoggerConfig
 }
 
 type ServerConfig struct {
@@ -133,11 +129,6 @@ type RedisConfig struct {
 // finder contract will not change.
 type CacheConfig struct {
 	LocalTTL time.Duration
-}
-
-type SessionStoreConfig struct {
-	Enabled bool
-	TTL     time.Duration
 }
 
 type KafkaConfig struct {
@@ -193,20 +184,19 @@ type LoggerConfig struct {
 
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
-		AppEnv:       getEnv("APP_ENV", defaultAppEnv),
-		Server:       getServerConfig(),
-		Database:     getDatabaseConfig(),
-		Redis:        getRedisConfig(),
-		Cache:        getCacheConfig(),
-		SessionStore: getSessionStoreConfig(),
-		Kafka:        getKafkaConfig(),
-		Telemetry:    getTelemetryConfig(),
-		Metrics:      getMetricsConfig(),
-		Upstream:     getUpstreamConfig(),
-		Provider:     getProviderConfig(),
-		Catalog:      getCatalogConfig(),
-		CORS:         getCORSConfig(),
-		Logger:       getLoggerConfig(),
+		AppEnv:    getEnv("APP_ENV", defaultAppEnv),
+		Server:    getServerConfig(),
+		Database:  getDatabaseConfig(),
+		Redis:     getRedisConfig(),
+		Cache:     getCacheConfig(),
+		Kafka:     getKafkaConfig(),
+		Telemetry: getTelemetryConfig(),
+		Metrics:   getMetricsConfig(),
+		Upstream:  getUpstreamConfig(),
+		Provider:  getProviderConfig(),
+		Catalog:   getCatalogConfig(),
+		CORS:      getCORSConfig(),
+		Logger:    getLoggerConfig(),
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -257,13 +247,6 @@ func getRedisConfig() RedisConfig {
 func getCacheConfig() CacheConfig {
 	return CacheConfig{
 		LocalTTL: getEnvDuration("CACHE_LOCAL_TTL", defaultCacheLocalTTL),
-	}
-}
-
-func getSessionStoreConfig() SessionStoreConfig {
-	return SessionStoreConfig{
-		Enabled: getEnvBool("SESSION_STORE_ENABLED", defaultSessionStoreEnabled),
-		TTL:     getEnvDuration("SESSION_STORE_TTL", defaultSessionStoreTTL),
 	}
 }
 

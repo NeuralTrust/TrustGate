@@ -11,7 +11,6 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
-	appsession "github.com/NeuralTrust/AgentGateway/pkg/app/session"
 	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
@@ -67,28 +66,7 @@ func newTestForwarder(t *testing.T, invoker appproxy.ProviderInvoker) appproxy.F
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, nil, nil, nil, newTestLogger(),
-	)
-}
-
-type fakeSessionStore struct {
-	last     string
-	recorded []appsession.RecordInput
-}
-
-func (f *fakeSessionStore) Record(_ context.Context, in appsession.RecordInput) {
-	f.recorded = append(f.recorded, in)
-}
-
-func (f *fakeSessionStore) LastTurnID(_ context.Context, _, _ string) string {
-	return f.last
-}
-
-func newTestForwarderWithStore(t *testing.T, invoker appproxy.ProviderInvoker, store appsession.Store) appproxy.Forwarder {
-	mgr := cache.NewTTLMapManager(time.Minute)
-	return appproxy.NewForwarder(
-		loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, nil, store, nil, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, nil, nil, newTestLogger(),
 	)
 }
 
@@ -255,80 +233,6 @@ func TestForward_RecordsLLMSpanWithUsage(t *testing.T) {
 	usage := rt.LLMUsage()
 	require.NotNil(t, usage, "non-streaming usage must land on the LLM span")
 	assert.Equal(t, 10, usage.TotalTokens)
-}
-
-func TestForward_RecordsSessionTurnOnSuccess(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	bk := backendFor(gatewayID, "openai")
-	rc := routableConsumerWith(gatewayID, bk)
-
-	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().
-		Invoke(mock.Anything, mock.Anything, mock.Anything).
-		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok"), Model: "gpt-4o", ResponseID: "resp_turn"}, nil).
-		Once()
-
-	store := &fakeSessionStore{}
-	fwd := newTestForwarderWithStore(t, invoker, store)
-
-	rt := trace.New("trace-1", trace.Metadata{})
-	ctx := trace.NewContext(context.Background(), rt)
-	_, err := fwd.Forward(ctx, appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: ctx, GatewayID: gatewayID.String(), SessionID: "sess-1"},
-	})
-	require.NoError(t, err)
-
-	require.Len(t, store.recorded, 1)
-	assert.Equal(t, "resp_turn", store.recorded[0].TurnID)
-	assert.Equal(t, "sess-1", store.recorded[0].SessionID)
-	assert.Equal(t, gatewayID.String(), store.recorded[0].GatewayID)
-	assert.Equal(t, "openai", store.recorded[0].Provider)
-}
-
-func TestForward_DoesNotRecordWithoutSession(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	bk := backendFor(gatewayID, "openai")
-	rc := routableConsumerWith(gatewayID, bk)
-
-	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().
-		Invoke(mock.Anything, mock.Anything, mock.Anything).
-		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok"), ResponseID: "resp_turn"}, nil).
-		Once()
-
-	store := &fakeSessionStore{}
-	fwd := newTestForwarderWithStore(t, invoker, store)
-
-	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
-		GatewayID: gatewayID,
-		Consumer:  rc,
-		Request:   &infracontext.RequestContext{Context: context.Background(), GatewayID: gatewayID.String()},
-	})
-	require.NoError(t, err)
-	assert.Empty(t, store.recorded, "no session id means nothing to record")
-}
-
-func TestForward_StampsContinuationFromStore(t *testing.T) {
-	gatewayID := ids.New[ids.GatewayKind]()
-	bk := backendFor(gatewayID, "openai")
-	rc := routableConsumerWith(gatewayID, bk)
-
-	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().
-		Invoke(mock.Anything, mock.Anything, mock.Anything).
-		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
-		Once()
-
-	store := &fakeSessionStore{last: "resp_prev"}
-	fwd := newTestForwarderWithStore(t, invoker, store)
-
-	req := &infracontext.RequestContext{Context: context.Background(), GatewayID: gatewayID.String(), SessionID: "sess-1"}
-	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{GatewayID: gatewayID, Consumer: rc, Request: req})
-	require.NoError(t, err)
-
-	assert.Equal(t, "resp_prev", req.PreviousResponseID, "last turn id is stamped for the invoker to thread")
 }
 
 func TestForward_BackendErrorStatusPassthrough(t *testing.T) {

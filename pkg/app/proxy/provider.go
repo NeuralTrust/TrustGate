@@ -2,13 +2,11 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
@@ -22,9 +20,6 @@ const (
 	headerSelectedProvider = "X-Selected-Provider"
 	headerContentType      = "Content-Type"
 	contentTypeJSON        = "application/json"
-
-	responsesTurnIDPrefix = "resp_"
-	fieldPreviousResponse = "previous_response_id"
 )
 
 // ErrInvalidRequestPayload signals that the inbound body could not be decoded
@@ -235,8 +230,6 @@ func (p *providerInvoker) prepare(
 		body = normalized
 	}
 
-	body = injectPreviousResponseID(body, targetFormat, req.PreviousResponseID)
-
 	return &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
@@ -248,31 +241,6 @@ func (p *providerInvoker) prepare(
 		targetFormat: targetFormat,
 		crossFormat:  crossFormat,
 	}, nil
-}
-
-func injectPreviousResponseID(body []byte, targetFormat adapter.Format, previousResponseID string) []byte {
-	if previousResponseID == "" ||
-		targetFormat != adapter.FormatOpenAIResponses ||
-		!strings.HasPrefix(previousResponseID, responsesTurnIDPrefix) {
-		return body
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(body, &obj); err != nil {
-		return body
-	}
-	if _, exists := obj[fieldPreviousResponse]; exists {
-		return body
-	}
-	raw, err := json.Marshal(previousResponseID)
-	if err != nil {
-		return body
-	}
-	obj[fieldPreviousResponse] = raw
-	merged, err := json.Marshal(obj)
-	if err != nil {
-		return body
-	}
-	return merged
 }
 
 func (p *providerInvoker) streamObserver(ctx context.Context) func(*adapter.CanonicalStreamChunk) {
