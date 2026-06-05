@@ -22,6 +22,7 @@ type Fingerprint struct {
 	SessionID string
 }
 
+// DEPRECATED
 func NewFromID(id string) (*Fingerprint, error) {
 	decoded, err := base64.StdEncoding.DecodeString(id)
 	if err != nil {

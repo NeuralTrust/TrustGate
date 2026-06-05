@@ -690,6 +690,18 @@ definitions:
       username:
         type: string
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TestConnectionRequest:
+    properties:
+      auth:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetAuthRequest'
+      provider:
+        type: string
+      provider_options:
+        additionalProperties: {}
+        type: object
+      registry_id:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.UpdateRegistryRequest:
     properties:
       auth:
@@ -852,6 +864,21 @@ definitions:
         type: string
       use_basic_auth:
         type: boolean
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TestConnectionResponse:
+    properties:
+      latency_ms:
+        type: integer
+      message:
+        type: string
+      ok:
+        type: boolean
+      provider:
+        type: string
+      stage:
+        type: string
+      status_code:
+        type: integer
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog:
     properties:
@@ -2411,6 +2438,55 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a backend
+      tags:
+      - registries
+  /v1/gateways/{gateway_id}/registries/test-connection:
+    post:
+      consumes:
+      - application/json
+      description: Validates connectivity and credentials against the provider's API
+        with a lightweight, auth-only request. Test either a stored registry (registry_id)
+        or an inline candidate configuration (provider + auth). Always returns 200;
+        inspect "ok" and "stage" for the outcome.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Connection to test
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TestConnectionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TestConnectionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Test a backend connection
       tags:
       - registries
   /v1/gateways/{id}:
