@@ -2,6 +2,8 @@ package registry
 
 import (
 	"fmt"
+
+	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
 )
 
 type AuthType string
@@ -90,7 +92,77 @@ func NewGCPServiceAccountAuth(encryptedSA string) *TargetAuth {
 	}
 }
 
+// ResolveSecretsFrom keeps previously stored secret values when the incoming
+// update omits them (empty or the redaction placeholder). It only merges when the
+// auth type is unchanged; switching types requires supplying the new secrets.
+func (a *TargetAuth) ResolveSecretsFrom(prev *TargetAuth) {
+	if a == nil || prev == nil || a.Type != prev.Type {
+		return
+	}
+	switch a.Type {
+	case AuthTypeAPIKey:
+		if a.APIKey != nil && prev.APIKey != nil {
+			a.APIKey.APIKey = secret.Resolve(a.APIKey.APIKey, prev.APIKey.APIKey)
+			a.APIKey.HeaderValue = secret.Resolve(a.APIKey.HeaderValue, prev.APIKey.HeaderValue)
+			a.APIKey.ParamValue = secret.Resolve(a.APIKey.ParamValue, prev.APIKey.ParamValue)
+		}
+	case AuthTypeAzure:
+		if a.Azure != nil && prev.Azure != nil {
+			a.Azure.APIKey = secret.Resolve(a.Azure.APIKey, prev.Azure.APIKey)
+			a.Azure.ClientSecret = secret.Resolve(a.Azure.ClientSecret, prev.Azure.ClientSecret)
+		}
+	case AuthTypeAWS:
+		if a.AWS != nil && prev.AWS != nil {
+			a.AWS.AccessKeyID = secret.Resolve(a.AWS.AccessKeyID, prev.AWS.AccessKeyID)
+			a.AWS.SecretAccessKey = secret.Resolve(a.AWS.SecretAccessKey, prev.AWS.SecretAccessKey)
+			a.AWS.SessionToken = secret.Resolve(a.AWS.SessionToken, prev.AWS.SessionToken)
+		}
+	case AuthTypeOAuth2:
+		if a.OAuth != nil && prev.OAuth != nil {
+			a.OAuth.ClientSecret = secret.Resolve(a.OAuth.ClientSecret, prev.OAuth.ClientSecret)
+			a.OAuth.RefreshToken = secret.Resolve(a.OAuth.RefreshToken, prev.OAuth.RefreshToken)
+			a.OAuth.Password = secret.Resolve(a.OAuth.Password, prev.OAuth.Password)
+		}
+	case AuthTypeGCPServiceAccount:
+		if prev.GCPServiceAccount != nil && blankSecretPtr(a.GCPServiceAccount) {
+			a.GCPServiceAccount = prev.GCPServiceAccount
+		}
+	}
+}
+
+func blankSecretPtr(s *string) bool {
+	return s == nil || *s == "" || *s == secret.Redacted
+}
+
+// secretValues returns every secret field that the API masks in responses, so
+// Validate can reject the redaction placeholder before it is persisted.
+func (a *TargetAuth) secretValues() []string {
+	var v []string
+	if a.APIKey != nil {
+		v = append(v, a.APIKey.APIKey, a.APIKey.HeaderValue, a.APIKey.ParamValue)
+	}
+	if a.Azure != nil {
+		v = append(v, a.Azure.APIKey, a.Azure.ClientSecret)
+	}
+	if a.AWS != nil {
+		v = append(v, a.AWS.AccessKeyID, a.AWS.SecretAccessKey, a.AWS.SessionToken)
+	}
+	if a.OAuth != nil {
+		v = append(v, a.OAuth.ClientSecret, a.OAuth.RefreshToken, a.OAuth.Password)
+	}
+	if a.GCPServiceAccount != nil {
+		v = append(v, *a.GCPServiceAccount)
+	}
+	return v
+}
+
 func (a *TargetAuth) Validate() error {
+	for _, v := range a.secretValues() {
+		if secret.IsRedacted(v) {
+			return fmt.Errorf("%w: secret cannot be the redaction placeholder %q; omit the field to keep the stored value",
+				ErrInvalidRegistry, secret.Redacted)
+		}
+	}
 	switch a.Type {
 	case AuthTypeAPIKey:
 		if a.APIKey == nil {

@@ -4,6 +4,8 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+
+	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
 )
 
 type EmbeddingConfig struct {
@@ -27,12 +29,26 @@ func (e *EmbeddingConfig) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, e)
 }
 
+// ResolveSecretsFrom keeps previously stored embedding credentials when the
+// incoming update omits them (empty or the redaction placeholder).
+func (e *EmbeddingConfig) ResolveSecretsFrom(prev *EmbeddingConfig) {
+	if e == nil || prev == nil || e.Auth == nil || prev.Auth == nil {
+		return
+	}
+	e.Auth.APIKey = secret.Resolve(e.Auth.APIKey, prev.Auth.APIKey)
+	e.Auth.HeaderValue = secret.Resolve(e.Auth.HeaderValue, prev.Auth.HeaderValue)
+	e.Auth.ParamValue = secret.Resolve(e.Auth.ParamValue, prev.Auth.ParamValue)
+}
+
 func (e *EmbeddingConfig) Validate() error {
 	if e.Model == "" {
 		return fmt.Errorf("%w: model is required", ErrInvalidEmbeddingConfig)
 	}
 	if e.Auth == nil {
 		return fmt.Errorf("%w: auth is required", ErrInvalidEmbeddingConfig)
+	}
+	if secret.IsRedacted(e.Auth.APIKey) || secret.IsRedacted(e.Auth.HeaderValue) || secret.IsRedacted(e.Auth.ParamValue) {
+		return fmt.Errorf("%w: secret cannot be the redaction placeholder; omit it to keep the stored value", ErrInvalidEmbeddingConfig)
 	}
 	if e.Auth.APIKey == "" {
 		if e.Auth.HeaderName == "" {

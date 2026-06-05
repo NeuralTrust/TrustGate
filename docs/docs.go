@@ -2925,9 +2925,36 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse": {
+            "type": "object",
+            "properties": {
+                "api_key": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
+                "header_name": {
+                    "type": "string"
+                },
+                "header_value": {
+                    "type": "string"
+                },
+                "param_location": {
+                    "type": "string"
+                },
+                "param_name": {
+                    "type": "string"
+                },
+                "param_value": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse": {
             "type": "object",
             "properties": {
+                "auth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse"
+                },
                 "model": {
                     "type": "string"
                 },
