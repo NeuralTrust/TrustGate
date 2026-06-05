@@ -78,6 +78,64 @@ func (_c *ProviderLocator_Get_Call) RunAndReturn(run func(string) (providers.Cli
 	return _c
 }
 
+// GetTester provides a mock function with given fields: provider
+func (_m *ProviderLocator) GetTester(provider string) (providers.ConnectionTester, error) {
+	ret := _m.Called(provider)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetTester")
+	}
+
+	var r0 providers.ConnectionTester
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) (providers.ConnectionTester, error)); ok {
+		return rf(provider)
+	}
+	if rf, ok := ret.Get(0).(func(string) providers.ConnectionTester); ok {
+		r0 = rf(provider)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(providers.ConnectionTester)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(provider)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// ProviderLocator_GetTester_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetTester'
+type ProviderLocator_GetTester_Call struct {
+	*mock.Call
+}
+
+// GetTester is a helper method to define mock.On call
+//   - provider string
+func (_e *ProviderLocator_Expecter) GetTester(provider interface{}) *ProviderLocator_GetTester_Call {
+	return &ProviderLocator_GetTester_Call{Call: _e.mock.On("GetTester", provider)}
+}
+
+func (_c *ProviderLocator_GetTester_Call) Run(run func(provider string)) *ProviderLocator_GetTester_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string))
+	})
+	return _c
+}
+
+func (_c *ProviderLocator_GetTester_Call) Return(_a0 providers.ConnectionTester, _a1 error) *ProviderLocator_GetTester_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *ProviderLocator_GetTester_Call) RunAndReturn(run func(string) (providers.ConnectionTester, error)) *ProviderLocator_GetTester_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewProviderLocator creates a new instance of ProviderLocator. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewProviderLocator(t interface {

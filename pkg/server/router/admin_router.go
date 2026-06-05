@@ -39,11 +39,12 @@ type AdminRouterDeps struct {
 	UpdateGateway *gatewayhttp.UpdateGatewayHandler
 	DeleteGateway *gatewayhttp.DeleteGatewayHandler
 
-	CreateRegistry *registryhttp.CreateRegistryHandler
-	GetRegistry    *registryhttp.GetRegistryHandler
-	ListRegistry   *registryhttp.ListRegistryHandler
-	UpdateRegistry *registryhttp.UpdateRegistryHandler
-	DeleteRegistry *registryhttp.DeleteRegistryHandler
+	CreateRegistry         *registryhttp.CreateRegistryHandler
+	GetRegistry            *registryhttp.GetRegistryHandler
+	ListRegistry           *registryhttp.ListRegistryHandler
+	UpdateRegistry         *registryhttp.UpdateRegistryHandler
+	DeleteRegistry         *registryhttp.DeleteRegistryHandler
+	TestRegistryConnection *registryhttp.TestConnectionHandler
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
 	GetPolicy       *policyhttp.GetPolicyHandler
@@ -100,6 +101,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 
 	registries := gw.Group("/:gateway_id/registries")
 	registries.Post("", r.deps.CreateRegistry.Handle)
+	registries.Post("/test-connection", r.deps.TestRegistryConnection.Handle)
 	registries.Get("", r.deps.ListRegistry.Handle)
 	registries.Get("/:id", r.deps.GetRegistry.Handle)
 	registries.Put("/:id", r.deps.UpdateRegistry.Handle)

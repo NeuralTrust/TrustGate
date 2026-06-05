@@ -28,6 +28,9 @@ func Registry(c *container.Container) error {
 	if err := c.Provide(appregistry.NewFinder); err != nil {
 		return err
 	}
+	if err := c.Provide(appregistry.NewConnectionTester); err != nil {
+		return err
+	}
 	if err := c.Provide(registryhttp.NewCreateRegistryHandler); err != nil {
 		return err
 	}
@@ -41,6 +44,9 @@ func Registry(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(registryhttp.NewDeleteRegistryHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(registryhttp.NewTestConnectionHandler); err != nil {
 		return err
 	}
 	return nil

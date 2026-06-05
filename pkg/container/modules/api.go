@@ -45,9 +45,6 @@ func API(c *container.Container) error {
 	if err := c.Provide(fingerprint.NewFingerPrintTracker); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewFingerPrintMiddleware); err != nil {
-		return err
-	}
 	if err := c.Provide(middleware.NewSessionMiddleware); err != nil {
 		return err
 	}

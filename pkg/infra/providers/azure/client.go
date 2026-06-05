@@ -15,6 +15,8 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 )
 
+const defaultAPIVersion = "2024-05-01-preview"
+
 type client struct {
 	pool *providers.HTTPClientPool
 }
@@ -150,7 +152,7 @@ func (c *client) getToken(ctx context.Context, config *providers.Config) (string
 }
 
 func (c *client) buildURL(config *providers.Config, model string) string {
-	apiVersion := "2024-05-01-preview"
+	apiVersion := defaultAPIVersion
 	if config.Credentials.Azure.ApiVersion != "" {
 		apiVersion = config.Credentials.Azure.ApiVersion
 	}
