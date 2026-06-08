@@ -63,7 +63,10 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	existing.ProviderOptions = in.ProviderOptions
 	existing.Description = in.Description
 	existing.Weight = in.Weight
-	existing.Auth = in.Auth
+	if in.Auth != nil {
+		in.Auth.ResolveSecretsFrom(existing.Auth)
+		existing.Auth = in.Auth
+	}
 	existing.HealthChecks = in.HealthChecks
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {

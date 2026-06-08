@@ -4,8 +4,10 @@ import (
 	"sort"
 	"time"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 type ConsumerResponse struct {
@@ -33,8 +35,18 @@ type ModelPolicyResponse struct {
 }
 
 type EmbeddingConfigResponse struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
+	Provider string                 `json:"provider"`
+	Model    string                 `json:"model"`
+	Auth     *EmbeddingAuthResponse `json:"auth,omitempty"`
+}
+
+type EmbeddingAuthResponse struct {
+	APIKey        string `json:"api_key,omitempty"` // #nosec G117
+	HeaderName    string `json:"header_name,omitempty"`
+	HeaderValue   string `json:"header_value,omitempty"`
+	ParamName     string `json:"param_name,omitempty"`
+	ParamValue    string `json:"param_value,omitempty"`
+	ParamLocation string `json:"param_location,omitempty"`
 }
 
 type FallbackResponse struct {
@@ -67,6 +79,7 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		embedding = &EmbeddingConfigResponse{
 			Provider: c.EmbeddingConfig.Provider,
 			Model:    c.EmbeddingConfig.Model,
+			Auth:     fromEmbeddingAuth(c.EmbeddingConfig.Auth),
 		}
 	}
 	return ConsumerResponse{
@@ -85,6 +98,20 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		ModelPolicies:   fromModelPolicies(c.ModelPolicies),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
+	}
+}
+
+func fromEmbeddingAuth(a *registrydomain.APIKeyAuth) *EmbeddingAuthResponse {
+	if a == nil {
+		return nil
+	}
+	return &EmbeddingAuthResponse{
+		APIKey:        secret.Mask(a.APIKey),
+		HeaderName:    a.HeaderName,
+		HeaderValue:   secret.Mask(a.HeaderValue),
+		ParamName:     a.ParamName,
+		ParamValue:    secret.Mask(a.ParamValue),
+		ParamLocation: a.ParamLocation,
 	}
 }
 

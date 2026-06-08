@@ -68,6 +68,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	}
 	existing.Path = in.Path
 	existing.Algorithm = in.Algorithm
+	if in.EmbeddingConfig != nil {
+		in.EmbeddingConfig.ResolveSecretsFrom(existing.EmbeddingConfig)
+	}
 	existing.EmbeddingConfig = in.EmbeddingConfig
 	existing.Headers = in.Headers
 	if in.Active != nil {

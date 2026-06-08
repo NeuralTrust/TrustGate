@@ -37,6 +37,53 @@ func TestUpdater_Update_Success(t *testing.T) {
 	}
 }
 
+func TestUpdater_Update_PreservesRedactedSecret(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "old", "openai", nil, "", 1, domain.NewAPIKeyAuth("sk-real"), nil)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+		return b.Auth != nil && b.Auth.APIKey != nil && b.Auth.APIKey.APIKey == "sk-real"
+	})).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:       existing.ID,
+		Name:     "old",
+		Provider: "openai",
+		Auth:     domain.NewAPIKeyAuth("***"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Auth.APIKey.APIKey != "sk-real" {
+		t.Fatalf("api key = %q, want preserved sk-real", got.Auth.APIKey.APIKey)
+	}
+}
+
+func TestUpdater_Update_PreservesSecretWhenAuthOmitted(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "old", "openai", nil, "", 1, domain.NewAPIKeyAuth("sk-real"), nil)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+		return b.Name == "renamed" && b.Auth != nil && b.Auth.APIKey.APIKey == "sk-real"
+	})).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:       existing.ID,
+		Name:     "renamed",
+		Provider: "openai",
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Auth == nil || got.Auth.APIKey.APIKey != "sk-real" {
+		t.Fatalf("auth not preserved when omitted: %+v", got.Auth)
+	}
+}
+
 func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)

@@ -31,9 +31,6 @@ func (r UpdateRegistryRequest) Validate() error {
 	if r.Weight < 0 {
 		return fmt.Errorf("weight cannot be negative: %w", commonerrors.ErrValidation)
 	}
-	if r.Auth == nil {
-		return fmt.Errorf("auth is required: %w", commonerrors.ErrValidation)
-	}
 	return nil
 }
 

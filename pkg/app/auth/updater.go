@@ -60,6 +60,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	existing.Name = in.Name
 	existing.Type = in.Type
 	existing.Enabled = in.Enabled
+	in.Config.ResolveSecretsFrom(existing.Config)
 	existing.Config = in.Config
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {
