@@ -16,18 +16,16 @@ func TestNewClient(t *testing.T) {
 	assert.NotNil(t, NewClient())
 }
 
-func TestResolveURL(t *testing.T) {
-	t.Run("base_url is required", func(t *testing.T) {
-		_, err := resolveURL(options{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "base_url is required")
-	})
-
-	t.Run("appends chat/completions path and trims trailing slash", func(t *testing.T) {
-		got, err := resolveURL(options{BaseURL: "https://host/v1/"})
-		require.NoError(t, err)
-		assert.Equal(t, "https://host/v1/chat/completions", got)
-	})
+func TestCompletionsURL(t *testing.T) {
+	assert.Equal(t,
+		"https://host/v1/chat/completions",
+		completionsURL(providers.OpenAICompatibleOptions{BaseURL: "https://host/v1"}),
+	)
+	assert.Equal(t,
+		"https://host/v1/chat/completions",
+		completionsURL(providers.OpenAICompatibleOptions{BaseURL: "https://host/v1/"}),
+		"a trailing slash on base_url is tolerated",
+	)
 }
 
 func TestCompletions_MissingBaseURL(t *testing.T) {
@@ -118,6 +116,52 @@ func TestCompletions_CustomHeaderOverridesAuth(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "Token abc123", gotAuth, "custom headers are applied last and override defaults")
+}
+
+func TestCompletions_CustomAuthorizationWithoutAPIKey(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := NewClient().Completions(
+		context.Background(),
+		&providers.Config{
+			Options: map[string]any{
+				"base_url": srv.URL,
+				"headers":  map[string]any{"Authorization": "Token abc123"},
+			},
+		},
+		[]byte(`{}`),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "Token abc123", gotAuth, "a custom Authorization header authenticates without a bearer api key")
+}
+
+func TestCompletions_NoCredentials(t *testing.T) {
+	_, err := NewClient().Completions(
+		context.Background(),
+		&providers.Config{Options: map[string]any{"base_url": "https://host/v1"}},
+		[]byte(`{}`),
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required")
+}
+
+func TestCompletions_InvalidBaseURL(t *testing.T) {
+	_, err := NewClient().Completions(
+		context.Background(),
+		&providers.Config{
+			Credentials: providers.Credentials{ApiKey: "sk-test"},
+			Options:     map[string]any{"base_url": "host/v1"},
+		},
+		[]byte(`{}`),
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "base_url")
 }
 
 func TestCompletionsStream_RoundTrip(t *testing.T) {

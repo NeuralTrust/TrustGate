@@ -14,15 +14,15 @@ const modelsPath = "/models"
 // the de-facto discovery endpoint exposed by OpenAI-compatible servers. Any
 // configured custom headers are applied to the probe as well.
 func (c *client) TestConnection(ctx context.Context, config *providers.Config) providers.ProbeResult {
-	opts := parseOptions(config)
-	base := strings.TrimRight(opts.BaseURL, "/")
-	if base == "" {
+	opts, err := providers.DecodeOpenAICompatibleOptions(config.Options)
+	if err != nil {
 		return providers.ProbeResult{
 			OK:      false,
 			Stage:   providers.StageProvider,
-			Message: "base_url is required",
+			Message: err.Error(),
 		}
 	}
+	base := strings.TrimRight(opts.BaseURL, "/")
 	return providers.RunAPIKeyGETProbe(
 		ctx,
 		providers.ProviderOpenAICompatible,

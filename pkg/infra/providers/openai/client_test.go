@@ -68,7 +68,7 @@ func TestResolveURL(t *testing.T) {
 
 func TestChatCompletions_MissingAPIKey(t *testing.T) {
 	chat := NewChatCompletionsClient(providers.ProviderOpenAI, nil)
-	_, err := chat.Completions(context.Background(), "http://example.invalid", &providers.Config{}, []byte(`{}`))
+	_, err := chat.Completions(context.Background(), "http://example.invalid", &providers.Config{}, []byte(`{}`), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "API key is required")
 }
@@ -92,6 +92,7 @@ func TestChatCompletions_RoundTrip(t *testing.T) {
 		srv.URL+"/v1/chat/completions",
 		&providers.Config{Credentials: providers.Credentials{ApiKey: "sk-test"}},
 		[]byte(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`),
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -120,6 +121,7 @@ func TestCompletionsStream_RoundTrip(t *testing.T) {
 		srv.URL,
 		&providers.Config{Credentials: providers.Credentials{ApiKey: "sk-test"}},
 		[]byte(`{"model":"gpt-4","stream":true}`),
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -143,6 +145,7 @@ func TestCompletionsStream_BackendErrorPassthrough(t *testing.T) {
 		srv.URL,
 		&providers.Config{Credentials: providers.Credentials{ApiKey: "sk-test"}},
 		[]byte(`{"model":"gpt-4","stream":true}`),
+		nil,
 	)
 	require.Error(t, err)
 	assert.Nil(t, seq, "no stream must be opened on a non-2xx response")
@@ -168,6 +171,7 @@ func TestChatCompletions_BackendErrorPassthrough(t *testing.T) {
 		srv.URL,
 		&providers.Config{Credentials: providers.Credentials{ApiKey: "sk-test"}},
 		[]byte(`{"model":"gpt-4"}`),
+		nil,
 	)
 	require.Error(t, err)
 

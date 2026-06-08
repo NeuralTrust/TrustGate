@@ -16,8 +16,12 @@ func TestValidateProviderOptions(t *testing.T) {
 	}{
 		{name: "openai has no required options", provider: ProviderOpenAI, options: nil},
 		{name: "openai_compatible with base_url", provider: ProviderOpenAICompatible, options: map[string]any{"base_url": "https://host/v1"}},
+		{name: "openai_compatible with http base_url", provider: ProviderOpenAICompatible, options: map[string]any{"base_url": "http://localhost:8080/v1"}},
 		{name: "openai_compatible missing base_url", provider: ProviderOpenAICompatible, options: nil, wantErr: true},
 		{name: "openai_compatible empty base_url", provider: ProviderOpenAICompatible, options: map[string]any{"base_url": ""}, wantErr: true},
+		{name: "openai_compatible whitespace base_url", provider: ProviderOpenAICompatible, options: map[string]any{"base_url": "   "}, wantErr: true},
+		{name: "openai_compatible base_url without scheme", provider: ProviderOpenAICompatible, options: map[string]any{"base_url": "host/v1"}, wantErr: true},
+		{name: "openai_compatible base_url with bad scheme", provider: ProviderOpenAICompatible, options: map[string]any{"base_url": "ftp://host/v1"}, wantErr: true},
 		{name: "openai_compatible non-string base_url", provider: ProviderOpenAICompatible, options: map[string]any{"base_url": 123}, wantErr: true},
 	}
 	for _, tt := range tests {

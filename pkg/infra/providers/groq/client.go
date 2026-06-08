@@ -25,7 +25,7 @@ func (c *client) Completions(
 	config *providers.Config,
 	reqBody []byte,
 ) ([]byte, error) {
-	return c.chat.Completions(ctx, chatCompletionsURL, config, reqBody)
+	return c.chat.Completions(ctx, chatCompletionsURL, config, reqBody, nil)
 }
 
 func (c *client) CompletionsStream(
@@ -33,5 +33,5 @@ func (c *client) CompletionsStream(
 	config *providers.Config,
 	reqBody []byte,
 ) (iter.Seq2[[]byte, error], error) {
-	return c.chat.CompletionsStream(ctx, chatCompletionsURL, config, reqBody)
+	return c.chat.CompletionsStream(ctx, chatCompletionsURL, config, reqBody, nil)
 }
