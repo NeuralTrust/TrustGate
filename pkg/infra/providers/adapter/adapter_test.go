@@ -153,6 +153,7 @@ func TestResolveAgentFormat_KnownProviders(t *testing.T) {
 		want     Format
 	}{
 		{"openai", FormatOpenAI},
+		{"openai_compatible", FormatOpenAI},
 		{"azure", FormatAzure},
 		{"anthropic", FormatAnthropic},
 		{"google", FormatGemini},
@@ -208,6 +209,18 @@ func TestResolveTargetFormat_OpenAIResponsesUnchanged(t *testing.T) {
 	assert.Equal(t, FormatOpenAIResponses, ResolveTargetFormat("openai", opts))
 	assert.Equal(t, FormatOpenAIResponses, ResolveTargetFormat("azure", opts))
 	assert.Equal(t, FormatGroq, ResolveTargetFormat("groq", opts))
+}
+
+func TestResolveTargetFormat_OpenAICompatible(t *testing.T) {
+	// Generic OpenAI-compatible targets use the OpenAI Chat Completions wire
+	// format. They are Chat Completions only, so the Responses API opt-in does
+	// NOT apply even if an "api" option leaks into provider_options.
+	got := ResolveTargetFormat("openai_compatible", map[string]any{"base_url": "https://host/v1"})
+	assert.Equal(t, FormatOpenAI, got)
+	assert.True(t, IsSameWireFormat(got, FormatOpenAI))
+
+	assert.Equal(t, FormatOpenAI, ResolveTargetFormat("openai_compatible", map[string]any{"api": "responses"}),
+		"openai_compatible must stay Chat Completions regardless of the api option")
 }
 
 // ---------------------------------------------------------------------------

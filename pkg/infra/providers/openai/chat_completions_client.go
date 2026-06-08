@@ -32,10 +32,23 @@ func (c *ChatCompletionsClient) Completions(
 	config *providers.Config,
 	reqBody []byte,
 ) ([]byte, error) {
+	return c.CompletionsWithHeaders(ctx, endpointURL, config, reqBody, nil)
+}
+
+// CompletionsWithHeaders is Completions with extra request headers merged in
+// (applied after the default Content-Type/Authorization, so a caller may
+// override them). Used by OpenAI-compatible backends that require custom headers.
+func (c *ChatCompletionsClient) CompletionsWithHeaders(
+	ctx context.Context,
+	endpointURL string,
+	config *providers.Config,
+	reqBody []byte,
+	extraHeaders map[string]string,
+) ([]byte, error) {
 	if config.Credentials.ApiKey == "" {
 		return nil, fmt.Errorf("API key is required")
 	}
-	return c.post(ctx, endpointURL, config.Credentials.ApiKey, reqBody)
+	return c.post(ctx, endpointURL, config.Credentials.ApiKey, reqBody, extraHeaders)
 }
 
 func (c *ChatCompletionsClient) CompletionsStream(
@@ -43,6 +56,18 @@ func (c *ChatCompletionsClient) CompletionsStream(
 	endpointURL string,
 	config *providers.Config,
 	reqBody []byte,
+) (iter.Seq2[[]byte, error], error) {
+	return c.CompletionsStreamWithHeaders(ctx, endpointURL, config, reqBody, nil)
+}
+
+// CompletionsStreamWithHeaders is CompletionsStream with extra request headers
+// merged in (applied after the defaults). See CompletionsWithHeaders.
+func (c *ChatCompletionsClient) CompletionsStreamWithHeaders(
+	ctx context.Context,
+	endpointURL string,
+	config *providers.Config,
+	reqBody []byte,
+	extraHeaders map[string]string,
 ) (iter.Seq2[[]byte, error], error) {
 	if config.Credentials.ApiKey == "" {
 		return nil, fmt.Errorf("API key is required")
@@ -55,6 +80,7 @@ func (c *ChatCompletionsClient) CompletionsStream(
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+config.Credentials.ApiKey)
+	applyExtraHeaders(httpReq, extraHeaders)
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- endpointURL is set by the provider wrapper, not user input
 	if err != nil {
@@ -74,6 +100,7 @@ func (c *ChatCompletionsClient) post(
 	ctx context.Context,
 	endpointURL, apiKey string,
 	reqBody []byte,
+	extraHeaders map[string]string,
 ) ([]byte, error) {
 	httpClient := c.Pool.Get(c.ProviderKey, providers.DefaultHTTPTimeout)
 
@@ -83,6 +110,7 @@ func (c *ChatCompletionsClient) post(
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	applyExtraHeaders(httpReq, extraHeaders)
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- endpointURL is set by the provider wrapper, not user input
 	if err != nil {
@@ -100,4 +128,13 @@ func (c *ChatCompletionsClient) post(
 	}
 
 	return body.Bytes(), nil
+}
+
+func applyExtraHeaders(req *http.Request, headers map[string]string) {
+	for k, v := range headers {
+		if k == "" {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
 }

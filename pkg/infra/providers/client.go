@@ -8,20 +8,22 @@ import (
 // Provider name constants. Use these as keys for HTTPClientPool.Get() and
 // anywhere a provider needs to be identified by name.
 const (
-	ProviderOpenAI    = "openai"
-	ProviderGoogle    = "google"
-	ProviderVertex    = "vertex"
-	ProviderAnthropic = "anthropic"
-	ProviderBedrock   = "bedrock"
-	ProviderAzure     = "azure"
-	ProviderMistral   = "mistral"
-	ProviderGroq      = "groq"
+	ProviderOpenAI           = "openai"
+	ProviderOpenAICompatible = "openai_compatible"
+	ProviderGoogle           = "google"
+	ProviderVertex           = "vertex"
+	ProviderAnthropic        = "anthropic"
+	ProviderBedrock          = "bedrock"
+	ProviderAzure            = "azure"
+	ProviderMistral          = "mistral"
+	ProviderGroq             = "groq"
 )
 
 // SupportedProviders returns every provider name the gateway can route to.
 func SupportedProviders() []string {
 	return []string{
 		ProviderOpenAI,
+		ProviderOpenAICompatible,
 		ProviderGoogle,
 		ProviderVertex,
 		ProviderAnthropic,
@@ -36,6 +38,7 @@ func SupportedProviders() []string {
 func IsValidProvider(name string) bool {
 	switch name {
 	case ProviderOpenAI,
+		ProviderOpenAICompatible,
 		ProviderGoogle,
 		ProviderVertex,
 		ProviderAnthropic,
