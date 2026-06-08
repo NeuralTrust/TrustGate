@@ -44,6 +44,7 @@ func NewStagePlan(reg Registry, policies []*policy.Policy) *StagePlan {
 				Name:     pol.Name,
 				Settings: pol.Settings,
 			},
+			mode:     pol.Mode.Normalize(),
 			priority: pol.Priority,
 			parallel: pol.Parallel,
 		}

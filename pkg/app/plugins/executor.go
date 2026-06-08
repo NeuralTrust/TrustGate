@@ -129,9 +129,14 @@ func (e *executor) runOne(
 		defer event.Publish()
 	}
 
+	if event != nil {
+		event.SetMode(string(entry.mode))
+	}
+
 	start := time.Now()
 	res, err := entry.plugin.Execute(ctx, ExecInput{
 		Stage:    stage,
+		Mode:     entry.mode,
 		Config:   entry.config,
 		Request:  req,
 		Response: resp,

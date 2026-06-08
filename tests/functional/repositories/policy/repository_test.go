@@ -103,7 +103,7 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.Gate
 func validPolicy(t *testing.T, gwID ids.GatewayID, name string) *domain.Policy {
 	t.Helper()
 	p, err := domain.NewPolicy(gwID, name, "rate_limiter", true, 0, false,
-		map[string]any{"limit": 100}, []domain.Stage{domain.StagePreRequest}, "round-trip description")
+		map[string]any{"limit": 100}, []domain.Stage{domain.StagePreRequest}, "round-trip description", domain.ModeEnforce)
 	if err != nil {
 		t.Fatalf("policy domain.NewPolicy: %v", err)
 	}
@@ -136,6 +136,9 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if len(got.Stages) != 1 || got.Stages[0] != domain.StagePreRequest {
 		t.Fatalf("Stages round-trip lost data: %+v", got.Stages)
 	}
+	if got.Mode != domain.ModeEnforce {
+		t.Fatalf("Mode round-trip lost data: %+v", got.Mode)
+	}
 	if got.Settings["limit"] != float64(100) {
 		t.Fatalf("Settings round-trip lost data: %+v", got.Settings)
 	}
@@ -146,7 +149,7 @@ func TestRepository_SaveAndFindByID_EmptySettings(t *testing.T) {
 	ctx := context.Background()
 	gwID := seedGateway(t, gw, "pgw-empty")
 
-	p, err := domain.NewPolicy(gwID, "empty", "cors", true, 0, false, nil, nil, "")
+	p, err := domain.NewPolicy(gwID, "empty", "cors", true, 0, false, nil, nil, "", domain.ModeEnforce)
 	if err != nil {
 		t.Fatalf("domain.NewPolicy: %v", err)
 	}

@@ -13,7 +13,7 @@ func TestPolicy_New_HappyPath(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	p, err := NewPolicy(gwID, "default", "rate_limiter", true, 10, false,
-		map[string]any{"limit": 100}, []Stage{StagePreRequest}, "my description")
+		map[string]any{"limit": 100}, []Stage{StagePreRequest}, "my description", ModeEnforce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -39,12 +39,15 @@ func TestPolicy_New_HappyPath(t *testing.T) {
 
 func TestPolicy_New_AllowsEmptyStages(t *testing.T) {
 	t.Parallel()
-	p, err := NewPolicy(ids.New[ids.GatewayKind](), "no-stages", "cors", true, 0, false, nil, nil, "")
+	p, err := NewPolicy(ids.New[ids.GatewayKind](), "no-stages", "cors", true, 0, false, nil, nil, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(p.Stages) != 0 {
 		t.Fatalf("Stages len = %d, want 0", len(p.Stages))
+	}
+	if p.Mode != ModeEnforce {
+		t.Fatalf("Mode = %q, want default %q", p.Mode, ModeEnforce)
 	}
 }
 
@@ -74,6 +77,11 @@ func TestPolicy_Validate_Rejects(t *testing.T) {
 			name:    "unknown stage",
 			mutate:  func(p *Policy) { p.Stages = []Stage{Stage("bogus")} },
 			wantErr: ErrInvalidStage,
+		},
+		{
+			name:    "unknown mode",
+			mutate:  func(p *Policy) { p.Mode = Mode("bogus") },
+			wantErr: ErrInvalidMode,
 		},
 	}
 	for _, tc := range tests {
@@ -126,7 +134,7 @@ func TestPolicy_Rehydrate(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	p := Rehydrate(id, gwID, nil, "x", "rehydrated description", "cors", true, true, 5, true,
-		map[string]any{"k": "v"}, []Stage{StagePreRequest}, now, now)
+		map[string]any{"k": "v"}, []Stage{StagePreRequest}, ModeEnforce, now, now)
 	if p.ID != id || p.GatewayID != gwID {
 		t.Fatal("identity mismatch after rehydrate")
 	}

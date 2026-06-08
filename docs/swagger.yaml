@@ -486,6 +486,8 @@ definitions:
         type: string
       enabled:
         type: boolean
+      mode:
+        type: string
       name:
         type: string
       parallel:
@@ -508,6 +510,8 @@ definitions:
         type: string
       enabled:
         type: boolean
+      mode:
+        type: string
       name:
         type: string
       parallel:
@@ -554,6 +558,8 @@ definitions:
       global:
         type: boolean
       id:
+        type: string
+      mode:
         type: string
       name:
         type: string
@@ -913,6 +919,8 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry:
     properties:
+      default_mode:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode'
       description:
         type: string
       mandatory_stages:
@@ -925,6 +933,10 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.SettingsSchema'
       slug:
         type: string
+      supported_modes:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode'
+        type: array
       supported_stages:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage'
@@ -1020,6 +1032,18 @@ definitions:
       header_name:
         type: string
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode:
+    enum:
+    - enforce
+    - throttle
+    - observe
+    - enforce
+    type: string
+    x-enum-varnames:
+    - ModeEnforce
+    - ModeThrottle
+    - ModeObserve
+    - DefaultMode
   github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage:
     enum:
     - pre_request

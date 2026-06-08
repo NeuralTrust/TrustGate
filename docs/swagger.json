@@ -3207,6 +3207,9 @@
                 "enabled": {
                     "type": "boolean"
                 },
+                "mode": {
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -3239,6 +3242,9 @@
                 },
                 "enabled": {
                     "type": "boolean"
+                },
+                "mode": {
+                    "type": "string"
                 },
                 "name": {
                     "type": "string"
@@ -3309,6 +3315,9 @@
                     "type": "boolean"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "mode": {
                     "type": "string"
                 },
                 "name": {
@@ -3848,6 +3857,9 @@
         "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry": {
             "type": "object",
             "properties": {
+                "default_mode": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode"
+                },
                 "description": {
                     "type": "string"
                 },
@@ -3865,6 +3877,12 @@
                 },
                 "slug": {
                     "type": "string"
+                },
+                "supported_modes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode"
+                    }
                 },
                 "supported_stages": {
                     "type": "array",
@@ -4003,6 +4021,21 @@
                     "type": "string"
                 }
             }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode": {
+            "type": "string",
+            "enum": [
+                "enforce",
+                "throttle",
+                "observe",
+                "enforce"
+            ],
+            "x-enum-varnames": [
+                "ModeEnforce",
+                "ModeThrottle",
+                "ModeObserve",
+                "DefaultMode"
+            ]
         },
         "github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage": {
             "type": "string",

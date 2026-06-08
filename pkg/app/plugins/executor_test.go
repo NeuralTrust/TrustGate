@@ -29,6 +29,7 @@ type fakePlugin struct {
 func (f *fakePlugin) Name() string                        { return f.name }
 func (f *fakePlugin) MandatoryStages() []policy.Stage     { return f.stages }
 func (f *fakePlugin) SupportedStages() []policy.Stage     { return f.stages }
+func (f *fakePlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
 func (f *fakePlugin) ValidateConfig(map[string]any) error { return f.validErr }
 
 func (f *fakePlugin) Execute(ctx context.Context, in ExecInput) (*Result, error) {

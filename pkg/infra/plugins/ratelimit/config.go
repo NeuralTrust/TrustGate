@@ -31,7 +31,6 @@ type config struct {
 }
 
 type actionsConfig struct {
-	Type       string `mapstructure:"type"`
 	RetryAfter string `mapstructure:"retry_after"`
 }
 
@@ -63,9 +62,6 @@ func (c *config) validate() error {
 		if _, err := time.ParseDuration(lc.Window); err != nil {
 			return fmt.Errorf("rate_limiter: invalid window for %q: %w", limitType, err)
 		}
-	}
-	if c.Actions.Type != "" && c.Actions.Type != "reject" && c.Actions.Type != "block" {
-		return fmt.Errorf("rate_limiter: actions.type must be 'reject' or 'block'")
 	}
 	return nil
 }

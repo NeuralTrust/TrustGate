@@ -87,6 +87,21 @@ func TestPlugin_Execute_RejectsTooManyChars(t *testing.T) {
 	assert.Equal(t, 413, pe.StatusCode)
 }
 
+func TestPlugin_Execute_ObserveDoesNotBlock(t *testing.T) {
+	p := New()
+	assert.Equal(t, []policy.Mode{policy.ModeEnforce, policy.ModeObserve}, p.SupportedModes())
+
+	settings := map[string]any{"allowed_payload_size": 10, "size_unit": "bytes"}
+	req := &infracontext.RequestContext{Body: []byte("this body is definitely longer than ten bytes")}
+	in := input(settings, req)
+	in.Mode = policy.ModeObserve
+
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, 200, res.StatusCode)
+}
+
 func TestPlugin_Execute_RequiresContentLength(t *testing.T) {
 	p := New()
 	settings := map[string]any{"allowed_payload_size": 1, "size_unit": "megabytes", "require_content_length": true}

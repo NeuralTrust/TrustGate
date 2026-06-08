@@ -15,7 +15,7 @@ import (
 
 func existingPolicy(t *testing.T) *domain.Policy {
 	t.Helper()
-	p, err := domain.NewPolicy(ids.New[ids.GatewayKind](), "old", "rate_limiter", true, 0, false, nil, nil, "old description")
+	p, err := domain.NewPolicy(ids.New[ids.GatewayKind](), "old", "rate_limiter", true, 0, false, nil, nil, "old description", domain.ModeEnforce)
 	if err != nil {
 		t.Fatalf("NewPolicy: %v", err)
 	}

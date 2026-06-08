@@ -19,6 +19,7 @@ type stagePlugin struct {
 func (s *stagePlugin) Name() string                                        { return s.name }
 func (s *stagePlugin) MandatoryStages() []policy.Stage                     { return s.mandatory }
 func (s *stagePlugin) SupportedStages() []policy.Stage                     { return s.supported }
+func (s *stagePlugin) SupportedModes() []policy.Mode                       { return []policy.Mode{policy.ModeEnforce} }
 func (s *stagePlugin) ValidateConfig(map[string]any) error                 { return nil }
 func (s *stagePlugin) Execute(context.Context, ExecInput) (*Result, error) { return nil, nil }
 

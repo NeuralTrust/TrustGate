@@ -3613,9 +3613,36 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse": {
+                "type": "object",
+                "properties": {
+                    "api_key": {
+                        "description": "#nosec G117",
+                        "type": "string"
+                    },
+                    "header_name": {
+                        "type": "string"
+                    },
+                    "header_value": {
+                        "type": "string"
+                    },
+                    "param_location": {
+                        "type": "string"
+                    },
+                    "param_name": {
+                        "type": "string"
+                    },
+                    "param_value": {
+                        "type": "string"
+                    }
+                }
+            },
             "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse": {
                 "type": "object",
                 "properties": {
+                    "auth": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse"
+                    },
                     "model": {
                         "type": "string"
                     },
@@ -3804,6 +3831,9 @@
                     "enabled": {
                         "type": "boolean"
                     },
+                    "mode": {
+                        "type": "string"
+                    },
                     "name": {
                         "type": "string"
                     },
@@ -3836,6 +3866,9 @@
                     },
                     "enabled": {
                         "type": "boolean"
+                    },
+                    "mode": {
+                        "type": "string"
                     },
                     "name": {
                         "type": "string"
@@ -3906,6 +3939,9 @@
                         "type": "boolean"
                     },
                     "id": {
+                        "type": "string"
+                    },
+                    "mode": {
                         "type": "string"
                     },
                     "name": {
@@ -4445,6 +4481,9 @@
             "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry": {
                 "type": "object",
                 "properties": {
+                    "default_mode": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode"
+                    },
                     "description": {
                         "type": "string"
                     },
@@ -4462,6 +4501,12 @@
                     },
                     "slug": {
                         "type": "string"
+                    },
+                    "supported_modes": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode"
+                        }
                     },
                     "supported_stages": {
                         "type": "array",
@@ -4600,6 +4645,21 @@
                         "type": "string"
                     }
                 }
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode": {
+                "type": "string",
+                "enum": [
+                    "enforce",
+                    "throttle",
+                    "observe",
+                    "enforce"
+                ],
+                "x-enum-varnames": [
+                    "ModeEnforce",
+                    "ModeThrottle",
+                    "ModeObserve",
+                    "DefaultMode"
+                ]
             },
             "github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage": {
                 "type": "string",

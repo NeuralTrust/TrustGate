@@ -19,6 +19,7 @@ type CreatePolicyRequest struct {
 	Parallel    *bool          `json:"parallel,omitempty"`
 	Settings    map[string]any `json:"settings,omitempty"`
 	Stages      []string       `json:"stages,omitempty"`
+	Mode        string         `json:"mode,omitempty"`
 }
 
 func (r CreatePolicyRequest) Validate() error {
@@ -34,11 +35,15 @@ func (r CreatePolicyRequest) Validate() error {
 	if strings.TrimSpace(r.Slug) == "" {
 		return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)
 	}
-	return nil
+	return validateMode(r.Mode)
 }
 
 func (r CreatePolicyRequest) ToStages() []domain.Stage {
 	return toStages(r.Stages)
+}
+
+func (r CreatePolicyRequest) ToMode() domain.Mode {
+	return domain.Mode(r.Mode)
 }
 
 func (r CreatePolicyRequest) ParallelOrDefault() bool {
@@ -57,4 +62,14 @@ func toStages(raw []string) []domain.Stage {
 		out = append(out, domain.Stage(s))
 	}
 	return out
+}
+
+func validateMode(mode string) error {
+	if mode == "" {
+		return nil
+	}
+	if !domain.Mode(mode).IsValid() {
+		return fmt.Errorf("invalid mode %q: %w", mode, commonerrors.ErrValidation)
+	}
+	return nil
 }

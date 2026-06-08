@@ -59,6 +59,10 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}
 }
 
+func (p *Plugin) SupportedModes() []policy.Mode {
+	return []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve}
+}
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err
@@ -80,7 +84,7 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 
 	switch in.Stage {
 	case policy.StagePreRequest:
-		return p.preRequest(ctx, cfg, counterKey, in.Request.Provider, in.Event)
+		return p.preRequest(ctx, cfg, counterKey, in.Request.Provider, in.Mode, in.Event)
 	case policy.StagePostResponse:
 		return p.postResponse(ctx, cfg, counterKey, in.Request, in.Response, in.Event)
 	default:
@@ -93,6 +97,7 @@ func (p *Plugin) preRequest(
 	cfg *config,
 	counterKey string,
 	provider string,
+	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
 	consumed, err := p.redis.Get(ctx, counterKey).Int64()
@@ -119,14 +124,29 @@ func (p *Plugin) preRequest(
 	if consumed >= int64(cfg.Window.Max) {
 		data.LimitExceeded = true
 		setTokenExtras(event, data)
-		return nil, &appplugins.PluginError{
-			StatusCode: http.StatusTooManyRequests,
-			Message:    fmt.Sprintf("token rate limit exceeded: consumed %d, limit %d", consumed, cfg.Window.Max),
-			Headers:    headers,
+		if event != nil {
+			event.SetDecision(appplugins.DecisionForMode(mode))
 		}
+		switch {
+		case appplugins.Throttles(mode):
+			if err := appplugins.Throttle(ctx, throttleDelay(cfg)); err != nil {
+				return nil, err
+			}
+		case appplugins.Blocks(mode):
+			return nil, &appplugins.PluginError{
+				StatusCode: http.StatusTooManyRequests,
+				Message:    fmt.Sprintf("token rate limit exceeded: consumed %d, limit %d", consumed, cfg.Window.Max),
+				Headers:    headers,
+			}
+		}
+		return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 	}
 	setTokenExtras(event, data)
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
+}
+
+func throttleDelay(cfg *config) time.Duration {
+	return time.Duration(cfg.windowSeconds()) * time.Second
 }
 
 func (p *Plugin) postResponse(

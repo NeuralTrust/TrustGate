@@ -56,6 +56,10 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest}
 }
 
+func (p *Plugin) SupportedModes() []policy.Mode {
+	return []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve}
+}
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err
@@ -70,6 +74,8 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 	headers := make(map[string][]string)
 
 	var evaluated *RateLimiterData
+	var exceeded *RateLimiterData
+	var throttle time.Duration
 
 	for _, limitType := range limitOrder {
 		lc, ok := cfg.Limits[limitType]
@@ -102,17 +108,25 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		}
 
 		if count >= int64(lc.Limit) {
-			headers["Retry-After"] = []string{cfg.Actions.RetryAfter}
 			evaluated.RateLimitExceeded = true
 			evaluated.RetryAfter = cfg.Actions.RetryAfter
-			if in.Event != nil {
-				in.Event.SetDecision("block")
-				in.Event.SetExtras(*evaluated)
+
+			if appplugins.Blocks(in.Mode) && !appplugins.Throttles(in.Mode) {
+				headers["Retry-After"] = []string{cfg.Actions.RetryAfter}
+				appplugins.SetDecision(in.Event, in.Mode)
+				if in.Event != nil {
+					in.Event.SetExtras(*evaluated)
+				}
+				return nil, &appplugins.PluginError{
+					StatusCode: http.StatusTooManyRequests,
+					Message:    fmt.Sprintf("%s rate limit exceeded", limitType),
+					Headers:    headers,
+				}
 			}
-			return nil, &appplugins.PluginError{
-				StatusCode: http.StatusTooManyRequests,
-				Message:    fmt.Sprintf("%s rate limit exceeded", limitType),
-				Headers:    headers,
+
+			if exceeded == nil {
+				exceeded = evaluated
+				throttle = throttleDelay(window, lc.Limit)
 			}
 		}
 		if err := p.record(ctx, redisKey, now, window); err != nil {
@@ -120,13 +134,29 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		}
 	}
 
+	if exceeded != nil && appplugins.Throttles(in.Mode) {
+		if err := appplugins.Throttle(ctx, throttle); err != nil {
+			return nil, err
+		}
+	}
+
 	if in.Event != nil {
 		in.Event.SetStatusCode(http.StatusOK)
-		if evaluated != nil {
+		if exceeded != nil {
+			appplugins.SetDecision(in.Event, in.Mode)
+			in.Event.SetExtras(*exceeded)
+		} else if evaluated != nil {
 			in.Event.SetExtras(*evaluated)
 		}
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
+}
+
+func throttleDelay(window time.Duration, limit int) time.Duration {
+	if limit <= 0 || window <= 0 {
+		return 0
+	}
+	return window / time.Duration(limit)
 }
 
 // currentCount returns the number of requests recorded inside the sliding

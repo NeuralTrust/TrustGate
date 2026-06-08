@@ -65,6 +65,7 @@ func (d *duplicator) Duplicate(ctx context.Context, gatewayID ids.GatewayID, id 
 			Parallel:    src.Parallel,
 			Settings:    cloneSettings(src.Settings),
 			Stages:      cloneStages(src.Stages),
+			Mode:        src.Mode,
 		})
 		if createErr == nil {
 			return p, nil

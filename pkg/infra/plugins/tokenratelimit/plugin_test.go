@@ -102,6 +102,26 @@ func TestPlugin_PostResponse_RecordsTokensAndPreRequestRejects(t *testing.T) {
 	assert.Equal(t, 429, pe.StatusCode)
 }
 
+func TestPlugin_PreRequest_ObserveDoesNotReject(t *testing.T) {
+	p := newTestPlugin(t)
+	assert.Equal(t, []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve}, p.SupportedModes())
+
+	settings := map[string]any{"window": map[string]any{"unit": "minute", "max": 10}}
+	req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", IP: "2.2.2.2"}
+
+	body := []byte(`{"id":"x","model":"gpt","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`)
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: body}
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
+	require.NoError(t, err)
+
+	in := input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{})
+	in.Mode = policy.ModeObserve
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err, "observe must not reject an over-budget request")
+	require.NotNil(t, res)
+	assert.Equal(t, 200, res.StatusCode)
+}
+
 func TestPlugin_PostResponse_StreamingUsesObservedUsage(t *testing.T) {
 	p := newTestPlugin(t)
 	settings := map[string]any{"window": map[string]any{"unit": "minute", "max": 100}}
