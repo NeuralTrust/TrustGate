@@ -27,43 +27,32 @@ func TestNewOpenaiClient(t *testing.T) {
 	assert.NotNil(t, NewOpenaiClient())
 }
 
-func TestParseOptions(t *testing.T) {
-	tests := []struct {
-		name    string
-		options map[string]any
-		wantAPI string
-	}{
-		{name: "no options defaults to completions", options: nil, wantAPI: CompletionsAPI},
-		{name: "explicit completions", options: map[string]any{"api": "completions"}, wantAPI: CompletionsAPI},
-		{name: "responses api", options: map[string]any{"api": "responses"}, wantAPI: ResponsesAPI},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseOptions(&providers.Config{Options: tt.options})
-			assert.Equal(t, tt.wantAPI, got.API)
-		})
-	}
-}
-
 func TestResolveURL(t *testing.T) {
 	c := &client{}
-	assert.Equal(t, completionsURL, c.resolveURL(&providers.Config{}))
-	assert.Equal(t, responsesURL, c.resolveURL(&providers.Config{Options: map[string]any{"api": "responses"}}))
 
-	// base_url overrides the host for OpenAI-compatible endpoints; the endpoint
-	// path is appended and a trailing slash on the base is tolerated.
-	assert.Equal(t,
-		"http://127.0.0.1:9999/chat/completions",
-		c.resolveURL(&providers.Config{Options: map[string]any{"base_url": "http://127.0.0.1:9999"}}),
-	)
-	assert.Equal(t,
-		"https://host/v1/chat/completions",
-		c.resolveURL(&providers.Config{Options: map[string]any{"base_url": "https://host/v1/"}}),
-	)
-	assert.Equal(t,
-		"https://host/v1/responses",
-		c.resolveURL(&providers.Config{Options: map[string]any{"api": "responses", "base_url": "https://host/v1"}}),
-	)
+	cases := []struct {
+		name    string
+		options map[string]any
+		want    string
+	}{
+		{name: "defaults to completions", options: nil, want: completionsURL},
+		{name: "responses api", options: map[string]any{"api": "responses"}, want: responsesURL},
+		{name: "base_url completions", options: map[string]any{"base_url": "http://127.0.0.1:9999"}, want: "http://127.0.0.1:9999/chat/completions"},
+		{name: "base_url trailing slash", options: map[string]any{"base_url": "https://host/v1/"}, want: "https://host/v1/chat/completions"},
+		{name: "base_url responses", options: map[string]any{"api": "responses", "base_url": "https://host/v1"}, want: "https://host/v1/responses"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := c.resolveURL(&providers.Config{Options: tt.options})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	t.Run("invalid api errors", func(t *testing.T) {
+		_, err := c.resolveURL(&providers.Config{Options: map[string]any{"api": "chat"}})
+		require.Error(t, err)
+	})
 }
 
 func TestChatCompletions_MissingAPIKey(t *testing.T) {

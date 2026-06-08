@@ -17,19 +17,9 @@ import (
 const (
 	defaultAction = "generateContent"
 	streamAction  = "streamGenerateContent"
-	defaultAPIVer = "v1"
 
-	OptKeyProject  = "project"
-	OptKeyLocation = "location"
-	OptKeyVersion  = "version"
-	optKeyAction   = "action"
+	optKeyAction = "action"
 )
-
-type vertexOptions struct {
-	Project  string
-	Location string
-	Version  string
-}
 
 type client struct {
 	pool *providers.HTTPClientPool
@@ -105,7 +95,7 @@ func (c *client) buildRequestURL(config *providers.Config, reqBody []byte, strea
 		return "", fmt.Errorf("bearer token (api_key) is required for Vertex AI")
 	}
 
-	opts, err := parseOptions(config.Options)
+	opts, err := providers.DecodeVertexOptions(config.Options)
 	if err != nil {
 		return "", err
 	}
@@ -174,36 +164,7 @@ func isModelAllowed(model string, allowed []string) bool {
 	return false
 }
 
-func parseOptions(opts map[string]any) (vertexOptions, error) {
-	vo := vertexOptions{Version: defaultAPIVer}
-
-	vo.Project = stringOpt(opts, OptKeyProject)
-	if vo.Project == "" {
-		return vo, fmt.Errorf("vertex provider_options.%s is required", OptKeyProject)
-	}
-
-	vo.Location = stringOpt(opts, OptKeyLocation)
-	if vo.Location == "" {
-		return vo, fmt.Errorf("vertex provider_options.%s is required", OptKeyLocation)
-	}
-
-	if v := stringOpt(opts, OptKeyVersion); v != "" {
-		vo.Version = v
-	}
-
-	return vo, nil
-}
-
-func stringOpt(opts map[string]any, key string) string {
-	if v, ok := opts[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func buildVertexURL(opts vertexOptions, model, action string) string {
+func buildVertexURL(opts providers.VertexOptions, model, action string) string {
 	var sb strings.Builder
 	sb.WriteString("https://")
 	sb.WriteString(opts.Location)
