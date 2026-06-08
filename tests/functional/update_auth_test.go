@@ -38,6 +38,36 @@ func TestUpdateAuth_Success(t *testing.T) {
 	assert.False(t, hasAPIKeyCfg, "api_key auth must not carry a config.api_key block: %v", cfg)
 }
 
+func TestUpdateAuth_Partial_OAuth2PreservesConfig(t *testing.T) {
+	defer Track(t, "UpdateAuth")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd-oauth-gw")})
+	id := CreateAuth(t, gwID, map[string]any{
+		"name": uniqueName("oauth-cred"),
+		"type": "oauth2",
+		"config": map[string]any{
+			"oauth2": map[string]any{
+				"issuer":        "https://issuer.example.com",
+				"jwks_url":      "https://issuer.example.com/jwks",
+				"client_id":     "client-123",
+				"client_secret": "super-secret",
+			},
+		},
+	})
+
+	renamed := uniqueName("oauth-renamed")
+	url := fmt.Sprintf("%s/v1/gateways/%s/auths/%s", AdminURL, gwID, id)
+	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{"name": renamed})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, renamed, body["name"])
+	assert.Equal(t, "oauth2", body["type"], "type must be preserved on a partial update")
+
+	cfg, ok := body["config"].(map[string]any)
+	require.True(t, ok, "config must be preserved on a partial update: %v", body)
+	oauth2, ok := cfg["oauth2"].(map[string]any)
+	require.True(t, ok, "oauth2 config block must be preserved: %v", cfg)
+	assert.Equal(t, "https://issuer.example.com", oauth2["issuer"])
+}
+
 func TestUpdateAuth_Validation(t *testing.T) {
 	defer Track(t, "UpdateAuth")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd-val")})

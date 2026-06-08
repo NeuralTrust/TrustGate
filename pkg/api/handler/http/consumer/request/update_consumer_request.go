@@ -10,32 +10,45 @@ import (
 )
 
 type UpdateConsumerRequest struct {
-	Name            string                  `json:"name"`
-	Type            string                  `json:"type,omitempty"`
-	Path            string                  `json:"path"`
-	Algorithm       string                  `json:"algorithm,omitempty"`
+	Name            *string                 `json:"name,omitempty"`
+	Type            *string                 `json:"type,omitempty"`
+	Path            *string                 `json:"path,omitempty"`
+	Algorithm       *string                 `json:"algorithm,omitempty"`
 	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
-	Headers         map[string]string       `json:"headers,omitempty"`
+	Headers         *map[string]string      `json:"headers,omitempty"`
 	Active          *bool                   `json:"active,omitempty"`
 	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
-	ModelPolicies   []ModelPolicyRequest    `json:"model_policies,omitempty"`
+	ModelPolicies   *[]ModelPolicyRequest   `json:"model_policies,omitempty"`
 }
 
 func (r UpdateConsumerRequest) Validate() error {
-	if strings.TrimSpace(r.Name) == "" {
-		return fmt.Errorf("name is required: %w", commonerrors.ErrValidation)
+	if r.Name != nil {
+		if strings.TrimSpace(*r.Name) == "" {
+			return fmt.Errorf("name is required: %w", commonerrors.ErrValidation)
+		}
+		if len(*r.Name) > 255 {
+			return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
+		}
 	}
-	if len(r.Name) > 255 {
-		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
-	}
-	if strings.TrimSpace(r.Path) == "" {
+	if r.Path != nil && strings.TrimSpace(*r.Path) == "" {
 		return fmt.Errorf("path is required: %w", commonerrors.ErrValidation)
 	}
 	return nil
 }
 
-func (r UpdateConsumerRequest) ToType() domain.Type {
-	return domain.Type(r.Type)
+func (r UpdateConsumerRequest) ToType() *domain.Type {
+	if r.Type == nil || strings.TrimSpace(*r.Type) == "" {
+		return nil
+	}
+	t := domain.Type(*r.Type)
+	return &t
+}
+
+func (r UpdateConsumerRequest) ToAlgorithm() *string {
+	if r.Algorithm == nil || strings.TrimSpace(*r.Algorithm) == "" {
+		return nil
+	}
+	return r.Algorithm
 }
 
 func (r UpdateConsumerRequest) ToEmbeddingConfig() *registrydomain.EmbeddingConfig {
@@ -46,6 +59,13 @@ func (r UpdateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 	return r.Fallback.ToFallback()
 }
 
-func (r UpdateConsumerRequest) ToModelPolicies() (domain.ModelPolicies, error) {
-	return parseModelPolicies(r.ModelPolicies)
+func (r UpdateConsumerRequest) ToModelPolicies() (*domain.ModelPolicies, error) {
+	if r.ModelPolicies == nil {
+		return nil, nil
+	}
+	mp, err := parseModelPolicies(*r.ModelPolicies)
+	if err != nil {
+		return nil, err
+	}
+	return &mp, nil
 }

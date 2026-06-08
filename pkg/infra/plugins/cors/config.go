@@ -23,8 +23,8 @@ var allowedHTTPMethods = map[string]struct{}{
 }
 
 func parseConfig(settings map[string]any) (*config, error) {
-	var cfg config
-	if err := pluginutil.Decode(settings, &cfg); err != nil {
+	cfg, err := pluginutil.Parse[config](settings)
+	if err != nil {
 		return nil, err
 	}
 	if err := cfg.validate(); err != nil {

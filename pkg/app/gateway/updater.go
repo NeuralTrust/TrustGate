@@ -13,10 +13,10 @@ import (
 
 type UpdateInput struct {
 	ID              ids.GatewayID
-	Name            string
-	Status          string
+	Name            *string
+	Status          *string
 	Telemetry       *telemetry.Telemetry
-	ClientTLSConfig domain.ClientTLSConfig
+	ClientTLSConfig *domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
 }
 
@@ -53,11 +53,21 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if err != nil {
 		return nil, err
 	}
-	g.Name = in.Name
-	g.Status = in.Status
-	g.Telemetry = in.Telemetry
-	g.ClientTLSConfig = in.ClientTLSConfig
-	g.SessionConfig = in.SessionConfig
+	if in.Name != nil {
+		g.Name = *in.Name
+	}
+	if in.Status != nil {
+		g.Status = *in.Status
+	}
+	if in.Telemetry != nil {
+		g.Telemetry = in.Telemetry
+	}
+	if in.ClientTLSConfig != nil {
+		g.ClientTLSConfig = *in.ClientTLSConfig
+	}
+	if in.SessionConfig != nil {
+		g.SessionConfig = in.SessionConfig
+	}
 	g.UpdatedAt = time.Now().UTC()
 	if err := g.Validate(); err != nil {
 		return nil, err

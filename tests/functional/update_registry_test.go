@@ -39,6 +39,24 @@ func TestUpdateRegistry_Success(t *testing.T) {
 	assert.Equal(t, "anthropic", body["provider"])
 }
 
+func TestUpdateRegistry_Partial(t *testing.T) {
+	defer Track(t, "UpdateRegistry")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-partial-gw")})
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("be-upd-partial")))
+
+	renamed := uniqueName("be-upd-partial-to")
+	url := fmt.Sprintf("%s/v1/gateways/%s/registries/%s", AdminURL, gwID, beID)
+	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{"name": renamed})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, renamed, body["name"])
+
+	status, body = sendRequest(t, http.MethodGet, url, nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, renamed, body["name"])
+	assert.Equal(t, "openai", body["provider"], "provider must be preserved on a partial update")
+	assert.NotNil(t, body["auth"], "auth must be preserved when omitted on update")
+}
+
 func TestUpdateRegistry_NotFound(t *testing.T) {
 	defer Track(t, "UpdateRegistry")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-upd-missing-gw")})

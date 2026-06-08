@@ -15,15 +15,15 @@ import (
 type UpdateInput struct {
 	ID              ids.ConsumerID
 	GatewayID       ids.GatewayID
-	Name            string
-	Type            domain.Type
-	Path            string
-	Algorithm       string
+	Name            *string
+	Type            *domain.Type
+	Path            *string
+	Algorithm       *string
 	EmbeddingConfig *registrydomain.EmbeddingConfig
-	Headers         map[string]string
+	Headers         *map[string]string
 	Active          *bool
 	Fallback        *domain.Fallback
-	ModelPolicies   domain.ModelPolicies
+	ModelPolicies   *domain.ModelPolicies
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -62,22 +62,34 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
-	existing.Name = in.Name
-	if in.Type != "" {
-		existing.Type = in.Type
+	if in.Name != nil {
+		existing.Name = *in.Name
 	}
-	existing.Path = in.Path
-	existing.Algorithm = in.Algorithm
+	if in.Type != nil {
+		existing.Type = *in.Type
+	}
+	if in.Path != nil {
+		existing.Path = *in.Path
+	}
+	if in.Algorithm != nil {
+		existing.Algorithm = *in.Algorithm
+	}
 	if in.EmbeddingConfig != nil {
 		in.EmbeddingConfig.ResolveSecretsFrom(existing.EmbeddingConfig)
+		existing.EmbeddingConfig = in.EmbeddingConfig
 	}
-	existing.EmbeddingConfig = in.EmbeddingConfig
-	existing.Headers = in.Headers
+	if in.Headers != nil {
+		existing.Headers = *in.Headers
+	}
 	if in.Active != nil {
 		existing.Active = *in.Active
 	}
-	existing.Fallback = in.Fallback
-	existing.ModelPolicies = in.ModelPolicies
+	if in.Fallback != nil {
+		existing.Fallback = in.Fallback
+	}
+	if in.ModelPolicies != nil {
+		existing.ModelPolicies = *in.ModelPolicies
+	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := validateRegistryRefsAssociated(existing); err != nil {
 		return nil, err

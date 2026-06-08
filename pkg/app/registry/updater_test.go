@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+func ptr[T any](v T) *T { return &v }
+
 func TestUpdater_Update_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
@@ -25,8 +27,8 @@ func TestUpdater_Update_Success(t *testing.T) {
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       existing.ID,
-		Name:     "new",
-		Provider: "openai",
+		Name:     ptr("new"),
+		Provider: ptr("openai"),
 		Auth:     domain.NewAPIKeyAuth("sk-1"),
 	})
 	if err != nil {
@@ -34,6 +36,39 @@ func TestUpdater_Update_Success(t *testing.T) {
 	}
 	if got.Name != "new" {
 		t.Fatalf("Name = %q, want %q", got.Name, "new")
+	}
+}
+
+func TestUpdater_Update_Partial_PreservesProviderOptionsAndHealthChecks(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	opts := map[string]any{"base_url": "https://example.com"}
+	hc := &domain.HealthChecks{Threshold: 3, Interval: 10}
+	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "old", "openai", opts, "", 1, domain.NewAPIKeyAuth("sk-real"), hc)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+		return b.Name == "renamed" &&
+			b.ProviderOptions["base_url"] == "https://example.com" &&
+			b.HealthChecks != nil && b.HealthChecks.Threshold == 3 &&
+			b.Auth != nil && b.Auth.APIKey != nil && b.Auth.APIKey.APIKey == "sk-real"
+	})).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:   existing.ID,
+		Name: ptr("renamed"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.ProviderOptions["base_url"] != "https://example.com" {
+		t.Fatalf("provider_options not preserved: %+v", got.ProviderOptions)
+	}
+	if got.HealthChecks == nil || got.HealthChecks.Threshold != 3 {
+		t.Fatalf("health_checks not preserved: %+v", got.HealthChecks)
+	}
+	if got.Auth == nil || got.Auth.APIKey.APIKey != "sk-real" {
+		t.Fatalf("auth not preserved: %+v", got.Auth)
 	}
 }
 
@@ -49,8 +84,8 @@ func TestUpdater_Update_PreservesRedactedSecret(t *testing.T) {
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       existing.ID,
-		Name:     "old",
-		Provider: "openai",
+		Name:     ptr("old"),
+		Provider: ptr("openai"),
 		Auth:     domain.NewAPIKeyAuth("***"),
 	})
 	if err != nil {
@@ -73,8 +108,8 @@ func TestUpdater_Update_PreservesSecretWhenAuthOmitted(t *testing.T) {
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       existing.ID,
-		Name:     "renamed",
-		Provider: "openai",
+		Name:     ptr("renamed"),
+		Provider: ptr("openai"),
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -94,8 +129,8 @@ func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
 	_, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: ids.New[ids.GatewayKind](),
-		Name:      "x",
-		Provider:  "openai",
+		Name:      ptr("x"),
+		Provider:  ptr("openai"),
 		Auth:      domain.NewAPIKeyAuth("sk-1"),
 	})
 	if !errors.Is(err, domain.ErrInvalidGatewayID) {
@@ -112,8 +147,8 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	_, err := updater.Update(context.Background(), appregistry.UpdateInput{
 		ID:       id,
-		Name:     "x",
-		Provider: "openai",
+		Name:     ptr("x"),
+		Provider: ptr("openai"),
 		Auth:     domain.NewAPIKeyAuth("sk-1"),
 	})
 	if !errors.Is(err, domain.ErrNotFound) {
