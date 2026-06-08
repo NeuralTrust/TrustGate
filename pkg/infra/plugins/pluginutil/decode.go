@@ -24,3 +24,11 @@ func Decode(settings map[string]any, target any) error {
 	}
 	return nil
 }
+
+func Parse[T any](settings map[string]any) (T, error) {
+	var cfg T
+	if err := Decode(settings, &cfg); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
+}

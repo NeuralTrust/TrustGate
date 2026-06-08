@@ -16,6 +16,8 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+func ptr[T any](v T) *T { return &v }
+
 func TestUpdater_Update_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
@@ -36,8 +38,8 @@ func TestUpdater_Update_Success(t *testing.T) {
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:     id,
-		Name:   "new",
-		Status: "paused",
+		Name:   ptr("new"),
+		Status: ptr("paused"),
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -64,10 +66,38 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
-		Name: "x",
+		Name: ptr("x"),
 	})
 	if !errors.Is(err, commonerrors.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestUpdater_Update_Partial_PreservesStatus(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(id, "old", "paused", nil, nil, nil, now, now)
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.Name == "renamed" && g.Status == "paused"
+		})).
+		Return(nil).
+		Once()
+
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:   id,
+		Name: ptr("renamed"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Status != "paused" {
+		t.Fatalf("Status = %q, want preserved paused", got.Status)
 	}
 }
 
@@ -84,7 +114,7 @@ func TestUpdater_Update_RejectsEmptyName(t *testing.T) {
 	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
-		Name: "",
+		Name: ptr(""),
 	})
 	if err == nil {
 		t.Fatal("expected validation error, got nil")
