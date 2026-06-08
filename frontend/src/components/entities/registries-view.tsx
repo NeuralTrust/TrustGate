@@ -19,7 +19,7 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-import { Field, Input, Select } from "@/components/ui/field";
+import { Field, Input, Label, Select } from "@/components/ui/field";
 import { Section, SwitchRow, Grid2, Divider } from "@/components/ui/form-bits";
 import type { Registry, Provider, TargetAuth, AuthKind } from "@/lib/types";
 
@@ -270,6 +270,28 @@ function buildAuth(a: AuthState): TargetAuth {
   }
 }
 
+interface HeaderRow {
+  key: string;
+  value: string;
+}
+
+const PROVIDER_OPTIONS_PROVIDER = "openai_compatible";
+
+function readBaseUrl(options: Record<string, unknown> | undefined): string {
+  return typeof options?.base_url === "string" ? options.base_url : "";
+}
+
+function readHeaderRows(options: Record<string, unknown> | undefined): HeaderRow[] {
+  const headers = options?.headers;
+  if (headers && typeof headers === "object" && !Array.isArray(headers)) {
+    return Object.entries(headers as Record<string, unknown>).map(([key, value]) => ({
+      key,
+      value: String(value),
+    }));
+  }
+  return [];
+}
+
 function RegistryFormDialog({
   open,
   onOpenChange,
@@ -291,6 +313,8 @@ function RegistryFormDialog({
   const [weight, setWeight] = useState(String(registry?.weight ?? 1));
   const [description, setDescription] = useState(registry?.description ?? "");
   const [auth, setAuth] = useState<AuthState>(emptyAuth((registry?.auth?.type as AuthKind) ?? "api_key"));
+  const [baseUrl, setBaseUrl] = useState(() => readBaseUrl(registry?.provider_options));
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => readHeaderRows(registry?.provider_options));
   const [healthEnabled, setHealthEnabled] = useState(Boolean(registry?.health_checks));
   const [hcPath, setHcPath] = useState(registry?.health_checks?.path ?? "/health");
   const [hcThreshold, setHcThreshold] = useState(String(registry?.health_checks?.threshold ?? 3));
@@ -300,6 +324,18 @@ function RegistryFormDialog({
 
   function set<K extends keyof AuthState>(key: K, value: AuthState[K]) {
     setAuth((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function updateHeaderRow(index: number, field: keyof HeaderRow, value: string) {
+    setHeaderRows((prev) => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
+  }
+
+  function addHeaderRow() {
+    setHeaderRows((prev) => [...prev, { key: "", value: "" }]);
+  }
+
+  function removeHeaderRow(index: number) {
+    setHeaderRows((prev) => prev.filter((_, i) => i !== index));
   }
 
   async function submit() {
@@ -313,6 +349,29 @@ function RegistryFormDialog({
       weight: Number(weight) || 0,
       auth: buildAuth(auth),
     };
+    if (provider === PROVIDER_OPTIONS_PROVIDER) {
+      if (!baseUrl.trim()) {
+        toast({
+          variant: "error",
+          title: "Base URL is required",
+          description: "OpenAI-compatible providers need a base URL.",
+        });
+        return;
+      }
+      const headers: Record<string, string> = {};
+      for (const row of headerRows) {
+        const key = row.key.trim();
+        if (key) headers[key] = row.value;
+      }
+      body.provider_options = {
+        base_url: baseUrl.trim(),
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      };
+    } else if (isEdit && registry.provider === provider && registry.provider_options) {
+      // Preserve provider_options the form does not manage (e.g. vertex
+      // project/location) so a full-replace PUT does not wipe them.
+      body.provider_options = registry.provider_options;
+    }
     if (description.trim()) body.description = description.trim();
     if (healthEnabled) {
       body.health_checks = {
@@ -379,6 +438,55 @@ function RegistryFormDialog({
               <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Primary OpenAI pool" />
             </Field>
           </Grid2>
+
+          {provider === PROVIDER_OPTIONS_PROVIDER && (
+            <>
+              <Divider />
+              <Section
+                title="Provider options"
+                description="Connection settings for the OpenAI-compatible endpoint."
+              >
+                <Field label="Base URL" hint="required">
+                  <Input
+                    value={baseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder="https://api.together.xyz/v1"
+                  />
+                </Field>
+                <div className="flex flex-col gap-2">
+                  <Label hint="optional">Custom headers</Label>
+                  {headerRows.map((row, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Input
+                        value={row.key}
+                        onChange={(e) => updateHeaderRow(i, "key", e.target.value)}
+                        placeholder="X-Custom-Header"
+                      />
+                      <Input
+                        value={row.value}
+                        onChange={(e) => updateHeaderRow(i, "value", e.target.value)}
+                        placeholder="value"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeHeaderRow(i)}
+                        aria-label="Remove header"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <div>
+                    <Button variant="ghost" size="sm" onClick={addHeaderRow}>
+                      <Plus className="h-4 w-4" />
+                      Add header
+                    </Button>
+                  </div>
+                </div>
+              </Section>
+            </>
+          )}
 
           <Divider />
 

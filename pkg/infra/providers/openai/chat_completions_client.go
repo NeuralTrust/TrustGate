@@ -7,6 +7,7 @@ import (
 	"io"
 	"iter"
 	"net/http"
+	"strings"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
@@ -31,11 +32,12 @@ func (c *ChatCompletionsClient) Completions(
 	endpointURL string,
 	config *providers.Config,
 	reqBody []byte,
+	customHeaders map[string]string,
 ) ([]byte, error) {
-	if config.Credentials.ApiKey == "" {
-		return nil, fmt.Errorf("API key is required")
+	if config.Credentials.ApiKey == "" && !hasAuthorizationHeader(customHeaders) {
+		return nil, fmt.Errorf("API key is required when no Authorization header is set")
 	}
-	return c.post(ctx, endpointURL, config.Credentials.ApiKey, reqBody)
+	return c.post(ctx, endpointURL, config.Credentials.ApiKey, reqBody, customHeaders)
 }
 
 func (c *ChatCompletionsClient) CompletionsStream(
@@ -43,9 +45,10 @@ func (c *ChatCompletionsClient) CompletionsStream(
 	endpointURL string,
 	config *providers.Config,
 	reqBody []byte,
+	customHeaders map[string]string,
 ) (iter.Seq2[[]byte, error], error) {
-	if config.Credentials.ApiKey == "" {
-		return nil, fmt.Errorf("API key is required")
+	if config.Credentials.ApiKey == "" && !hasAuthorizationHeader(customHeaders) {
+		return nil, fmt.Errorf("API key is required when no Authorization header is set")
 	}
 
 	httpClient := c.Pool.GetStream(c.ProviderKey)
@@ -54,7 +57,8 @@ func (c *ChatCompletionsClient) CompletionsStream(
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+config.Credentials.ApiKey)
+	setBearerAuth(httpReq, config.Credentials.ApiKey)
+	applyExtraHeaders(httpReq, customHeaders)
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- endpointURL is set by the provider wrapper, not user input
 	if err != nil {
@@ -74,6 +78,7 @@ func (c *ChatCompletionsClient) post(
 	ctx context.Context,
 	endpointURL, apiKey string,
 	reqBody []byte,
+	customHeaders map[string]string,
 ) ([]byte, error) {
 	httpClient := c.Pool.Get(c.ProviderKey, providers.DefaultHTTPTimeout)
 
@@ -82,7 +87,8 @@ func (c *ChatCompletionsClient) post(
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	setBearerAuth(httpReq, apiKey)
+	applyExtraHeaders(httpReq, customHeaders)
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- endpointURL is set by the provider wrapper, not user input
 	if err != nil {
@@ -100,4 +106,31 @@ func (c *ChatCompletionsClient) post(
 	}
 
 	return body.Bytes(), nil
+}
+
+func setBearerAuth(req *http.Request, apiKey string) {
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+}
+
+func applyExtraHeaders(req *http.Request, headers map[string]string) {
+	if len(headers) == 0 {
+		return
+	}
+	for k, v := range headers {
+		if k == "" {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
+}
+
+func hasAuthorizationHeader(headers map[string]string) bool {
+	for k := range headers {
+		if strings.EqualFold(k, "Authorization") {
+			return true
+		}
+	}
+	return false
 }

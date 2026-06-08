@@ -117,6 +117,10 @@ func resolveProviderWireFormat(provider string) Format {
 	switch provider {
 	case "groq":
 		return FormatGroq
+	case "openai_compatible":
+		// Generic OpenAI-compatible upstreams speak the OpenAI Chat Completions
+		// wire format and reuse the OpenAI adapter.
+		return FormatOpenAI
 	default:
 		return Format(provider)
 	}
@@ -130,6 +134,8 @@ func ResolveTargetFormat(provider string, providerOptions map[string]any) Format
 	f := resolveProviderWireFormat(provider)
 	providerFormat := Format(provider)
 
+	// Only first-class OpenAI and Azure targets can opt into the Responses API.
+	// openai_compatible is Chat Completions only, so it is intentionally excluded.
 	if providerFormat == FormatOpenAI || providerFormat == FormatAzure {
 		if api, ok := providerOptions["api"]; ok {
 			if s, ok := api.(string); ok && s == "responses" {
@@ -151,7 +157,7 @@ func ResolveAgentFormat(provider, sourceFormat string, providerOptions map[strin
 		return Format(sourceFormat), nil
 	}
 	switch provider {
-	case "openai", "azure", "groq":
+	case "openai", "openai_compatible", "azure", "groq":
 		return ResolveTargetFormat(provider, providerOptions), nil
 	case "anthropic":
 		return FormatAnthropic, nil

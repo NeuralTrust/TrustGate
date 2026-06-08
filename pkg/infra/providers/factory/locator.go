@@ -11,20 +11,22 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/groq"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/mistral"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/openai"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/openaicompat"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/vertex"
 )
 
 // Provider name constants — aliased from the providers package so callers that
 // import factory.ProviderX continue to compile.
 const (
-	ProviderOpenAI    = providers.ProviderOpenAI
-	ProviderGoogle    = providers.ProviderGoogle
-	ProviderVertex    = providers.ProviderVertex
-	ProviderAnthropic = providers.ProviderAnthropic
-	ProviderBedrock   = providers.ProviderBedrock
-	ProviderAzure     = providers.ProviderAzure
-	ProviderMistral   = providers.ProviderMistral
-	ProviderGroq      = providers.ProviderGroq
+	ProviderOpenAI           = providers.ProviderOpenAI
+	ProviderOpenAICompatible = providers.ProviderOpenAICompatible
+	ProviderGoogle           = providers.ProviderGoogle
+	ProviderVertex           = providers.ProviderVertex
+	ProviderAnthropic        = providers.ProviderAnthropic
+	ProviderBedrock          = providers.ProviderBedrock
+	ProviderAzure            = providers.ProviderAzure
+	ProviderMistral          = providers.ProviderMistral
+	ProviderGroq             = providers.ProviderGroq
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -46,14 +48,15 @@ type providerLocator struct {
 func NewProviderLocator() ProviderLocator {
 	return &providerLocator{
 		clients: map[string]providers.Client{
-			ProviderOpenAI:    openai.NewOpenaiClient(),
-			ProviderGoogle:    google.NewGoogleClient(),
-			ProviderAnthropic: anthropic.NewAnthropicClient(),
-			ProviderBedrock:   bedrock.NewBedrockClient(),
-			ProviderAzure:     azure.NewAzureClient(),
-			ProviderMistral:   mistral.NewMistralClient(),
-			ProviderGroq:      groq.NewGroqClient(),
-			ProviderVertex:    vertex.NewVertexClient(),
+			ProviderOpenAI:           openai.NewOpenaiClient(),
+			ProviderOpenAICompatible: openaicompat.NewClient(),
+			ProviderGoogle:           google.NewGoogleClient(),
+			ProviderAnthropic:        anthropic.NewAnthropicClient(),
+			ProviderBedrock:          bedrock.NewBedrockClient(),
+			ProviderAzure:            azure.NewAzureClient(),
+			ProviderMistral:          mistral.NewMistralClient(),
+			ProviderGroq:             groq.NewGroqClient(),
+			ProviderVertex:           vertex.NewVertexClient(),
 		},
 	}
 }
