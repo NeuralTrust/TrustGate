@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Server, Users, KeyRound, ShieldCheck } from "lucide-react";
+import { Server, Users, KeyRound, ShieldCheck, FlaskConical } from "lucide-react";
 import { Logo } from "./logo";
 import { cn } from "@/lib/cn";
 
@@ -11,6 +11,7 @@ const nav = [
   { href: "/dashboard/consumers", label: "Consumers", icon: Users },
   { href: "/dashboard/auth", label: "Auth", icon: KeyRound },
   { href: "/dashboard/policies", label: "Policies", icon: ShieldCheck },
+  { href: "/dashboard/playground", label: "Playground", icon: FlaskConical },
 ];
 
 export function Sidebar() {

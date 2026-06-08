@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Trash2, Users, Settings2 } from "lucide-react";
+import { Plus, Trash2, Users, Settings2, ChevronDown } from "lucide-react";
 import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
 import { useList, useInvalidate, errorMessage } from "@/lib/hooks";
@@ -18,24 +18,36 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-import { Field, Input, Select } from "@/components/ui/field";
-import { Grid2 } from "@/components/ui/form-bits";
+import { Field, Input, Select, Label } from "@/components/ui/field";
+import { cn } from "@/lib/cn";
 import { ConsumerDetail } from "./consumer-detail";
-import type { Consumer, ConsumerType, Algorithm } from "@/lib/types";
+import { ApiKeyDialog } from "./auth-view";
+import type { Consumer, ConsumerType, Registry, Auth } from "@/lib/types";
 
-const ALGORITHMS: Algorithm[] = [
-  "round-robin",
-  "random",
-  "weighted-round-robin",
-  "least-connections",
-  "semantic",
+const CREATE_AUTH = "__create__";
+
+const PROTOCOLS: { value: ConsumerType; label: string }[] = [
+  { value: "LLM", label: "LLM" },
+  { value: "MCP", label: "MCP" },
+  { value: "A2A", label: "A2A" },
 ];
+
+// The consumer name doubles as its route slug: the proxy path is derived from
+// the slugified name so each consumer exposes a unique endpoint.
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
 export function ConsumersView() {
   const { data: consumers, isLoading } = useList<Consumer>("consumers");
   const create = useDisclosure();
   const [detail, setDetail] = useState<Consumer | null>(null);
   const [toDelete, setToDelete] = useState<Consumer | null>(null);
+  const [generatedKey, setGeneratedKey] = useState<{ name: string; key: string } | null>(null);
 
   return (
     <div>
@@ -116,7 +128,13 @@ export function ConsumersView() {
         </Table>
       )}
 
-      {create.open && <CreateConsumerDialog open={create.open} onOpenChange={create.setOpen} />}
+      {create.open && (
+        <CreateConsumerDialog
+          open={create.open}
+          onOpenChange={create.setOpen}
+          onKeyGenerated={(name, key) => setGeneratedKey({ name, key })}
+        />
+      )}
       {detail && (
         <ConsumerDetail
           consumerId={detail.id}
@@ -125,6 +143,7 @@ export function ConsumersView() {
         />
       )}
       <DeleteConsumerDialog consumer={toDelete} onClose={() => setToDelete(null)} />
+      <ApiKeyDialog data={generatedKey} onClose={() => setGeneratedKey(null)} />
     </div>
   );
 }
@@ -162,42 +181,68 @@ function DeleteConsumerDialog({ consumer, onClose }: { consumer: Consumer | null
   );
 }
 
-function CreateConsumerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+function CreateConsumerDialog({
+  open,
+  onOpenChange,
+  onKeyGenerated,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onKeyGenerated: (name: string, key: string) => void;
+}) {
   const gatewayId = useActiveGatewayId();
   const invalidate = useInvalidate();
   const { toast } = useToast();
+  const { data: registries } = useList<Registry>("registries");
+  const { data: auths } = useList<Auth>("auths");
 
   const [name, setName] = useState("");
-  const [path, setPath] = useState("/v1/chat/completions");
   const [type, setType] = useState<ConsumerType>("LLM");
-  const [algorithm, setAlgorithm] = useState<Algorithm>("round-robin");
-  const [embProvider, setEmbProvider] = useState("openai");
-  const [embModel, setEmbModel] = useState("text-embedding-3-small");
-  const [embApiKey, setEmbApiKey] = useState("");
+  const [registryId, setRegistryId] = useState("");
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authChoice, setAuthChoice] = useState(CREATE_AUTH);
+  const [authName, setAuthName] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  const slug = slugify(name);
+
   async function submit() {
-    if (!name.trim() || !path.trim()) {
-      toast({ variant: "error", title: "Name and path are required" });
+    if (!slug) {
+      toast({ variant: "error", title: "Name is required" });
       return;
     }
     const body: Record<string, unknown> = {
       name: name.trim(),
-      path: path.trim(),
+      path: `/${slug}`,
       type,
-      algorithm,
+      algorithm: "round-robin",
     };
-    if (algorithm === "semantic") {
-      body.embedding_config = {
-        provider: embProvider,
-        model: embModel,
-        ...(embApiKey ? { auth: { api_key: embApiKey } } : {}),
-      };
-    }
 
     setSubmitting(true);
     try {
-      await api.post(`${gatewayScope(gatewayId)}/consumers`, body);
+      const base = gatewayScope(gatewayId);
+      const consumer = await api.post<Consumer>(`${base}/consumers`, body);
+      const consumerBase = `${base}/consumers/${consumer.id}`;
+
+      if (registryId) {
+        await api.post(`${consumerBase}/registries/${registryId}`);
+      }
+
+      if (authChoice === CREATE_AUTH) {
+        const keyName = authName.trim() || `${name.trim()}-key`;
+        const auth = await api.post<Auth>(`${base}/auths`, {
+          name: keyName,
+          type: "api_key",
+          enabled: true,
+          config: {},
+        });
+        await api.post(`${consumerBase}/auths/${auth.id}`);
+        void invalidate("auths");
+        if (auth.api_key) onKeyGenerated(auth.name, auth.api_key);
+      } else if (authChoice) {
+        await api.post(`${consumerBase}/auths/${authChoice}`);
+      }
+
       toast({ variant: "success", title: "Consumer created", description: name });
       void invalidate("consumers");
       onOpenChange(false);
@@ -211,52 +256,111 @@ function CreateConsumerDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader
-          title="New consumer"
-          description="Bind registries, auth and policies after creating the consumer."
-        />
-        <DialogBody className="flex flex-col gap-4">
-          <Field label="Name">
+        <DialogHeader title="New consumer" />
+        <DialogBody className="flex flex-col gap-5">
+          <div className="flex flex-col gap-1.5">
+            <Label>Name</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="chat-prod" />
-          </Field>
-          <Field label="Path" hint="route match">
-            <Input value={path} onChange={(e) => setPath(e.target.value)} />
-          </Field>
-          <Grid2>
-            <Field label="Type">
-              <Select value={type} onChange={(e) => setType(e.target.value as ConsumerType)}>
-                <option value="LLM">LLM</option>
-                <option value="MCP">MCP</option>
-                <option value="A2A">A2A</option>
-              </Select>
-            </Field>
-            <Field label="Algorithm">
-              <Select value={algorithm} onChange={(e) => setAlgorithm(e.target.value as Algorithm)}>
-                {ALGORITHMS.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </Grid2>
+            <p className="text-[12px] text-muted">
+              Route <Mono>{slug ? `/${slug}` : "/…"}</Mono> — derived from the name.
+            </p>
+          </div>
 
-          {algorithm === "semantic" && (
-            <div className="rounded-(--radius) border border-border bg-surface-2/40 p-3 flex flex-col gap-3">
-              <p className="text-[12px] text-muted">Semantic routing requires an embedding model.</p>
-              <Grid2>
-                <Field label="Embedding provider">
-                  <Input value={embProvider} onChange={(e) => setEmbProvider(e.target.value)} />
-                </Field>
-                <Field label="Embedding model">
-                  <Input value={embModel} onChange={(e) => setEmbModel(e.target.value)} />
-                </Field>
-              </Grid2>
-              <Field label="Embedding API key" hint="optional">
-                <Input type="password" value={embApiKey} onChange={(e) => setEmbApiKey(e.target.value)} />
-              </Field>
+          <div className="flex flex-col gap-2">
+            <Label>Protocol</Label>
+            <div className="flex items-center gap-7 pt-0.5">
+              {PROTOCOLS.map((p) => {
+                const active = type === p.value;
+                return (
+                  <button
+                    key={p.value}
+                    type="button"
+                    onClick={() => setType(p.value)}
+                    className="group flex items-center gap-2.5"
+                  >
+                    <span
+                      className={cn(
+                        "flex h-4.5 w-4.5 items-center justify-center rounded-full border-2 transition-colors",
+                        active ? "border-accent" : "border-border-strong group-hover:border-fg/40",
+                      )}
+                    >
+                      {active && <span className="h-2 w-2 rounded-full bg-accent" />}
+                    </span>
+                    <span className={cn("text-[13px]", active ? "text-fg" : "text-muted")}>{p.label}</span>
+                  </button>
+                );
+              })}
             </div>
-          )}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label>Target backend</Label>
+            <Select value={registryId} onChange={(e) => setRegistryId(e.target.value)}>
+              <option value="">Select a backend</option>
+              {(registries ?? []).map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name} ({r.provider})
+                </option>
+              ))}
+            </Select>
+            <p className="text-[12px] text-muted">
+              Start with one backend. Add fallbacks or load balancing after creation.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label>Authentication</Label>
+            <div className="rounded-(--radius) border border-border bg-surface-2/40 p-3.5 flex flex-col gap-2.5">
+              <div className="flex flex-col gap-0.5">
+                <p className="text-[13px] text-fg">
+                  {authChoice === CREATE_AUTH
+                    ? "Defaults to API key"
+                    : authChoice === ""
+                      ? "No authentication"
+                      : "Uses an existing credential"}
+                </p>
+                <p className="text-[12px] text-muted">
+                  {authChoice === CREATE_AUTH
+                    ? "A key is generated on creation. Change the auth method anytime."
+                    : "Change the auth method anytime."}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAuthOpen((v) => !v)}
+                className="inline-flex items-center gap-1.5 self-start text-[12px] font-medium text-accent transition-colors hover:text-accent/80"
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+                Change auth method
+                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", authOpen && "rotate-180")} />
+              </button>
+
+              {authOpen && (
+                <div className="flex flex-col gap-3 border-t border-border pt-3">
+                  <Field label="Auth method">
+                    <Select value={authChoice} onChange={(e) => setAuthChoice(e.target.value)}>
+                      <option value={CREATE_AUTH}>Generate new API key</option>
+                      <option value="">No authentication</option>
+                      {(auths ?? []).map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({a.type})
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  {authChoice === CREATE_AUTH && (
+                    <Field label="API key name" hint="optional">
+                      <Input
+                        value={authName}
+                        onChange={(e) => setAuthName(e.target.value)}
+                        placeholder={`${name.trim() || "consumer"}-key`}
+                      />
+                    </Field>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </DialogBody>
         <DialogFooter>
           <DialogClose asChild>

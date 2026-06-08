@@ -150,7 +150,7 @@ function DeleteAuthDialog({ auth, onClose }: { auth: Auth | null; onClose: () =>
   );
 }
 
-function ApiKeyDialog({
+export function ApiKeyDialog({
   data,
   onClose,
 }: {

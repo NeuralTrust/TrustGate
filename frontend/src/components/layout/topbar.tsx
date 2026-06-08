@@ -8,6 +8,7 @@ const titles: Record<string, string> = {
   consumers: "Consumers",
   auth: "Auth",
   policies: "Policies",
+  playground: "Playground",
 };
 
 export function Topbar() {
