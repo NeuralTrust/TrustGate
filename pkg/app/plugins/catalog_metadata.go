@@ -36,52 +36,35 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"rate_limiter": {
 		name:        "Rate Limiter",
 		group:       groupTrafficControl,
-		description: "Limit request volume using sliding windows scoped globally or per user, IP or fingerprint.",
+		description: "Limit request volume using a sliding window. The limit applies gateway-wide when the policy is global, otherwise per consumer.",
 		schema: SettingsSchema{
 			Fields: []Field{
 				{
-					Key:         "limits",
-					Label:       "Limits",
-					Type:        FieldTypeMap,
-					Description: "Per-scope request limits. At least one scope must be configured.",
+					Key:         "limit",
+					Label:       "Max Requests",
+					Type:        FieldTypeInteger,
+					Description: "Maximum number of requests allowed within the window.",
 					Required:    true,
-					KeyOptions:  []string{"global", "per_user", "per_ip", "per_fingerprint"},
-					Value: &Field{
-						Key:   "limit",
-						Label: "Limit",
-						Type:  FieldTypeObject,
-						Fields: []Field{
-							{
-								Key:         "limit",
-								Label:       "Max Requests",
-								Type:        FieldTypeInteger,
-								Description: "Maximum number of requests allowed within the window.",
-								Required:    true,
-							},
-							{
-								Key:         "window",
-								Label:       "Window",
-								Type:        FieldTypeDuration,
-								Description: "Sliding window duration (e.g. 1s, 1m, 1h).",
-								Required:    true,
-							},
-						},
-					},
 				},
 				{
-					Key:         "actions",
-					Label:       "Actions",
-					Type:        FieldTypeObject,
-					Description: "Behaviour applied when a limit is exceeded. How the limit is enforced (block, throttle or observe) is controlled by the policy mode.",
-					Fields: []Field{
-						{
-							Key:         "retry_after",
-							Label:       "Retry After",
-							Type:        FieldTypeString,
-							Description: "Value sent in the Retry-After header, in seconds.",
-							Default:     "60",
-						},
-					},
+					Key:         "window",
+					Label:       "Window",
+					Type:        FieldTypeDuration,
+					Description: "Sliding window duration (e.g. 1s, 1m, 1h).",
+					Required:    true,
+				},
+				{
+					Key:         "retry_after",
+					Label:       "Retry After",
+					Type:        FieldTypeString,
+					Description: "Value sent in the Retry-After header, in seconds, when the limit is exceeded.",
+					Default:     "60",
+				},
+				{
+					Key:         "group_by_header",
+					Label:       "Group By Header",
+					Type:        FieldTypeString,
+					Description: "Optional request header whose value sub-partitions the limit within the policy scope (e.g. X-User-Id). When empty, the limit is counted per gateway (global) or per consumer.",
 				},
 			},
 		},
@@ -184,15 +167,9 @@ var pluginCatalogMeta = map[string]catalogMeta{
 	"token_rate_limiter": {
 		name:        "Token Rate Limiter",
 		group:       groupQuota,
-		description: "Enforce an LLM token budget per identifier over a fixed time window.",
+		description: "Enforce an LLM token budget over a fixed time window. The budget applies gateway-wide when the policy is global, otherwise per consumer.",
 		schema: SettingsSchema{
 			Fields: []Field{
-				{
-					Key:         "identifier_header",
-					Label:       "Identifier Header",
-					Type:        FieldTypeString,
-					Description: "Request header used to identify the caller. Falls back to a shared budget when empty.",
-				},
 				{
 					Key:      "window",
 					Label:    "Window",
@@ -215,6 +192,12 @@ var pluginCatalogMeta = map[string]catalogMeta{
 							Required:    true,
 						},
 					},
+				},
+				{
+					Key:         "group_by_header",
+					Label:       "Group By Header",
+					Type:        FieldTypeString,
+					Description: "Optional request header whose value sub-partitions the budget within the policy scope (e.g. X-User-Id). When empty, the budget is counted per gateway (global) or per consumer.",
 				},
 			},
 		},

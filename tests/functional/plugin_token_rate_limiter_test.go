@@ -32,22 +32,3 @@ func TestPluginE2E_TokenRateLimiter(t *testing.T) {
 	}
 	assert.Equal(t, 5, up.Hits())
 }
-
-func TestPluginE2E_TokenRateLimiter_WithIdentifierHeader(t *testing.T) {
-	defer Track(t, "PluginTokenRateLimiter")()
-
-	up := newUsageUpstream(t, "token-hdr-upstream", 8)
-	apiKey, path := setupPolicyRoute(t, up,
-		policyPlugin("token_rate_limiter", map[string]any{
-			"identifier_header": "X-Client-ID",
-			"window":            map[string]any{"unit": "hour", "max": 1000},
-		}),
-	)
-
-	body := mustJSON(t, chatRequest(false))
-	for _, clientID := range []string{"client-a", "client-b"} {
-		status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path,
-			map[string]string{"X-Client-ID": clientID}, body)
-		assert.Equal(t, http.StatusOK, status, "client %s should pass through, body: %s", clientID, raw)
-	}
-}

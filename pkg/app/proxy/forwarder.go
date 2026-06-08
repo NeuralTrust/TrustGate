@@ -102,6 +102,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 		return nil, ErrNoBackendsInPool
 	}
 
+	f.stampConsumerScope(in)
 	f.stampContinuation(ctx, in.Request)
 
 	lb, bk, err := f.selectBackend(in.Consumer, in.Request)
@@ -293,6 +294,19 @@ func (f *forwarder) recordSpan(
 	_ = rt.AddSpan(span)
 	span.End()
 	return span
+}
+
+// stampConsumerScope records the resolved consumer (and gateway) identity on the
+// request so plugins can partition runtime state (e.g. rate-limit counters) by
+// the policy scope without re-resolving the consumer from headers or path.
+func (f *forwarder) stampConsumerScope(in ForwardInput) {
+	if in.Request == nil {
+		return
+	}
+	in.Request.ConsumerID = in.Consumer.Consumer.ID.String()
+	if in.Request.GatewayID == "" {
+		in.Request.GatewayID = in.Consumer.Consumer.GatewayID.String()
+	}
 }
 
 func (f *forwarder) stampContinuation(ctx context.Context, req *infracontext.RequestContext) {

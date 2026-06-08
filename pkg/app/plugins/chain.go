@@ -12,6 +12,7 @@ type chainEntry struct {
 	mode     policy.Mode
 	priority int
 	parallel bool
+	global   bool
 }
 
 func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage) []chainEntry {
@@ -45,6 +46,7 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 			mode:     pol.Mode.Normalize(),
 			priority: pol.Priority,
 			parallel: pol.Parallel,
+			global:   pol.IsGlobal(),
 		})
 	}
 
