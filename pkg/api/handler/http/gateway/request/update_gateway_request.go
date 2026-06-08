@@ -10,19 +10,21 @@ import (
 )
 
 type UpdateGatewayRequest struct {
-	Name            string                 `json:"name"`
-	Status          string                 `json:"status"`
-	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
-	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
-	SessionConfig   *domain.SessionConfig  `json:"session_config,omitempty"`
+	Name            *string                 `json:"name,omitempty"`
+	Status          *string                 `json:"status,omitempty"`
+	Telemetry       *telemetry.Telemetry    `json:"telemetry,omitempty"`
+	ClientTLSConfig *domain.ClientTLSConfig `json:"client_tls,omitempty"`
+	SessionConfig   *domain.SessionConfig   `json:"session_config,omitempty"`
 }
 
 func (r UpdateGatewayRequest) Validate() error {
-	if strings.TrimSpace(r.Name) == "" {
-		return fmt.Errorf("name is required: %w", commonerrors.ErrValidation)
-	}
-	if len(r.Name) > 255 {
-		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
+	if r.Name != nil {
+		if strings.TrimSpace(*r.Name) == "" {
+			return fmt.Errorf("name is required: %w", commonerrors.ErrValidation)
+		}
+		if len(*r.Name) > 255 {
+			return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
+		}
 	}
 	return nil
 }

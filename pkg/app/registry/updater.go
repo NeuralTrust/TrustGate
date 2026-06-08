@@ -13,11 +13,11 @@ import (
 type UpdateInput struct {
 	ID              ids.RegistryID
 	GatewayID       ids.GatewayID
-	Name            string
-	Provider        string
-	ProviderOptions map[string]any
-	Description     string
-	Weight          int
+	Name            *string
+	Provider        *string
+	ProviderOptions *map[string]any
+	Description     *string
+	Weight          *int
 	Auth            *domain.TargetAuth
 	HealthChecks    *domain.HealthChecks
 }
@@ -58,16 +58,28 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
-	existing.Name = in.Name
-	existing.Provider = in.Provider
-	existing.ProviderOptions = in.ProviderOptions
-	existing.Description = in.Description
-	existing.Weight = in.Weight
+	if in.Name != nil {
+		existing.Name = *in.Name
+	}
+	if in.Provider != nil {
+		existing.Provider = *in.Provider
+	}
+	if in.ProviderOptions != nil {
+		existing.ProviderOptions = *in.ProviderOptions
+	}
+	if in.Description != nil {
+		existing.Description = *in.Description
+	}
+	if in.Weight != nil {
+		existing.Weight = *in.Weight
+	}
 	if in.Auth != nil {
 		in.Auth.ResolveSecretsFrom(existing.Auth)
 		existing.Auth = in.Auth
 	}
-	existing.HealthChecks = in.HealthChecks
+	if in.HealthChecks != nil {
+		existing.HealthChecks = in.HealthChecks
+	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {
 		return nil, err

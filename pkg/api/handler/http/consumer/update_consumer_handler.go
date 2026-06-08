@@ -65,7 +65,7 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		Name:            req.Name,
 		Type:            req.ToType(),
 		Path:            req.Path,
-		Algorithm:       req.Algorithm,
+		Algorithm:       req.ToAlgorithm(),
 		EmbeddingConfig: req.ToEmbeddingConfig(),
 		Headers:         req.Headers,
 		Active:          req.Active,

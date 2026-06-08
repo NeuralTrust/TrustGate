@@ -8,7 +8,6 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
@@ -55,9 +54,9 @@ func (h *UpdateAuthHandler) Handle(c *fiber.Ctx) error {
 		ID:        id,
 		GatewayID: gatewayID,
 		Name:      req.Name,
-		Type:      domain.Type(req.Type),
-		Enabled:   req.IsEnabled(),
-		Config:    req.Config.ToDomain(),
+		Type:      req.ToType(),
+		Enabled:   req.Enabled,
+		Config:    req.ToConfig(),
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

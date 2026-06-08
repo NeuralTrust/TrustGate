@@ -117,6 +117,42 @@ func TestUpdateConsumer_RejectsModelPolicyForUnassociatedRegistry(t *testing.T) 
 	assert.Equal(t, "validation_failed", body["error"])
 }
 
+func TestUpdateConsumer_Partial(t *testing.T) {
+	defer Track(t, "UpdateConsumer")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-partial-gw")})
+	name := uniqueName("co-upd-partial")
+	coID := CreateConsumer(t, gwID, validConsumerPayload(name))
+	expectedPath := "/v1/" + name
+
+	renamed := uniqueName("co-upd-partial-to")
+	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID)
+	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{"name": renamed})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, renamed, body["name"])
+
+	status, body = sendRequest(t, http.MethodGet, url, nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, renamed, body["name"])
+	assert.Equal(t, expectedPath, body["path"], "path must be preserved on a partial update")
+}
+
+func TestUpdateConsumer_Partial_EmptyTypePreservesExisting(t *testing.T) {
+	defer Track(t, "UpdateConsumer")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-empty-type-gw")})
+	name := uniqueName("co-upd-empty-type")
+	payload := validConsumerPayload(name)
+	payload["type"] = "MCP"
+	coID := CreateConsumer(t, gwID, payload)
+
+	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID)
+	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{"type": ""})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+
+	status, body = sendRequest(t, http.MethodGet, url, nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, "MCP", body["type"], "empty type must be treated as no-change, not reset to LLM")
+}
+
 func TestUpdateConsumer_NotFound(t *testing.T) {
 	defer Track(t, "UpdateConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-missing-gw")})
