@@ -8,9 +8,7 @@ type Event struct {
 	GatewayID     string `json:"gateway_id"`
 	TeamID        string `json:"team_id,omitempty"`
 
-	Timestamp      string `json:"timestamp"`
-	StartTimestamp int64  `json:"start_timestamp"`
-	EndTimestamp   int64  `json:"end_timestamp"`
+	OccurredOn int64 `json:"occurred_on"`
 
 	Consumer      Consumer `json:"consumer"`
 	SessionID     string   `json:"session_id,omitempty"`
