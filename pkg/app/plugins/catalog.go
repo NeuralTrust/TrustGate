@@ -57,6 +57,8 @@ type CatalogEntry struct {
 	Description     string         `json:"description,omitempty"`
 	MandatoryStages []policy.Stage `json:"mandatory_stages"`
 	SupportedStages []policy.Stage `json:"supported_stages"`
+	SupportedModes  []policy.Mode  `json:"supported_modes"`
+	DefaultMode     policy.Mode    `json:"default_mode"`
 	SettingsSchema  SettingsSchema `json:"settings_schema"`
 }
 
@@ -114,6 +116,8 @@ func (s *catalogService) Catalog() Catalog {
 			Description:     meta.description,
 			MandatoryStages: plugin.MandatoryStages(),
 			SupportedStages: plugin.SupportedStages(),
+			SupportedModes:  plugin.SupportedModes(),
+			DefaultMode:     policy.DefaultMode,
 			SettingsSchema:  meta.schema,
 		})
 	}

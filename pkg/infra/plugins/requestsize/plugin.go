@@ -1,5 +1,3 @@
-// Package requestsize implements a PreRequest plugin that rejects requests
-// whose body exceeds configured byte or character limits.
 package requestsize
 
 import (
@@ -36,6 +34,10 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest}
 }
 
+func (p *Plugin) SupportedModes() []policy.Mode {
+	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
+}
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err
@@ -47,11 +49,16 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		return nil, fmt.Errorf("request_size_limiter: %w", err)
 	}
 
+	blocks := appplugins.Blocks(in.Mode)
+
 	if cfg.RequireContentLength && contentLength(in.Request) == "" {
-		return nil, &appplugins.PluginError{
-			StatusCode: http.StatusLengthRequired,
-			Message:    "Content-Length header is required",
+		if blocks {
+			return nil, &appplugins.PluginError{
+				StatusCode: http.StatusLengthRequired,
+				Message:    "Content-Length header is required",
+			}
 		}
+		appplugins.SetDecision(in.Event, in.Mode)
 	}
 
 	var body []byte
@@ -72,10 +79,14 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 			LimitExceeded:      true,
 			ExceededType:       "bytes",
 		})
-		return nil, &appplugins.PluginError{
-			StatusCode: http.StatusRequestEntityTooLarge,
-			Message:    fmt.Sprintf("request size limit exceeded: received %d bytes", byteSize),
+		if blocks {
+			return nil, &appplugins.PluginError{
+				StatusCode: http.StatusRequestEntityTooLarge,
+				Message:    fmt.Sprintf("request size limit exceeded: received %d bytes", byteSize),
+			}
 		}
+		appplugins.SetDecision(in.Event, in.Mode)
+		return allowResult(byteSize, charCount, maxBytes, cfg), nil
 	}
 
 	if int64(charCount) > cfg.MaxCharsPerRequest {
@@ -87,10 +98,14 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 			LimitExceeded:      true,
 			ExceededType:       "chars",
 		})
-		return nil, &appplugins.PluginError{
-			StatusCode: http.StatusRequestEntityTooLarge,
-			Message:    fmt.Sprintf("character limit exceeded: received %d characters", charCount),
+		if blocks {
+			return nil, &appplugins.PluginError{
+				StatusCode: http.StatusRequestEntityTooLarge,
+				Message:    fmt.Sprintf("character limit exceeded: received %d characters", charCount),
+			}
 		}
+		appplugins.SetDecision(in.Event, in.Mode)
+		return allowResult(byteSize, charCount, maxBytes, cfg), nil
 	}
 
 	setSizeExtras(in.Event, RequestSizeLimiterData{
@@ -100,6 +115,10 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 		MaxCharsPerRequest: int(cfg.MaxCharsPerRequest),
 		LimitExceeded:      false,
 	})
+	return allowResult(byteSize, charCount, maxBytes, cfg), nil
+}
+
+func allowResult(byteSize, charCount, maxBytes int, cfg *config) *appplugins.Result {
 	return &appplugins.Result{
 		StatusCode: http.StatusOK,
 		Headers: map[string][]string{
@@ -108,7 +127,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 			"X-Size-Limit-Bytes":   {strconv.Itoa(maxBytes)},
 			"X-Size-Limit-Chars":   {strconv.FormatInt(cfg.MaxCharsPerRequest, 10)},
 		},
-	}, nil
+	}
 }
 
 func setSizeExtras(event *metrics.EventContext, data RequestSizeLimiterData) {

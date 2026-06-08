@@ -45,7 +45,7 @@ func createInputMatcher(want apppolicy.CreateInput) interface{} {
 }
 
 func createFromInput(_ context.Context, in apppolicy.CreateInput) (*domain.Policy, error) {
-	return domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description)
+	return domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description, in.Mode)
 }
 
 func TestDuplicator_CopiesConfigWithFirstFreeSuffix(t *testing.T) {

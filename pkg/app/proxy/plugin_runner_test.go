@@ -29,6 +29,7 @@ type stubPlugin struct {
 func (s *stubPlugin) Name() string                        { return s.name }
 func (s *stubPlugin) MandatoryStages() []policy.Stage     { return s.stages }
 func (s *stubPlugin) SupportedStages() []policy.Stage     { return s.stages }
+func (s *stubPlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
 func (s *stubPlugin) ValidateConfig(map[string]any) error { return nil }
 func (s *stubPlugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	if s.ran != nil {
@@ -209,6 +210,7 @@ type capturePlugin struct {
 func (c *capturePlugin) Name() string                        { return c.name }
 func (c *capturePlugin) MandatoryStages() []policy.Stage     { return c.stages }
 func (c *capturePlugin) SupportedStages() []policy.Stage     { return c.stages }
+func (c *capturePlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
 func (c *capturePlugin) ValidateConfig(map[string]any) error { return nil }
 func (c *capturePlugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugins.Result, error) {
 	if in.Stage == policy.StagePostResponse && c.seen != nil {

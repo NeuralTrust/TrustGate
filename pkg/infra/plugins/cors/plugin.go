@@ -35,6 +35,10 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest}
 }
 
+func (p *Plugin) SupportedModes() []policy.Mode {
+	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
+}
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err
@@ -48,13 +52,22 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 
 	method := methodOf(in.Request)
 	origin := header(in.Request, "Origin")
+	blocks := appplugins.Blocks(in.Mode)
 	if origin == "" {
 		setCorsExtras(in.Event, CorsData{Method: method, AllowedMethods: cfg.AllowMethods, Allowed: false})
-		return nil, &appplugins.PluginError{StatusCode: http.StatusForbidden, Message: "invalid origin"}
+		if blocks {
+			return nil, &appplugins.PluginError{StatusCode: http.StatusForbidden, Message: "invalid origin"}
+		}
+		appplugins.SetDecision(in.Event, in.Mode)
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
 	if !cfg.isOriginAllowed(origin) {
 		setCorsExtras(in.Event, CorsData{Origin: origin, Method: method, AllowedMethods: cfg.AllowMethods, Allowed: false})
-		return nil, &appplugins.PluginError{StatusCode: http.StatusForbidden, Message: "CORS: origin not allowed"}
+		if blocks {
+			return nil, &appplugins.PluginError{StatusCode: http.StatusForbidden, Message: "CORS: origin not allowed"}
+		}
+		appplugins.SetDecision(in.Event, in.Mode)
+		return &appplugins.Result{StatusCode: http.StatusOK}, nil
 	}
 
 	headers := map[string][]string{
@@ -66,7 +79,7 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 	}
 
 	if method == http.MethodOptions {
-		return p.handlePreflight(cfg, in.Request, headers, in.Event)
+		return p.handlePreflight(cfg, in.Mode, in.Request, headers, in.Event)
 	}
 
 	setCorsExtras(in.Event, CorsData{Origin: origin, Method: method, AllowedMethods: cfg.AllowMethods, Allowed: true})
@@ -75,24 +88,33 @@ func (p *Plugin) Execute(_ context.Context, in appplugins.ExecInput) (*appplugin
 
 // handlePreflight validates the preflight request and short-circuits with a 204
 // response carrying the negotiated CORS headers.
-func (p *Plugin) handlePreflight(cfg *config, req *infracontext.RequestContext, headers map[string][]string, event *metrics.EventContext) (*appplugins.Result, error) {
+func (p *Plugin) handlePreflight(cfg *config, mode policy.Mode, req *infracontext.RequestContext, headers map[string][]string, event *metrics.EventContext) (*appplugins.Result, error) {
 	origin := header(req, "Origin")
 	requestedMethod := header(req, "Access-Control-Request-Method")
+	blocks := appplugins.Blocks(mode)
 	if requestedMethod == "" {
 		setCorsExtras(event, CorsData{Origin: origin, Method: req.Method, AllowedMethods: cfg.AllowMethods, Preflight: true, Allowed: false})
-		return nil, &appplugins.PluginError{
-			StatusCode: http.StatusBadRequest,
-			Message:    "CORS preflight missing Access-Control-Request-Method header",
-			Headers:    headers,
+		if blocks {
+			return nil, &appplugins.PluginError{
+				StatusCode: http.StatusBadRequest,
+				Message:    "CORS preflight missing Access-Control-Request-Method header",
+				Headers:    headers,
+			}
 		}
+		appplugins.SetDecision(event, mode)
+		return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 	}
 	if !cfg.isMethodAllowed(requestedMethod) {
 		setCorsExtras(event, CorsData{Origin: origin, Method: req.Method, RequestedMethod: requestedMethod, AllowedMethods: cfg.AllowMethods, Preflight: true, Allowed: false})
-		return nil, &appplugins.PluginError{
-			StatusCode: http.StatusMethodNotAllowed,
-			Message:    "CORS preflight: method not allowed",
-			Headers:    headers,
+		if blocks {
+			return nil, &appplugins.PluginError{
+				StatusCode: http.StatusMethodNotAllowed,
+				Message:    "CORS preflight: method not allowed",
+				Headers:    headers,
+			}
 		}
+		appplugins.SetDecision(event, mode)
+		return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 	}
 
 	headers["Access-Control-Allow-Methods"] = []string{strings.Join(cfg.AllowMethods, ", ")}

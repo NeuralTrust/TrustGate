@@ -22,6 +22,7 @@ type UpdateInput struct {
 	Parallel    *bool
 	Settings    *map[string]any
 	Stages      *[]domain.Stage
+	Mode        *domain.Mode
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=policy_updater_mock.go --case=underscore --with-expecter
@@ -86,6 +87,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	}
 	if in.Stages != nil {
 		existing.Stages = *in.Stages
+	}
+	if in.Mode != nil {
+		existing.Mode = in.Mode.Normalize()
 	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {

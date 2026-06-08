@@ -88,6 +88,10 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}
 }
 
+func (p *Plugin) SupportedModes() []policy.Mode {
+	return []policy.Mode{policy.ModeEnforce, policy.ModeObserve}
+}
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err
@@ -177,6 +181,20 @@ func (p *Plugin) preRequest(
 	}
 
 	best := candidates[0]
+	if in.Mode == policy.ModeObserve {
+		markStatus(in.Response, cacheStatusMiss)
+		setCacheExtras(in.Event, SemanticCacheData{
+			Threshold:     cfg.SimilarityThreshold,
+			CacheHit:      true,
+			Stored:        false,
+			Similarity:    best.Similarity,
+			EmbeddingSize: embeddingSize(emb),
+			VectorDim:     p.dimension,
+		})
+		appplugins.SetDecision(in.Event, in.Mode)
+		return passThrough(), nil
+	}
+
 	markStatus(in.Response, cacheStatusHit)
 	setCacheExtras(in.Event, SemanticCacheData{
 		Threshold:     cfg.SimilarityThreshold,
@@ -206,6 +224,10 @@ func (p *Plugin) postResponse(
 	if resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 || len(resp.Body) == 0 {
 		return passThrough(), nil
 	}
+	if in.Mode == policy.ModeObserve {
+		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Stored: false})
+		return passThrough(), nil
+	}
 	if statusOf(resp) == cacheStatusHit {
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, CacheHit: true, Stored: false})
 		return passThrough(), nil
@@ -228,7 +250,6 @@ func (p *Plugin) postResponse(
 		Response:  string(resp.Body),
 		TTL:       cfg.parsedTTL(),
 	}); err != nil {
-		// Storing is best-effort; never fail the response.
 		setCacheExtras(in.Event, SemanticCacheData{Threshold: cfg.SimilarityThreshold, Degraded: true, DegradedReason: "store_failed", EmbeddingSize: embeddingSize(emb), VectorDim: p.dimension})
 		return passThrough(), nil
 	}
@@ -255,9 +276,6 @@ func setCacheExtras(event *metrics.EventContext, data SemanticCacheData) {
 	event.SetExtras(data)
 }
 
-// extractUserInput returns the last user message for embedding. It uses the
-// provider-aware adapter when a provider is known, falling back to a generic
-// JSON extraction.
 func (p *Plugin) extractUserInput(req *infracontext.RequestContext) string {
 	if req == nil {
 		return ""

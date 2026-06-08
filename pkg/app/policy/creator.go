@@ -20,6 +20,7 @@ type CreateInput struct {
 	Parallel    bool
 	Settings    map[string]any
 	Stages      []domain.Stage
+	Mode        domain.Mode
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=policy_creator_mock.go --case=underscore --with-expecter
@@ -51,7 +52,7 @@ func NewCreator(
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Policy, error) {
-	p, err := domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description)
+	p, err := domain.NewPolicy(in.GatewayID, in.Name, in.Slug, in.Enabled, in.Priority, in.Parallel, in.Settings, in.Stages, in.Description, in.Mode)
 	if err != nil {
 		return nil, err
 	}

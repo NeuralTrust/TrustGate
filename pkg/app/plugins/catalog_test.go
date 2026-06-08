@@ -78,6 +78,9 @@ func TestCatalogService_EntriesHaveStagesAndSchema(t *testing.T) {
 		assert.NotEmptyf(t, entry.Name, "slug %q has empty display name", slug)
 		assert.NotEmptyf(t, entry.SupportedStages, "slug %q has no supported stages", slug)
 		assert.NotEmptyf(t, entry.SettingsSchema.Fields, "slug %q has no settings schema fields", slug)
+		assert.NotEmptyf(t, entry.SupportedModes, "slug %q has no supported modes", slug)
+		assert.Containsf(t, entry.SupportedModes, policy.ModeEnforce, "slug %q must support enforce", slug)
+		assert.Equalf(t, policy.DefaultMode, entry.DefaultMode, "slug %q default mode mismatch", slug)
 	}
 
 	// Stage data must come from the plugin implementation, not the metadata.

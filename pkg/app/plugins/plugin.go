@@ -25,6 +25,7 @@ type Plugin interface {
 	// SupportedStages are every stage the plugin can run on. A policy may opt
 	// into any subset of these; mandatory stages are always included.
 	SupportedStages() []policy.Stage
+	SupportedModes() []policy.Mode
 	ValidateConfig(settings map[string]any) error
 	Execute(ctx context.Context, in ExecInput) (*Result, error)
 }
@@ -32,6 +33,7 @@ type Plugin interface {
 // ExecInput is the immutable input handed to a plugin for a single stage run.
 type ExecInput struct {
 	Stage    policy.Stage
+	Mode     policy.Mode
 	Config   policy.PluginConfig
 	Request  *infracontext.RequestContext
 	Response *infracontext.ResponseContext

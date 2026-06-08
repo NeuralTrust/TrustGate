@@ -72,16 +72,8 @@ var pluginCatalogMeta = map[string]catalogMeta{
 					Key:         "actions",
 					Label:       "Actions",
 					Type:        FieldTypeObject,
-					Description: "Behaviour applied when a limit is exceeded.",
+					Description: "Behaviour applied when a limit is exceeded. How the limit is enforced (block, throttle or observe) is controlled by the policy mode.",
 					Fields: []Field{
-						{
-							Key:         "type",
-							Label:       "Action Type",
-							Type:        FieldTypeEnum,
-							Description: "How to respond when the limit is exceeded.",
-							Enum:        []string{"reject", "block"},
-							Default:     "reject",
-						},
 						{
 							Key:         "retry_after",
 							Label:       "Retry After",

@@ -17,6 +17,7 @@ type UpdatePolicyRequest struct {
 	Parallel    *bool           `json:"parallel,omitempty"`
 	Settings    *map[string]any `json:"settings,omitempty"`
 	Stages      *[]string       `json:"stages,omitempty"`
+	Mode        *string         `json:"mode,omitempty"`
 }
 
 func (r UpdatePolicyRequest) Validate() error {
@@ -34,6 +35,9 @@ func (r UpdatePolicyRequest) Validate() error {
 	if r.Slug != nil && strings.TrimSpace(*r.Slug) == "" {
 		return fmt.Errorf("slug is required: %w", commonerrors.ErrValidation)
 	}
+	if r.Mode != nil {
+		return validateMode(*r.Mode)
+	}
 	return nil
 }
 
@@ -43,4 +47,12 @@ func (r UpdatePolicyRequest) ToStages() *[]domain.Stage {
 	}
 	stages := toStages(*r.Stages)
 	return &stages
+}
+
+func (r UpdatePolicyRequest) ToMode() *domain.Mode {
+	if r.Mode == nil {
+		return nil
+	}
+	m := domain.Mode(*r.Mode)
+	return &m
 }

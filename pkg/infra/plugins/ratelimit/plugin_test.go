@@ -8,6 +8,8 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
@@ -70,9 +72,9 @@ func TestPlugin_ValidateConfig(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name:     "bad action type",
+			name:     "ignores deprecated action type",
 			settings: map[string]any{"limits": map[string]any{"global": map[string]any{"limit": 5, "window": "1m"}}, "actions": map[string]any{"type": "explode"}},
-			wantErr:  true,
+			wantErr:  false,
 		},
 	}
 	p := New(nil)
@@ -120,6 +122,83 @@ func TestPlugin_Execute_RejectsOverLimit(t *testing.T) {
 	assert.Equal(t, 429, pe.StatusCode)
 	assert.Equal(t, []string{"30"}, pe.Headers["Retry-After"])
 	assert.Equal(t, []string{"0"}, pe.Headers["X-RateLimit-per_ip-Remaining"])
+}
+
+func TestPlugin_Execute_ObserveDoesNotReject(t *testing.T) {
+	p, _ := newTestPlugin(t)
+	assert.Equal(t, []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve}, p.SupportedModes())
+
+	settings := map[string]any{
+		"limits":  map[string]any{"per_ip": map[string]any{"limit": 1, "window": "1m"}},
+		"actions": map[string]any{"type": "reject", "retry_after": "30"},
+	}
+	req := &infracontext.RequestContext{IP: "9.9.9.9"}
+
+	for i := 0; i < 5; i++ {
+		in := execInput(settings, req)
+		in.Mode = policy.ModeObserve
+		res, err := p.Execute(context.Background(), in)
+		require.NoError(t, err, "observe request %d should never be rejected", i)
+		require.NotNil(t, res)
+		assert.Equal(t, 200, res.StatusCode)
+	}
+}
+
+func TestPlugin_Execute_ObserveReportsExceededLimitNotLastEvaluated(t *testing.T) {
+	p, _ := newTestPlugin(t)
+	settings := map[string]any{
+		"limits": map[string]any{
+			"per_ip": map[string]any{"limit": 1, "window": "1m"},
+			"global": map[string]any{"limit": 1000, "window": "1m"},
+		},
+	}
+	req := &infracontext.RequestContext{IP: "5.5.5.5"}
+
+	first := execInput(settings, req)
+	first.Mode = policy.ModeObserve
+	_, err := p.Execute(context.Background(), first)
+	require.NoError(t, err)
+
+	rt := trace.New("t", trace.Metadata{})
+	span := rt.StartSpan(trace.SpanPlugin, PluginName)
+	second := execInput(settings, req)
+	second.Mode = policy.ModeObserve
+	second.Event = metrics.NewEventContext(span)
+
+	res, err := p.Execute(context.Background(), second)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, 200, res.StatusCode)
+
+	require.NotNil(t, span.Plugin)
+	assert.Equal(t, "observe", span.Plugin.Decision)
+	data, ok := span.Plugin.Extras.(RateLimiterData)
+	require.True(t, ok, "extras should carry rate limiter data")
+	assert.True(t, data.RateLimitExceeded, "must report the exceeded limit, not the last evaluated one")
+	assert.Equal(t, "per_ip", data.ExceededType)
+}
+
+func TestPlugin_Execute_ThrottleDelaysButAllows(t *testing.T) {
+	p, _ := newTestPlugin(t)
+	settings := map[string]any{
+		"limits": map[string]any{"per_ip": map[string]any{"limit": 1, "window": "200ms"}},
+	}
+	req := &infracontext.RequestContext{IP: "8.8.8.8"}
+
+	for i := 0; i < 3; i++ {
+		in := execInput(settings, req)
+		in.Mode = policy.ModeThrottle
+		res, err := p.Execute(context.Background(), in)
+		require.NoError(t, err, "throttle request %d should not be rejected", i)
+		require.NotNil(t, res)
+		assert.Equal(t, 200, res.StatusCode)
+	}
+}
+
+func TestThrottleDelay(t *testing.T) {
+	assert.Equal(t, time.Duration(0), throttleDelay(time.Minute, 0))
+	assert.Equal(t, time.Duration(0), throttleDelay(0, 10))
+	assert.Equal(t, 100*time.Millisecond, throttleDelay(time.Second, 10))
 }
 
 func TestPlugin_Execute_PerFingerprintFromContext(t *testing.T) {

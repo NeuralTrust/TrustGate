@@ -58,6 +58,7 @@ func (h *CreatePolicyHandler) Handle(c *fiber.Ctx) error {
 		Parallel:    req.ParallelOrDefault(),
 		Settings:    req.Settings,
 		Stages:      req.ToStages(),
+		Mode:        req.ToMode(),
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)
