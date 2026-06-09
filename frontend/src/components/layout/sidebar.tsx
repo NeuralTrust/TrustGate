@@ -7,10 +7,10 @@ import { Logo } from "./logo";
 import { cn } from "@/lib/cn";
 
 const nav = [
-  { href: "/dashboard/registries", label: "Registries", icon: Server },
   { href: "/dashboard/consumers", label: "Consumers", icon: Users },
-  { href: "/dashboard/auth", label: "Auth", icon: KeyRound },
+  { href: "/dashboard/registries", label: "Registry", icon: Server },
   { href: "/dashboard/policies", label: "Policies", icon: ShieldCheck },
+  { href: "/dashboard/auth", label: "Auth", icon: KeyRound },
   { href: "/dashboard/playground", label: "Playground", icon: FlaskConical },
 ];
 

@@ -379,6 +379,10 @@ function RegistryFormDialog({
   );
   const [baseUrl, setBaseUrl] = useState(() => readBaseUrl(registry?.provider_options));
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => readHeaderRows(registry?.provider_options));
+<<<<<<< Updated upstream
+=======
+  const [weight, setWeight] = useState(String(registry?.weight ?? 1));
+>>>>>>> Stashed changes
   const [submitting, setSubmitting] = useState(false);
 
   function set<K extends keyof AuthState>(key: K, value: AuthState[K]) {
@@ -401,7 +405,7 @@ function RegistryFormDialog({
     const body: Record<string, unknown> = {
       name,
       provider,
-      weight: 1,
+      weight: Number(weight) || 1,
       auth: buildAuth(auth),
     };
     if (provider === PROVIDER_OPTIONS_PROVIDER) {
@@ -596,6 +600,18 @@ function RegistryFormDialog({
               <Input value={auth.gcpServiceAccount} onChange={(e) => set("gcpServiceAccount", e.target.value)} placeholder='{"type":"service_account",...}' />
             </Field>
           )}
+<<<<<<< Updated upstream
+=======
+
+          <Field label="Weight" hint="for weighted load balancing">
+            <Input
+              type="number"
+              min={1}
+              value={weight}
+              onChange={(e) => setWeight(e.target.value)}
+            />
+          </Field>
+>>>>>>> Stashed changes
         </DialogBody>
         <DialogFooter>
           {isEdit && onDelete && (
