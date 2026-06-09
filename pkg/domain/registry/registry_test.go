@@ -95,6 +95,34 @@ func TestBackend_Validate_Rejects(t *testing.T) {
 	}
 }
 
+func TestBackend_Validate_OpenAICompatible(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+
+	t.Run("missing base_url is rejected", func(t *testing.T) {
+		t.Parallel()
+		_, err := NewRegistry(gwID, "compat-1", "openai_compatible", nil, "", 1, NewAPIKeyAuth("sk-test"), nil)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, ErrInvalidRegistry) {
+			t.Fatalf("err = %v, want wrap of ErrInvalidRegistry", err)
+		}
+	})
+
+	t.Run("with base_url is accepted", func(t *testing.T) {
+		t.Parallel()
+		b, err := NewRegistry(gwID, "compat-2", "openai_compatible",
+			map[string]any{"base_url": "https://api.together.xyz/v1"}, "", 1, NewAPIKeyAuth("sk-test"), nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if b.Provider != "openai_compatible" {
+			t.Fatalf("Provider = %q, want openai_compatible", b.Provider)
+		}
+	})
+}
+
 func TestBackend_Rehydrate(t *testing.T) {
 	t.Parallel()
 	id := ids.New[ids.RegistryKind]()

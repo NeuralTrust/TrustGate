@@ -20,8 +20,7 @@ type Repository interface {
 	Delete(ctx context.Context, id ids.ConsumerID) error
 	FindByID(ctx context.Context, id ids.ConsumerID) (*Consumer, error)
 	List(ctx context.Context, filter ListFilter) (items []*Consumer, total int, err error)
-	// ListByGateway returns every consumer of a gateway, unpaginated. It backs
-	// the per-gateway aggregated read model consumed on the hot path.
+
 	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Consumer, error)
 
 	AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error

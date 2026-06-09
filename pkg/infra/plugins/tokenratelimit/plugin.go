@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
@@ -79,8 +78,14 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return nil, fmt.Errorf("token_rate_limiter: %w", err)
 	}
 
-	identifier := extractIdentifier(in.Request, cfg.IdentifierHeader)
-	counterKey := fmt.Sprintf("%s:%s:%s", counterKeyPrefix, in.Config.ID, identifier)
+	dimension, subject, err := in.Scope.Subject()
+	if err != nil {
+		return nil, fmt.Errorf("token_rate_limiter: %w", err)
+	}
+	counterKey := fmt.Sprintf("%s:%s:%s:%s", counterKeyPrefix, in.Config.ID, dimension, subject)
+	if group := in.Request.HeaderValue(cfg.GroupByHeader); group != "" {
+		counterKey += ":hdr:" + group
+	}
 
 	switch in.Stage {
 	case policy.StagePreRequest:
@@ -248,24 +253,6 @@ func (p *Plugin) resetSeconds(ctx context.Context, counterKey string, cfg *confi
 		return int(ttl / time.Second)
 	}
 	return cfg.windowSeconds()
-}
-
-func extractIdentifier(req *infracontext.RequestContext, headerName string) string {
-	if req != nil && headerName != "" {
-		if values, ok := req.Headers[headerName]; ok && len(values) > 0 && values[0] != "" {
-			return values[0]
-		}
-		canonical := strings.ToLower(headerName)
-		for name, values := range req.Headers {
-			if strings.ToLower(name) == canonical && len(values) > 0 && values[0] != "" {
-				return values[0]
-			}
-		}
-	}
-	if req != nil && req.IP != "" {
-		return req.IP
-	}
-	return "_global"
 }
 
 func rateLimitHeaders(limit, remaining, resetSeconds int) map[string][]string {

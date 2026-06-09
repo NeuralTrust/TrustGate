@@ -138,6 +138,7 @@ func (e *executor) runOne(
 		Stage:    stage,
 		Mode:     entry.mode,
 		Config:   entry.config,
+		Scope:    scopeFromRequest(req, entry.global),
 		Request:  req,
 		Response: resp,
 		Event:    event,
@@ -163,6 +164,15 @@ func (e *executor) runOne(
 			slog.String("error", err.Error()))
 	}
 	return res, err
+}
+
+func scopeFromRequest(req *infracontext.RequestContext, global bool) RuntimeScope {
+	scope := RuntimeScope{Global: global}
+	if req != nil {
+		scope.GatewayID = req.GatewayID
+		scope.ConsumerID = req.ConsumerID
+	}
+	return scope
 }
 
 func isolateRequest(src *infracontext.RequestContext) *infracontext.RequestContext {

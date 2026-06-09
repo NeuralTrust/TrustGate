@@ -16,44 +16,8 @@ func TestNewVertexClient(t *testing.T) {
 	assert.NotNil(t, NewVertexClient())
 }
 
-func TestParseOptions(t *testing.T) {
-	tests := []struct {
-		name     string
-		opts     map[string]any
-		wantOpts vertexOptions
-		wantErr  bool
-	}{
-		{
-			name:     "valid options",
-			opts:     map[string]any{"project": "my-proj", "location": "us-central1"},
-			wantOpts: vertexOptions{Project: "my-proj", Location: "us-central1", Version: "v1"},
-		},
-		{
-			name:     "custom version",
-			opts:     map[string]any{"project": "p", "location": "eu-west1", "version": "v1beta1"},
-			wantOpts: vertexOptions{Project: "p", Location: "eu-west1", Version: "v1beta1"},
-		},
-		{name: "missing project", opts: map[string]any{"location": "us-central1"}, wantErr: true},
-		{name: "missing location", opts: map[string]any{"project": "p"}, wantErr: true},
-		{name: "nil options", opts: nil, wantErr: true},
-		{name: "empty options", opts: map[string]any{}, wantErr: true},
-		{name: "project wrong type", opts: map[string]any{"project": 123, "location": "us-central1"}, wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseOptions(tt.opts)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantOpts, got)
-		})
-	}
-}
-
 func TestBuildVertexURL(t *testing.T) {
-	opts := vertexOptions{Project: "my-proj", Location: "us-central1", Version: "v1"}
+	opts := providers.VertexOptions{Project: "my-proj", Location: "us-central1", Version: "v1"}
 
 	assert.Equal(t,
 		"https://us-central1-aiplatform.googleapis.com/v1/projects/my-proj/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent",

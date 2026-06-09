@@ -63,6 +63,7 @@ type polSpec struct {
 	enabled  bool
 	priority int
 	parallel bool
+	global   bool
 	stages   []policy.Stage
 }
 
@@ -77,10 +78,28 @@ func policies(t *testing.T, specs ...polSpec) []*policy.Policy {
 			Enabled:  s.enabled,
 			Priority: s.priority,
 			Parallel: s.parallel,
+			Global:   s.global,
 			Stages:   s.stages,
 		})
 	}
 	return out
+}
+
+// scopeCapturePlugin records the RuntimeScope it was executed with so tests can
+// assert the executor derived it from the policy and the request.
+type scopeCapturePlugin struct {
+	name string
+	seen chan ExecInput
+}
+
+func (s *scopeCapturePlugin) Name() string                        { return s.name }
+func (s *scopeCapturePlugin) MandatoryStages() []policy.Stage     { return []policy.Stage{policy.StagePreRequest} }
+func (s *scopeCapturePlugin) SupportedStages() []policy.Stage     { return []policy.Stage{policy.StagePreRequest} }
+func (s *scopeCapturePlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
+func (s *scopeCapturePlugin) ValidateConfig(map[string]any) error { return nil }
+func (s *scopeCapturePlugin) Execute(_ context.Context, in ExecInput) (*Result, error) {
+	s.seen <- in
+	return &Result{StatusCode: 200}, nil
 }
 
 func newRegistry(t *testing.T, ps ...Plugin) Registry {
@@ -330,6 +349,53 @@ func TestExecutor_RunStage_MergesHeadersInOrder(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Origin", "Accept"}, resp.Headers["Vary"])
+}
+
+func TestExecutor_RunStage_PropagatesConsumerScope(t *testing.T) {
+	p := &scopeCapturePlugin{name: "rate", seen: make(chan ExecInput, 1)}
+	reg := newRegistry(t, p)
+	exec := NewExecutor(reg, nil)
+
+	_, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: policies(t, polSpec{slug: "rate", enabled: true, global: false}),
+		Request:  &infracontext.RequestContext{GatewayID: "gw-1", ConsumerID: "c-1"},
+		Response: &infracontext.ResponseContext{},
+	})
+	require.NoError(t, err)
+
+	in := <-p.seen
+	assert.False(t, in.Scope.Global)
+	assert.Equal(t, "gw-1", in.Scope.GatewayID)
+	assert.Equal(t, "c-1", in.Scope.ConsumerID)
+
+	dimension, id, err := in.Scope.Subject()
+	require.NoError(t, err)
+	assert.Equal(t, "consumer", dimension)
+	assert.Equal(t, "c-1", id)
+}
+
+func TestExecutor_RunStage_PropagatesGlobalScopeFromPlan(t *testing.T) {
+	p := &scopeCapturePlugin{name: "rate", seen: make(chan ExecInput, 1)}
+	reg := newRegistry(t, p)
+	exec := NewExecutor(reg, nil)
+
+	plan := NewStagePlan(reg, policies(t, polSpec{slug: "rate", enabled: true, global: true}))
+	_, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Plan:     plan,
+		Request:  &infracontext.RequestContext{GatewayID: "gw-1", ConsumerID: "c-1"},
+		Response: &infracontext.ResponseContext{},
+	})
+	require.NoError(t, err)
+
+	in := <-p.seen
+	assert.True(t, in.Scope.Global, "a global policy must propagate Global through the precomputed plan")
+
+	dimension, id, err := in.Scope.Subject()
+	require.NoError(t, err)
+	assert.Equal(t, "global", dimension)
+	assert.Equal(t, "gw-1", id)
 }
 
 func TestExecutor_RunStage_RecordsPluginSpanOnTrace(t *testing.T) {

@@ -19,6 +19,7 @@ type seedProvider struct {
 
 var seedProviders = []seedProvider{
 	{providers.ProviderOpenAI, "OpenAI", "openai"},
+	{providers.ProviderOpenAICompatible, "OpenAI Compatible", "openai"},
 	{providers.ProviderGoogle, "Google AI Studio", "google"},
 	{providers.ProviderVertex, "Google Vertex AI", "google"},
 	{providers.ProviderAnthropic, "Anthropic", "anthropic"},

@@ -13,13 +13,25 @@ const (
 )
 
 func (c *client) TestConnection(ctx context.Context, config *providers.Config) providers.ProbeResult {
-	return providers.RunBearerGETProbe(ctx, providers.ProviderOpenAI, c.resolveModelsURL(config), config.Credentials.ApiKey)
+	endpointURL, err := c.resolveModelsURL(config)
+	if err != nil {
+		return providers.ProbeResult{
+			OK:      false,
+			Stage:   providers.StageProvider,
+			Message: err.Error(),
+		}
+	}
+	return providers.RunBearerGETProbe(ctx, providers.ProviderOpenAI, endpointURL, config.Credentials.ApiKey)
 }
 
-func (c *client) resolveModelsURL(config *providers.Config) string {
-	base := strings.TrimRight(parseOptions(config).BaseURL, "/")
-	if base != "" {
-		return base + modelsPath
+func (c *client) resolveModelsURL(config *providers.Config) (string, error) {
+	opts, err := providers.DecodeOpenAIOptions(config.Options)
+	if err != nil {
+		return "", err
 	}
-	return modelsURL
+	base := strings.TrimRight(opts.BaseURL, "/")
+	if base != "" {
+		return base + modelsPath, nil
+	}
+	return modelsURL, nil
 }

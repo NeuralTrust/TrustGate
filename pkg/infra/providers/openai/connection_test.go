@@ -13,11 +13,14 @@ import (
 
 func TestResolveModelsURL(t *testing.T) {
 	c := &client{}
-	assert.Equal(t, modelsURL, c.resolveModelsURL(&providers.Config{}))
-	assert.Equal(t,
-		"https://host/v1/models",
-		c.resolveModelsURL(&providers.Config{Options: map[string]any{"base_url": "https://host/v1/"}}),
-	)
+
+	got, err := c.resolveModelsURL(&providers.Config{})
+	require.NoError(t, err)
+	assert.Equal(t, modelsURL, got)
+
+	got, err = c.resolveModelsURL(&providers.Config{Options: map[string]any{"base_url": "https://host/v1/"}})
+	require.NoError(t, err)
+	assert.Equal(t, "https://host/v1/models", got)
 }
 
 func TestTestConnection_MissingAPIKey(t *testing.T) {

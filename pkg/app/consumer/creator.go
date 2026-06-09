@@ -19,6 +19,7 @@ type CreateInput struct {
 	EmbeddingConfig *registrydomain.EmbeddingConfig
 	Headers         map[string]string
 	Active          *bool
+	Fallback        *domain.Fallback
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -59,6 +60,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		EmbeddingConfig: in.EmbeddingConfig,
 		Headers:         in.Headers,
 		Active:          in.Active,
+		Fallback:        in.Fallback,
 	})
 	if err != nil {
 		return nil, err

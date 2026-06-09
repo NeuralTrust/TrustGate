@@ -30,11 +30,11 @@ func newGroqClientAt(url string) providers.Client {
 }
 
 func (c *groqClientAt) Completions(ctx context.Context, config *providers.Config, reqBody []byte) ([]byte, error) {
-	return c.chat.Completions(ctx, c.url, config, reqBody)
+	return c.chat.Completions(ctx, c.url, config, reqBody, nil)
 }
 
 func (c *groqClientAt) CompletionsStream(ctx context.Context, config *providers.Config, reqBody []byte) (iter.Seq2[[]byte, error], error) {
-	return c.chat.CompletionsStream(ctx, c.url, config, reqBody)
+	return c.chat.CompletionsStream(ctx, c.url, config, reqBody, nil)
 }
 
 func TestNewGroqClient(t *testing.T) {

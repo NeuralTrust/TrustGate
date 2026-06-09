@@ -12,6 +12,7 @@ func TestProviderLocator_Get(t *testing.T) {
 
 	for _, provider := range []string{
 		ProviderOpenAI,
+		ProviderOpenAICompatible,
 		ProviderGoogle,
 		ProviderVertex,
 		ProviderAnthropic,

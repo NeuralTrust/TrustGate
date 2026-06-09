@@ -20,13 +20,8 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-<<<<<<< Updated upstream
-import { Field, Input, Select } from "@/components/ui/field";
-import { Section, SwitchRow, Grid2, Divider } from "@/components/ui/form-bits";
-=======
 import { Field, Input, Label } from "@/components/ui/field";
 import { SwitchRow, Grid2 } from "@/components/ui/form-bits";
->>>>>>> Stashed changes
 import type { Registry, Provider, TargetAuth, AuthKind } from "@/lib/types";
 
 export function RegistriesView() {
@@ -195,11 +190,11 @@ function DeleteRegistryDialog({
     setLoading(true);
     try {
       await api.del(`${gatewayScope(gatewayId)}/registries/${registry.id}`);
-      toast({ variant: "success", title: "Registry deleted", description: registry.name });
+      toast({ variant: "success", title: "Connection removed", description: registry.name });
       void invalidate("registries");
       onClose();
     } catch (err) {
-      toast({ variant: "error", title: "Could not delete registry", description: errorMessage(err) });
+      toast({ variant: "error", title: "Could not remove connection", description: errorMessage(err) });
     } finally {
       setLoading(false);
     }
@@ -209,8 +204,8 @@ function DeleteRegistryDialog({
     <ConfirmDialog
       open={registry !== null}
       onOpenChange={(v) => !v && onClose()}
-      title="Delete registry"
-      description={`"${registry?.name}" will be permanently removed. This fails if a consumer still references it.`}
+      title="Disconnect provider"
+      description={`"${registry?.name}" will be removed. This fails if a consumer still references it.`}
       onConfirm={confirm}
       loading={loading}
     />
@@ -218,8 +213,8 @@ function DeleteRegistryDialog({
 }
 
 // Most providers authenticate with a simple API key; the cloud providers need
-// their native credential scheme. This drives the default (and resets when the
-// provider changes) so the common case shows nothing but an API key field.
+// their native credential scheme. This drives the default so the common case
+// shows nothing but an API key field.
 function defaultAuthType(provider: string): AuthKind {
   switch (provider) {
     case "azure":
@@ -332,6 +327,28 @@ function buildAuth(a: AuthState): TargetAuth {
   }
 }
 
+interface HeaderRow {
+  key: string;
+  value: string;
+}
+
+const PROVIDER_OPTIONS_PROVIDER = "openai_compatible";
+
+function readBaseUrl(options: Record<string, unknown> | undefined): string {
+  return typeof options?.base_url === "string" ? options.base_url : "";
+}
+
+function readHeaderRows(options: Record<string, unknown> | undefined): HeaderRow[] {
+  const headers = options?.headers;
+  if (headers && typeof headers === "object" && !Array.isArray(headers)) {
+    return Object.entries(headers as Record<string, unknown>).map(([key, value]) => ({
+      key,
+      value: String(value),
+    }));
+  }
+  return [];
+}
+
 function RegistryFormDialog({
   open,
   onOpenChange,
@@ -357,51 +374,36 @@ function RegistryFormDialog({
   const provider = registry?.provider ?? initialProvider ?? "openai";
   const name = registry?.name ?? initialName ?? provider;
 
-<<<<<<< Updated upstream
-  const [name, setName] = useState(registry?.name ?? "");
-  const [provider, setProvider] = useState(registry?.provider ?? "openai");
-  const [weight, setWeight] = useState(String(registry?.weight ?? 1));
-  const [description, setDescription] = useState(registry?.description ?? "");
-  const [auth, setAuth] = useState<AuthState>(emptyAuth((registry?.auth?.type as AuthKind) ?? "api_key"));
-  const [healthEnabled, setHealthEnabled] = useState(Boolean(registry?.health_checks));
-  const [hcPath, setHcPath] = useState(registry?.health_checks?.path ?? "/health");
-  const [hcThreshold, setHcThreshold] = useState(String(registry?.health_checks?.threshold ?? 3));
-  const [hcInterval, setHcInterval] = useState(String(registry?.health_checks?.interval ?? 30));
-  const [hcPassive, setHcPassive] = useState(registry?.health_checks?.passive ?? false);
-=======
   const [auth, setAuth] = useState<AuthState>(
     emptyAuth((registry?.auth?.type as AuthKind) ?? defaultAuthType(provider)),
   );
   const [baseUrl, setBaseUrl] = useState(() => readBaseUrl(registry?.provider_options));
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => readHeaderRows(registry?.provider_options));
->>>>>>> Stashed changes
   const [submitting, setSubmitting] = useState(false);
 
   function set<K extends keyof AuthState>(key: K, value: AuthState[K]) {
     setAuth((prev) => ({ ...prev, [key]: value }));
   }
 
+  function updateHeaderRow(index: number, field: keyof HeaderRow, value: string) {
+    setHeaderRows((prev) => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
+  }
+
+  function addHeaderRow() {
+    setHeaderRows((prev) => [...prev, { key: "", value: "" }]);
+  }
+
+  function removeHeaderRow(index: number) {
+    setHeaderRows((prev) => prev.filter((_, i) => i !== index));
+  }
+
   async function submit() {
-    if (!name.trim()) {
-      toast({ variant: "error", title: "Name is required" });
-      return;
-    }
     const body: Record<string, unknown> = {
-      name: name.trim(),
+      name,
       provider,
       weight: 1,
       auth: buildAuth(auth),
     };
-<<<<<<< Updated upstream
-    if (description.trim()) body.description = description.trim();
-    if (healthEnabled) {
-      body.health_checks = {
-        passive: hcPassive,
-        path: hcPath,
-        threshold: Number(hcThreshold) || 1,
-        interval: Number(hcInterval) || 1,
-      };
-=======
     if (provider === PROVIDER_OPTIONS_PROVIDER) {
       if (!baseUrl.trim()) {
         toast({
@@ -424,7 +426,6 @@ function RegistryFormDialog({
       // Preserve provider_options the form does not manage (e.g. vertex
       // project/location) so a full-replace PUT does not wipe them.
       body.provider_options = registry.provider_options;
->>>>>>> Stashed changes
     }
 
     setSubmitting(true);
@@ -437,7 +438,7 @@ function RegistryFormDialog({
       }
       toast({
         variant: "success",
-        title: isEdit ? "Registry updated" : "Registry created",
+        title: isEdit ? "Connection updated" : "Connection created",
         description: name,
       });
       void invalidate("registries");
@@ -456,51 +457,11 @@ function RegistryFormDialog({
           title={isEdit ? "Edit connection" : initialName ? `Connect ${initialName}` : "New connection"}
           description={
             isEdit
-              ? "Updates replace the connection configuration in full."
+              ? "Update the credentials for this connection."
               : "Set credentials to activate this provider."
           }
         />
         <DialogBody className="flex flex-col gap-5">
-<<<<<<< Updated upstream
-          <Grid2>
-            <Field label="Name">
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="openai-primary" />
-            </Field>
-            <Field label="Provider">
-              <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
-                {providers && providers.length > 0 ? (
-                  providers.map((p) => (
-                    <option key={p.id} value={p.code}>
-                      {p.display_name}
-                    </option>
-                  ))
-                ) : (
-                  <option value="openai">openai</option>
-                )}
-              </Select>
-            </Field>
-          </Grid2>
-          <Grid2>
-            <Field label="Weight" hint="load balancing">
-              <Input type="number" min={0} value={weight} onChange={(e) => setWeight(e.target.value)} />
-            </Field>
-            <Field label="Description" hint="optional">
-              <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Primary OpenAI pool" />
-            </Field>
-          </Grid2>
-
-          <Divider />
-
-          <Section title="Authentication" description={isEdit ? "Secrets are write-only — re-enter to change them." : "Credentials used to reach the provider."}>
-            <Field label="Type">
-              <Select value={auth.type} onChange={(e) => set("type", e.target.value as AuthKind)}>
-                {AUTH_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </Select>
-=======
           {provider === PROVIDER_OPTIONS_PROVIDER && (
             <>
               <Field label="Base URL" hint="required">
@@ -552,90 +513,89 @@ function RegistryFormDialog({
                 onChange={(e) => set("apiKey", e.target.value)}
                 placeholder="sk-..."
               />
->>>>>>> Stashed changes
             </Field>
           )}
 
           {auth.type === "azure" && (
-              <>
-                <SwitchRow
-                  label="Use managed identity"
-                  checked={auth.azureManagedIdentity}
-                  onCheckedChange={(v) => set("azureManagedIdentity", v)}
-                />
-                <Grid2>
-                  <Field label="Endpoint">
-                    <Input value={auth.azureEndpoint} onChange={(e) => set("azureEndpoint", e.target.value)} />
-                  </Field>
-                  <Field label="API version">
-                    <Input value={auth.azureVersion} onChange={(e) => set("azureVersion", e.target.value)} />
-                  </Field>
-                </Grid2>
-                <Grid2>
-                  <Field label="Client ID">
-                    <Input value={auth.azureClientId} onChange={(e) => set("azureClientId", e.target.value)} />
-                  </Field>
-                  <Field label="Client secret">
-                    <Input type="password" value={auth.azureClientSecret} onChange={(e) => set("azureClientSecret", e.target.value)} />
-                  </Field>
-                </Grid2>
-                <Field label="Tenant ID">
-                  <Input value={auth.azureTenantId} onChange={(e) => set("azureTenantId", e.target.value)} />
+            <>
+              <SwitchRow
+                label="Use managed identity"
+                checked={auth.azureManagedIdentity}
+                onCheckedChange={(v) => set("azureManagedIdentity", v)}
+              />
+              <Grid2>
+                <Field label="Endpoint">
+                  <Input value={auth.azureEndpoint} onChange={(e) => set("azureEndpoint", e.target.value)} />
                 </Field>
-              </>
-            )}
-
-            {auth.type === "aws" && (
-              <>
-                <SwitchRow label="Assume role" checked={auth.awsUseRole} onCheckedChange={(v) => set("awsUseRole", v)} />
-                <Grid2>
-                  <Field label="Access key ID">
-                    <Input value={auth.awsAccessKeyId} onChange={(e) => set("awsAccessKeyId", e.target.value)} />
-                  </Field>
-                  <Field label="Secret access key">
-                    <Input type="password" value={auth.awsSecretAccessKey} onChange={(e) => set("awsSecretAccessKey", e.target.value)} />
-                  </Field>
-                </Grid2>
-                <Grid2>
-                  <Field label="Region">
-                    <Input value={auth.awsRegion} onChange={(e) => set("awsRegion", e.target.value)} placeholder="us-east-1" />
-                  </Field>
-                  <Field label="Role ARN" hint="optional">
-                    <Input value={auth.awsRole} onChange={(e) => set("awsRole", e.target.value)} />
-                  </Field>
-                </Grid2>
-              </>
-            )}
-
-            {auth.type === "oauth2" && (
-              <>
-                <Grid2>
-                  <Field label="Token URL">
-                    <Input value={auth.oauthTokenUrl} onChange={(e) => set("oauthTokenUrl", e.target.value)} />
-                  </Field>
-                  <Field label="Grant type">
-                    <Input value={auth.oauthGrantType} onChange={(e) => set("oauthGrantType", e.target.value)} />
-                  </Field>
-                </Grid2>
-                <Grid2>
-                  <Field label="Client ID">
-                    <Input value={auth.oauthClientId} onChange={(e) => set("oauthClientId", e.target.value)} />
-                  </Field>
-                  <Field label="Client secret">
-                    <Input type="password" value={auth.oauthClientSecret} onChange={(e) => set("oauthClientSecret", e.target.value)} />
-                  </Field>
-                </Grid2>
-                <Field label="Scopes" hint="comma-separated">
-                  <Input value={auth.oauthScopes} onChange={(e) => set("oauthScopes", e.target.value)} placeholder="read, write" />
+                <Field label="API version">
+                  <Input value={auth.azureVersion} onChange={(e) => set("azureVersion", e.target.value)} />
                 </Field>
-              </>
-            )}
-
-            {auth.type === "gcp_service_account" && (
-              <Field label="Service account JSON">
-                <Input value={auth.gcpServiceAccount} onChange={(e) => set("gcpServiceAccount", e.target.value)} placeholder='{"type":"service_account",...}' />
+              </Grid2>
+              <Grid2>
+                <Field label="Client ID">
+                  <Input value={auth.azureClientId} onChange={(e) => set("azureClientId", e.target.value)} />
+                </Field>
+                <Field label="Client secret">
+                  <Input type="password" value={auth.azureClientSecret} onChange={(e) => set("azureClientSecret", e.target.value)} />
+                </Field>
+              </Grid2>
+              <Field label="Tenant ID">
+                <Input value={auth.azureTenantId} onChange={(e) => set("azureTenantId", e.target.value)} />
               </Field>
-            )}
+            </>
+          )}
+
+          {auth.type === "aws" && (
+            <>
+              <SwitchRow label="Assume role" checked={auth.awsUseRole} onCheckedChange={(v) => set("awsUseRole", v)} />
+              <Grid2>
+                <Field label="Access key ID">
+                  <Input value={auth.awsAccessKeyId} onChange={(e) => set("awsAccessKeyId", e.target.value)} />
+                </Field>
+                <Field label="Secret access key">
+                  <Input type="password" value={auth.awsSecretAccessKey} onChange={(e) => set("awsSecretAccessKey", e.target.value)} />
+                </Field>
+              </Grid2>
+              <Grid2>
+                <Field label="Region">
+                  <Input value={auth.awsRegion} onChange={(e) => set("awsRegion", e.target.value)} placeholder="us-east-1" />
+                </Field>
+                <Field label="Role ARN" hint="optional">
+                  <Input value={auth.awsRole} onChange={(e) => set("awsRole", e.target.value)} />
+                </Field>
+              </Grid2>
+            </>
+          )}
+
+          {auth.type === "oauth2" && (
+            <>
+              <Grid2>
+                <Field label="Token URL">
+                  <Input value={auth.oauthTokenUrl} onChange={(e) => set("oauthTokenUrl", e.target.value)} />
+                </Field>
+                <Field label="Grant type">
+                  <Input value={auth.oauthGrantType} onChange={(e) => set("oauthGrantType", e.target.value)} />
+                </Field>
+              </Grid2>
+              <Grid2>
+                <Field label="Client ID">
+                  <Input value={auth.oauthClientId} onChange={(e) => set("oauthClientId", e.target.value)} />
+                </Field>
+                <Field label="Client secret">
+                  <Input type="password" value={auth.oauthClientSecret} onChange={(e) => set("oauthClientSecret", e.target.value)} />
+                </Field>
+              </Grid2>
+              <Field label="Scopes" hint="comma-separated">
+                <Input value={auth.oauthScopes} onChange={(e) => set("oauthScopes", e.target.value)} placeholder="read, write" />
+              </Field>
+            </>
+          )}
+
+          {auth.type === "gcp_service_account" && (
+            <Field label="Service account JSON">
+              <Input value={auth.gcpServiceAccount} onChange={(e) => set("gcpServiceAccount", e.target.value)} placeholder='{"type":"service_account",...}' />
+            </Field>
+          )}
         </DialogBody>
         <DialogFooter>
           {isEdit && onDelete && (

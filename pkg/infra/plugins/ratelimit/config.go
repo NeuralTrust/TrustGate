@@ -9,29 +9,19 @@ import (
 
 const defaultRetryAfter = "60"
 
-// limitOrder is the precedence in which limit types are evaluated: most
-// granular first. The first exceeded type rejects the request.
-var limitOrder = []string{keyPerFingerprint, keyPerIP, keyPerUser, keyGlobal}
-
-const (
-	keyPerFingerprint = "per_fingerprint"
-	keyPerIP          = "per_ip"
-	keyPerUser        = "per_user"
-	keyGlobal         = "global"
-)
-
-type limitConfig struct {
-	Limit  int    `mapstructure:"limit"`
-	Window string `mapstructure:"window"`
-}
-
+// config is the rate_limiter settings. The limit is a single sliding window;
+// whether it is enforced gateway-wide or per consumer is decided by the policy
+// scope (Policy.Global) at runtime, not by configuration.
+//
+// GroupByHeader optionally sub-partitions the counter within the policy scope by
+// the value of a request header (e.g. a tenant or end-user id), so each distinct
+// header value gets its own budget. When empty (or the header is absent on a
+// request), the counter is keyed by the scope subject (gateway or consumer).
 type config struct {
-	Limits  map[string]limitConfig `mapstructure:"limits"`
-	Actions actionsConfig          `mapstructure:"actions"`
-}
-
-type actionsConfig struct {
-	RetryAfter string `mapstructure:"retry_after"`
+	Limit         int    `mapstructure:"limit"`
+	Window        string `mapstructure:"window"`
+	RetryAfter    string `mapstructure:"retry_after"`
+	GroupByHeader string `mapstructure:"group_by_header"`
 }
 
 func parseConfig(settings map[string]any) (*config, error) {
@@ -42,26 +32,21 @@ func parseConfig(settings map[string]any) (*config, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	if cfg.Actions.RetryAfter == "" {
-		cfg.Actions.RetryAfter = defaultRetryAfter
+	if cfg.RetryAfter == "" {
+		cfg.RetryAfter = defaultRetryAfter
 	}
 	return &cfg, nil
 }
 
 func (c *config) validate() error {
-	if len(c.Limits) == 0 {
-		return fmt.Errorf("rate_limiter: at least one limit is required")
+	if c.Limit <= 0 {
+		return fmt.Errorf("rate_limiter: limit must be positive")
 	}
-	for limitType, lc := range c.Limits {
-		if lc.Limit <= 0 {
-			return fmt.Errorf("rate_limiter: limit for %q must be positive", limitType)
-		}
-		if lc.Window == "" {
-			return fmt.Errorf("rate_limiter: window for %q is required", limitType)
-		}
-		if _, err := time.ParseDuration(lc.Window); err != nil {
-			return fmt.Errorf("rate_limiter: invalid window for %q: %w", limitType, err)
-		}
+	if c.Window == "" {
+		return fmt.Errorf("rate_limiter: window is required")
+	}
+	if _, err := time.ParseDuration(c.Window); err != nil {
+		return fmt.Errorf("rate_limiter: invalid window: %w", err)
 	}
 	return nil
 }

@@ -29,14 +29,14 @@ import (
 
 // ---- payload builders -------------------------------------------------------
 
-// rateLimitSettings configures the rate_limiter plugin with a single global
-// limit over a 1-minute window, rejecting with 429 + Retry-After once exceeded.
+// rateLimitSettings configures the rate_limiter plugin with a single sliding
+// window over 1 minute, rejecting with 429 + Retry-After once exceeded. Whether
+// the limit is gateway-wide or per consumer is decided by the policy scope.
 func rateLimitSettings(limit int) map[string]any {
 	return map[string]any{
-		"limits": map[string]any{
-			"global": map[string]any{"limit": limit, "window": "1m"},
-		},
-		"actions": map[string]any{"type": "reject", "retry_after": "30"},
+		"limit":       limit,
+		"window":      "1m",
+		"retry_after": "30",
 	}
 }
 
@@ -208,7 +208,7 @@ func TestPolicyE2E_GlobalAndConsumerComposeDifferentSlugs(t *testing.T) {
 	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, allowed, body)
 	require.Equal(t, http.StatusOK, status, "body: %s", raw)
 	assert.Equal(t, "https://allowed.com", headers.Get("Access-Control-Allow-Origin"), "global CORS must run")
-	assert.Equal(t, "2", headers.Get("X-RateLimit-global-Limit"), "consumer rate limiter must run")
+	assert.Equal(t, "2", headers.Get("X-RateLimit-consumer-Limit"), "consumer rate limiter must run")
 
 	// The global CORS rejection still fires for a foreign origin.
 	statusBad, _, _ := proxyRequest(t, http.MethodPost, apiKey, path,
@@ -243,7 +243,7 @@ func TestPolicyE2E_ConsumerOverridesGlobalBySlug(t *testing.T) {
 		require.Equal(t, http.StatusOK, status,
 			"request %d must pass: the permissive consumer policy overrides the strict global one, body: %s", i, raw)
 		// The applied limit is the consumer's (100), proving the global was dropped.
-		assert.Equal(t, "100", headers.Get("X-RateLimit-global-Limit"))
+		assert.Equal(t, "100", headers.Get("X-RateLimit-consumer-Limit"))
 	}
 	assert.Equal(t, 3, up.Hits())
 }
@@ -309,7 +309,7 @@ func TestPolicyE2E_ParallelBatchBothApply(t *testing.T) {
 	status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, allowed, body)
 	require.Equal(t, http.StatusOK, status, "body: %s", raw)
 	assert.Equal(t, "https://allowed.com", headers.Get("Access-Control-Allow-Origin"), "parallel CORS header must survive")
-	assert.Equal(t, "2", headers.Get("X-RateLimit-global-Limit"), "parallel rate-limiter header must survive")
+	assert.Equal(t, "2", headers.Get("X-RateLimit-consumer-Limit"), "parallel rate-limiter header must survive")
 
 	// A rejection from any plugin in the parallel batch still short-circuits.
 	statusBad, _, _ := proxyRequest(t, http.MethodPost, apiKey, path,
@@ -338,7 +338,7 @@ func TestPolicyE2E_MultiStagePluginComposesWithPreRequest(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		status, headers, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
 		require.Equal(t, http.StatusOK, status, "request %d should pass, body: %s", i, raw)
-		assert.Equal(t, "2", headers.Get("X-RateLimit-global-Limit"),
+		assert.Equal(t, "2", headers.Get("X-RateLimit-consumer-Limit"),
 			"the pre_request rate limiter must run alongside the multi-stage token limiter")
 	}
 	status, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
