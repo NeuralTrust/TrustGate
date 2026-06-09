@@ -8,6 +8,7 @@ import (
 	"iter"
 	"net/http"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
@@ -18,13 +19,22 @@ import (
 const defaultAPIVersion = "2024-05-01-preview"
 
 type client struct {
-	pool *providers.HTTPClientPool
+	pool        *providers.HTTPClientPool
+	tokenSource azureTokenSource
 }
 
 func NewAzureClient() providers.Client {
 	return &client{
-		pool: providers.NewHTTPClientPool(),
+		pool:        providers.NewHTTPClientPool(),
+		tokenSource: getAzureBearerToken,
 	}
+}
+
+type azureTokenSource func(context.Context, *providers.Azure) (string, error)
+
+type authHeader struct {
+	name  string
+	value string
 }
 
 // Completions sends reqBody raw to the Azure OpenAI endpoint (non-streaming).
@@ -45,17 +55,17 @@ func (c *client) Completions(
 		return nil, fmt.Errorf("model (deployment ID) is required")
 	}
 
-	token, err := c.getToken(ctx, config)
+	auth, err := c.resolveAuth(ctx, config)
 	if err != nil {
 		return nil, err
 	}
 
 	url := c.buildURL(config, model)
 
-	return c.rawPost(ctx, url, token, config.Credentials.Azure.UseIdentity, reqBody)
+	return c.rawPost(ctx, url, auth, reqBody)
 }
 
-func (c *client) rawPost(ctx context.Context, url, token string, useIdentity bool, reqBody []byte) ([]byte, error) {
+func (c *client) rawPost(ctx context.Context, url string, auth authHeader, reqBody []byte) ([]byte, error) {
 	httpClient := c.pool.Get(providers.ProviderAzure, providers.DefaultHTTPTimeout)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
@@ -63,7 +73,7 @@ func (c *client) rawPost(ctx context.Context, url, token string, useIdentity boo
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	c.applyAuthHeader(httpReq, useIdentity, token)
+	auth.apply(httpReq)
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is built from admin-configured Azure endpoint, not user-controlled
 	if err != nil {
@@ -100,7 +110,7 @@ func (c *client) CompletionsStream(
 		return nil, fmt.Errorf("model (deployment ID) is required")
 	}
 
-	token, err := c.getToken(ctx, config)
+	auth, err := c.resolveAuth(ctx, config)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +123,7 @@ func (c *client) CompletionsStream(
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	c.applyAuthHeader(httpReq, config.Credentials.Azure.UseIdentity, token)
+	auth.apply(httpReq)
 
 	resp, err := httpClient.Do(httpReq) // #nosec G704 -- URL is built from admin-configured Azure endpoint, not user-controlled
 	if err != nil {
@@ -129,26 +139,52 @@ func (c *client) CompletionsStream(
 	return providers.StreamResponse(ctx, resp.Body), nil
 }
 
-func (c *client) applyAuthHeader(req *http.Request, useIdentity bool, token string) {
-	if useIdentity {
-		req.Header.Set("Authorization", "Bearer "+token)
-	} else {
-		req.Header.Set("api-key", token)
+func (h authHeader) apply(req *http.Request) {
+	req.Header.Set(h.name, h.value)
+}
+
+func (c *client) resolveAuth(ctx context.Context, config *providers.Config) (authHeader, error) {
+	az := config.Credentials.Azure
+	switch azureAuthMode(az) {
+	case providers.AzureAuthModeAPIKey:
+		if config.Credentials.ApiKey == "" {
+			return authHeader{}, fmt.Errorf("API key is required for Azure API key authentication")
+		}
+		return authHeader{name: "api-key", value: config.Credentials.ApiKey}, nil
+	case providers.AzureAuthModeServicePrincipal, providers.AzureAuthModeDefaultAzureCredential:
+		token, err := c.bearerToken(ctx, az)
+		if err != nil {
+			return authHeader{}, err
+		}
+		return authHeader{name: "Authorization", value: "Bearer " + token}, nil
+	default:
+		return authHeader{}, fmt.Errorf("unsupported Azure auth mode %q", az.AuthMode)
 	}
 }
 
-func (c *client) getToken(ctx context.Context, config *providers.Config) (string, error) {
-	if config.Credentials.Azure.UseIdentity {
-		token, err := getAzureADToken(ctx)
-		if err != nil {
-			return "", fmt.Errorf("failed to get Azure AD token: %w", err)
-		}
-		return token, nil
+func (c *client) bearerToken(ctx context.Context, az *providers.Azure) (string, error) {
+	tokenSource := c.tokenSource
+	if tokenSource == nil {
+		tokenSource = getAzureBearerToken
 	}
-	if config.Credentials.ApiKey == "" {
-		return "", fmt.Errorf("API key is required when not using Azure identity")
+	token, err := tokenSource(ctx, az)
+	if err != nil {
+		return "", fmt.Errorf("failed to get Azure bearer token: %w", err)
 	}
-	return config.Credentials.ApiKey, nil
+	return token, nil
+}
+
+func azureAuthMode(az *providers.Azure) providers.AzureAuthMode {
+	if az.AuthMode != "" {
+		return az.AuthMode
+	}
+	if az.UseIdentity {
+		return providers.AzureAuthModeDefaultAzureCredential
+	}
+	if az.TenantID != "" || az.ClientID != "" || az.ClientSecret != "" {
+		return providers.AzureAuthModeServicePrincipal
+	}
+	return providers.AzureAuthModeAPIKey
 }
 
 func (c *client) buildURL(config *providers.Config, model string) string {
@@ -160,10 +196,10 @@ func (c *client) buildURL(config *providers.Config, model string) string {
 		config.Credentials.Azure.Endpoint, model, apiVersion)
 }
 
-func getAzureADToken(ctx context.Context) (string, error) {
-	cred, err := azidentity.NewDefaultAzureCredential(nil)
+func getAzureBearerToken(ctx context.Context, az *providers.Azure) (string, error) {
+	cred, err := azureCredential(az)
 	if err != nil {
-		return "", fmt.Errorf("failed to create credential: %w", err)
+		return "", err
 	}
 	token, err := cred.GetToken(ctx, policy.TokenRequestOptions{
 		Scopes: []string{"https://cognitiveservices.azure.com/.default"},
@@ -172,4 +208,26 @@ func getAzureADToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to get token: %w", err)
 	}
 	return token.Token, nil
+}
+
+func azureCredential(az *providers.Azure) (azcore.TokenCredential, error) {
+	switch azureAuthMode(az) {
+	case providers.AzureAuthModeServicePrincipal:
+		if az.TenantID == "" || az.ClientID == "" || az.ClientSecret == "" {
+			return nil, fmt.Errorf("azure service principal requires tenant_id, client_id, and client_secret")
+		}
+		cred, err := azidentity.NewClientSecretCredential(az.TenantID, az.ClientID, az.ClientSecret, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Azure client secret credential: %w", err)
+		}
+		return cred, nil
+	case providers.AzureAuthModeDefaultAzureCredential:
+		cred, err := azidentity.NewDefaultAzureCredential(nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Azure default credential: %w", err)
+		}
+		return cred, nil
+	default:
+		return nil, fmt.Errorf("unsupported Azure bearer auth mode %q", az.AuthMode)
+	}
 }

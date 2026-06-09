@@ -96,6 +96,9 @@ func (r CreateRegistryRequest) Validate() error {
 	if r.Auth == nil {
 		return fmt.Errorf("auth is required: %w", commonerrors.ErrValidation)
 	}
+	if err := r.Auth.ToDomain().Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 

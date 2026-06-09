@@ -32,6 +32,9 @@ func (r TestConnectionRequest) Validate() error {
 	if r.Auth == nil {
 		return fmt.Errorf("auth is required when registry_id is not set: %w", commonerrors.ErrValidation)
 	}
+	if err := r.Auth.ToDomain().Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 

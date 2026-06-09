@@ -17,7 +17,7 @@ func (c *client) TestConnection(ctx context.Context, config *providers.Config) p
 		}
 	}
 
-	token, err := c.getToken(ctx, config)
+	auth, err := c.resolveAuth(ctx, config)
 	if err != nil {
 		return providers.ProbeResult{
 			OK:      false,
@@ -30,7 +30,7 @@ func (c *client) TestConnection(ctx context.Context, config *providers.Config) p
 	if err != nil {
 		return providers.ProbeResult{OK: false, Stage: providers.StageConnectivity, Message: err.Error()}
 	}
-	c.applyAuthHeader(req, config.Credentials.Azure.UseIdentity, token)
+	auth.apply(req)
 	return providers.RunHTTPProbe(providers.ProviderAzure, req)
 }
 

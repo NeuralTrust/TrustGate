@@ -16,6 +16,11 @@
     { "key": "proxy_url", "value": "http://localhost:8081", "type": "string" },
     { "key": "admin_token", "value": "", "type": "string" },
     { "key": "openai_api_key", "value": "sk-replace-with-real-openai-key", "type": "string" },
+    { "key": "azure_openai_endpoint", "value": "https://replace-me.openai.azure.com", "type": "string" },
+    { "key": "azure_openai_api_key", "value": "replace-with-real-azure-api-key", "type": "string" },
+    { "key": "azure_tenant_id", "value": "replace-with-tenant-id", "type": "string" },
+    { "key": "azure_client_id", "value": "replace-with-client-id", "type": "string" },
+    { "key": "azure_client_secret", "value": "replace-with-client-secret", "type": "string" },
     { "key": "consumer_api_key", "value": "", "type": "string" },
     { "key": "consumer_path", "value": "/v1/chat/completions", "type": "string" },
     { "key": "gateway_id", "value": "", "type": "string" },
@@ -161,6 +166,45 @@
           }
         },
         {
+          "name": "Create Azure Registry (API Key)",
+          "description": "Azure API key mode requires auth.type=azure, azure.endpoint, and azure.api_key.",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"azure-api-key\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using api-key auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-05-01-preview\",\n      \"api_key\": \"{{azure_openai_api_key}}\"\n    }\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries"] }
+          }
+        },
+        {
+          "name": "Create Azure Registry (Service Principal)",
+          "description": "Azure service principal mode requires auth.type=azure, azure.endpoint, azure.tenant_id, azure.client_id, and azure.client_secret. It is not generic auth.type=oauth2.",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"azure-service-principal\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using service principal auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-05-01-preview\",\n      \"tenant_id\": \"{{azure_tenant_id}}\",\n      \"client_id\": \"{{azure_client_id}}\",\n      \"client_secret\": \"{{azure_client_secret}}\"\n    }\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries"] }
+          }
+        },
+        {
+          "name": "Create Azure Registry (DefaultAzureCredential)",
+          "description": "The public field use_managed_identity is retained for compatibility, but AgentGateway uses Azure SDK DefaultAzureCredential semantics for this mode.",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"azure-default-credential\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using Azure SDK DefaultAzureCredential\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-05-01-preview\",\n      \"use_managed_identity\": true\n    }\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries"] }
+          }
+        },
+        {
           "name": "List Registries",
           "request": {
             "method": "GET",
@@ -195,6 +239,45 @@
               "raw": "{\n  \"name\": \"openai-primary\",\n  \"provider\": \"openai\",\n  \"description\": \"Updated description\",\n  \"weight\": 2,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"sk-replace-me\" }\n  }\n}"
             },
             "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "{{registry_id}}"] }
+          }
+        },
+        {
+          "name": "Update Azure Registry (Preserve Secret)",
+          "description": "Use the redaction placeholder for the same Azure mode to preserve the stored api_key or client_secret during partial updates.",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Rotate metadata without resending the Azure API key\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-05-01-preview\",\n      \"api_key\": \"***\"\n    }\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "{{registry_id}}"] }
+          }
+        },
+        {
+          "name": "Test Azure Connection (Service Principal)",
+          "description": "Connection testing supports Azure service principal auth under auth.type=azure.",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"azure\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"tenant_id\": \"{{azure_tenant_id}}\",\n      \"client_id\": \"{{azure_client_id}}\",\n      \"client_secret\": \"{{azure_client_secret}}\"\n    }\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/test-connection", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "test-connection"] }
+          }
+        },
+        {
+          "name": "Test Azure Connection (DefaultAzureCredential)",
+          "description": "use_managed_identity=true keeps the existing API name, but the runtime uses Azure SDK DefaultAzureCredential.",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"azure\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"use_managed_identity\": true\n    }\n  }\n}"
+            },
+            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/test-connection", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "test-connection"] }
           }
         },
         {
