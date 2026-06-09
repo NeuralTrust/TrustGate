@@ -84,7 +84,7 @@ type AzureAuthMode string
 const (
 	AzureAuthModeAPIKey                 AzureAuthMode = "api_key"
 	AzureAuthModeServicePrincipal       AzureAuthMode = "service_principal"
-	AzureAuthModeDefaultAzureCredential AzureAuthMode = "default_azure_credential"
+	AzureAuthModeDefaultAzureCredential AzureAuthMode = "default_azure_credential" // #nosec G101 -- auth mode identifier, not a credential value
 )
 
 type Azure struct {

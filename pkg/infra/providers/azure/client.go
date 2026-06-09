@@ -19,7 +19,7 @@ import (
 
 const (
 	defaultAPIVersion = "2024-10-21"
-	azureTokenScope   = "https://ai.azure.com/.default"
+	azureTokenScope   = "https://ai.azure.com/.default" // #nosec G101 -- OAuth audience scope, not a credential value
 )
 
 type client struct {
