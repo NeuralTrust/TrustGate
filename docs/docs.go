@@ -2811,6 +2811,9 @@ const docTemplate = `{
                 "embedding_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest"
                 },
+                "fallback": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest"
+                },
                 "headers": {
                     "type": "object",
                     "additionalProperties": {
