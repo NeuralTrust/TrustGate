@@ -128,6 +128,11 @@ export interface ModelPolicy {
   default?: string;
 }
 
+export interface ConsumerWeight {
+  registry_id: string;
+  weight: number;
+}
+
 export interface Consumer {
   id: string;
   gateway_id: string;
@@ -141,6 +146,7 @@ export interface Consumer {
   registry_ids: string[];
   auth_ids: string[];
   fallback?: Fallback | null;
+  weights?: ConsumerWeight[];
   model_policies?: ModelPolicy[];
   created_at: string;
   updated_at: string;
