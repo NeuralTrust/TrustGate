@@ -30,6 +30,6 @@ func (r *proxyRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(ReadyPath, r.healthHandler.Readiness)
 
 	installMiddlewares(app, r.middlewareTransport)
-	app.All("/v1/*", r.proxyHandler.Handle)
+	app.All("/*", r.proxyHandler.Handle)
 	return nil
 }
