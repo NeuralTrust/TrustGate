@@ -17,6 +17,10 @@ func TestNewAzureClient(t *testing.T) {
 	assert.NotNil(t, NewAzureClient())
 }
 
+func TestAzureTokenScope(t *testing.T) {
+	assert.Equal(t, "https://ai.azure.com/.default", azureTokenScope)
+}
+
 func TestCompletions_MissingAzureConfig(t *testing.T) {
 	_, err := NewAzureClient().Completions(context.Background(), &providers.Config{}, []byte(`{"model":"dep"}`))
 	require.Error(t, err)
@@ -36,7 +40,13 @@ func TestBuildURL(t *testing.T) {
 	t.Run("default api version", func(t *testing.T) {
 		cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{Endpoint: "https://x.openai.azure.com"}}}
 		url := c.buildURL(cfg, "gpt-4o")
-		assert.Equal(t, "https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-05-01-preview", url)
+		assert.Equal(t, "https://x.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21", url)
+	})
+
+	t.Run("project endpoint default api version", func(t *testing.T) {
+		cfg := &providers.Config{Credentials: providers.Credentials{Azure: &providers.Azure{Endpoint: "https://x.services.ai.azure.com/api/projects/project-a"}}}
+		url := c.buildURL(cfg, "gpt-4o")
+		assert.Equal(t, "https://x.services.ai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21", url)
 	})
 
 	t.Run("custom api version", func(t *testing.T) {

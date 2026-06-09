@@ -35,9 +35,10 @@ func (c *client) TestConnection(ctx context.Context, config *providers.Config) p
 }
 
 func (c *client) buildModelsURL(config *providers.Config) string {
+	endpoint := azureRESTEndpoint(config.Credentials.Azure.Endpoint)
 	apiVersion := defaultAPIVersion
 	if config.Credentials.Azure.ApiVersion != "" {
 		apiVersion = config.Credentials.Azure.ApiVersion
 	}
-	return fmt.Sprintf("%s/openai/models?api-version=%s", config.Credentials.Azure.Endpoint, apiVersion)
+	return fmt.Sprintf("%s/openai/models?api-version=%s", endpoint, apiVersion)
 }

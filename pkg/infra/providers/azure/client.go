@@ -7,6 +7,7 @@ import (
 	"io"
 	"iter"
 	"net/http"
+	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
@@ -16,7 +17,10 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 )
 
-const defaultAPIVersion = "2024-05-01-preview"
+const (
+	defaultAPIVersion = "2024-10-21"
+	azureTokenScope   = "https://ai.azure.com/.default"
+)
 
 type client struct {
 	pool        *providers.HTTPClientPool
@@ -188,12 +192,22 @@ func azureAuthMode(az *providers.Azure) providers.AzureAuthMode {
 }
 
 func (c *client) buildURL(config *providers.Config, model string) string {
+	originalEndpoint := config.Credentials.Azure.Endpoint
+	endpoint := azureRESTEndpoint(originalEndpoint)
 	apiVersion := defaultAPIVersion
 	if config.Credentials.Azure.ApiVersion != "" {
 		apiVersion = config.Credentials.Azure.ApiVersion
 	}
-	return fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
-		config.Credentials.Azure.Endpoint, model, apiVersion)
+	finalURL := fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
+		endpoint, model, apiVersion)
+	return finalURL
+}
+
+func azureRESTEndpoint(endpoint string) string {
+	if idx := strings.Index(endpoint, "/api/projects/"); idx >= 0 {
+		return endpoint[:idx]
+	}
+	return strings.TrimRight(endpoint, "/")
 }
 
 func getAzureBearerToken(ctx context.Context, az *providers.Azure) (string, error) {
@@ -202,7 +216,7 @@ func getAzureBearerToken(ctx context.Context, az *providers.Azure) (string, erro
 		return "", err
 	}
 	token, err := cred.GetToken(ctx, policy.TokenRequestOptions{
-		Scopes: []string{"https://cognitiveservices.azure.com/.default"},
+		Scopes: []string{azureTokenScope},
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to get token: %w", err)

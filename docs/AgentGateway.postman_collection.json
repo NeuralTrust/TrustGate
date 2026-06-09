@@ -8,26 +8,149 @@
   "auth": {
     "type": "bearer",
     "bearer": [
-      { "key": "token", "value": "{{admin_token}}", "type": "string" }
+      {
+        "key": "token",
+        "value": "{{admin_token}}",
+        "type": "string"
+      }
     ]
   },
   "variable": [
-    { "key": "base_url", "value": "http://localhost:8080", "type": "string" },
-    { "key": "proxy_url", "value": "http://localhost:8081", "type": "string" },
-    { "key": "admin_token", "value": "", "type": "string" },
-    { "key": "openai_api_key", "value": "sk-replace-with-real-openai-key", "type": "string" },
-    { "key": "azure_openai_endpoint", "value": "https://replace-me.openai.azure.com", "type": "string" },
-    { "key": "azure_openai_api_key", "value": "replace-with-real-azure-api-key", "type": "string" },
-    { "key": "azure_tenant_id", "value": "replace-with-tenant-id", "type": "string" },
-    { "key": "azure_client_id", "value": "replace-with-client-id", "type": "string" },
-    { "key": "azure_client_secret", "value": "replace-with-client-secret", "type": "string" },
-    { "key": "consumer_api_key", "value": "", "type": "string" },
-    { "key": "consumer_path", "value": "/v1/chat/completions", "type": "string" },
-    { "key": "gateway_id", "value": "", "type": "string" },
-    { "key": "registry_id", "value": "", "type": "string" },
-    { "key": "policy_id", "value": "", "type": "string" },
-    { "key": "consumer_id", "value": "", "type": "string" },
-    { "key": "auth_id", "value": "", "type": "string" }
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "proxy_url",
+      "value": "http://localhost:8081",
+      "type": "string"
+    },
+    {
+      "key": "admin_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "openai_api_key",
+      "value": "sk-replace-with-real-openai-key",
+      "type": "string"
+    },
+    {
+      "key": "azure_openai_endpoint",
+      "value": "https://replace-me.openai.azure.com",
+      "type": "string"
+    },
+    {
+      "key": "azure_openai_api_key",
+      "value": "replace-with-real-azure-api-key",
+      "type": "string"
+    },
+    {
+      "key": "azure_tenant_id",
+      "value": "replace-with-tenant-id",
+      "type": "string"
+    },
+    {
+      "key": "azure_client_id",
+      "value": "replace-with-client-id",
+      "type": "string"
+    },
+    {
+      "key": "azure_client_secret",
+      "value": "replace-with-client-secret",
+      "type": "string"
+    },
+    {
+      "key": "consumer_api_key",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "consumer_path",
+      "value": "/v1/chat/completions",
+      "type": "string"
+    },
+    {
+      "key": "gateway_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "registry_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "policy_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "consumer_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "auth_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "google_api_key",
+      "value": "replace-with-real-google-api-key",
+      "type": "string"
+    },
+    {
+      "key": "anthropic_api_key",
+      "value": "replace-with-real-anthropic-api-key",
+      "type": "string"
+    },
+    {
+      "key": "mistral_api_key",
+      "value": "replace-with-real-mistral-api-key",
+      "type": "string"
+    },
+    {
+      "key": "groq_api_key",
+      "value": "replace-with-real-groq-api-key",
+      "type": "string"
+    },
+    {
+      "key": "aws_region",
+      "value": "us-east-1",
+      "type": "string"
+    },
+    {
+      "key": "aws_access_key_id",
+      "value": "replace-with-aws-access-key-id",
+      "type": "string"
+    },
+    {
+      "key": "aws_secret_access_key",
+      "value": "replace-with-aws-secret-access-key",
+      "type": "string"
+    },
+    {
+      "key": "aws_session_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "vertex_project",
+      "value": "replace-with-gcp-project",
+      "type": "string"
+    },
+    {
+      "key": "vertex_location",
+      "value": "us-central1",
+      "type": "string"
+    },
+    {
+      "key": "gcp_service_account",
+      "value": "replace-with-gcp-service-account-json",
+      "type": "string"
+    }
   ],
   "item": [
     {
@@ -36,28 +159,59 @@
         {
           "name": "Liveness",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/healthz", "host": ["{{base_url}}"], "path": ["healthz"] }
+            "url": {
+              "raw": "{{base_url}}/healthz",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            }
           }
         },
         {
           "name": "Readiness",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/readyz", "host": ["{{base_url}}"], "path": ["readyz"] }
+            "url": {
+              "raw": "{{base_url}}/readyz",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "readyz"
+              ]
+            }
           }
         },
         {
           "name": "Version",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/__/version", "host": ["{{base_url}}"], "path": ["__", "version"] }
+            "url": {
+              "raw": "{{base_url}}/__/version",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "__",
+                "version"
+              ]
+            }
           }
         }
       ]
@@ -74,7 +228,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.response.code === 201) {",
-                  "  pm.collectionVariables.set('gateway_id', pm.response.json().id);",
+                  "  pm.environment.set('gateway_id', pm.response.json().id);",
                   "}"
                 ]
               }
@@ -82,12 +236,26 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"my-gateway\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"name\": \"my-gateway-{{$guid}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways", "host": ["{{base_url}}"], "path": ["v1", "gateways"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways"
+              ]
+            }
           }
         },
         {
@@ -97,12 +265,27 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/v1/gateways?page=1&size=20",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "gateways"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways"
+              ],
               "query": [
-                { "key": "page", "value": "1" },
-                { "key": "size", "value": "20" },
-                { "key": "name", "value": "", "disabled": true }
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                },
+                {
+                  "key": "name",
+                  "value": "",
+                  "disabled": true
+                }
               ]
             }
           }
@@ -112,19 +295,44 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}"
+              ]
+            }
           }
         },
         {
           "name": "Update Gateway",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"my-gateway\",\n  \"status\": \"active\"\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}"
+              ]
+            }
           }
         },
         {
@@ -132,7 +340,17 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}"
+              ]
+            }
           }
         }
       ]
@@ -149,7 +367,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.response.code === 201) {",
-                  "  pm.collectionVariables.set('registry_id', pm.response.json().id);",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
                   "}"
                 ]
               }
@@ -157,12 +375,28 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"openai-primary\",\n  \"provider\": \"openai\",\n  \"description\": \"Primary OpenAI target\",\n  \"weight\": 1,\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"sk-replace-me\" }\n  },\n  \"health_checks\": {\n    \"passive\": true,\n    \"threshold\": 3,\n    \"interval\": 30\n  }\n}"
+              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"Primary OpenAI target\",\n  \"weight\": 1,\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"sk-replace-me\" }\n  },\n  \"health_checks\": {\n    \"passive\": true,\n    \"threshold\": 3,\n    \"interval\": 30\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
           }
         },
         {
@@ -170,12 +404,28 @@
           "description": "Azure API key mode requires auth.type=azure, azure.endpoint, and azure.api_key.",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"azure-api-key\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using api-key auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-05-01-preview\",\n      \"api_key\": \"{{azure_openai_api_key}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"azure-api-key-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using api-key auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"api_key\": \"{{azure_openai_api_key}}\"\n    }\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
           }
         },
         {
@@ -183,12 +433,28 @@
           "description": "Azure service principal mode requires auth.type=azure, azure.endpoint, azure.tenant_id, azure.client_id, and azure.client_secret. It is not generic auth.type=oauth2.",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"azure-service-principal\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using service principal auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-05-01-preview\",\n      \"tenant_id\": \"{{azure_tenant_id}}\",\n      \"client_id\": \"{{azure_client_id}}\",\n      \"client_secret\": \"{{azure_client_secret}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"azure-service-principal-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using service principal auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"tenant_id\": \"{{azure_tenant_id}}\",\n      \"client_id\": \"{{azure_client_id}}\",\n      \"client_secret\": \"{{azure_client_secret}}\"\n    }\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
           }
         },
         {
@@ -196,12 +462,28 @@
           "description": "The public field use_managed_identity is retained for compatibility, but AgentGateway uses Azure SDK DefaultAzureCredential semantics for this mode.",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"azure-default-credential\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using Azure SDK DefaultAzureCredential\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-05-01-preview\",\n      \"use_managed_identity\": true\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"azure-default-credential-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using Azure SDK DefaultAzureCredential\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"use_managed_identity\": true\n    }\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
           }
         },
         {
@@ -211,12 +493,29 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries?page=1&size=20",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "gateways", "{{gateway_id}}", "registries"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ],
               "query": [
-                { "key": "page", "value": "1" },
-                { "key": "size", "value": "20" },
-                { "key": "name", "value": "", "disabled": true }
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                },
+                {
+                  "key": "name",
+                  "value": "",
+                  "disabled": true
+                }
               ]
             }
           }
@@ -226,19 +525,48 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "{{registry_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries",
+                "{{registry_id}}"
+              ]
+            }
           }
         },
         {
           "name": "Update Registry",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"openai-primary\",\n  \"provider\": \"openai\",\n  \"description\": \"Updated description\",\n  \"weight\": 2,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"sk-replace-me\" }\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "{{registry_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries",
+                "{{registry_id}}"
+              ]
+            }
           }
         },
         {
@@ -246,25 +574,119 @@
           "description": "Use the redaction placeholder for the same Azure mode to preserve the stored api_key or client_secret during partial updates.",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"description\": \"Rotate metadata without resending the Azure API key\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-05-01-preview\",\n      \"api_key\": \"***\"\n    }\n  }\n}"
+              "raw": "{\n  \"description\": \"Rotate metadata without resending the Azure API key\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"api_key\": \"***\"\n    }\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "{{registry_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries",
+                "{{registry_id}}"
+              ]
+            }
           }
+        },
+        {
+          "name": "Test Connection (OpenAI API Key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"openai\",\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{openai_api_key}}\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/test-connection",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries",
+                "test-connection"
+              ]
+            }
+          },
+          "description": "Tests provider credentials without creating a registry."
+        },
+        {
+          "name": "Test Azure Connection (API Key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"azure\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"api_key\": \"{{azure_openai_api_key}}\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/test-connection",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries",
+                "test-connection"
+              ]
+            }
+          },
+          "description": "Connection testing for Azure API key auth."
         },
         {
           "name": "Test Azure Connection (Service Principal)",
           "description": "Connection testing supports Azure service principal auth under auth.type=azure.",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"provider\": \"azure\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"tenant_id\": \"{{azure_tenant_id}}\",\n      \"client_id\": \"{{azure_client_id}}\",\n      \"client_secret\": \"{{azure_client_secret}}\"\n    }\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/test-connection", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "test-connection"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/test-connection",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries",
+                "test-connection"
+              ]
+            }
           }
         },
         {
@@ -272,12 +694,29 @@
           "description": "use_managed_identity=true keeps the existing API name, but the runtime uses Azure SDK DefaultAzureCredential.",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"provider\": \"azure\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"use_managed_identity\": true\n    }\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/test-connection", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "test-connection"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/test-connection",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries",
+                "test-connection"
+              ]
+            }
           }
         },
         {
@@ -285,7 +724,19 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries", "{{registry_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries",
+                "{{registry_id}}"
+              ]
+            }
           }
         }
       ]
@@ -302,7 +753,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.response.code === 201) {",
-                  "  pm.collectionVariables.set('policy_id', pm.response.json().id);",
+                  "  pm.environment.set('policy_id', pm.response.json().id);",
                   "}"
                 ]
               }
@@ -310,12 +761,28 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"rate-limit-global\",\n  \"slug\": \"rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 0,\n  \"parallel\": false,\n  \"stages\": [],\n  \"settings\": {\n    \"limits\": {\n      \"global\": { \"limit\": 100, \"window\": \"1m\" }\n    },\n    \"actions\": { \"type\": \"reject\", \"retry_after\": \"60\" }\n  }\n}"
+              "raw": "{\n  \"name\": \"rate-limit-global-{{$guid}}\",\n  \"slug\": \"rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 0,\n  \"parallel\": false,\n  \"stages\": [],\n  \"settings\": {\n    \"limit\": 100,\n    \"window\": \"1m\",\n    \"retry_after\": \"60\"\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "policies"
+              ]
+            }
           }
         },
         {
@@ -325,12 +792,29 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies?page=1&size=20",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "gateways", "{{gateway_id}}", "policies"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "policies"
+              ],
               "query": [
-                { "key": "page", "value": "1" },
-                { "key": "size", "value": "20" },
-                { "key": "name", "value": "", "disabled": true }
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                },
+                {
+                  "key": "name",
+                  "value": "",
+                  "disabled": true
+                }
               ]
             }
           }
@@ -340,19 +824,48 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies", "{{policy_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "policies",
+                "{{policy_id}}"
+              ]
+            }
           }
         },
         {
           "name": "Update Policy",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"cors-policy\",\n  \"slug\": \"cors\",\n  \"enabled\": true,\n  \"priority\": 0,\n  \"settings\": {\n    \"allowed_origins\": [\"https://example.com\"],\n    \"allowed_methods\": [\"GET\", \"POST\"],\n    \"allow_credentials\": false,\n    \"max_age\": \"600s\"\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies", "{{policy_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "policies",
+                "{{policy_id}}"
+              ]
+            }
           }
         },
         {
@@ -360,7 +873,19 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies", "{{policy_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "policies",
+                "{{policy_id}}"
+              ]
+            }
           }
         },
         {
@@ -368,7 +893,20 @@
           "request": {
             "method": "POST",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}/global", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies", "{{policy_id}}", "global"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}/global",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "policies",
+                "{{policy_id}}",
+                "global"
+              ]
+            }
           }
         },
         {
@@ -376,7 +914,20 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}/global", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies", "{{policy_id}}", "global"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies/{{policy_id}}/global",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "policies",
+                "{{policy_id}}",
+                "global"
+              ]
+            }
           }
         }
       ]
@@ -393,7 +944,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (pm.response.code === 201) {",
-                  "  pm.collectionVariables.set('consumer_id', pm.response.json().id);",
+                  "  pm.environment.set('consumer_id', pm.response.json().id);",
                   "}"
                 ]
               }
@@ -401,12 +952,28 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"team-a\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"headers\": {}\n}"
+              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a-{{$guid}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"headers\": {}\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers"
+              ]
+            }
           }
         },
         {
@@ -416,12 +983,29 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers?page=1&size=20",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "gateways", "{{gateway_id}}", "consumers"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers"
+              ],
               "query": [
-                { "key": "page", "value": "1" },
-                { "key": "size", "value": "20" },
-                { "key": "name", "value": "", "disabled": true }
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                },
+                {
+                  "key": "name",
+                  "value": "",
+                  "disabled": true
+                }
               ]
             }
           }
@@ -431,19 +1015,48 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}"
+              ]
+            }
           }
         },
         {
           "name": "Update Consumer",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"team-a\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\"gpt-4o\"],\n      \"default\": \"gpt-4o\"\n    }\n  ],\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\"5xx\"],\n    \"chain\": [\"{{registry_id}}\"],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000,\n      \"max_cost_usd\": 0.5\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a-{{$guid}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\"gpt-4o\"],\n      \"default\": \"gpt-4o\"\n    }\n  ],\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\"5xx\"],\n    \"chain\": [\"{{registry_id}}\"],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000,\n      \"max_cost_usd\": 0.5\n    }\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}"
+              ]
+            }
           }
         },
         {
@@ -451,7 +1064,19 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}"
+              ]
+            }
           }
         }
       ]
@@ -464,7 +1089,21 @@
           "request": {
             "method": "POST",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "registries", "{{registry_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "registries",
+                "{{registry_id}}"
+              ]
+            }
           }
         },
         {
@@ -472,7 +1111,21 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "registries", "{{registry_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "registries",
+                "{{registry_id}}"
+              ]
+            }
           }
         },
         {
@@ -480,7 +1133,21 @@
           "request": {
             "method": "POST",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "auths", "{{auth_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "auths",
+                "{{auth_id}}"
+              ]
+            }
           }
         },
         {
@@ -488,7 +1155,21 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "auths", "{{auth_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "auths",
+                "{{auth_id}}"
+              ]
+            }
           }
         },
         {
@@ -496,7 +1177,21 @@
           "request": {
             "method": "POST",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "policies", "{{policy_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "policies",
+                "{{policy_id}}"
+              ]
+            }
           }
         },
         {
@@ -504,7 +1199,21 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "policies", "{{policy_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "policies",
+                "{{policy_id}}"
+              ]
+            }
           }
         }
       ]
@@ -522,10 +1231,10 @@
                 "exec": [
                   "if (pm.response.code === 201) {",
                   "  const body = pm.response.json();",
-                  "  pm.collectionVariables.set('auth_id', body.id);",
+                  "  pm.environment.set('auth_id', body.id);",
                   "  // The plaintext key is generated server-side and shown ONLY here.",
                   "  if (body.api_key) {",
-                  "    pm.collectionVariables.set('consumer_api_key', body.api_key);",
+                  "    pm.environment.set('consumer_api_key', body.api_key);",
                   "  }",
                   "}"
                 ]
@@ -534,12 +1243,28 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"client-key\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+              "raw": "{\n  \"name\": \"client-key-{{$guid}}\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "auths"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths"
+              ]
+            }
           }
         },
         {
@@ -549,12 +1274,29 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths?page=1&size=20",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "gateways", "{{gateway_id}}", "auths"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths"
+              ],
               "query": [
-                { "key": "page", "value": "1" },
-                { "key": "size", "value": "20" },
-                { "key": "name", "value": "", "disabled": true }
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                },
+                {
+                  "key": "name",
+                  "value": "",
+                  "disabled": true
+                }
               ]
             }
           }
@@ -564,19 +1306,48 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "auths", "{{auth_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths/{{auth_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths",
+                "{{auth_id}}"
+              ]
+            }
           }
         },
         {
           "name": "Update Auth",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"client-key\",\n  \"type\": \"api_key\",\n  \"enabled\": false\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "auths", "{{auth_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths/{{auth_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths",
+                "{{auth_id}}"
+              ]
+            }
           }
         },
         {
@@ -584,7 +1355,19 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "auths", "{{auth_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths/{{auth_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths",
+                "{{auth_id}}"
+              ]
+            }
           }
         }
       ]
@@ -597,7 +1380,16 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/providers-catalog", "host": ["{{base_url}}"], "path": ["v1", "providers-catalog"] }
+            "url": {
+              "raw": "{{base_url}}/v1/providers-catalog",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "providers-catalog"
+              ]
+            }
           }
         },
         {
@@ -607,10 +1399,18 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/v1/models-catalog?provider=openai",
-              "host": ["{{base_url}}"],
-              "path": ["v1", "models-catalog"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "models-catalog"
+              ],
               "query": [
-                { "key": "provider", "value": "openai" }
+                {
+                  "key": "provider",
+                  "value": "openai"
+                }
               ]
             }
           }
@@ -631,7 +1431,7 @@
                 "exec": [
                   "pm.test('gateway created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
-                  "  pm.collectionVariables.set('gateway_id', pm.response.json().id);",
+                  "  pm.environment.set('gateway_id', pm.response.json().id);",
                   "}"
                 ]
               }
@@ -639,12 +1439,26 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"e2e-gateway\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"name\": \"e2e-gateway-{{$guid}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways", "host": ["{{base_url}}"], "path": ["v1", "gateways"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways"
+              ]
+            }
           }
         },
         {
@@ -657,7 +1471,7 @@
                 "exec": [
                   "pm.test('registry created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
-                  "  pm.collectionVariables.set('registry_id', pm.response.json().id);",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
                   "}"
                 ]
               }
@@ -665,13 +1479,232 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"openai-primary\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"weight\": 1,\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
+              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"weight\": 1,\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "registries"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
           }
+        },
+        {
+          "name": "2b. Create Registry (Google)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"google-primary-{$guid}\",\n  \"provider\": \"google\",\n  \"description\": \"Google Gemini registry\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{google_api_key}}\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
+          },
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+        },
+        {
+          "name": "2c. Create Registry (Vertex)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"vertex-primary-{{$guid}}\",\n  \"provider\": \"vertex\",\n  \"description\": \"Google Vertex AI registry\",\n  \"weight\": 1,\n  \"provider_options\": {\n    \"project\": \"{{vertex_project}}\",\n    \"location\": \"{{vertex_location}}\"\n  },\n  \"auth\": {\n    \"type\": \"gcp_service_account\",\n    \"gcp_service_account\": \"{{gcp_service_account}}\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
+          },
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+        },
+        {
+          "name": "2d. Create Registry (Anthropic)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"anthropic-primary-{$guid}\",\n  \"provider\": \"anthropic\",\n  \"description\": \"Anthropic registry\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{anthropic_api_key}}\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
+          },
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+        },
+        {
+          "name": "2e. Create Registry (Bedrock)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"bedrock-primary-{{$guid}}\",\n  \"provider\": \"bedrock\",\n  \"description\": \"AWS Bedrock registry\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"aws\",\n    \"aws\": {\n      \"region\": \"{{aws_region}}\",\n      \"access_key_id\": \"{{aws_access_key_id}}\",\n      \"secret_access_key\": \"{{aws_secret_access_key}}\",\n      \"session_token\": \"{{aws_session_token}}\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
+          },
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+        },
+        {
+          "name": "2f. Create Registry (Azure API Key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"azure-primary-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI registry using API key auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"api_key\": \"{{azure_openai_api_key}}\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
+          },
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+        },
+        {
+          "name": "2g. Create Registry (Mistral)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"mistral-primary-{$guid}\",\n  \"provider\": \"mistral\",\n  \"description\": \"Mistral registry\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{mistral_api_key}}\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
+          },
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+        },
+        {
+          "name": "2h. Create Registry (Groq)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"groq-primary-{$guid}\",\n  \"provider\": \"groq\",\n  \"description\": \"Groq registry\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{groq_api_key}}\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
+          },
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
         },
         {
           "name": "3. Create Policy",
@@ -683,7 +1716,7 @@
                 "exec": [
                   "pm.test('policy created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
-                  "  pm.collectionVariables.set('policy_id', pm.response.json().id);",
+                  "  pm.environment.set('policy_id', pm.response.json().id);",
                   "}"
                 ]
               }
@@ -691,12 +1724,28 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"rate-limit-global\",\n  \"slug\": \"rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 0,\n  \"parallel\": false,\n  \"stages\": [],\n  \"settings\": {\n    \"limits\": {\n      \"global\": { \"limit\": 100, \"window\": \"1m\" }\n    },\n    \"actions\": { \"type\": \"reject\", \"retry_after\": \"60\" }\n  }\n}"
+              "raw": "{\n  \"name\": \"rate-limit-global-{{$guid}}\",\n  \"slug\": \"rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 0,\n  \"parallel\": false,\n  \"stages\": [],\n  \"settings\": {\n    \"limit\": 100,\n    \"window\": \"1m\",\n    \"retry_after\": \"60\"\n  }\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "policies"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "policies"
+              ]
+            }
           }
         },
         {
@@ -711,10 +1760,10 @@
                   "pm.test('api key returned once', () => !!pm.response.json().api_key);",
                   "if (pm.response.code === 201) {",
                   "  const body = pm.response.json();",
-                  "  pm.collectionVariables.set('auth_id', body.id);",
+                  "  pm.environment.set('auth_id', body.id);",
                   "  // The key is generated server-side and only surfaced here; the proxy",
                   "  // step authenticates with it via the fixed X-AG-API-Key header.",
-                  "  pm.collectionVariables.set('consumer_api_key', body.api_key);",
+                  "  pm.environment.set('consumer_api_key', body.api_key);",
                   "}"
                 ]
               }
@@ -722,12 +1771,28 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"client-key\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+              "raw": "{\n  \"name\": \"client-key-{{$guid}}\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "auths"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths"
+              ]
+            }
           }
         },
         {
@@ -740,7 +1805,7 @@
                 "exec": [
                   "pm.test('consumer created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
-                  "  pm.collectionVariables.set('consumer_id', pm.response.json().id);",
+                  "  pm.environment.set('consumer_id', pm.response.json().id);",
                   "}"
                 ]
               }
@@ -748,12 +1813,28 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"e2e-consumer\",\n  \"type\": \"LLM\",\n  \"path\": \"{{consumer_path}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"headers\": {}\n}"
+              "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/chat/completions-{{$guid}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"headers\": {}\n}"
             },
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers"
+              ]
+            }
           }
         },
         {
@@ -763,14 +1844,30 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('registry attached', () => [200, 201, 204].includes(pm.response.code));"]
+                "exec": [
+                  "pm.test('registry attached', () => [200, 201, 204].includes(pm.response.code));"
+                ]
               }
             }
           ],
           "request": {
             "method": "POST",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "registries", "{{registry_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "registries",
+                "{{registry_id}}"
+              ]
+            }
           }
         },
         {
@@ -780,14 +1877,30 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('policy attached', () => [200, 201, 204].includes(pm.response.code));"]
+                "exec": [
+                  "pm.test('policy attached', () => [200, 201, 204].includes(pm.response.code));"
+                ]
               }
             }
           ],
           "request": {
             "method": "POST",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "policies", "{{policy_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "policies",
+                "{{policy_id}}"
+              ]
+            }
           }
         },
         {
@@ -797,14 +1910,30 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('auth attached', () => [200, 201, 204].includes(pm.response.code));"]
+                "exec": [
+                  "pm.test('auth attached', () => [200, 201, 204].includes(pm.response.code));"
+                ]
               }
             }
           ],
           "request": {
             "method": "POST",
             "header": [],
-            "url": { "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}", "host": ["{{base_url}}"], "path": ["v1", "gateways", "{{gateway_id}}", "consumers", "{{consumer_id}}", "auths", "{{auth_id}}"] }
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "auths",
+                "{{auth_id}}"
+              ]
+            }
           }
         },
         {
@@ -822,17 +1951,35 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{consumer_api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{consumer_api_key}}"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from AgentGateway\" }\n  ]\n}"
             },
-            "url": { "raw": "{{proxy_url}}{{consumer_path}}", "host": ["{{proxy_url}}"], "path": ["v1", "chat", "completions"] }
+            "url": {
+              "raw": "{{proxy_url}}{{consumer_path}}",
+              "host": [
+                "{{proxy_url}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
           }
         }
       ]
