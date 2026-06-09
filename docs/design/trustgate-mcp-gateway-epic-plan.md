@@ -9,13 +9,13 @@ todos:
     content: "Phase 2: real IdentityResolver - OIDC/JWKS + introspection + API key + mTLS validation across Entra/Okta/Keycloak/Auth0/OIDC, producing a Principal"
     status: pending
   - id: mcp-dataplane
-    content: "Phase 3: new MCP server plane (argv mcp + runMCP + server_mcp.go + mcp_router.go + MCPPort + k8s); MCP backend target spec + resilience (timeout/retry/outlier-eviction/LB-across-replicas/backend-TLS); Streamable HTTP MCP client; stateless inbound + Redis-backed session/discovery store (no sticky-header dependency, any replica serves any request); per-backend warm pool + per-pod SSE stream cap; virtual-MCP composer (toolkit select/rename, per-alias call routing, failmode); JSON-RPC handler for v1 surface (initialize+version negotiation, tools/resources/prompts, ping, list_changed fan-out); admin tool-introspection endpoint; event-driven discovery-cache invalidation; SpanMCP traces; tools/call runs through existing policy chain (empty by default)"
+    content: "Phase 3: new MCP server plane (argv mcp + runMCP + server_mcp.go + mcp_router.go + MCPPort + k8s); MCP registry target spec (registry.Type=MCP + MCPTarget) + resilience (timeout/retry/outlier-eviction/LB-across-replicas/backend-TLS); Streamable HTTP MCP client; stateless inbound + Redis-backed session/discovery store (no sticky-header dependency, any replica serves any request); per-backend warm pool + per-pod SSE stream cap; virtual-MCP composer (toolkit select/rename, per-alias call routing, failmode); JSON-RPC handler for v1 surface (initialize+version negotiation, tools/resources/prompts, ping, list_changed fan-out); admin tool-introspection endpoint; MCP servers catalog endpoint (/v1/mcp-servers-catalog, mirrors providers-catalog); event-driven discovery-cache invalidation; SpanMCP traces; tools/call runs through existing policy chain (empty by default)"
     status: pending
   - id: mcp-oauth
     content: "Phase 4: MCP OAuth 2.1 RS+AS - protected-resource & AS metadata, 401 WWW-Authenticate, DCR, PKCE, IdP adapters"
     status: pending
   - id: cred-federation
-    content: "Phase 5: Security Token Service (RFC 8693) - TrustGate-as-issuer (signing key + JWKS); impersonation, delegation (act/ID-JAG), Entra OBO external-IdP exchange, and elicitation credential-forwarding vault; passthrough/exchange/forwarded backend auth with isolated token cache"
+    content: "Phase 5: Security Token Service (RFC 8693) - TrustGate-as-issuer (signing key + JWKS); impersonation, delegation (act/ID-JAG), Entra OBO external-IdP exchange, and elicitation credential forwarding with a durable Vault entity (pkg/domain/vault) + OAuth broker endpoints (/oauth/connect|callback) + Connections page; passthrough/exchange/forwarded upstream auth with isolated token cache"
     status: pending
 isProject: false
 ---
@@ -32,7 +32,9 @@ TrustGate ([AgentGateway](/Users/victor/Code/neuraltrust/AgentGateway)) is a Go 
 - Proxy entrypoint is a single catch-all `app.All("/v1/*", proxyHandler.Handle)` ([pkg/server/router/proxy_router.go](/Users/victor/Code/neuraltrust/AgentGateway/pkg/server/router/proxy_router.go)) routed through the LLM forwarder.
 - Server selection is by `argv[1]` in [cmd/agentgateway/main.go](/Users/victor/Code/neuraltrust/AgentGateway/cmd/agentgateway/main.go) (`admin`/`proxy`, default proxy); `modules.All()` provides named `server.Server` instances (`name:"admin"`, `name:"proxy"`) wired in [pkg/container/modules/server_admin.go](/Users/victor/Code/neuraltrust/AgentGateway/pkg/container/modules/server_admin.go) / [server_proxy.go](/Users/victor/Code/neuraltrust/AgentGateway/pkg/container/modules/server_proxy.go).
 
-The MCP Gateway is a **new third server plane** (`./agentgateway mcp` on its own port), not a branch of the proxy. It reuses existing seams: the `IdentityResolver`/Auth middleware, the `consumer` and `backend` aggregates, and the DI module pattern under `pkg/container/modules/`.
+The MCP Gateway is a **new third server plane** (`./agentgateway mcp` on its own port), not a branch of the proxy. It reuses existing seams: the `IdentityResolver`/Auth middleware, the `consumer` and `registry` aggregates, and the DI module pattern under `pkg/container/modules/`.
+
+> Naming note: earlier drafts called the upstream aggregate `backend`. The codebase aggregate is **`registry`** (`pkg/domain/registry/`, `pkg/infra/repository/registry/`); this doc now uses `registry` for the entity and "upstream MCP server" for the remote server it points at.
 
 ## Competitive positioning (what we adopt / where we differentiate)
 
@@ -62,7 +64,7 @@ flowchart TD
 The headline goal is a **core MCP Gateway that is enterprise-ready**, not a maximal feature set. Enforcement-style features (rate limits, content guardrails, tool-level rules) are intentionally **deferred to the existing `policy` mechanism**, not rebuilt here.
 
 - **Policies are a fast-follow, not core.** A `policy.Policy` is a named set of `Plugins` ([pkg/domain/policy/policy.go](/Users/victor/Code/neuraltrust/AgentGateway/pkg/domain/policy/policy.go)) already referenced by a consumer via `PolicyIDs`. MCP-specific enforcement (per-tool rate limit, argument guardrails, content inspection / tool-poisoning defenses) lands later as new MCP-aware `Plugins` on the MCP consumer - no new authorization subsystem. The core gateway just exposes the seam (`tools/call` runs through the consumer's policy chain) and ships with it empty.
-- **Backend catalog + install governance is a fast-follow.** Competitors ship a curated, discoverable registry of MCP servers with enterprise governance (server presets, team-scoped catalogs, and an install-request -> admin-approval workflow - cf. docker's catalog and archestra's `internal-mcp-catalog` + `mcp-server-installation-requests`). For v1 the admin tool-introspection endpoint (Phase 3) covers composition; a first-class **catalog of approved backends + request/approve governance** is a planned follow-on, layered on the existing admin plane + tenancy, not part of the core gateway.
+- **MCP servers catalog is in scope; install governance is a fast-follow.** The curated, read-only **catalog of remote MCP servers** (Linear, GitHub, ...) ships in Phase 3 as a sibling of the existing LLM providers catalog (`/v1/providers-catalog`): same domain/service/handler pattern, exposed at `/v1/mcp-servers-catalog`, feeding the Registries MCP tab pick-list. What stays a fast-follow is the **governance** layer competitors ship around it (server presets, team-scoped catalogs, an install-request -> admin-approval workflow - cf. docker's catalog and archestra's `internal-mcp-catalog` + `mcp-server-installation-requests`), layered on the existing admin plane + tenancy, not part of the core gateway.
 
 - **MCP protocol surface for v1** (the federating handler must implement these correctly across multiplexed upstreams):
   - **In:** `initialize` (with protocol-version + capability negotiation), `tools/list` + `tools/call`, `resources/list` + `resources/read`, `prompts/list` + `prompts/get`, `ping`, and `notifications/*/list_changed` fan-out (upstream change -> invalidate discovery -> notify connected clients).
@@ -78,7 +80,7 @@ The headline goal is a **core MCP Gateway that is enterprise-ready**, not a maxi
 Tenancy is invasive (touches every aggregate) and the identity subject depends on it, so it lands first.
 
 - New domain `pkg/domain/tenant/` (Organization, Team, membership). New `pkg/domain/identity/principal.go` describing the authenticated subject (subject id, tenant, claims, scopes, auth method).
-- Add `tenant_id` (org) / optional `team_id` to `gateways`, `consumers`, `backends`, `policies`, `auths` via a new migration in `pkg/infra/database/migrations/`.
+- Add `tenant_id` (org) / optional `team_id` to `gateways`, `consumers`, `registries`, `policies`, `auths` via a new migration in `pkg/infra/database/migrations/`.
 - Scope all admin repositories and finders by tenant; derive tenant from the admin JWT `team_id`/`org` claims already stored in `pkg/infra/context/`.
 - Admin handlers under `pkg/api/handler/http/` enforce tenant scoping; add tenant CRUD.
 
@@ -183,6 +185,8 @@ Summary: A1/A7 are offline + identity-only; A2-A5 are offline-after-JWKS; A6 is 
 
 The MCP Gateway runs as its own server, and the unit it serves is a **virtual MCP server**: a `consumer` (Type=MCP) that composes a curated toolkit by selecting specific tools from one or more upstream MCP backends, optionally renaming each, exposed at the consumer's path. This is the headline feature.
 
+> **Inline-first, Roles after.** The inline `consumer.toolkit` is the MCP mirror of the LLM plane's **inline upstream bind** ([consumer-identity-federation-spec.md](/Users/victor/Code/neuraltrust/AgentGateway/docs/design/consumer-identity-federation-spec.md) §1) — same mental model on both planes: configure access inline on the Consumer now; the reusable **Roles** layer (`MCPGrant` = the reusable form of a toolkit entry) is a **separate follow-on plan** (see "Implement after"). This epic ships inline-only.
+
 New server plane (mirrors admin/proxy):
 
 - Add `serverMCP = "mcp"` + an `argv[1]` branch and `runMCP` in [cmd/agentgateway/main.go](/Users/victor/Code/neuraltrust/AgentGateway/cmd/agentgateway/main.go) (start the MCP session reaper on boot, like the proxy's metrics worker).
@@ -191,18 +195,19 @@ New server plane (mirrors admin/proxy):
 
 Upstream connectivity:
 
-- Extend `backend` aggregate with an MCP target spec: a `backend.Type` discriminator (`LLM`/`MCP`) plus `MCPTarget{ URL, Transport=streamable-http, Headers, AuthRef, Resilience }`. Migration + repo updates under `pkg/infra/repository/backend/`.
+- Extend the `registry` aggregate with an MCP target spec: a `registry.Type` discriminator (`LLM`/`MCP`) plus `MCPTarget{ URL, Transport=streamable-http, Headers, AuthRef, Resilience }`. Migration + repo updates under `pkg/infra/repository/registry/`.
 - New `pkg/infra/mcp/client/` Streamable HTTP MCP client (JSON-RPC, `Mcp-Session-Id`, SSE response handling) and `pkg/infra/mcp/session/` session manager backed by a **shared store (Redis)**, not pod-local memory (see "Scaling and session state" below).
 - **Backend resilience (enterprise table-stakes, matching agentgateway's `http/retry` + `http/outlierdetection` + `loadbalancer`):** per-backend connect/request **timeouts**, **retries with backoff** (idempotent ops only), **outlier detection / endpoint eviction** feeding the circuit breaker, **load balancing across upstream replicas** (compatible with the stateful session pin - balance only at session creation, then pin), and **backend TLS/mTLS** to the upstream. These live on `MCPTarget.Resilience` and are enforced by the MCP client; `failOpen`/`failClosed` remains the composition-level fallback.
 
 Composition engine (the virtual MCP):
 
-- New `consumer` composition spec `toolkit`: an ordered list of entries `{ backend_id, tool (upstream name), expose_as (alias, optional), enabled }` - the operator hand-picks tools across backends. Whole-server inclusion is shorthand (`{ backend_id, tool: "*" }`); `tool_allowlist` becomes a degenerate single-backend toolkit.
-- New `pkg/app/mcp/` composer: connect to the referenced MCP backends, discover their capabilities, then build the virtual server from the `toolkit` - resolve each selected tool, apply `expose_as` rename (or auto-prefix `{backend}_{tool}` on collision), and synthesize one merged `initialize`/`tools`/`prompts`/`resources` view. `failClosed`/`failOpen` per backend.
+- New `consumer` composition spec `toolkit`: an ordered list of entries `{ registry_id, tool (upstream name), expose_as (alias, optional), enabled }` - the operator hand-picks tools across backends. Whole-server inclusion is shorthand (`{ registry_id, tool: "*" }`); `tool_allowlist` becomes a degenerate single-backend toolkit.
+- New `pkg/app/mcp/` composer: connect to the referenced MCP backends, discover their capabilities, then build the virtual server from the `toolkit` - resolve each selected tool, apply `expose_as` rename (or auto-prefix `{server}_{tool}` on collision, matching the Roles spec), and synthesize one merged `initialize`/`tools`/`prompts`/`resources` view. `failClosed`/`failOpen` per backend. **Forward-compat:** the composer's input is "the Consumer's effective tool set" — in v1 computed from the inline `toolkit` only; the Roles plan later widens it to `union(role MCP grants) ∪ inline toolkit` with no engine change (select, rename/auto-prefix, failmode all stay).
 - `tools/call` maps the exposed alias back to its `{backend, upstream tool}` and routes only to that backend (with that backend's Phase 5 downstream auth) - no broadcast.
 - New `pkg/api/handler/http/mcp/` handler serving JSON-RPC over Streamable HTTP, wired into `mcp_router.go`. Implements the v1 surface from "Scope, protocol surface" - `initialize` (version + capability negotiation across heterogeneous backends), `tools`/`resources`/`prompts` list+invoke, `ping`, and `notifications/*/list_changed` fan-out.
 - Authorization model: `tools/list` returns exactly the composed `toolkit`, and reachability is already gated by the Phase 2 inbound auth on the virtual server. No per-tool policy engine. `tools/call` runs through the consumer's existing `policy` chain (empty by default - MCP enforcement plugins are the fast-follow). Emit `SpanMCP` traces ([pkg/infra/trace/span.go](/Users/victor/Code/neuraltrust/AgentGateway/pkg/infra/trace/span.go)) for `tools/list`/`tools/call`.
 - **Admin tool introspection** (composition UX): an admin-plane endpoint to connect to a backend and list its discoverable tools/resources/prompts, so operators (and the UI) can build a `toolkit` from a real pick-list instead of guessing names.
+- **MCP servers catalog endpoint** (discovery UX): mirror the LLM providers catalog (`pkg/domain/catalog/` `Provider`/`Model`, `catalog.Service`, `/v1/providers-catalog`) with a curated catalog of **remote MCP servers**: new catalog entity `MCPServer{ Code, DisplayName, URL, Transport, AuthHint (none|static|oauth + default scopes), Metadata (icon, docs), Source }` + `mcp_servers_catalog` table (same migration/seed pattern as `providers_catalog`), `catalog.Service.ListMCPServers`, handler + admin route **`/v1/mcp-servers-catalog`**. Feeds the Registries -> MCP tab (the placeholder already exists in [registries-view.tsx](/Users/victor/Code/neuraltrust/AgentGateway/frontend/src/components/entities/registries-view.tsx): "MCP backends will appear here once they are available in the catalog") so creating an MCP registry starts from the catalog (Linear, GitHub, ...) instead of a blank URL; the entry's `AuthHint`/scopes prefill the registry's downstream auth mode and the Phase 5 broker scopes.
 - **Config lifecycle**: a toolkit/backend change must invalidate the backend-keyed discovery cache and emit `notifications/tools/list_changed` to connected clients. Prefer event-driven invalidation over the existing TTL-only `dataFinder` (the stack already has Kafka), so changes propagate across replicas promptly; re-discover an upstream on reconnect after a `failOpen` skip.
 
 ### Scaling and session state
@@ -242,10 +247,67 @@ New `pkg/app/identity/sts/` exposing an `Exchanger` seam with four patterns:
 
 Integration:
 
-- Backend auth modes for MCP targets: `passthrough` (re-inject validated JWT), `exchange` (one of the four STS patterns), and `forwarded` (vaulted third-party token). Configured per `consumer`/target via the `auth` ref.
+- Registry auth modes for MCP targets: `passthrough` (re-inject validated JWT), `exchange` (one of the four STS patterns), and `forwarded` (vaulted third-party token). Configured per `consumer`/target via the `auth` ref.
 - The federator (`pkg/app/mcp/`) calls `Exchanger.Mint` (or vault lookup) just before opening each upstream Streamable HTTP connection, then sets `Authorization: Bearer {credential}`.
 - Token/credential cache keyed by `(principal subject/oid, target resource, tenant)` with refresh before expiry; strict per-principal/per-tenant isolation (a leak here is cross-user escalation). Propagate IdP claims challenges (`interaction_required`) back to the client as `401` + `WWW-Authenticate` `claims`, reusing Phase 4 challenge machinery.
 - Strategy inference from issuer hostname; explicit per-consumer override.
+
+### Credential vault (forwarded mode)
+
+The `forwarded` mode needs a **durable** store, not a cache: OBO/exchange tokens are re-derivable from the inbound token, but forwarded refresh tokens come from **one-time user consent** and cannot be re-minted — losing them forces re-consent. New `pkg/domain/vault/`:
+
+```go
+// durable, encrypted, per (principal, provider)
+type VaultedCredential struct {
+    ID           ids.VaultID
+    TenantID     ids.OrgID
+    PrincipalSub string         // user's oid/sub
+    Provider     string         // "github" | "slack" | ...
+    AccountRef   string         // linked account, for display
+    AccessToken  Secret         // encrypted at rest
+    RefreshToken Secret         // encrypted at rest — irreplaceable (consent-derived)
+    Scopes       []string
+    ExpiresAt    time.Time
+    CreatedAt, UpdatedAt time.Time
+}
+```
+
+- **Security:** encrypted at rest via KMS/secret manager (per the Cross-cutting secret rules); strict `(tenant, principal)` isolation — a leak here is cross-user account takeover; revoke = delete row (+ provider-side revoke).
+- **OAuth broker surface:** `/oauth/connect/{provider}` (302 to the third party's consent screen) and `/oauth/callback/{provider}` (code exchange + encrypted store + confirmation page). The login/consent UI is always the third party's — TrustGate builds no login forms; it is only the OAuth client (admin-registered `client_id`/`secret`).
+- **End-user auth mini-UI (small frontend), scoped to the virtual MCP:** the page is derived from the **consumer's MCP gateway URL** (the virtual MCP the user added to their client, e.g. `/v1/mcp/dev` → `/v1/mcp/dev/connect`). After the user authenticates inbound with the **IdP** (Phase 4 challenge → `Principal`), the page enumerates the upstream MCP servers **behind that virtual MCP** whose registry auth mode is `forwarded` (resolved from the consumer's toolkit → registries), and renders **one connect button per upstream** (e.g. "Connect Linear", "Connect GitHub" — branding/scopes from the Phase 3 catalog entry) with per-provider status (connected as `AccountRef` / not connected). Each button runs `/oauth/connect/{provider}` → third-party consent → callback, and **every resulting token is stored in the Vault** keyed `(tenant, principal, provider)`. Two entry points: **onboarding** — on the first authenticated session, if any required provider is missing the gateway elicits this page's URL so the user links everything once; **lazy** — a later `tools/call` hitting a missing/revoked token elicits the same page filtered to that provider. Plus the post-callback confirmation page ("account connected — return to your MCP client") and the global **Connections page** (all linked accounts, connect/revoke).
+- **Refresh concurrency:** providers that rotate refresh tokens on use require **single-flight refresh** per `(principal, provider)` — concurrent calls must not invalidate each other's token.
+
+Connection-setup flow (per virtual MCP):
+
+```mermaid
+sequenceDiagram
+  participant U as User (MCP client, e.g. Cursor)
+  participant GW as TrustGate (virtual MCP /v1/mcp/dev)
+  participant IdP as Corporate IdP
+  participant UI as Connect page /v1/mcp/dev/connect
+  participant TP as Linear / GitHub
+  participant V as Vault
+  U->>GW: add gateway URL -> first MCP request
+  GW-->>U: 401 OAuth challenge (Phase 4)
+  U->>IdP: authenticate (SSO)
+  U->>GW: request + Bearer (aud=gateway) -> Principal
+  GW-->>U: elicitation: connect-page URL (forwarded upstreams not linked yet)
+  U->>UI: open (authenticated as Principal)
+  UI-->>U: one button per upstream behind this virtual MCP (catalog branding)
+  loop each provider
+    U->>TP: Connect -> third-party consent
+    TP-->>GW: callback code -> exchange
+    GW->>V: store encrypted (tenant, principal, provider)
+  end
+  U->>GW: tools/call -> federator injects vaulted token per upstream
+```
+
+### Preconditions (which inbound credentials support which modes)
+
+Per-user downstream modes require a **user identity inbound**: OBO/exchange needs a user JWT with `aud = gateway` (guaranteed by the Phase 4 OAuth challenge); `forwarded` needs a `Principal` to key the vault. Consequences:
+
+- **api_key / M2M client-credentials consumers** carry no user identity → limited to `none`/`static`/`impersonation` (machine identity). No OBO, no vault.
+- **`forwarded` is effectively MCP-plane-only:** the elicitation consent URL must be surfaced mid-call by an interactive MCP client (Cursor/Claude). A backend HTTP LLM call cannot be redirected through a consent flow.
 
 ### Downstream auth flows (per target mode)
 
@@ -290,24 +352,38 @@ Claims challenges from an IdP during exchange (`interaction_required`) propagate
 - **Tests**: extend `tests/functional/` with MCP federation E2E (a mock remote MCP server), token-validation, and toolkit-composition tests (selection/rename/collision, fail mode); table-driven unit tests per new domain/app package per the Go rules.
 - **Docs/config**: extend `.env.example`, OpenAPI/Swagger annotations, and README (currently says "B.0 scaffolding only").
 
+## Implement after (post-epic follow-ons)
+
+This epic ships with **inline-only** authorization (the `toolkit` on the Consumer). The following layer on afterwards, each with its dependency on an epic phase:
+
+| Follow-on | What it is | Depends on |
+|---|---|---|
+| **Roles layer** (its own plan) | `Role` aggregate with `MCPGrant` + `LLMGrant`, `consumer.role_ids`; effective access = `union(roles) ∪ inline` (toolkit on MCP, upstream binds on LLM). Composer/engine unchanged — only the input widens. Admin tool-introspection (Phase 3) feeds the Roles UI tool pick-list. | Phase 3 |
+| **Claim → Role binding** (identity federation, spec §11) | Per-user access: claims on the authenticated `Principal` resolve extra Roles at request time, layered onto the Consumer's base grants. | Phase 2 + Roles plan |
+| **OBO / exchange downstream modes** | Per-user tokens to IdP-trusting upstreams; requires inbound user JWT with `aud = gateway`. | Phase 4 (challenge) + Phase 5 (STS) |
+| **Vault + OAuth broker + Connections page** | `forwarded` mode for third parties outside the corp IdP trust domain (GitHub/Slack). | Phase 5 |
+| **MCP policy plugins** | Per-tool rate limits, argument guardrails, content inspection as `Plugins` on the MCP consumer's policy chain (seam ships empty in Phase 3). | Phase 3 |
+| **Catalog install governance** | Request/approve workflow, server presets, team-scoped catalogs — on top of the Phase 3 `/v1/mcp-servers-catalog` endpoint (which ships in the epic). | Phase 3 + tenancy |
+| **`expose_as` on Role grants** | Explicit aliasing at the grant level (v1: collisions auto-prefix `{server}_{tool}`). | Roles plan |
+
 ## Sequencing and review budget
 
 Phases are dependency-ordered (1 -> 2 -> 3 -> 4 -> 5). Each phase is well over the 400-line PR budget, so each ships as its own stacked/chained PR (often split further, e.g. Phase 3 into model+client / federator / handler-routing). Phases 1-2 unblock everything; Phase 3 delivers the usable MCP gateway; Phases 4-5 complete the enterprise identity story.
 
 ## Appendix - Configuration examples (all combinations)
 
-Every config below is the JSON body of a **create** call against one of the admin-plane entities. Each snippet is headed with `// <METHOD> <endpoint> -> <Entity>` so it is clear which entity it is. Field names on `auth` and `consumer` match the code today ([pkg/domain/auth/config.go](/Users/victor/Code/neuraltrust/AgentGateway/pkg/domain/auth/config.go), [pkg/domain/consumer/consumer.go](/Users/victor/Code/neuraltrust/AgentGateway/pkg/domain/consumer/consumer.go)); `consumer.toolkit` and `backend.mcp_target.*` are the proposed Phase 3-5 shapes.
+Every config below is the JSON body of a **create** call against one of the admin-plane entities. Each snippet is headed with `// <METHOD> <endpoint> -> <Entity>` so it is clear which entity it is. Field names on `auth` and `consumer` match the code today ([pkg/domain/auth/config.go](/Users/victor/Code/neuraltrust/AgentGateway/pkg/domain/auth/config.go), [pkg/domain/consumer/consumer.go](/Users/victor/Code/neuraltrust/AgentGateway/pkg/domain/consumer/consumer.go)); `consumer.toolkit` and `registry.mcp_target.*` are the proposed Phase 3-5 shapes.
 
 ### Entities and endpoints (how they link)
 
 - **Gateway** - `POST /v1/gateways` - the runtime instance. Everything else carries its `gateway_id` (and the Phase 1 `tenant_id`/`team_id`).
 - **Auth** - `POST /v1/auths` - *inbound* credential validation (`api_key`/`oauth2`/`mtls`). A Consumer references one or more by `auth_ids` (OR set).
-- **Backend** - `POST /v1/backends` - an upstream target. For MCP: `type: "MCP"` + `mcp_target` (URL + *downstream* auth mode). A Consumer references them by `backend_ids` (>1 = federation).
-- **Consumer** - `POST /v1/consumers` - for `type: "MCP"` this *is* the virtual MCP server (served on the MCP plane at `path`): it ties `auth_ids` + `backend_ids` + `policy_ids` and a `toolkit` (the composed selection of upstream tools) together.
+- **Registry** - `POST /v1/registries` - an upstream target. For MCP: `type: "MCP"` + `mcp_target` (URL + *downstream* auth mode). A Consumer references them by `registry_ids` (>1 = federation).
+- **Consumer** - `POST /v1/consumers` - for `type: "MCP"` this *is* the virtual MCP server (served on the MCP plane at `path`): it ties `auth_ids` + `registry_ids` + `policy_ids` and a `toolkit` (the composed selection of upstream tools) together.
 
-Reference rule of thumb: inbound auth (`auth.config`) validates the *caller* and gates who reaches the virtual server; the `toolkit` defines which tools exist on it; downstream auth (`backend.mcp_target.auth.mode`) decides what credential reaches each *upstream*. There is no separate authorization-policy layer - auth + toolkit is the authorization model.
+Reference rule of thumb: inbound auth (`auth.config`) validates the *caller* and gates who reaches the virtual server; the `toolkit` defines which tools exist on it; downstream auth (`registry.mcp_target.auth.mode`) decides what credential reaches each *upstream*. There is no separate authorization-policy layer - auth + toolkit is the authorization model.
 
-> IDs are UUID v7. The readable placeholders below (`auth_entra-oidc`, `be_graph-mcp`, `cn_corp-graph`) stand in for the `id` returned by each create call; you wire real UUIDs into the referencing entity.
+> IDs are UUID v7. The readable placeholders below (`auth_entra-oidc`, `reg_graph-mcp`, `cn_corp-graph`) stand in for the `id` returned by each create call; you wire real UUIDs into the referencing entity.
 
 ### A. Inbound auth styles (Auth entity)
 
@@ -389,14 +465,14 @@ A8. Multiple credentials accepted (API key OR JWT) - no new Auth entity; create 
 
 A9. MCP OAuth 2.1 (gateway as RS/AS, Phase 4) - reuses an `oauth2` Auth (e.g. A2); the challenge is turned on by the `mcp_oauth` block on the Consumer (see D6), which makes unauthenticated calls return `401` + `WWW-Authenticate: ... resource_metadata="https://gw/.well-known/oauth-protected-resource/v1/mcp/<id>"`.
 
-### B. Downstream target auth (Backend entity, MCP)
+### B. Downstream target auth (Registry entity, MCP)
 
-Each is a full `type: "MCP"` Backend; only the `mcp_target.auth` block differs per mode.
+Each is a full `type: "MCP"` Registry; only the `mcp_target.auth` block differs per mode.
 
 B1. None (public upstream):
 
 ```json
-// POST /v1/backends -> Backend
+// POST /v1/registries -> Registry
 { "gateway_id": "gw_01...", "name": "public-mcp", "type": "MCP",
   "mcp_target": { "url": "https://public.example/mcp", "transport": "streamable-http",
     "auth": { "mode": "none" } } }
@@ -405,7 +481,7 @@ B1. None (public upstream):
 B2. Static (gateway's own shared credential):
 
 ```json
-// POST /v1/backends -> Backend
+// POST /v1/registries -> Registry
 { "gateway_id": "gw_01...", "name": "weather-mcp", "type": "MCP",
   "mcp_target": { "url": "https://weather.internal/mcp", "transport": "streamable-http",
     "auth": { "mode": "static", "header": "Authorization", "value": "Bearer upstream-token" } } }
@@ -414,7 +490,7 @@ B2. Static (gateway's own shared credential):
 B3. Passthrough (re-inject the validated inbound JWT):
 
 ```json
-// POST /v1/backends -> Backend
+// POST /v1/registries -> Registry
 { "gateway_id": "gw_01...", "name": "internal-mcp", "type": "MCP",
   "mcp_target": { "url": "https://internal/mcp", "transport": "streamable-http",
     "auth": { "mode": "passthrough" } } }
@@ -423,7 +499,7 @@ B3. Passthrough (re-inject the validated inbound JWT):
 B4. STS impersonation (mint, same `sub`, new `aud`, iss = TrustGate):
 
 ```json
-// POST /v1/backends -> Backend
+// POST /v1/registries -> Registry
 { "gateway_id": "gw_01...", "name": "internal-mcp", "type": "MCP",
   "mcp_target": { "url": "https://internal/mcp", "transport": "streamable-http",
     "auth": { "mode": "exchange", "pattern": "impersonation", "audience": "internal-service" } } }
@@ -432,7 +508,7 @@ B4. STS impersonation (mint, same `sub`, new `aud`, iss = TrustGate):
 B5. STS delegation (mint with `act` = agent / ID-JAG):
 
 ```json
-// POST /v1/backends -> Backend
+// POST /v1/registries -> Registry
 { "gateway_id": "gw_01...", "name": "finance-mcp", "type": "MCP",
   "mcp_target": { "url": "https://finance-tools.internal/mcp", "transport": "streamable-http",
     "auth": { "mode": "exchange", "pattern": "delegation",
@@ -442,7 +518,7 @@ B5. STS delegation (mint with `act` = agent / ID-JAG):
 B6. External IdP exchange - Entra OBO:
 
 ```json
-// POST /v1/backends -> Backend
+// POST /v1/registries -> Registry
 { "gateway_id": "gw_01...", "name": "graph-mcp", "type": "MCP",
   "mcp_target": { "url": "https://graph-tools.internal/mcp", "transport": "streamable-http",
     "auth": { "mode": "exchange", "pattern": "external_idp", "provider": "entra",
@@ -452,7 +528,7 @@ B6. External IdP exchange - Entra OBO:
 B7. External IdP exchange - Okta (RFC 8693, `private_key_jwt`):
 
 ```json
-// POST /v1/backends -> Backend
+// POST /v1/registries -> Registry
 { "gateway_id": "gw_01...", "name": "okta-downstream-mcp", "type": "MCP",
   "mcp_target": { "url": "https://downstream/mcp", "transport": "streamable-http",
     "auth": { "mode": "exchange", "pattern": "external_idp", "provider": "okta",
@@ -462,7 +538,7 @@ B7. External IdP exchange - Okta (RFC 8693, `private_key_jwt`):
 B8. Forwarded / elicitation (vaulted third-party OAuth, e.g. GitHub):
 
 ```json
-// POST /v1/backends -> Backend
+// POST /v1/registries -> Registry
 { "gateway_id": "gw_01...", "name": "github-mcp", "type": "MCP",
   "mcp_target": { "url": "https://api.github.com/mcp", "transport": "streamable-http",
     "auth": { "mode": "forwarded", "provider": "github", "scopes": ["repo", "read:org"] } } }
@@ -470,16 +546,16 @@ B8. Forwarded / elicitation (vaulted third-party OAuth, e.g. GitHub):
 
 ### C. End-to-end combined consumers (Consumer entity)
 
-Each scenario is the full ordered sequence of create calls; the `id` returned by each earlier call is wired into the Consumer at the end. Auth/Backend bodies are abbreviated (full shapes in A/B); the Consumer is shown in full. Authorization is just inbound auth (who reaches the server) + the `toolkit` (which tools exist) - no policy block.
+Each scenario is the full ordered sequence of create calls; the `id` returned by each earlier call is wired into the Consumer at the end. Auth/Registry bodies are abbreviated (full shapes in A/B); the Consumer is shown in full. Authorization is just inbound auth (who reaches the server) + the `toolkit` (which tools exist) - no policy block.
 
 C1. Public partner - API key (A1) + allowlist + static upstream (B2). The `tool_allowlist`/`toolkit` is the only tool gate:
 
 ```json
 // 1) POST /v1/auths -> Auth        (api_key)         => id auth_partner-key
-// 2) POST /v1/backends -> Backend  (MCP, auth.mode=static)  => id be_weather-mcp
+// 2) POST /v1/registries -> Registry  (MCP, auth.mode=static)  => id reg_weather-mcp
 // 3) POST /v1/consumers -> Consumer
 { "gateway_id": "gw_01...", "name": "partner-weather", "type": "MCP", "path": "/v1/mcp/weather",
-  "auth_ids": ["auth_partner-key"], "backend_ids": ["be_weather-mcp"],
+  "auth_ids": ["auth_partner-key"], "registry_ids": ["reg_weather-mcp"],
   "tool_allowlist": ["get_forecast", "get_current"] }
 ```
 
@@ -487,42 +563,42 @@ C2. Enterprise SSO - Entra JWT (A2) gates the endpoint, toolkit exposes two Grap
 
 ```json
 // 1) POST /v1/auths -> Auth        (oauth2, Entra issuer/jwks)   => id auth_entra-oidc
-// 2) POST /v1/backends -> Backend  (MCP, auth.mode=exchange, pattern=external_idp, provider=entra)  => id be_graph-mcp
+// 2) POST /v1/registries -> Registry  (MCP, auth.mode=exchange, pattern=external_idp, provider=entra)  => id reg_graph-mcp
 // 3) POST /v1/consumers -> Consumer
 { "gateway_id": "gw_01...", "name": "corp-graph", "type": "MCP", "path": "/v1/mcp/graph",
-  "auth_ids": ["auth_entra-oidc"], "backend_ids": ["be_graph-mcp"],
+  "auth_ids": ["auth_entra-oidc"], "registry_ids": ["reg_graph-mcp"],
   "toolkit": [
-    { "backend_id": "be_graph-mcp", "tool": "list_messages", "enabled": true },
-    { "backend_id": "be_graph-mcp", "tool": "send_mail",     "enabled": true } ] }
+    { "registry_id": "reg_graph-mcp", "tool": "list_messages", "enabled": true },
+    { "registry_id": "reg_graph-mcp", "tool": "send_mail",     "enabled": true } ] }
 ```
 
 C3. Virtual MCP toolkit - compose a curated server from tools cherry-picked across two upstreams, each renamed; delegation (B5) + forwarded vault (B8) downstream:
 
 ```json
 // 1) reuse auth_entra-oidc (A2)
-// 2) POST /v1/backends -> Backend  (MCP finance, auth.mode=exchange, pattern=delegation)  => id be_finance-mcp
-// 3) POST /v1/backends -> Backend  (MCP github,  auth.mode=forwarded, provider=github)    => id be_github-mcp
+// 2) POST /v1/registries -> Registry  (MCP finance, auth.mode=exchange, pattern=delegation)  => id reg_finance-mcp
+// 3) POST /v1/registries -> Registry  (MCP github,  auth.mode=forwarded, provider=github)    => id reg_github-mcp
 // 4) POST /v1/consumers -> Consumer = virtual MCP server "dev-tools"
 { "gateway_id": "gw_01...", "name": "dev-tools", "type": "MCP", "path": "/v1/mcp/dev",
   "auth_ids": ["auth_entra-oidc"],
-  "backend_ids": ["be_finance-mcp", "be_github-mcp"],
+  "registry_ids": ["reg_finance-mcp", "reg_github-mcp"],
   "toolkit": [
-    { "backend_id": "be_finance-mcp", "tool": "post_journal", "expose_as": "book_entry", "enabled": true },
-    { "backend_id": "be_github-mcp",  "tool": "create_issue", "expose_as": "file_ticket", "enabled": true },
-    { "backend_id": "be_github-mcp",  "tool": "list_repos",   "enabled": true } ],
+    { "registry_id": "reg_finance-mcp", "tool": "post_journal", "expose_as": "book_entry", "enabled": true },
+    { "registry_id": "reg_github-mcp",  "tool": "create_issue", "expose_as": "file_ticket", "enabled": true },
+    { "registry_id": "reg_github-mcp",  "tool": "list_repos",   "enabled": true } ],
   "fail_mode": "failOpen" }
 // tools/list on this virtual server exposes exactly: book_entry, file_ticket, github_list_repos
-// a call to book_entry routes only to be_finance-mcp (delegation token); file_ticket -> be_github-mcp (vaulted token)
+// a call to book_entry routes only to reg_finance-mcp (delegation token); file_ticket -> reg_github-mcp (vaulted token)
 ```
 
 C4. mTLS partner (A7) + static upstream (B2):
 
 ```json
 // 1) POST /v1/auths -> Auth        (mtls, ca_cert + allowlists)  => id auth_partner-mtls
-// 2) POST /v1/backends -> Backend  (MCP, auth.mode=static)       => id be_weather-mcp
+// 2) POST /v1/registries -> Registry  (MCP, auth.mode=static)       => id reg_weather-mcp
 // 3) POST /v1/consumers -> Consumer
 { "gateway_id": "gw_01...", "name": "partner-b", "type": "MCP", "path": "/v1/mcp/partner-b",
-  "auth_ids": ["auth_partner-mtls"], "backend_ids": ["be_weather-mcp"] }
+  "auth_ids": ["auth_partner-mtls"], "registry_ids": ["reg_weather-mcp"] }
 ```
 
 C5. Multi-tenant scoping (Phase 1) - every entity carries `tenant_id` (org) and optional `team_id`; an admin token only sees/manages its org's resources:
@@ -531,22 +607,22 @@ C5. Multi-tenant scoping (Phase 1) - every entity carries `tenant_id` (org) and 
 // POST /v1/consumers -> Consumer   (tenant fields apply to every entity)
 { "tenant_id": "org_acme", "team_id": "team_platform", "gateway_id": "gw_01...",
   "name": "corp-graph", "type": "MCP", "path": "/v1/mcp/graph",
-  "auth_ids": ["auth_entra-oidc"], "backend_ids": ["be_graph-mcp"],
-  "toolkit": [ { "backend_id": "be_graph-mcp", "tool": "*", "enabled": true } ] }
+  "auth_ids": ["auth_entra-oidc"], "registry_ids": ["reg_graph-mcp"],
+  "toolkit": [ { "registry_id": "reg_graph-mcp", "tool": "*", "enabled": true } ] }
 ```
 
 C6. Zero-pre-shared-credential MCP OAuth 2.1 client (A9) + impersonation downstream (B4):
 
 ```json
 // 1) reuse auth_entra-oidc (A2) as the trusted issuer for validation after the OAuth bootstrap
-// 2) POST /v1/backends -> Backend  (MCP, auth.mode=exchange, pattern=impersonation)  => id be_internal-mcp
+// 2) POST /v1/registries -> Registry  (MCP, auth.mode=exchange, pattern=impersonation)  => id reg_internal-mcp
 // 3) POST /v1/consumers -> Consumer   (mcp_oauth turns on the RS/AS challenge)
 { "gateway_id": "gw_01...", "name": "public-mcp", "type": "MCP", "path": "/v1/mcp/public",
   "auth_ids": ["auth_entra-oidc"], "mcp_oauth": { "enabled": true, "dcr": true, "pkce": true },
-  "backend_ids": ["be_internal-mcp"] }
+  "registry_ids": ["reg_internal-mcp"] }
 ```
 
 ### Proposed field reference (to lock before implementation)
 
-- **Backend** (`type: "MCP"`) `mcp_target`: `url`, `transport` (`streamable-http`), `headers` (map), `auth` { `mode`: none|static|passthrough|exchange|forwarded, plus mode-specific: `pattern` (impersonation|delegation|external_idp), `provider`, `resource`, `audience`, `actor`, `scopes`, `header`, `value` }, `resilience` { `connect_timeout`, `request_timeout`, `retries` { `max`, `backoff` }, `outlier_detection` { `consecutive_failures`, `eviction` }, `load_balancing` (replica endpoints + algorithm; balanced at session creation then pinned), `tls` { `ca_cert`, `client_cert`, `client_key` } }.
-- **Consumer** additions: `toolkit[]` { `backend_id`, `tool` (upstream name or `"*"`), `expose_as` (alias, optional), `enabled` } - the virtual-MCP composition; `tool_allowlist` ([]string, shorthand single-backend toolkit); `fail_mode` (failClosed|failOpen); `mcp_oauth` { `enabled`, `dcr`, `pkce` }. No authorization-policy fields - the `toolkit` (plus the gating `auth_ids`) is the authorization model.
+- **Registry** (`type: "MCP"`) `mcp_target`: `url`, `transport` (`streamable-http`), `headers` (map), `auth` { `mode`: none|static|passthrough|exchange|forwarded, plus mode-specific: `pattern` (impersonation|delegation|external_idp), `provider`, `resource`, `audience`, `actor`, `scopes`, `header`, `value` }, `resilience` { `connect_timeout`, `request_timeout`, `retries` { `max`, `backoff` }, `outlier_detection` { `consecutive_failures`, `eviction` }, `load_balancing` (replica endpoints + algorithm; balanced at session creation then pinned), `tls` { `ca_cert`, `client_cert`, `client_key` } }.
+- **Consumer** additions: `toolkit[]` { `registry_id`, `tool` (upstream name or `"*"`), `expose_as` (alias, optional), `enabled` } - the virtual-MCP composition; `tool_allowlist` ([]string, shorthand single-backend toolkit); `fail_mode` (failClosed|failOpen); `mcp_oauth` { `enabled`, `dcr`, `pkce` }. No authorization-policy fields - the `toolkit` (plus the gating `auth_ids`) is the authorization model. **Later (Roles plan, not this epic):** `consumer.role_ids` joins these fields; a `Role.MCP` grant (`MCPGrant{ server, tools }`) is the reusable form of a toolkit entry, and effective access becomes `union(roles) ∪ inline toolkit`.
