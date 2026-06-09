@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agentgateway-mcp
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    component: mcp
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agentgateway
+      app.kubernetes.io/instance: agentgateway
+      component: mcp

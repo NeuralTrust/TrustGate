@@ -29,7 +29,7 @@ const (
 )
 
 const consumerSelectColumns = `
-		SELECT c.id, c.gateway_id, c.name, c.type, c.path, c.algorithm, c.embedding_config, c.fallback, c.model_policies, c.headers, c.active,
+		SELECT c.id, c.gateway_id, c.name, c.type, c.path, c.algorithm, c.embedding_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
 		       c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
@@ -66,15 +66,19 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal model_policies: %w", err)
 	}
+	toolkitBytes, err := marshalToolkit(c.Toolkit)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal toolkit: %w", err)
+	}
 	const insertConsumer = `
 		INSERT INTO consumers (
-			id, gateway_id, name, type, path, algorithm, embedding_config, fallback, model_policies, headers, active, created_at, updated_at
+			id, gateway_id, name, type, path, algorithm, embedding_config, fallback, model_policies, toolkit, fail_mode, headers, active, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		)`
 	if _, err := r.conn.Pool.Exec(ctx, insertConsumer,
 		c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
-		headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
+		toolkitBytes, failMode(c), headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
 	); err != nil {
 		return mapPgError(err)
 	}
@@ -101,6 +105,10 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal model_policies: %w", err)
 	}
+	toolkitBytes, err := marshalToolkit(c.Toolkit)
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal toolkit: %w", err)
+	}
 	const updateConsumer = `
 		UPDATE consumers
 		   SET name             = $2,
@@ -110,13 +118,15 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		       embedding_config = $6,
 		       fallback         = $7,
 		       model_policies   = $8,
-		       headers          = $9,
-		       active           = $10,
-		       updated_at       = $11
+		       toolkit          = $9,
+		       fail_mode        = $10,
+		       headers          = $11,
+		       active           = $12,
+		       updated_at       = $13
 		 WHERE id = $1`
 	cmd, err := r.conn.Pool.Exec(ctx, updateConsumer,
 		c.ID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
-		headersBytes, c.Active, c.UpdatedAt,
+		toolkitBytes, failMode(c), headersBytes, c.Active, c.UpdatedAt,
 	)
 	if err != nil {
 		return mapPgError(err)
@@ -287,18 +297,21 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		embeddingRaw     []byte
 		fallbackRaw      []byte
 		modelPoliciesRaw []byte
+		toolkitRaw       []byte
+		failModeRaw      string
 		consumerType     string
 		registryIDs      []uuid.UUID
 		authIDs          []uuid.UUID
 	)
 	if err := s.Scan(
-		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &c.Algorithm, &embeddingRaw, &fallbackRaw, &modelPoliciesRaw, &headersRaw, &c.Active,
+		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &c.Algorithm, &embeddingRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
 		&registryIDs, &authIDs,
 	); err != nil {
 		return nil, err
 	}
 	c.Type = domain.Type(consumerType)
+	c.FailMode = domain.FailMode(failModeRaw)
 	if len(headersRaw) > 0 {
 		if err := json.Unmarshal(headersRaw, &c.Headers); err != nil {
 			return nil, fmt.Errorf("scan headers: %w", err)
@@ -324,6 +337,13 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 			return nil, fmt.Errorf("scan model_policies: %w", err)
 		}
 		c.ModelPolicies = mp
+	}
+	if len(toolkitRaw) > 0 {
+		var tk domain.Toolkit
+		if err := json.Unmarshal(toolkitRaw, &tk); err != nil {
+			return nil, fmt.Errorf("scan toolkit: %w", err)
+		}
+		c.Toolkit = tk
 	}
 	c.RegistryIDs = registrydomain.Registries(ids.FromUUIDs[ids.RegistryKind](registryIDs))
 	c.AuthIDs = ids.FromUUIDs[ids.AuthKind](authIDs)
@@ -362,6 +382,20 @@ func marshalModelPolicies(m domain.ModelPolicies) ([]byte, error) {
 		return nil, nil
 	}
 	return json.Marshal(m)
+}
+
+func marshalToolkit(t domain.Toolkit) ([]byte, error) {
+	if len(t) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(t)
+}
+
+func failMode(c *domain.Consumer) string {
+	if c.FailMode == "" {
+		return string(domain.FailModeClosed)
+	}
+	return string(c.FailMode)
 }
 
 func nullableUUID(id uuid.UUID) any {

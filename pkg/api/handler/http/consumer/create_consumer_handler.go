@@ -62,6 +62,7 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 		Headers:         req.Headers,
 		Active:          req.Active,
 		Fallback:        fallback,
+		FailMode:        req.ToFailMode(),
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

@@ -20,6 +20,7 @@ type CreateInput struct {
 	Headers         map[string]string
 	Active          *bool
 	Fallback        *domain.Fallback
+	FailMode        domain.FailMode
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -61,6 +62,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		Headers:         in.Headers,
 		Active:          in.Active,
 		Fallback:        in.Fallback,
+		FailMode:        in.FailMode,
 	})
 	if err != nil {
 		return nil, err

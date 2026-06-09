@@ -10,12 +10,27 @@ import (
 
 type CreateRegistryRequest struct {
 	Name            string               `json:"name"`
-	Provider        string               `json:"provider"`
+	Type            string               `json:"type,omitempty"`
+	Provider        string               `json:"provider,omitempty"`
 	ProviderOptions map[string]any       `json:"provider_options,omitempty"`
 	Description     string               `json:"description,omitempty"`
 	Weight          int                  `json:"weight,omitempty"`
 	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
+	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
+}
+
+type MCPTargetRequest struct {
+	URL       string            `json:"url"`
+	Transport string            `json:"transport,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Auth      *MCPAuthRequest   `json:"auth,omitempty"`
+}
+
+type MCPAuthRequest struct {
+	Mode   string `json:"mode"`
+	Header string `json:"header,omitempty"`
+	Value  string `json:"value,omitempty"` // #nosec G117
 }
 
 type HealthChecksRequest struct {
@@ -87,11 +102,17 @@ func (r CreateRegistryRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
-	if strings.TrimSpace(r.Provider) == "" {
-		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
-	}
 	if r.Weight < 0 {
 		return fmt.Errorf("weight cannot be negative: %w", commonerrors.ErrValidation)
+	}
+	if r.ToType() == domain.TypeMCP {
+		if r.MCPTarget == nil {
+			return fmt.Errorf("mcp_target is required for MCP registries: %w", commonerrors.ErrValidation)
+		}
+		return nil
+	}
+	if strings.TrimSpace(r.Provider) == "" {
+		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
 	}
 	if r.Auth == nil {
 		return fmt.Errorf("auth is required: %w", commonerrors.ErrValidation)
@@ -102,12 +123,42 @@ func (r CreateRegistryRequest) Validate() error {
 	return nil
 }
 
+func (r CreateRegistryRequest) ToType() domain.Type {
+	if r.Type == "" {
+		return domain.TypeLLM
+	}
+	return domain.Type(r.Type)
+}
+
 func (r CreateRegistryRequest) ToAuth() *domain.TargetAuth {
 	return r.Auth.ToDomain()
 }
 
 func (r CreateRegistryRequest) ToHealthChecks() *domain.HealthChecks {
 	return r.HealthChecks.ToDomain()
+}
+
+func (r CreateRegistryRequest) ToMCPTarget() *domain.MCPTarget {
+	return r.MCPTarget.ToDomain()
+}
+
+func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
+	if t == nil {
+		return nil
+	}
+	out := &domain.MCPTarget{
+		URL:       t.URL,
+		Transport: domain.MCPTransport(t.Transport),
+		Headers:   t.Headers,
+	}
+	if t.Auth != nil {
+		out.Auth = &domain.MCPAuth{
+			Mode:   domain.MCPAuthMode(t.Auth.Mode),
+			Header: t.Auth.Header,
+			Value:  t.Auth.Value,
+		}
+	}
+	return out
 }
 
 func (h *HealthChecksRequest) ToDomain() *domain.HealthChecks {

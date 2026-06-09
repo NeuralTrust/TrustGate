@@ -24,6 +24,8 @@ type UpdateInput struct {
 	Active          *bool
 	Fallback        *domain.Fallback
 	ModelPolicies   *domain.ModelPolicies
+	Toolkit         *domain.Toolkit
+	FailMode        *domain.FailMode
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -90,6 +92,12 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if in.ModelPolicies != nil {
 		existing.ModelPolicies = *in.ModelPolicies
 	}
+	if in.Toolkit != nil {
+		existing.Toolkit = *in.Toolkit
+	}
+	if in.FailMode != nil {
+		existing.FailMode = *in.FailMode
+	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := validateRegistryRefsAssociated(existing); err != nil {
 		return nil, err
@@ -122,6 +130,12 @@ func validateRegistryRefsAssociated(c *domain.Consumer) error {
 		if _, ok := associated[id]; !ok {
 			return fmt.Errorf("%w: model_policies registry %s is not associated with the consumer",
 				registrydomain.ErrInvalidRegistryID, id)
+		}
+	}
+	for _, e := range c.Toolkit {
+		if _, ok := associated[e.RegistryID]; !ok {
+			return fmt.Errorf("%w: toolkit registry %s is not associated with the consumer",
+				registrydomain.ErrInvalidRegistryID, e.RegistryID)
 		}
 	}
 	return nil

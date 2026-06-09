@@ -57,6 +57,7 @@ type adminRouterParams struct {
 	UpdateRegistry         *registryhttp.UpdateRegistryHandler
 	DeleteRegistry         *registryhttp.DeleteRegistryHandler
 	TestRegistryConnection *registryhttp.TestConnectionHandler
+	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
 	GetPolicy       *policyhttp.GetPolicyHandler
@@ -79,9 +80,10 @@ type adminRouterParams struct {
 	UpdateAuth *authhttp.UpdateAuthHandler
 	DeleteAuth *authhttp.DeleteAuthHandler
 
-	ListProvidersCatalog *cataloghttp.ListProvidersHandler
-	ListModelsCatalog    *cataloghttp.ListModelsHandler
-	ListPoliciesCatalog  *cataloghttp.ListPolicyCatalogHandler
+	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
+	ListModelsCatalog     *cataloghttp.ListModelsHandler
+	ListPoliciesCatalog   *cataloghttp.ListPolicyCatalogHandler
+	ListMCPServersCatalog *cataloghttp.ListMCPServersHandler
 }
 
 type adminServerParams struct {
@@ -113,6 +115,7 @@ func ServerAdmin(c *container.Container) error {
 				UpdateRegistry:         p.UpdateRegistry,
 				DeleteRegistry:         p.DeleteRegistry,
 				TestRegistryConnection: p.TestRegistryConnection,
+				ListRegistryTools:      p.ListRegistryTools,
 				CreatePolicy:           p.CreatePolicy,
 				GetPolicy:              p.GetPolicy,
 				ListPolicy:             p.ListPolicy,
@@ -132,9 +135,10 @@ func ServerAdmin(c *container.Container) error {
 				UpdateAuth:             p.UpdateAuth,
 				DeleteAuth:             p.DeleteAuth,
 
-				ListProvidersCatalog: p.ListProvidersCatalog,
-				ListModelsCatalog:    p.ListModelsCatalog,
-				ListPoliciesCatalog:  p.ListPoliciesCatalog,
+				ListProvidersCatalog:  p.ListProvidersCatalog,
+				ListModelsCatalog:     p.ListModelsCatalog,
+				ListPoliciesCatalog:   p.ListPoliciesCatalog,
+				ListMCPServersCatalog: p.ListMCPServersCatalog,
 			})
 		},
 		dig.Name("admin"),

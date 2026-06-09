@@ -20,6 +20,32 @@ type CreateConsumerRequest struct {
 	Headers         map[string]string       `json:"headers,omitempty"`
 	Active          *bool                   `json:"active,omitempty"`
 	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
+	FailMode        string                  `json:"fail_mode,omitempty"`
+}
+
+type ToolkitEntryRequest struct {
+	RegistryID string `json:"registry_id"`
+	Tool       string `json:"tool"`
+	ExposeAs   string `json:"expose_as,omitempty"`
+}
+
+func parseToolkit(raw []ToolkitEntryRequest) (domain.Toolkit, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(domain.Toolkit, 0, len(raw))
+	for i, e := range raw {
+		id, err := ids.Parse[ids.RegistryKind](e.RegistryID)
+		if err != nil {
+			return nil, fmt.Errorf("toolkit[%d]: invalid registry_id %q: %w", i, e.RegistryID, commonerrors.ErrValidation)
+		}
+		out = append(out, domain.ToolkitEntry{
+			RegistryID: id,
+			Tool:       e.Tool,
+			ExposeAs:   e.ExposeAs,
+		})
+	}
+	return out, nil
 }
 
 type ModelPolicyRequest struct {
@@ -126,6 +152,10 @@ func (r CreateConsumerRequest) ToEmbeddingConfig() *registrydomain.EmbeddingConf
 
 func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 	return r.Fallback.ToFallback()
+}
+
+func (r CreateConsumerRequest) ToFailMode() domain.FailMode {
+	return domain.FailMode(r.FailMode)
 }
 
 func parseModelPolicies(raw []ModelPolicyRequest) (domain.ModelPolicies, error) {

@@ -19,6 +19,8 @@ type UpdateConsumerRequest struct {
 	Active          *bool                   `json:"active,omitempty"`
 	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
 	ModelPolicies   *[]ModelPolicyRequest   `json:"model_policies,omitempty"`
+	Toolkit         *[]ToolkitEntryRequest  `json:"toolkit,omitempty"`
+	FailMode        *string                 `json:"fail_mode,omitempty"`
 }
 
 func (r UpdateConsumerRequest) Validate() error {
@@ -68,4 +70,23 @@ func (r UpdateConsumerRequest) ToModelPolicies() (*domain.ModelPolicies, error) 
 		return nil, err
 	}
 	return &mp, nil
+}
+
+func (r UpdateConsumerRequest) ToToolkit() (*domain.Toolkit, error) {
+	if r.Toolkit == nil {
+		return nil, nil
+	}
+	tk, err := parseToolkit(*r.Toolkit)
+	if err != nil {
+		return nil, err
+	}
+	return &tk, nil
+}
+
+func (r UpdateConsumerRequest) ToFailMode() *domain.FailMode {
+	if r.FailMode == nil || strings.TrimSpace(*r.FailMode) == "" {
+		return nil
+	}
+	m := domain.FailMode(*r.FailMode)
+	return &m
 }

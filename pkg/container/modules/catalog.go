@@ -41,6 +41,12 @@ func Catalog(c *container.Container) error {
 	if err := c.Provide(cataloghttp.NewListProvidersHandler); err != nil {
 		return err
 	}
+	if err := c.Provide(appcatalog.NewMCPServerCatalog); err != nil {
+		return err
+	}
+	if err := c.Provide(cataloghttp.NewListMCPServersHandler); err != nil {
+		return err
+	}
 	return c.Provide(cataloghttp.NewListModelsHandler)
 }
 

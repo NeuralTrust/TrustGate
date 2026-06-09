@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-mcp
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    app.kubernetes.io/component: mcp
+    component: mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: agentgateway
+      app.kubernetes.io/component: mcp
+      component: mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: agentgateway
+        app.kubernetes.io/component: mcp
+        component: mcp
+    spec:
+      serviceAccountName: agentgateway
+      containers:
+      - name: mcp
+        image: agentgateway
+        # Distroless image has no /bin/sh; secrets load via godotenv from /etc/secrets/.env.
+        workingDir: /app
+        args:
+        - mcp
+        imagePullPolicy: Always
+        envFrom:
+        - configMapRef:
+            name: agentgateway-config
+        ports:
+        - containerPort: 8082
+          name: http
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        volumeMounts:
+        - name: agentgateway-secrets
+          mountPath: /etc/secrets
+          readOnly: true
+      securityContext: {}
+      volumes:
+      - name: agentgateway-secrets
+        csi:
+          driver: secrets-store-gke.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: agentgateway-secrets
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - agentgateway-mcp
+            topologyKey: kubernetes.io/hostname

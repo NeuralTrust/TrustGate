@@ -24,8 +24,16 @@ type ConsumerResponse struct {
 	AuthIDs         []ids.AuthID             `json:"auth_ids"`
 	Fallback        *FallbackResponse        `json:"fallback,omitempty"`
 	ModelPolicies   []ModelPolicyResponse    `json:"model_policies,omitempty"`
+	Toolkit         []ToolkitEntryResponse   `json:"toolkit,omitempty"`
+	FailMode        string                   `json:"fail_mode,omitempty"`
 	CreatedAt       time.Time                `json:"created_at"`
 	UpdatedAt       time.Time                `json:"updated_at"`
+}
+
+type ToolkitEntryResponse struct {
+	RegistryID ids.RegistryID `json:"registry_id"`
+	Tool       string         `json:"tool"`
+	ExposeAs   string         `json:"expose_as,omitempty"`
 }
 
 type ModelPolicyResponse struct {
@@ -96,9 +104,26 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		AuthIDs:         authIDs,
 		Fallback:        fromFallback(c.Fallback),
 		ModelPolicies:   fromModelPolicies(c.ModelPolicies),
+		Toolkit:         fromToolkit(c.Toolkit),
+		FailMode:        string(c.FailMode),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 	}
+}
+
+func fromToolkit(t domain.Toolkit) []ToolkitEntryResponse {
+	if len(t) == 0 {
+		return nil
+	}
+	out := make([]ToolkitEntryResponse, 0, len(t))
+	for _, e := range t {
+		out = append(out, ToolkitEntryResponse{
+			RegistryID: e.RegistryID,
+			Tool:       e.Tool,
+			ExposeAs:   e.ExposeAs,
+		})
+	}
+	return out
 }
 
 func fromEmbeddingAuth(a *registrydomain.APIKeyAuth) *EmbeddingAuthResponse {

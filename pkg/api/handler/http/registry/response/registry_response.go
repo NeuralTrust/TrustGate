@@ -12,14 +12,29 @@ type RegistryResponse struct {
 	ID              ids.RegistryID        `json:"id"`
 	GatewayID       ids.GatewayID         `json:"gateway_id"`
 	Name            string                `json:"name"`
-	Provider        string                `json:"provider"`
+	Type            string                `json:"type"`
+	Provider        string                `json:"provider,omitempty"`
 	ProviderOptions map[string]any        `json:"provider_options,omitempty"`
 	Description     string                `json:"description,omitempty"`
 	Weight          int                   `json:"weight,omitempty"`
 	Auth            *TargetAuthResponse   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksResponse `json:"health_checks,omitempty"`
+	MCPTarget       *MCPTargetResponse    `json:"mcp_target,omitempty"`
 	CreatedAt       time.Time             `json:"created_at"`
 	UpdatedAt       time.Time             `json:"updated_at"`
+}
+
+type MCPTargetResponse struct {
+	URL       string            `json:"url"`
+	Transport string            `json:"transport,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Auth      *MCPAuthResponse  `json:"auth,omitempty"`
+}
+
+type MCPAuthResponse struct {
+	Mode   string `json:"mode"`
+	Header string `json:"header,omitempty"`
+	Value  string `json:"value,omitempty"` // #nosec G117 -- masked before serialization
 }
 
 type HealthChecksResponse struct {
@@ -90,19 +105,44 @@ func FromRegistry(b *domain.Registry) RegistryResponse {
 			Interval:  b.HealthChecks.Interval,
 		}
 	}
+	regType := b.Type
+	if regType == "" {
+		regType = domain.TypeLLM
+	}
 	return RegistryResponse{
 		ID:              b.ID,
 		GatewayID:       b.GatewayID,
 		Name:            b.Name,
+		Type:            string(regType),
 		Provider:        b.Provider,
 		ProviderOptions: b.ProviderOptions,
 		Description:     b.Description,
 		Weight:          b.Weight,
 		Auth:            FromAuth(b.Auth),
 		HealthChecks:    health,
+		MCPTarget:       fromMCPTarget(b.MCPTarget),
 		CreatedAt:       b.CreatedAt,
 		UpdatedAt:       b.UpdatedAt,
 	}
+}
+
+func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
+	if t == nil {
+		return nil
+	}
+	out := &MCPTargetResponse{
+		URL:       t.URL,
+		Transport: string(t.Transport),
+		Headers:   t.Headers,
+	}
+	if t.Auth != nil {
+		out.Auth = &MCPAuthResponse{
+			Mode:   string(t.Auth.Mode),
+			Header: t.Auth.Header,
+			Value:  secret.Mask(t.Auth.Value),
+		}
+	}
+	return out
 }
 
 func FromAuth(a *domain.TargetAuth) *TargetAuthResponse {

@@ -44,6 +44,8 @@ type Consumer struct {
 	AuthIDs         []ids.AuthID              `json:"auth_ids"`
 	Fallback        *Fallback                 `json:"fallback,omitempty"`
 	ModelPolicies   ModelPolicies             `json:"model_policies,omitempty"`
+	Toolkit         Toolkit                   `json:"toolkit,omitempty"`
+	FailMode        FailMode                  `json:"fail_mode,omitempty"`
 	CreatedAt       time.Time                 `json:"created_at"`
 	UpdatedAt       time.Time                 `json:"updated_at"`
 }
@@ -61,6 +63,8 @@ type CreateParams struct {
 	AuthIDs         []ids.AuthID
 	Fallback        *Fallback
 	ModelPolicies   ModelPolicies
+	Toolkit         Toolkit
+	FailMode        FailMode
 }
 
 func New(params CreateParams) (*Consumer, error) {
@@ -87,6 +91,8 @@ func New(params CreateParams) (*Consumer, error) {
 		AuthIDs:         params.AuthIDs,
 		Fallback:        params.Fallback,
 		ModelPolicies:   params.ModelPolicies,
+		Toolkit:         params.Toolkit,
+		FailMode:        params.FailMode,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -173,6 +179,20 @@ func (c *Consumer) Validate() error {
 	}
 	if err := c.ModelPolicies.Validate(c.knownRegistryIDs()); err != nil {
 		return err
+	}
+	if c.FailMode == "" {
+		c.FailMode = FailModeClosed
+	}
+	if err := c.FailMode.Validate(); err != nil {
+		return err
+	}
+	if len(c.Toolkit) > 0 {
+		if c.Type != TypeMCP {
+			return fmt.Errorf("%w: toolkit is only valid for MCP consumers", ErrInvalidToolkit)
+		}
+		if err := c.Toolkit.Validate(c.knownRegistryIDs()); err != nil {
+			return err
+		}
 	}
 	return nil
 }

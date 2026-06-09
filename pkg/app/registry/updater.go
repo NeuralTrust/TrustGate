@@ -20,6 +20,7 @@ type UpdateInput struct {
 	Weight          *int
 	Auth            *domain.TargetAuth
 	HealthChecks    *domain.HealthChecks
+	MCPTarget       *domain.MCPTarget
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=registry_updater_mock.go --case=underscore --with-expecter
@@ -79,6 +80,11 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	}
 	if in.HealthChecks != nil {
 		existing.HealthChecks = in.HealthChecks
+	}
+	if in.MCPTarget != nil {
+		in.MCPTarget.Normalize()
+		in.MCPTarget.ResolveSecretsFrom(existing.MCPTarget)
+		existing.MCPTarget = in.MCPTarget
 	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {
