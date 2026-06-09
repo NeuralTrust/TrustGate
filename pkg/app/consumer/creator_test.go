@@ -12,6 +12,7 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
@@ -59,6 +60,46 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 	if cached.(*domain.Consumer).ID != c.ID {
 		t.Fatal("cached consumer ID mismatch")
+	}
+}
+
+func TestCreator_Create_WithFallback(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	fallbackID := ids.New[ids.RegistryKind]()
+	fallback := &domain.Fallback{
+		Enabled:  true,
+		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+		Budget:   domain.FallbackBudget{MaxAttempts: 3},
+		Chain:    registrydomain.Registries{fallbackID},
+	}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().
+		Save(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
+			return c.Fallback != nil &&
+				c.Fallback.Enabled &&
+				c.Fallback.Budget.MaxAttempts == 3 &&
+				len(c.Fallback.Chain) == 1 &&
+				c.Fallback.Chain[0] == fallbackID
+		})).
+		Return(nil).
+		Once()
+
+	creator := appconsumer.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+
+	created, err := creator.Create(context.Background(), appconsumer.CreateInput{
+		GatewayID: gwID,
+		Name:      "chat",
+		Type:      domain.TypeLLM,
+		Path:      "/v1/chat/completions",
+		Fallback:  fallback,
+	})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if created.Fallback == nil || created.Fallback.Chain[0] != fallbackID {
+		t.Fatalf("Fallback = %#v, want chain with %s", created.Fallback, fallbackID)
 	}
 }
 
