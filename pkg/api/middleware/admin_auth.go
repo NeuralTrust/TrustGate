@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
@@ -27,26 +28,24 @@ func (m *AdminAuthMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get(authorizationHeader)
 		if authHeader == "" {
-			return unauthorized(c, "Authorization required")
+			return m.unauthorized(c, "Authorization required", nil)
 		}
 		if !strings.HasPrefix(authHeader, bearerPrefix) {
-			return unauthorized(c, "Invalid authorization format")
+			return m.unauthorized(c, "Invalid authorization format", nil)
 		}
 
 		tokenString := strings.TrimPrefix(authHeader, bearerPrefix)
 		if tokenString == "" {
-			return unauthorized(c, "Empty token provided")
+			return m.unauthorized(c, "Empty token provided", nil)
 		}
 
 		if err := m.jwtManager.ValidateToken(tokenString); err != nil {
-			m.logger.Debug("admin auth: invalid token", slog.String("error", err.Error()))
-			return unauthorized(c, "Invalid token")
+			return m.unauthorized(c, "Invalid token", err)
 		}
 
 		claims, err := m.jwtManager.DecodeToken(tokenString)
 		if err != nil {
-			m.logger.Debug("admin auth: failed to decode token", slog.String("error", err.Error()))
-			return unauthorized(c, "Invalid token")
+			return m.unauthorized(c, "Invalid token", err)
 		}
 
 		if claims.TeamID != "" {
@@ -63,6 +62,26 @@ func (m *AdminAuthMiddleware) Middleware() fiber.Handler {
 	}
 }
 
-func unauthorized(c *fiber.Ctx, message string) error {
-	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": message})
+func (m *AdminAuthMiddleware) unauthorized(c *fiber.Ctx, message string, err error) error {
+	m.logAuthFailure(c, message, err)
+	return c.Status(fiber.StatusUnauthorized).JSON(helpers.ErrorBody{
+		Error:   "unauthorized",
+		Message: message,
+	})
+}
+
+func (m *AdminAuthMiddleware) logAuthFailure(c *fiber.Ctx, reason string, err error) {
+	if m.logger == nil {
+		return
+	}
+	attrs := []slog.Attr{
+		slog.String("reason", reason),
+		slog.String("method", c.Method()),
+		slog.String("path", c.Path()),
+		slog.String("request_id", c.Get(fiber.HeaderXRequestID)),
+	}
+	if err != nil {
+		attrs = append(attrs, slog.String("error", err.Error()))
+	}
+	m.logger.LogAttrs(c.UserContext(), slog.LevelDebug, "admin auth failed", attrs...)
 }
