@@ -120,6 +120,95 @@ func TestConnectionTester_UnsupportedAuthType(t *testing.T) {
 	assert.Equal(t, "unsupported", res.Stage)
 }
 
+func TestConnectionTester_AzureModesAreSupported(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		auth *domain.TargetAuth
+		want providers.Azure
+		key  string
+	}{
+		{
+			name: "api key",
+			auth: &domain.TargetAuth{
+				Type:  domain.AuthTypeAzure,
+				Azure: &domain.AzureAuth{Endpoint: "https://example.openai.azure.com", APIKey: "azure-key"},
+			},
+			want: providers.Azure{
+				Endpoint: "https://example.openai.azure.com",
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+			key: "azure-key",
+		},
+		{
+			name: "service principal",
+			auth: &domain.TargetAuth{
+				Type: domain.AuthTypeAzure,
+				Azure: &domain.AzureAuth{
+					Endpoint:     "https://example.openai.azure.com",
+					TenantID:     "tenant",
+					ClientID:     "client",
+					ClientSecret: "secret",
+				},
+			},
+			want: providers.Azure{
+				Endpoint:     "https://example.openai.azure.com",
+				AuthMode:     providers.AzureAuthModeServicePrincipal,
+				TenantID:     "tenant",
+				ClientID:     "client",
+				ClientSecret: "secret",
+			},
+		},
+		{
+			name: "default azure credential",
+			auth: &domain.TargetAuth{
+				Type:  domain.AuthTypeAzure,
+				Azure: &domain.AzureAuth{Endpoint: "https://example.openai.azure.com", UseManagedIdentity: true},
+			},
+			want: providers.Azure{
+				Endpoint:    "https://example.openai.azure.com",
+				AuthMode:    providers.AzureAuthModeDefaultAzureCredential,
+				UseIdentity: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			finder := regmocks.NewFinder(t)
+			locator := locatormocks.NewProviderLocator(t)
+			probe := providermocks.NewConnectionTester(t)
+
+			probe.EXPECT().
+				TestConnection(mock.Anything, mock.MatchedBy(func(cfg *providers.Config) bool {
+					if cfg.Credentials.ApiKey != tt.key || cfg.Credentials.Azure == nil {
+						return false
+					}
+					return *cfg.Credentials.Azure == tt.want
+				})).
+				Return(providers.ProbeResult{OK: true, Stage: providers.StageAuthentication, StatusCode: 200}).
+				Once()
+			locator.EXPECT().Get("azure").Return(nil, nil).Once()
+			locator.EXPECT().GetTester("azure").Return(probe, nil).Once()
+
+			svc := appregistry.NewConnectionTester(finder, locator, newTestLogger())
+			res, err := svc.Test(context.Background(), appregistry.TestConnectionInput{
+				GatewayID: ids.New[ids.GatewayKind](),
+				Provider:  "azure",
+				Auth:      tt.auth,
+			})
+
+			require.NoError(t, err)
+			assert.True(t, res.OK)
+			assert.Equal(t, "authentication", res.Stage)
+			assert.Equal(t, "azure", res.Provider)
+		})
+	}
+}
+
 func TestConnectionTester_UnsupportedProvider(t *testing.T) {
 	t.Parallel()
 	finder := regmocks.NewFinder(t)

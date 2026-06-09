@@ -79,10 +79,22 @@ type AwsBedrock struct {
 	RoleARN      string `json:"role_arn"`
 }
 
+type AzureAuthMode string
+
+const (
+	AzureAuthModeAPIKey                 AzureAuthMode = "api_key"
+	AzureAuthModeServicePrincipal       AzureAuthMode = "service_principal"
+	AzureAuthModeDefaultAzureCredential AzureAuthMode = "default_azure_credential" // #nosec G101 -- auth mode identifier, not a credential value
+)
+
 type Azure struct {
-	Endpoint    string `json:"endpoint"`
-	ApiVersion  string `json:"api_version"`
-	UseIdentity bool   `json:"use_identity"`
+	Endpoint     string        `json:"endpoint"`
+	ApiVersion   string        `json:"api_version"`
+	AuthMode     AzureAuthMode `json:"auth_mode"`
+	UseIdentity  bool          `json:"use_identity"`
+	TenantID     string        `json:"tenant_id"`
+	ClientID     string        `json:"client_id"`
+	ClientSecret string        `json:"client_secret"` // #nosec G117 -- Azure client secret credential
 }
 
 //go:generate mockery --name=Client --dir=. --output=./mocks --filename=client_mock.go --case=underscore --with-expecter

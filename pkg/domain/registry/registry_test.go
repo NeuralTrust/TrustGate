@@ -7,6 +7,7 @@ import (
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 )
 
 func TestBackend_New_HappyPath(t *testing.T) {
@@ -154,8 +155,17 @@ func TestTargetAuth_Validate(t *testing.T) {
 		{name: "api_key missing payload", auth: &TargetAuth{Type: AuthTypeAPIKey}, wantErr: true},
 		{name: "api_key empty fields", auth: &TargetAuth{Type: AuthTypeAPIKey, APIKey: &APIKeyAuth{}}, wantErr: true},
 		{name: "azure ok with api key", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", APIKey: "az-key"}}},
+		{name: "azure ok with service principal", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", ClientID: "client", ClientSecret: "secret", TenantID: "tenant"}}},
 		{name: "azure ok with managed identity", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", UseManagedIdentity: true}}},
 		{name: "azure missing key and identity", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x"}}, wantErr: true},
+		{name: "azure missing endpoint", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{APIKey: "az-key"}}, wantErr: true},
+		{name: "azure incomplete service principal", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", ClientID: "client", ClientSecret: "secret"}}, wantErr: true},
+		{name: "azure client id only", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", ClientID: "client"}}, wantErr: true},
+		{name: "azure tenant id only", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", TenantID: "tenant"}}, wantErr: true},
+		{name: "azure client secret only", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", ClientSecret: "secret"}}, wantErr: true},
+		{name: "azure api key mixed with service principal", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", APIKey: "az-key", ClientID: "client", ClientSecret: "secret", TenantID: "tenant"}}, wantErr: true},
+		{name: "azure api key mixed with managed identity", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", APIKey: "az-key", UseManagedIdentity: true}}, wantErr: true},
+		{name: "azure service principal mixed with managed identity", auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", ClientID: "client", ClientSecret: "secret", TenantID: "tenant", UseManagedIdentity: true}}, wantErr: true},
 		{name: "azure nil payload", auth: &TargetAuth{Type: AuthTypeAzure}, wantErr: true},
 		{name: "aws ok", auth: &TargetAuth{Type: AuthTypeAWS, AWS: &AWSAuth{Region: "us-east-1"}}},
 		{name: "aws nil payload", auth: &TargetAuth{Type: AuthTypeAWS}, wantErr: true},
@@ -179,6 +189,144 @@ func TestTargetAuth_Validate(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestAzureAuth_CredentialMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		auth    *AzureAuth
+		want    AzureCredentialMode
+		wantErr bool
+	}{
+		{name: "api key", auth: &AzureAuth{Endpoint: "https://x", APIKey: "az-key"}, want: AzureCredentialModeAPIKey},
+		{name: "service principal", auth: &AzureAuth{Endpoint: "https://x", ClientID: "client", ClientSecret: "secret", TenantID: "tenant"}, want: AzureCredentialModeServicePrincipal},
+		{name: "default azure credential", auth: &AzureAuth{Endpoint: "https://x", UseManagedIdentity: true}, want: AzureCredentialModeDefaultAzureCredential},
+		{name: "mixed modes", auth: &AzureAuth{Endpoint: "https://x", APIKey: "az-key", UseManagedIdentity: true}, wantErr: true},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tc.auth.CredentialMode()
+			if tc.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !tc.wantErr && got != tc.want {
+				t.Fatalf("CredentialMode() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTargetAuth_ProviderCredentials_Azure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		auth      *TargetAuth
+		wantKey   string
+		wantAzure providers.Azure
+	}{
+		{
+			name:    "api key",
+			auth:    &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{Endpoint: "https://x", Version: "2025-01-01", APIKey: "az-key"}},
+			wantKey: "az-key",
+			wantAzure: providers.Azure{
+				Endpoint:   "https://x",
+				ApiVersion: "2025-01-01",
+				AuthMode:   providers.AzureAuthModeAPIKey,
+			},
+		},
+		{
+			name: "service principal",
+			auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{
+				Endpoint:     "https://x",
+				Version:      "2025-01-01",
+				ClientID:     "client",
+				ClientSecret: "secret",
+				TenantID:     "tenant",
+			}},
+			wantAzure: providers.Azure{
+				Endpoint:     "https://x",
+				ApiVersion:   "2025-01-01",
+				AuthMode:     providers.AzureAuthModeServicePrincipal,
+				ClientID:     "client",
+				ClientSecret: "secret",
+				TenantID:     "tenant",
+			},
+		},
+		{
+			name: "default azure credential",
+			auth: &TargetAuth{Type: AuthTypeAzure, Azure: &AzureAuth{
+				Endpoint:           "https://x",
+				Version:            "2025-01-01",
+				UseManagedIdentity: true,
+			}},
+			wantAzure: providers.Azure{
+				Endpoint:    "https://x",
+				ApiVersion:  "2025-01-01",
+				AuthMode:    providers.AzureAuthModeDefaultAzureCredential,
+				UseIdentity: true,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			creds := tc.auth.ProviderCredentials()
+			if creds.ApiKey != tc.wantKey {
+				t.Fatalf("ApiKey = %q, want %q", creds.ApiKey, tc.wantKey)
+			}
+			if creds.Azure == nil {
+				t.Fatal("Azure credentials are nil")
+			}
+			if *creds.Azure != tc.wantAzure {
+				t.Fatalf("Azure credentials = %+v, want %+v", *creds.Azure, tc.wantAzure)
+			}
+		})
+	}
+}
+
+func TestRegistry_Rehydrate_AllowsLegacyAzureWithoutEndpoint(t *testing.T) {
+	t.Parallel()
+
+	auth := &TargetAuth{
+		Type:  AuthTypeAzure,
+		Azure: &AzureAuth{APIKey: "legacy-key"},
+	}
+	got := Rehydrate(
+		ids.New[ids.RegistryKind](),
+		ids.New[ids.GatewayKind](),
+		"legacy-azure",
+		"azure",
+		nil,
+		"",
+		1,
+		auth,
+		nil,
+		time.Now().UTC(),
+		time.Now().UTC(),
+	)
+
+	if got.Auth == nil || got.Auth.Azure == nil {
+		t.Fatalf("legacy Azure auth not rehydrated: %+v", got.Auth)
+	}
+	if got.Auth.Azure.APIKey != "legacy-key" {
+		t.Fatalf("legacy Azure APIKey = %q, want legacy-key", got.Auth.Azure.APIKey)
+	}
+	if err := got.Validate(); err == nil {
+		t.Fatal("Validate() = nil, want writes to reject missing azure.endpoint")
 	}
 }
 

@@ -13,7 +13,7 @@ func TestProviderCredentials_AzureAPIKey(t *testing.T) {
 		Type: registrydomain.AuthTypeAzure,
 		Azure: &registrydomain.AzureAuth{
 			Endpoint: "https://example.openai.azure.com",
-			Version:  "2024-05-01-preview",
+			Version:  "2024-10-21",
 			APIKey:   "az-secret-key",
 		},
 	}
