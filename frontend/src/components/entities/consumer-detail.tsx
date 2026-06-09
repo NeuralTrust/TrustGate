@@ -10,13 +10,21 @@ import { useToast } from "@/components/ui/toast";
 import { Dialog, DialogContent, DialogHeader, DialogBody, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabTrigger, TabContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Field, Input } from "@/components/ui/field";
+import { Field, Input, Select } from "@/components/ui/field";
 import { SwitchRow, Grid2 } from "@/components/ui/form-bits";
 import { PageLoader, Badge } from "@/components/ui/misc";
 import { cn } from "@/lib/cn";
-import type { Consumer, Registry, Auth, Policy } from "@/lib/types";
+import type { Consumer, Registry, Auth, Policy, Algorithm } from "@/lib/types";
 
 const TRIGGERS = ["http_5xx", "http_429", "timeout", "provider_error", "plugin_rejection"];
+
+const ALGORITHMS: { value: Algorithm; label: string; hint: string }[] = [
+  { value: "round-robin", label: "Round robin", hint: "Even rotation across the attached registries." },
+  { value: "weighted-round-robin", label: "Weighted round robin", hint: "Rotation weighted by each registry's weight." },
+  { value: "least-connections", label: "Least connections", hint: "Prefer the registry with the fewest in-flight requests." },
+  { value: "random", label: "Random", hint: "Pick an attached registry at random." },
+  { value: "semantic", label: "Semantic", hint: "Route by embedding similarity (requires an embedding model)." },
+];
 
 export function ConsumerDetail({
   consumerId,
@@ -49,6 +57,7 @@ export function ConsumerDetail({
             <div className="px-6 pt-3">
               <TabsList>
                 <TabTrigger value="bindings">Bindings</TabTrigger>
+                <TabTrigger value="routing">Routing</TabTrigger>
                 <TabTrigger value="fallback">Fallback</TabTrigger>
                 <TabTrigger value="models">Model policies</TabTrigger>
               </TabsList>
@@ -56,6 +65,9 @@ export function ConsumerDetail({
             <DialogBody className="min-h-[340px]">
               <TabContent value="bindings">
                 <BindingsTab consumer={consumer} />
+              </TabContent>
+              <TabContent value="routing">
+                <RoutingTab consumer={consumer} onClose={() => onOpenChange(false)} />
               </TabContent>
               <TabContent value="fallback">
                 <FallbackTab consumer={consumer} onClose={() => onOpenChange(false)} />
@@ -208,6 +220,98 @@ function BindingSection<T extends NamedEntity>({
         </div>
       )}
     </section>
+  );
+}
+
+function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => void }) {
+  const gatewayId = useActiveGatewayId();
+  const invalidate = useConsumerInvalidate(consumer.id);
+  const { toast } = useToast();
+
+  const [algorithm, setAlgorithm] = useState<Algorithm>(consumer.algorithm);
+  const [embProvider, setEmbProvider] = useState(consumer.embedding_config?.provider ?? "");
+  const [embModel, setEmbModel] = useState(consumer.embedding_config?.model ?? "");
+  const [embKey, setEmbKey] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const isSemantic = algorithm === "semantic";
+  const meta = ALGORITHMS.find((a) => a.value === algorithm);
+
+  async function save() {
+    const body = consumerBaseBody(consumer);
+    body.algorithm = algorithm;
+    if (isSemantic) {
+      if (!embProvider.trim() || !embModel.trim() || !embKey.trim()) {
+        toast({
+          variant: "error",
+          title: "Embedding model required",
+          description: "Semantic routing needs an embedding provider, model and API key.",
+        });
+        return;
+      }
+      body.embedding_config = {
+        provider: embProvider.trim(),
+        model: embModel.trim(),
+        auth: { api_key: embKey.trim() },
+      };
+    }
+
+    setSaving(true);
+    try {
+      await api.put(`${gatewayScope(gatewayId)}/consumers/${consumer.id}`, body);
+      toast({ variant: "success", title: "Routing saved" });
+      invalidate();
+      onClose();
+    } catch (err) {
+      toast({ variant: "error", title: "Save failed", description: errorMessage(err) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Field label="Load balancing algorithm">
+        <Select value={algorithm} onChange={(e) => setAlgorithm(e.target.value as Algorithm)}>
+          {ALGORITHMS.map((a) => (
+            <option key={a.value} value={a.value}>
+              {a.label}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {meta && <p className="text-[12px] text-muted -mt-2">{meta.hint}</p>}
+
+      {algorithm === "weighted-round-robin" && (
+        <p className="text-[12px] text-faint">
+          Weighting uses each registry&apos;s configured weight. Registries without an explicit
+          weight default to 1, which behaves like plain round robin.
+        </p>
+      )}
+
+      {isSemantic && (
+        <div className="rounded-(--radius) border border-border bg-surface-2/30 p-3.5 flex flex-col gap-3">
+          <p className="text-[13px] font-medium text-fg">Embedding model</p>
+          <Grid2>
+            <Field label="Provider">
+              <Input value={embProvider} onChange={(e) => setEmbProvider(e.target.value)} placeholder="openai" />
+            </Field>
+            <Field label="Model">
+              <Input value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder="text-embedding-3-small" />
+            </Field>
+          </Grid2>
+          <Field label="API key" hint="re-enter to update">
+            <Input type="password" value={embKey} onChange={(e) => setEmbKey(e.target.value)} placeholder="sk-..." />
+          </Field>
+        </div>
+      )}
+
+      <div className="flex justify-end pt-2">
+        <Button variant="primary" onClick={save} loading={saving}>
+          Save routing
+        </Button>
+      </div>
+    </div>
   );
 }
 
