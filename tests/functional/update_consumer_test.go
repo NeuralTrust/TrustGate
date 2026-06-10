@@ -56,7 +56,7 @@ func TestUpdateConsumer_PreservesAssociations(t *testing.T) {
 	)
 	require.Equal(t, http.StatusOK, status, "body=%v", body)
 
-	got := idSet(t, getConsumer(t, gwID, coID), "registry_ids")
+	got := registryIDSet(t, getConsumer(t, gwID, coID))
 	require.Len(t, got, 2, "update must not drop associations")
 	assert.Contains(t, got, be1)
 	assert.Contains(t, got, be2)
@@ -72,8 +72,8 @@ func TestUpdateConsumer_SetsModelPolicies(t *testing.T) {
 	coID := CreateConsumerWithRegistries(t, gwID, name, beID)
 
 	payload := validConsumerPayload(name)
-	payload["model_policies"] = []map[string]any{
-		{"registry_id": beID, "allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"},
+	payload["registries"] = []map[string]any{
+		{"id": beID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"}},
 	}
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
@@ -87,12 +87,14 @@ func TestUpdateConsumer_SetsModelPolicies(t *testing.T) {
 	)
 	require.Equal(t, http.StatusOK, status)
 
-	policies, ok := body["model_policies"].([]any)
-	require.True(t, ok, "model_policies missing after update: %v", body)
-	require.Len(t, policies, 1)
-	policy, ok := policies[0].(map[string]any)
-	require.True(t, ok, "model policy entry malformed: %v", policies[0])
-	assert.Equal(t, beID, policy["registry_id"])
+	registries, ok := body["registries"].([]any)
+	require.True(t, ok, "registries missing after update: %v", body)
+	require.Len(t, registries, 1)
+	binding, ok := registries[0].(map[string]any)
+	require.True(t, ok, "registry binding malformed: %v", registries[0])
+	assert.Equal(t, beID, binding["id"])
+	policy, ok := binding["model_policies"].(map[string]any)
+	require.True(t, ok, "model_policies missing on binding: %v", binding)
 	assert.Equal(t, "gpt-4o-mini", policy["default"])
 }
 
@@ -106,8 +108,8 @@ func TestUpdateConsumer_RejectsModelPolicyForUnassociatedRegistry(t *testing.T) 
 	coID := CreateConsumer(t, gwID, validConsumerPayload(name)) // registry NOT attached
 
 	payload := validConsumerPayload(name)
-	payload["model_policies"] = []map[string]any{
-		{"registry_id": beID, "allowed": []string{"gpt-4o-mini"}},
+	payload["registries"] = []map[string]any{
+		{"id": beID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}}},
 	}
 	status, body := sendRequest(t, http.MethodPut,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),

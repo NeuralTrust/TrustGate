@@ -2826,6 +2826,12 @@ const docTemplate = `{
                 "path": {
                     "type": "string"
                 },
+                "registries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest"
+                    }
+                },
                 "type": {
                     "type": "string"
                 }
@@ -2893,9 +2899,17 @@ const docTemplate = `{
                 },
                 "default": {
                     "type": "string"
-                },
-                "registry_id": {
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
                     "type": "string"
+                },
+                "model_policies": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest"
                 }
             }
         },
@@ -2920,17 +2934,17 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
-                "model_policies": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest"
-                    }
-                },
                 "name": {
                     "type": "string"
                 },
                 "path": {
                     "type": "string"
+                },
+                "registries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest"
+                    }
                 },
                 "type": {
                     "type": "string"
@@ -2973,22 +2987,16 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "model_policies": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ModelPolicyResponse"
-                    }
-                },
                 "name": {
                     "type": "string"
                 },
                 "path": {
                     "type": "string"
                 },
-                "registry_ids": {
+                "registries": {
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryBindingResponse"
                     }
                 },
                 "type": {
@@ -3105,9 +3113,17 @@ const docTemplate = `{
                 },
                 "default": {
                     "type": "string"
-                },
-                "registry_id": {
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryBindingResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
                     "type": "string"
+                },
+                "model_policies": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ModelPolicyResponse"
                 }
             }
         },

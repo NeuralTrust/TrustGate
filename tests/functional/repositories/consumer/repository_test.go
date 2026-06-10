@@ -158,6 +158,44 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	}
 }
 
+func TestRepository_Save_PersistsRegistriesAtomically(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "pool-atomic")
+	be1 := seedRegistry(t, f.be, gwID, "be-atomic-1")
+	be2 := seedRegistry(t, f.be, gwID, "be-atomic-2")
+
+	c := validConsumer(t, gwID, "atomic-consumer", be1, be2)
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.RegistryIDs) != 2 {
+		t.Fatalf("RegistryIDs = %v, want 2 entries persisted by Save", got.RegistryIDs)
+	}
+	if !got.RegistryIDs.Contains(be1) || !got.RegistryIDs.Contains(be2) {
+		t.Fatalf("RegistryIDs = %v, want [%s, %s]", got.RegistryIDs, be1, be2)
+	}
+}
+
+func TestRepository_Save_RollsBackConsumerWhenRegistryInvalid(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "pool-rollback")
+
+	c := validConsumer(t, gwID, "rollback-consumer", ids.New[ids.RegistryKind]())
+	if err := f.repo.Save(ctx, c); !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
+		t.Fatalf("Save err = %v, want registrydomain.ErrInvalidRegistryID", err)
+	}
+	if _, err := f.repo.FindByID(ctx, c.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("FindByID err = %v, want ErrNotFound (consumer insert must roll back)", err)
+	}
+}
+
 func TestRepository_SaveAndFindByID_RoundTripsFallback(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()

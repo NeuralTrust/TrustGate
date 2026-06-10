@@ -123,9 +123,13 @@ export interface Fallback {
 }
 
 export interface ModelPolicy {
-  registry_id: string;
   allowed?: string[];
   default?: string;
+}
+
+export interface RegistryBinding {
+  id: string;
+  model_policies?: ModelPolicy | null;
 }
 
 export interface ConsumerWeight {
@@ -143,11 +147,10 @@ export interface Consumer {
   embedding_config?: EmbeddingConfig | null;
   headers?: Record<string, string>;
   active: boolean;
-  registry_ids: string[];
+  registries: RegistryBinding[];
   auth_ids: string[];
   fallback?: Fallback | null;
   weights?: ConsumerWeight[];
-  model_policies?: ModelPolicy[];
   created_at: string;
   updated_at: string;
 }

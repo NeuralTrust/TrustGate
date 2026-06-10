@@ -10,15 +10,15 @@ import (
 )
 
 type UpdateConsumerRequest struct {
-	Name            *string                 `json:"name,omitempty"`
-	Type            *string                 `json:"type,omitempty"`
-	Path            *string                 `json:"path,omitempty"`
-	Algorithm       *string                 `json:"algorithm,omitempty"`
-	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
-	Headers         *map[string]string      `json:"headers,omitempty"`
-	Active          *bool                   `json:"active,omitempty"`
-	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
-	ModelPolicies   *[]ModelPolicyRequest   `json:"model_policies,omitempty"`
+	Name            *string                   `json:"name,omitempty"`
+	Type            *string                   `json:"type,omitempty"`
+	Path            *string                   `json:"path,omitempty"`
+	Algorithm       *string                   `json:"algorithm,omitempty"`
+	EmbeddingConfig *EmbeddingConfigRequest   `json:"embedding_config,omitempty"`
+	Headers         *map[string]string        `json:"headers,omitempty"`
+	Active          *bool                     `json:"active,omitempty"`
+	Fallback        *FallbackRequest          `json:"fallback,omitempty"`
+	Registries      *[]RegistryBindingRequest `json:"registries,omitempty"`
 }
 
 func (r UpdateConsumerRequest) Validate() error {
@@ -60,12 +60,15 @@ func (r UpdateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 }
 
 func (r UpdateConsumerRequest) ToModelPolicies() (*domain.ModelPolicies, error) {
-	if r.ModelPolicies == nil {
+	if r.Registries == nil {
 		return nil, nil
 	}
-	mp, err := parseModelPolicies(*r.ModelPolicies)
+	_, mp, err := parseRegistryBindings(*r.Registries)
 	if err != nil {
 		return nil, err
+	}
+	if mp == nil {
+		mp = domain.ModelPolicies{}
 	}
 	return &mp, nil
 }
