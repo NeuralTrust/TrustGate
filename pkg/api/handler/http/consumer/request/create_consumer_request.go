@@ -12,15 +12,28 @@ import (
 )
 
 type CreateConsumerRequest struct {
-	Name          string               `json:"name"`
-	Type          string               `json:"type,omitempty"`
-	Path          string               `json:"path"`
-	RoutingMode   string               `json:"routing_mode,omitempty"`
-	LBConfig      *LBConfigRequest     `json:"lb_config,omitempty"`
-	Headers       map[string]string    `json:"headers,omitempty"`
-	Active        *bool                `json:"active,omitempty"`
-	Fallback      *FallbackRequest     `json:"fallback,omitempty"`
-	ModelPolicies []ModelPolicyRequest `json:"model_policies,omitempty"`
+	Name          string                   `json:"name"`
+	Type          string                   `json:"type,omitempty"`
+	Path          string                   `json:"path"`
+	RoutingMode   string                   `json:"routing_mode,omitempty"`
+	LBConfig      *LBConfigRequest         `json:"lb_config,omitempty"`
+	Headers       map[string]string        `json:"headers,omitempty"`
+	Active        *bool                    `json:"active,omitempty"`
+	Fallback      *FallbackRequest         `json:"fallback,omitempty"`
+	Registries    []RegistryBindingRequest `json:"registries,omitempty"`
+	ModelPolicies []ModelPolicyRequest     `json:"model_policies,omitempty"`
+}
+
+// RegistryBindingRequest binds a registry to the consumer atomically at create
+// time, optionally carrying the model policy for that registry.
+type RegistryBindingRequest struct {
+	ID            string                      `json:"id"`
+	ModelPolicies *RegistryModelPolicyRequest `json:"model_policies,omitempty"`
+}
+
+type RegistryModelPolicyRequest struct {
+	Allowed []string `json:"allowed,omitempty"`
+	Default string   `json:"default,omitempty"`
 }
 
 type ModelPolicyRequest struct {
@@ -146,8 +159,47 @@ func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 	return r.Fallback.ToFallback()
 }
 
-func (r CreateConsumerRequest) ToModelPolicies() (domain.ModelPolicies, error) {
-	return parseModelPolicies(r.ModelPolicies)
+// ToRegistryBindings resolves the nested registries array into the registry id
+// list plus the model policies they carry, merged with the top-level
+// model_policies entries. A registry may declare its policy in only one place.
+func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, domain.ModelPolicies, error) {
+	policies, err := parseModelPolicies(r.ModelPolicies)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(r.Registries) == 0 {
+		return nil, policies, nil
+	}
+	registryIDs := make([]ids.RegistryID, 0, len(r.Registries))
+	seen := make(map[ids.RegistryID]struct{}, len(r.Registries))
+	for i, binding := range r.Registries {
+		id, err := ids.Parse[ids.RegistryKind](binding.ID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("registries[%d]: invalid id %q: %w", i, binding.ID, commonerrors.ErrValidation)
+		}
+		if _, dup := seen[id]; dup {
+			return nil, nil, fmt.Errorf("registries[%d]: duplicate id %q: %w", i, binding.ID, commonerrors.ErrValidation)
+		}
+		seen[id] = struct{}{}
+		registryIDs = append(registryIDs, id)
+		if binding.ModelPolicies == nil {
+			continue
+		}
+		if policies == nil {
+			policies = make(domain.ModelPolicies, len(r.Registries))
+		}
+		if _, dup := policies[id]; dup {
+			return nil, nil, fmt.Errorf(
+				"registries[%d]: model policy for %q already declared in model_policies: %w",
+				i, binding.ID, commonerrors.ErrValidation,
+			)
+		}
+		policies[id] = domain.ModelPolicy{
+			Allowed: binding.ModelPolicies.Allowed,
+			Default: binding.ModelPolicies.Default,
+		}
+	}
+	return registryIDs, policies, nil
 }
 
 func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {

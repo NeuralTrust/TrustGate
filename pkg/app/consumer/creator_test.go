@@ -13,6 +13,7 @@ import (
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	registrymocks "github.com/NeuralTrust/AgentGateway/pkg/domain/registry/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
@@ -39,7 +40,7 @@ func TestCreator_Create_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	creator := appconsumer.NewCreator(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), mgr, cachetest.NoopPublisher(), newTestLogger())
 
 	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID: gwID,
@@ -60,6 +61,68 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 	if cached.(*domain.Consumer).ID != c.ID {
 		t.Fatal("cached consumer ID mismatch")
+	}
+}
+
+func TestCreator_Create_WithRegistries_BindsAtomically(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().
+		Save(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
+			return len(c.RegistryIDs) == 1 && c.RegistryIDs[0] == registryID
+		})).
+		Return(nil).
+		Once()
+
+	registryRepo := registrymocks.NewRepository(t)
+	registryRepo.EXPECT().
+		FindByIDs(mock.Anything, gwID, []ids.RegistryID{registryID}).
+		Return([]*registrydomain.Registry{{ID: registryID, GatewayID: gwID}}, nil).
+		Once()
+
+	creator := appconsumer.NewCreator(repo, registryRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+
+	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
+		GatewayID:     gwID,
+		Name:          "chat",
+		Type:          domain.TypeLLM,
+		Path:          "/v1/chat/completions",
+		RegistryIDs:   []ids.RegistryID{registryID},
+		ModelPolicies: domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}},
+	})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if len(c.RegistryIDs) != 1 || c.RegistryIDs[0] != registryID {
+		t.Fatalf("RegistryIDs = %v, want [%s]", c.RegistryIDs, registryID)
+	}
+}
+
+func TestCreator_Create_RejectsRegistryFromAnotherGateway(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+
+	registryRepo := registrymocks.NewRepository(t)
+	registryRepo.EXPECT().
+		FindByIDs(mock.Anything, gwID, []ids.RegistryID{registryID}).
+		Return(nil, nil).
+		Once()
+
+	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registryRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+
+	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
+		GatewayID:   gwID,
+		Name:        "chat",
+		Type:        domain.TypeLLM,
+		Path:        "/v1/chat/completions",
+		RegistryIDs: []ids.RegistryID{registryID},
+	})
+	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
+		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
 }
 
@@ -109,7 +172,7 @@ func TestCreator_Create_RejectsRegistryReferencesBeforeAssociation(t *testing.T)
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			creator := appconsumer.NewCreator(repomocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+			creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 			tc.input.GatewayID = gwID
 			tc.input.Name = "chat"
 			tc.input.Type = domain.TypeLLM
@@ -125,7 +188,7 @@ func TestCreator_Create_RejectsRegistryReferencesBeforeAssociation(t *testing.T)
 
 func TestCreator_Create_RejectsInvalidDomain(t *testing.T) {
 	t.Parallel()
-	creator := appconsumer.NewCreator(repomocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),
@@ -143,7 +206,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrAlreadyExists).Once()
 
-	creator := appconsumer.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 
 	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
 		GatewayID: ids.New[ids.GatewayKind](),

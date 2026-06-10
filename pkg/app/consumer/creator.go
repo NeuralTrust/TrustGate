@@ -2,10 +2,12 @@ package consumer
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
 
@@ -19,6 +21,7 @@ type CreateInput struct {
 	Headers       map[string]string
 	Active        *bool
 	Fallback      *domain.Fallback
+	RegistryIDs   []ids.RegistryID
 	ModelPolicies domain.ModelPolicies
 }
 
@@ -30,23 +33,26 @@ type Creator interface {
 var _ Creator = (*creator)(nil)
 
 type creator struct {
-	repo        domain.Repository
-	memoryCache *cache.TTLMap
-	publisher   cache.EventPublisher
-	logger      *slog.Logger
+	repo         domain.Repository
+	registryRepo registrydomain.Repository
+	memoryCache  *cache.TTLMap
+	publisher    cache.EventPublisher
+	logger       *slog.Logger
 }
 
 func NewCreator(
 	repo domain.Repository,
+	registryRepo registrydomain.Repository,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 ) Creator {
 	return &creator{
-		repo:        repo,
-		memoryCache: manager.GetTTLMap(cache.ConsumerTTLName),
-		publisher:   publisher,
-		logger:      logger,
+		repo:         repo,
+		registryRepo: registryRepo,
+		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
+		publisher:    publisher,
+		logger:       logger,
 	}
 }
 
@@ -61,6 +67,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		Headers:       in.Headers,
 		Active:        in.Active,
 		Fallback:      in.Fallback,
+		RegistryIDs:   in.RegistryIDs,
 		ModelPolicies: in.ModelPolicies,
 	})
 	if err != nil {
@@ -69,10 +76,30 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	if err := validateRegistryRefsAssociated(cons); err != nil {
 		return nil, err
 	}
+	if err := c.ensureRegistriesInGateway(ctx, in.GatewayID, in.RegistryIDs); err != nil {
+		return nil, err
+	}
 	if err := c.repo.Save(ctx, cons); err != nil {
 		return nil, err
 	}
 	c.memoryCache.Set(cons.ID.String(), cons)
 	publishGatewayDataInvalidation(ctx, c.publisher, c.logger, cons.GatewayID)
 	return cons, nil
+}
+
+// ensureRegistriesInGateway guards against binding registries owned by another
+// gateway: the consumer_registry FK only proves the registry exists, not that
+// this gateway owns it.
+func (c *creator) ensureRegistriesInGateway(ctx context.Context, gatewayID ids.GatewayID, registryIDs []ids.RegistryID) error {
+	if len(registryIDs) == 0 {
+		return nil
+	}
+	found, err := c.registryRepo.FindByIDs(ctx, gatewayID, registryIDs)
+	if err != nil {
+		return err
+	}
+	if len(found) != len(registryIDs) {
+		return fmt.Errorf("%w: one or more registries do not belong to the gateway", registrydomain.ErrInvalidRegistryID)
+	}
+	return nil
 }

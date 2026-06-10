@@ -81,13 +81,22 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 		)`
-	if _, err := r.conn.Pool.Exec(ctx, insertConsumer,
-		c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-		headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
-	); err != nil {
-		return mapPgError(err)
-	}
-	return nil
+	const insertConsumerRegistry = `
+		INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, insertConsumer,
+			c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
+			headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
+		); err != nil {
+			return mapPgError(err)
+		}
+		for _, registryID := range c.RegistryIDs {
+			if _, err := tx.Exec(ctx, insertConsumerRegistry, c.ID, registryID); err != nil {
+				return mapPgError(err)
+			}
+		}
+		return nil
+	})
 }
 
 func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
