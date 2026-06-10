@@ -16,10 +16,9 @@ import (
 
 const HeaderGatewaySlug = "X-AG-Gateway-Slug"
 
-const (
-	gatewayDiscoveryModeHeader    = "header"
-	gatewayDiscoveryModeSubdomain = "subdomain"
-)
+// gatewayDiscoveryModeSubdomain mirrors config.GatewayDiscoveryModeSubdomain;
+// any other validated mode ("header") gets the header resolver with host fallback.
+const gatewayDiscoveryModeSubdomain = "subdomain"
 
 type GatewayResolver interface {
 	Resolve(c *fiber.Ctx) (*gatewaydomain.Gateway, error)
