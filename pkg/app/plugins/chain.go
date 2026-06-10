@@ -9,8 +9,10 @@ import (
 type chainEntry struct {
 	plugin   Plugin
 	config   policy.PluginConfig
+	mode     policy.Mode
 	priority int
 	parallel bool
+	global   bool
 }
 
 func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage) []chainEntry {
@@ -41,8 +43,10 @@ func buildStageChain(reg Registry, policies []*policy.Policy, stage policy.Stage
 				Name:     pol.Name,
 				Settings: pol.Settings,
 			},
+			mode:     pol.Mode.Normalize(),
 			priority: pol.Priority,
 			parallel: pol.Parallel,
+			global:   pol.IsGlobal(),
 		})
 	}
 

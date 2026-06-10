@@ -39,18 +39,20 @@ type AdminRouterDeps struct {
 	UpdateGateway *gatewayhttp.UpdateGatewayHandler
 	DeleteGateway *gatewayhttp.DeleteGatewayHandler
 
-	CreateRegistry *registryhttp.CreateRegistryHandler
-	GetRegistry    *registryhttp.GetRegistryHandler
-	ListRegistry   *registryhttp.ListRegistryHandler
-	UpdateRegistry *registryhttp.UpdateRegistryHandler
-	DeleteRegistry *registryhttp.DeleteRegistryHandler
+	CreateRegistry         *registryhttp.CreateRegistryHandler
+	GetRegistry            *registryhttp.GetRegistryHandler
+	ListRegistry           *registryhttp.ListRegistryHandler
+	UpdateRegistry         *registryhttp.UpdateRegistryHandler
+	DeleteRegistry         *registryhttp.DeleteRegistryHandler
+	TestRegistryConnection *registryhttp.TestConnectionHandler
 
-	CreatePolicy *policyhttp.CreatePolicyHandler
-	GetPolicy    *policyhttp.GetPolicyHandler
-	ListPolicy   *policyhttp.ListPolicyHandler
-	UpdatePolicy *policyhttp.UpdatePolicyHandler
-	DeletePolicy *policyhttp.DeletePolicyHandler
-	GlobalPolicy *policyhttp.GlobalPolicyHandler
+	CreatePolicy    *policyhttp.CreatePolicyHandler
+	GetPolicy       *policyhttp.GetPolicyHandler
+	ListPolicy      *policyhttp.ListPolicyHandler
+	UpdatePolicy    *policyhttp.UpdatePolicyHandler
+	DeletePolicy    *policyhttp.DeletePolicyHandler
+	GlobalPolicy    *policyhttp.GlobalPolicyHandler
+	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
 
 	CreateConsumer      *consumerhttp.CreateConsumerHandler
 	GetConsumer         *consumerhttp.GetConsumerHandler
@@ -99,6 +101,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 
 	registries := gw.Group("/:gateway_id/registries")
 	registries.Post("", r.deps.CreateRegistry.Handle)
+	registries.Post("/test-connection", r.deps.TestRegistryConnection.Handle)
 	registries.Get("", r.deps.ListRegistry.Handle)
 	registries.Get("/:id", r.deps.GetRegistry.Handle)
 	registries.Put("/:id", r.deps.UpdateRegistry.Handle)
@@ -112,6 +115,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	policies.Delete("/:id", r.deps.DeletePolicy.Handle)
 	policies.Post("/:id/global", r.deps.GlobalPolicy.SetGlobal)
 	policies.Delete("/:id/global", r.deps.GlobalPolicy.UnsetGlobal)
+	policies.Post("/:id/duplicate", r.deps.DuplicatePolicy.Handle)
 
 	consumers := gw.Group("/:gateway_id/consumers")
 	consumers.Post("", r.deps.CreateConsumer.Handle)

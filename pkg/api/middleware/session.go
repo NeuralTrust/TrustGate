@@ -10,7 +10,10 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 )
+
+const defaultSessionHeader = "X-Session-Id"
 
 type SessionMiddleware struct {
 	logger *slog.Logger
@@ -24,27 +27,49 @@ func NewSessionMiddleware(logger *slog.Logger, finder appgateway.Finder) *Sessio
 func (m *SessionMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		cfg := m.resolveConfig(c)
-		if cfg == nil || !cfg.Enabled {
+		if !cfg.IsEnabled() {
 			return c.Next()
 		}
 
-		sessionID := ""
-		if cfg.HeaderName != "" {
-			sessionID = c.Get(cfg.HeaderName)
+		headerName := defaultSessionHeader
+		bodyParam := ""
+		if cfg != nil {
+			if cfg.HeaderName != "" {
+				headerName = cfg.HeaderName
+			}
+			bodyParam = cfg.BodyParamName
 		}
-		if sessionID == "" && cfg.BodyParamName != "" {
-			sessionID = m.extractFromBody(c, cfg.BodyParamName)
+
+		sessionID := c.Get(headerName)
+		if sessionID == "" && bodyParam != "" {
+			sessionID = m.extractFromBody(c, bodyParam)
 		}
+
+		generated := false
 		if sessionID == "" {
-			return c.Next()
+			sessionID = m.generateSessionID()
+			generated = true
 		}
 
 		c.Locals(string(infracontext.SessionContextKey), sessionID)
 		ctx := context.WithValue(c.UserContext(), infracontext.SessionContextKey, sessionID)
+		if generated {
+			c.Locals(string(infracontext.SessionGeneratedContextKey), true)
+			ctx = context.WithValue(ctx, infracontext.SessionGeneratedContextKey, true)
+		}
 		c.SetUserContext(ctx)
+
+		c.Set(defaultSessionHeader, sessionID)
 
 		return c.Next()
 	}
+}
+
+func (m *SessionMiddleware) generateSessionID() string {
+	if id, err := uuid.NewV7(); err == nil {
+		return id.String()
+	}
+	return uuid.New().String()
 }
 
 func (m *SessionMiddleware) resolveConfig(c *fiber.Ctx) *domain.SessionConfig {

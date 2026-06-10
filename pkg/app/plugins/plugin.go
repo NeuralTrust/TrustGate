@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"errors"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
@@ -25,6 +26,7 @@ type Plugin interface {
 	// SupportedStages are every stage the plugin can run on. A policy may opt
 	// into any subset of these; mandatory stages are always included.
 	SupportedStages() []policy.Stage
+	SupportedModes() []policy.Mode
 	ValidateConfig(settings map[string]any) error
 	Execute(ctx context.Context, in ExecInput) (*Result, error)
 }
@@ -32,12 +34,41 @@ type Plugin interface {
 // ExecInput is the immutable input handed to a plugin for a single stage run.
 type ExecInput struct {
 	Stage    policy.Stage
+	Mode     policy.Mode
 	Config   policy.PluginConfig
+	Scope    RuntimeScope
 	Request  *infracontext.RequestContext
 	Response *infracontext.ResponseContext
 	// Event is the per-invocation metrics sink. It is nil when plugin traces
 	// are disabled, so plugins must nil-check before using it.
 	Event *metrics.EventContext
+}
+
+// RuntimeScope is the execution scope derived from the policy and the resolved
+// consumer. It tells a plugin whether the policy applies gateway-wide (Global)
+// or to a single consumer, so stateful plugins can partition their state
+// accordingly. It is derived from the source of truth (Policy.Global plus the
+// resolved consumer), never from request headers, path or credentials.
+type RuntimeScope struct {
+	GatewayID  string
+	ConsumerID string
+	Global     bool
+}
+
+// Subject resolves the partition for this execution: gateway-wide when the
+// policy is global, otherwise the current consumer. It returns the dimension
+// label ("global" or "consumer") and the identifier to key state on.
+func (s RuntimeScope) Subject() (dimension string, id string, err error) {
+	if s.Global {
+		if s.GatewayID == "" {
+			return "", "", errors.New("plugins: missing gateway id for global scope")
+		}
+		return "global", s.GatewayID, nil
+	}
+	if s.ConsumerID == "" {
+		return "", "", errors.New("plugins: missing consumer id for consumer scope")
+	}
+	return "consumer", s.ConsumerID, nil
 }
 
 // Result carries the changes a plugin wants the executor to apply. Headers are

@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Server, Users, KeyRound, ShieldCheck } from "lucide-react";
+import { Server, Users, KeyRound, ShieldCheck, FlaskConical } from "lucide-react";
 import { Logo } from "./logo";
 import { cn } from "@/lib/cn";
 
 const nav = [
-  { href: "/dashboard/registries", label: "Registries", icon: Server },
   { href: "/dashboard/consumers", label: "Consumers", icon: Users },
-  { href: "/dashboard/auth", label: "Auth", icon: KeyRound },
+  { href: "/dashboard/registries", label: "Registry", icon: Server },
   { href: "/dashboard/policies", label: "Policies", icon: ShieldCheck },
+  { href: "/dashboard/auth", label: "Auth", icon: KeyRound },
+  { href: "/dashboard/playground", label: "Playground", icon: FlaskConical },
 ];
 
 export function Sidebar() {

@@ -44,8 +44,10 @@ func NewStagePlan(reg Registry, policies []*policy.Policy) *StagePlan {
 				Name:     pol.Name,
 				Settings: pol.Settings,
 			},
+			mode:     pol.Mode.Normalize(),
 			priority: pol.Priority,
 			parallel: pol.Parallel,
+			global:   pol.IsGlobal(),
 		}
 		for _, stage := range planStages {
 			if isEffectiveStage(plugin, pol.Stages, stage) {

@@ -72,9 +72,8 @@ func validPolicyPayload(name string) map[string]any {
 		"enabled":  true,
 		"priority": 0,
 		"settings": map[string]any{
-			"limits": map[string]any{
-				"global": map[string]any{"limit": 100, "window": "1m"},
-			},
+			"limit":  100,
+			"window": "1m",
 		},
 	}
 }

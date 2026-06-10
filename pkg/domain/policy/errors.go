@@ -15,5 +15,6 @@ var (
 	ErrInvalidConsumerID = fmt.Errorf("policy: invalid consumer_id: %w", commonerrors.ErrValidation)
 	ErrInvalidSlug       = fmt.Errorf("policy: invalid slug: %w", commonerrors.ErrValidation)
 	ErrInvalidStage      = fmt.Errorf("policy: invalid stage: %w", commonerrors.ErrValidation)
+	ErrInvalidMode       = fmt.Errorf("policy: invalid mode: %w", commonerrors.ErrValidation)
 	ErrInvalidPriority   = fmt.Errorf("policy: invalid priority: %w", commonerrors.ErrValidation)
 )

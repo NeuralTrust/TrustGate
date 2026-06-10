@@ -3,7 +3,6 @@ package metrics
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 
 	appcatalog "github.com/NeuralTrust/AgentGateway/pkg/app/catalog"
@@ -13,10 +12,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 )
 
-const (
-	headerConversationID = "X-Conversation-Id"
-	costCurrencyUSD      = "USD"
-)
+const costCurrencyUSD = "USD"
 
 type Builder struct {
 	adapters *adapter.Registry
@@ -50,12 +46,14 @@ func (b *Builder) Build(
 		EndTimestamp:   endTime.UnixMilli(),
 		Consumer:       events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
 		SessionID:      meta.SessionID,
-		ConversationID: lookupHeader(req.Headers, headerConversationID),
 		FingerprintID:  meta.FingerprintID,
 		IP:             meta.IP,
 	}
 
 	served, attempts := b.foldLLMSpans(requestTrace)
+	if served != nil {
+		evt.TurnID = served.TurnID
+	}
 	chain, pluginsMs, flagged, security := b.foldPluginSpans(requestTrace)
 	evt.Attempts = attempts
 	evt.PolicyChain = chain
@@ -269,13 +267,4 @@ func maxInt64(a, b int64) int64 {
 		return a
 	}
 	return b
-}
-
-func lookupHeader(headers map[string][]string, name string) string {
-	for key, values := range headers {
-		if strings.EqualFold(key, name) && len(values) > 0 {
-			return values[0]
-		}
-	}
-	return ""
 }

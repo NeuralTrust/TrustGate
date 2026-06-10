@@ -12,6 +12,7 @@ type PolicyResponse struct {
 	GatewayID   ids.GatewayID    `json:"gateway_id"`
 	ConsumerIDs []ids.ConsumerID `json:"consumer_ids,omitempty"`
 	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
 	Slug        string           `json:"slug"`
 	Enabled     bool             `json:"enabled"`
 	Global      bool             `json:"global"`
@@ -19,6 +20,7 @@ type PolicyResponse struct {
 	Parallel    bool             `json:"parallel,omitempty"`
 	Settings    map[string]any   `json:"settings,omitempty"`
 	Stages      []string         `json:"stages,omitempty"`
+	Mode        string           `json:"mode"`
 	CreatedAt   time.Time        `json:"created_at"`
 	UpdatedAt   time.Time        `json:"updated_at"`
 }
@@ -29,6 +31,7 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 		GatewayID:   p.GatewayID,
 		ConsumerIDs: p.ConsumerIDs,
 		Name:        p.Name,
+		Description: p.Description,
 		Slug:        p.Slug,
 		Enabled:     p.Enabled,
 		Global:      p.Global,
@@ -36,6 +39,7 @@ func FromPolicy(p *domain.Policy) PolicyResponse {
 		Parallel:    p.Parallel,
 		Settings:    p.Settings,
 		Stages:      fromStages(p.Stages),
+		Mode:        string(p.Mode.Normalize()),
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 	}

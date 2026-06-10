@@ -9,8 +9,6 @@ import (
 	policyrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/policy"
 )
 
-// Policy wires the Policy aggregate end-to-end: pgx repository, the four
-// application services, and the five admin HTTP handlers.
 func Policy(c *container.Container) error {
 	if err := c.Provide(func(conn *database.Connection) domain.Repository {
 		return policyrepo.NewRepository(conn)
@@ -33,6 +31,9 @@ func Policy(c *container.Container) error {
 	if err := c.Provide(apppolicy.NewScoper); err != nil {
 		return err
 	}
+	if err := c.Provide(apppolicy.NewDuplicator); err != nil {
+		return err
+	}
 
 	if err := c.Provide(policyhttp.NewCreatePolicyHandler); err != nil {
 		return err
@@ -50,6 +51,9 @@ func Policy(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(policyhttp.NewGlobalPolicyHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(policyhttp.NewDuplicatePolicyHandler); err != nil {
 		return err
 	}
 	return nil

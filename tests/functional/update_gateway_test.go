@@ -39,6 +39,26 @@ func TestUpdateGateway_Success(t *testing.T) {
 	assert.Equal(t, "inactive", body["status"])
 }
 
+func TestUpdateGateway_Partial(t *testing.T) {
+	defer Track(t, "UpdateGateway")()
+	id := CreateGateway(t, map[string]any{"name": uniqueName("upd-partial")})
+	url := fmt.Sprintf("%s/v1/gateways/%s", AdminURL, id)
+
+	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{"status": "inactive"})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, "inactive", body["status"])
+
+	renamed := uniqueName("upd-partial-to")
+	status, body = sendRequest(t, http.MethodPut, url, nil, map[string]any{"name": renamed})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Equal(t, renamed, body["name"])
+
+	status, body = sendRequest(t, http.MethodGet, url, nil, nil)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, renamed, body["name"])
+	assert.Equal(t, "inactive", body["status"], "status must be preserved on a partial update")
+}
+
 func TestUpdateGateway_NotFound(t *testing.T) {
 	defer Track(t, "UpdateGateway")()
 	missing := uuid.NewString()

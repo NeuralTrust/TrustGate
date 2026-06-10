@@ -15,8 +15,10 @@ services:
       - .env
     environment:
       ADMIN_API_URL: http://admin:8080
+      PROXY_API_URL: http://proxy:8081
     ports:
       - "3000:3000"
     depends_on:
       - admin
+      - proxy
     restart: unless-stopped

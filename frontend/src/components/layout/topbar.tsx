@@ -4,10 +4,11 @@ import { usePathname } from "next/navigation";
 import { GatewaySwitcher } from "./gateway-switcher";
 
 const titles: Record<string, string> = {
-  registries: "Registries",
+  registries: "Registry",
   consumers: "Consumers",
   auth: "Auth",
   policies: "Policies",
+  playground: "Playground",
 };
 
 export function Topbar() {

@@ -12,9 +12,17 @@ type windowConfig struct {
 	Max  int    `mapstructure:"max"`
 }
 
+// config is the token_rate_limiter settings. Whether the budget is enforced
+// gateway-wide or per consumer is decided by the policy scope (Policy.Global) at
+// runtime.
+//
+// GroupByHeader optionally sub-partitions the budget within the policy scope by
+// the value of a request header (e.g. a tenant or end-user id), so each distinct
+// header value gets its own budget. When empty (or the header is absent on a
+// request), the budget is keyed by the scope subject (gateway or consumer).
 type config struct {
-	IdentifierHeader string       `mapstructure:"identifier_header"`
-	Window           windowConfig `mapstructure:"window"`
+	Window        windowConfig `mapstructure:"window"`
+	GroupByHeader string       `mapstructure:"group_by_header"`
 }
 
 var validUnits = map[string]int{
@@ -25,8 +33,8 @@ var validUnits = map[string]int{
 }
 
 func parseConfig(settings map[string]any) (*config, error) {
-	var cfg config
-	if err := pluginutil.Decode(settings, &cfg); err != nil {
+	cfg, err := pluginutil.Parse[config](settings)
+	if err != nil {
 		return nil, err
 	}
 	if err := cfg.validate(); err != nil {

@@ -13,10 +13,10 @@ import (
 type UpdateInput struct {
 	ID        ids.AuthID
 	GatewayID ids.GatewayID
-	Name      string
-	Type      domain.Type
-	Enabled   bool
-	Config    domain.Config
+	Name      *string
+	Type      *domain.Type
+	Enabled   *bool
+	Config    *domain.Config
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=auth_updater_mock.go --case=underscore --with-expecter
@@ -57,10 +57,19 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
-	existing.Name = in.Name
-	existing.Type = in.Type
-	existing.Enabled = in.Enabled
-	existing.Config = in.Config
+	if in.Name != nil {
+		existing.Name = *in.Name
+	}
+	if in.Type != nil {
+		existing.Type = *in.Type
+	}
+	if in.Enabled != nil {
+		existing.Enabled = *in.Enabled
+	}
+	if in.Config != nil {
+		in.Config.ResolveSecretsFrom(existing.Config)
+		existing.Config = *in.Config
+	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {
 		return nil, err

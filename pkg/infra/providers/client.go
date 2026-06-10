@@ -8,20 +8,22 @@ import (
 // Provider name constants. Use these as keys for HTTPClientPool.Get() and
 // anywhere a provider needs to be identified by name.
 const (
-	ProviderOpenAI    = "openai"
-	ProviderGoogle    = "google"
-	ProviderVertex    = "vertex"
-	ProviderAnthropic = "anthropic"
-	ProviderBedrock   = "bedrock"
-	ProviderAzure     = "azure"
-	ProviderMistral   = "mistral"
-	ProviderGroq      = "groq"
+	ProviderOpenAI           = "openai"
+	ProviderOpenAICompatible = "openai_compatible"
+	ProviderGoogle           = "google"
+	ProviderVertex           = "vertex"
+	ProviderAnthropic        = "anthropic"
+	ProviderBedrock          = "bedrock"
+	ProviderAzure            = "azure"
+	ProviderMistral          = "mistral"
+	ProviderGroq             = "groq"
 )
 
 // SupportedProviders returns every provider name the gateway can route to.
 func SupportedProviders() []string {
 	return []string{
 		ProviderOpenAI,
+		ProviderOpenAICompatible,
 		ProviderGoogle,
 		ProviderVertex,
 		ProviderAnthropic,
@@ -36,6 +38,7 @@ func SupportedProviders() []string {
 func IsValidProvider(name string) bool {
 	switch name {
 	case ProviderOpenAI,
+		ProviderOpenAICompatible,
 		ProviderGoogle,
 		ProviderVertex,
 		ProviderAnthropic,
@@ -76,10 +79,22 @@ type AwsBedrock struct {
 	RoleARN      string `json:"role_arn"`
 }
 
+type AzureAuthMode string
+
+const (
+	AzureAuthModeAPIKey                 AzureAuthMode = "api_key"
+	AzureAuthModeServicePrincipal       AzureAuthMode = "service_principal"
+	AzureAuthModeDefaultAzureCredential AzureAuthMode = "default_azure_credential" // #nosec G101 -- auth mode identifier, not a credential value
+)
+
 type Azure struct {
-	Endpoint    string `json:"endpoint"`
-	ApiVersion  string `json:"api_version"`
-	UseIdentity bool   `json:"use_identity"`
+	Endpoint     string        `json:"endpoint"`
+	ApiVersion   string        `json:"api_version"`
+	AuthMode     AzureAuthMode `json:"auth_mode"`
+	UseIdentity  bool          `json:"use_identity"`
+	TenantID     string        `json:"tenant_id"`
+	ClientID     string        `json:"client_id"`
+	ClientSecret string        `json:"client_secret"` // #nosec G117 -- Azure client secret credential
 }
 
 //go:generate mockery --name=Client --dir=. --output=./mocks --filename=client_mock.go --case=underscore --with-expecter

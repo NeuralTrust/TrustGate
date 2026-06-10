@@ -12,15 +12,17 @@ import (
 )
 
 type UpdateInput struct {
-	ID        ids.PolicyID
-	GatewayID ids.GatewayID
-	Name      string
-	Slug      string
-	Enabled   bool
-	Priority  int
-	Parallel  bool
-	Settings  map[string]any
-	Stages    []domain.Stage
+	ID          ids.PolicyID
+	GatewayID   ids.GatewayID
+	Name        *string
+	Description *string
+	Slug        *string
+	Enabled     *bool
+	Priority    *int
+	Parallel    *bool
+	Settings    *map[string]any
+	Stages      *[]domain.Stage
+	Mode        *domain.Mode
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=policy_updater_mock.go --case=underscore --with-expecter
@@ -62,18 +64,38 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Policy, e
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
-	existing.Name = in.Name
-	existing.Slug = in.Slug
-	existing.Enabled = in.Enabled
-	existing.Priority = in.Priority
-	existing.Parallel = in.Parallel
-	existing.Settings = in.Settings
-	existing.Stages = in.Stages
+	if in.Name != nil {
+		existing.Name = *in.Name
+	}
+	if in.Description != nil {
+		existing.Description = *in.Description
+	}
+	if in.Slug != nil {
+		existing.Slug = *in.Slug
+	}
+	if in.Enabled != nil {
+		existing.Enabled = *in.Enabled
+	}
+	if in.Priority != nil {
+		existing.Priority = *in.Priority
+	}
+	if in.Parallel != nil {
+		existing.Parallel = *in.Parallel
+	}
+	if in.Settings != nil {
+		existing.Settings = *in.Settings
+	}
+	if in.Stages != nil {
+		existing.Stages = *in.Stages
+	}
+	if in.Mode != nil {
+		existing.Mode = in.Mode.Normalize()
+	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}
-	if err := validatePlugin(u.registry, in.Slug, in.Stages, in.Settings); err != nil {
+	if err := validatePlugin(u.registry, existing.Slug, existing.Stages, existing.Settings); err != nil {
 		return nil, err
 	}
 	if err := u.repo.Update(ctx, existing); err != nil {

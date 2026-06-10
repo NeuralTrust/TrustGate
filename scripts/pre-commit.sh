@@ -8,14 +8,15 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Running Gosec Security Scanner..."
-if ! command -v gosec &> /dev/null; then
+if ! command -v gosec >/dev/null 2>&1; then
   echo "gosec not found, installing..."
   go install github.com/securego/gosec/v2/cmd/gosec@latest
 fi
 
-gosec -no-fail ./...
+gosec ./...
 if [ $? -ne 0 ]; then
-  echo "Gosec found security issues (non-blocking due to -no-fail)"
+  echo "Gosec found security issues!"
+  exit 1
 fi
 
 make test

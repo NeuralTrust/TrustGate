@@ -48,6 +48,7 @@ type AzureAuthRequest struct {
 	UseManagedIdentity bool   `json:"use_managed_identity,omitempty"`
 	Endpoint           string `json:"endpoint,omitempty"`
 	Version            string `json:"version,omitempty"`
+	APIKey             string `json:"api_key,omitempty"` // #nosec G117
 	ClientID           string `json:"client_id,omitempty"`
 	ClientSecret       string `json:"client_secret,omitempty"` // #nosec G117
 	TenantID           string `json:"tenant_id,omitempty"`
@@ -94,6 +95,9 @@ func (r CreateRegistryRequest) Validate() error {
 	}
 	if r.Auth == nil {
 		return fmt.Errorf("auth is required: %w", commonerrors.ErrValidation)
+	}
+	if err := r.Auth.ToDomain().Validate(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -164,6 +168,7 @@ func (a *AzureAuthRequest) ToDomain() *domain.AzureAuth {
 		UseManagedIdentity: a.UseManagedIdentity,
 		Endpoint:           a.Endpoint,
 		Version:            a.Version,
+		APIKey:             a.APIKey,
 		ClientID:           a.ClientID,
 		ClientSecret:       a.ClientSecret,
 		TenantID:           a.TenantID,

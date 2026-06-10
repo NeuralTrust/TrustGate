@@ -15,19 +15,22 @@ import (
 
 func existingPolicy(t *testing.T) *domain.Policy {
 	t.Helper()
-	p, err := domain.NewPolicy(ids.New[ids.GatewayKind](), "old", "rate_limiter", true, 0, false, nil, nil)
+	p, err := domain.NewPolicy(ids.New[ids.GatewayKind](), "old", "rate_limiter", true, 0, false, nil, nil, "old description", domain.ModeEnforce)
 	if err != nil {
 		t.Fatalf("NewPolicy: %v", err)
 	}
 	return p
 }
 
+func ptr[T any](v T) *T { return &v }
+
 func validUpdateInput(id ids.PolicyID) apppolicy.UpdateInput {
 	return apppolicy.UpdateInput{
-		ID:      id,
-		Name:    "new",
-		Slug:    "rate_limiter",
-		Enabled: true,
+		ID:          id,
+		Name:        ptr("new"),
+		Description: ptr("new description"),
+		Slug:        ptr("rate_limiter"),
+		Enabled:     ptr(true),
 	}
 }
 
@@ -37,7 +40,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 	existing := existingPolicy(t)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
-		return p.ID == existing.ID && p.Name == "new"
+		return p.ID == existing.ID && p.Name == "new" && p.Description == "new description"
 	})).Return(nil).Once()
 
 	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
@@ -47,6 +50,76 @@ func TestUpdater_Update_Success(t *testing.T) {
 	}
 	if got.Name != "new" {
 		t.Fatalf("Name = %q, want %q", got.Name, "new")
+	}
+	if got.Description != "new description" {
+		t.Fatalf("Description = %q, want %q", got.Description, "new description")
+	}
+}
+
+func TestUpdater_Update_Partial(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
+		return p.Name == "renamed" && p.Slug == "rate_limiter" && p.Description == "old description"
+	})).Return(nil).Once()
+
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{
+		ID:   existing.ID,
+		Name: ptr("renamed"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Name != "renamed" {
+		t.Fatalf("Name = %q, want renamed", got.Name)
+	}
+	if got.Slug != "rate_limiter" {
+		t.Fatalf("Slug = %q, want preserved rate_limiter", got.Slug)
+	}
+	if got.Description != "old description" {
+		t.Fatalf("Description = %q, want preserved old description", got.Description)
+	}
+}
+
+func TestUpdater_Update_PreservesModeWhenOmitted(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	existing.Mode = domain.ModeObserve
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
+		return p.Mode == domain.ModeObserve
+	})).Return(nil).Once()
+
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Name: ptr("renamed")})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Mode != domain.ModeObserve {
+		t.Fatalf("Mode = %q, want preserved observe", got.Mode)
+	}
+}
+
+func TestUpdater_Update_SetsModeWhenProvided(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing := existingPolicy(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(p *domain.Policy) bool {
+		return p.Mode == domain.ModeThrottle
+	})).Return(nil).Once()
+
+	updater := apppolicy.NewUpdater(repo, newRegistryMock(t, nil), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), apppolicy.UpdateInput{ID: existing.ID, Mode: ptr(domain.ModeThrottle)})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Mode != domain.ModeThrottle {
+		t.Fatalf("Mode = %q, want throttle", got.Mode)
 	}
 }
 

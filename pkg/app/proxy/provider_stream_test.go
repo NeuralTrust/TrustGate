@@ -149,7 +149,7 @@ func TestInvokeStream_PreStreamBackendErrorPassthrough(t *testing.T) {
 
 func TestInvokeStream_UsageObserverRecordsFinalUsage(t *testing.T) {
 	lines := [][]byte{
-		[]byte(`data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}`),
+		[]byte(`data: {"id":"chatcmpl-stream","choices":[{"index":0,"delta":{"content":"hi"}}]}`),
 		[]byte(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`),
 		[]byte("data: [DONE]"),
 	}
@@ -163,7 +163,7 @@ func TestInvokeStream_UsageObserverRecordsFinalUsage(t *testing.T) {
 	req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
 
 	rt := trace.New("trace-1", trace.Metadata{})
-	_ = rt.StartSpan(trace.SpanLLM, "openai")
+	span := rt.StartSpan(trace.SpanLLM, "openai")
 	ctx := trace.NewContext(context.Background(), rt)
 
 	resp, err := inv.InvokeStream(ctx, apiKeyTarget("openai"), req)
@@ -176,4 +176,8 @@ func TestInvokeStream_UsageObserverRecordsFinalUsage(t *testing.T) {
 	assert.Equal(t, 10, usage.InputTokens)
 	assert.Equal(t, 5, usage.OutputTokens)
 	assert.Equal(t, 15, usage.TotalTokens)
+
+	attrs, ok := span.LLMAttrsCopy()
+	require.True(t, ok)
+	assert.Equal(t, "chatcmpl-stream", attrs.TurnID, "streamed provider id captured as turn id")
 }

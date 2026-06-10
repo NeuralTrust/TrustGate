@@ -118,6 +118,22 @@ func openaiBackendPayload(name, baseURL string) map[string]any {
 	}
 }
 
+// openaiCompatibleBackendPayload builds a CreateRegistry body for a generic
+// OpenAI-compatible target (provider "openai_compatible") whose base_url points
+// at a fake upstream. Unlike openaiBackendPayload, base_url is mandatory.
+func openaiCompatibleBackendPayload(name, baseURL string) map[string]any {
+	return map[string]any{
+		"name":             name,
+		"provider":         "openai_compatible",
+		"weight":           1,
+		"provider_options": map[string]any{"base_url": baseURL},
+		"auth": map[string]any{
+			"type":    "api_key",
+			"api_key": map[string]any{"api_key": "sk-test"},
+		},
+	}
+}
+
 // chatRequest returns a minimal OpenAI chat-completions body; stream toggles the
 // "stream" flag that the proxy uses to pick the streaming path.
 func chatRequest(stream bool) map[string]any {
@@ -175,11 +191,6 @@ func proxyPost(t *testing.T, apiKey, path string, body any) (int, http.Header, [
 	return resp.StatusCode, resp.Header, raw
 }
 
-// setupRoute creates a gateway, one backend per upstream and a consumer routing
-// path to those registries, plus an api_key credential attached to the consumer.
-// It returns that credential's key (to authenticate at the proxy) and the
-// routing path. Registries are bound through the association endpoints after the
-// consumer is created (the link sub-resource flow).
 func setupRoute(t *testing.T, algorithm string, upstreams ...*fakeUpstream) (string, string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("proxy-gw")})
@@ -253,10 +264,48 @@ func TestProxyE2E_Streaming_NoLB(t *testing.T) {
 
 		status, _, body := proxyPost(t, apiKey, path, chatRequest(true))
 
-		// A pre-stream failure never opens a stream, so the budget is exhausted
-		// exactly like the synchronous path and the final error is relayed.
 		assert.Equal(t, http.StatusInternalServerError, status, "body: %s", body)
 		assert.Equal(t, expectedAttempts(), up.Hits())
+	})
+}
+
+func TestProxyE2E_OpenAICompatibleProvider(t *testing.T) {
+	defer Track(t, "ProxyE2E")()
+
+	setupCompatRoute := func(t *testing.T, up *fakeUpstream) (string, string) {
+		t.Helper()
+		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("compat-gw")})
+		registryID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be"), up.URL()))
+		path := "/v1/" + uniqueName("route")
+		coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("cons"), "path": path})
+		AttachRegistry(t, gatewayID, coID, registryID)
+		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+		return apiKey, path
+	}
+
+	t.Run("non-streaming", func(t *testing.T) {
+		up := newJSONUpstream(t, "compat-hello")
+		apiKey, path := setupCompatRoute(t, up)
+
+		status, headers, body := proxyPost(t, apiKey, path, chatRequest(false))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Equal(t, "openai_compatible", headers.Get("X-Selected-Provider"))
+		assert.Contains(t, string(body), "compat-hello")
+		assert.Equal(t, 1, up.Hits())
+	})
+
+	t.Run("streaming", func(t *testing.T) {
+		up := newStreamUpstream(t, "compat-token")
+		apiKey, path := setupCompatRoute(t, up)
+
+		status, headers, body := proxyPost(t, apiKey, path, chatRequest(true))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Equal(t, "openai_compatible", headers.Get("X-Selected-Provider"))
+		assert.Contains(t, string(body), "compat-token")
+		assert.Contains(t, string(body), "[DONE]", "the SSE terminator must be relayed")
+		assert.Equal(t, 1, up.Hits())
 	})
 }
 
@@ -386,16 +435,10 @@ func setupFallbackRoute(t *testing.T, primary, fallback *fakeUpstream, fallbackE
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
 
 	if !fallbackEnabled {
-		// A disabled fallback is modeled by simply never wiring the fallback
-		// target: attaching it would fold it into the primary pool. The consumer
-		// routes only to the primary, so the upstream error is relayed as-is.
 		_ = fallbackID
 		return apiKey, path
 	}
 
-	// The fallback chain may only reference associated registries, so the
-	// fallback target is attached too; the data plane keeps it out of the
-	// primary pool so the failover ordering is preserved.
 	AttachRegistry(t, gatewayID, coID, fallbackID)
 	UpdateConsumer(t, gatewayID, coID, map[string]any{
 		"name": name,

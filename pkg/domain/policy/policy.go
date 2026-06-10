@@ -12,6 +12,7 @@ type Policy struct {
 	GatewayID   ids.GatewayID    `json:"gateway_id"`
 	ConsumerIDs []ids.ConsumerID `json:"consumer_ids,omitempty"`
 	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
 	Slug        string           `json:"slug"`
 	Enabled     bool             `json:"enabled"`
 	Global      bool             `json:"global"`
@@ -19,6 +20,7 @@ type Policy struct {
 	Parallel    bool             `json:"parallel"`
 	Settings    map[string]any   `json:"settings,omitempty"`
 	Stages      []Stage          `json:"stages,omitempty"`
+	Mode        Mode             `json:"mode"`
 	CreatedAt   time.Time        `json:"created_at"`
 	UpdatedAt   time.Time        `json:"updated_at"`
 }
@@ -36,6 +38,8 @@ func NewPolicy(
 	parallel bool,
 	settings map[string]any,
 	stages []Stage,
+	description string,
+	mode Mode,
 ) (*Policy, error) {
 	id, err := ids.NewV7[ids.PolicyKind]()
 	if err != nil {
@@ -43,17 +47,19 @@ func NewPolicy(
 	}
 	now := time.Now().UTC()
 	p := &Policy{
-		ID:        id,
-		GatewayID: gatewayID,
-		Name:      name,
-		Slug:      slug,
-		Enabled:   enabled,
-		Priority:  priority,
-		Parallel:  parallel,
-		Settings:  settings,
-		Stages:    stages,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          id,
+		GatewayID:   gatewayID,
+		Name:        name,
+		Description: description,
+		Slug:        slug,
+		Enabled:     enabled,
+		Priority:    priority,
+		Parallel:    parallel,
+		Settings:    settings,
+		Stages:      stages,
+		Mode:        mode.Normalize(),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if err := p.Validate(); err != nil {
 		return nil, err
@@ -66,6 +72,7 @@ func Rehydrate(
 	gatewayID ids.GatewayID,
 	consumerIDs []ids.ConsumerID,
 	name string,
+	description string,
 	slug string,
 	enabled bool,
 	global bool,
@@ -73,6 +80,7 @@ func Rehydrate(
 	parallel bool,
 	settings map[string]any,
 	stages []Stage,
+	mode Mode,
 	createdAt, updatedAt time.Time,
 ) *Policy {
 	return &Policy{
@@ -80,6 +88,7 @@ func Rehydrate(
 		GatewayID:   gatewayID,
 		ConsumerIDs: consumerIDs,
 		Name:        name,
+		Description: description,
 		Slug:        slug,
 		Enabled:     enabled,
 		Global:      global,
@@ -87,6 +96,7 @@ func Rehydrate(
 		Parallel:    parallel,
 		Settings:    settings,
 		Stages:      stages,
+		Mode:        mode.Normalize(),
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
 	}
@@ -119,6 +129,9 @@ func (p *Policy) Validate() error {
 		if !s.IsValid() {
 			return fmt.Errorf("%w: %q", ErrInvalidStage, s)
 		}
+	}
+	if p.Mode != "" && !p.Mode.IsValid() {
+		return fmt.Errorf("%w: %q", ErrInvalidMode, p.Mode)
 	}
 	return nil
 }

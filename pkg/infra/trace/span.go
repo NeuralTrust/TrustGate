@@ -22,6 +22,7 @@ type LLMAttrs struct {
 	Provider     string
 	Model        string
 	FinishReason string
+	TurnID       string
 	Attempt      int
 	Fallback     bool
 	Outcome      string
@@ -160,6 +161,18 @@ func (s *Span) SetLLMResult(model, finishReason string) {
 	if finishReason != "" {
 		s.LLM.FinishReason = finishReason
 	}
+}
+
+func (s *Span) SetTurnID(turnID string) {
+	if turnID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.LLM == nil {
+		s.LLM = &LLMAttrs{}
+	}
+	s.LLM.TurnID = turnID
 }
 
 func (s *Span) SetStage(stage string) {

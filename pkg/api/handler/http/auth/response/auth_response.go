@@ -3,6 +3,7 @@ package response
 import (
 	"time"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
@@ -15,8 +16,8 @@ type AuthResponse struct {
 	Enabled   bool           `json:"enabled"`
 	Config    ConfigResponse `json:"config"`
 	APIKey    string         `json:"api_key,omitempty"` // #nosec G101
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 type ConfigResponse struct {
@@ -40,19 +41,6 @@ type MTLSConfigResponse struct {
 	AllowedCommonNames  []string `json:"allowed_common_names,omitempty"`
 	AllowedDNSNames     []string `json:"allowed_dns_names,omitempty"`
 	AllowedFingerprints []string `json:"allowed_fingerprints,omitempty"`
-}
-
-// maskSecret partially reveals a secret so the API never returns it in full.
-// Short secrets are fully redacted; longer ones keep their first two and last
-// three characters (e.g. "ab...xyz").
-func maskSecret(s string) string {
-	if s == "" {
-		return ""
-	}
-	if len(s) < 8 {
-		return "***"
-	}
-	return s[:2] + "..." + s[len(s)-3:]
 }
 
 func FromAuth(a *domain.Auth) AuthResponse {
@@ -83,7 +71,7 @@ func fromConfig(c domain.Config) ConfigResponse {
 			JWKSURL:          c.OAuth2.JWKSURL,
 			IntrospectionURL: c.OAuth2.IntrospectionURL,
 			ClientID:         c.OAuth2.ClientID,
-			ClientSecret:     maskSecret(c.OAuth2.ClientSecret),
+			ClientSecret:     secret.Mask(c.OAuth2.ClientSecret),
 			RequiredScopes:   c.OAuth2.RequiredScopes,
 			Algorithms:       c.OAuth2.Algorithms,
 		}

@@ -51,18 +51,20 @@ type adminRouterParams struct {
 	UpdateGateway *gatewayhttp.UpdateGatewayHandler
 	DeleteGateway *gatewayhttp.DeleteGatewayHandler
 
-	CreateRegistry *registryhttp.CreateRegistryHandler
-	GetRegistry    *registryhttp.GetRegistryHandler
-	ListRegistry   *registryhttp.ListRegistryHandler
-	UpdateRegistry *registryhttp.UpdateRegistryHandler
-	DeleteRegistry *registryhttp.DeleteRegistryHandler
+	CreateRegistry         *registryhttp.CreateRegistryHandler
+	GetRegistry            *registryhttp.GetRegistryHandler
+	ListRegistry           *registryhttp.ListRegistryHandler
+	UpdateRegistry         *registryhttp.UpdateRegistryHandler
+	DeleteRegistry         *registryhttp.DeleteRegistryHandler
+	TestRegistryConnection *registryhttp.TestConnectionHandler
 
-	CreatePolicy *policyhttp.CreatePolicyHandler
-	GetPolicy    *policyhttp.GetPolicyHandler
-	ListPolicy   *policyhttp.ListPolicyHandler
-	UpdatePolicy *policyhttp.UpdatePolicyHandler
-	DeletePolicy *policyhttp.DeletePolicyHandler
-	GlobalPolicy *policyhttp.GlobalPolicyHandler
+	CreatePolicy    *policyhttp.CreatePolicyHandler
+	GetPolicy       *policyhttp.GetPolicyHandler
+	ListPolicy      *policyhttp.ListPolicyHandler
+	UpdatePolicy    *policyhttp.UpdatePolicyHandler
+	DeletePolicy    *policyhttp.DeletePolicyHandler
+	GlobalPolicy    *policyhttp.GlobalPolicyHandler
+	DuplicatePolicy *policyhttp.DuplicatePolicyHandler
 
 	CreateConsumer      *consumerhttp.CreateConsumerHandler
 	GetConsumer         *consumerhttp.GetConsumerHandler
@@ -96,37 +98,39 @@ func ServerAdmin(c *container.Container) error {
 	if err := c.Provide(
 		func(p adminRouterParams) router.ServerRouter {
 			return router.NewAdminRouter(router.AdminRouterDeps{
-				MiddlewareTransport: p.Transport,
-				AdminAuth:           p.AdminAuth,
-				HealthHandler:       p.HealthHandler,
-				VersionHandler:      p.VersionHandler,
-				CreateGateway:       p.CreateGateway,
-				GetGateway:          p.GetGateway,
-				ListGateway:         p.ListGateway,
-				UpdateGateway:       p.UpdateGateway,
-				DeleteGateway:       p.DeleteGateway,
-				CreateRegistry:      p.CreateRegistry,
-				GetRegistry:         p.GetRegistry,
-				ListRegistry:        p.ListRegistry,
-				UpdateRegistry:      p.UpdateRegistry,
-				DeleteRegistry:      p.DeleteRegistry,
-				CreatePolicy:        p.CreatePolicy,
-				GetPolicy:           p.GetPolicy,
-				ListPolicy:          p.ListPolicy,
-				UpdatePolicy:        p.UpdatePolicy,
-				DeletePolicy:        p.DeletePolicy,
-				GlobalPolicy:        p.GlobalPolicy,
-				CreateConsumer:      p.CreateConsumer,
-				GetConsumer:         p.GetConsumer,
-				ListConsumer:        p.ListConsumer,
-				UpdateConsumer:      p.UpdateConsumer,
-				DeleteConsumer:      p.DeleteConsumer,
-				ConsumerAssociation: p.ConsumerAssociation,
-				CreateAuth:          p.CreateAuth,
-				GetAuth:             p.GetAuth,
-				ListAuth:            p.ListAuth,
-				UpdateAuth:          p.UpdateAuth,
-				DeleteAuth:          p.DeleteAuth,
+				MiddlewareTransport:    p.Transport,
+				AdminAuth:              p.AdminAuth,
+				HealthHandler:          p.HealthHandler,
+				VersionHandler:         p.VersionHandler,
+				CreateGateway:          p.CreateGateway,
+				GetGateway:             p.GetGateway,
+				ListGateway:            p.ListGateway,
+				UpdateGateway:          p.UpdateGateway,
+				DeleteGateway:          p.DeleteGateway,
+				CreateRegistry:         p.CreateRegistry,
+				GetRegistry:            p.GetRegistry,
+				ListRegistry:           p.ListRegistry,
+				UpdateRegistry:         p.UpdateRegistry,
+				DeleteRegistry:         p.DeleteRegistry,
+				TestRegistryConnection: p.TestRegistryConnection,
+				CreatePolicy:           p.CreatePolicy,
+				GetPolicy:              p.GetPolicy,
+				ListPolicy:             p.ListPolicy,
+				UpdatePolicy:           p.UpdatePolicy,
+				DeletePolicy:           p.DeletePolicy,
+				GlobalPolicy:           p.GlobalPolicy,
+				DuplicatePolicy:        p.DuplicatePolicy,
+				CreateConsumer:         p.CreateConsumer,
+				GetConsumer:            p.GetConsumer,
+				ListConsumer:           p.ListConsumer,
+				UpdateConsumer:         p.UpdateConsumer,
+				DeleteConsumer:         p.DeleteConsumer,
+				ConsumerAssociation:    p.ConsumerAssociation,
+				CreateAuth:             p.CreateAuth,
+				GetAuth:                p.GetAuth,
+				ListAuth:               p.ListAuth,
+				UpdateAuth:             p.UpdateAuth,
+				DeleteAuth:             p.DeleteAuth,
 
 				ListProvidersCatalog: p.ListProvidersCatalog,
 				ListModelsCatalog:    p.ListModelsCatalog,

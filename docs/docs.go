@@ -1589,6 +1589,73 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/gateways/{gateway_id}/policies/{id}/duplicate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a copy of an existing policy. The new policy reuses the plugin configuration (slug, settings, stages, enabled, priority, parallel) with a fresh id and an auto-generated name (suffix 2, 3, 4...). The copy has no consumer associations and is not global.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "policies"
+                ],
+                "summary": "Duplicate a policy",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Policy id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_response.PolicyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/gateways/{gateway_id}/policies/{id}/global": {
             "post": {
                 "security": [
@@ -1836,6 +1903,77 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/gateways/{gateway_id}/registries/test-connection": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Validates connectivity and credentials against the provider's API with a lightweight, auth-only request. Test either a stored registry (registry_id) or an inline candidate configuration (provider + auth). Always returns 200; inspect \"ok\" and \"stage\" for the outcome.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registries"
+                ],
+                "summary": "Test a backend connection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Gateway id",
+                        "name": "gateway_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Connection to test",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TestConnectionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TestConnectionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
                         }
@@ -2673,6 +2811,9 @@ const docTemplate = `{
                 "embedding_config": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest"
                 },
+                "fallback": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest"
+                },
                 "headers": {
                     "type": "object",
                     "additionalProperties": {
@@ -2858,9 +2999,36 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse": {
+            "type": "object",
+            "properties": {
+                "api_key": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
+                "header_name": {
+                    "type": "string"
+                },
+                "header_value": {
+                    "type": "string"
+                },
+                "param_location": {
+                    "type": "string"
+                },
+                "param_name": {
+                    "type": "string"
+                },
+                "param_value": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse": {
             "type": "object",
             "properties": {
+                "auth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingAuthResponse"
+                },
                 "model": {
                     "type": "string"
                 },
@@ -3043,8 +3211,14 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.CreatePolicyRequest": {
             "type": "object",
             "properties": {
+                "description": {
+                    "type": "string"
+                },
                 "enabled": {
                     "type": "boolean"
+                },
+                "mode": {
+                    "type": "string"
                 },
                 "name": {
                     "type": "string"
@@ -3073,8 +3247,14 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_policy_request.UpdatePolicyRequest": {
             "type": "object",
             "properties": {
+                "description": {
+                    "type": "string"
+                },
                 "enabled": {
                     "type": "boolean"
+                },
+                "mode": {
+                    "type": "string"
                 },
                 "name": {
                     "type": "string"
@@ -3132,6 +3312,9 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "description": {
+                    "type": "string"
+                },
                 "enabled": {
                     "type": "boolean"
                 },
@@ -3142,6 +3325,9 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "mode": {
                     "type": "string"
                 },
                 "name": {
@@ -3223,6 +3409,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.AzureAuthRequest": {
             "type": "object",
             "properties": {
+                "api_key": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
                 "client_id": {
                     "type": "string"
                 },
@@ -3373,6 +3563,24 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TestConnectionRequest": {
+            "type": "object",
+            "properties": {
+                "auth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetAuthRequest"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "provider_options": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "registry_id": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.UpdateRegistryRequest": {
             "type": "object",
             "properties": {
@@ -3452,6 +3660,10 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.AzureAuthResponse": {
             "type": "object",
             "properties": {
+                "api_key": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
                 "client_id": {
                     "type": "string"
                 },
@@ -3618,6 +3830,29 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TestConnectionResponse": {
+            "type": "object",
+            "properties": {
+                "latency_ms": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "ok": {
+                    "type": "boolean"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "stage": {
+                    "type": "string"
+                },
+                "status_code": {
+                    "type": "integer"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog": {
             "type": "object",
             "properties": {
@@ -3632,6 +3867,9 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_app_plugins.CatalogEntry": {
             "type": "object",
             "properties": {
+                "default_mode": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode"
+                },
                 "description": {
                     "type": "string"
                 },
@@ -3649,6 +3887,12 @@ const docTemplate = `{
                 },
                 "slug": {
                     "type": "string"
+                },
+                "supported_modes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode"
+                    }
                 },
                 "supported_stages": {
                     "type": "array",
@@ -3787,6 +4031,21 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Mode": {
+            "type": "string",
+            "enum": [
+                "enforce",
+                "throttle",
+                "observe",
+                "enforce"
+            ],
+            "x-enum-varnames": [
+                "ModeEnforce",
+                "ModeThrottle",
+                "ModeObserve",
+                "DefaultMode"
+            ]
         },
         "github_com_NeuralTrust_AgentGateway_pkg_domain_policy.Stage": {
             "type": "string",

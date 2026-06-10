@@ -9,7 +9,6 @@ import (
 
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 )
@@ -56,6 +55,10 @@ func (p *Plugin) SupportedStages() []policy.Stage {
 	return []policy.Stage{policy.StagePreRequest}
 }
 
+func (p *Plugin) SupportedModes() []policy.Mode {
+	return []policy.Mode{policy.ModeEnforce, policy.ModeThrottle, policy.ModeObserve}
+}
+
 func (p *Plugin) ValidateConfig(settings map[string]any) error {
 	_, err := parseConfig(settings)
 	return err
@@ -67,66 +70,79 @@ func (p *Plugin) Execute(ctx context.Context, in appplugins.ExecInput) (*appplug
 		return nil, fmt.Errorf("rate_limiter: %w", err)
 	}
 
+	dimension, subject, err := in.Scope.Subject()
+	if err != nil {
+		return nil, fmt.Errorf("rate_limiter: %w", err)
+	}
+
+	window, err := time.ParseDuration(cfg.Window)
+	if err != nil {
+		return nil, fmt.Errorf("rate_limiter: invalid window: %w", err)
+	}
+
+	now := p.now()
+	redisKey := fmt.Sprintf("ratelimit:%s:%s:%s", in.Config.ID, dimension, subject)
+	if group := in.Request.HeaderValue(cfg.GroupByHeader); group != "" {
+		redisKey += ":hdr:" + group
+	}
+	count, err := p.currentCount(ctx, redisKey, now, window)
+	if err != nil {
+		return nil, err
+	}
+
 	headers := make(map[string][]string)
+	setLimitHeaders(headers, dimension, cfg.Limit, count, now.Add(window))
 
-	var evaluated *RateLimiterData
+	data := RateLimiterData{
+		ExceededType: dimension,
+		CurrentCount: count,
+		Limit:        cfg.Limit,
+		Window:       cfg.Window,
+	}
 
-	for _, limitType := range limitOrder {
-		lc, ok := cfg.Limits[limitType]
-		if !ok {
-			continue
-		}
-		key := p.extractKey(ctx, in.Request, limitType)
-		if limitType == keyPerUser && key == "anonymous" {
-			continue
-		}
+	if count >= int64(cfg.Limit) {
+		data.RateLimitExceeded = true
+		data.RetryAfter = cfg.RetryAfter
 
-		window, err := time.ParseDuration(lc.Window)
-		if err != nil {
-			return nil, fmt.Errorf("rate_limiter: invalid window for %q: %w", limitType, err)
-		}
-
-		now := p.now()
-		redisKey := fmt.Sprintf("ratelimit:%s:%s:%s", in.Config.ID, limitType, key)
-		count, err := p.currentCount(ctx, redisKey, now, window)
-		if err != nil {
-			return nil, err
-		}
-
-		setLimitHeaders(headers, limitType, lc.Limit, count, now.Add(window))
-		evaluated = &RateLimiterData{
-			ExceededType: limitType,
-			CurrentCount: count,
-			Limit:        lc.Limit,
-			Window:       lc.Window,
-		}
-
-		if count >= int64(lc.Limit) {
-			headers["Retry-After"] = []string{cfg.Actions.RetryAfter}
-			evaluated.RateLimitExceeded = true
-			evaluated.RetryAfter = cfg.Actions.RetryAfter
+		if appplugins.Blocks(in.Mode) && !appplugins.Throttles(in.Mode) {
+			headers["Retry-After"] = []string{cfg.RetryAfter}
+			appplugins.SetDecision(in.Event, in.Mode)
 			if in.Event != nil {
-				in.Event.SetDecision("block")
-				in.Event.SetExtras(*evaluated)
+				in.Event.SetExtras(data)
 			}
 			return nil, &appplugins.PluginError{
 				StatusCode: http.StatusTooManyRequests,
-				Message:    fmt.Sprintf("%s rate limit exceeded", limitType),
+				Message:    fmt.Sprintf("%s rate limit exceeded", dimension),
 				Headers:    headers,
 			}
 		}
-		if err := p.record(ctx, redisKey, now, window); err != nil {
-			return nil, err
+
+		if appplugins.Throttles(in.Mode) {
+			if err := appplugins.Throttle(ctx, throttleDelay(window, cfg.Limit)); err != nil {
+				return nil, err
+			}
 		}
+	}
+
+	if err := p.record(ctx, redisKey, now, window); err != nil {
+		return nil, err
 	}
 
 	if in.Event != nil {
 		in.Event.SetStatusCode(http.StatusOK)
-		if evaluated != nil {
-			in.Event.SetExtras(*evaluated)
+		if data.RateLimitExceeded {
+			appplugins.SetDecision(in.Event, in.Mode)
 		}
+		in.Event.SetExtras(data)
 	}
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
+}
+
+func throttleDelay(window time.Duration, limit int) time.Duration {
+	if limit <= 0 || window <= 0 {
+		return 0
+	}
+	return window / time.Duration(limit)
 }
 
 // currentCount returns the number of requests recorded inside the sliding
@@ -157,48 +173,8 @@ func (p *Plugin) record(ctx context.Context, key string, now time.Time, window t
 	return nil
 }
 
-// extractKey resolves the rate-limit subject for a limit type.
-func (p *Plugin) extractKey(ctx context.Context, req *infracontext.RequestContext, limitType string) string {
-	switch limitType {
-	case keyGlobal:
-		return keyGlobal
-	case keyPerFingerprint:
-		if fp, ok := ctx.Value(infracontext.FingerprintIDContextKey).(string); ok && fp != "" {
-			return fp
-		}
-		return "unknown"
-	case keyPerIP:
-		if ip := firstHeader(req, "X-Real-IP", "X-Real-Ip", "X-Forwarded-For", "X-Original-Forwarded-For", "True-Client-IP", "CF-Connecting-IP"); ip != "" {
-			return ip
-		}
-		if req != nil && req.IP != "" {
-			return req.IP
-		}
-		return "unknown"
-	case keyPerUser:
-		if user := firstHeader(req, "X-User-ID", "X-User-Id", "X-UserID", "User-ID"); user != "" {
-			return user
-		}
-		return "anonymous"
-	default:
-		return limitType
-	}
-}
-
-func firstHeader(req *infracontext.RequestContext, names ...string) string {
-	if req == nil {
-		return ""
-	}
-	for _, name := range names {
-		if values := req.Headers[name]; len(values) > 0 && values[0] != "" {
-			return values[0]
-		}
-	}
-	return ""
-}
-
-func setLimitHeaders(headers map[string][]string, limitType string, limit int, count int64, reset time.Time) {
-	prefix := "X-RateLimit-" + limitType
+func setLimitHeaders(headers map[string][]string, dimension string, limit int, count int64, reset time.Time) {
+	prefix := "X-RateLimit-" + dimension
 	remaining := int64(limit) - count
 	if remaining < 0 {
 		remaining = 0

@@ -13,6 +13,7 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/registry/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -57,6 +58,96 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 	if cached.(*domain.Registry).ID != b.ID {
 		t.Fatal("cached backend ID mismatch")
+	}
+}
+
+func TestCreator_Create_AzureModes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		auth *domain.TargetAuth
+		want providers.Azure
+		key  string
+	}{
+		{
+			name: "api key",
+			auth: &domain.TargetAuth{
+				Type:  domain.AuthTypeAzure,
+				Azure: &domain.AzureAuth{Endpoint: "https://example.openai.azure.com", APIKey: "azure-key"},
+			},
+			want: providers.Azure{
+				Endpoint: "https://example.openai.azure.com",
+				AuthMode: providers.AzureAuthModeAPIKey,
+			},
+			key: "azure-key",
+		},
+		{
+			name: "service principal",
+			auth: &domain.TargetAuth{
+				Type: domain.AuthTypeAzure,
+				Azure: &domain.AzureAuth{
+					Endpoint:     "https://example.openai.azure.com",
+					ClientID:     "client",
+					ClientSecret: "secret",
+					TenantID:     "tenant",
+				},
+			},
+			want: providers.Azure{
+				Endpoint:     "https://example.openai.azure.com",
+				AuthMode:     providers.AzureAuthModeServicePrincipal,
+				ClientID:     "client",
+				ClientSecret: "secret",
+				TenantID:     "tenant",
+			},
+		},
+		{
+			name: "default azure credential",
+			auth: &domain.TargetAuth{
+				Type:  domain.AuthTypeAzure,
+				Azure: &domain.AzureAuth{Endpoint: "https://example.openai.azure.com", UseManagedIdentity: true},
+			},
+			want: providers.Azure{
+				Endpoint:    "https://example.openai.azure.com",
+				AuthMode:    providers.AzureAuthModeDefaultAzureCredential,
+				UseIdentity: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := repomocks.NewRepository(t)
+			gwID := ids.New[ids.GatewayKind]()
+			repo.EXPECT().
+				Save(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+					creds := b.Auth.ProviderCredentials()
+					return b.GatewayID == gwID &&
+						b.Provider == "azure" &&
+						creds.ApiKey == tt.key &&
+						creds.Azure != nil &&
+						*creds.Azure == tt.want
+				})).
+				Return(nil).
+				Once()
+
+			creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger())
+			got, err := creator.Create(context.Background(), appregistry.CreateInput{
+				GatewayID: gwID,
+				Name:      "azure-" + tt.name,
+				Provider:  "azure",
+				Auth:      tt.auth,
+			})
+
+			if err != nil {
+				t.Fatalf("Create error: %v", err)
+			}
+			if got.Provider != "azure" {
+				t.Fatalf("Provider = %q, want azure", got.Provider)
+			}
+		})
 	}
 }
 

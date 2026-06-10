@@ -2,11 +2,13 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
@@ -20,6 +22,9 @@ const (
 	headerSelectedProvider = "X-Selected-Provider"
 	headerContentType      = "Content-Type"
 	contentTypeJSON        = "application/json"
+
+	responsesTurnIDPrefix = "resp_"
+	fieldPreviousResponse = "previous_response_id"
 )
 
 // ErrInvalidRequestPayload signals that the inbound body could not be decoded
@@ -46,6 +51,7 @@ type ProviderResponse struct {
 	Usage        *adapter.CanonicalUsage
 	Model        string
 	FinishReason string
+	ResponseID   string
 }
 
 //go:generate mockery --name=ProviderInvoker --dir=. --output=./mocks --filename=provider_invoker_mock.go --case=underscore --with-expecter
@@ -108,7 +114,7 @@ func (p *providerInvoker) Invoke(
 		return nil, fmt.Errorf("provider completions: %w", err)
 	}
 
-	usage, model, finishReason := p.decodeResponseMeta(respBody, prep.targetFormat)
+	usage, model, finishReason, responseID := p.decodeResponseMeta(respBody, prep.targetFormat)
 
 	if prep.crossFormat {
 		if adapted, aerr := p.registry.AdaptResponse(respBody, prep.sourceFormat, prep.targetFormat); aerr != nil {
@@ -129,15 +135,16 @@ func (p *providerInvoker) Invoke(
 		Usage:        usage,
 		Model:        model,
 		FinishReason: finishReason,
+		ResponseID:   responseID,
 	}, nil
 }
 
-func (p *providerInvoker) decodeResponseMeta(body []byte, format adapter.Format) (*adapter.CanonicalUsage, string, string) {
+func (p *providerInvoker) decodeResponseMeta(body []byte, format adapter.Format) (*adapter.CanonicalUsage, string, string, string) {
 	canonical, err := p.registry.DecodeResponseFor(body, format)
 	if err != nil || canonical == nil {
-		return nil, "", ""
+		return nil, "", "", ""
 	}
-	return canonical.Usage, canonical.Model, canonical.FinishReason
+	return canonical.Usage, canonical.Model, canonical.FinishReason, canonical.ID
 }
 
 func (p *providerInvoker) InvokeStream(
@@ -228,17 +235,44 @@ func (p *providerInvoker) prepare(
 		body = normalized
 	}
 
+	body = injectPreviousResponseID(body, targetFormat, req.PreviousResponseID)
+
 	return &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
 			Options:     bk.ProviderOptions,
-			Credentials: buildCredentials(bk.Auth),
+			Credentials: bk.Auth.ProviderCredentials(),
 		},
 		body:         body,
 		sourceFormat: sourceFormat,
 		targetFormat: targetFormat,
 		crossFormat:  crossFormat,
 	}, nil
+}
+
+func injectPreviousResponseID(body []byte, targetFormat adapter.Format, previousResponseID string) []byte {
+	if previousResponseID == "" ||
+		targetFormat != adapter.FormatOpenAIResponses ||
+		!strings.HasPrefix(previousResponseID, responsesTurnIDPrefix) {
+		return body
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return body
+	}
+	if _, exists := obj[fieldPreviousResponse]; exists {
+		return body
+	}
+	raw, err := json.Marshal(previousResponseID)
+	if err != nil {
+		return body
+	}
+	obj[fieldPreviousResponse] = raw
+	merged, err := json.Marshal(obj)
+	if err != nil {
+		return body
+	}
+	return merged
 }
 
 func (p *providerInvoker) streamObserver(ctx context.Context) func(*adapter.CanonicalStreamChunk) {
@@ -248,6 +282,7 @@ func (p *providerInvoker) streamObserver(ctx context.Context) func(*adapter.Cano
 			return
 		}
 		requestTrace.ObserveLLMResult(chunk.Model, chunk.FinishReason)
+		requestTrace.ObserveLLMTurnID(chunk.ID)
 		if chunk.Usage == nil {
 			return
 		}
@@ -286,42 +321,4 @@ func (p *providerInvoker) resolveSourceFormat(req *infracontext.RequestContext) 
 		return trusted
 	}
 	return adapter.DetectFormat(req.Body)
-}
-
-// buildCredentials maps a target's auth configuration to provider credentials.
-// API key, AWS and Azure are mapped now; OAuth2 and GCP service accounts are
-// deferred to the auth multi-type work (B.7).
-func buildCredentials(auth *registry.TargetAuth) providers.Credentials {
-	creds := providers.Credentials{}
-	if auth == nil {
-		return creds
-	}
-	switch auth.Type {
-	case registry.AuthTypeAPIKey:
-		if auth.APIKey != nil {
-			creds.ApiKey = auth.APIKey.APIKey
-		}
-	case registry.AuthTypeAWS:
-		if auth.AWS != nil {
-			creds.AwsBedrock = &providers.AwsBedrock{
-				Region:       auth.AWS.Region,
-				AccessKey:    auth.AWS.AccessKeyID,
-				SecretKey:    auth.AWS.SecretAccessKey,
-				SessionToken: auth.AWS.SessionToken,
-				UseRole:      auth.AWS.UseRole,
-				RoleARN:      auth.AWS.Role,
-			}
-		}
-	case registry.AuthTypeAzure:
-		if auth.Azure != nil {
-			creds.Azure = &providers.Azure{
-				Endpoint:    auth.Azure.Endpoint,
-				ApiVersion:  auth.Azure.Version,
-				UseIdentity: auth.Azure.UseManagedIdentity,
-			}
-		}
-	case registry.AuthTypeOAuth2, registry.AuthTypeGCPServiceAccount:
-		// Deferred to B.7.
-	}
-	return creds
 }

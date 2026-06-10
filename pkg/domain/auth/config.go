@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
 )
 
 type Config struct {
@@ -30,6 +32,14 @@ type MTLSConfig struct {
 	AllowedFingerprints []string `json:"allowed_fingerprints,omitempty"`
 }
 
+// ResolveSecretsFrom keeps previously stored secret values when the incoming
+// update omits them (empty or the redaction placeholder).
+func (c *Config) ResolveSecretsFrom(prev Config) {
+	if c.OAuth2 != nil && prev.OAuth2 != nil {
+		c.OAuth2.ClientSecret = secret.Resolve(c.OAuth2.ClientSecret, prev.OAuth2.ClientSecret)
+	}
+}
+
 func (c Config) Validate(t Type) error {
 	switch t {
 	case TypeAPIKey:
@@ -53,6 +63,9 @@ func (c Config) Validate(t Type) error {
 }
 
 func (c OAuth2Config) validate() error {
+	if secret.IsMasked(c.ClientSecret) {
+		return fmt.Errorf("%w: oauth2.client_secret cannot be a masked value; omit it to keep the stored value", ErrInvalidConfig)
+	}
 	if strings.TrimSpace(c.Issuer) == "" {
 		return fmt.Errorf("%w: oauth2.issuer is required", ErrInvalidConfig)
 	}

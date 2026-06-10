@@ -5,8 +5,21 @@ import (
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
+
+func TestConfig_Validate_RejectsRedactedClientSecret(t *testing.T) {
+	t.Parallel()
+	cfg := Config{OAuth2: &OAuth2Config{
+		Issuer:       "https://issuer.example.com",
+		JWKSURL:      "https://issuer.example.com/jwks",
+		ClientSecret: secret.Redacted,
+	}}
+	if err := cfg.Validate(TypeOAuth2); err == nil {
+		t.Fatal("Validate() = nil, want rejection of redaction placeholder")
+	}
+}
 
 func TestNewAPIKeyAuth_GeneratesKey(t *testing.T) {
 	t.Parallel()

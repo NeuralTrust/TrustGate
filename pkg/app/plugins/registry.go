@@ -58,6 +58,9 @@ func (r *registry) Register(p Plugin) error {
 			return fmt.Errorf("%w: %s requires %q outside its supported stages", ErrInvalidStages, name, s)
 		}
 	}
+	if err := validateDeclaredModes(name, p.SupportedModes()); err != nil {
+		return err
+	}
 	r.plugins[name] = p
 	return nil
 }

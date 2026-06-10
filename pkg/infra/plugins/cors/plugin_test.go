@@ -79,6 +79,21 @@ func TestPlugin_Execute_OriginNotAllowed(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, pe.StatusCode)
 }
 
+func TestPlugin_Execute_ObserveDoesNotBlockDisallowedOrigin(t *testing.T) {
+	p := New()
+	assert.Equal(t, []policy.Mode{policy.ModeEnforce, policy.ModeObserve}, p.SupportedModes())
+
+	req := &infracontext.RequestContext{Method: http.MethodGet, Headers: map[string][]string{"Origin": {"https://evil.com"}}}
+	in := input(baseSettings(), req)
+	in.Mode = policy.ModeObserve
+
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.False(t, res.StopUpstream)
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+}
+
 func TestPlugin_Execute_SimpleRequestSetsHeaders(t *testing.T) {
 	p := New()
 	req := &infracontext.RequestContext{Method: http.MethodGet, Headers: map[string][]string{"Origin": {"https://allowed.com"}}}

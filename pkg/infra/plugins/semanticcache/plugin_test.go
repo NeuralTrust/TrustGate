@@ -117,6 +117,40 @@ func TestPlugin_PreRequest_HitShortCircuits(t *testing.T) {
 	assert.Equal(t, cacheStatusHit, resp.Metadata[metadataCacheStatus])
 }
 
+func TestPlugin_PreRequest_ObserveDoesNotServeHit(t *testing.T) {
+	store := &fakeStore{candidates: []semantic.Candidate{{Response: `{"cached":true}`, Similarity: 0.95}}}
+	creator := &fakeCreator{emb: &embedding.Embedding{Value: []float64{0.1, 0.2}}}
+	p := New(store, locatorWith(creator), adapter.NewRegistry())
+
+	req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+	resp := &infracontext.ResponseContext{}
+
+	in := newInput(policy.StagePreRequest, req, resp)
+	in.Mode = policy.ModeObserve
+
+	res, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	require.False(t, res.StopUpstream, "observe must not serve a cached response")
+	assert.Nil(t, res.Body)
+	assert.Equal(t, cacheStatusMiss, resp.Metadata[metadataCacheStatus])
+}
+
+func TestPlugin_PostResponse_ObserveDoesNotStore(t *testing.T) {
+	store := &fakeStore{}
+	creator := &fakeCreator{emb: &embedding.Embedding{Value: []float64{0.1, 0.2}}}
+	p := New(store, locatorWith(creator), adapter.NewRegistry())
+
+	req := &infracontext.RequestContext{Provider: "openai", RegistryID: "b1", Body: openAIBody()}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"answer":"hi"}`)}
+
+	in := newInput(policy.StagePostResponse, req, resp)
+	in.Mode = policy.ModeObserve
+
+	_, err := p.Execute(context.Background(), in)
+	require.NoError(t, err)
+	assert.Empty(t, store.stored, "observe must not write to the cache")
+}
+
 func TestPlugin_PreRequest_BelowThresholdMisses(t *testing.T) {
 	store := &fakeStore{candidates: []semantic.Candidate{{Response: "x", Similarity: 0.5}}}
 	creator := &fakeCreator{emb: &embedding.Embedding{Value: []float64{0.1}}}

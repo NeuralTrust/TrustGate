@@ -3,11 +3,10 @@ package response
 import (
 	"time"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
-
-const redacted = "***"
 
 type RegistryResponse struct {
 	ID              ids.RegistryID        `json:"id"`
@@ -53,6 +52,7 @@ type AzureAuthResponse struct {
 	UseManagedIdentity bool   `json:"use_managed_identity,omitempty"`
 	Endpoint           string `json:"endpoint,omitempty"`
 	Version            string `json:"version,omitempty"`
+	APIKey             string `json:"api_key,omitempty"` // #nosec G117
 	ClientID           string `json:"client_id,omitempty"`
 	ClientSecret       string `json:"client_secret,omitempty"` // #nosec G117
 	TenantID           string `json:"tenant_id,omitempty"`
@@ -111,7 +111,7 @@ func FromAuth(a *domain.TargetAuth) *TargetAuthResponse {
 	}
 	out := &TargetAuthResponse{Type: string(a.Type)}
 	if a.GCPServiceAccount != nil {
-		gcp := redacted
+		gcp := secret.Mask(*a.GCPServiceAccount)
 		out.GCPServiceAccount = &gcp
 	}
 	out.APIKey = fromAPIKeyAuth(a.APIKey)
@@ -126,11 +126,11 @@ func fromAPIKeyAuth(k *domain.APIKeyAuth) *APIKeyAuthResponse {
 		return nil
 	}
 	return &APIKeyAuthResponse{
-		APIKey:        redactIfPresent(k.APIKey),
+		APIKey:        secret.Mask(k.APIKey),
 		HeaderName:    k.HeaderName,
-		HeaderValue:   redactIfPresent(k.HeaderValue),
+		HeaderValue:   secret.Mask(k.HeaderValue),
 		ParamName:     k.ParamName,
-		ParamValue:    redactIfPresent(k.ParamValue),
+		ParamValue:    secret.Mask(k.ParamValue),
 		ParamLocation: k.ParamLocation,
 	}
 }
@@ -143,8 +143,9 @@ func fromAzureAuth(a *domain.AzureAuth) *AzureAuthResponse {
 		UseManagedIdentity: a.UseManagedIdentity,
 		Endpoint:           a.Endpoint,
 		Version:            a.Version,
+		APIKey:             secret.Mask(a.APIKey),
 		ClientID:           a.ClientID,
-		ClientSecret:       redactIfPresent(a.ClientSecret),
+		ClientSecret:       secret.Mask(a.ClientSecret),
 		TenantID:           a.TenantID,
 	}
 }
@@ -154,10 +155,10 @@ func fromAWSAuth(a *domain.AWSAuth) *AWSAuthResponse {
 		return nil
 	}
 	return &AWSAuthResponse{
-		AccessKeyID:     redactIfPresent(a.AccessKeyID),
-		SecretAccessKey: redactIfPresent(a.SecretAccessKey),
+		AccessKeyID:     secret.Mask(a.AccessKeyID),
+		SecretAccessKey: secret.Mask(a.SecretAccessKey),
 		Region:          a.Region,
-		SessionToken:    redactIfPresent(a.SessionToken),
+		SessionToken:    secret.Mask(a.SessionToken),
 		Role:            a.Role,
 		UseRole:         a.UseRole,
 	}
@@ -171,18 +172,11 @@ func fromOAuthConfig(o *domain.TargetOAuthConfig) *TargetOAuthConfigResponse {
 		TokenURL:     o.TokenURL,
 		GrantType:    o.GrantType,
 		ClientID:     o.ClientID,
-		ClientSecret: redactIfPresent(o.ClientSecret),
+		ClientSecret: secret.Mask(o.ClientSecret),
 		UseBasicAuth: o.UseBasicAuth,
 		Scopes:       o.Scopes,
 		Audience:     o.Audience,
-		RefreshToken: redactIfPresent(o.RefreshToken),
+		RefreshToken: secret.Mask(o.RefreshToken),
 		Extra:        o.Extra,
 	}
-}
-
-func redactIfPresent(v string) string {
-	if v == "" {
-		return ""
-	}
-	return redacted
 }

@@ -28,8 +28,8 @@ type config struct {
 }
 
 func parseConfig(settings map[string]any) (*config, error) {
-	var cfg config
-	if err := pluginutil.Decode(settings, &cfg); err != nil {
+	cfg, err := pluginutil.Parse[config](settings)
+	if err != nil {
 		return nil, err
 	}
 	cfg.applyDefaults()

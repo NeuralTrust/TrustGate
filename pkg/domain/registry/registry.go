@@ -97,6 +97,9 @@ func (b *Registry) Validate() error {
 	if !providers.IsValidProvider(b.Provider) {
 		return fmt.Errorf("%w: unsupported provider %q", ErrInvalidRegistry, b.Provider)
 	}
+	if err := providers.ValidateProviderOptions(b.Provider, b.ProviderOptions); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidRegistry, err)
+	}
 	if b.Auth == nil {
 		return fmt.Errorf("%w: auth is required", ErrInvalidRegistry)
 	}
