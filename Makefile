@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy run-servers test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools swagger openapi docs \
+.PHONY: help build run run-admin run-proxy run-proxy-sandbox run-servers local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools swagger openapi docs \
         install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -38,13 +38,21 @@ run-proxy: build ## Build and run the proxy server
 	@$(info $(M) Running $(APP_NAME) proxy ...)
 	./bin/$(APP_NAME) proxy
 
+run-proxy-sandbox: build ## Run the proxy resolving gateways from {slug}.gw.agentgateway.sandbox (see local-dns)
+	@$(info $(M) Running $(APP_NAME) proxy with sandbox base domain ...)
+	GATEWAY_BASE_DOMAIN=gw.agentgateway.sandbox ./bin/$(APP_NAME) proxy
+
+local-dns: ## Point *.gw.agentgateway.sandbox to 127.0.0.1 via dnsmasq (macOS, requires sudo)
+	@$(info $(M) Configuring local sandbox DNS ...)
+	./scripts/setup-local-subdomains.sh
+
 run-servers: ## Start the full stack + proxy & admin servers in docker
 	@$(info $(M) Starting full stack with proxy + admin servers ...)
 	docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
 
 test: ## Run unit tests
 	@$(info $(M) Running unit tests ...)
-	go test -v ./pkg/...
+	go test -cover -v ./pkg/...
 
 test-race: ## Run unit tests with the race detector
 	@$(info $(M) Running unit tests with -race ...)

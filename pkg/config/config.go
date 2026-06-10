@@ -20,6 +20,10 @@ const (
 	defaultServerReadTimeout  = 60 * time.Second
 	defaultServerWriteTimeout = 60 * time.Second
 	defaultServerIdleTimeout  = 120 * time.Second
+	defaultGatewayBaseDomain  = "gw.neuraltrust.ai"
+
+	GatewayDiscoveryModeHeader    = "header"
+	GatewayDiscoveryModeSubdomain = "subdomain"
 
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
@@ -101,6 +105,15 @@ type ServerConfig struct {
 	// SecretKey signs and verifies admin-plane JWTs. Empty disables admin auth
 	// token acceptance (every token is rejected).
 	SecretKey string
+	// GatewayBaseDomain is the suffix used to resolve gateways from the request
+	// host ({slug}.<base-domain>), e.g. gw.neuraltrust.ai in cloud or
+	// gw.agentgateway.sandbox for local development.
+	GatewayBaseDomain string
+	// GatewayDiscoveryMode selects how the proxy matches the target gateway:
+	// "header" reads the X-AG-Gateway-Slug header and falls back to the host
+	// when absent (self-hosted default); "subdomain" only trusts the request
+	// host and ignores the header (cloud).
+	GatewayDiscoveryMode string
 }
 
 type DatabaseConfig struct {
@@ -222,6 +235,14 @@ func getServerConfig() ServerConfig {
 		WriteTimeout: getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
 		IdleTimeout:  getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),
 		SecretKey:    getEnv("SERVER_SECRET_KEY", ""),
+		GatewayBaseDomain: getEnv(
+			"GATEWAY_BASE_DOMAIN",
+			defaultGatewayBaseDomain,
+		),
+		GatewayDiscoveryMode: strings.ToLower(strings.TrimSpace(getEnv(
+			"GATEWAY_DISCOVERY_MODE",
+			GatewayDiscoveryModeHeader,
+		))),
 	}
 }
 
@@ -343,6 +364,13 @@ func getLoggerConfig() LoggerConfig {
 }
 
 func (c *Config) Validate() error {
+	if c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeHeader &&
+		c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeSubdomain {
+		return fmt.Errorf(
+			"%w: GATEWAY_DISCOVERY_MODE must be %q or %q",
+			errors.ErrInvalidConfig, GatewayDiscoveryModeHeader, GatewayDiscoveryModeSubdomain,
+		)
+	}
 	if c.Database.Host == "" {
 		return fmt.Errorf("%w: DB_HOST is required", errors.ErrInvalidConfig)
 	}

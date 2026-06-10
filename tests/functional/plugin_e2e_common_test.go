@@ -48,7 +48,7 @@ func policyPlugin(slug string, settings map[string]any) map[string]any {
 }
 
 // proxyAPIKeyHeader is the fixed ingress header the proxy plane reads the client
-// api key from. It mirrors middleware.HeaderAPIKey.
+// api key from. It mirrors resolver.HeaderAPIKey.
 const proxyAPIKeyHeader = "X-AG-API-Key"
 
 // setupPolicyRoute wires a full proxy route guarded by one or more policies: a
