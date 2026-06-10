@@ -12,6 +12,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// testBaseDomain mirrors the GATEWAY_BASE_DOMAIN default from pkg/config.
+const testBaseDomain = "gw.neuraltrust.ai"
+
 func TestParseGatewaySlugFromHost(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -31,7 +34,7 @@ func TestParseGatewaySlugFromHost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseGatewaySlugFromHost(tt.host, defaultGatewayBaseDomain)
+			got, err := parseGatewaySlugFromHost(tt.host, testBaseDomain)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -66,7 +69,7 @@ func TestSubdomainGatewayResolver_UsesHostNotForwardedHost(t *testing.T) {
 	t.Parallel()
 	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
 	finder := fakeGatewayFinder{bySlug: map[string]*gatewaydomain.Gateway{"acme": gw}}
-	resolver := NewSubdomainGatewayResolver(&finder, "")
+	resolver := NewSubdomainGatewayResolver(&finder, testBaseDomain)
 
 	var (
 		got *gatewaydomain.Gateway
@@ -124,7 +127,7 @@ func TestSubdomainGatewayResolver_ErrorMapping(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			resolver := NewSubdomainGatewayResolver(&tt.finder, "")
+			resolver := NewSubdomainGatewayResolver(&tt.finder, testBaseDomain)
 
 			var resolveErr error
 			app := fiber.New()
@@ -177,7 +180,7 @@ func TestHeaderGatewayResolver(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			finder := fakeGatewayFinder{bySlug: map[string]*gatewaydomain.Gateway{"acme": gw}}
-			resolver := NewGatewayResolver(&finder, "header", "")
+			resolver := NewGatewayResolver(&finder, "header", testBaseDomain)
 
 			var (
 				got        *gatewaydomain.Gateway
@@ -223,7 +226,7 @@ func TestNewGatewayResolver_SubdomainModeIgnoresHeader(t *testing.T) {
 	t.Parallel()
 	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
 	finder := fakeGatewayFinder{bySlug: map[string]*gatewaydomain.Gateway{"acme": gw}}
-	resolver := NewGatewayResolver(&finder, "subdomain", "")
+	resolver := NewGatewayResolver(&finder, "subdomain", testBaseDomain)
 
 	var resolveErr error
 	app := fiber.New()

@@ -371,6 +371,9 @@ func (c *Config) Validate() error {
 			errors.ErrInvalidConfig, GatewayDiscoveryModeHeader, GatewayDiscoveryModeSubdomain,
 		)
 	}
+	if strings.Trim(strings.ToLower(strings.TrimSpace(c.Server.GatewayBaseDomain)), ".") == "" {
+		return fmt.Errorf("%w: GATEWAY_BASE_DOMAIN is required", errors.ErrInvalidConfig)
+	}
 	if c.Database.Host == "" {
 		return fmt.Errorf("%w: DB_HOST is required", errors.ErrInvalidConfig)
 	}

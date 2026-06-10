@@ -14,7 +14,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-const defaultGatewayBaseDomain = "gw.neuraltrust.ai"
 const HeaderGatewaySlug = "X-AG-Gateway-Slug"
 
 const (
@@ -39,11 +38,10 @@ type SubdomainGatewayResolver struct {
 	baseDomain string
 }
 
+// NewSubdomainGatewayResolver expects a non-empty base domain; config supplies
+// it from GATEWAY_BASE_DOMAIN (default gw.neuraltrust.ai) and validates it.
 func NewSubdomainGatewayResolver(finder appgateway.Finder, baseDomain string) GatewayResolver {
 	baseDomain = strings.Trim(strings.ToLower(strings.TrimSpace(baseDomain)), ".")
-	if baseDomain == "" {
-		baseDomain = defaultGatewayBaseDomain
-	}
 	return &SubdomainGatewayResolver{
 		finder:     finder,
 		baseDomain: baseDomain,
