@@ -3,6 +3,7 @@ package middleware
 import (
 	"errors"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
@@ -67,11 +68,11 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		identity, err := m.resolver.Resolve(c)
 		if err != nil {
-			return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+			return unauthenticated(c)
 		}
 		gw, err := m.gateways.FindByID(c.UserContext(), identity.GatewayID)
 		if err != nil {
-			return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+			return unauthenticated(c)
 		}
 		data, err := m.dataFinder.FindByGateway(c.UserContext(), identity.GatewayID)
 		if err != nil {
@@ -80,6 +81,13 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		m.attach(c, identity, gw, data)
 		return c.Next()
 	}
+}
+
+func unauthenticated(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusUnauthorized).JSON(helpers.ErrorBody{
+		Error:   "unauthenticated",
+		Message: ErrUnauthenticated.Error(),
+	})
 }
 
 func (m *AuthMiddleware) attach(c *fiber.Ctx, identity Identity, gw *gatewaydomain.Gateway, data *appconsumer.Data) {

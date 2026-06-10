@@ -3,8 +3,10 @@ package middleware_test
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
@@ -48,6 +50,25 @@ func runResolve(t *testing.T, finder appauth.APIKeyFinder, headers map[string]st
 func TestAPIKeyResolver_MissingHeader_Unauthenticated(t *testing.T) {
 	_, err := runResolve(t, fakeAPIKeyFinder{}, nil)
 	require.ErrorIs(t, err, middleware.ErrUnauthenticated)
+}
+
+func TestAuthMiddleware_MissingHeader_ReturnsJSONUnauthorized(t *testing.T) {
+	resolver := middleware.NewAPIKeyIdentityResolver(fakeAPIKeyFinder{})
+	mw := middleware.NewAuthMiddleware(resolver, nil, nil)
+
+	app := fiber.New()
+	app.Get("/", mw.Middleware(), func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/", nil))
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+	require.True(t, strings.HasPrefix(resp.Header.Get(fiber.HeaderContentType), fiber.MIMEApplicationJSON))
+	require.Equal(t, helpers.ErrorBody{
+		Error:   "unauthenticated",
+		Message: "unauthenticated",
+	}, decodeErrorBody(t, resp))
 }
 
 func TestAPIKeyResolver_ValidKey_ResolvesIdentity(t *testing.T) {
