@@ -8,6 +8,7 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
+	approuting "github.com/NeuralTrust/AgentGateway/pkg/app/routing"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
@@ -46,7 +47,7 @@ func forwarderWithPlugin(t *testing.T, invoker appproxy.ProviderInvoker, p apppl
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, exec, nil, nil, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, exec, nil, approuting.NewResolver(), nil, newTestLogger(),
 	)
 }
 

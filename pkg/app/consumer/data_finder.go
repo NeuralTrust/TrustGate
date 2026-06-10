@@ -94,7 +94,11 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 
-	backendByID, err := f.loadBackends(ctx, gatewayID, consumers)
+	roles, err := f.loadRoles(ctx, gatewayID)
+	if err != nil {
+		return nil, err
+	}
+	backendByID, err := f.loadBackends(ctx, gatewayID, consumers, roles)
 	if err != nil {
 		return nil, err
 	}
@@ -103,10 +107,6 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 	authByID, err := f.loadAuths(ctx, gatewayID, consumers)
-	if err != nil {
-		return nil, err
-	}
-	roles, err := f.loadRoles(ctx, gatewayID)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +128,7 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 	}
 
 	data := NewData(gatewayID, routable, roles)
+	data.SetRegistryIndex(backendByID)
 	f.memoryCache.Set(key, data)
 	return data, nil
 }
@@ -143,10 +144,12 @@ func (f *dataFinder) loadBackends(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	consumers []*domain.Consumer,
+	roles []*roledomain.Role,
 ) (map[ids.RegistryID]*registrydomain.Registry, error) {
 	idList := uniqueIDs(consumers, func(c *domain.Consumer) []ids.RegistryID {
 		return append(append([]ids.RegistryID{}, c.RegistryIDs...), fallbackChainOf(c)...)
 	})
+	idList = appendRoleRegistryIDs(idList, roles)
 	if len(idList) == 0 {
 		return map[ids.RegistryID]*registrydomain.Registry{}, nil
 	}
@@ -211,6 +214,26 @@ func (f *dataFinder) loadRoles(ctx context.Context, gatewayID ids.GatewayID) ([]
 		return nil, nil
 	}
 	return f.roleRepo.ListByGateway(ctx, gatewayID)
+}
+
+func appendRoleRegistryIDs(idList []ids.RegistryID, roles []*roledomain.Role) []ids.RegistryID {
+	seen := make(map[ids.RegistryID]struct{}, len(idList))
+	for _, id := range idList {
+		seen[id] = struct{}{}
+	}
+	for _, r := range roles {
+		if r == nil {
+			continue
+		}
+		for _, id := range r.RegistryIDs {
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			idList = append(idList, id)
+		}
+	}
+	return idList
 }
 
 func uniqueIDs[T comparable](consumers []*domain.Consumer, pick func(*domain.Consumer) []T) []T {

@@ -11,6 +11,7 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
+	approuting "github.com/NeuralTrust/AgentGateway/pkg/app/routing"
 	appsession "github.com/NeuralTrust/AgentGateway/pkg/app/session"
 	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
@@ -67,7 +68,7 @@ func newTestForwarder(t *testing.T, invoker appproxy.ProviderInvoker) appproxy.F
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, nil, nil, nil, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), nil, newTestLogger(),
 	)
 }
 
@@ -88,7 +89,7 @@ func newTestForwarderWithStore(t *testing.T, invoker appproxy.ProviderInvoker, s
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, nil, store, nil, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, nil, store, approuting.NewResolver(), nil, newTestLogger(),
 	)
 }
 

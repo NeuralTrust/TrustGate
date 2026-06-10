@@ -15,6 +15,7 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	routingdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
@@ -67,17 +68,20 @@ func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
 }
 
 func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, consumer, err := resolveConsumer(c)
+	gatewayID, consumer, authCtx, err := resolveConsumer(c)
 	if err != nil {
 		return writeProxyError(c, err)
 	}
 
 	stampConsumerTrace(c, consumer)
 
+	data, _ := appconsumer.DataFromContext(c.UserContext())
 	reqCtx := buildRequestContext(c, gatewayID)
 	result, err := h.forwarder.Forward(c.UserContext(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  consumer,
+		Data:      data,
+		RoleIDs:   authCtx.RoleIDs,
 		Request:   reqCtx,
 	})
 	if err != nil {
@@ -157,30 +161,30 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 	return nil
 }
 
-func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer, error) {
+func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer, *appauth.AuthContext, error) {
 	gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
 	if !ok {
-		return ids.GatewayID{}, nil, errNotAuthenticated
+		return ids.GatewayID{}, nil, nil, errNotAuthenticated
 	}
 	authCtx, ok := appauth.AuthContextFromContext(c.UserContext())
 	if !ok {
-		return ids.GatewayID{}, nil, errNotAuthenticated
+		return ids.GatewayID{}, nil, nil, errNotAuthenticated
 	}
 	data, ok := appconsumer.DataFromContext(c.UserContext())
 	if !ok || data == nil {
-		return ids.GatewayID{}, nil, errNotAuthenticated
+		return ids.GatewayID{}, nil, nil, errNotAuthenticated
 	}
 	rc, ok := appconsumer.ConsumerFromContext(c.UserContext())
 	if !ok {
 		rc, ok = data.MatchPath(c.Path())
 		if !ok {
-			return ids.GatewayID{}, nil, errPathNotFound
+			return ids.GatewayID{}, nil, nil, errPathNotFound
 		}
 	}
 	if !isAuthorizedForConsumer(rc, authCtx) {
-		return ids.GatewayID{}, nil, errForbidden
+		return ids.GatewayID{}, nil, nil, errForbidden
 	}
-	return gatewayID, rc, nil
+	return gatewayID, rc, authCtx, nil
 }
 
 func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
@@ -305,7 +309,12 @@ func mapProxyError(err error) (int, helpers.ErrorBody) {
 		return fiber.StatusServiceUnavailable, helpers.ErrorBody{Error: "no_backend_available", Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload):
 		return fiber.StatusBadRequest, helpers.ErrorBody{Error: "invalid_request", Message: err.Error()}
-	case errors.Is(err, appproxy.ErrModelNotAllowed):
+	case errors.Is(err, routingdomain.ErrInvalidModelRef),
+		errors.Is(err, routingdomain.ErrUnknownPoolAlias),
+		errors.Is(err, routingdomain.ErrAmbiguousModel):
+		return fiber.StatusBadRequest, helpers.ErrorBody{Error: "invalid_model", Message: err.Error()}
+	case errors.Is(err, routingdomain.ErrModelDenied),
+		errors.Is(err, appproxy.ErrModelNotAllowed):
 		return fiber.StatusForbidden, helpers.ErrorBody{Error: "model_not_allowed", Message: err.Error()}
 	default:
 		return fiber.StatusBadGateway, helpers.ErrorBody{Error: "backend_error"}
