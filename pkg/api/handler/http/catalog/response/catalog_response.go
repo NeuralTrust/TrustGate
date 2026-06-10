@@ -14,6 +14,9 @@ type ProviderResponse struct {
 	Source      string                      `json:"source"`
 	Metadata    map[string]any              `json:"metadata,omitempty"`
 	AuthTypes   []appcatalog.AuthTypeOption `json:"auth_types"`
+	// ProviderOptionsSchema lists provider-specific connection settings that are
+	// not credentials (e.g. base_url, project, location).
+	ProviderOptionsSchema []appcatalog.ProviderOptionField `json:"provider_options_schema"`
 }
 
 type ModelResponse struct {
@@ -40,6 +43,8 @@ func FromProvider(p domain.Provider) ProviderResponse {
 		Source:      p.Source,
 		Metadata:    p.Metadata,
 		AuthTypes:   appcatalog.ProviderAuthOptions(p.Code),
+
+		ProviderOptionsSchema: appcatalog.ProviderOptions(p.Code),
 	}
 }
 
