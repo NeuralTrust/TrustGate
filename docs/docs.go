@@ -2820,11 +2820,23 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "model_policies": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest"
+                    }
+                },
                 "name": {
                     "type": "string"
                 },
                 "path": {
                     "type": "string"
+                },
+                "registry_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "type": {
                     "type": "string"

@@ -51,6 +51,14 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	registryIDs, err := req.ToRegistryIDs()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	modelPolicies, err := req.ToModelPolicies()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
 		GatewayID:       gatewayID,
@@ -62,6 +70,8 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 		Headers:         req.Headers,
 		Active:          req.Active,
 		Fallback:        fallback,
+		RegistryIDs:     registryIDs,
+		ModelPolicies:   modelPolicies,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

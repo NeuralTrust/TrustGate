@@ -229,10 +229,18 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
+        type: array
       name:
         type: string
       path:
         type: string
+      registry_ids:
+        items:
+          type: string
+        type: array
       type:
         type: string
     type: object

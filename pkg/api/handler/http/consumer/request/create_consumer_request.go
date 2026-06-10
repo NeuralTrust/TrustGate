@@ -20,6 +20,8 @@ type CreateConsumerRequest struct {
 	Headers         map[string]string       `json:"headers,omitempty"`
 	Active          *bool                   `json:"active,omitempty"`
 	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
+	RegistryIDs     []string                `json:"registry_ids,omitempty"`
+	ModelPolicies   []ModelPolicyRequest    `json:"model_policies,omitempty"`
 }
 
 type ModelPolicyRequest struct {
@@ -126,6 +128,14 @@ func (r CreateConsumerRequest) ToEmbeddingConfig() *registrydomain.EmbeddingConf
 
 func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 	return r.Fallback.ToFallback()
+}
+
+func (r CreateConsumerRequest) ToRegistryIDs() ([]ids.RegistryID, error) {
+	return parseUUIDList[ids.RegistryKind](r.RegistryIDs, "registry_ids")
+}
+
+func (r CreateConsumerRequest) ToModelPolicies() (domain.ModelPolicies, error) {
+	return parseModelPolicies(r.ModelPolicies)
 }
 
 func parseModelPolicies(raw []ModelPolicyRequest) (domain.ModelPolicies, error) {

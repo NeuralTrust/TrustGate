@@ -28,6 +28,8 @@ const (
 	consumerPathUniqueIndex      = "consumers_gateway_path_unique"
 )
 
+const insertConsumerRegistry = `INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+
 const consumerSelectColumns = `
 		SELECT c.id, c.gateway_id, c.name, c.type, c.path, c.algorithm, c.embedding_config, c.fallback, c.model_policies, c.headers, c.active,
 		       c.created_at, c.updated_at,
@@ -72,13 +74,20 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 		)`
-	if _, err := r.conn.Pool.Exec(ctx, insertConsumer,
-		c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
-		headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
-	); err != nil {
-		return mapPgError(err)
-	}
-	return nil
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, insertConsumer,
+			c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
+			headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
+		); err != nil {
+			return mapPgError(err)
+		}
+		for _, registryID := range c.RegistryIDs {
+			if _, err := tx.Exec(ctx, insertConsumerRegistry, c.ID, registryID); err != nil {
+				return mapPgError(err)
+			}
+		}
+		return nil
+	})
 }
 
 func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
@@ -128,8 +137,7 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 }
 
 func (r *Repository) AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
-	const query = `INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, registryID); err != nil {
+	if _, err := r.conn.Pool.Exec(ctx, insertConsumerRegistry, consumerID, registryID); err != nil {
 		return mapPgError(err)
 	}
 	return nil
