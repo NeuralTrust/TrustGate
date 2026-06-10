@@ -368,19 +368,17 @@ func setupModelPolicyRoute(t *testing.T, up *fakeUpstream, allowed []string, def
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 	name := uniqueName("cons")
 	path := "/v1/" + uniqueName("route")
-	coID := CreateConsumer(t, gatewayID, map[string]any{"name": name, "path": path})
-	AttachRegistry(t, gatewayID, coID, backendID)
-
-	policy := map[string]any{"registry_id": backendID, "allowed": allowed}
+	policy := map[string]any{"allowed": allowed}
 	if defaultModel != "" {
 		policy["default"] = defaultModel
 	}
-	// model_policies reference an already-attached registry, so they are set on
-	// update once the association exists.
-	UpdateConsumer(t, gatewayID, coID, map[string]any{
-		"name":           name,
-		"path":           path,
-		"model_policies": []map[string]any{policy},
+	// The atomic create path binds the registry and its model policy in one POST.
+	coID := CreateConsumer(t, gatewayID, map[string]any{
+		"name": name,
+		"path": path,
+		"registries": []map[string]any{
+			{"id": backendID, "model_policies": policy},
+		},
 	})
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
 	return apiKey, path
