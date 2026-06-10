@@ -1,6 +1,9 @@
 package proxy
 
 import (
+	"fmt"
+	"strings"
+
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	approuting "github.com/NeuralTrust/AgentGateway/pkg/app/routing"
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
@@ -101,6 +104,7 @@ func registryLookup(data *appconsumer.Data) approuting.RegistryLookup {
 func (f *forwarder) routeBackend(
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
+	intent routingdomain.RoutingIntent,
 	candidates *routingdomain.CandidateSet,
 ) (routedBackend, error) {
 	if isRoleBased(rc) {
@@ -112,15 +116,30 @@ func (f *forwarder) routeBackend(
 	if len(rc.Registries) == 0 {
 		return routedBackend{}, ErrNoBackendsInPool
 	}
+	lb, err := f.routeLoadBalancer(rc, intent, candidates)
+	if err != nil {
+		return routedBackend{}, err
+	}
 	excluded := nonCandidateRegistries(rc, candidates)
-	lb, bk, err := f.selectBackend(rc, req, excluded)
+	bk, err := lb.NextBackend(req, excluded)
 	if err != nil {
 		if fallback := firstAvailableFallback(rc, excluded); fallback != nil {
 			return routedBackend{lb: lb, backend: fallback, excluded: excluded, fromFallback: true}, nil
 		}
-		return routedBackend{}, err
+		return routedBackend{}, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
 	}
 	return routedBackend{lb: lb, backend: bk, excluded: excluded}, nil
+}
+
+func (f *forwarder) routeLoadBalancer(
+	rc *appconsumer.RoutableConsumer,
+	intent routingdomain.RoutingIntent,
+	candidates *routingdomain.CandidateSet,
+) (*loadbalancer.LoadBalancer, error) {
+	if intent.IsPool() {
+		return f.poolLoadBalancerFor(rc, intent.PoolAlias, candidates)
+	}
+	return f.loadBalancerFor(rc)
 }
 
 func nonCandidateRegistries(
@@ -160,6 +179,7 @@ func firstAvailableFallback(
 }
 
 func (f *forwarder) stampRoutingPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Registry) {
+	dto.routeSource = routeSourceFor(dto.candidates, bk)
 	if candidate, ok := dto.candidates.ForRegistry(bk.ID); ok {
 		dto.request.AllowedModels = candidate.Allowed
 		dto.request.DefaultModel = candidate.Default
@@ -173,4 +193,11 @@ func (f *forwarder) stampRoutingPolicy(dto *forwardRequestDTO, rc *appconsumer.R
 	}
 	dto.request.AllowedModels = policy.Allowed
 	dto.request.DefaultModel = policy.Default
+}
+
+func routeSourceFor(candidates *routingdomain.CandidateSet, bk *domain.Registry) string {
+	if candidate, ok := candidates.ForRegistry(bk.ID); ok && len(candidate.Sources) > 0 {
+		return strings.Join(candidate.Sources, ",")
+	}
+	return "consumer"
 }
