@@ -1,7 +1,3 @@
-// Package resolver contains the proxy-plane identity and gateway resolution
-// strategies. Resolvers translate transport-level credentials (API key header,
-// bearer tokens) and gateway identification (slug header, subdomain host) into
-// an authenticated context; the auth middleware orchestrates them.
 package resolver
 
 import (

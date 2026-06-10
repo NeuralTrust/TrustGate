@@ -21,9 +21,7 @@ const (
 	defaultFetchTimeout = 10 * time.Second
 	expiryMargin        = 30 * time.Second
 	defaultTokenTTL     = 60 * time.Second
-	// minCacheTTL is the floor applied to short-lived tokens so they still get
-	// brief cache reuse instead of one token-endpoint POST per request.
-	minCacheTTL = 5 * time.Second
+	minCacheTTL         = 5 * time.Second
 )
 
 var ErrTokenAcquisition = errors.New("oauth2 client token acquisition failed")
@@ -41,9 +39,6 @@ type tokenEntry struct {
 	inflight  *tokenFetch
 }
 
-// tokenFetch is the shared result of a single in-flight token request:
-// concurrent callers for the same config wait on done (honoring their own
-// context) instead of serializing behind a lock held across the HTTP call.
 type tokenFetch struct {
 	done  chan struct{}
 	token string
@@ -114,8 +109,6 @@ func (c *TokenClient) runFetch(cfg domain.OAuth2ClientConfig, entry *tokenEntry,
 			entry.expiresAt = c.now().Add(cacheTTL)
 		}
 	} else {
-		// Errors are shared with current waiters but never cached: the next
-		// caller starts a fresh fetch.
 		fetch.err = err
 	}
 	entry.inflight = nil
@@ -129,11 +122,6 @@ type tokenResponse struct {
 	ExpiresIn   *int64 `json:"expires_in"`
 }
 
-// fetch posts to the token endpoint and returns the token plus how long it may
-// be cached (0 means do not cache). It deliberately uses a background context:
-// the result is shared by every concurrent caller, so it must not be tied to
-// any single caller's lifetime. The HTTP client timeout (10s default) bounds
-// the request.
 func (c *TokenClient) fetch(cfg domain.OAuth2ClientConfig) (string, time.Duration, error) {
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
@@ -168,11 +156,6 @@ func (c *TokenClient) fetch(cfg domain.OAuth2ClientConfig) (string, time.Duratio
 	return body.AccessToken, cacheTTLFor(body.ExpiresIn), nil
 }
 
-// cacheTTLFor maps the server-reported expires_in to a cache duration:
-//   - absent field: keep the historical 60s cap (minus the safety margin);
-//   - expires_in <= 0: already expired or non-cacheable, never cache;
-//   - otherwise: expires_in minus the margin, floored at minCacheTTL so
-//     short-lived tokens still get brief reuse.
 func cacheTTLFor(expiresIn *int64) time.Duration {
 	if expiresIn == nil {
 		return defaultTokenTTL - expiryMargin

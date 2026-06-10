@@ -1,6 +1,3 @@
-// Package gateway is the application-layer use cases that orchestrate
-// the gateway aggregate. One file per use case (interface + impl +
-// generate directive) — see .agents/AGENT.md.
 package gateway
 
 import (
