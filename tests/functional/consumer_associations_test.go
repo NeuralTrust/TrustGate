@@ -47,6 +47,20 @@ func idSet(t *testing.T, body map[string]any, key string) map[string]struct{} {
 	return out
 }
 
+// registryIDSet extracts the bound registry ids from the nested registries
+// array of a consumer response.
+func registryIDSet(t *testing.T, body map[string]any) map[string]struct{} {
+	t.Helper()
+	raw, _ := body["registries"].([]any)
+	out := make(map[string]struct{}, len(raw))
+	for _, v := range raw {
+		entry, _ := v.(map[string]any)
+		s, _ := entry["id"].(string)
+		out[s] = struct{}{}
+	}
+	return out
+}
+
 func TestAttachRegistry_RoundTrip(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("assoc-be-gw")})
@@ -57,7 +71,7 @@ func TestAttachRegistry_RoundTrip(t *testing.T) {
 	// Re-attach must be idempotent (204, no duplicate).
 	AttachRegistry(t, gwID, coID, beID)
 
-	got := idSet(t, getConsumer(t, gwID, coID), "registry_ids")
+	got := registryIDSet(t, getConsumer(t, gwID, coID))
 	require.Len(t, got, 1)
 	assert.Contains(t, got, beID)
 
@@ -67,7 +81,7 @@ func TestAttachRegistry_RoundTrip(t *testing.T) {
 	)
 	require.Equal(t, http.StatusNoContent, status)
 
-	got = idSet(t, getConsumer(t, gwID, coID), "registry_ids")
+	got = registryIDSet(t, getConsumer(t, gwID, coID))
 	assert.Empty(t, got, "registry should be detached")
 }
 

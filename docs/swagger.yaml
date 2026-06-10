@@ -229,17 +229,13 @@ definitions:
         additionalProperties:
           type: string
         type: object
-      model_policies:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
-        type: array
       name:
         type: string
       path:
         type: string
-      registry_ids:
+      registries:
         items:
-          type: string
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest'
         type: array
       type:
         type: string
@@ -285,8 +281,13 @@ definitions:
         type: array
       default:
         type: string
-      registry_id:
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest:
+    properties:
+      id:
         type: string
+      model_policies:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.UpdateConsumerRequest:
     properties:
@@ -302,14 +303,14 @@ definitions:
         additionalProperties:
           type: string
         type: object
-      model_policies:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
-        type: array
       name:
         type: string
       path:
         type: string
+      registries:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest'
+        type: array
       type:
         type: string
     type: object
@@ -337,17 +338,13 @@ definitions:
         type: object
       id:
         type: string
-      model_policies:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ModelPolicyResponse'
-        type: array
       name:
         type: string
       path:
         type: string
-      registry_ids:
+      registries:
         items:
-          type: string
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryBindingResponse'
         type: array
       type:
         type: string
@@ -424,8 +421,13 @@ definitions:
         type: array
       default:
         type: string
-      registry_id:
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryBindingResponse:
+    properties:
+      id:
         type: string
+      model_policies:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ModelPolicyResponse'
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.CreateGatewayRequest:
     properties:

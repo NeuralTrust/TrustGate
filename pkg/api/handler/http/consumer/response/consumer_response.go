@@ -11,27 +11,30 @@ import (
 )
 
 type ConsumerResponse struct {
-	ID              ids.ConsumerID           `json:"id"`
-	GatewayID       ids.GatewayID            `json:"gateway_id"`
-	Name            string                   `json:"name"`
-	Type            string                   `json:"type"`
-	Path            string                   `json:"path"`
-	Algorithm       string                   `json:"algorithm"`
-	EmbeddingConfig *EmbeddingConfigResponse `json:"embedding_config,omitempty"`
-	Headers         map[string]string        `json:"headers,omitempty"`
-	Active          bool                     `json:"active"`
-	RegistryIDs     []ids.RegistryID         `json:"registry_ids"`
-	AuthIDs         []ids.AuthID             `json:"auth_ids"`
-	Fallback        *FallbackResponse        `json:"fallback,omitempty"`
-	ModelPolicies   []ModelPolicyResponse    `json:"model_policies,omitempty"`
-	CreatedAt       time.Time                `json:"created_at"`
-	UpdatedAt       time.Time                `json:"updated_at"`
+	ID              ids.ConsumerID            `json:"id"`
+	GatewayID       ids.GatewayID             `json:"gateway_id"`
+	Name            string                    `json:"name"`
+	Type            string                    `json:"type"`
+	Path            string                    `json:"path"`
+	Algorithm       string                    `json:"algorithm"`
+	EmbeddingConfig *EmbeddingConfigResponse  `json:"embedding_config,omitempty"`
+	Headers         map[string]string         `json:"headers,omitempty"`
+	Active          bool                      `json:"active"`
+	Registries      []RegistryBindingResponse `json:"registries"`
+	AuthIDs         []ids.AuthID              `json:"auth_ids"`
+	Fallback        *FallbackResponse         `json:"fallback,omitempty"`
+	CreatedAt       time.Time                 `json:"created_at"`
+	UpdatedAt       time.Time                 `json:"updated_at"`
+}
+
+type RegistryBindingResponse struct {
+	ID            ids.RegistryID       `json:"id"`
+	ModelPolicies *ModelPolicyResponse `json:"model_policies,omitempty"`
 }
 
 type ModelPolicyResponse struct {
-	RegistryID ids.RegistryID `json:"registry_id"`
-	Allowed    []string       `json:"allowed,omitempty"`
-	Default    string         `json:"default,omitempty"`
+	Allowed []string `json:"allowed,omitempty"`
+	Default string   `json:"default,omitempty"`
 }
 
 type EmbeddingConfigResponse struct {
@@ -66,10 +69,6 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 	if c == nil {
 		return ConsumerResponse{}
 	}
-	registryIDs := []ids.RegistryID(c.RegistryIDs)
-	if registryIDs == nil {
-		registryIDs = []ids.RegistryID{}
-	}
 	authIDs := c.AuthIDs
 	if authIDs == nil {
 		authIDs = []ids.AuthID{}
@@ -92,13 +91,27 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		EmbeddingConfig: embedding,
 		Headers:         c.Headers,
 		Active:          c.Active,
-		RegistryIDs:     registryIDs,
+		Registries:      fromRegistryBindings(c.RegistryIDs, c.ModelPolicies),
 		AuthIDs:         authIDs,
 		Fallback:        fromFallback(c.Fallback),
-		ModelPolicies:   fromModelPolicies(c.ModelPolicies),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 	}
+}
+
+func fromRegistryBindings(registryIDs []ids.RegistryID, policies domain.ModelPolicies) []RegistryBindingResponse {
+	out := make([]RegistryBindingResponse, 0, len(registryIDs))
+	for _, id := range registryIDs {
+		binding := RegistryBindingResponse{ID: id}
+		if policy, ok := policies.For(id); ok {
+			binding.ModelPolicies = &ModelPolicyResponse{Allowed: policy.Allowed, Default: policy.Default}
+		}
+		out = append(out, binding)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ID.String() < out[j].ID.String()
+	})
+	return out
 }
 
 func fromEmbeddingAuth(a *registrydomain.APIKeyAuth) *EmbeddingAuthResponse {
@@ -113,24 +126,6 @@ func fromEmbeddingAuth(a *registrydomain.APIKeyAuth) *EmbeddingAuthResponse {
 		ParamValue:    secret.Mask(a.ParamValue),
 		ParamLocation: a.ParamLocation,
 	}
-}
-
-func fromModelPolicies(m domain.ModelPolicies) []ModelPolicyResponse {
-	if len(m) == 0 {
-		return nil
-	}
-	out := make([]ModelPolicyResponse, 0, len(m))
-	for backendID, policy := range m {
-		out = append(out, ModelPolicyResponse{
-			RegistryID: backendID,
-			Allowed:    policy.Allowed,
-			Default:    policy.Default,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].RegistryID.String() < out[j].RegistryID.String()
-	})
-	return out
 }
 
 func fromFallback(f *domain.Fallback) *FallbackResponse {

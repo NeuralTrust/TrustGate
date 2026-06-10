@@ -30,10 +30,69 @@ func TestCreateConsumer_Success(t *testing.T) {
 	assert.Equal(t, "LLM", body["type"])
 	assert.Equal(t, true, body["active"])
 
-	// A freshly created consumer carries no associations until they are linked.
-	beIDs, ok := body["registry_ids"].([]any)
-	require.True(t, ok, "registry_ids missing: %v", body)
-	assert.Empty(t, beIDs)
+	// A consumer created without registries carries no associations.
+	bindings, ok := body["registries"].([]any)
+	require.True(t, ok, "registries missing: %v", body)
+	assert.Empty(t, bindings)
+}
+
+// TestCreateConsumer_WithRegistriesAndModelPolicies covers the atomic create
+// path: associations and per-registry model policies are accepted in a single
+// POST through the nested registries array.
+func TestCreateConsumer_WithRegistriesAndModelPolicies(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-create-bind-gw")})
+	be1 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-create-bind-be1")))
+	be2 := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-create-bind-be2")))
+	name := uniqueName("co-create-bind")
+
+	payload := validConsumerPayload(name)
+	payload["registries"] = []map[string]any{
+		{"id": be1, "model_policies": map[string]any{"allowed": []string{"gpt-4o", "gpt-4o-mini"}, "default": "gpt-4o"}},
+		{"id": be2},
+	}
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
+		nil, payload,
+	)
+	require.Equal(t, http.StatusCreated, status, "body=%v", body)
+
+	got := registryIDSet(t, body)
+	require.Len(t, got, 2)
+	assert.Contains(t, got, be1)
+	assert.Contains(t, got, be2)
+
+	bindings := body["registries"].([]any)
+	for _, raw := range bindings {
+		binding := raw.(map[string]any)
+		policy, hasPolicy := binding["model_policies"].(map[string]any)
+		switch binding["id"] {
+		case be1:
+			require.True(t, hasPolicy, "policy missing for %s: %v", be1, binding)
+			assert.Equal(t, "gpt-4o", policy["default"])
+		case be2:
+			assert.False(t, hasPolicy, "unexpected policy for %s: %v", be2, binding)
+		}
+	}
+}
+
+// TestCreateConsumer_RejectsRegistryFromAnotherGateway ensures ownership is
+// validated before persisting anything: a registry created under a different
+// gateway cannot be bound at create time.
+func TestCreateConsumer_RejectsRegistryFromAnotherGateway(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
+	gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-create-xgw-a")})
+	gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-create-xgw-b")})
+	foreignBE := CreateRegistry(t, gwB, validRegistryPayload(uniqueName("co-create-xgw-be")))
+
+	payload := validConsumerPayload(uniqueName("co-create-xgw"))
+	payload["registries"] = []map[string]any{{"id": foreignBE}}
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwA),
+		nil, payload,
+	)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
 }
 
 func TestCreateConsumer_ConflictSameGateway(t *testing.T) {

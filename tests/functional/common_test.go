@@ -104,16 +104,17 @@ func validConsumerPayload(name string) map[string]any {
 	}
 }
 
-// CreateConsumerWithRegistries creates a base consumer and attaches each
-// registry through the association endpoint, returning the consumer id. This is
-// the common multi-step setup now that registries live outside the create body.
+// CreateConsumerWithRegistries creates a consumer with the given registries
+// bound atomically through the nested registries array of the create body.
 func CreateConsumerWithRegistries(t *testing.T, gatewayID, name string, registryIDs ...string) string {
 	t.Helper()
-	id := CreateConsumer(t, gatewayID, validConsumerPayload(name))
+	payload := validConsumerPayload(name)
+	bindings := make([]map[string]any, 0, len(registryIDs))
 	for _, registryID := range registryIDs {
-		AttachRegistry(t, gatewayID, id, registryID)
+		bindings = append(bindings, map[string]any{"id": registryID})
 	}
-	return id
+	payload["registries"] = bindings
+	return CreateConsumer(t, gatewayID, payload)
 }
 
 // AttachRegistry links a registry to a consumer via the association endpoint,
@@ -156,8 +157,8 @@ func SetPolicyGlobal(t *testing.T, gatewayID, policyID string) {
 }
 
 // UpdateConsumer issues a PUT /v1/gateways/:gateway_id/consumers/:id, asserting
-// the 200 contract. Registry-referencing config (model_policies, fallback) is
-// configured here, after the registries have been attached.
+// the 200 contract. Registry-referencing config (nested registries policies,
+// fallback) must reference registries already attached to the consumer.
 func UpdateConsumer(t *testing.T, gatewayID, consumerID string, payload map[string]any) {
 	t.Helper()
 	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gatewayID, consumerID)

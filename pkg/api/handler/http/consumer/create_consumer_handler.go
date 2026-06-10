@@ -51,11 +51,7 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
-	registryIDs, err := req.ToRegistryIDs()
-	if err != nil {
-		return helpers.WriteError(c, err)
-	}
-	modelPolicies, err := req.ToModelPolicies()
+	registryIDs, modelPolicies, err := req.ToRegistryBindings()
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}

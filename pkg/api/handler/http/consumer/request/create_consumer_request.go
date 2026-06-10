@@ -12,22 +12,28 @@ import (
 )
 
 type CreateConsumerRequest struct {
-	Name            string                  `json:"name"`
-	Type            string                  `json:"type,omitempty"`
-	Path            string                  `json:"path"`
-	Algorithm       string                  `json:"algorithm,omitempty"`
-	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
-	Headers         map[string]string       `json:"headers,omitempty"`
-	Active          *bool                   `json:"active,omitempty"`
-	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
-	RegistryIDs     []string                `json:"registry_ids,omitempty"`
-	ModelPolicies   []ModelPolicyRequest    `json:"model_policies,omitempty"`
+	Name            string                   `json:"name"`
+	Type            string                   `json:"type,omitempty"`
+	Path            string                   `json:"path"`
+	Algorithm       string                   `json:"algorithm,omitempty"`
+	EmbeddingConfig *EmbeddingConfigRequest  `json:"embedding_config,omitempty"`
+	Headers         map[string]string        `json:"headers,omitempty"`
+	Active          *bool                    `json:"active,omitempty"`
+	Fallback        *FallbackRequest         `json:"fallback,omitempty"`
+	Registries      []RegistryBindingRequest `json:"registries,omitempty"`
+}
+
+// RegistryBindingRequest binds a registry to the consumer and optionally scopes
+// which models may be used on it. The policy applies to the registry whether it
+// is reached as a pool member or through the fallback chain.
+type RegistryBindingRequest struct {
+	ID            string              `json:"id"`
+	ModelPolicies *ModelPolicyRequest `json:"model_policies,omitempty"`
 }
 
 type ModelPolicyRequest struct {
-	RegistryID string   `json:"registry_id"`
-	Allowed    []string `json:"allowed,omitempty"`
-	Default    string   `json:"default,omitempty"`
+	Allowed []string `json:"allowed,omitempty"`
+	Default string   `json:"default,omitempty"`
 }
 
 type FallbackRequest struct {
@@ -130,30 +136,36 @@ func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 	return r.Fallback.ToFallback()
 }
 
-func (r CreateConsumerRequest) ToRegistryIDs() ([]ids.RegistryID, error) {
-	return parseUUIDList[ids.RegistryKind](r.RegistryIDs, "registry_ids")
+func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, domain.ModelPolicies, error) {
+	return parseRegistryBindings(r.Registries)
 }
 
-func (r CreateConsumerRequest) ToModelPolicies() (domain.ModelPolicies, error) {
-	return parseModelPolicies(r.ModelPolicies)
-}
-
-func parseModelPolicies(raw []ModelPolicyRequest) (domain.ModelPolicies, error) {
+func parseRegistryBindings(raw []RegistryBindingRequest) ([]ids.RegistryID, domain.ModelPolicies, error) {
 	if len(raw) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	out := make(domain.ModelPolicies, len(raw))
-	for i, mp := range raw {
-		id, err := ids.Parse[ids.RegistryKind](mp.RegistryID)
+	registryIDs := make([]ids.RegistryID, 0, len(raw))
+	seen := make(map[ids.RegistryID]struct{}, len(raw))
+	var policies domain.ModelPolicies
+	for i, binding := range raw {
+		id, err := ids.Parse[ids.RegistryKind](binding.ID)
 		if err != nil {
-			return nil, fmt.Errorf("model_policies[%d]: invalid registry_id %q: %w", i, mp.RegistryID, commonerrors.ErrValidation)
+			return nil, nil, fmt.Errorf("registries[%d]: invalid id %q: %w", i, binding.ID, commonerrors.ErrValidation)
 		}
-		if _, dup := out[id]; dup {
-			return nil, fmt.Errorf("model_policies[%d]: duplicate registry_id %q: %w", i, mp.RegistryID, commonerrors.ErrValidation)
+		if _, dup := seen[id]; dup {
+			return nil, nil, fmt.Errorf("registries[%d]: duplicate id %q: %w", i, binding.ID, commonerrors.ErrValidation)
 		}
-		out[id] = domain.ModelPolicy{Allowed: mp.Allowed, Default: mp.Default}
+		seen[id] = struct{}{}
+		registryIDs = append(registryIDs, id)
+		if binding.ModelPolicies == nil {
+			continue
+		}
+		if policies == nil {
+			policies = make(domain.ModelPolicies, len(raw))
+		}
+		policies[id] = domain.ModelPolicy{Allowed: binding.ModelPolicies.Allowed, Default: binding.ModelPolicies.Default}
 	}
-	return out, nil
+	return registryIDs, policies, nil
 }
 
 func parseUUIDList[K ids.Kind](raw []string, field string) ([]ids.ID[K], error) {
