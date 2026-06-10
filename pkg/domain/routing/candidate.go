@@ -51,25 +51,30 @@ func (s *CandidateSet) Add(c Candidate) {
 }
 
 func mergeCandidates(existing, incoming Candidate) Candidate {
-	if existing.Allowed == nil || incoming.Allowed == nil {
-		existing.Allowed = nil
-	} else {
-		seen := make(map[string]struct{}, len(existing.Allowed))
-		for _, m := range existing.Allowed {
-			seen[m] = struct{}{}
-		}
-		for _, m := range incoming.Allowed {
-			if _, dup := seen[m]; !dup {
-				existing.Allowed = append(existing.Allowed, m)
-				seen[m] = struct{}{}
-			}
-		}
-	}
+	existing.Allowed = mergeAllowLists(existing.Allowed, incoming.Allowed)
 	if existing.Default == "" {
 		existing.Default = incoming.Default
 	}
-	existing.Sources = append(existing.Sources, incoming.Sources...)
+	existing.Sources = append(existing.Sources[:len(existing.Sources):len(existing.Sources)], incoming.Sources...)
 	return existing
+}
+
+func mergeAllowLists(a, b []string) []string {
+	if a == nil || b == nil {
+		return nil
+	}
+	merged := make([]string, 0, len(a)+len(b))
+	seen := make(map[string]struct{}, len(a)+len(b))
+	for _, list := range [2][]string{a, b} {
+		for _, m := range list {
+			if _, dup := seen[m]; dup {
+				continue
+			}
+			seen[m] = struct{}{}
+			merged = append(merged, m)
+		}
+	}
+	return merged
 }
 
 func (s *CandidateSet) Candidates() []Candidate {

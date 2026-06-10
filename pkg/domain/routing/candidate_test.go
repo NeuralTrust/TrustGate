@@ -37,6 +37,29 @@ func TestCandidateSet_AddMergesByRegistry(t *testing.T) {
 	}
 }
 
+func TestCandidateSet_AddMergeDoesNotMutateSourceAllowLists(t *testing.T) {
+	t.Parallel()
+	reg := newTestRegistry(t, "openai")
+	shared := make([]string, 1, 4)
+	shared[0] = "gpt-5"
+	snapshot := shared[:cap(shared)]
+	want := append([]string(nil), snapshot...)
+
+	s := routing.NewCandidateSet()
+	s.Add(routing.Candidate{Registry: reg, Allowed: shared})
+	s.Add(routing.Candidate{Registry: reg, Allowed: []string{"gpt-5-mini"}})
+
+	for i, m := range snapshot {
+		if m != want[i] {
+			t.Fatalf("merge mutated the shared source slice at %d: %q", i, m)
+		}
+	}
+	merged, _ := s.ForRegistry(reg.ID)
+	if len(merged.Allowed) != 2 {
+		t.Fatalf("expected merged allow-list, got %v", merged.Allowed)
+	}
+}
+
 func TestCandidateSet_AddMergeOpenAllowListWins(t *testing.T) {
 	t.Parallel()
 	reg := newTestRegistry(t, "openai")
