@@ -101,6 +101,9 @@ func proxyRequest(
 	}
 	req, err := http.NewRequest(method, ProxyURL+path, reader)
 	require.NoError(t, err)
+	host, ok := proxyHosts.Load(apiKey)
+	require.True(t, ok, "proxy host missing for api key")
+	req.Host = host.(string)
 	req.Header.Set(proxyAPIKeyHeader, apiKey)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

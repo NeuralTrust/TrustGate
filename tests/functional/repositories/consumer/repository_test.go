@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
@@ -153,8 +154,8 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.Path != c.Path {
 		t.Fatalf("Path = %q, want %q", got.Path, c.Path)
 	}
-	if got.Algorithm == "" {
-		t.Fatalf("Algorithm should default, got empty")
+	if got.RoutingMode != domain.RoutingModeInline {
+		t.Fatalf("RoutingMode = %q, want %q", got.RoutingMode, domain.RoutingModeInline)
 	}
 }
 
@@ -370,6 +371,104 @@ func TestRepository_RebindsBackendsViaAttachDetach(t *testing.T) {
 	have := map[ids.RegistryID]bool{got.RegistryIDs[0]: true, got.RegistryIDs[1]: true}
 	if !have[be2] || !have[be3] {
 		t.Fatalf("RegistryIDs = %v, want [%s,%s]", got.RegistryIDs, be2, be3)
+	}
+}
+
+func TestRepository_DetachRegistryIfUnreferenced_SucceedsWithoutRoutingReferences(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "guard-detach-ok")
+	beID := seedRegistry(t, f.be, gwID, "guard-detach-ok-be")
+	c := validConsumer(t, gwID, "guard-detach-ok", beID)
+	saveWithRegistries(t, f, c)
+
+	detached, err := f.repo.DetachRegistryIfUnreferenced(ctx, gwID, c.ID, beID)
+	if err != nil {
+		t.Fatalf("DetachRegistryIfUnreferenced: %v", err)
+	}
+	if detached.ID != c.ID || detached.GatewayID != gwID {
+		t.Fatalf("detached consumer = %+v, want id %s gateway %s", detached, c.ID, gwID)
+	}
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.RegistryIDs) != 0 {
+		t.Fatalf("RegistryIDs = %v, want empty", got.RegistryIDs)
+	}
+}
+
+func TestRepository_DetachRegistryIfUnreferenced_RejectsRoutingReferences(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "guard-detach-conflict")
+
+	cases := []struct {
+		name      string
+		configure func(*domain.Consumer, ids.RegistryID)
+	}{
+		{
+			name: "fallback chain",
+			configure: func(c *domain.Consumer, registryID ids.RegistryID) {
+				c.Fallback = &domain.Fallback{Enabled: true, Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx}, Chain: []ids.RegistryID{registryID}}
+			},
+		},
+		{
+			name: "model policies",
+			configure: func(c *domain.Consumer, registryID ids.RegistryID) {
+				c.ModelPolicies = domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}}
+			},
+		},
+		{
+			name: "lb config members",
+			configure: func(c *domain.Consumer, registryID ids.RegistryID) {
+				c.ModelPolicies = domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}}
+				c.LBConfig = &domain.LBConfig{
+					Enabled: true,
+					Members: []domain.LBPoolMember{{RegistryID: registryID, Models: []string{"gpt-4o"}}},
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			beID := seedRegistry(t, f.be, gwID, "guard-"+tc.name)
+			c := validConsumer(t, gwID, "guard-"+tc.name, beID)
+			tc.configure(c, beID)
+			saveWithRegistries(t, f, c)
+
+			_, err := f.repo.DetachRegistryIfUnreferenced(ctx, gwID, c.ID, beID)
+			if !errors.Is(err, commonerrors.ErrConflict) {
+				t.Fatalf("err = %v, want ErrConflict", err)
+			}
+			got, err := f.repo.FindByID(ctx, c.ID)
+			if err != nil {
+				t.Fatalf("FindByID: %v", err)
+			}
+			if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != beID {
+				t.Fatalf("RegistryIDs = %v, want [%s]", got.RegistryIDs, beID)
+			}
+		})
+	}
+}
+
+func TestRepository_Update_RejectsRegistryReferenceAfterDetach(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "guard-update-stale")
+	beID := seedRegistry(t, f.be, gwID, "guard-update-stale-be")
+	c := validConsumer(t, gwID, "guard-update-stale", beID)
+	saveWithRegistries(t, f, c)
+	if _, err := f.repo.DetachRegistryIfUnreferenced(ctx, gwID, c.ID, beID); err != nil {
+		t.Fatalf("DetachRegistryIfUnreferenced: %v", err)
+	}
+
+	c.ModelPolicies = domain.ModelPolicies{beID: {Allowed: []string{"gpt-4o"}}}
+	c.UpdatedAt = time.Now().UTC()
+	err := f.repo.Update(ctx, c)
+	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
+		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
 }
 

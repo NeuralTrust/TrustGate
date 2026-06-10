@@ -7,6 +7,8 @@ import (
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
+	approle "github.com/NeuralTrust/AgentGateway/pkg/app/role"
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
@@ -15,72 +17,105 @@ import (
 
 const HeaderAPIKey = "X-AG-API-Key" // #nosec G101 -- HTTP header name, not a credential
 
-var ErrUnauthenticated = errors.New("unauthenticated")
-
-type Identity struct {
-	GatewayID ids.GatewayID
-	AuthID    ids.AuthID
-}
+var (
+	ErrUnauthenticated = errors.New("unauthenticated")
+	ErrForbidden       = errors.New("forbidden")
+)
 
 type IdentityResolver interface {
-	Resolve(c *fiber.Ctx) (Identity, error)
-}
-
-type apiKeyIdentityResolver struct {
-	finder appauth.APIKeyFinder
-}
-
-func NewAPIKeyIdentityResolver(finder appauth.APIKeyFinder) IdentityResolver {
-	return apiKeyIdentityResolver{finder: finder}
-}
-
-func (r apiKeyIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
-	rawKey := c.Get(HeaderAPIKey)
-	if rawKey == "" {
-		return Identity{}, ErrUnauthenticated
-	}
-	a, err := r.finder.FindByAPIKey(c.UserContext(), rawKey)
-	if err != nil || a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey {
-		return Identity{}, ErrUnauthenticated
-	}
-	return Identity{GatewayID: a.GatewayID, AuthID: a.ID}, nil
+	Resolve(c *fiber.Ctx, gw *gatewaydomain.Gateway, rc *appconsumer.RoutableConsumer) (*appauth.AuthContext, error)
 }
 
 type AuthMiddleware struct {
-	resolver   IdentityResolver
-	dataFinder appconsumer.DataFinder
-	gateways   appgateway.Finder
+	resolver        IdentityResolver
+	dataFinder      appconsumer.DataFinder
+	gatewayResolver GatewayResolver
+	roleResolver    approle.IDPResolver
 }
 
 func NewAuthMiddleware(
 	resolver IdentityResolver,
 	dataFinder appconsumer.DataFinder,
-	gateways appgateway.Finder,
+	gatewayResolver GatewayResolver,
+	roleResolver approle.IDPResolver,
 ) *AuthMiddleware {
 	return &AuthMiddleware{
-		resolver:   resolver,
-		dataFinder: dataFinder,
-		gateways:   gateways,
+		resolver:        resolver,
+		dataFinder:      dataFinder,
+		gatewayResolver: gatewayResolver,
+		roleResolver:    roleResolver,
 	}
 }
 
 func (m *AuthMiddleware) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		identity, err := m.resolver.Resolve(c)
+		gw, err := m.gatewayResolver.Resolve(c)
 		if err != nil {
-			return unauthenticated(c)
+			if isAuthMappableError(err) {
+				return writeAuthError(c, err)
+			}
+			return internalError(c, "failed to resolve gateway")
 		}
-		gw, err := m.gateways.FindByID(c.UserContext(), identity.GatewayID)
+		data, err := m.dataFinder.FindByGateway(c.UserContext(), gw.ID)
 		if err != nil {
-			return unauthenticated(c)
+			return internalError(c, "failed to load gateway data")
 		}
-		data, err := m.dataFinder.FindByGateway(c.UserContext(), identity.GatewayID)
+		rc, ok := data.MatchPath(c.Path())
+		if !ok {
+			return notFound(c)
+		}
+		authCtx, err := m.resolver.Resolve(c, gw, rc)
 		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "failed to load gateway data")
+			if errors.Is(err, ErrUnauthenticated) && apiKeyAttachedElsewhere(c.Get(HeaderAPIKey), data, rc) {
+				return forbidden(c, ErrForbidden)
+			}
+			return writeAuthError(c, err)
 		}
-		m.attach(c, identity, gw, data)
+		authCtx.GatewayID = gw.ID
+		authCtx.GatewaySlug = gw.Slug
+		authCtx.ConsumerID = rc.Consumer.ID
+		if authCtx.Method == appauth.MethodIDP {
+			if m.roleResolver == nil {
+				return internalError(c, "failed to resolve idp roles")
+			}
+			roleIDs, err := m.roleResolver.ResolveIDPRoles(c.UserContext(), data.Roles, authCtx.Claims)
+			if err != nil {
+				return invalidAuthRequest(c, err)
+			}
+			authCtx.RoleIDs = intersectRoleIDs(roleIDs, rc.Consumer.RoleIDs)
+			if len(authCtx.RoleIDs) == 0 {
+				return forbidden(c, ErrForbidden)
+			}
+		}
+		m.attach(c, authCtx, gw, data, rc)
 		return c.Next()
 	}
+}
+
+func writeAuthError(c *fiber.Ctx, err error) error {
+	if errors.Is(err, appauth.ErrInvalidAuthRequest) || errors.Is(err, appauth.ErrAmbiguousIDPConfig) {
+		return invalidAuthRequest(c, err)
+	}
+	if errors.Is(err, commonerrors.ErrInvalidConfig) || errors.Is(err, commonerrors.ErrValidation) {
+		return invalidAuthRequest(c, err)
+	}
+	if errors.Is(err, ErrForbidden) {
+		return forbidden(c, err)
+	}
+	return unauthenticated(c)
+}
+
+// isAuthMappableError reports whether a gateway-resolution error has a
+// deliberate auth-plane mapping (400/403/401). Anything else is an unexpected
+// infra failure and must surface as a 500 instead of masquerading as an auth
+// rejection.
+func isAuthMappableError(err error) bool {
+	return errors.Is(err, appauth.ErrInvalidAuthRequest) ||
+		errors.Is(err, appauth.ErrAmbiguousIDPConfig) ||
+		errors.Is(err, commonerrors.ErrInvalidConfig) ||
+		errors.Is(err, commonerrors.ErrValidation) ||
+		errors.Is(err, ErrForbidden) ||
+		errors.Is(err, ErrUnauthenticated)
 }
 
 func unauthenticated(c *fiber.Ctx) error {
@@ -90,13 +125,98 @@ func unauthenticated(c *fiber.Ctx) error {
 	})
 }
 
-func (m *AuthMiddleware) attach(c *fiber.Ctx, identity Identity, gw *gatewaydomain.Gateway, data *appconsumer.Data) {
-	c.Locals(string(appconsumer.GatewayIDKey), identity.GatewayID)
-	c.Locals(string(appconsumer.AuthIDKey), identity.AuthID)
+func forbidden(c *fiber.Ctx, err error) error {
+	return c.Status(fiber.StatusForbidden).JSON(helpers.ErrorBody{
+		Error:   "forbidden",
+		Message: err.Error(),
+	})
+}
+
+func invalidAuthRequest(c *fiber.Ctx, err error) error {
+	return c.Status(fiber.StatusBadRequest).JSON(helpers.ErrorBody{
+		Error:   "invalid_auth_request",
+		Message: err.Error(),
+	})
+}
+
+func notFound(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusNotFound).JSON(helpers.ErrorBody{
+		Error: "not_found",
+	})
+}
+
+func internalError(c *fiber.Ctx, message string) error {
+	return c.Status(fiber.StatusInternalServerError).JSON(helpers.ErrorBody{
+		Error:   "internal_error",
+		Message: message,
+	})
+}
+
+func (m *AuthMiddleware) attach(
+	c *fiber.Ctx,
+	authCtx *appauth.AuthContext,
+	gw *gatewaydomain.Gateway,
+	data *appconsumer.Data,
+	rc *appconsumer.RoutableConsumer,
+) {
+	c.Locals(string(appconsumer.GatewayIDKey), authCtx.GatewayID)
+	if authCtx.AuthID != (ids.AuthID{}) {
+		c.Locals(string(appconsumer.AuthIDKey), authCtx.AuthID)
+	}
 	c.Locals(string(appconsumer.ConsumerDataKey), data)
-	ctx := appconsumer.WithGatewayID(c.UserContext(), identity.GatewayID)
-	ctx = appconsumer.WithAuthID(ctx, identity.AuthID)
+	c.Locals(string(appconsumer.ConsumerKey), rc)
+	ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
+	ctx = appconsumer.WithGatewayID(ctx, authCtx.GatewayID)
+	if authCtx.AuthID != (ids.AuthID{}) {
+		ctx = appconsumer.WithAuthID(ctx, authCtx.AuthID)
+	}
 	ctx = appconsumer.WithData(ctx, data)
+	ctx = appconsumer.WithConsumer(ctx, rc)
 	ctx = appgateway.WithGateway(ctx, gw)
 	c.SetUserContext(ctx)
+}
+
+func hasAttachedAuthType(rc *appconsumer.RoutableConsumer, authType authdomain.Type) bool {
+	if rc == nil {
+		return false
+	}
+	for _, a := range rc.Auths {
+		if a != nil && a.Enabled && a.Type == authType {
+			return true
+		}
+	}
+	return false
+}
+
+func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsumer.RoutableConsumer) bool {
+	if rawKey == "" || data == nil || rc == nil || rc.Consumer == nil {
+		return false
+	}
+	hash := authdomain.HashAPIKey(rawKey)
+	for i := range data.Consumers {
+		other := &data.Consumers[i]
+		if other.Consumer == nil || other.Consumer.ID == rc.Consumer.ID {
+			continue
+		}
+		for _, a := range other.Auths {
+			if a != nil && a.Enabled && a.Type == authdomain.TypeAPIKey && a.KeyHash == hash {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func intersectRoleIDs(resolved, assigned []ids.RoleID) []ids.RoleID {
+	assignedSet := make(map[ids.RoleID]struct{}, len(assigned))
+	for _, id := range assigned {
+		assignedSet[id] = struct{}{}
+	}
+	out := make([]ids.RoleID, 0, len(resolved))
+	for _, id := range resolved {
+		if _, ok := assignedSet[id]; ok {
+			out = append(out, id)
+		}
+	}
+	return out
 }

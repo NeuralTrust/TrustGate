@@ -82,6 +82,65 @@ func (_c *Finder_FindByID_Call) RunAndReturn(run func(context.Context, ids.ID[id
 	return _c
 }
 
+// FindBySlug provides a mock function with given fields: ctx, slug
+func (_m *Finder) FindBySlug(ctx context.Context, slug string) (*gateway.Gateway, error) {
+	ret := _m.Called(ctx, slug)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindBySlug")
+	}
+
+	var r0 *gateway.Gateway
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (*gateway.Gateway, error)); ok {
+		return rf(ctx, slug)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) *gateway.Gateway); ok {
+		r0 = rf(ctx, slug)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*gateway.Gateway)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, slug)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Finder_FindBySlug_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindBySlug'
+type Finder_FindBySlug_Call struct {
+	*mock.Call
+}
+
+// FindBySlug is a helper method to define mock.On call
+//   - ctx context.Context
+//   - slug string
+func (_e *Finder_Expecter) FindBySlug(ctx interface{}, slug interface{}) *Finder_FindBySlug_Call {
+	return &Finder_FindBySlug_Call{Call: _e.mock.On("FindBySlug", ctx, slug)}
+}
+
+func (_c *Finder_FindBySlug_Call) Run(run func(ctx context.Context, slug string)) *Finder_FindBySlug_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Finder_FindBySlug_Call) Return(_a0 *gateway.Gateway, _a1 error) *Finder_FindBySlug_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Finder_FindBySlug_Call) RunAndReturn(run func(context.Context, string) (*gateway.Gateway, error)) *Finder_FindBySlug_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // List provides a mock function with given fields: ctx, filter
 func (_m *Finder) List(ctx context.Context, filter gateway.ListFilter) ([]*gateway.Gateway, int, error) {
 	ret := _m.Called(ctx, filter)

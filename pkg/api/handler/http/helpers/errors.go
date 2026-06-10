@@ -38,6 +38,8 @@ func MapDomainError(err error) (int, ErrorBody) {
 		return fiber.StatusConflict, ErrorBody{Error: "already_exists", Message: err.Error()}
 	case errors.Is(err, commonerrors.ErrHasDependents):
 		return fiber.StatusConflict, ErrorBody{Error: "has_dependents", Message: err.Error()}
+	case errors.Is(err, commonerrors.ErrConflict):
+		return fiber.StatusConflict, ErrorBody{Error: "conflict", Message: err.Error()}
 	case errors.Is(err, commonerrors.ErrValidation):
 		return fiber.StatusUnprocessableEntity, ErrorBody{Error: "validation_failed", Message: err.Error()}
 	case errors.Is(err, commonerrors.ErrInvalidConfig):

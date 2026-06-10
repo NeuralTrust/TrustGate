@@ -10,6 +10,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"golang.org/x/sync/singleflight"
 )
@@ -26,6 +27,7 @@ type dataFinder struct {
 	registryRepo   registrydomain.Repository
 	policyRepo     policydomain.Repository
 	authRepo       authdomain.Repository
+	roleRepo       roledomain.Repository
 	pluginRegistry appplugins.Registry
 	memoryCache    *cache.TTLMap
 	logger         *slog.Logger
@@ -37,6 +39,7 @@ func NewDataFinder(
 	registryRepo registrydomain.Repository,
 	policyRepo policydomain.Repository,
 	authRepo authdomain.Repository,
+	roleRepo roledomain.Repository,
 	pluginRegistry appplugins.Registry,
 	manager *cache.TTLMapManager,
 	logger *slog.Logger,
@@ -46,6 +49,7 @@ func NewDataFinder(
 		registryRepo:   registryRepo,
 		policyRepo:     policyRepo,
 		authRepo:       authRepo,
+		roleRepo:       roleRepo,
 		pluginRegistry: pluginRegistry,
 		memoryCache:    manager.GetTTLMap(cache.ConsumerDataTTLName),
 		logger:         logger,
@@ -102,6 +106,10 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 	if err != nil {
 		return nil, err
 	}
+	roles, err := f.loadRoles(ctx, gatewayID)
+	if err != nil {
+		return nil, err
+	}
 
 	routable := make([]RoutableConsumer, 0, len(consumers))
 	for _, c := range consumers {
@@ -119,7 +127,7 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		})
 	}
 
-	data := NewData(gatewayID, routable)
+	data := NewData(gatewayID, routable, roles)
 	f.memoryCache.Set(key, data)
 	return data, nil
 }
@@ -196,6 +204,13 @@ func (f *dataFinder) loadAuths(
 		byID[a.ID] = a
 	}
 	return byID, nil
+}
+
+func (f *dataFinder) loadRoles(ctx context.Context, gatewayID ids.GatewayID) ([]*roledomain.Role, error) {
+	if f.roleRepo == nil {
+		return nil, nil
+	}
+	return f.roleRepo.ListByGateway(ctx, gatewayID)
 }
 
 func uniqueIDs[T comparable](consumers []*domain.Consumer, pick func(*domain.Consumer) []T) []T {

@@ -1,0 +1,72 @@
+package role_test
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"testing"
+
+	approle "github.com/NeuralTrust/AgentGateway/pkg/app/role"
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrymocks "github.com/NeuralTrust/AgentGateway/pkg/domain/registry/mocks"
+	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
+)
+
+type associatorRoleRepositoryStub struct {
+	role      *domain.Role
+	detachErr error
+}
+
+func (s associatorRoleRepositoryStub) Save(context.Context, *domain.Role) error   { return nil }
+func (s associatorRoleRepositoryStub) Update(context.Context, *domain.Role) error { return nil }
+func (s associatorRoleRepositoryStub) Delete(context.Context, ids.RoleID) error   { return nil }
+func (s associatorRoleRepositoryStub) FindByID(context.Context, ids.RoleID) (*domain.Role, error) {
+	if s.role == nil {
+		return nil, domain.ErrNotFound
+	}
+	return s.role, nil
+}
+func (s associatorRoleRepositoryStub) List(context.Context, domain.ListFilter) ([]*domain.Role, int, error) {
+	return nil, 0, nil
+}
+func (s associatorRoleRepositoryStub) ListByGateway(context.Context, ids.GatewayID) ([]*domain.Role, error) {
+	return nil, nil
+}
+func (s associatorRoleRepositoryStub) AttachRegistry(context.Context, ids.RoleID, ids.RegistryID) error {
+	return nil
+}
+func (s associatorRoleRepositoryStub) DetachRegistry(context.Context, ids.RoleID, ids.RegistryID) error {
+	return nil
+}
+func (s associatorRoleRepositoryStub) DetachRegistryIfUnreferenced(context.Context, ids.GatewayID, ids.RoleID, ids.RegistryID) (*domain.Role, error) {
+	return s.role, s.detachErr
+}
+
+func TestAssociator_DetachRegistry_RejectsModelPolicyReference(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	roleID := ids.New[ids.RoleKind]()
+	registryID := ids.New[ids.RegistryKind]()
+
+	role := &domain.Role{
+		ID:            roleID,
+		GatewayID:     gwID,
+		ModelPolicies: domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}},
+	}
+	associator := approle.NewAssociator(
+		associatorRoleRepositoryStub{role: role, detachErr: commonerrors.ErrConflict},
+		registrymocks.NewRepository(t),
+		cache.NewTTLMapManager(cache.RoleCacheTTL),
+		cachetest.NoopPublisher(),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	err := associator.DetachRegistry(context.Background(), gwID, roleID, registryID)
+	if !errors.Is(err, commonerrors.ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict", err)
+	}
+}

@@ -6,20 +6,20 @@ import (
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
 
 type CreateInput struct {
-	GatewayID       ids.GatewayID
-	Name            string
-	Type            domain.Type
-	Path            string
-	Algorithm       string
-	EmbeddingConfig *registrydomain.EmbeddingConfig
-	Headers         map[string]string
-	Active          *bool
-	Fallback        *domain.Fallback
+	GatewayID     ids.GatewayID
+	Name          string
+	Type          domain.Type
+	Path          string
+	RoutingMode   domain.RoutingMode
+	LBConfig      *domain.LBConfig
+	Headers       map[string]string
+	Active        *bool
+	Fallback      *domain.Fallback
+	ModelPolicies domain.ModelPolicies
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -52,17 +52,21 @@ func NewCreator(
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer, error) {
 	cons, err := domain.New(domain.CreateParams{
-		GatewayID:       in.GatewayID,
-		Name:            in.Name,
-		Type:            in.Type,
-		Path:            in.Path,
-		Algorithm:       in.Algorithm,
-		EmbeddingConfig: in.EmbeddingConfig,
-		Headers:         in.Headers,
-		Active:          in.Active,
-		Fallback:        in.Fallback,
+		GatewayID:     in.GatewayID,
+		Name:          in.Name,
+		Type:          in.Type,
+		Path:          in.Path,
+		RoutingMode:   in.RoutingMode,
+		LBConfig:      in.LBConfig,
+		Headers:       in.Headers,
+		Active:        in.Active,
+		Fallback:      in.Fallback,
+		ModelPolicies: in.ModelPolicies,
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := validateRegistryRefsAssociated(cons); err != nil {
 		return nil, err
 	}
 	if err := c.repo.Save(ctx, cons); err != nil {

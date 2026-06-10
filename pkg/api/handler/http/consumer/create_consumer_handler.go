@@ -51,17 +51,26 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	lbConfig, err := req.ToLBConfig()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	modelPolicies, err := req.ToModelPolicies()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
-		GatewayID:       gatewayID,
-		Name:            req.Name,
-		Type:            req.ToType(),
-		Path:            req.Path,
-		Algorithm:       req.Algorithm,
-		EmbeddingConfig: req.ToEmbeddingConfig(),
-		Headers:         req.Headers,
-		Active:          req.Active,
-		Fallback:        fallback,
+		GatewayID:     gatewayID,
+		Name:          req.Name,
+		Type:          req.ToType(),
+		Path:          req.Path,
+		RoutingMode:   req.ToRoutingMode(),
+		LBConfig:      lbConfig,
+		Headers:       req.Headers,
+		Active:        req.Active,
+		Fallback:      fallback,
+		ModelPolicies: modelPolicies,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

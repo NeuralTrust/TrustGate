@@ -12,14 +12,15 @@ import (
 )
 
 type CreateConsumerRequest struct {
-	Name            string                  `json:"name"`
-	Type            string                  `json:"type,omitempty"`
-	Path            string                  `json:"path"`
-	Algorithm       string                  `json:"algorithm,omitempty"`
-	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
-	Headers         map[string]string       `json:"headers,omitempty"`
-	Active          *bool                   `json:"active,omitempty"`
-	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
+	Name          string               `json:"name"`
+	Type          string               `json:"type,omitempty"`
+	Path          string               `json:"path"`
+	RoutingMode   string               `json:"routing_mode,omitempty"`
+	LBConfig      *LBConfigRequest     `json:"lb_config,omitempty"`
+	Headers       map[string]string    `json:"headers,omitempty"`
+	Active        *bool                `json:"active,omitempty"`
+	Fallback      *FallbackRequest     `json:"fallback,omitempty"`
+	ModelPolicies []ModelPolicyRequest `json:"model_policies,omitempty"`
 }
 
 type ModelPolicyRequest struct {
@@ -39,6 +40,19 @@ type FallbackBudgetRequest struct {
 	MaxAttempts       int     `json:"max_attempts,omitempty"`
 	MaxTotalLatencyMs int     `json:"max_total_latency_ms,omitempty"`
 	MaxCostUSD        float64 `json:"max_cost_usd,omitempty"`
+}
+
+type LBConfigRequest struct {
+	Enabled         bool                    `json:"enabled"`
+	Algorithm       string                  `json:"algorithm,omitempty"`
+	PoolAlias       string                  `json:"pool_alias,omitempty"`
+	Members         []LBPoolMemberRequest   `json:"members,omitempty"`
+	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
+}
+
+type LBPoolMemberRequest struct {
+	RegistryID string   `json:"registry_id"`
+	Models     []string `json:"models,omitempty"`
 }
 
 func (r *FallbackRequest) ToFallback() (*domain.Fallback, error) {
@@ -120,12 +134,44 @@ func (r CreateConsumerRequest) ToType() domain.Type {
 	return domain.Type(r.Type)
 }
 
-func (r CreateConsumerRequest) ToEmbeddingConfig() *registrydomain.EmbeddingConfig {
-	return r.EmbeddingConfig.ToDomain()
+func (r CreateConsumerRequest) ToRoutingMode() domain.RoutingMode {
+	return domain.RoutingMode(r.RoutingMode)
+}
+
+func (r CreateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {
+	return r.LBConfig.ToDomain()
 }
 
 func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 	return r.Fallback.ToFallback()
+}
+
+func (r CreateConsumerRequest) ToModelPolicies() (domain.ModelPolicies, error) {
+	return parseModelPolicies(r.ModelPolicies)
+}
+
+func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {
+	if r == nil {
+		return nil, nil
+	}
+	members := make([]domain.LBPoolMember, 0, len(r.Members))
+	for i, member := range r.Members {
+		registryID, err := ids.Parse[ids.RegistryKind](member.RegistryID)
+		if err != nil {
+			return nil, fmt.Errorf("lb_config.members[%d]: invalid registry_id %q: %w", i, member.RegistryID, commonerrors.ErrValidation)
+		}
+		members = append(members, domain.LBPoolMember{
+			RegistryID: registryID,
+			Models:     member.Models,
+		})
+	}
+	return &domain.LBConfig{
+		Enabled:         r.Enabled,
+		Algorithm:       r.Algorithm,
+		PoolAlias:       r.PoolAlias,
+		Members:         members,
+		EmbeddingConfig: r.EmbeddingConfig.ToDomain(),
+	}, nil
 }
 
 func parseModelPolicies(raw []ModelPolicyRequest) (domain.ModelPolicies, error) {

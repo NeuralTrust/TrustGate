@@ -9,6 +9,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
 )
 
 type RoutableConsumer struct {
@@ -24,11 +25,15 @@ type RoutableConsumer struct {
 type Data struct {
 	GatewayID ids.GatewayID
 	Consumers []RoutableConsumer
+	Roles     []*roledomain.Role
 	byPath    map[string]*RoutableConsumer
 }
 
-func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer) *Data {
+func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer, roles ...[]*roledomain.Role) *Data {
 	d := &Data{GatewayID: gatewayID, Consumers: consumers}
+	if len(roles) > 0 {
+		d.Roles = roles[0]
+	}
 	d.indexByPath()
 	return d
 }

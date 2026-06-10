@@ -11,6 +11,7 @@ import (
 type GatewayResponse struct {
 	ID              ids.GatewayID          `json:"id"`
 	Name            string                 `json:"name"`
+	Slug            string                 `json:"slug"`
 	Status          string                 `json:"status"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
@@ -20,9 +21,13 @@ type GatewayResponse struct {
 }
 
 func FromDomain(g *domain.Gateway) GatewayResponse {
+	if g == nil {
+		return GatewayResponse{}
+	}
 	return GatewayResponse{
 		ID:              g.ID,
 		Name:            g.Name,
+		Slug:            g.Slug,
 		Status:          g.Status,
 		Telemetry:       g.Telemetry,
 		ClientTLSConfig: g.ClientTLSConfig,

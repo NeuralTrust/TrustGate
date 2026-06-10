@@ -8,11 +8,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+const functionalGatewayBaseDomain = "gw.neuraltrust.ai"
+
+var (
+	gatewayHosts sync.Map
+	proxyHosts   sync.Map
 )
 
 // uniqueName returns a name that cannot collide across runs or
@@ -31,6 +39,10 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 	id, ok := body["id"].(string)
 	require.True(t, ok, "create response missing id: %v", body)
 	require.NotEmpty(t, id)
+	slug, ok := body["slug"].(string)
+	require.True(t, ok, "create response missing slug: %v", body)
+	require.NotEmpty(t, slug)
+	gatewayHosts.Store(id, slug+"."+functionalGatewayBaseDomain)
 	return id
 }
 
@@ -212,6 +224,9 @@ func createAndAttachAPIKey(t *testing.T, gatewayID, consumerID string) string {
 	t.Helper()
 	authID, key := CreateAPIKeyAuth(t, gatewayID, uniqueName("proxy-key"))
 	AttachAuth(t, gatewayID, consumerID, authID)
+	host, ok := gatewayHosts.Load(gatewayID)
+	require.True(t, ok, "gateway host missing for %s", gatewayID)
+	proxyHosts.Store(key, host.(string))
 	return key
 }
 

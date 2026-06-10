@@ -63,43 +63,63 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 }
 
-func TestCreator_Create_WithFallback(t *testing.T) {
+func TestCreator_Create_RejectsRegistryReferencesBeforeAssociation(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	fallbackID := ids.New[ids.RegistryKind]()
-	fallback := &domain.Fallback{
-		Enabled:  true,
-		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
-		Budget:   domain.FallbackBudget{MaxAttempts: 3},
-		Chain:    registrydomain.Registries{fallbackID},
+	registryID := ids.New[ids.RegistryKind]()
+
+	cases := []struct {
+		name    string
+		input   appconsumer.CreateInput
+		wantErr error
+	}{
+		{
+			name: "fallback chain",
+			input: appconsumer.CreateInput{
+				Fallback: &domain.Fallback{
+					Enabled:  true,
+					Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+					Budget:   domain.FallbackBudget{MaxAttempts: 3},
+					Chain:    registrydomain.Registries{registryID},
+				},
+			},
+			wantErr: registrydomain.ErrInvalidRegistryID,
+		},
+		{
+			name: "model policies",
+			input: appconsumer.CreateInput{
+				ModelPolicies: domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}},
+			},
+			wantErr: domain.ErrInvalidModelPolicy,
+		},
+		{
+			name: "lb config members",
+			input: appconsumer.CreateInput{
+				LBConfig: &domain.LBConfig{
+					Enabled: true,
+					Members: []domain.LBPoolMember{{RegistryID: registryID, Models: []string{"gpt-4o"}}},
+				},
+				ModelPolicies: domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}},
+			},
+			wantErr: domain.ErrInvalidModelPolicy,
+		},
 	}
 
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().
-		Save(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			return c.Fallback != nil &&
-				c.Fallback.Enabled &&
-				c.Fallback.Budget.MaxAttempts == 3 &&
-				len(c.Fallback.Chain) == 1 &&
-				c.Fallback.Chain[0] == fallbackID
-		})).
-		Return(nil).
-		Once()
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			creator := appconsumer.NewCreator(repomocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+			tc.input.GatewayID = gwID
+			tc.input.Name = "chat"
+			tc.input.Type = domain.TypeLLM
+			tc.input.Path = "/v1/chat/completions"
 
-	creator := appconsumer.NewCreator(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-
-	created, err := creator.Create(context.Background(), appconsumer.CreateInput{
-		GatewayID: gwID,
-		Name:      "chat",
-		Type:      domain.TypeLLM,
-		Path:      "/v1/chat/completions",
-		Fallback:  fallback,
-	})
-	if err != nil {
-		t.Fatalf("Create error: %v", err)
-	}
-	if created.Fallback == nil || created.Fallback.Chain[0] != fallbackID {
-		t.Fatalf("Fallback = %#v, want chain with %s", created.Fallback, fallbackID)
+			_, err := creator.Create(context.Background(), tc.input)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 

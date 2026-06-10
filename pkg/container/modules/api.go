@@ -3,9 +3,12 @@ package modules
 import (
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
+	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
+	idpauth "github.com/NeuralTrust/AgentGateway/pkg/infra/auth/idp"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oauthclient"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/fingerprint"
 )
 
@@ -48,7 +51,30 @@ func API(c *container.Container) error {
 	if err := c.Provide(middleware.NewSessionMiddleware); err != nil {
 		return err
 	}
+	if err := c.Provide(idpauth.NewVerifier); err != nil {
+		return err
+	}
+	if err := c.Provide(func() appauth.OAuth2ClientTokenSource {
+		return oauthclient.NewTokenSource(nil)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewSubdomainGatewayResolver); err != nil {
+		return err
+	}
 	if err := c.Provide(middleware.NewAPIKeyIdentityResolver); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewOAuth2IdentityResolver); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewOAuth2ClientIdentityResolver); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewIDPIdentityResolver); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewIdentityResolver); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewAuthMiddleware); err != nil {

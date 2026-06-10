@@ -37,6 +37,7 @@ func initializeMemoryCache(mgr *cache.TTLMapManager) {
 	mgr.CreateTTLMap(cache.GatewayTTLName, cache.GatewayCacheTTL)
 	mgr.CreateTTLMap(cache.RegistryTTLName, cache.RegistryCacheTTL)
 	mgr.CreateTTLMap(cache.ConsumerTTLName, cache.ConsumerCacheTTL)
+	mgr.CreateTTLMap(cache.RoleTTLName, cache.RoleCacheTTL)
 	mgr.CreateTTLMap(cache.ConsumerDataTTLName, cache.ConsumerDataCacheTTL)
 	mgr.CreateTTLMap(cache.PolicyTTLName, cache.PolicyCacheTTL)
 	mgr.CreateTTLMap(cache.AuthTTLName, cache.AuthCacheTTL)

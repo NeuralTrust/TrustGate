@@ -8,6 +8,7 @@ import (
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
 	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
+	rolehttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
 	fiberSwagger "github.com/gofiber/swagger"
@@ -60,6 +61,13 @@ type AdminRouterDeps struct {
 	UpdateConsumer      *consumerhttp.UpdateConsumerHandler
 	DeleteConsumer      *consumerhttp.DeleteConsumerHandler
 	ConsumerAssociation *consumerhttp.AssociationHandler
+
+	CreateRole      *rolehttp.CreateRoleHandler
+	GetRole         *rolehttp.GetRoleHandler
+	ListRole        *rolehttp.ListRoleHandler
+	UpdateRole      *rolehttp.UpdateRoleHandler
+	DeleteRole      *rolehttp.DeleteRoleHandler
+	RoleAssociation *rolehttp.AssociationHandler
 
 	CreateAuth *authhttp.CreateAuthHandler
 	GetAuth    *authhttp.GetAuthHandler
@@ -125,10 +133,21 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	consumers.Delete("/:id", r.deps.DeleteConsumer.Handle)
 	consumers.Post("/:id/registries/:registry_id", r.deps.ConsumerAssociation.AttachRegistry)
 	consumers.Delete("/:id/registries/:registry_id", r.deps.ConsumerAssociation.DetachRegistry)
+	consumers.Post("/:id/roles/:role_id", r.deps.ConsumerAssociation.AttachRole)
+	consumers.Delete("/:id/roles/:role_id", r.deps.ConsumerAssociation.DetachRole)
 	consumers.Post("/:id/auths/:auth_id", r.deps.ConsumerAssociation.AttachAuth)
 	consumers.Delete("/:id/auths/:auth_id", r.deps.ConsumerAssociation.DetachAuth)
 	consumers.Post("/:id/policies/:policy_id", r.deps.ConsumerAssociation.AttachPolicy)
 	consumers.Delete("/:id/policies/:policy_id", r.deps.ConsumerAssociation.DetachPolicy)
+
+	roles := gw.Group("/:gateway_id/roles")
+	roles.Post("", r.deps.CreateRole.Handle)
+	roles.Get("", r.deps.ListRole.Handle)
+	roles.Get("/:id", r.deps.GetRole.Handle)
+	roles.Put("/:id", r.deps.UpdateRole.Handle)
+	roles.Delete("/:id", r.deps.DeleteRole.Handle)
+	roles.Post("/:role_id/registries/:registry_id", r.deps.RoleAssociation.AttachRegistry)
+	roles.Delete("/:role_id/registries/:registry_id", r.deps.RoleAssociation.DetachRegistry)
 
 	auths := gw.Group("/:gateway_id/auths")
 	auths.Post("", r.deps.CreateAuth.Handle)

@@ -11,27 +11,41 @@ import (
 )
 
 type ConsumerResponse struct {
-	ID              ids.ConsumerID           `json:"id"`
-	GatewayID       ids.GatewayID            `json:"gateway_id"`
-	Name            string                   `json:"name"`
-	Type            string                   `json:"type"`
-	Path            string                   `json:"path"`
-	Algorithm       string                   `json:"algorithm"`
-	EmbeddingConfig *EmbeddingConfigResponse `json:"embedding_config,omitempty"`
-	Headers         map[string]string        `json:"headers,omitempty"`
-	Active          bool                     `json:"active"`
-	RegistryIDs     []ids.RegistryID         `json:"registry_ids"`
-	AuthIDs         []ids.AuthID             `json:"auth_ids"`
-	Fallback        *FallbackResponse        `json:"fallback,omitempty"`
-	ModelPolicies   []ModelPolicyResponse    `json:"model_policies,omitempty"`
-	CreatedAt       time.Time                `json:"created_at"`
-	UpdatedAt       time.Time                `json:"updated_at"`
+	ID            ids.ConsumerID        `json:"id"`
+	GatewayID     ids.GatewayID         `json:"gateway_id"`
+	Name          string                `json:"name"`
+	Type          string                `json:"type"`
+	Path          string                `json:"path"`
+	RoutingMode   string                `json:"routing_mode"`
+	LBConfig      *LBConfigResponse     `json:"lb_config,omitempty"`
+	Headers       map[string]string     `json:"headers,omitempty"`
+	Active        bool                  `json:"active"`
+	RegistryIDs   []ids.RegistryID      `json:"registry_ids"`
+	RoleIDs       []ids.RoleID          `json:"role_ids"`
+	AuthIDs       []ids.AuthID          `json:"auth_ids"`
+	Fallback      *FallbackResponse     `json:"fallback,omitempty"`
+	ModelPolicies []ModelPolicyResponse `json:"model_policies,omitempty"`
+	CreatedAt     time.Time             `json:"created_at"`
+	UpdatedAt     time.Time             `json:"updated_at"`
 }
 
 type ModelPolicyResponse struct {
 	RegistryID ids.RegistryID `json:"registry_id"`
 	Allowed    []string       `json:"allowed,omitempty"`
 	Default    string         `json:"default,omitempty"`
+}
+
+type LBConfigResponse struct {
+	Enabled         bool                     `json:"enabled"`
+	Algorithm       string                   `json:"algorithm,omitempty"`
+	PoolAlias       string                   `json:"pool_alias,omitempty"`
+	Members         []LBPoolMemberResponse   `json:"members,omitempty"`
+	EmbeddingConfig *EmbeddingConfigResponse `json:"embedding_config,omitempty"`
+}
+
+type LBPoolMemberResponse struct {
+	RegistryID ids.RegistryID `json:"registry_id"`
+	Models     []string       `json:"models,omitempty"`
 }
 
 type EmbeddingConfigResponse struct {
@@ -74,30 +88,55 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 	if authIDs == nil {
 		authIDs = []ids.AuthID{}
 	}
-	var embedding *EmbeddingConfigResponse
-	if c.EmbeddingConfig != nil {
-		embedding = &EmbeddingConfigResponse{
-			Provider: c.EmbeddingConfig.Provider,
-			Model:    c.EmbeddingConfig.Model,
-			Auth:     fromEmbeddingAuth(c.EmbeddingConfig.Auth),
-		}
+	roleIDs := c.RoleIDs
+	if roleIDs == nil {
+		roleIDs = []ids.RoleID{}
 	}
 	return ConsumerResponse{
-		ID:              c.ID,
-		GatewayID:       c.GatewayID,
-		Name:            c.Name,
-		Type:            string(c.Type),
-		Path:            c.Path,
-		Algorithm:       c.Algorithm,
+		ID:            c.ID,
+		GatewayID:     c.GatewayID,
+		Name:          c.Name,
+		Type:          string(c.Type),
+		Path:          c.Path,
+		RoutingMode:   string(c.RoutingMode),
+		LBConfig:      fromLBConfig(c.LBConfig),
+		Headers:       c.Headers,
+		Active:        c.Active,
+		RegistryIDs:   registryIDs,
+		RoleIDs:       roleIDs,
+		AuthIDs:       authIDs,
+		Fallback:      fromFallback(c.Fallback),
+		ModelPolicies: fromModelPolicies(c.ModelPolicies),
+		CreatedAt:     c.CreatedAt,
+		UpdatedAt:     c.UpdatedAt,
+	}
+}
+
+func fromLBConfig(config *domain.LBConfig) *LBConfigResponse {
+	if config == nil {
+		return nil
+	}
+	members := make([]LBPoolMemberResponse, 0, len(config.Members))
+	for _, member := range config.Members {
+		members = append(members, LBPoolMemberResponse{
+			RegistryID: member.RegistryID,
+			Models:     member.Models,
+		})
+	}
+	var embedding *EmbeddingConfigResponse
+	if config.EmbeddingConfig != nil {
+		embedding = &EmbeddingConfigResponse{
+			Provider: config.EmbeddingConfig.Provider,
+			Model:    config.EmbeddingConfig.Model,
+			Auth:     fromEmbeddingAuth(config.EmbeddingConfig.Auth),
+		}
+	}
+	return &LBConfigResponse{
+		Enabled:         config.Enabled,
+		Algorithm:       config.Algorithm,
+		PoolAlias:       config.PoolAlias,
+		Members:         members,
 		EmbeddingConfig: embedding,
-		Headers:         c.Headers,
-		Active:          c.Active,
-		RegistryIDs:     registryIDs,
-		AuthIDs:         authIDs,
-		Fallback:        fromFallback(c.Fallback),
-		ModelPolicies:   fromModelPolicies(c.ModelPolicies),
-		CreatedAt:       c.CreatedAt,
-		UpdatedAt:       c.UpdatedAt,
 	}
 }
 

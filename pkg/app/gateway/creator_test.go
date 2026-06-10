@@ -32,6 +32,7 @@ func TestCreator_Create_Success(t *testing.T) {
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
 			return g.Name == "Prod" &&
+				g.Slug == "prod" &&
 				g.Status == "active" &&
 				g.Telemetry == tel
 		})).
@@ -50,6 +51,9 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 	if g.Name != "Prod" || g.Status != "active" {
 		t.Fatalf("Create returned unexpected gateway: %+v", g)
+	}
+	if g.Slug != "prod" {
+		t.Fatalf("Slug = %q, want prod", g.Slug)
 	}
 	if !g.SessionConfig.IsEnabled() {
 		t.Fatal("expected default session config to be enabled when none is provided")

@@ -18,6 +18,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"golang.org/x/sync/singleflight"
 )
@@ -524,11 +525,21 @@ func (f *forwarder) loadBalancerFor(rc *appconsumer.RoutableConsumer) (*loadbala
 		if lb, ok := f.cachedLoadBalancer(key); ok {
 			return lb, nil
 		}
+		lbAlgorithm := algorithm.RoundRobin
+		var embeddingConfig *domain.EmbeddingConfig
+		// A disabled lb_config must behave exactly like no lb_config: its
+		// algorithm and embedding settings are ignored.
+		if lbCfg := rc.Consumer.LBConfig; lbCfg != nil && lbCfg.Enabled {
+			if lbCfg.Algorithm != "" {
+				lbAlgorithm = lbCfg.Algorithm
+			}
+			embeddingConfig = lbCfg.EmbeddingConfig
+		}
 		pool := loadbalancer.Pool{
 			ID:              key,
 			Registries:      rc.Registries,
-			Algorithm:       rc.Consumer.Algorithm,
-			EmbeddingConfig: rc.Consumer.EmbeddingConfig,
+			Algorithm:       lbAlgorithm,
+			EmbeddingConfig: embeddingConfig,
 		}
 		lb, err := loadbalancer.NewLoadBalancer(f.factory, pool, f.logger, f.cache)
 		if err != nil {

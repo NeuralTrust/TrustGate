@@ -25,6 +25,9 @@ type Repository interface {
 
 	AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error
 	DetachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error
+	DetachRegistryIfUnreferenced(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) (*Consumer, error)
+	AttachRole(ctx context.Context, consumerID ids.ConsumerID, roleID ids.RoleID) error
+	DetachRole(ctx context.Context, consumerID ids.ConsumerID, roleID ids.RoleID) error
 	AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error
 	DetachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error
 	AttachPolicy(ctx context.Context, consumerID ids.ConsumerID, policyID ids.PolicyID) error

@@ -65,6 +65,28 @@ func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
 	return helpers.WriteNoContent(c)
 }
 
+func (h *AssociationHandler) AttachRole(c *fiber.Ctx) error {
+	gatewayID, consumerID, roleID, err := helpers.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	if err := h.associator.AttachRole(c.UserContext(), gatewayID, consumerID, roleID); err != nil {
+		return helpers.WriteError(c, err)
+	}
+	return helpers.WriteNoContent(c)
+}
+
+func (h *AssociationHandler) DetachRole(c *fiber.Ctx) error {
+	gatewayID, consumerID, roleID, err := helpers.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	if err := h.associator.DetachRole(c.UserContext(), gatewayID, consumerID, roleID); err != nil {
+		return helpers.WriteError(c, err)
+	}
+	return helpers.WriteNoContent(c)
+}
+
 // AttachAuth godoc
 // @Summary      Attach an auth to a consumer
 // @Description  Associates an auth credential with a consumer (idempotent).

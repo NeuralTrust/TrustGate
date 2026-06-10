@@ -23,9 +23,9 @@ func routableConsumer(gwID ids.GatewayID, authIDs []ids.AuthID) *domain.Consumer
 	now := time.Now().UTC()
 	return domain.Rehydrate(
 		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
-		"/v1/chat", "round-robin", nil,
+		"/v1/chat", domain.RoutingModeInline, nil,
 		nil, true,
-		[]ids.RegistryID{ids.New[ids.RegistryKind]()}, authIDs,
+		[]ids.RegistryID{ids.New[ids.RegistryKind]()}, nil, authIDs,
 		nil,
 		nil,
 		now, now,
@@ -81,7 +81,7 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 		FindByIDs(mock.Anything, gwID, mock.Anything).
 		Return(nil, nil).Once()
 
-	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, newCacheManager(), newTestLogger())
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, nil, newCacheManager(), newTestLogger())
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
@@ -148,9 +148,9 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(
 		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
-		"/v1/chat", "round-robin", nil,
+		"/v1/chat", domain.RoutingModeInline, nil,
 		nil, true,
-		[]ids.RegistryID{poolID}, nil,
+		[]ids.RegistryID{poolID}, nil, nil,
 		&domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
@@ -182,7 +182,7 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, registryRepo,
 		policyRepo, authmocks.NewRepository(t),
-		nil, newCacheManager(), newTestLogger(),
+		nil, nil, newCacheManager(), newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
@@ -211,7 +211,7 @@ func TestDataFinder_FindByGateway_CacheHitSkipsRepositories(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repomocks.NewRepository(t), backendmocks.NewRepository(t),
 		policymocks.NewRepository(t), authmocks.NewRepository(t),
-		nil, mgr, newTestLogger(),
+		nil, nil, mgr, newTestLogger(),
 	)
 
 	got, err := finder.FindByGateway(context.Background(), gwID)
@@ -238,7 +238,7 @@ func TestDataFinder_FindByGateway_RecoversFromCorruptCacheEntry(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, backendmocks.NewRepository(t),
 		policyRepo, authmocks.NewRepository(t),
-		nil, mgr, newTestLogger(),
+		nil, nil, mgr, newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
