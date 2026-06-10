@@ -16,8 +16,6 @@ import (
 
 const HeaderGatewaySlug = "X-AG-Gateway-Slug"
 
-// gatewayDiscoveryModeSubdomain mirrors config.GatewayDiscoveryModeSubdomain;
-// any other validated mode ("header") gets the header resolver with host fallback.
 const gatewayDiscoveryModeSubdomain = "subdomain"
 
 type GatewayResolver interface {
@@ -37,8 +35,6 @@ type SubdomainGatewayResolver struct {
 	baseDomain string
 }
 
-// NewSubdomainGatewayResolver expects a non-empty base domain; config supplies
-// it from GATEWAY_BASE_DOMAIN (default gw.neuraltrust.ai) and validates it.
 func NewSubdomainGatewayResolver(finder appgateway.Finder, baseDomain string) GatewayResolver {
 	baseDomain = strings.Trim(strings.ToLower(strings.TrimSpace(baseDomain)), ".")
 	return &SubdomainGatewayResolver{

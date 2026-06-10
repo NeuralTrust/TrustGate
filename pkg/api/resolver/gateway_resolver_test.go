@@ -12,7 +12,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// testBaseDomain mirrors the GATEWAY_BASE_DOMAIN default from pkg/config.
 const testBaseDomain = "gw.neuraltrust.ai"
 
 func TestParseGatewaySlugFromHost(t *testing.T) {

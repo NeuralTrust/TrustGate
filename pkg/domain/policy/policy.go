@@ -8,7 +8,7 @@ import (
 )
 
 type Policy struct {
-	ID        ids.PolicyID  `json:"id"`
+	ID          ids.PolicyID     `json:"id"`
 	GatewayID   ids.GatewayID    `json:"gateway_id"`
 	ConsumerIDs []ids.ConsumerID `json:"consumer_ids,omitempty"`
 	Name        string           `json:"name"`

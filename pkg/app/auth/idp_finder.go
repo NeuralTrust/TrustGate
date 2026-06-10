@@ -12,25 +12,7 @@ var (
 	ErrAmbiguousIDPConfig = errors.New("ambiguous idp auth config")
 )
 
-type TokenHints struct {
-	Issuer    string
-	Audiences []string
-	KeyID     string
-	Algorithm string
-}
-
-type VerifiedClaims struct {
-	Subject string
-	Claims  map[string]any
-	Scopes  []string
-}
-
-//go:generate mockery --name=IDPVerifier --dir=. --output=./mocks --filename=idp_verifier_mock.go --case=underscore --with-expecter
-type IDPVerifier interface {
-	Peek(token string) (TokenHints, error)
-	Verify(ctx context.Context, token string, cfg domain.IDPConfig) (*VerifiedClaims, error)
-}
-
+//go:generate mockery --name=IDPFinder --dir=. --output=./mocks --filename=idp_finder_mock.go --case=underscore --with-expecter
 type IDPFinder interface {
 	FindIDPAuth(ctx context.Context, auths []*domain.Auth, token string) (*domain.Auth, error)
 }

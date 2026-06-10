@@ -7,15 +7,13 @@ import (
 )
 
 type ProviderResponse struct {
-	ID          ids.ProviderID              `json:"id"`
-	Code        string                      `json:"code"`
-	DisplayName string                      `json:"display_name"`
-	WireFormat  string                      `json:"wire_format"`
-	Source      string                      `json:"source"`
-	Metadata    map[string]any              `json:"metadata,omitempty"`
-	AuthTypes   []appcatalog.AuthTypeOption `json:"auth_types"`
-	// ProviderOptionsSchema lists provider-specific connection settings that are
-	// not credentials (e.g. base_url, project, location).
+	ID                    ids.ProviderID                   `json:"id"`
+	Code                  string                           `json:"code"`
+	DisplayName           string                           `json:"display_name"`
+	WireFormat            string                           `json:"wire_format"`
+	Source                string                           `json:"source"`
+	Metadata              map[string]any                   `json:"metadata,omitempty"`
+	AuthTypes             []appcatalog.AuthTypeOption      `json:"auth_types"`
 	ProviderOptionsSchema []appcatalog.ProviderOptionField `json:"provider_options_schema"`
 }
 

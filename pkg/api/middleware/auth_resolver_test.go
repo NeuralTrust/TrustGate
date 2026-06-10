@@ -191,7 +191,7 @@ func TestAuthMiddleware_OAuth2ClientWrongTokenUnauthorized(t *testing.T) {
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 }
 
-func TestAuthMiddleware_OAuth2ClientAcquisitionFailureUnauthorized(t *testing.T) {
+func TestAuthMiddleware_OAuth2ClientAcquisitionFailureServiceUnavailable(t *testing.T) {
 	t.Parallel()
 	gw, rc := inlineConsumerWithOAuth2Client(t)
 	tokenSource := fakeTokenSource{err: fmt.Errorf("token endpoint status 503")}
@@ -202,7 +202,7 @@ func TestAuthMiddleware_OAuth2ClientAcquisitionFailureUnauthorized(t *testing.T)
 	req.Header.Set(fiber.HeaderAuthorization, "Bearer acquired-token")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
-	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+	require.Equal(t, fiber.StatusServiceUnavailable, resp.StatusCode)
 }
 
 func TestAuthMiddleware_OAuth2ClientCannotAuthorizeRoleBasedConsumer(t *testing.T) {

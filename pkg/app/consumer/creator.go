@@ -87,9 +87,6 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	return cons, nil
 }
 
-// ensureRegistriesInGateway guards against binding registries owned by another
-// gateway: the consumer_registry FK only proves the registry exists, not that
-// this gateway owns it.
 func (c *creator) ensureRegistriesInGateway(ctx context.Context, gatewayID ids.GatewayID, registryIDs []ids.RegistryID) error {
 	if len(registryIDs) == 0 {
 		return nil

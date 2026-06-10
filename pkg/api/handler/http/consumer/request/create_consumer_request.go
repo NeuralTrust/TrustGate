@@ -24,8 +24,6 @@ type CreateConsumerRequest struct {
 	ModelPolicies []ModelPolicyRequest     `json:"model_policies,omitempty"`
 }
 
-// RegistryBindingRequest binds a registry to the consumer atomically at create
-// time, optionally carrying the model policy for that registry.
 type RegistryBindingRequest struct {
 	ID            string                      `json:"id"`
 	ModelPolicies *RegistryModelPolicyRequest `json:"model_policies,omitempty"`
@@ -159,9 +157,6 @@ func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 	return r.Fallback.ToFallback()
 }
 
-// ToRegistryBindings resolves the nested registries array into the registry id
-// list plus the model policies they carry, merged with the top-level
-// model_policies entries. A registry may declare its policy in only one place.
 func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, domain.ModelPolicies, error) {
 	policies, err := parseModelPolicies(r.ModelPolicies)
 	if err != nil {

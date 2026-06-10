@@ -59,7 +59,7 @@ func TestCreator_Create_Success(t *testing.T) {
 		t.Fatal("expected default session config to be enabled when none is provided")
 	}
 
-	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get(g.ID.String())
+	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("id:" + g.ID.String())
 	if !ok {
 		t.Fatal("created gateway was not pre-warmed in the cache")
 	}

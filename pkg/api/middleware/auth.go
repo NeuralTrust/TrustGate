@@ -92,13 +92,12 @@ func writeAuthError(c *fiber.Ctx, err error) error {
 	if errors.Is(err, resolver.ErrForbidden) {
 		return forbidden(c, err)
 	}
+	if errors.Is(err, appauth.ErrTokenAcquisition) {
+		return authUpstreamUnavailable(c)
+	}
 	return unauthenticated(c)
 }
 
-// isAuthMappableError reports whether a gateway-resolution error has a
-// deliberate auth-plane mapping (400/403/401). Anything else is an unexpected
-// infra failure and must surface as a 500 instead of masquerading as an auth
-// rejection.
 func isAuthMappableError(err error) bool {
 	return errors.Is(err, appauth.ErrInvalidAuthRequest) ||
 		errors.Is(err, appauth.ErrAmbiguousIDPConfig) ||
@@ -132,6 +131,13 @@ func invalidAuthRequest(c *fiber.Ctx, err error) error {
 func notFound(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusNotFound).JSON(helpers.ErrorBody{
 		Error: "not_found",
+	})
+}
+
+func authUpstreamUnavailable(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusServiceUnavailable).JSON(helpers.ErrorBody{
+		Error:   "auth_upstream_unavailable",
+		Message: appauth.ErrTokenAcquisition.Error(),
 	})
 }
 

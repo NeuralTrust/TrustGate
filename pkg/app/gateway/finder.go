@@ -2,12 +2,20 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"time"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
+
+const slugMissTTL = 5 * time.Second
+
+type slugMiss struct {
+	at time.Time
+}
 
 //go:generate mockery --name=Finder --dir=. --output=./mocks --filename=gateway_finder_mock.go --case=underscore --with-expecter
 type Finder interface {
@@ -36,9 +44,6 @@ func (f *finder) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gatewa
 	if g, ok := f.cached(gatewayIDCacheKey(id), "gateway_id", id.String()); ok {
 		return g, nil
 	}
-	if g, ok := f.cached(id.String(), "gateway_id", id.String()); ok {
-		return g, nil
-	}
 	g, err := f.repo.FindByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -49,15 +54,39 @@ func (f *finder) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gatewa
 
 func (f *finder) FindBySlug(ctx context.Context, slug string) (*domain.Gateway, error) {
 	slug = domain.NormalizeSlug(slug)
-	if g, ok := f.cached(gatewaySlugCacheKey(slug), "gateway_slug", slug); ok {
+	key := gatewaySlugCacheKey(slug)
+	if f.missedRecently(key) {
+		return nil, domain.ErrNotFound
+	}
+	if g, ok := f.cached(key, "gateway_slug", slug); ok {
 		return g, nil
 	}
 	g, err := f.repo.FindBySlug(ctx, slug)
+	if errors.Is(err, domain.ErrNotFound) {
+		f.memoryCache.Set(key, slugMiss{at: time.Now()})
+		return nil, err
+	}
 	if err != nil {
 		return nil, err
 	}
 	setGatewayCache(f.memoryCache, g)
 	return g, nil
+}
+
+func (f *finder) missedRecently(key string) bool {
+	cached, ok := f.memoryCache.Get(key)
+	if !ok {
+		return false
+	}
+	miss, ok := cached.(slugMiss)
+	if !ok {
+		return false
+	}
+	if time.Since(miss.at) < slugMissTTL {
+		return true
+	}
+	f.memoryCache.Delete(key)
+	return false
 }
 
 func (f *finder) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Gateway, int, error) {
@@ -81,7 +110,6 @@ func (f *finder) cached(key, field, value string) (*domain.Gateway, bool) {
 
 func setGatewayCache(memoryCache *cache.TTLMap, g *domain.Gateway) {
 	memoryCache.Set(gatewayIDCacheKey(g.ID), g)
-	memoryCache.Set(g.ID.String(), g)
 	if g.Slug != "" {
 		memoryCache.Set(gatewaySlugCacheKey(g.Slug), g)
 	}
@@ -92,7 +120,6 @@ func deleteGatewayCache(memoryCache *cache.TTLMap, g *domain.Gateway) {
 		return
 	}
 	memoryCache.Delete(gatewayIDCacheKey(g.ID))
-	memoryCache.Delete(g.ID.String())
 	if g.Slug != "" {
 		memoryCache.Delete(gatewaySlugCacheKey(g.Slug))
 	}

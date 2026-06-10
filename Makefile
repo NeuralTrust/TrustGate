@@ -38,11 +38,11 @@ run-proxy: build ## Build and run the proxy server
 	@$(info $(M) Running $(APP_NAME) proxy ...)
 	./bin/$(APP_NAME) proxy
 
-run-proxy-sandbox: build ## Run the proxy resolving gateways from {slug}.gw.agentgateway.sandbox (see local-dns)
+run-proxy-sandbox: build ## Run the proxy resolving gateways from {slug}.gw.neuraltrust.sandbox (see local-dns)
 	@$(info $(M) Running $(APP_NAME) proxy with sandbox base domain ...)
-	GATEWAY_BASE_DOMAIN=gw.agentgateway.sandbox ./bin/$(APP_NAME) proxy
+	GATEWAY_BASE_DOMAIN=gw.neuraltrust.sandbox ./bin/$(APP_NAME) proxy
 
-local-dns: ## Point *.gw.agentgateway.sandbox to 127.0.0.1 via dnsmasq (macOS, requires sudo)
+local-dns: ## Point *.gw.neuraltrust.sandbox to 127.0.0.1 via dnsmasq (macOS, requires sudo)
 	@$(info $(M) Configuring local sandbox DNS ...)
 	./scripts/setup-local-subdomains.sh
 

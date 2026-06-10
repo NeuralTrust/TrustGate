@@ -48,7 +48,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		t.Fatalf("unexpected gateway: %+v", got)
 	}
 
-	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get(id.String())
+	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("id:" + id.String())
 	if !ok {
 		t.Fatal("updated gateway was not refreshed in cache")
 	}

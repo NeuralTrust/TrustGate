@@ -54,8 +54,6 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 		s.loadBalancerCache.DeleteByPrefix(evt.GatewayID + ":")
 	}
 	if s.roleCache != nil {
-		// Role entries are keyed by bare role ID and the event only carries the
-		// gateway ID, so the whole map is cleared to avoid serving stale roles.
 		s.roleCache.Clear()
 	}
 
@@ -71,7 +69,6 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 
 func deleteGatewayAliases(gatewayCache *cache.TTLMap, gatewayID string) {
 	slug := cachedGatewaySlug(gatewayCache, gatewayID)
-	gatewayCache.Delete(gatewayID)
 	gatewayCache.Delete("id:" + gatewayID)
 	if slug != "" {
 		gatewayCache.Delete("slug:" + slug)
@@ -79,15 +76,13 @@ func deleteGatewayAliases(gatewayCache *cache.TTLMap, gatewayID string) {
 }
 
 func cachedGatewaySlug(gatewayCache *cache.TTLMap, gatewayID string) string {
-	for _, key := range []string{gatewayID, "id:" + gatewayID} {
-		cached, ok := gatewayCache.Get(key)
-		if !ok {
-			continue
-		}
-		gw, ok := cached.(*gatewaydomain.Gateway)
-		if ok && gw.Slug != "" {
-			return gatewaydomain.NormalizeSlug(gw.Slug)
-		}
+	cached, ok := gatewayCache.Get("id:" + gatewayID)
+	if !ok {
+		return ""
 	}
-	return ""
+	gw, ok := cached.(*gatewaydomain.Gateway)
+	if !ok || gw.Slug == "" {
+		return ""
+	}
+	return gatewaydomain.NormalizeSlug(gw.Slug)
 }

@@ -2,8 +2,6 @@ package catalog
 
 import "github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 
-// OptionFieldType enumerates the provider_options field kinds the admin UI can
-// render when building a provider connection form.
 type OptionFieldType string
 
 const (
@@ -12,9 +10,6 @@ const (
 	OptionFieldTypeMap    OptionFieldType = "map"
 )
 
-// ProviderOptionField describes a single provider_options input. These are
-// provider-specific connection settings unrelated to credentials (e.g. the base
-// URL for an OpenAI-compatible endpoint or the GCP project for Vertex).
 type ProviderOptionField struct {
 	Key         string          `json:"key"`
 	Label       string          `json:"label"`
@@ -25,10 +20,6 @@ type ProviderOptionField struct {
 	Enum        []string        `json:"enum,omitempty"`
 }
 
-// providerOptionsCatalog maps each provider code to its provider_options schema.
-// Schemas are hand-authored from providers.Decode*Options so the catalog matches
-// the validation applied at registry create/update time. Providers without
-// extra options are omitted and resolve to an empty slice.
 var providerOptionsCatalog = map[string][]ProviderOptionField{
 	providers.ProviderOpenAI: {
 		{
@@ -85,9 +76,6 @@ var providerOptionsCatalog = map[string][]ProviderOptionField{
 	},
 }
 
-// ProviderOptions returns the provider_options schema for a provider code. It
-// returns an empty (non-nil) slice for providers without extra options so the
-// API always emits a JSON array.
 func ProviderOptions(code string) []ProviderOptionField {
 	if opts, ok := providerOptionsCatalog[code]; ok {
 		return opts

@@ -104,15 +104,8 @@ type ServerConfig struct {
 	IdleTimeout  time.Duration
 	// SecretKey signs and verifies admin-plane JWTs. Empty disables admin auth
 	// token acceptance (every token is rejected).
-	SecretKey string
-	// GatewayBaseDomain is the suffix used to resolve gateways from the request
-	// host ({slug}.<base-domain>), e.g. gw.neuraltrust.ai in cloud or
-	// gw.agentgateway.sandbox for local development.
-	GatewayBaseDomain string
-	// GatewayDiscoveryMode selects how the proxy matches the target gateway:
-	// "header" reads the X-AG-Gateway-Slug header and falls back to the host
-	// when absent (self-hosted default); "subdomain" only trusts the request
-	// host and ignores the header (cloud).
+	SecretKey            string
+	GatewayBaseDomain    string
 	GatewayDiscoveryMode string
 }
 

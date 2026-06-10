@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"crypto/subtle"
+	"fmt"
 
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
@@ -39,7 +40,7 @@ func (r *OAuth2ClientIdentityResolver) Resolve(
 		attached = true
 		acquired, err := r.tokens.Token(c.UserContext(), *a.Config.OAuth2Client)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("%w: %w", appauth.ErrTokenAcquisition, err)
 		}
 		if subtle.ConstantTimeCompare([]byte(acquired), []byte(token)) == 1 {
 			return &appauth.AuthContext{

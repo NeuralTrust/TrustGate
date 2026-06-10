@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -24,7 +23,7 @@ const (
 	minCacheTTL         = 5 * time.Second
 )
 
-var ErrTokenAcquisition = errors.New("oauth2 client token acquisition failed")
+var ErrTokenAcquisition = appauth.ErrTokenAcquisition
 
 type TokenClient struct {
 	client *http.Client

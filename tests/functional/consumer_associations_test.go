@@ -199,7 +199,6 @@ func TestAttachAuth_OAuth2AndOAuth2ClientExclusive(t *testing.T) {
 	)
 	require.Equal(t, http.StatusConflict, status, "oauth2 cannot coexist with oauth2_client, body=%v", body)
 
-	// Re-attaching the already attached credential stays idempotent.
 	AttachAuth(t, gwID, coID, oauthClientID)
 }
 

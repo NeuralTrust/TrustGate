@@ -164,10 +164,6 @@ func SlugFromName(name string) string {
 	}
 	out := strings.Trim(b.String(), "-")
 	if out == "" {
-		// Names with no slug-able characters (e.g. fully non-ASCII) would all
-		// collapse to the same fallback and collide on the unique slug index,
-		// so the fallback carries a random suffix (mirrors the migration
-		// backfill, which appends the gateway UUID).
 		return "gateway-" + uuid.NewString()[:8]
 	}
 	return out

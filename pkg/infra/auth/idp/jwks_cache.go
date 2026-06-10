@@ -10,10 +10,7 @@ import (
 )
 
 const (
-	defaultFetchTimeout = 10 * time.Second
-	// defaultRefreshInterval rate-limits forced refreshes (unknown kid or
-	// signature failure) per URL so unauthenticated tokens with random kids
-	// cannot amplify into outbound JWKS fetches.
+	defaultFetchTimeout    = 10 * time.Second
 	defaultRefreshInterval = 30 * time.Second
 )
 
@@ -35,8 +32,6 @@ type jwksEntry struct {
 	inflight       *jwksFetch
 }
 
-// jwksFetch is the shared result of a single in-flight fetch: concurrent
-// callers for the same URL wait on done instead of stampeding the endpoint.
 type jwksFetch struct {
 	done chan struct{}
 	keys jwkSet
@@ -74,9 +69,6 @@ func (c *JWKSCache) Get(ctx context.Context, url string) (jwkSet, error) {
 	return c.awaitFetchLocked(ctx, url, entry)
 }
 
-// Refresh forces a fetch (key rotation suspected). Forced refreshes are
-// rate-limited per URL: within the interval the cached set is served, even if
-// its TTL elapsed, so attacker-crafted tokens cannot trigger fetch storms.
 func (c *JWKSCache) Refresh(ctx context.Context, url string) (jwkSet, error) {
 	c.mu.Lock()
 	entry := c.entryLocked(url)
@@ -100,9 +92,6 @@ func (c *JWKSCache) entryLocked(url string) *jwksEntry {
 	return entry
 }
 
-// awaitFetchLocked joins the in-flight fetch for the URL (starting one if
-// needed) and waits for its shared result. It must be called with c.mu held
-// and releases the lock before blocking.
 func (c *JWKSCache) awaitFetchLocked(ctx context.Context, url string, entry *jwksEntry) (jwkSet, error) {
 	fetch := entry.inflight
 	if fetch == nil {
@@ -129,8 +118,6 @@ func (c *JWKSCache) runFetch(url string, entry *jwksEntry, fetch *jwksFetch) {
 		entry.expiresAt = c.now().Add(c.ttl)
 		fetch.keys = keys
 	case entry.hasKeys:
-		// Stale-while-error: a previously fetched set (even expired) beats
-		// failing outright when the issuer endpoint is flaky.
 		fetch.keys = entry.keys
 	default:
 		fetch.err = err
@@ -140,9 +127,6 @@ func (c *JWKSCache) runFetch(url string, entry *jwksEntry, fetch *jwksFetch) {
 	close(fetch.done)
 }
 
-// fetchRemote deliberately uses a background context: the result is shared by
-// every concurrent caller, so it must not be tied to any single caller's
-// lifetime. The HTTP client timeout (10s default) bounds the request.
 func (c *JWKSCache) fetchRemote(url string) (jwkSet, error) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {

@@ -24,7 +24,7 @@ func TestFinder_FindByID_CacheHit(t *testing.T) {
 	now := time.Now().UTC()
 	mgr := newCacheManager()
 	cached := domain.Rehydrate(id, "Prod", "active", nil, nil, nil, now, now)
-	mgr.GetTTLMap(cache.GatewayTTLName).Set(id.String(), cached)
+	mgr.GetTTLMap(cache.GatewayTTLName).Set("id:"+id.String(), cached)
 
 	finder := appgateway.NewFinder(repo, mgr, newTestLogger())
 	got, err := finder.FindByID(context.Background(), id)
@@ -56,7 +56,7 @@ func TestFinder_FindByID_CacheMiss_PopulatesCache(t *testing.T) {
 		t.Fatal("FindByID did not return the entity loaded from the repository")
 	}
 
-	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get(id.String())
+	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("id:" + id.String())
 	if !ok {
 		t.Fatal("cache was not populated after DB load")
 	}
@@ -118,7 +118,7 @@ func TestFinder_FindByID_PoisonedCache_FallsBackToDB(t *testing.T) {
 	mgr := newCacheManager()
 	// Wrong type stored under the key — finder must drop it and load
 	// from the DB rather than serving garbage.
-	mgr.GetTTLMap(cache.GatewayTTLName).Set(id.String(), "not a gateway")
+	mgr.GetTTLMap(cache.GatewayTTLName).Set("id:"+id.String(), "not a gateway")
 
 	finder := appgateway.NewFinder(repo, mgr, newTestLogger())
 	got, err := finder.FindByID(context.Background(), id)
@@ -128,7 +128,7 @@ func TestFinder_FindByID_PoisonedCache_FallsBackToDB(t *testing.T) {
 	if got != fromDB {
 		t.Fatal("finder did not fall back to the database on poisoned cache")
 	}
-	cached, _ := mgr.GetTTLMap(cache.GatewayTTLName).Get(id.String())
+	cached, _ := mgr.GetTTLMap(cache.GatewayTTLName).Get("id:" + id.String())
 	if _, ok := cached.(*domain.Gateway); !ok {
 		t.Fatal("cache was not refreshed with a proper entity after poison fallback")
 	}

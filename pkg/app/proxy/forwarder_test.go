@@ -220,8 +220,6 @@ func TestForward_DisabledLBConfigIsIgnored(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	bk := backendFor(gatewayID, "openai")
 	rc := routableConsumerWith(gatewayID, bk)
-	// A disabled lb_config with an algorithm the factory cannot build must be
-	// ignored entirely: the forwarder falls back to the default round-robin.
 	rc.Consumer.LBConfig = &domainconsumer.LBConfig{Enabled: false, Algorithm: "unsupported-algorithm"}
 
 	invoker := proxymocks.NewProviderInvoker(t)

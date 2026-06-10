@@ -38,9 +38,6 @@ func IsValidType(t Type) bool {
 	return false
 }
 
-// ConflictingAttachmentTypes returns the auth types that cannot coexist with t
-// on the same consumer: a consumer holds at most one oauth2_client credential,
-// and oauth2_client is mutually exclusive with oauth2.
 func ConflictingAttachmentTypes(t Type) []Type {
 	switch t {
 	case TypeOAuth2Client:

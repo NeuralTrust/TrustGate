@@ -32,10 +32,9 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	consumerDataMap := cache.NewTTLMap(cache.ConsumerDataCacheTTL)
 	loadBalancerMap := cache.NewTTLMap(cache.LoadBalancerCacheTTL)
 	roleMap := cache.NewTTLMap(cache.RoleCacheTTL)
-	gatewayMap.Set(gatewayID, gw)
 	gatewayMap.Set("id:"+gatewayID, gw)
 	gatewayMap.Set("slug:acme", gw)
-	gatewayMap.Set(otherID, "keep")
+	gatewayMap.Set("id:"+otherID, "keep")
 	consumerDataMap.Set(gatewayID, "aggregate")
 	consumerDataMap.Set(otherID, "keep")
 	loadBalancerMap.Set(gatewayID+":consumer-1", "lb")
@@ -55,9 +54,6 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 		t.Fatalf("OnEvent error: %v", err)
 	}
 
-	if _, ok := gatewayMap.Get(gatewayID); ok {
-		t.Fatal("gateway entry was not evicted")
-	}
 	if _, ok := gatewayMap.Get("id:" + gatewayID); ok {
 		t.Fatal("gateway id alias was not evicted")
 	}
@@ -73,7 +69,7 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	if _, ok := roleMap.Get(roleID); ok {
 		t.Fatal("role entry was not evicted")
 	}
-	if _, ok := gatewayMap.Get(otherID); !ok {
+	if _, ok := gatewayMap.Get("id:" + otherID); !ok {
 		t.Fatal("unrelated gateway entry must be preserved")
 	}
 	if _, ok := consumerDataMap.Get(otherID); !ok {

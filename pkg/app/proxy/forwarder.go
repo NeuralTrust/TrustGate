@@ -527,8 +527,6 @@ func (f *forwarder) loadBalancerFor(rc *appconsumer.RoutableConsumer) (*loadbala
 		}
 		lbAlgorithm := algorithm.RoundRobin
 		var embeddingConfig *domain.EmbeddingConfig
-		// A disabled lb_config must behave exactly like no lb_config: its
-		// algorithm and embedding settings are ignored.
 		if lbCfg := rc.Consumer.LBConfig; lbCfg != nil && lbCfg.Enabled {
 			if lbCfg.Algorithm != "" {
 				lbAlgorithm = lbCfg.Algorithm

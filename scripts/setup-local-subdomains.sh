@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Points any {slug}.gw.agentgateway.sandbox at 127.0.0.1 on macOS.
+# Points any {slug}.gw.neuraltrust.sandbox at 127.0.0.1 on macOS.
 # /etc/hosts cannot express wildcards, so this uses dnsmasq (Homebrew) plus a
 # scoped /etc/resolver entry. DNS only maps the host: the proxy still listens
-# on its own port (8081 by default), e.g. http://acme.gw.agentgateway.sandbox:8081
+# on its own port (8081 by default), e.g. http://acme.gw.neuraltrust.sandbox:8081
 set -euo pipefail
 
-DOMAIN="${GATEWAY_SANDBOX_DOMAIN:-gw.agentgateway.sandbox}"
+DOMAIN="${GATEWAY_SANDBOX_DOMAIN:-gw.neuraltrust.sandbox}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "error: this script only supports macOS" >&2

@@ -49,9 +49,6 @@ func (m ModelPolicies) Validate(validRegistryIDs map[ids.RegistryID]struct{}) er
 }
 
 func (p ModelPolicy) validate(registryID ids.RegistryID) error {
-	// An explicitly empty allow-list is ambiguous: enforcement (and the
-	// omitempty JSON round-trip) would silently treat it as "no restriction".
-	// Reject it so intent is always explicit: omit the field to allow all.
 	if p.Allowed != nil && len(p.Allowed) == 0 {
 		return fmt.Errorf("%w: empty allow-list for registry %s (omit allowed to permit all models)", ErrInvalidModelPolicy, registryID)
 	}

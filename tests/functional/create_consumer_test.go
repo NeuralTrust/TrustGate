@@ -30,7 +30,6 @@ func TestCreateConsumer_Success(t *testing.T) {
 	assert.Equal(t, "LLM", body["type"])
 	assert.Equal(t, true, body["active"])
 
-	// A freshly created consumer carries no associations until they are linked.
 	beIDs, ok := body["registry_ids"].([]any)
 	require.True(t, ok, "registry_ids missing: %v", body)
 	assert.Empty(t, beIDs)

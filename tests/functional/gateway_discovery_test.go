@@ -15,13 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// gatewaySlugHeader mirrors resolver.HeaderGatewaySlug: it carries the target
-// gateway slug under header-based discovery (the default mode the suite boots
-// with, since .env.functional does not override GATEWAY_DISCOVERY_MODE).
 const gatewaySlugHeader = "X-AG-Gateway-Slug"
 
-// setupDiscoveryRoute provisions a gateway with one registry, one consumer and
-// an API key, returning the gateway slug plus the credentials to call the proxy.
 func setupDiscoveryRoute(t *testing.T) (slug, apiKey, path string) {
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("disc-gw")})
@@ -40,8 +35,6 @@ func setupDiscoveryRoute(t *testing.T) (slug, apiKey, path string) {
 	return slug, apiKey, path
 }
 
-// discoveryPost posts a chat body to the proxy controlling exactly how the
-// gateway is identified: via the slug header, via the request host, or neither.
 func discoveryPost(t *testing.T, apiKey, path, host, headerSlug string) (int, []byte) {
 	t.Helper()
 	buf, err := json.Marshal(chatRequest(false))
@@ -67,9 +60,6 @@ func discoveryPost(t *testing.T, apiKey, path, host, headerSlug string) (int, []
 	return resp.StatusCode, raw
 }
 
-// TestProxyE2E_GatewayDiscovery pins the gateway-match contract under the
-// default header discovery mode: the X-AG-Gateway-Slug header identifies the
-// gateway when present, and the subdomain host is the fallback when it is not.
 func TestProxyE2E_GatewayDiscovery(t *testing.T) {
 	defer Track(t, "GatewayDiscovery")()
 	slug, apiKey, path := setupDiscoveryRoute(t)

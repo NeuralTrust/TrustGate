@@ -2,9 +2,6 @@ package catalog
 
 import "github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 
-// AuthFieldType enumerates the credential field kinds the admin UI can render
-// when building a provider connection form. It mirrors the compact vocabulary
-// used by the policy catalog's settings schema.
 type AuthFieldType string
 
 const (
@@ -12,7 +9,6 @@ const (
 	AuthFieldTypeBoolean AuthFieldType = "boolean"
 )
 
-// AuthField describes a single credential input for a provider auth type.
 type AuthField struct {
 	Key         string        `json:"key"`
 	Label       string        `json:"label"`
@@ -22,9 +18,6 @@ type AuthField struct {
 	Secret      bool          `json:"secret,omitempty"`
 }
 
-// AuthTypeOption describes one authentication method a provider supports and the
-// fields required to configure it. The Type matches the auth type accepted by
-// the registry create/update API (api_key, azure, aws, gcp_service_account).
 type AuthTypeOption struct {
 	Type        string      `json:"type"`
 	Label       string      `json:"label"`
@@ -32,9 +25,6 @@ type AuthTypeOption struct {
 	Fields      []AuthField `json:"fields"`
 }
 
-// Curated auth options shared across providers. They are hand-authored from the
-// registry auth payloads (domain/registry.TargetAuth) so the catalog stays in
-// sync with what the registry API actually accepts.
 var (
 	apiKeyAuthOption = AuthTypeOption{
 		Type:  "api_key",
@@ -169,9 +159,6 @@ var (
 	}
 )
 
-// providerAuthCatalog maps each provider code to the authentication methods it
-// supports. Only methods that the registry can actually use at runtime are
-// advertised, so the catalog never surfaces an unsupported auth type.
 var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderOpenAI:           {apiKeyAuthOption},
 	providers.ProviderOpenAICompatible: {apiKeyAuthOption},
@@ -184,9 +171,6 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderGroq:             {apiKeyAuthOption},
 }
 
-// ProviderAuthOptions returns the supported authentication methods for a
-// provider code. It returns an empty (non-nil) slice for unknown providers so
-// the API always emits a JSON array.
 func ProviderAuthOptions(code string) []AuthTypeOption {
 	if opts, ok := providerAuthCatalog[code]; ok {
 		return opts
