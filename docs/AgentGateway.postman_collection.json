@@ -960,7 +960,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a-{{$guid}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"headers\": {}\n}"
+              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a-{{$guid}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"model_policies\": {\n        \"allowed\": [\"gpt-4o\"],\n        \"default\": \"gpt-4o\"\n      }\n    }\n  ]\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
@@ -1042,7 +1042,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a-{{$guid}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\"gpt-4o\"],\n      \"default\": \"gpt-4o\"\n    }\n  ],\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\"5xx\"],\n    \"chain\": [\"{{registry_id}}\"],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000,\n      \"max_cost_usd\": 0.5\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a-{{$guid}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"model_policies\": {\n        \"allowed\": [\"gpt-4o\"],\n        \"default\": \"gpt-4o\"\n      }\n    }\n  ],\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\"http_5xx\"],\n    \"chain\": [\"{{registry_id}}\"],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000,\n      \"max_cost_usd\": 0.5\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
