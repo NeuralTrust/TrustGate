@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
@@ -283,9 +284,59 @@ func (r *Repository) DetachRole(ctx context.Context, consumerID ids.ConsumerID, 
 }
 
 func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error {
-	const query = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, authID); err != nil {
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		if err := lockConsumerRow(ctx, tx, consumerID); err != nil {
+			return err
+		}
+		var authType string
+		err := tx.QueryRow(ctx, `SELECT type FROM auths WHERE id = $1`, authID).Scan(&authType)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		if err != nil {
+			return mapPgError(err)
+		}
+		if err := ensureNoConflictingAuthAttachment(ctx, tx, consumerID, authID, authdomain.Type(authType)); err != nil {
+			return err
+		}
+		const query = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+		if _, err := tx.Exec(ctx, query, consumerID, authID); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	})
+}
+
+func ensureNoConflictingAuthAttachment(
+	ctx context.Context,
+	tx pgx.Tx,
+	consumerID ids.ConsumerID,
+	authID ids.AuthID,
+	authType authdomain.Type,
+) error {
+	conflicting := authdomain.ConflictingAttachmentTypes(authType)
+	if len(conflicting) == 0 {
+		return nil
+	}
+	types := make([]string, len(conflicting))
+	for i, t := range conflicting {
+		types[i] = string(t)
+	}
+	const query = `
+		SELECT EXISTS (
+			SELECT 1 FROM consumer_auth ca
+			JOIN auths a ON a.id = ca.auth_id
+			WHERE ca.consumer_id = $1 AND ca.auth_id <> $2 AND a.type = ANY($3)
+		)`
+	var exists bool
+	if err := tx.QueryRow(ctx, query, consumerID, authID, types).Scan(&exists); err != nil {
 		return mapPgError(err)
+	}
+	if exists {
+		return fmt.Errorf(
+			"consumer already has an attached auth incompatible with type %q (oauth2 and oauth2_client are mutually exclusive and at most one oauth2_client is allowed): %w",
+			authType, commonerrors.ErrConflict,
+		)
 	}
 	return nil
 }
