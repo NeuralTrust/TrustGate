@@ -1,7 +1,6 @@
-package middleware
+package resolver
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -96,15 +95,10 @@ func (r ChainedIdentityResolver) Resolve(
 		return nil, ErrUnauthenticated
 	}
 	if rc != nil && rc.Consumer != nil && rc.Consumer.RoutingMode == consumerdomain.RoutingModeInline {
+		// oauth2 and oauth2_client are mutually exclusive per consumer,
+		// enforced at attach time.
 		if hasAttachedAuthType(rc, authdomain.TypeOAuth2Client) {
-			authCtx, err := r.oauth2Client.Resolve(c, gw, rc)
-			// A credential mismatch on oauth2_client must not shadow a valid
-			// oauth2 JWT when both auth types are attached; malformed requests
-			// (ErrInvalidAuthRequest) still fail fast.
-			if errors.Is(err, ErrUnauthenticated) && hasAttachedAuthType(rc, authdomain.TypeOAuth2) {
-				return r.oauth2.Resolve(c, gw, rc)
-			}
-			return authCtx, err
+			return r.oauth2Client.Resolve(c, gw, rc)
 		}
 		return r.oauth2.Resolve(c, gw, rc)
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
@@ -15,32 +16,21 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-const HeaderAPIKey = "X-AG-API-Key" // #nosec G101 -- HTTP header name, not a credential
-
-var (
-	ErrUnauthenticated = errors.New("unauthenticated")
-	ErrForbidden       = errors.New("forbidden")
-)
-
-type IdentityResolver interface {
-	Resolve(c *fiber.Ctx, gw *gatewaydomain.Gateway, rc *appconsumer.RoutableConsumer) (*appauth.AuthContext, error)
-}
-
 type AuthMiddleware struct {
-	resolver        IdentityResolver
+	resolver        resolver.IdentityResolver
 	dataFinder      appconsumer.DataFinder
-	gatewayResolver GatewayResolver
+	gatewayResolver resolver.GatewayResolver
 	roleResolver    approle.IDPResolver
 }
 
 func NewAuthMiddleware(
-	resolver IdentityResolver,
+	identityResolver resolver.IdentityResolver,
 	dataFinder appconsumer.DataFinder,
-	gatewayResolver GatewayResolver,
+	gatewayResolver resolver.GatewayResolver,
 	roleResolver approle.IDPResolver,
 ) *AuthMiddleware {
 	return &AuthMiddleware{
-		resolver:        resolver,
+		resolver:        identityResolver,
 		dataFinder:      dataFinder,
 		gatewayResolver: gatewayResolver,
 		roleResolver:    roleResolver,
@@ -66,8 +56,8 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		}
 		authCtx, err := m.resolver.Resolve(c, gw, rc)
 		if err != nil {
-			if errors.Is(err, ErrUnauthenticated) && apiKeyAttachedElsewhere(c.Get(HeaderAPIKey), data, rc) {
-				return forbidden(c, ErrForbidden)
+			if errors.Is(err, resolver.ErrUnauthenticated) && apiKeyAttachedElsewhere(c.Get(resolver.HeaderAPIKey), data, rc) {
+				return forbidden(c, resolver.ErrForbidden)
 			}
 			return writeAuthError(c, err)
 		}
@@ -84,7 +74,7 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 			}
 			authCtx.RoleIDs = intersectRoleIDs(roleIDs, rc.Consumer.RoleIDs)
 			if len(authCtx.RoleIDs) == 0 {
-				return forbidden(c, ErrForbidden)
+				return forbidden(c, resolver.ErrForbidden)
 			}
 		}
 		m.attach(c, authCtx, gw, data, rc)
@@ -99,7 +89,7 @@ func writeAuthError(c *fiber.Ctx, err error) error {
 	if errors.Is(err, commonerrors.ErrInvalidConfig) || errors.Is(err, commonerrors.ErrValidation) {
 		return invalidAuthRequest(c, err)
 	}
-	if errors.Is(err, ErrForbidden) {
+	if errors.Is(err, resolver.ErrForbidden) {
 		return forbidden(c, err)
 	}
 	return unauthenticated(c)
@@ -114,14 +104,14 @@ func isAuthMappableError(err error) bool {
 		errors.Is(err, appauth.ErrAmbiguousIDPConfig) ||
 		errors.Is(err, commonerrors.ErrInvalidConfig) ||
 		errors.Is(err, commonerrors.ErrValidation) ||
-		errors.Is(err, ErrForbidden) ||
-		errors.Is(err, ErrUnauthenticated)
+		errors.Is(err, resolver.ErrForbidden) ||
+		errors.Is(err, resolver.ErrUnauthenticated)
 }
 
 func unauthenticated(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusUnauthorized).JSON(helpers.ErrorBody{
 		Error:   "unauthenticated",
-		Message: ErrUnauthenticated.Error(),
+		Message: resolver.ErrUnauthenticated.Error(),
 	})
 }
 
@@ -174,18 +164,6 @@ func (m *AuthMiddleware) attach(
 	ctx = appconsumer.WithConsumer(ctx, rc)
 	ctx = appgateway.WithGateway(ctx, gw)
 	c.SetUserContext(ctx)
-}
-
-func hasAttachedAuthType(rc *appconsumer.RoutableConsumer, authType authdomain.Type) bool {
-	if rc == nil {
-		return false
-	}
-	for _, a := range rc.Auths {
-		if a != nil && a.Enabled && a.Type == authType {
-			return true
-		}
-	}
-	return false
 }
 
 func apiKeyAttachedElsewhere(rawKey string, data *appconsumer.Data, rc *appconsumer.RoutableConsumer) bool {

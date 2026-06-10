@@ -12,6 +12,7 @@ import (
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
+	"github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
@@ -93,7 +94,7 @@ func TestAuthMiddleware_APIKeyInlineSuccess(t *testing.T) {
 
 	req := httptest.NewRequest(fiber.MethodPost, "/chat", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(middleware.HeaderAPIKey, rawKey)
+	req.Header.Set(resolver.HeaderAPIKey, rawKey)
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
@@ -126,7 +127,7 @@ func TestAuthMiddleware_APIKeyValidElsewhereForbidden(t *testing.T) {
 
 	req := httptest.NewRequest(fiber.MethodPost, "/chat", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(middleware.HeaderAPIKey, otherRawKey)
+	req.Header.Set(resolver.HeaderAPIKey, otherRawKey)
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
@@ -139,7 +140,7 @@ func TestAuthMiddleware_APIKeyUnknownUnauthorized(t *testing.T) {
 
 	req := httptest.NewRequest(fiber.MethodPost, "/chat", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(middleware.HeaderAPIKey, "ag_unknown")
+	req.Header.Set(resolver.HeaderAPIKey, "ag_unknown")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
@@ -199,38 +200,6 @@ func TestAuthMiddleware_OAuth2ClientAcquisitionFailureUnauthorized(t *testing.T)
 	req := httptest.NewRequest(fiber.MethodPost, "/chat", nil)
 	req.Host = "acme.gw.neuraltrust.ai"
 	req.Header.Set(fiber.HeaderAuthorization, "Bearer acquired-token")
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-}
-
-func TestAuthMiddleware_OAuth2FallbackWhenOAuth2ClientMismatch(t *testing.T) {
-	t.Parallel()
-	gw, rc := inlineConsumerWithOAuth2ClientAndOAuth(t)
-	oauthVerifier := fakeOAuth2Verifier{claims: &appauth.VerifiedClaims{
-		Subject: "user-1",
-		Claims:  map[string]any{"sub": "user-1"},
-	}}
-	app := newAuthTestAppWithTokens(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), oauthVerifier, fakeTokenSource{token: "acquired-token"}, fakeIDPVerifier{}, nil)
-
-	req := httptest.NewRequest(fiber.MethodPost, "/chat", nil)
-	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(fiber.HeaderAuthorization, "Bearer a-valid-oauth2-jwt")
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, fiber.StatusOK, resp.StatusCode,
-		"an oauth2_client mismatch must fall back to the oauth2 resolver when both auths are attached")
-}
-
-func TestAuthMiddleware_OAuth2FallbackStillRejectsInvalidToken(t *testing.T) {
-	t.Parallel()
-	gw, rc := inlineConsumerWithOAuth2ClientAndOAuth(t)
-	oauthVerifier := fakeOAuth2Verifier{err: fmt.Errorf("signature mismatch")}
-	app := newAuthTestAppWithTokens(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), oauthVerifier, fakeTokenSource{token: "acquired-token"}, fakeIDPVerifier{}, nil)
-
-	req := httptest.NewRequest(fiber.MethodPost, "/chat", nil)
-	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(fiber.HeaderAuthorization, "Bearer bogus-token")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
@@ -306,14 +275,14 @@ func TestAuthMiddleware_ErrorMatrix(t *testing.T) {
 		{
 			name:           "malformed host config returns 400",
 			gatewayErr:     fmt.Errorf("%w: malformed host", appauth.ErrInvalidAuthRequest),
-			headers:        map[string]string{middleware.HeaderAPIKey: "ag_any"},
+			headers:        map[string]string{resolver.HeaderAPIKey: "ag_any"},
 			wantStatusCode: fiber.StatusBadRequest,
 			wantError:      "invalid_auth_request",
 		},
 		{
 			name:           "invalid proxy auth config returns 400",
 			gatewayErr:     fmt.Errorf("%w: malformed auth config", commonerrors.ErrInvalidConfig),
-			headers:        map[string]string{middleware.HeaderAPIKey: "ag_any"},
+			headers:        map[string]string{resolver.HeaderAPIKey: "ag_any"},
 			wantStatusCode: fiber.StatusBadRequest,
 			wantError:      "invalid_auth_request",
 		},
@@ -326,14 +295,14 @@ func TestAuthMiddleware_ErrorMatrix(t *testing.T) {
 		{
 			name:           "path miss returns 404",
 			data:           appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{}),
-			headers:        map[string]string{middleware.HeaderAPIKey: "ag_any"},
+			headers:        map[string]string{resolver.HeaderAPIKey: "ag_any"},
 			wantStatusCode: fiber.StatusNotFound,
 			wantError:      "not_found",
 		},
 		{
 			name:           "unexpected gateway resolution failure returns 500",
 			gatewayErr:     fmt.Errorf("database is down"),
-			headers:        map[string]string{middleware.HeaderAPIKey: "ag_any"},
+			headers:        map[string]string{resolver.HeaderAPIKey: "ag_any"},
 			wantStatusCode: fiber.StatusInternalServerError,
 			wantError:      "internal_error",
 		},
@@ -377,7 +346,7 @@ func TestAuthMiddleware_RejectsHeaderOnlyGatewayIdentity(t *testing.T) {
 
 	req := httptest.NewRequest(fiber.MethodPost, "/chat", nil)
 	req.Header.Set("X-AG-"+"Gateway-ID", ids.New[ids.GatewayKind]().String())
-	req.Header.Set(middleware.HeaderAPIKey, "ag_any")
+	req.Header.Set(resolver.HeaderAPIKey, "ag_any")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
@@ -415,7 +384,7 @@ type middlewareRoleResolver interface {
 
 func newAuthTestAppWithResolver(
 	t *testing.T,
-	gatewayResolver middleware.GatewayResolver,
+	gatewayResolver resolver.GatewayResolver,
 	data *appconsumer.Data,
 	oauthVerifier fakeOAuth2Verifier,
 	tokenSource fakeTokenSource,
@@ -426,12 +395,12 @@ func newAuthTestAppWithResolver(
 	if roleResolver == nil {
 		roleResolver = fakeRoleResolver{}
 	}
-	apiKey := middleware.NewAPIKeyIdentityResolver()
-	oauth2 := middleware.NewOAuth2IdentityResolver(oauthVerifier)
-	oauth2Client := middleware.NewOAuth2ClientIdentityResolver(tokenSource)
-	idp := middleware.NewIDPIdentityResolver(appauth.NewIDPFinder(idpVerifier), idpVerifier)
+	apiKey := resolver.NewAPIKeyIdentityResolver()
+	oauth2 := resolver.NewOAuth2IdentityResolver(oauthVerifier)
+	oauth2Client := resolver.NewOAuth2ClientIdentityResolver(tokenSource)
+	idp := resolver.NewIDPIdentityResolver(appauth.NewIDPFinder(idpVerifier), idpVerifier)
 	authMiddleware := middleware.NewAuthMiddleware(
-		middleware.NewIdentityResolver(apiKey, oauth2, oauth2Client, idp),
+		resolver.NewIdentityResolver(apiKey, oauth2, oauth2Client, idp),
 		fakeDataFinder{data: data},
 		gatewayResolver,
 		roleResolver,
@@ -526,25 +495,6 @@ func inlineConsumerWithOAuth2Client(t *testing.T) (*gatewaydomain.Gateway, appco
 			}},
 		}},
 	}
-	return gw, rc
-}
-
-func inlineConsumerWithOAuth2ClientAndOAuth(t *testing.T) (*gatewaydomain.Gateway, appconsumer.RoutableConsumer) {
-	t.Helper()
-	gw, rc := inlineConsumerWithOAuth2Client(t)
-	oauthAuthID := ids.New[ids.AuthKind]()
-	rc.Consumer.AuthIDs = append(rc.Consumer.AuthIDs, oauthAuthID)
-	rc.Auths = append(rc.Auths, &authdomain.Auth{
-		ID:        oauthAuthID,
-		GatewayID: gw.ID,
-		Type:      authdomain.TypeOAuth2,
-		Enabled:   true,
-		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
-			Issuer:    "https://issuer.example.com",
-			Audiences: []string{"gateway"},
-			JWKSURL:   "https://issuer.example.com/jwks",
-		}},
-	})
 	return gw, rc
 }
 

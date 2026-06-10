@@ -3,7 +3,9 @@ package modules
 import (
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
+	"github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
+	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	idpauth "github.com/NeuralTrust/AgentGateway/pkg/infra/auth/idp"
@@ -59,22 +61,24 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewSubdomainGatewayResolver); err != nil {
+	if err := c.Provide(func(cfg *config.Config, finder appgateway.Finder) resolver.GatewayResolver {
+		return resolver.NewGatewayResolver(finder, cfg.Server.GatewayDiscoveryMode, cfg.Server.GatewayBaseDomain)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewAPIKeyIdentityResolver); err != nil {
+	if err := c.Provide(resolver.NewAPIKeyIdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewOAuth2IdentityResolver); err != nil {
+	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewOAuth2ClientIdentityResolver); err != nil {
+	if err := c.Provide(resolver.NewOAuth2ClientIdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewIDPIdentityResolver); err != nil {
+	if err := c.Provide(resolver.NewIDPIdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(middleware.NewIdentityResolver); err != nil {
+	if err := c.Provide(resolver.NewIdentityResolver); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewAuthMiddleware); err != nil {

@@ -1,4 +1,4 @@
-package middleware
+package resolver
 
 import (
 	"context"
@@ -31,7 +31,7 @@ func TestParseGatewaySlugFromHost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseGatewaySlugFromHost(tt.host, cloudGatewayBaseDomain)
+			got, err := parseGatewaySlugFromHost(tt.host, defaultGatewayBaseDomain)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -48,11 +48,25 @@ func TestParseGatewaySlugFromHost(t *testing.T) {
 	}
 }
 
+func TestParseGatewaySlugFromHost_CustomBaseDomain(t *testing.T) {
+	t.Parallel()
+	got, err := parseGatewaySlugFromHost("acme.gw.agentgateway.sandbox:8081", "gw.agentgateway.sandbox")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "acme" {
+		t.Fatalf("slug = %q, want acme", got)
+	}
+	if _, err := parseGatewaySlugFromHost("acme.gw.neuraltrust.ai", "gw.agentgateway.sandbox"); err == nil {
+		t.Fatal("expected error for host outside the configured base domain")
+	}
+}
+
 func TestSubdomainGatewayResolver_UsesHostNotForwardedHost(t *testing.T) {
 	t.Parallel()
 	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
 	finder := fakeGatewayFinder{bySlug: map[string]*gatewaydomain.Gateway{"acme": gw}}
-	resolver := NewSubdomainGatewayResolver(&finder)
+	resolver := NewSubdomainGatewayResolver(&finder, "")
 
 	var (
 		got *gatewaydomain.Gateway
@@ -110,7 +124,7 @@ func TestSubdomainGatewayResolver_ErrorMapping(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			resolver := NewSubdomainGatewayResolver(&tt.finder)
+			resolver := NewSubdomainGatewayResolver(&tt.finder, "")
 
 			var resolveErr error
 			app := fiber.New()
@@ -134,6 +148,101 @@ func TestSubdomainGatewayResolver_ErrorMapping(t *testing.T) {
 				t.Fatalf("err = %v, want it to wrap %v", resolveErr, tt.wantWrapped)
 			}
 		})
+	}
+}
+
+func TestHeaderGatewayResolver(t *testing.T) {
+	t.Parallel()
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+
+	tests := []struct {
+		name     string
+		header   string
+		host     string
+		wantGW   bool
+		wantSlug string
+		wantErr  bool
+	}{
+		{name: "header carries the slug", header: "acme", host: "localhost:8081", wantGW: true, wantSlug: "acme"},
+		{name: "header is normalized", header: "  ACME  ", host: "localhost:8081", wantGW: true, wantSlug: "acme"},
+		{name: "no header falls back to host", host: "acme.gw.neuraltrust.ai", wantGW: true, wantSlug: "acme"},
+		{name: "header takes precedence over a valid host", header: "unknown", host: "acme.gw.neuraltrust.ai", wantErr: true, wantSlug: "unknown"},
+		{name: "invalid header slug", header: "-bad-", host: "localhost:8081", wantErr: true},
+		{name: "unknown header slug", header: "ghost", host: "localhost:8081", wantErr: true, wantSlug: "ghost"},
+		{name: "no header and non-subdomain host", host: "localhost:8081", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			finder := fakeGatewayFinder{bySlug: map[string]*gatewaydomain.Gateway{"acme": gw}}
+			resolver := NewGatewayResolver(&finder, "header", "")
+
+			var (
+				got        *gatewaydomain.Gateway
+				resolveErr error
+			)
+			app := fiber.New()
+			app.Get("/", func(c *fiber.Ctx) error {
+				got, resolveErr = resolver.Resolve(c)
+				return c.SendStatus(fiber.StatusOK)
+			})
+			req := httptest.NewRequest(fiber.MethodGet, "/", nil)
+			req.Host = tt.host
+			if tt.header != "" {
+				req.Header.Set(HeaderGatewaySlug, tt.header)
+			}
+			if _, err := app.Test(req); err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+
+			if tt.wantErr {
+				if resolveErr == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !errors.Is(resolveErr, appauth.ErrInvalidAuthRequest) {
+					t.Fatalf("err = %v, want ErrInvalidAuthRequest", resolveErr)
+				}
+			} else {
+				if resolveErr != nil {
+					t.Fatalf("Resolve error: %v", resolveErr)
+				}
+				if !tt.wantGW || got != gw {
+					t.Fatal("resolver did not return the expected gateway")
+				}
+			}
+			if tt.wantSlug != "" && finder.lastSlug != tt.wantSlug {
+				t.Fatalf("finder slug = %q, want %q", finder.lastSlug, tt.wantSlug)
+			}
+		})
+	}
+}
+
+func TestNewGatewayResolver_SubdomainModeIgnoresHeader(t *testing.T) {
+	t.Parallel()
+	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
+	finder := fakeGatewayFinder{bySlug: map[string]*gatewaydomain.Gateway{"acme": gw}}
+	resolver := NewGatewayResolver(&finder, "subdomain", "")
+
+	var resolveErr error
+	app := fiber.New()
+	app.Get("/", func(c *fiber.Ctx) error {
+		_, resolveErr = resolver.Resolve(c)
+		return c.SendStatus(fiber.StatusOK)
+	})
+	req := httptest.NewRequest(fiber.MethodGet, "/", nil)
+	req.Host = "localhost:8081"
+	req.Header.Set(HeaderGatewaySlug, "acme")
+	if _, err := app.Test(req); err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+
+	if resolveErr == nil {
+		t.Fatal("subdomain mode must ignore the slug header and fail on a non-subdomain host")
+	}
+	if !errors.Is(resolveErr, appauth.ErrInvalidAuthRequest) {
+		t.Fatalf("err = %v, want ErrInvalidAuthRequest", resolveErr)
 	}
 }
 

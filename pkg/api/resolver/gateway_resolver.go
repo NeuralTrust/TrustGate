@@ -1,4 +1,4 @@
-package middleware
+package resolver
 
 import (
 	"errors"
@@ -14,10 +14,24 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-const cloudGatewayBaseDomain = "gw.neuraltrust.ai"
+const defaultGatewayBaseDomain = "gw.neuraltrust.ai"
+const HeaderGatewaySlug = "X-AG-Gateway-Slug"
+
+const (
+	gatewayDiscoveryModeHeader    = "header"
+	gatewayDiscoveryModeSubdomain = "subdomain"
+)
 
 type GatewayResolver interface {
 	Resolve(c *fiber.Ctx) (*gatewaydomain.Gateway, error)
+}
+
+func NewGatewayResolver(finder appgateway.Finder, mode, baseDomain string) GatewayResolver {
+	subdomain := NewSubdomainGatewayResolver(finder, baseDomain)
+	if strings.ToLower(strings.TrimSpace(mode)) == gatewayDiscoveryModeSubdomain {
+		return subdomain
+	}
+	return &HeaderGatewayResolver{finder: finder, hostFallback: subdomain}
 }
 
 type SubdomainGatewayResolver struct {
@@ -25,10 +39,14 @@ type SubdomainGatewayResolver struct {
 	baseDomain string
 }
 
-func NewSubdomainGatewayResolver(finder appgateway.Finder) GatewayResolver {
+func NewSubdomainGatewayResolver(finder appgateway.Finder, baseDomain string) GatewayResolver {
+	baseDomain = strings.Trim(strings.ToLower(strings.TrimSpace(baseDomain)), ".")
+	if baseDomain == "" {
+		baseDomain = defaultGatewayBaseDomain
+	}
 	return &SubdomainGatewayResolver{
 		finder:     finder,
-		baseDomain: cloudGatewayBaseDomain,
+		baseDomain: baseDomain,
 	}
 }
 
@@ -37,10 +55,34 @@ func (r *SubdomainGatewayResolver) Resolve(c *fiber.Ctx) (*gatewaydomain.Gateway
 	if err != nil {
 		return nil, err
 	}
-	gw, err := r.finder.FindBySlug(c.UserContext(), slug)
+	return resolveGatewayBySlug(c, r.finder, slug)
+}
+
+type HeaderGatewayResolver struct {
+	finder       appgateway.Finder
+	hostFallback GatewayResolver
+}
+
+func (r *HeaderGatewayResolver) Resolve(c *fiber.Ctx) (*gatewaydomain.Gateway, error) {
+	raw := strings.TrimSpace(c.Get(HeaderGatewaySlug))
+	if raw == "" {
+		return r.hostFallback.Resolve(c)
+	}
+	slug := gatewaydomain.NormalizeSlug(raw)
+	if !gatewaydomain.IsValidSlug(slug) {
+		return nil, fmt.Errorf(
+			"%w: header %s contains an invalid gateway slug",
+			appauth.ErrInvalidAuthRequest, HeaderGatewaySlug,
+		)
+	}
+	return resolveGatewayBySlug(c, r.finder, slug)
+}
+
+func resolveGatewayBySlug(c *fiber.Ctx, finder appgateway.Finder, slug string) (*gatewaydomain.Gateway, error) {
+	gw, err := finder.FindBySlug(c.UserContext(), slug)
 	if err != nil {
 		if errors.Is(err, commonerrors.ErrNotFound) {
-			return nil, fmt.Errorf("%w: gateway host is unknown", appauth.ErrInvalidAuthRequest)
+			return nil, fmt.Errorf("%w: gateway %q is unknown", appauth.ErrInvalidAuthRequest, slug)
 		}
 		return nil, fmt.Errorf("resolve gateway by slug: %w", err)
 	}

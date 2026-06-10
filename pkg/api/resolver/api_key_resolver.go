@@ -1,4 +1,4 @@
-package middleware
+package resolver
 
 import (
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
