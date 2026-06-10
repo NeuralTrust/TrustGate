@@ -8,10 +8,12 @@ import (
 	"net/url"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
+	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
@@ -160,7 +162,7 @@ func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer
 	if !ok {
 		return ids.GatewayID{}, nil, errNotAuthenticated
 	}
-	authID, ok := appconsumer.AuthIDFromContext(c.UserContext())
+	authCtx, ok := appauth.AuthContextFromContext(c.UserContext())
 	if !ok {
 		return ids.GatewayID{}, nil, errNotAuthenticated
 	}
@@ -168,11 +170,14 @@ func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer
 	if !ok || data == nil {
 		return ids.GatewayID{}, nil, errNotAuthenticated
 	}
-	rc, ok := data.MatchPath(c.Path())
+	rc, ok := appconsumer.ConsumerFromContext(c.UserContext())
 	if !ok {
-		return ids.GatewayID{}, nil, errPathNotFound
+		rc, ok = data.MatchPath(c.Path())
+		if !ok {
+			return ids.GatewayID{}, nil, errPathNotFound
+		}
 	}
-	if !consumerHasAuth(rc, authID) {
+	if !isAuthorizedForConsumer(rc, authCtx) {
 		return ids.GatewayID{}, nil, errForbidden
 	}
 	return gatewayID, rc, nil
@@ -189,12 +194,51 @@ func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 	rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
 }
 
+func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) bool {
+	if rc == nil || rc.Consumer == nil || authCtx == nil {
+		return false
+	}
+	switch rc.Consumer.RoutingMode {
+	case "", domainconsumer.RoutingModeInline:
+		return isInlineAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)
+	case domainconsumer.RoutingModeRoleBased:
+		return authCtx.Method == appauth.MethodIDP && consumerHasRole(rc, authCtx.RoleIDs)
+	default:
+		return false
+	}
+}
+
+func isInlineAuthMethod(method appauth.Method) bool {
+	switch method {
+	case appauth.MethodAPIKey, appauth.MethodOAuth2, appauth.MethodOAuth2Client:
+		return true
+	default:
+		return false
+	}
+}
+
 func consumerHasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {
 	if rc == nil || rc.Consumer == nil {
 		return false
 	}
 	for _, id := range rc.Consumer.AuthIDs {
 		if id == authID {
+			return true
+		}
+	}
+	return false
+}
+
+func consumerHasRole(rc *appconsumer.RoutableConsumer, roleIDs []ids.RoleID) bool {
+	if rc == nil || rc.Consumer == nil {
+		return false
+	}
+	effective := make(map[ids.RoleID]struct{}, len(roleIDs))
+	for _, id := range roleIDs {
+		effective[id] = struct{}{}
+	}
+	for _, id := range rc.Consumer.RoleIDs {
+		if _, ok := effective[id]; ok {
 			return true
 		}
 	}

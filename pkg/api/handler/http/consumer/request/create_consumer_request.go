@@ -12,28 +12,32 @@ import (
 )
 
 type CreateConsumerRequest struct {
-	Name            string                   `json:"name"`
-	Type            string                   `json:"type,omitempty"`
-	Path            string                   `json:"path"`
-	Algorithm       string                   `json:"algorithm,omitempty"`
-	EmbeddingConfig *EmbeddingConfigRequest  `json:"embedding_config,omitempty"`
-	Headers         map[string]string        `json:"headers,omitempty"`
-	Active          *bool                    `json:"active,omitempty"`
-	Fallback        *FallbackRequest         `json:"fallback,omitempty"`
-	Registries      []RegistryBindingRequest `json:"registries,omitempty"`
+	Name          string                   `json:"name"`
+	Type          string                   `json:"type,omitempty"`
+	Path          string                   `json:"path"`
+	RoutingMode   string                   `json:"routing_mode,omitempty"`
+	LBConfig      *LBConfigRequest         `json:"lb_config,omitempty"`
+	Headers       map[string]string        `json:"headers,omitempty"`
+	Active        *bool                    `json:"active,omitempty"`
+	Fallback      *FallbackRequest         `json:"fallback,omitempty"`
+	Registries    []RegistryBindingRequest `json:"registries,omitempty"`
+	ModelPolicies []ModelPolicyRequest     `json:"model_policies,omitempty"`
 }
 
-// RegistryBindingRequest binds a registry to the consumer and optionally scopes
-// which models may be used on it. The policy applies to the registry whether it
-// is reached as a pool member or through the fallback chain.
 type RegistryBindingRequest struct {
-	ID            string              `json:"id"`
-	ModelPolicies *ModelPolicyRequest `json:"model_policies,omitempty"`
+	ID            string                      `json:"id"`
+	ModelPolicies *RegistryModelPolicyRequest `json:"model_policies,omitempty"`
+}
+
+type RegistryModelPolicyRequest struct {
+	Allowed []string `json:"allowed,omitempty"`
+	Default string   `json:"default,omitempty"`
 }
 
 type ModelPolicyRequest struct {
-	Allowed []string `json:"allowed,omitempty"`
-	Default string   `json:"default,omitempty"`
+	RegistryID string   `json:"registry_id"`
+	Allowed    []string `json:"allowed,omitempty"`
+	Default    string   `json:"default,omitempty"`
 }
 
 type FallbackRequest struct {
@@ -47,6 +51,19 @@ type FallbackBudgetRequest struct {
 	MaxAttempts       int     `json:"max_attempts,omitempty"`
 	MaxTotalLatencyMs int     `json:"max_total_latency_ms,omitempty"`
 	MaxCostUSD        float64 `json:"max_cost_usd,omitempty"`
+}
+
+type LBConfigRequest struct {
+	Enabled         bool                    `json:"enabled"`
+	Algorithm       string                  `json:"algorithm,omitempty"`
+	PoolAlias       string                  `json:"pool_alias,omitempty"`
+	Members         []LBPoolMemberRequest   `json:"members,omitempty"`
+	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
+}
+
+type LBPoolMemberRequest struct {
+	RegistryID string   `json:"registry_id"`
+	Models     []string `json:"models,omitempty"`
 }
 
 func (r *FallbackRequest) ToFallback() (*domain.Fallback, error) {
@@ -128,8 +145,12 @@ func (r CreateConsumerRequest) ToType() domain.Type {
 	return domain.Type(r.Type)
 }
 
-func (r CreateConsumerRequest) ToEmbeddingConfig() *registrydomain.EmbeddingConfig {
-	return r.EmbeddingConfig.ToDomain()
+func (r CreateConsumerRequest) ToRoutingMode() domain.RoutingMode {
+	return domain.RoutingMode(r.RoutingMode)
+}
+
+func (r CreateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {
+	return r.LBConfig.ToDomain()
 }
 
 func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
@@ -137,17 +158,16 @@ func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 }
 
 func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, domain.ModelPolicies, error) {
-	return parseRegistryBindings(r.Registries)
-}
-
-func parseRegistryBindings(raw []RegistryBindingRequest) ([]ids.RegistryID, domain.ModelPolicies, error) {
-	if len(raw) == 0 {
-		return nil, nil, nil
+	policies, err := parseModelPolicies(r.ModelPolicies)
+	if err != nil {
+		return nil, nil, err
 	}
-	registryIDs := make([]ids.RegistryID, 0, len(raw))
-	seen := make(map[ids.RegistryID]struct{}, len(raw))
-	var policies domain.ModelPolicies
-	for i, binding := range raw {
+	if len(r.Registries) == 0 {
+		return nil, policies, nil
+	}
+	registryIDs := make([]ids.RegistryID, 0, len(r.Registries))
+	seen := make(map[ids.RegistryID]struct{}, len(r.Registries))
+	for i, binding := range r.Registries {
 		id, err := ids.Parse[ids.RegistryKind](binding.ID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("registries[%d]: invalid id %q: %w", i, binding.ID, commonerrors.ErrValidation)
@@ -161,11 +181,62 @@ func parseRegistryBindings(raw []RegistryBindingRequest) ([]ids.RegistryID, doma
 			continue
 		}
 		if policies == nil {
-			policies = make(domain.ModelPolicies, len(raw))
+			policies = make(domain.ModelPolicies, len(r.Registries))
 		}
-		policies[id] = domain.ModelPolicy{Allowed: binding.ModelPolicies.Allowed, Default: binding.ModelPolicies.Default}
+		if _, dup := policies[id]; dup {
+			return nil, nil, fmt.Errorf(
+				"registries[%d]: model policy for %q already declared in model_policies: %w",
+				i, binding.ID, commonerrors.ErrValidation,
+			)
+		}
+		policies[id] = domain.ModelPolicy{
+			Allowed: binding.ModelPolicies.Allowed,
+			Default: binding.ModelPolicies.Default,
+		}
 	}
 	return registryIDs, policies, nil
+}
+
+func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {
+	if r == nil {
+		return nil, nil
+	}
+	members := make([]domain.LBPoolMember, 0, len(r.Members))
+	for i, member := range r.Members {
+		registryID, err := ids.Parse[ids.RegistryKind](member.RegistryID)
+		if err != nil {
+			return nil, fmt.Errorf("lb_config.members[%d]: invalid registry_id %q: %w", i, member.RegistryID, commonerrors.ErrValidation)
+		}
+		members = append(members, domain.LBPoolMember{
+			RegistryID: registryID,
+			Models:     member.Models,
+		})
+	}
+	return &domain.LBConfig{
+		Enabled:         r.Enabled,
+		Algorithm:       r.Algorithm,
+		PoolAlias:       r.PoolAlias,
+		Members:         members,
+		EmbeddingConfig: r.EmbeddingConfig.ToDomain(),
+	}, nil
+}
+
+func parseModelPolicies(raw []ModelPolicyRequest) (domain.ModelPolicies, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(domain.ModelPolicies, len(raw))
+	for i, mp := range raw {
+		id, err := ids.Parse[ids.RegistryKind](mp.RegistryID)
+		if err != nil {
+			return nil, fmt.Errorf("model_policies[%d]: invalid registry_id %q: %w", i, mp.RegistryID, commonerrors.ErrValidation)
+		}
+		if _, dup := out[id]; dup {
+			return nil, fmt.Errorf("model_policies[%d]: duplicate registry_id %q: %w", i, mp.RegistryID, commonerrors.ErrValidation)
+		}
+		out[id] = domain.ModelPolicy{Allowed: mp.Allowed, Default: mp.Default}
+	}
+	return out, nil
 }
 
 func parseUUIDList[K ids.Kind](raw []string, field string) ([]ids.ID[K], error) {

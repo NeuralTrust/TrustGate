@@ -64,43 +64,125 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 }
 
-func TestCreator_Create_WithFallback(t *testing.T) {
+func TestCreator_Create_WithRegistries_BindsAtomically(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	fallbackID := ids.New[ids.RegistryKind]()
-	fallback := &domain.Fallback{
-		Enabled:  true,
-		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
-		Budget:   domain.FallbackBudget{MaxAttempts: 3},
-		Chain:    registrydomain.Registries{fallbackID},
-	}
+	registryID := ids.New[ids.RegistryKind]()
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			return c.Fallback != nil &&
-				c.Fallback.Enabled &&
-				c.Fallback.Budget.MaxAttempts == 3 &&
-				len(c.Fallback.Chain) == 1 &&
-				c.Fallback.Chain[0] == fallbackID
+			return len(c.RegistryIDs) == 1 && c.RegistryIDs[0] == registryID
 		})).
 		Return(nil).
 		Once()
 
-	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	registryRepo := registrymocks.NewRepository(t)
+	registryRepo.EXPECT().
+		FindByIDs(mock.Anything, gwID, []ids.RegistryID{registryID}).
+		Return([]*registrydomain.Registry{{ID: registryID, GatewayID: gwID}}, nil).
+		Once()
 
-	created, err := creator.Create(context.Background(), appconsumer.CreateInput{
-		GatewayID: gwID,
-		Name:      "chat",
-		Type:      domain.TypeLLM,
-		Path:      "/v1/chat/completions",
-		Fallback:  fallback,
+	creator := appconsumer.NewCreator(repo, registryRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+
+	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
+		GatewayID:     gwID,
+		Name:          "chat",
+		Type:          domain.TypeLLM,
+		Path:          "/v1/chat/completions",
+		RegistryIDs:   []ids.RegistryID{registryID},
+		ModelPolicies: domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}},
 	})
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
-	if created.Fallback == nil || created.Fallback.Chain[0] != fallbackID {
-		t.Fatalf("Fallback = %#v, want chain with %s", created.Fallback, fallbackID)
+	if len(c.RegistryIDs) != 1 || c.RegistryIDs[0] != registryID {
+		t.Fatalf("RegistryIDs = %v, want [%s]", c.RegistryIDs, registryID)
+	}
+}
+
+func TestCreator_Create_RejectsRegistryFromAnotherGateway(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+
+	registryRepo := registrymocks.NewRepository(t)
+	registryRepo.EXPECT().
+		FindByIDs(mock.Anything, gwID, []ids.RegistryID{registryID}).
+		Return(nil, nil).
+		Once()
+
+	creator := appconsumer.NewCreator(repomocks.NewRepository(t), registryRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+
+	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
+		GatewayID:   gwID,
+		Name:        "chat",
+		Type:        domain.TypeLLM,
+		Path:        "/v1/chat/completions",
+		RegistryIDs: []ids.RegistryID{registryID},
+	})
+	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
+		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
+	}
+}
+
+func TestCreator_Create_RejectsRegistryReferencesBeforeAssociation(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	registryID := ids.New[ids.RegistryKind]()
+
+	cases := []struct {
+		name    string
+		input   appconsumer.CreateInput
+		wantErr error
+	}{
+		{
+			name: "fallback chain",
+			input: appconsumer.CreateInput{
+				Fallback: &domain.Fallback{
+					Enabled:  true,
+					Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+					Budget:   domain.FallbackBudget{MaxAttempts: 3},
+					Chain:    registrydomain.Registries{registryID},
+				},
+			},
+			wantErr: registrydomain.ErrInvalidRegistryID,
+		},
+		{
+			name: "model policies",
+			input: appconsumer.CreateInput{
+				ModelPolicies: domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}},
+			},
+			wantErr: domain.ErrInvalidModelPolicy,
+		},
+		{
+			name: "lb config members",
+			input: appconsumer.CreateInput{
+				LBConfig: &domain.LBConfig{
+					Enabled: true,
+					Members: []domain.LBPoolMember{{RegistryID: registryID, Models: []string{"gpt-4o"}}},
+				},
+				ModelPolicies: domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}},
+			},
+			wantErr: domain.ErrInvalidModelPolicy,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			creator := appconsumer.NewCreator(repomocks.NewRepository(t), registrymocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+			tc.input.GatewayID = gwID
+			tc.input.Name = "chat"
+			tc.input.Type = domain.TypeLLM
+			tc.input.Path = "/v1/chat/completions"
+
+			_, err := creator.Create(context.Background(), tc.input)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -134,113 +216,5 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)
-	}
-}
-
-func TestCreator_Create_WithRegistriesAndModelPolicies(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	reg1 := ids.New[ids.RegistryKind]()
-	reg2 := ids.New[ids.RegistryKind]()
-
-	repo := repomocks.NewRepository(t)
-	repo.EXPECT().
-		Save(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			return len(c.RegistryIDs) == 2 &&
-				c.RegistryIDs.Contains(reg1) &&
-				c.RegistryIDs.Contains(reg2) &&
-				len(c.ModelPolicies) == 1
-		})).
-		Return(nil).
-		Once()
-
-	registryRepo := registrymocks.NewRepository(t)
-	registryRepo.EXPECT().
-		FindByIDs(mock.Anything, gwID, mock.Anything).
-		Return([]*registrydomain.Registry{
-			{ID: reg1, GatewayID: gwID},
-			{ID: reg2, GatewayID: gwID},
-		}, nil).
-		Once()
-
-	creator := appconsumer.NewCreator(repo, registryRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-
-	created, err := creator.Create(context.Background(), appconsumer.CreateInput{
-		GatewayID:   gwID,
-		Name:        "chat",
-		Type:        domain.TypeLLM,
-		Path:        "/v1/chat/completions",
-		RegistryIDs: []ids.RegistryID{reg1, reg2},
-		ModelPolicies: domain.ModelPolicies{
-			reg1: {Allowed: []string{"gpt-4o", "gpt-4o-mini"}, Default: "gpt-4o"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Create error: %v", err)
-	}
-	if len(created.RegistryIDs) != 2 {
-		t.Fatalf("RegistryIDs = %v, want 2 entries", created.RegistryIDs)
-	}
-	if _, ok := created.ModelPolicies.For(reg1); !ok {
-		t.Fatalf("ModelPolicies missing entry for %s", reg1)
-	}
-}
-
-func TestCreator_Create_RejectsRegistryFromAnotherGateway(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	reg1 := ids.New[ids.RegistryKind]()
-	reg2 := ids.New[ids.RegistryKind]()
-
-	repo := repomocks.NewRepository(t)
-
-	registryRepo := registrymocks.NewRepository(t)
-	registryRepo.EXPECT().
-		FindByIDs(mock.Anything, gwID, mock.Anything).
-		Return([]*registrydomain.Registry{
-			{ID: reg1, GatewayID: gwID},
-		}, nil).
-		Once()
-
-	creator := appconsumer.NewCreator(repo, registryRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
-
-	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
-		GatewayID:   gwID,
-		Name:        "chat",
-		Type:        domain.TypeLLM,
-		Path:        "/v1/chat/completions",
-		RegistryIDs: []ids.RegistryID{reg1, reg2},
-	})
-	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
-		t.Fatalf("err = %v, want registrydomain.ErrInvalidRegistryID", err)
-	}
-}
-
-func TestCreator_Create_RejectsModelPolicyForUnboundRegistry(t *testing.T) {
-	t.Parallel()
-	gwID := ids.New[ids.GatewayKind]()
-	reg1 := ids.New[ids.RegistryKind]()
-	unbound := ids.New[ids.RegistryKind]()
-
-	creator := appconsumer.NewCreator(
-		repomocks.NewRepository(t),
-		registrymocks.NewRepository(t),
-		newCacheManager(),
-		cachetest.NoopPublisher(),
-		newTestLogger(),
-	)
-
-	_, err := creator.Create(context.Background(), appconsumer.CreateInput{
-		GatewayID:   gwID,
-		Name:        "chat",
-		Type:        domain.TypeLLM,
-		Path:        "/v1/chat/completions",
-		RegistryIDs: []ids.RegistryID{reg1},
-		ModelPolicies: domain.ModelPolicies{
-			unbound: {Default: "gpt-4o"},
-		},
-	})
-	if !errors.Is(err, domain.ErrInvalidModelPolicy) {
-		t.Fatalf("err = %v, want domain.ErrInvalidModelPolicy", err)
 	}
 }

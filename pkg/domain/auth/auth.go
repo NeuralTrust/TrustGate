@@ -19,21 +19,33 @@ const apiKeyEntropyBytes = 32
 type Type string
 
 const (
-	TypeAPIKey Type = "api_key"
-	TypeOAuth2 Type = "oauth2"
-	TypeMTLS   Type = "mtls"
+	TypeAPIKey       Type = "api_key"
+	TypeOAuth2       Type = "oauth2"
+	TypeOAuth2Client Type = "oauth2_client"
+	TypeIDP          Type = "idp"
+	TypeMTLS         Type = "mtls"
 )
 
 func Types() []Type {
-	return []Type{TypeAPIKey, TypeOAuth2, TypeMTLS}
+	return []Type{TypeAPIKey, TypeOAuth2, TypeOAuth2Client, TypeIDP, TypeMTLS}
 }
 
 func IsValidType(t Type) bool {
 	switch t {
-	case TypeAPIKey, TypeOAuth2, TypeMTLS:
+	case TypeAPIKey, TypeOAuth2, TypeOAuth2Client, TypeIDP, TypeMTLS:
 		return true
 	}
 	return false
+}
+
+func ConflictingAttachmentTypes(t Type) []Type {
+	switch t {
+	case TypeOAuth2Client:
+		return []Type{TypeOAuth2Client, TypeOAuth2}
+	case TypeOAuth2:
+		return []Type{TypeOAuth2Client}
+	}
+	return nil
 }
 
 type Auth struct {
@@ -45,8 +57,8 @@ type Auth struct {
 	Config    Config        `json:"config"`
 	KeyHash   string        `json:"-"`
 	RawKey    string        `json:"-"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
 }
 
 func NewAuth(gatewayID ids.GatewayID, name string, authType Type, enabled bool, config Config) (*Auth, error) {

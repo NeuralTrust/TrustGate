@@ -20,6 +20,10 @@ const (
 	defaultServerReadTimeout  = 60 * time.Second
 	defaultServerWriteTimeout = 60 * time.Second
 	defaultServerIdleTimeout  = 120 * time.Second
+	defaultGatewayBaseDomain  = "gw.neuraltrust.ai"
+
+	GatewayDiscoveryModeHeader    = "header"
+	GatewayDiscoveryModeSubdomain = "subdomain"
 
 	defaultDBHost                    = "localhost"
 	defaultDBPort                    = 5432
@@ -100,7 +104,9 @@ type ServerConfig struct {
 	IdleTimeout  time.Duration
 	// SecretKey signs and verifies admin-plane JWTs. Empty disables admin auth
 	// token acceptance (every token is rejected).
-	SecretKey string
+	SecretKey            string
+	GatewayBaseDomain    string
+	GatewayDiscoveryMode string
 }
 
 type DatabaseConfig struct {
@@ -222,6 +228,14 @@ func getServerConfig() ServerConfig {
 		WriteTimeout: getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
 		IdleTimeout:  getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),
 		SecretKey:    getEnv("SERVER_SECRET_KEY", ""),
+		GatewayBaseDomain: getEnv(
+			"GATEWAY_BASE_DOMAIN",
+			defaultGatewayBaseDomain,
+		),
+		GatewayDiscoveryMode: strings.ToLower(strings.TrimSpace(getEnv(
+			"GATEWAY_DISCOVERY_MODE",
+			GatewayDiscoveryModeHeader,
+		))),
 	}
 }
 
@@ -343,6 +357,16 @@ func getLoggerConfig() LoggerConfig {
 }
 
 func (c *Config) Validate() error {
+	if c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeHeader &&
+		c.Server.GatewayDiscoveryMode != GatewayDiscoveryModeSubdomain {
+		return fmt.Errorf(
+			"%w: GATEWAY_DISCOVERY_MODE must be %q or %q",
+			errors.ErrInvalidConfig, GatewayDiscoveryModeHeader, GatewayDiscoveryModeSubdomain,
+		)
+	}
+	if strings.Trim(strings.ToLower(strings.TrimSpace(c.Server.GatewayBaseDomain)), ".") == "" {
+		return fmt.Errorf("%w: GATEWAY_BASE_DOMAIN is required", errors.ErrInvalidConfig)
+	}
 	if c.Database.Host == "" {
 		return fmt.Errorf("%w: DB_HOST is required", errors.ErrInvalidConfig)
 	}

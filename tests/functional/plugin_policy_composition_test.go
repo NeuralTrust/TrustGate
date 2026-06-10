@@ -233,7 +233,7 @@ func TestPolicyE2E_ConsumerOverridesGlobalBySlug(t *testing.T) {
 
 	up := newJSONUpstream(t, "override")
 	gatewayID, backendID := setupGatewayBackend(t, up)
-	createGlobalPolicy(t, gatewayID, "rate_limiter", rateLimitSettings(2))   // strict global
+	createGlobalPolicy(t, gatewayID, "rate_limiter", rateLimitSettings(2))                       // strict global
 	scoped := createScopedPolicy(t, gatewayID, "rate_limiter", rateLimitSettings(100), 0, false) // permissive override
 	path, apiKey := addConsumerRoute(t, gatewayID, backendID, scoped)
 

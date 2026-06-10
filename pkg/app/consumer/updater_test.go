@@ -21,9 +21,9 @@ func existingConsumer(gwID ids.GatewayID, beID ids.RegistryID) *domain.Consumer 
 	now := time.Now().UTC()
 	return domain.Rehydrate(
 		ids.New[ids.ConsumerKind](), gwID, "old", domain.TypeLLM,
-		"/v1/chat", "round-robin", nil,
+		"/v1/chat", domain.RoutingModeInline, nil,
 		nil, true,
-		[]ids.RegistryID{beID}, nil,
+		[]ids.RegistryID{beID}, nil, nil,
 		nil,
 		nil,
 		now, now,
@@ -54,7 +54,6 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Name:      ptr("new"),
 		Type:      ptr(domain.TypeMCP),
 		Path:      ptr("/v1/messages"),
-		Algorithm: ptr("round-robin"),
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -75,7 +74,7 @@ func TestUpdater_Update_Partial_PreservesFieldsAndAssociations(t *testing.T) {
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
 			return c.Name == "renamed" && c.Path == "/v1/chat" &&
-				c.Algorithm == "round-robin" && c.Type == domain.TypeLLM &&
+				c.RoutingMode == domain.RoutingModeInline && c.Type == domain.TypeLLM &&
 				len(c.RegistryIDs) == 1 && c.RegistryIDs[0] == beID
 		})).
 		Return(nil).
@@ -90,7 +89,7 @@ func TestUpdater_Update_Partial_PreservesFieldsAndAssociations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.Path != "/v1/chat" || got.Algorithm != "round-robin" {
+	if got.Path != "/v1/chat" || got.RoutingMode != domain.RoutingModeInline {
 		t.Fatalf("fields not preserved: %+v", got)
 	}
 	if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != beID {
@@ -162,6 +161,140 @@ func TestUpdater_Update_AllowsModelPolicyForAssociatedRegistry(t *testing.T) {
 		}),
 	})
 	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+}
+
+func TestUpdater_Update_RejectsLBConfigForUnassociatedRegistry(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.RegistryKind]()
+	unassociatedID := ids.New[ids.RegistryKind]()
+	existing := existingConsumer(gwID, beID)
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+
+	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+
+	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
+		ID:        existing.ID,
+		GatewayID: gwID,
+		LBConfig: &domain.LBConfig{
+			Enabled: true,
+			Members: []domain.LBPoolMember{{RegistryID: unassociatedID, Models: []string{"gpt-4o"}}},
+		},
+		ModelPolicies: ptr(domain.ModelPolicies{
+			beID: {Allowed: []string{"gpt-4o"}},
+		}),
+	})
+	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
+		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
+	}
+}
+
+func TestUpdater_Update_DisabledObjectsClearFallbackAndLBConfig(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.RegistryKind]()
+	existing := existingConsumer(gwID, beID)
+	existing.Fallback = &domain.Fallback{
+		Enabled:  true,
+		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+		Budget:   domain.FallbackBudget{MaxAttempts: 3},
+		Chain:    []ids.RegistryID{beID},
+	}
+	existing.ModelPolicies = domain.ModelPolicies{beID: {Allowed: []string{"gpt-4o"}}}
+	existing.LBConfig = &domain.LBConfig{
+		Enabled: true,
+		Members: []domain.LBPoolMember{{RegistryID: beID, Models: []string{"gpt-4o"}}},
+	}
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
+			return c.Fallback != nil && !c.Fallback.Enabled && len(c.Fallback.Chain) == 0 &&
+				c.LBConfig != nil && !c.LBConfig.Enabled && len(c.LBConfig.Members) == 0
+		})).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{
+		ID:        existing.ID,
+		GatewayID: gwID,
+		Fallback:  &domain.Fallback{Enabled: false},
+		LBConfig:  &domain.LBConfig{Enabled: false},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+}
+
+func TestUpdater_Update_SwitchToRoleBasedCleansInlineConfig(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	beID := ids.New[ids.RegistryKind]()
+	existing := existingConsumer(gwID, beID)
+	existing.Fallback = &domain.Fallback{Enabled: true, Chain: []ids.RegistryID{beID}, Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx}}
+	existing.ModelPolicies = domain.ModelPolicies{beID: {Allowed: []string{"gpt-4o"}}}
+	existing.LBConfig = &domain.LBConfig{Enabled: true, Members: []domain.LBPoolMember{{RegistryID: beID, Models: []string{"gpt-4o"}}}}
+	mode := domain.RoutingModeRoleBased
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
+			return c.RoutingMode == domain.RoutingModeRoleBased &&
+				len(c.RegistryIDs) == 0 &&
+				c.Fallback == nil &&
+				c.LBConfig == nil &&
+				len(c.ModelPolicies) == 0
+		})).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
+		ID:          existing.ID,
+		GatewayID:   gwID,
+		RoutingMode: &mode,
+	}); err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+}
+
+func TestUpdater_Update_SwitchToInlineClearsRoles(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.Rehydrate(
+		ids.New[ids.ConsumerKind](), gwID, "old", domain.TypeLLM,
+		"/v1/chat", domain.RoutingModeRoleBased, nil,
+		nil, true,
+		nil, []ids.RoleID{ids.New[ids.RoleKind]()}, nil,
+		nil,
+		nil,
+		now, now,
+	)
+	mode := domain.RoutingModeInline
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
+			return c.RoutingMode == domain.RoutingModeInline && len(c.RoleIDs) == 0
+		})).
+		Return(nil).
+		Once()
+
+	updater := appconsumer.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	if _, err := updater.Update(context.Background(), appconsumer.UpdateInput{
+		ID:          existing.ID,
+		GatewayID:   gwID,
+		RoutingMode: &mode,
+	}); err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
 }

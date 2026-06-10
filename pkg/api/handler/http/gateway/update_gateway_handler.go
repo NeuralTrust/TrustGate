@@ -52,6 +52,7 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 	g, err := h.updater.Update(c.UserContext(), appgateway.UpdateInput{
 		ID:              id,
 		Name:            req.Name,
+		Slug:            req.Slug,
 		Status:          req.Status,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,

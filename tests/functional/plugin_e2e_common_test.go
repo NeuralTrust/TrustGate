@@ -48,7 +48,6 @@ func policyPlugin(slug string, settings map[string]any) map[string]any {
 }
 
 // proxyAPIKeyHeader is the fixed ingress header the proxy plane reads the client
-// api key from. It mirrors middleware.HeaderAPIKey.
 const proxyAPIKeyHeader = "X-AG-API-Key"
 
 // setupPolicyRoute wires a full proxy route guarded by one or more policies: a
@@ -101,6 +100,9 @@ func proxyRequest(
 	}
 	req, err := http.NewRequest(method, ProxyURL+path, reader)
 	require.NoError(t, err)
+	host, ok := proxyHosts.Load(apiKey)
+	require.True(t, ok, "proxy host missing for api key")
+	req.Host = host.(string)
 	req.Header.Set(proxyAPIKeyHeader, apiKey)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

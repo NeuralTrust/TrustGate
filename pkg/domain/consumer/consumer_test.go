@@ -7,7 +7,6 @@ import (
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 func validParams() CreateParams {
@@ -35,6 +34,9 @@ func TestConsumer_New_HappyPath(t *testing.T) {
 	}
 	if c.Type != TypeLLM {
 		t.Fatalf("Type = %q, want %q", c.Type, TypeLLM)
+	}
+	if c.RoutingMode != RoutingModeInline {
+		t.Fatalf("RoutingMode = %q, want %q", c.RoutingMode, RoutingModeInline)
 	}
 	if !c.Active {
 		t.Fatal("Active should default to true")
@@ -99,14 +101,16 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 			wantErr: ErrInvalidPath,
 		},
 		{
-			name:    "invalid algorithm",
-			mutate:  func(c *Consumer) { c.Algorithm = "bogus" },
-			wantErr: ErrInvalidAlgorithm,
+			name:    "invalid routing mode",
+			mutate:  func(c *Consumer) { c.RoutingMode = "mixed" },
+			wantErr: ErrInvalidRoutingMode,
 		},
 		{
-			name:    "semantic without embedding",
-			mutate:  func(c *Consumer) { c.Algorithm = "semantic" },
-			wantErr: ErrInvalidEmbeddingConfig,
+			name: "role based rejects inline registries",
+			mutate: func(c *Consumer) {
+				c.RoutingMode = RoutingModeRoleBased
+			},
+			wantErr: ErrInvalidRoutingMode,
 		},
 		{
 			name: "duplicate backend",
@@ -114,12 +118,39 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 				id := ids.New[ids.RegistryKind]()
 				c.RegistryIDs = []ids.RegistryID{id, id}
 			},
-			wantErr: registrydomain.ErrInvalidRegistryID,
+			wantErr: ErrInvalidModelPolicy,
 		},
 		{
 			name:    "nil backend uuid",
 			mutate:  func(c *Consumer) { c.RegistryIDs = []ids.RegistryID{{}} },
-			wantErr: registrydomain.ErrInvalidRegistryID,
+			wantErr: ErrInvalidModelPolicy,
+		},
+		{
+			name: "role based rejects lb config",
+			mutate: func(c *Consumer) {
+				c.RoutingMode = RoutingModeRoleBased
+				c.RegistryIDs = nil
+				c.LBConfig = &LBConfig{}
+			},
+			wantErr: ErrInvalidRoutingMode,
+		},
+		{
+			name: "role based rejects enabled fallback",
+			mutate: func(c *Consumer) {
+				c.RoutingMode = RoutingModeRoleBased
+				c.RegistryIDs = nil
+				c.Fallback = &Fallback{Enabled: true}
+			},
+			wantErr: ErrInvalidRoutingMode,
+		},
+		{
+			name: "role based rejects model policies",
+			mutate: func(c *Consumer) {
+				c.RoutingMode = RoutingModeRoleBased
+				c.RegistryIDs = nil
+				c.ModelPolicies = ModelPolicies{ids.New[ids.RegistryKind](): {}}
+			},
+			wantErr: ErrInvalidRoutingMode,
 		},
 	}
 	for _, tc := range tests {
@@ -172,10 +203,10 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	now := time.Now().UTC()
 	c := Rehydrate(
 		id, gwID, "x", TypeMCP,
-		"/v1/messages", "round-robin", nil,
+		"/v1/messages", RoutingModeInline, nil,
 		map[string]string{"X-K": "v"},
 		true,
-		[]ids.RegistryID{beID}, nil,
+		[]ids.RegistryID{beID}, nil, nil,
 		nil,
 		nil,
 		now, now,

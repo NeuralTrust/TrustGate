@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
 )
@@ -20,6 +21,7 @@ type InvalidateGatewayDataEventSubscriber struct {
 	gatewayCache      *cache.TTLMap
 	consumerDataCache *cache.TTLMap
 	loadBalancerCache *cache.TTLMap
+	roleCache         *cache.TTLMap
 }
 
 func NewInvalidateGatewayDataEventSubscriber(
@@ -32,6 +34,7 @@ func NewInvalidateGatewayDataEventSubscriber(
 		gatewayCache:      c.GetTTLMap(cache.GatewayTTLName),
 		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
 		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
+		roleCache:         c.GetTTLMap(cache.RoleTTLName),
 	}
 }
 
@@ -39,7 +42,7 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 	s.logger.Info("invalidating gateway data cache", slog.String("gateway_id", evt.GatewayID))
 
 	if s.gatewayCache != nil {
-		s.gatewayCache.Delete(evt.GatewayID)
+		deleteGatewayAliases(s.gatewayCache, evt.GatewayID)
 	}
 	if s.consumerDataCache != nil {
 		s.consumerDataCache.Delete(evt.GatewayID)
@@ -50,6 +53,9 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 		// refreshed consumer/backend configuration.
 		s.loadBalancerCache.DeleteByPrefix(evt.GatewayID + ":")
 	}
+	if s.roleCache != nil {
+		s.roleCache.Clear()
+	}
 
 	if err := s.cache.DeleteAllByGatewayID(ctx, evt.GatewayID); err != nil {
 		s.logger.Warn("failed to delete gateway keys from redis cache",
@@ -59,4 +65,24 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 	}
 
 	return nil
+}
+
+func deleteGatewayAliases(gatewayCache *cache.TTLMap, gatewayID string) {
+	slug := cachedGatewaySlug(gatewayCache, gatewayID)
+	gatewayCache.Delete("id:" + gatewayID)
+	if slug != "" {
+		gatewayCache.Delete("slug:" + slug)
+	}
+}
+
+func cachedGatewaySlug(gatewayCache *cache.TTLMap, gatewayID string) string {
+	cached, ok := gatewayCache.Get("id:" + gatewayID)
+	if !ok {
+		return ""
+	}
+	gw, ok := cached.(*gatewaydomain.Gateway)
+	if !ok || gw.Slug == "" {
+		return ""
+	}
+	return gatewaydomain.NormalizeSlug(gw.Slug)
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	proxyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/proxy"
+	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
@@ -33,7 +34,33 @@ func authStub(gatewayID ids.GatewayID, path string) fiber.Handler {
 		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Path: path, Active: true, AuthIDs: []ids.AuthID{authID}}},
 	})
 	return func(c *fiber.Ctx) error {
-		ctx := appconsumer.WithGatewayID(c.UserContext(), gatewayID)
+		authCtx := &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gatewayID, AuthID: authID}
+		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
+		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
+		ctx = appconsumer.WithAuthID(ctx, authID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	}
+}
+
+func authStubOAuth(gatewayID ids.GatewayID, path string) fiber.Handler {
+	return authStubWithMethod(gatewayID, path, appauth.MethodOAuth2)
+}
+
+func authStubOAuth2Client(gatewayID ids.GatewayID, path string) fiber.Handler {
+	return authStubWithMethod(gatewayID, path, appauth.MethodOAuth2Client)
+}
+
+func authStubWithMethod(gatewayID ids.GatewayID, path string, method appauth.Method) fiber.Handler {
+	authID := ids.New[ids.AuthKind]()
+	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
+		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Path: path, Active: true, AuthIDs: []ids.AuthID{authID}}},
+	})
+	return func(c *fiber.Ctx) error {
+		authCtx := &appauth.AuthContext{Method: method, GatewayID: gatewayID, AuthID: authID, Subject: "user-1"}
+		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
+		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithAuthID(ctx, authID)
 		ctx = appconsumer.WithData(ctx, data)
 		c.SetUserContext(ctx)
@@ -49,8 +76,31 @@ func authStubForbidden(gatewayID ids.GatewayID, path string) fiber.Handler {
 		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Path: path, Active: true, AuthIDs: []ids.AuthID{ids.New[ids.AuthKind]()}}},
 	})
 	return func(c *fiber.Ctx) error {
-		ctx := appconsumer.WithGatewayID(c.UserContext(), gatewayID)
-		ctx = appconsumer.WithAuthID(ctx, ids.New[ids.AuthKind]())
+		authCtx := &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gatewayID, AuthID: ids.New[ids.AuthKind]()}
+		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
+		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
+		ctx = appconsumer.WithAuthID(ctx, authCtx.AuthID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	}
+}
+
+func authStubRoleBased(gatewayID ids.GatewayID, path string, consumerRoles, effectiveRoles []ids.RoleID) fiber.Handler {
+	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
+		{Consumer: &domainconsumer.Consumer{
+			ID:          ids.New[ids.ConsumerKind](),
+			GatewayID:   gatewayID,
+			Path:        path,
+			Active:      true,
+			RoutingMode: domainconsumer.RoutingModeRoleBased,
+			RoleIDs:     consumerRoles,
+		}},
+	})
+	return func(c *fiber.Ctx) error {
+		authCtx := &appauth.AuthContext{Method: appauth.MethodIDP, GatewayID: gatewayID, Subject: "user-1", RoleIDs: effectiveRoles}
+		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
+		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithData(ctx, data)
 		c.SetUserContext(ctx)
 		return c.Next()
@@ -143,6 +193,127 @@ func TestHandle_Forbidden_ConsumerLacksCredential(t *testing.T) {
 	}
 	if eb := decodeError(t, resp.Body); eb.Error != "forbidden" {
 		t.Fatalf("error = %q, want forbidden", eb.Error)
+	}
+}
+
+func TestHandle_Forbidden_APIKeyCannotAuthorizeRoleBasedConsumer(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	gwID := ids.New[ids.GatewayKind]()
+	roleID := ids.New[ids.RoleKind]()
+	data := appconsumer.NewData(gwID, []appconsumer.RoutableConsumer{
+		{Consumer: &domainconsumer.Consumer{
+			ID:          ids.New[ids.ConsumerKind](),
+			GatewayID:   gwID,
+			Path:        proxyPath,
+			Active:      true,
+			RoutingMode: domainconsumer.RoutingModeRoleBased,
+			RoleIDs:     []ids.RoleID{roleID},
+		}},
+	})
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		authID := ids.New[ids.AuthKind]()
+		authCtx := &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gwID, AuthID: authID}
+		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
+		ctx = appconsumer.WithGatewayID(ctx, gwID)
+		ctx = appconsumer.WithAuthID(ctx, authID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/v1/*", handler.Handle)
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestHandle_RoleBasedIDPIntersectionSucceeds(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	gwID := ids.New[ids.GatewayKind]()
+	roleID := ids.New[ids.RoleKind]()
+	app := fiber.New()
+	app.Use(authStubRoleBased(gwID, proxyPath, []ids.RoleID{roleID}, []ids.RoleID{roleID}))
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/v1/*", handler.Handle)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
+			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Consumer.Consumer.RoutingMode == domainconsumer.RoutingModeRoleBased
+		})).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestHandle_OAuthInlineSucceeds(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(authStubOAuth(ids.New[ids.GatewayKind](), proxyPath))
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/v1/*", handler.Handle)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
+			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
+		})).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestHandle_OAuth2ClientInlineSucceeds(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(authStubOAuth2Client(ids.New[ids.GatewayKind](), proxyPath))
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/v1/*", handler.Handle)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
+			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
+		})).
+		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestHandle_Forbidden_IDPLacksRole(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	app := fiber.New()
+	app.Use(authStubRoleBased(ids.New[ids.GatewayKind](), proxyPath, []ids.RoleID{ids.New[ids.RoleKind]()}, []ids.RoleID{ids.New[ids.RoleKind]()}))
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/v1/*", handler.Handle)
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
 }
 

@@ -12,17 +12,17 @@ import (
 )
 
 type CreateInput struct {
-	GatewayID       ids.GatewayID
-	Name            string
-	Type            domain.Type
-	Path            string
-	Algorithm       string
-	EmbeddingConfig *registrydomain.EmbeddingConfig
-	Headers         map[string]string
-	Active          *bool
-	Fallback        *domain.Fallback
-	RegistryIDs     []ids.RegistryID
-	ModelPolicies   domain.ModelPolicies
+	GatewayID     ids.GatewayID
+	Name          string
+	Type          domain.Type
+	Path          string
+	RoutingMode   domain.RoutingMode
+	LBConfig      *domain.LBConfig
+	Headers       map[string]string
+	Active        *bool
+	Fallback      *domain.Fallback
+	RegistryIDs   []ids.RegistryID
+	ModelPolicies domain.ModelPolicies
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -58,19 +58,22 @@ func NewCreator(
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer, error) {
 	cons, err := domain.New(domain.CreateParams{
-		GatewayID:       in.GatewayID,
-		Name:            in.Name,
-		Type:            in.Type,
-		Path:            in.Path,
-		Algorithm:       in.Algorithm,
-		EmbeddingConfig: in.EmbeddingConfig,
-		Headers:         in.Headers,
-		Active:          in.Active,
-		RegistryIDs:     in.RegistryIDs,
-		Fallback:        in.Fallback,
-		ModelPolicies:   in.ModelPolicies,
+		GatewayID:     in.GatewayID,
+		Name:          in.Name,
+		Type:          in.Type,
+		Path:          in.Path,
+		RoutingMode:   in.RoutingMode,
+		LBConfig:      in.LBConfig,
+		Headers:       in.Headers,
+		Active:        in.Active,
+		Fallback:      in.Fallback,
+		RegistryIDs:   in.RegistryIDs,
+		ModelPolicies: in.ModelPolicies,
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := validateRegistryRefsAssociated(cons); err != nil {
 		return nil, err
 	}
 	if err := c.ensureRegistriesInGateway(ctx, in.GatewayID, in.RegistryIDs); err != nil {
@@ -84,9 +87,6 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	return cons, nil
 }
 
-// ensureRegistriesInGateway guards against attaching registries that belong to a
-// different gateway: the consumer_registry FK only proves the registry exists, not
-// that it is owned by this gateway.
 func (c *creator) ensureRegistriesInGateway(ctx context.Context, gatewayID ids.GatewayID, registryIDs []ids.RegistryID) error {
 	if len(registryIDs) == 0 {
 		return nil

@@ -248,6 +248,66 @@ func (_c *Repository_FindByIDs_Call) RunAndReturn(run func(context.Context, ids.
 	return _c
 }
 
+// ListEnabledByGatewayAndType provides a mock function with given fields: ctx, gatewayID, authType
+func (_m *Repository) ListEnabledByGatewayAndType(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], authType auth.Type) ([]*auth.Auth, error) {
+	ret := _m.Called(ctx, gatewayID, authType)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListEnabledByGatewayAndType")
+	}
+
+	var r0 []*auth.Auth
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], auth.Type) ([]*auth.Auth, error)); ok {
+		return rf(ctx, gatewayID, authType)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], auth.Type) []*auth.Auth); ok {
+		r0 = rf(ctx, gatewayID, authType)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*auth.Auth)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], auth.Type) error); ok {
+		r1 = rf(ctx, gatewayID, authType)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_ListEnabledByGatewayAndType_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListEnabledByGatewayAndType'
+type Repository_ListEnabledByGatewayAndType_Call struct {
+	*mock.Call
+}
+
+// ListEnabledByGatewayAndType is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - authType auth.Type
+func (_e *Repository_Expecter) ListEnabledByGatewayAndType(ctx interface{}, gatewayID interface{}, authType interface{}) *Repository_ListEnabledByGatewayAndType_Call {
+	return &Repository_ListEnabledByGatewayAndType_Call{Call: _e.mock.On("ListEnabledByGatewayAndType", ctx, gatewayID, authType)}
+}
+
+func (_c *Repository_ListEnabledByGatewayAndType_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], authType auth.Type)) *Repository_ListEnabledByGatewayAndType_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(auth.Type))
+	})
+	return _c
+}
+
+func (_c *Repository_ListEnabledByGatewayAndType_Call) Return(_a0 []*auth.Auth, _a1 error) *Repository_ListEnabledByGatewayAndType_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_ListEnabledByGatewayAndType_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], auth.Type) ([]*auth.Auth, error)) *Repository_ListEnabledByGatewayAndType_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // List provides a mock function with given fields: ctx, filter
 func (_m *Repository) List(ctx context.Context, filter auth.ListFilter) ([]*auth.Auth, int, error) {
 	ret := _m.Called(ctx, filter)

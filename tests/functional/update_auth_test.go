@@ -47,6 +47,7 @@ func TestUpdateAuth_Partial_OAuth2PreservesConfig(t *testing.T) {
 		"config": map[string]any{
 			"oauth2": map[string]any{
 				"issuer":        "https://issuer.example.com",
+				"audiences":     []string{"gateway"},
 				"jwks_url":      "https://issuer.example.com/jwks",
 				"client_id":     "client-123",
 				"client_secret": "super-secret",
@@ -66,6 +67,39 @@ func TestUpdateAuth_Partial_OAuth2PreservesConfig(t *testing.T) {
 	oauth2, ok := cfg["oauth2"].(map[string]any)
 	require.True(t, ok, "oauth2 config block must be preserved: %v", cfg)
 	assert.Equal(t, "https://issuer.example.com", oauth2["issuer"])
+}
+
+func TestUpdateAuth_OAuth2ClientMaskedSecretKeepsStoredValue(t *testing.T) {
+	defer Track(t, "UpdateAuth")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd-oauth-client")})
+	id := CreateAuth(t, gwID, map[string]any{
+		"name": uniqueName("oauth-client-cred"),
+		"type": "oauth2_client",
+		"config": map[string]any{
+			"oauth2_client": map[string]any{
+				"token_url":     "https://as.example.com/oauth/token",
+				"client_id":     "client-123",
+				"client_secret": "topsecretclientvalue",
+			},
+		},
+	})
+
+	url := fmt.Sprintf("%s/v1/gateways/%s/auths/%s", AdminURL, gwID, id)
+	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{
+		"config": map[string]any{
+			"oauth2_client": map[string]any{
+				"token_url":     "https://as.example.com/oauth/token",
+				"client_id":     "client-456",
+				"client_secret": "***alue",
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	cfg, _ := body["config"].(map[string]any)
+	oauthClient, ok := cfg["oauth2_client"].(map[string]any)
+	require.True(t, ok, "oauth2_client config missing: %v", cfg)
+	assert.Equal(t, "client-456", oauthClient["client_id"])
+	assert.Equal(t, "***alue", oauthClient["client_secret"], "stored secret must be kept and masked")
 }
 
 func TestUpdateAuth_Validation(t *testing.T) {

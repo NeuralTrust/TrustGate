@@ -92,9 +92,13 @@ type scopeCapturePlugin struct {
 	seen chan ExecInput
 }
 
-func (s *scopeCapturePlugin) Name() string                        { return s.name }
-func (s *scopeCapturePlugin) MandatoryStages() []policy.Stage     { return []policy.Stage{policy.StagePreRequest} }
-func (s *scopeCapturePlugin) SupportedStages() []policy.Stage     { return []policy.Stage{policy.StagePreRequest} }
+func (s *scopeCapturePlugin) Name() string { return s.name }
+func (s *scopeCapturePlugin) MandatoryStages() []policy.Stage {
+	return []policy.Stage{policy.StagePreRequest}
+}
+func (s *scopeCapturePlugin) SupportedStages() []policy.Stage {
+	return []policy.Stage{policy.StagePreRequest}
+}
 func (s *scopeCapturePlugin) SupportedModes() []policy.Mode       { return []policy.Mode{policy.ModeEnforce} }
 func (s *scopeCapturePlugin) ValidateConfig(map[string]any) error { return nil }
 func (s *scopeCapturePlugin) Execute(_ context.Context, in ExecInput) (*Result, error) {

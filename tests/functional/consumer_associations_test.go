@@ -47,20 +47,6 @@ func idSet(t *testing.T, body map[string]any, key string) map[string]struct{} {
 	return out
 }
 
-// registryIDSet extracts the bound registry ids from the nested registries
-// array of a consumer response.
-func registryIDSet(t *testing.T, body map[string]any) map[string]struct{} {
-	t.Helper()
-	raw, _ := body["registries"].([]any)
-	out := make(map[string]struct{}, len(raw))
-	for _, v := range raw {
-		entry, _ := v.(map[string]any)
-		s, _ := entry["id"].(string)
-		out[s] = struct{}{}
-	}
-	return out
-}
-
 func TestAttachRegistry_RoundTrip(t *testing.T) {
 	defer Track(t, "ConsumerAssociations")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("assoc-be-gw")})
@@ -71,7 +57,7 @@ func TestAttachRegistry_RoundTrip(t *testing.T) {
 	// Re-attach must be idempotent (204, no duplicate).
 	AttachRegistry(t, gwID, coID, beID)
 
-	got := registryIDSet(t, getConsumer(t, gwID, coID))
+	got := idSet(t, getConsumer(t, gwID, coID), "registry_ids")
 	require.Len(t, got, 1)
 	assert.Contains(t, got, beID)
 
@@ -81,7 +67,7 @@ func TestAttachRegistry_RoundTrip(t *testing.T) {
 	)
 	require.Equal(t, http.StatusNoContent, status)
 
-	got = registryIDSet(t, getConsumer(t, gwID, coID))
+	got = idSet(t, getConsumer(t, gwID, coID), "registry_ids")
 	assert.Empty(t, got, "registry should be detached")
 }
 
@@ -159,6 +145,61 @@ func TestAttachAuth_RoundTrip(t *testing.T) {
 
 	got = idSet(t, getConsumer(t, gwID, coID), "auth_ids")
 	assert.Empty(t, got, "auth should be detached")
+}
+
+func TestAttachAuth_OAuth2AndOAuth2ClientExclusive(t *testing.T) {
+	defer Track(t, "ConsumerAssociations")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("assoc-auth-excl-gw")})
+	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("assoc-auth-excl-co")))
+
+	oauthClientID := CreateAuth(t, gwID, map[string]any{
+		"name": uniqueName("assoc-auth-excl-oc"),
+		"type": "oauth2_client",
+		"config": map[string]any{
+			"oauth2_client": map[string]any{
+				"token_url":     "https://as.example.com/oauth/token",
+				"client_id":     "client-123",
+				"client_secret": "topsecretclientvalue",
+			},
+		},
+	})
+	AttachAuth(t, gwID, coID, oauthClientID)
+
+	secondOAuthClientID := CreateAuth(t, gwID, map[string]any{
+		"name": uniqueName("assoc-auth-excl-oc2"),
+		"type": "oauth2_client",
+		"config": map[string]any{
+			"oauth2_client": map[string]any{
+				"token_url":     "https://as.example.com/oauth/token",
+				"client_id":     "client-456",
+				"client_secret": "topsecretclientvalue",
+			},
+		},
+	})
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/auths/%s", AdminURL, gwID, coID, secondOAuthClientID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusConflict, status, "a consumer can hold at most one oauth2_client, body=%v", body)
+
+	oauthID := CreateAuth(t, gwID, map[string]any{
+		"name": uniqueName("assoc-auth-excl-oa"),
+		"type": "oauth2",
+		"config": map[string]any{
+			"oauth2": map[string]any{
+				"issuer":    "https://issuer.example.com",
+				"audiences": []string{"gateway"},
+				"jwks_url":  "https://issuer.example.com/.well-known/jwks.json",
+			},
+		},
+	})
+	status, body = sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s/auths/%s", AdminURL, gwID, coID, oauthID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusConflict, status, "oauth2 cannot coexist with oauth2_client, body=%v", body)
+
+	AttachAuth(t, gwID, coID, oauthClientID)
 }
 
 func TestAttachAuth_CrossGatewayRejected(t *testing.T) {

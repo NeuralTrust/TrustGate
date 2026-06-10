@@ -2,10 +2,14 @@ basePath: /
 definitions:
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest:
     properties:
+      idp:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest'
       mtls:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest'
       oauth2:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest'
+      oauth2_client:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ClientConfigRequest'
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.CreateAuthRequest:
     properties:
@@ -16,6 +20,31 @@ definitions:
       name:
         type: string
       type:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest:
+    properties:
+      allowed_algorithms:
+        items:
+          type: string
+        type: array
+      audiences:
+        items:
+          type: string
+        type: array
+      issuer:
+        type: string
+      jwks_url:
+        type: string
+      public_keys:
+        items:
+          type: string
+        type: array
+      required_scopes:
+        items:
+          type: string
+        type: array
+      subject_claim:
         type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest:
@@ -33,6 +62,21 @@ definitions:
           type: string
         type: array
       ca_cert:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ClientConfigRequest:
+    properties:
+      audience:
+        type: string
+      client_id:
+        type: string
+      client_secret:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token_url:
         type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest:
@@ -95,10 +139,39 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse:
     properties:
+      idp:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse'
       mtls:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse'
       oauth2:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse'
+      oauth2_client:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ClientConfigResponse'
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse:
+    properties:
+      allowed_algorithms:
+        items:
+          type: string
+        type: array
+      audiences:
+        items:
+          type: string
+        type: array
+      issuer:
+        type: string
+      jwks_url:
+        type: string
+      public_keys:
+        items:
+          type: string
+        type: array
+      required_scopes:
+        items:
+          type: string
+        type: array
+      subject_claim:
+        type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ListAuthResponse:
     properties:
@@ -128,6 +201,21 @@ definitions:
           type: string
         type: array
       ca_cert:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ClientConfigResponse:
+    properties:
+      audience:
+        type: string
+      client_id:
+        type: string
+      client_secret:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token_url:
         type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse:
@@ -185,6 +273,10 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_catalog_response.ProviderResponse:
     properties:
+      auth_types:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthTypeOption'
+        type: array
       code:
         type: string
       display_name:
@@ -194,6 +286,13 @@ definitions:
       metadata:
         additionalProperties: {}
         type: object
+      provider_options_schema:
+        description: |-
+          ProviderOptionsSchema lists provider-specific connection settings that are
+          not credentials (e.g. base_url, project, location).
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.ProviderOptionField'
+        type: array
       source:
         type: string
       wire_format:
@@ -219,24 +318,24 @@ definitions:
     properties:
       active:
         type: boolean
-      algorithm:
-        type: string
-      embedding_config:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest'
       fallback:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest'
       headers:
         additionalProperties:
           type: string
         type: object
+      lb_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBConfigRequest'
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
+        type: array
       name:
         type: string
       path:
         type: string
-      registries:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest'
-        type: array
+      routing_mode:
+        type: string
       type:
         type: string
     type: object
@@ -273,6 +372,30 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBConfigRequest:
+    properties:
+      algorithm:
+        type: string
+      embedding_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest'
+      enabled:
+        type: boolean
+      members:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBPoolMemberRequest'
+        type: array
+      pool_alias:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBPoolMemberRequest:
+    properties:
+      models:
+        items:
+          type: string
+        type: array
+      registry_id:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest:
     properties:
       allowed:
@@ -281,36 +404,31 @@ definitions:
         type: array
       default:
         type: string
-    type: object
-  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest:
-    properties:
-      id:
+      registry_id:
         type: string
-      model_policies:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.UpdateConsumerRequest:
     properties:
       active:
         type: boolean
-      algorithm:
-        type: string
-      embedding_config:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest'
       fallback:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest'
       headers:
         additionalProperties:
           type: string
         type: object
+      lb_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBConfigRequest'
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
+        type: array
       name:
         type: string
       path:
         type: string
-      registries:
-        items:
-          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest'
-        type: array
+      routing_mode:
+        type: string
       type:
         type: string
     type: object
@@ -318,16 +436,12 @@ definitions:
     properties:
       active:
         type: boolean
-      algorithm:
-        type: string
       auth_ids:
         items:
           type: string
         type: array
       created_at:
         type: string
-      embedding_config:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse'
       fallback:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.FallbackResponse'
       gateway_id:
@@ -338,14 +452,26 @@ definitions:
         type: object
       id:
         type: string
+      lb_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBConfigResponse'
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ModelPolicyResponse'
+        type: array
       name:
         type: string
       path:
         type: string
-      registries:
+      registry_ids:
         items:
-          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryBindingResponse'
+          type: string
         type: array
+      role_ids:
+        items:
+          type: string
+        type: array
+      routing_mode:
+        type: string
       type:
         type: string
       updated_at:
@@ -400,6 +526,30 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBConfigResponse:
+    properties:
+      algorithm:
+        type: string
+      embedding_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse'
+      enabled:
+        type: boolean
+      members:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBPoolMemberResponse'
+        type: array
+      pool_alias:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBPoolMemberResponse:
+    properties:
+      models:
+        items:
+          type: string
+        type: array
+      registry_id:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ListConsumerResponse:
     properties:
       items:
@@ -421,13 +571,8 @@ definitions:
         type: array
       default:
         type: string
-    type: object
-  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryBindingResponse:
-    properties:
-      id:
+      registry_id:
         type: string
-      model_policies:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ModelPolicyResponse'
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.CreateGatewayRequest:
     properties:
@@ -437,6 +582,8 @@ definitions:
         type: string
       session_config:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig'
+      slug:
+        type: string
       telemetry:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry'
     type: object
@@ -448,6 +595,8 @@ definitions:
         type: string
       session_config:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig'
+      slug:
+        type: string
       status:
         type: string
       telemetry:
@@ -465,6 +614,8 @@ definitions:
         type: string
       session_config:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig'
+      slug:
+        type: string
       status:
         type: string
       telemetry:
@@ -921,6 +1072,70 @@ definitions:
         type: string
       status_code:
         type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthField:
+    properties:
+      description:
+        type: string
+      key:
+        type: string
+      label:
+        type: string
+      required:
+        type: boolean
+      secret:
+        type: boolean
+      type:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthFieldType'
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthFieldType:
+    enum:
+    - string
+    - boolean
+    type: string
+    x-enum-varnames:
+    - AuthFieldTypeString
+    - AuthFieldTypeBoolean
+  github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthTypeOption:
+    properties:
+      description:
+        type: string
+      fields:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthField'
+        type: array
+      label:
+        type: string
+      type:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_app_catalog.OptionFieldType:
+    enum:
+    - string
+    - enum
+    - map
+    type: string
+    x-enum-varnames:
+    - OptionFieldTypeString
+    - OptionFieldTypeEnum
+    - OptionFieldTypeMap
+  github_com_NeuralTrust_AgentGateway_pkg_app_catalog.ProviderOptionField:
+    properties:
+      default: {}
+      description:
+        type: string
+      enum:
+        items:
+          type: string
+        type: array
+      key:
+        type: string
+      label:
+        type: string
+      required:
+        type: boolean
+      type:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.OptionFieldType'
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog:
     properties:

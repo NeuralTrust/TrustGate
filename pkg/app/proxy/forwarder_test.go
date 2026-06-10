@@ -46,7 +46,7 @@ func routableConsumerWith(gatewayID ids.GatewayID, registries ...*registrydomain
 			GatewayID: gatewayID,
 			Name:      "test-consumer",
 			Path:      "/v1/chat/completions",
-			Algorithm: loadbalancer.AlgorithmRoundRobin,
+			LBConfig:  &domainconsumer.LBConfig{Algorithm: loadbalancer.AlgorithmRoundRobin},
 		},
 		Registries: registries,
 	}
@@ -213,6 +213,33 @@ func TestForward_SyncSuccess(t *testing.T) {
 	}
 	if res.StatusCode != 200 || string(res.Body) != "ok" {
 		t.Fatalf("unexpected result: %+v", res)
+	}
+}
+
+func TestForward_DisabledLBConfigIsIgnored(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
+	rc.Consumer.LBConfig = &domainconsumer.LBConfig{Enabled: false, Algorithm: "unsupported-algorithm"}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Context: context.Background()},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
 	}
 }
 

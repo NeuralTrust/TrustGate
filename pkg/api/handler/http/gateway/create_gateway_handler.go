@@ -43,6 +43,7 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 
 	g, err := h.creator.Create(c.UserContext(), appgateway.CreateInput{
 		Name:            req.Name,
+		Slug:            req.Slug,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
 		SessionConfig:   req.SessionConfig,

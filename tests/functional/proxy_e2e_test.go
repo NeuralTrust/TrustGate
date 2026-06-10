@@ -179,6 +179,9 @@ func proxyPost(t *testing.T, apiKey, path string, body any) (int, http.Header, [
 
 	req, err := http.NewRequest(http.MethodPost, ProxyURL+path, bytes.NewReader(buf))
 	require.NoError(t, err)
+	host, ok := proxyHosts.Load(apiKey)
+	require.True(t, ok, "proxy host missing for api key")
+	req.Host = host.(string)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(proxyAPIKeyHeader, apiKey)
 

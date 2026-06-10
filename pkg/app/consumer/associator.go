@@ -4,11 +4,13 @@ import (
 	"context"
 	"log/slog"
 
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
 
@@ -16,6 +18,8 @@ import (
 type Associator interface {
 	AttachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error
 	DetachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error
+	AttachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error
+	DetachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error
 	AttachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error
 	DetachAuth(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, authID ids.AuthID) error
 	AttachPolicy(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, policyID ids.PolicyID) error
@@ -27,6 +31,7 @@ var _ Associator = (*associator)(nil)
 type associator struct {
 	repo         domain.Repository
 	registryRepo registrydomain.Repository
+	roleRepo     roledomain.Repository
 	authRepo     authdomain.Repository
 	policyRepo   policydomain.Repository
 	memoryCache  *cache.TTLMap
@@ -38,6 +43,7 @@ type associator struct {
 func NewAssociator(
 	repo domain.Repository,
 	registryRepo registrydomain.Repository,
+	roleRepo roledomain.Repository,
 	authRepo authdomain.Repository,
 	policyRepo policydomain.Repository,
 	manager *cache.TTLMapManager,
@@ -47,6 +53,7 @@ func NewAssociator(
 	return &associator{
 		repo:         repo,
 		registryRepo: registryRepo,
+		roleRepo:     roleRepo,
 		authRepo:     authRepo,
 		policyRepo:   policyRepo,
 		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
@@ -61,6 +68,9 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 	if err != nil {
 		return err
 	}
+	if cons.RoutingMode == domain.RoutingModeRoleBased {
+		return commonerrors.ErrConflict
+	}
 	if err := a.registryInGateway(ctx, gatewayID, registryID); err != nil {
 		return err
 	}
@@ -72,11 +82,38 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 }
 
 func (a *associator) DetachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
+	cons, err := a.repo.DetachRegistryIfUnreferenced(ctx, gatewayID, consumerID, registryID)
+	if err != nil {
+		return err
+	}
+	a.invalidate(ctx, cons)
+	return nil
+}
+
+func (a *associator) AttachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error {
 	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
 	}
-	if err := a.repo.DetachRegistry(ctx, consumerID, registryID); err != nil {
+	if cons.RoutingMode == domain.RoutingModeInline {
+		return commonerrors.ErrConflict
+	}
+	if err := a.roleInGateway(ctx, gatewayID, roleID); err != nil {
+		return err
+	}
+	if err := a.repo.AttachRole(ctx, consumerID, roleID); err != nil {
+		return err
+	}
+	a.invalidate(ctx, cons)
+	return nil
+}
+
+func (a *associator) DetachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error {
+	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
+	if err != nil {
+		return err
+	}
+	if err := a.repo.DetachRole(ctx, consumerID, roleID); err != nil {
 		return err
 	}
 	a.invalidate(ctx, cons)
@@ -157,6 +194,17 @@ func (a *associator) registryInGateway(ctx context.Context, gatewayID ids.Gatewa
 	}
 	if reg.GatewayID != gatewayID {
 		return registrydomain.ErrNotFound
+	}
+	return nil
+}
+
+func (a *associator) roleInGateway(ctx context.Context, gatewayID ids.GatewayID, roleID ids.RoleID) error {
+	role, err := a.roleRepo.FindByID(ctx, roleID)
+	if err != nil {
+		return err
+	}
+	if role.GatewayID != gatewayID {
+		return roledomain.ErrNotFound
 	}
 	return nil
 }

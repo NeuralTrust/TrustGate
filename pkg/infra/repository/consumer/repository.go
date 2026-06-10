@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"strings"
 
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -20,21 +23,25 @@ import (
 const (
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
+	pgCheckViolation      = "23514"
+	pgRoutingConflict     = "AG409"
 
 	gatewayFKConstraint          = "consumers_gateway_id_fkey"
 	consumerRegistryFKConstraint = "consumer_registry_registry_id_fkey"
+	consumerRoleFKConstraint     = "consumer_role_role_id_fkey"
 	consumerAuthFKConstraint     = "consumer_auth_auth_id_fkey"
 	consumerPolicyFKConstraint   = "consumer_policy_policy_id_fkey"
 	consumerPathUniqueIndex      = "consumers_gateway_path_unique"
+	consumerRoutingModeCheck     = "consumers_routing_mode_check"
 )
 
-const insertConsumerRegistry = `INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-
 const consumerSelectColumns = `
-		SELECT c.id, c.gateway_id, c.name, c.type, c.path, c.algorithm, c.embedding_config, c.fallback, c.model_policies, c.headers, c.active,
+		SELECT c.id, c.gateway_id, c.name, c.type, c.path, c.routing_mode, c.lb_config, c.fallback, c.model_policies, c.headers, c.active,
 		       c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
+		       COALESCE((SELECT array_agg(cr.role_id ORDER BY cr.role_id)
+		                   FROM consumer_role cr WHERE cr.consumer_id = c.id), '{}')::uuid[] AS role_ids,
 		       COALESCE((SELECT array_agg(ca.auth_id ORDER BY ca.auth_id)
 		                   FROM consumer_auth ca WHERE ca.consumer_id = c.id), '{}')::uuid[] AS auth_ids`
 
@@ -56,9 +63,9 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal headers: %w", err)
 	}
-	embeddingBytes, err := marshalEmbedding(c.EmbeddingConfig)
+	lbConfigBytes, err := marshalLBConfig(c.LBConfig)
 	if err != nil {
-		return fmt.Errorf("consumer repository: marshal embedding_config: %w", err)
+		return fmt.Errorf("consumer repository: marshal lb_config: %w", err)
 	}
 	fallbackBytes, err := marshalFallback(c.Fallback)
 	if err != nil {
@@ -70,13 +77,15 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	}
 	const insertConsumer = `
 		INSERT INTO consumers (
-			id, gateway_id, name, type, path, algorithm, embedding_config, fallback, model_policies, headers, active, created_at, updated_at
+			id, gateway_id, name, type, path, routing_mode, lb_config, fallback, model_policies, headers, active, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 		)`
+	const insertConsumerRegistry = `
+		INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
-			c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
+			c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
 			headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
@@ -98,9 +107,9 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal headers: %w", err)
 	}
-	embeddingBytes, err := marshalEmbedding(c.EmbeddingConfig)
+	lbConfigBytes, err := marshalLBConfig(c.LBConfig)
 	if err != nil {
-		return fmt.Errorf("consumer repository: marshal embedding_config: %w", err)
+		return fmt.Errorf("consumer repository: marshal lb_config: %w", err)
 	}
 	fallbackBytes, err := marshalFallback(c.Fallback)
 	if err != nil {
@@ -115,46 +124,228 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		   SET name             = $2,
 		       type             = $3,
 		       path             = $4,
-		       algorithm        = $5,
-		       embedding_config = $6,
+		       routing_mode     = $5,
+		       lb_config        = $6,
 		       fallback         = $7,
 		       model_policies   = $8,
 		       headers          = $9,
 		       active           = $10,
 		       updated_at       = $11
 		 WHERE id = $1`
-	cmd, err := r.conn.Pool.Exec(ctx, updateConsumer,
-		c.ID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
-		headersBytes, c.Active, c.UpdatedAt,
-	)
-	if err != nil {
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
+			return err
+		}
+		if err := ensureRegistryRefsAssociated(ctx, tx, c); err != nil {
+			return err
+		}
+		if err := cleanupIncompatibleRelations(ctx, tx, c); err != nil {
+			return err
+		}
+		cmd, err := tx.Exec(ctx, updateConsumer,
+			c.ID, c.Name, string(c.Type), c.Path, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
+			headersBytes, c.Active, c.UpdatedAt,
+		)
+		if err != nil {
+			return mapPgError(err)
+		}
+		if cmd.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		return nil
+	})
+}
+
+func cleanupIncompatibleRelations(ctx context.Context, tx pgx.Tx, c *domain.Consumer) error {
+	var query string
+	switch c.RoutingMode {
+	case domain.RoutingModeRoleBased:
+		query = `DELETE FROM consumer_registry WHERE consumer_id = $1`
+	case domain.RoutingModeInline:
+		query = `DELETE FROM consumer_role WHERE consumer_id = $1`
+	default:
+		return nil
+	}
+	if _, err := tx.Exec(ctx, query, c.ID); err != nil {
 		return mapPgError(err)
 	}
-	if cmd.RowsAffected() == 0 {
-		return domain.ErrNotFound
+	return nil
+}
+
+func lockConsumerRow(ctx context.Context, tx pgx.Tx, consumerID ids.ConsumerID) error {
+	const query = `SELECT 1 FROM consumers WHERE id = $1 FOR UPDATE`
+	var exists int
+	if err := tx.QueryRow(ctx, query, consumerID).Scan(&exists); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("consumer repository: lock consumer: %w", err)
+	}
+	return nil
+}
+
+func ensureRegistryRefsAssociated(ctx context.Context, tx pgx.Tx, c *domain.Consumer) error {
+	if c.RoutingMode == domain.RoutingModeRoleBased {
+		return nil
+	}
+	refs := consumerRegistryReferences(c)
+	if len(refs) == 0 {
+		return nil
+	}
+	const query = `
+		SELECT registry_id
+		  FROM consumer_registry
+		 WHERE consumer_id = $1
+		   AND registry_id = ANY($2::uuid[])`
+	rows, err := tx.Query(ctx, query, c.ID, ids.ToUUIDs(refs))
+	if err != nil {
+		return fmt.Errorf("consumer repository: registry reference check: %w", err)
+	}
+	defer rows.Close()
+
+	associated := make(map[ids.RegistryID]struct{}, len(refs))
+	for rows.Next() {
+		var id ids.RegistryID
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("consumer repository: registry reference scan: %w", err)
+		}
+		associated[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("consumer repository: registry reference iter: %w", err)
+	}
+	for _, id := range refs {
+		if _, ok := associated[id]; !ok {
+			return fmt.Errorf("%w: registry %s is not associated with the consumer", registrydomain.ErrInvalidRegistryID, id)
+		}
 	}
 	return nil
 }
 
 func (r *Repository) AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
-	if _, err := r.conn.Pool.Exec(ctx, insertConsumerRegistry, consumerID, registryID); err != nil {
-		return mapPgError(err)
-	}
-	return nil
-}
-
-func (r *Repository) DetachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
-	const query = `DELETE FROM consumer_registry WHERE consumer_id = $1 AND registry_id = $2`
+	const query = `INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
 	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, registryID); err != nil {
 		return mapPgError(err)
 	}
 	return nil
 }
 
-func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error {
-	const query = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, authID); err != nil {
+func (r *Repository) DetachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
+	_, err := r.detachRegistryIfUnreferenced(ctx, ids.GatewayID{}, consumerID, registryID, false)
+	return err
+}
+
+func (r *Repository) DetachRegistryIfUnreferenced(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	consumerID ids.ConsumerID,
+	registryID ids.RegistryID,
+) (*domain.Consumer, error) {
+	return r.detachRegistryIfUnreferenced(ctx, gatewayID, consumerID, registryID, true)
+}
+
+func (r *Repository) detachRegistryIfUnreferenced(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	consumerID ids.ConsumerID,
+	registryID ids.RegistryID,
+	checkGateway bool,
+) (*domain.Consumer, error) {
+	var current *domain.Consumer
+	err := database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		consumer, err := lockConsumerRoutingReferences(ctx, tx, consumerID)
+		if err != nil {
+			return err
+		}
+		if checkGateway && consumer.GatewayID != gatewayID {
+			return domain.ErrNotFound
+		}
+		if consumerReferencesRegistry(consumer, registryID) {
+			return fmt.Errorf("consumer registry %s has dependent routing references: %w", registryID, commonerrors.ErrConflict)
+		}
+		const query = `DELETE FROM consumer_registry WHERE consumer_id = $1 AND registry_id = $2`
+		if _, err := tx.Exec(ctx, query, consumerID, registryID); err != nil {
+			return mapPgError(err)
+		}
+		current = consumer
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return current, nil
+}
+
+func (r *Repository) AttachRole(ctx context.Context, consumerID ids.ConsumerID, roleID ids.RoleID) error {
+	const query = `INSERT INTO consumer_role (consumer_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, roleID); err != nil {
 		return mapPgError(err)
+	}
+	return nil
+}
+
+func (r *Repository) DetachRole(ctx context.Context, consumerID ids.ConsumerID, roleID ids.RoleID) error {
+	const query = `DELETE FROM consumer_role WHERE consumer_id = $1 AND role_id = $2`
+	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, roleID); err != nil {
+		return mapPgError(err)
+	}
+	return nil
+}
+
+func (r *Repository) AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error {
+	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
+		if err := lockConsumerRow(ctx, tx, consumerID); err != nil {
+			return err
+		}
+		var authType string
+		err := tx.QueryRow(ctx, `SELECT type FROM auths WHERE id = $1`, authID).Scan(&authType)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		if err != nil {
+			return mapPgError(err)
+		}
+		if err := ensureNoConflictingAuthAttachment(ctx, tx, consumerID, authID, authdomain.Type(authType)); err != nil {
+			return err
+		}
+		const query = `INSERT INTO consumer_auth (consumer_id, auth_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+		if _, err := tx.Exec(ctx, query, consumerID, authID); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	})
+}
+
+func ensureNoConflictingAuthAttachment(
+	ctx context.Context,
+	tx pgx.Tx,
+	consumerID ids.ConsumerID,
+	authID ids.AuthID,
+	authType authdomain.Type,
+) error {
+	conflicting := authdomain.ConflictingAttachmentTypes(authType)
+	if len(conflicting) == 0 {
+		return nil
+	}
+	types := make([]string, len(conflicting))
+	for i, t := range conflicting {
+		types[i] = string(t)
+	}
+	const query = `
+		SELECT EXISTS (
+			SELECT 1 FROM consumer_auth ca
+			JOIN auths a ON a.id = ca.auth_id
+			WHERE ca.consumer_id = $1 AND ca.auth_id <> $2 AND a.type = ANY($3)
+		)`
+	var exists bool
+	if err := tx.QueryRow(ctx, query, consumerID, authID, types).Scan(&exists); err != nil {
+		return mapPgError(err)
+	}
+	if exists {
+		return fmt.Errorf(
+			"consumer already has an attached auth incompatible with type %q (oauth2 and oauth2_client are mutually exclusive and at most one oauth2_client is allowed): %w",
+			authType, commonerrors.ErrConflict,
+		)
 	}
 	return nil
 }
@@ -284,6 +475,100 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 	return items, nil
 }
 
+func lockConsumerRoutingReferences(ctx context.Context, tx pgx.Tx, consumerID ids.ConsumerID) (*domain.Consumer, error) {
+	const query = `
+		SELECT id, gateway_id, fallback, model_policies, lb_config
+		  FROM consumers
+		 WHERE id = $1
+		 FOR UPDATE`
+	consumer := &domain.Consumer{}
+	var fallbackRaw, modelPoliciesRaw, lbConfigRaw []byte
+	if err := tx.QueryRow(ctx, query, consumerID).Scan(
+		&consumer.ID,
+		&consumer.GatewayID,
+		&fallbackRaw,
+		&modelPoliciesRaw,
+		&lbConfigRaw,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("consumer repository: lock routing references: %w", err)
+	}
+	if err := hydrateConsumerRoutingReferences(consumer, fallbackRaw, modelPoliciesRaw, lbConfigRaw); err != nil {
+		return nil, err
+	}
+	return consumer, nil
+}
+
+func hydrateConsumerRoutingReferences(consumer *domain.Consumer, fallbackRaw, modelPoliciesRaw, lbConfigRaw []byte) error {
+	if len(fallbackRaw) > 0 {
+		var fallback domain.Fallback
+		if err := json.Unmarshal(fallbackRaw, &fallback); err != nil {
+			return fmt.Errorf("scan fallback: %w", err)
+		}
+		consumer.Fallback = &fallback
+	}
+	if len(modelPoliciesRaw) > 0 {
+		var modelPolicies domain.ModelPolicies
+		if err := json.Unmarshal(modelPoliciesRaw, &modelPolicies); err != nil {
+			return fmt.Errorf("scan model_policies: %w", err)
+		}
+		consumer.ModelPolicies = modelPolicies
+	}
+	if len(lbConfigRaw) > 0 {
+		var lbConfig domain.LBConfig
+		if err := json.Unmarshal(lbConfigRaw, &lbConfig); err != nil {
+			return fmt.Errorf("scan lb_config: %w", err)
+		}
+		consumer.LBConfig = &lbConfig
+	}
+	return nil
+}
+
+func consumerReferencesRegistry(consumer *domain.Consumer, registryID ids.RegistryID) bool {
+	if consumer.Fallback != nil {
+		for _, id := range consumer.Fallback.Chain {
+			if id == registryID {
+				return true
+			}
+		}
+	}
+	if _, ok := consumer.ModelPolicies[registryID]; ok {
+		return true
+	}
+	if consumer.LBConfig != nil {
+		for _, member := range consumer.LBConfig.Members {
+			if member.RegistryID == registryID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func consumerRegistryReferences(consumer *domain.Consumer) []ids.RegistryID {
+	refs := make(map[ids.RegistryID]struct{})
+	if consumer.Fallback != nil {
+		for _, id := range consumer.Fallback.Chain {
+			refs[id] = struct{}{}
+		}
+	}
+	for id := range consumer.ModelPolicies {
+		refs[id] = struct{}{}
+	}
+	if consumer.LBConfig != nil {
+		for _, member := range consumer.LBConfig.Members {
+			refs[member.RegistryID] = struct{}{}
+		}
+	}
+	out := make([]ids.RegistryID, 0, len(refs))
+	for id := range refs {
+		out = append(out, id)
+	}
+	return out
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -292,32 +577,35 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 	c := &domain.Consumer{}
 	var (
 		headersRaw       []byte
-		embeddingRaw     []byte
+		lbConfigRaw      []byte
 		fallbackRaw      []byte
 		modelPoliciesRaw []byte
 		consumerType     string
+		routingMode      string
 		registryIDs      []uuid.UUID
+		roleIDs          []uuid.UUID
 		authIDs          []uuid.UUID
 	)
 	if err := s.Scan(
-		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &c.Algorithm, &embeddingRaw, &fallbackRaw, &modelPoliciesRaw, &headersRaw, &c.Active,
+		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &routingMode, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
-		&registryIDs, &authIDs,
+		&registryIDs, &roleIDs, &authIDs,
 	); err != nil {
 		return nil, err
 	}
 	c.Type = domain.Type(consumerType)
+	c.RoutingMode = domain.RoutingMode(routingMode)
 	if len(headersRaw) > 0 {
 		if err := json.Unmarshal(headersRaw, &c.Headers); err != nil {
 			return nil, fmt.Errorf("scan headers: %w", err)
 		}
 	}
-	if len(embeddingRaw) > 0 {
-		var ec registrydomain.EmbeddingConfig
-		if err := json.Unmarshal(embeddingRaw, &ec); err != nil {
-			return nil, fmt.Errorf("scan embedding_config: %w", err)
+	if len(lbConfigRaw) > 0 {
+		var lb domain.LBConfig
+		if err := json.Unmarshal(lbConfigRaw, &lb); err != nil {
+			return nil, fmt.Errorf("scan lb_config: %w", err)
 		}
-		c.EmbeddingConfig = &ec
+		c.LBConfig = &lb
 	}
 	if len(fallbackRaw) > 0 {
 		var fb domain.Fallback
@@ -333,10 +621,14 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		}
 		c.ModelPolicies = mp
 	}
-	c.RegistryIDs = registrydomain.Registries(ids.FromUUIDs[ids.RegistryKind](registryIDs))
+	c.RegistryIDs = ids.FromUUIDs[ids.RegistryKind](registryIDs)
+	c.RoleIDs = ids.FromUUIDs[ids.RoleKind](roleIDs)
 	c.AuthIDs = ids.FromUUIDs[ids.AuthKind](authIDs)
 	if c.RegistryIDs == nil {
-		c.RegistryIDs = registrydomain.Registries{}
+		c.RegistryIDs = []ids.RegistryID{}
+	}
+	if c.RoleIDs == nil {
+		c.RoleIDs = []ids.RoleID{}
 	}
 	if c.AuthIDs == nil {
 		c.AuthIDs = []ids.AuthID{}
@@ -351,11 +643,11 @@ func marshalHeaders(v map[string]string) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-func marshalEmbedding(e *registrydomain.EmbeddingConfig) ([]byte, error) {
-	if e == nil {
+func marshalLBConfig(lb *domain.LBConfig) ([]byte, error) {
+	if lb == nil {
 		return nil, nil
 	}
-	return json.Marshal(e)
+	return json.Marshal(lb)
 }
 
 func marshalFallback(f *domain.Fallback) ([]byte, error) {
@@ -382,11 +674,18 @@ func nullableUUID(id uuid.UUID) any {
 func mapPgError(err error) error {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		switch pgErr.Code {
+		case pgRoutingConflict:
+			return fmt.Errorf("%s: %w", pgErr.Message, commonerrors.ErrConflict)
 		case pgUniqueViolation:
 			if strings.Contains(pgErr.ConstraintName, consumerPathUniqueIndex) {
 				return domain.ErrPathAlreadyExists
 			}
 			return domain.ErrAlreadyExists
+		case pgCheckViolation:
+			if strings.Contains(pgErr.ConstraintName, consumerRoutingModeCheck) {
+				return domain.ErrInvalidRoutingMode
+			}
+			return err
 		case pgForeignKeyViolation:
 			if strings.Contains(pgErr.ConstraintName, gatewayFKConstraint) ||
 				strings.Contains(pgErr.Detail, "(gateway_id)") {
@@ -399,6 +698,10 @@ func mapPgError(err error) error {
 			if strings.Contains(pgErr.ConstraintName, consumerAuthFKConstraint) ||
 				strings.Contains(pgErr.Detail, "(auth_id)") {
 				return domain.ErrInvalidAuthID
+			}
+			if strings.Contains(pgErr.ConstraintName, consumerRoleFKConstraint) ||
+				strings.Contains(pgErr.Detail, "(role_id)") {
+				return roledomain.ErrNotFound
 			}
 			if strings.Contains(pgErr.ConstraintName, consumerPolicyFKConstraint) ||
 				strings.Contains(pgErr.Detail, "(policy_id)") {

@@ -13,17 +13,17 @@ import (
 )
 
 type UpdateInput struct {
-	ID              ids.ConsumerID
-	GatewayID       ids.GatewayID
-	Name            *string
-	Type            *domain.Type
-	Path            *string
-	Algorithm       *string
-	EmbeddingConfig *registrydomain.EmbeddingConfig
-	Headers         *map[string]string
-	Active          *bool
-	Fallback        *domain.Fallback
-	ModelPolicies   *domain.ModelPolicies
+	ID            ids.ConsumerID
+	GatewayID     ids.GatewayID
+	Name          *string
+	Type          *domain.Type
+	Path          *string
+	RoutingMode   *domain.RoutingMode
+	LBConfig      *domain.LBConfig
+	Headers       *map[string]string
+	Active        *bool
+	Fallback      *domain.Fallback
+	ModelPolicies *domain.ModelPolicies
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -71,12 +71,13 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if in.Path != nil {
 		existing.Path = *in.Path
 	}
-	if in.Algorithm != nil {
-		existing.Algorithm = *in.Algorithm
+	previousMode := existing.RoutingMode
+	if in.RoutingMode != nil {
+		existing.RoutingMode = *in.RoutingMode
 	}
-	if in.EmbeddingConfig != nil {
-		in.EmbeddingConfig.ResolveSecretsFrom(existing.EmbeddingConfig)
-		existing.EmbeddingConfig = in.EmbeddingConfig
+	if in.LBConfig != nil {
+		resolveLBConfigSecrets(in.LBConfig, existing.LBConfig)
+		existing.LBConfig = in.LBConfig
 	}
 	if in.Headers != nil {
 		existing.Headers = *in.Headers
@@ -89,6 +90,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	}
 	if in.ModelPolicies != nil {
 		existing.ModelPolicies = *in.ModelPolicies
+	}
+	if previousMode != existing.RoutingMode {
+		cleanIncompatibleModeConfig(existing)
 	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := validateRegistryRefsAssociated(existing); err != nil {
@@ -106,6 +110,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 }
 
 func validateRegistryRefsAssociated(c *domain.Consumer) error {
+	if c.RoutingMode == domain.RoutingModeRoleBased {
+		return nil
+	}
 	associated := make(map[ids.RegistryID]struct{}, len(c.RegistryIDs))
 	for _, id := range c.RegistryIDs {
 		associated[id] = struct{}{}
@@ -124,5 +131,36 @@ func validateRegistryRefsAssociated(c *domain.Consumer) error {
 				registrydomain.ErrInvalidRegistryID, id)
 		}
 	}
+	if c.LBConfig != nil {
+		for _, member := range c.LBConfig.Members {
+			if _, ok := associated[member.RegistryID]; !ok {
+				return fmt.Errorf("%w: lb_config member registry %s is not associated with the consumer",
+					registrydomain.ErrInvalidRegistryID, member.RegistryID)
+			}
+		}
+	}
 	return nil
+}
+
+func cleanIncompatibleModeConfig(c *domain.Consumer) {
+	switch c.RoutingMode {
+	case domain.RoutingModeRoleBased:
+		c.RegistryIDs = nil
+		c.Fallback = nil
+		c.LBConfig = nil
+		c.ModelPolicies = nil
+	case domain.RoutingModeInline:
+		c.RoleIDs = nil
+	}
+}
+
+func resolveLBConfigSecrets(next, prev *domain.LBConfig) {
+	if next == nil || next.EmbeddingConfig == nil {
+		return
+	}
+	if prev == nil {
+		next.EmbeddingConfig.ResolveSecretsFrom(nil)
+		return
+	}
+	next.EmbeddingConfig.ResolveSecretsFrom(prev.EmbeddingConfig)
 }

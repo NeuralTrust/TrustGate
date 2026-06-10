@@ -156,6 +156,38 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, aut
 	return out, nil
 }
 
+func (r *Repository) ListEnabledByGatewayAndType(
+	ctx context.Context,
+	gatewayID ids.GatewayID,
+	authType domain.Type,
+) ([]*domain.Auth, error) {
+	const query = `
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
+		  FROM auths
+		 WHERE gateway_id = $1
+		   AND type = $2
+		   AND enabled = TRUE
+		 ORDER BY created_at DESC, id`
+	rows, err := r.conn.Pool.Query(ctx, query, gatewayID, string(authType))
+	if err != nil {
+		return nil, fmt.Errorf("auth repository: list enabled by gateway and type: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*domain.Auth, 0)
+	for rows.Next() {
+		a, err := scanAuth(rows)
+		if err != nil {
+			return nil, fmt.Errorf("auth repository: scan: %w", err)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("auth repository: iter: %w", err)
+	}
+	return out, nil
+}
+
 func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Auth, int, error) {
 	if filter.Page < 1 {
 		filter.Page = 1
