@@ -10,15 +10,20 @@ import (
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
+	approuting "github.com/NeuralTrust/AgentGateway/pkg/app/routing"
 	appsession "github.com/NeuralTrust/AgentGateway/pkg/app/session"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
+	routingdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"golang.org/x/sync/singleflight"
 )
@@ -31,6 +36,8 @@ var (
 type ForwardInput struct {
 	GatewayID ids.GatewayID
 	Consumer  *appconsumer.RoutableConsumer
+	Data      *appconsumer.Data
+	RoleIDs   []ids.RoleID
 	Request   *infracontext.RequestContext
 }
 
@@ -43,6 +50,7 @@ type ForwardResult struct {
 
 type forwardRequestDTO struct {
 	backend     *domain.Registry
+	candidates  *routingdomain.CandidateSet
 	request     *infracontext.RequestContext
 	response    *infracontext.ResponseContext
 	policies    []*policydomain.Policy
@@ -65,6 +73,7 @@ type forwarder struct {
 	invoker    ProviderInvoker
 	executor   appplugins.Executor
 	sessions   appsession.Store
+	resolver   approuting.Resolver
 	maxRetries int
 	logger     *slog.Logger
 }
@@ -76,6 +85,7 @@ func NewForwarder(
 	invoker ProviderInvoker,
 	executor appplugins.Executor,
 	sessions appsession.Store,
+	resolver approuting.Resolver,
 	cfg *config.Config,
 	logger *slog.Logger,
 ) Forwarder {
@@ -86,6 +96,7 @@ func NewForwarder(
 		invoker:    invoker,
 		executor:   executor,
 		sessions:   sessions,
+		resolver:   resolver,
 		maxRetries: maxRetriesFromConfig(cfg),
 		logger:     logger,
 	}
@@ -99,14 +110,23 @@ func maxRetriesFromConfig(cfg *config.Config) int {
 }
 
 func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResult, error) {
-	if in.Consumer == nil || in.Consumer.Consumer == nil || len(in.Consumer.Registries) == 0 {
+	if in.Consumer == nil || in.Consumer.Consumer == nil {
 		return nil, ErrNoBackendsInPool
 	}
+
+	intent, candidates, err := f.resolveRouting(in)
+	if err != nil {
+		return nil, err
+	}
+	if candidates.Len() == 0 {
+		return nil, ErrNoBackendsInPool
+	}
+	applyIntentToBody(in.Request, intent)
 
 	f.stampConsumerScope(in)
 	f.stampContinuation(ctx, in.Request)
 
-	lb, bk, err := f.selectBackend(in.Consumer, in.Request)
+	lb, bk, excluded, err := f.routeBackend(in.Consumer, in.Request, candidates)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +148,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 
 	dto := &forwardRequestDTO{
 		backend:     bk,
+		candidates:  candidates,
 		request:     in.Request,
 		response:    resp,
 		policies:    policies,
@@ -136,7 +157,130 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	}
 	stream := DetectStream(dto.request)
 
-	return f.invokeWithFailover(ctx, lb, in.Consumer, dto, stream)
+	return f.invokeWithFailover(ctx, lb, in.Consumer, dto, stream, excluded)
+}
+
+func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.RoutingIntent, *routingdomain.CandidateSet, error) {
+	intent, err := parseIntent(in.Request)
+	if err != nil {
+		return intent, nil, err
+	}
+	candidates, err := f.resolver.Resolve(approuting.ResolveInput{
+		Intent:     intent,
+		Consumer:   in.Consumer,
+		Roles:      effectiveRoles(in.Data, in.RoleIDs),
+		Registries: registryLookup(in.Data),
+	})
+	if err != nil {
+		return intent, nil, err
+	}
+	return intent, candidates, nil
+}
+
+func parseIntent(req *infracontext.RequestContext) (routingdomain.RoutingIntent, error) {
+	if req == nil || len(req.Body) == 0 {
+		return routingdomain.RoutingIntent{}, nil
+	}
+	ref, err := adapter.ExtractModel(req.Body)
+	if err != nil {
+		return routingdomain.RoutingIntent{}, nil
+	}
+	return routingdomain.ParseModelRef(ref)
+}
+
+func applyIntentToBody(req *infracontext.RequestContext, intent routingdomain.RoutingIntent) {
+	if req == nil || intent.IsZero() {
+		return
+	}
+	if intent.IsPool() {
+		req.Body = adapter.StripModel(req.Body)
+		return
+	}
+	if intent.IsQualified() {
+		req.Body = adapter.OverrideModel(req.Body, intent.Model)
+	}
+}
+
+func effectiveRoles(data *appconsumer.Data, roleIDs []ids.RoleID) []*roledomain.Role {
+	if data == nil || len(roleIDs) == 0 {
+		return nil
+	}
+	want := make(map[ids.RoleID]struct{}, len(roleIDs))
+	for _, id := range roleIDs {
+		want[id] = struct{}{}
+	}
+	out := make([]*roledomain.Role, 0, len(roleIDs))
+	for _, r := range data.Roles {
+		if r == nil {
+			continue
+		}
+		if _, ok := want[r.ID]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func registryLookup(data *appconsumer.Data) approuting.RegistryLookup {
+	if data == nil {
+		return nil
+	}
+	return data.RegistryByID
+}
+
+func (f *forwarder) routeBackend(
+	rc *appconsumer.RoutableConsumer,
+	req *infracontext.RequestContext,
+	candidates *routingdomain.CandidateSet,
+) (*loadbalancer.LoadBalancer, *domain.Registry, map[ids.RegistryID]struct{}, error) {
+	if rc.Consumer.RoutingMode == consumerdomain.RoutingModeRoleBased {
+		return nil, candidates.Candidates()[0].Registry, make(map[ids.RegistryID]struct{}), nil
+	}
+	if len(rc.Registries) == 0 {
+		return nil, nil, nil, ErrNoBackendsInPool
+	}
+	excluded := nonCandidateRegistries(rc, candidates)
+	lb, bk, err := f.selectBackend(rc, req, excluded)
+	if err != nil {
+		if fallback := firstAvailableFallback(rc, excluded); fallback != nil {
+			return lb, fallback, excluded, nil
+		}
+		return nil, nil, nil, err
+	}
+	return lb, bk, excluded, nil
+}
+
+func nonCandidateRegistries(
+	rc *appconsumer.RoutableConsumer,
+	candidates *routingdomain.CandidateSet,
+) map[ids.RegistryID]struct{} {
+	excluded := make(map[ids.RegistryID]struct{})
+	for _, reg := range rc.Registries {
+		if !candidates.HasRegistry(reg.ID) {
+			excluded[reg.ID] = struct{}{}
+		}
+	}
+	for _, reg := range rc.FallbackBackends {
+		if !candidates.HasRegistry(reg.ID) {
+			excluded[reg.ID] = struct{}{}
+		}
+	}
+	return excluded
+}
+
+func firstAvailableFallback(
+	rc *appconsumer.RoutableConsumer,
+	excluded map[ids.RegistryID]struct{},
+) *domain.Registry {
+	if fb := rc.Consumer.Fallback; fb == nil || !fb.Enabled {
+		return nil
+	}
+	for _, bk := range rc.FallbackBackends {
+		if _, skip := excluded[bk.ID]; !skip {
+			return bk
+		}
+	}
+	return nil
 }
 
 func (f *forwarder) invokeWithFailover(
@@ -145,19 +289,22 @@ func (f *forwarder) invokeWithFailover(
 	rc *appconsumer.RoutableConsumer,
 	dto *forwardRequestDTO,
 	stream bool,
+	excluded map[ids.RegistryID]struct{},
 ) (*ForwardResult, error) {
 	fb := rc.Consumer.Fallback
 	triggers := triggersFrom(fb)
 	attemptsPerBackend := f.attemptsPerBackend()
 	budget := newFailoverBudget(fb)
-	excluded := make(map[ids.RegistryID]struct{})
+	if excluded == nil {
+		excluded = make(map[ids.RegistryID]struct{})
+	}
 
 	last := failoverState{}
 	current := dto.backend
 	fromFallback := false
 	for current != nil {
 		f.retarget(dto, current)
-		f.stampModelPolicy(dto, rc, current)
+		f.stampRoutingPolicy(dto, rc, current)
 		for r := 0; r < attemptsPerBackend; r++ {
 			if budget.exhausted() {
 				return f.relayLast(ctx, dto, last)
@@ -171,7 +318,7 @@ func (f *forwarder) invokeWithFailover(
 			span := f.recordSpan(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
 			switch outcome {
 			case OutcomeSuccess:
-				lb.ReportSuccess(current)
+				reportSuccess(lb, current)
 				if stream && resp.Stream != nil {
 					// The provider stream is lazy: invokeOnce only measured
 					// time-to-first-byte. Keep the LLM span open and re-time it
@@ -191,11 +338,11 @@ func (f *forwarder) invokeWithFailover(
 				if resp == nil {
 					return nil, err
 				}
-				lb.ReportSuccess(current)
+				reportSuccess(lb, current)
 				return f.finalizeBody(ctx, dto, resp), nil
 			case OutcomeRetryable:
 				reason := failureReason(resp, err)
-				lb.ReportFailure(current, reason)
+				reportFailure(lb, current, reason)
 				last = failoverState{resp: resp, err: err}
 				f.logRetry(current, reason, budget)
 				continue
@@ -245,19 +392,29 @@ func (f *forwarder) nextCandidate(
 	req *infracontext.RequestContext,
 	excluded map[ids.RegistryID]struct{},
 ) (*domain.Registry, bool) {
-	if bk, err := lb.NextBackend(req, excluded); err == nil && bk != nil {
-		if _, seen := excluded[bk.ID]; !seen {
-			return bk, false
-		}
-	}
-	if fb := rc.Consumer.Fallback; fb != nil && fb.Enabled {
-		for _, bk := range rc.FallbackBackends {
+	if lb != nil {
+		if bk, err := lb.NextBackend(req, excluded); err == nil && bk != nil {
 			if _, seen := excluded[bk.ID]; !seen {
-				return bk, true
+				return bk, false
 			}
 		}
 	}
+	if bk := firstAvailableFallback(rc, excluded); bk != nil {
+		return bk, true
+	}
 	return nil, false
+}
+
+func reportSuccess(lb *loadbalancer.LoadBalancer, bk *domain.Registry) {
+	if lb != nil {
+		lb.ReportSuccess(bk)
+	}
+}
+
+func reportFailure(lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason error) {
+	if lb != nil {
+		lb.ReportFailure(bk, reason)
+	}
 }
 
 func (f *forwarder) recordSpan(
@@ -396,7 +553,12 @@ func stampTarget(req *infracontext.RequestContext, bk *domain.Registry) {
 	req.Provider = bk.Provider
 }
 
-func (f *forwarder) stampModelPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Registry) {
+func (f *forwarder) stampRoutingPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Registry) {
+	if candidate, ok := dto.candidates.ForRegistry(bk.ID); ok {
+		dto.request.AllowedModels = candidate.Allowed
+		dto.request.DefaultModel = candidate.Default
+		return
+	}
 	policy, ok := rc.Consumer.ModelPolicies.For(bk.ID)
 	if !ok {
 		dto.request.AllowedModels = nil
@@ -503,14 +665,15 @@ func (f *forwarder) finalizeBodyGated(
 func (f *forwarder) selectBackend(
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
+	excluded map[ids.RegistryID]struct{},
 ) (*loadbalancer.LoadBalancer, *domain.Registry, error) {
 	lb, err := f.loadBalancerFor(rc)
 	if err != nil {
 		return nil, nil, err
 	}
-	bk, err := lb.NextBackend(req, nil)
+	bk, err := lb.NextBackend(req, excluded)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
+		return lb, nil, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
 	}
 	return lb, bk, nil
 }

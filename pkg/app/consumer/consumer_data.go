@@ -23,10 +23,11 @@ type RoutableConsumer struct {
 }
 
 type Data struct {
-	GatewayID ids.GatewayID
-	Consumers []RoutableConsumer
-	Roles     []*roledomain.Role
-	byPath    map[string]*RoutableConsumer
+	GatewayID    ids.GatewayID
+	Consumers    []RoutableConsumer
+	Roles        []*roledomain.Role
+	byPath       map[string]*RoutableConsumer
+	registryByID map[ids.RegistryID]*registrydomain.Registry
 }
 
 func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer, roles ...[]*roledomain.Role) *Data {
@@ -35,7 +36,34 @@ func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer, roles ...[]*
 		d.Roles = roles[0]
 	}
 	d.indexByPath()
+	d.indexRegistries()
 	return d
+}
+
+func (d *Data) SetRegistryIndex(byID map[ids.RegistryID]*registrydomain.Registry) {
+	for id, reg := range byID {
+		d.registryByID[id] = reg
+	}
+}
+
+func (d *Data) RegistryByID(id ids.RegistryID) (*registrydomain.Registry, bool) {
+	if d == nil || d.registryByID == nil {
+		return nil, false
+	}
+	reg, ok := d.registryByID[id]
+	return reg, ok
+}
+
+func (d *Data) indexRegistries() {
+	d.registryByID = make(map[ids.RegistryID]*registrydomain.Registry)
+	for i := range d.Consumers {
+		for _, reg := range d.Consumers[i].Registries {
+			d.registryByID[reg.ID] = reg
+		}
+		for _, reg := range d.Consumers[i].FallbackBackends {
+			d.registryByID[reg.ID] = reg
+		}
+	}
 }
 
 func (d *Data) MatchPath(path string) (*RoutableConsumer, bool) {
