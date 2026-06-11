@@ -54,10 +54,11 @@ func parseIntent(req *infracontext.RequestContext) (routingdomain.RoutingIntent,
 	if req == nil || len(req.Body) == 0 {
 		return routingdomain.RoutingIntent{}, nil
 	}
-	ref, err := adapter.ExtractModel(req.Body)
+	ref, err := adapter.ExtractModelField(req.Body)
 	if err != nil {
 		return routingdomain.RoutingIntent{}, nil
 	}
+	req.RequestedModel = strings.TrimSpace(ref)
 	return routingdomain.ParseModelRef(ref)
 }
 

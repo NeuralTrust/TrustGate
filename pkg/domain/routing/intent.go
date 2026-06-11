@@ -50,10 +50,24 @@ func ParseModelRef(ref string) (RoutingIntent, error) {
 		if provider == "" {
 			return RoutingIntent{}, fmt.Errorf("%w: %q has an empty provider", ErrInvalidModelRef, ref)
 		}
+		if !isProviderIdent(provider) {
+			return RoutingIntent{Model: ref}, nil
+		}
 		if model == "" {
 			return RoutingIntent{}, fmt.Errorf("%w: %q has an empty model", ErrInvalidModelRef, ref)
 		}
 		return RoutingIntent{Provider: provider, Model: model}, nil
 	}
 	return RoutingIntent{Model: ref}, nil
+}
+
+func isProviderIdent(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }

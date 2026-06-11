@@ -35,6 +35,7 @@ type RequestContext struct {
 	TargetFormat       string
 	AllowedModels      []string
 	DefaultModel       string
+	RequestedModel     string
 }
 
 // HeaderValue returns the first non-empty value of the named header, matched

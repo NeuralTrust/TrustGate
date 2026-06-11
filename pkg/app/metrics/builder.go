@@ -155,10 +155,11 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.Po
 
 func (b *Builder) fillRequest(evt *events.Event, req *infracontext.RequestContext, served *trace.LLMAttrs) {
 	evt.Request = events.Request{
-		Method:  req.Method,
-		Path:    req.Path,
-		Body:    events.SanitizeBody(req.Body, req.Headers),
-		Headers: events.RedactHeaders(req.Headers),
+		Method:         req.Method,
+		Path:           req.Path,
+		RequestedModel: req.RequestedModel,
+		Body:           events.SanitizeBody(req.Body, req.Headers),
+		Headers:        events.RedactHeaders(req.Headers),
 	}
 	if served != nil {
 		evt.Request.Provider = served.Provider

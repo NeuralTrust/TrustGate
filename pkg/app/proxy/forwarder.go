@@ -189,7 +189,7 @@ func (f *forwarder) invokeWithFailover(
 			resp, err := f.invokeOnce(ctx, current, dto.request, stream)
 			elapsed := time.Since(startedAt)
 			outcome := classifyOutcome(resp, err, triggers)
-			span := f.recordSpan(ctx, current, fromFallback, dto.routeSource, budget.attempts, outcome, resp, elapsed)
+			span := f.recordSpan(ctx, dto, current, fromFallback, budget.attempts, outcome, resp, elapsed)
 			switch outcome {
 			case OutcomeSuccess:
 				reportSuccess(lb, current)
@@ -296,9 +296,9 @@ func reportFailure(lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason er
 
 func (f *forwarder) recordSpan(
 	ctx context.Context,
+	dto *forwardRequestDTO,
 	bk *domain.Registry,
 	fromFallback bool,
-	route string,
 	attempt int,
 	outcome Outcome,
 	resp *ProviderResponse,
@@ -313,12 +313,13 @@ func (f *forwarder) recordSpan(
 		Name:      bk.Provider,
 		StartedAt: time.Now().Add(-elapsed),
 		LLM: &trace.LLMAttrs{
-			RegistryID: bk.ID.String(),
-			Provider:   bk.Provider,
-			Attempt:    attempt,
-			Fallback:   fromFallback,
-			Route:      route,
-			Outcome:    outcome.String(),
+			RegistryID:     bk.ID.String(),
+			Provider:       bk.Provider,
+			RequestedModel: dto.request.RequestedModel,
+			Attempt:        attempt,
+			Fallback:       fromFallback,
+			Route:          dto.routeSource,
+			Outcome:        outcome.String(),
 		},
 	}
 	if resp != nil {
