@@ -9,6 +9,7 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
 
@@ -22,6 +23,7 @@ type CreateInput struct {
 	Active        *bool
 	Fallback      *domain.Fallback
 	RegistryIDs   []ids.RegistryID
+	RoleIDs       []ids.RoleID
 	ModelPolicies domain.ModelPolicies
 }
 
@@ -35,6 +37,7 @@ var _ Creator = (*creator)(nil)
 type creator struct {
 	repo         domain.Repository
 	registryRepo registrydomain.Repository
+	roleRepo     roledomain.Repository
 	memoryCache  *cache.TTLMap
 	publisher    cache.EventPublisher
 	logger       *slog.Logger
@@ -43,6 +46,7 @@ type creator struct {
 func NewCreator(
 	repo domain.Repository,
 	registryRepo registrydomain.Repository,
+	roleRepo roledomain.Repository,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
@@ -50,6 +54,7 @@ func NewCreator(
 	return &creator{
 		repo:         repo,
 		registryRepo: registryRepo,
+		roleRepo:     roleRepo,
 		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
 		publisher:    publisher,
 		logger:       logger,
@@ -69,6 +74,7 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		Active:        in.Active,
 		Fallback:      in.Fallback,
 		RegistryIDs:   in.RegistryIDs,
+		RoleIDs:       in.RoleIDs,
 		ModelPolicies: in.ModelPolicies,
 	})
 	if err != nil {
@@ -78,6 +84,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 		return nil, err
 	}
 	if err := c.ensureRegistriesInGateway(ctx, in.GatewayID, in.RegistryIDs); err != nil {
+		return nil, err
+	}
+	if err := c.ensureRolesInGateway(ctx, in.GatewayID, in.RoleIDs); err != nil {
 		return nil, err
 	}
 	if err := c.saveWithSlugRetry(ctx, cons); err != nil {
@@ -112,6 +121,20 @@ func (c *creator) ensureRegistriesInGateway(ctx context.Context, gatewayID ids.G
 	}
 	if len(found) != len(registryIDs) {
 		return fmt.Errorf("%w: one or more registries do not belong to the gateway", registrydomain.ErrInvalidRegistryID)
+	}
+	return nil
+}
+
+func (c *creator) ensureRolesInGateway(ctx context.Context, gatewayID ids.GatewayID, roleIDs []ids.RoleID) error {
+	if len(roleIDs) == 0 {
+		return nil
+	}
+	found, err := c.roleRepo.FindByIDs(ctx, gatewayID, roleIDs)
+	if err != nil {
+		return err
+	}
+	if len(found) != len(roleIDs) {
+		return fmt.Errorf("%w: one or more roles do not belong to the gateway", roledomain.ErrInvalidRoleID)
 	}
 	return nil
 }

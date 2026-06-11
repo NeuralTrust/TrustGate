@@ -59,6 +59,10 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	roleIDs, err := req.ToRoleIDs()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
 		GatewayID:     gatewayID,
@@ -70,6 +74,7 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 		Active:        req.Active,
 		Fallback:      fallback,
 		RegistryIDs:   registryIDs,
+		RoleIDs:       roleIDs,
 		ModelPolicies: modelPolicies,
 	})
 	if err != nil {

@@ -61,6 +61,20 @@ func CreateRegistry(t *testing.T, gatewayID string, payload map[string]any) stri
 	return id
 }
 
+// CreateRole issues a POST /v1/gateways/:gateway_id/roles and returns the new
+// role id. Aborts the calling test on any failure.
+func CreateRole(t *testing.T, gatewayID string, payload map[string]any) string {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/roles", AdminURL, gatewayID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, payload)
+	require.Equal(t, http.StatusCreated, status, "create role failed: %v", body)
+
+	id, ok := body["id"].(string)
+	require.True(t, ok, "create role response missing id: %v", body)
+	require.NotEmpty(t, id)
+	return id
+}
+
 // CreatePolicy issues a POST /v1/gateways/:gateway_id/policies and returns
 // the new policy id. Aborts the calling test on any failure.
 func CreatePolicy(t *testing.T, gatewayID string, payload map[string]any) string {

@@ -20,6 +20,22 @@ func NewUpdateRoleHandler(updater approle.Updater) *UpdateRoleHandler {
 	return &UpdateRoleHandler{updater: updater}
 }
 
+// Handle godoc
+// @Summary      Update a role
+// @Description  Updates a role. model_policies may only reference registries already attached to the role.
+// @Tags         roles
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path      string                   true  "Gateway id"  format(uuid)
+// @Param        id          path      string                   true  "Role id"     format(uuid)
+// @Param        body        body      request.UpdateRoleRequest  true  "Role fields to update"
+// @Success      200         {object}  response.RoleResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      409         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/roles/{id} [put]
 func (h *UpdateRoleHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.RoleKind](c)
 	if err != nil {

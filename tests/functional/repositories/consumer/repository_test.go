@@ -14,18 +14,21 @@ import (
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/consumer"
 	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
 	registryrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/registry"
+	rolerepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/role"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type fixture struct {
-	repo *repo.Repository
-	gw   *gatewayrepo.Repository
-	be   *registryrepo.Repository
+	repo  *repo.Repository
+	gw    *gatewayrepo.Repository
+	be    *registryrepo.Repository
+	roles *rolerepo.Repository
 }
 
 func setupRepo(t *testing.T) fixture {
@@ -60,14 +63,15 @@ func setupRepo(t *testing.T) fixture {
 
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(),
-			"TRUNCATE TABLE consumer_registry, consumers, registries, gateways CASCADE")
+			"TRUNCATE TABLE consumer_role, consumer_registry, consumers, roles, registries, gateways CASCADE")
 		pool.Close()
 	})
 
 	return fixture{
-		repo: repo.NewRepository(conn),
-		gw:   gatewayrepo.NewRepository(conn),
-		be:   registryrepo.NewRepository(conn),
+		repo:  repo.NewRepository(conn),
+		gw:    gatewayrepo.NewRepository(conn),
+		be:    registryrepo.NewRepository(conn),
+		roles: rolerepo.NewRepository(conn),
 	}
 }
 
@@ -93,6 +97,21 @@ func seedRegistry(t *testing.T, be *registryrepo.Repository, gwID ids.GatewayID,
 		t.Fatalf("backend Save: %v", err)
 	}
 	return b.ID
+}
+
+func seedRole(t *testing.T, roles *rolerepo.Repository, gwID ids.GatewayID, name string) ids.RoleID {
+	t.Helper()
+	role, err := roledomain.New(roledomain.CreateParams{
+		GatewayID: gwID,
+		Name:      name,
+	})
+	if err != nil {
+		t.Fatalf("role domain.New: %v", err)
+	}
+	if err := roles.Save(context.Background(), role); err != nil {
+		t.Fatalf("role Save: %v", err)
+	}
+	return role.ID
 }
 
 func validConsumer(t *testing.T, gwID ids.GatewayID, name string, beIDs ...ids.RegistryID) *domain.Consumer {
@@ -535,6 +554,35 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	}
 	if total != 1 || len(items) != 1 || items[0].Name != "anthropic-prod" {
 		t.Fatalf("List(name) returned %+v", items)
+	}
+}
+
+func TestRepository_Save_PersistsRoleBindings(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "pool-roles")
+	roleID := seedRole(t, f.roles, gwID, "role-bind")
+
+	c, err := domain.New(domain.CreateParams{
+		GatewayID:   gwID,
+		Name:        "role-based-consumer",
+		Type:        domain.TypeLLM,
+		RoutingMode: domain.RoutingModeRoleBased,
+		RoleIDs:     []ids.RoleID{roleID},
+	})
+	if err != nil {
+		t.Fatalf("consumer domain.New: %v", err)
+	}
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.RoleIDs) != 1 || got.RoleIDs[0] != roleID {
+		t.Fatalf("RoleIDs = %v, want [%s]", got.RoleIDs, roleID)
 	}
 }
 

@@ -16,6 +16,19 @@ func NewGetRoleHandler(finder approle.Finder) *GetRoleHandler {
 	return &GetRoleHandler{finder: finder}
 }
 
+// Handle godoc
+// @Summary      Get a role
+// @Description  Returns a role by id within a gateway.
+// @Tags         roles
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path  string  true  "Gateway id"  format(uuid)
+// @Param        id          path  string  true  "Role id"     format(uuid)
+// @Success      200         {object}  response.RoleResponse
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/roles/{id} [get]
 func (h *GetRoleHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.RoleKind](c)
 	if err != nil {

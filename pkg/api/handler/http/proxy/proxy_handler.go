@@ -64,6 +64,24 @@ func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
 	return &ForwardedHandler{forwarder: forwarder}
 }
 
+// Handle godoc
+// @Summary      Proxy chat completion
+// @Description  Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses).
+// @Tags         proxy
+// @Accept       json
+// @Produce      json
+// @Param        consumer_slug      path   string  true   "Consumer slug"
+// @Param        X-AG-API-Key       header string  false  "API key for inline consumers"
+// @Param        Authorization      header string  false  "Bearer token for OAuth2 or IDP consumers"
+// @Param        X-AG-Gateway-Slug  header string  false  "Gateway slug when using header-based gateway discovery"
+// @Param        body               body   object  true   "OpenAI Chat Completions request body"
+// @Success      200                {object}  map[string]interface{}
+// @Failure      400                {object}  helpers.ErrorBody
+// @Failure      401                {object}  helpers.ErrorBody
+// @Failure      403                {object}  helpers.ErrorBody
+// @Failure      404                {object}  helpers.ErrorBody
+// @Failure      502                {object}  helpers.ErrorBody
+// @Router       /{consumer_slug}/v1/chat/completions [post]
 func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	route, err := proxyRoute(c)
 	if err != nil {

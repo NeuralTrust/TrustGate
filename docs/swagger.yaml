@@ -333,6 +333,10 @@ definitions:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest'
         type: array
+      roles:
+        items:
+          type: string
+        type: array
       routing_mode:
         type: string
       type:
@@ -1082,6 +1086,104 @@ definitions:
       status_code:
         type: integer
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.CreateRoleRequest:
+    properties:
+      idp_mapping:
+        items:
+          type: integer
+        type: array
+      mcp_policies:
+        items:
+          type: integer
+        type: array
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ModelPolicyRequest'
+        type: array
+      name:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ModelPolicyRequest:
+    properties:
+      allowed:
+        items:
+          type: string
+        type: array
+      default:
+        type: string
+      registry_id:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.UpdateRoleRequest:
+    properties:
+      idp_mapping:
+        items:
+          type: integer
+        type: array
+      mcp_policies:
+        items:
+          type: integer
+        type: array
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ModelPolicyRequest'
+        type: array
+      name:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ListRoleResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse'
+        type: array
+      page:
+        type: integer
+      size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ModelPolicyResponse:
+    properties:
+      allowed:
+        items:
+          type: string
+        type: array
+      default:
+        type: string
+      registry_id:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse:
+    properties:
+      created_at:
+        type: string
+      gateway_id:
+        type: string
+      id:
+        type: string
+      idp_mapping:
+        items:
+          type: integer
+        type: array
+      mcp_policies:
+        items:
+          type: integer
+        type: array
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ModelPolicyResponse'
+        type: array
+      name:
+        type: string
+      registry_ids:
+        items:
+          type: string
+        type: array
+      updated_at:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthField:
     properties:
       default: {}
@@ -1343,7 +1445,7 @@ info:
     name: NeuralTrust
     url: https://neuraltrust.ai/contact
   description: Administrative API for managing gateways and their registries, policies,
-    consumers and auth credentials.
+    consumers, roles and auth credentials.
   title: AgentGateway Admin API
   version: "1.0"
 paths:
@@ -1360,6 +1462,68 @@ paths:
       summary: Build version
       tags:
       - system
+  /{consumer_slug}/v1/chat/completions:
+    post:
+      consumes:
+      - application/json
+      description: 'Forwards an OpenAI Chat Completions request to the selected provider.
+        Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes
+        include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses).'
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: consumer_slug
+        required: true
+        type: string
+      - description: API key for inline consumers
+        in: header
+        name: X-AG-API-Key
+        type: string
+      - description: Bearer token for OAuth2 or IDP consumers
+        in: header
+        name: Authorization
+        type: string
+      - description: Gateway slug when using header-based gateway discovery
+        in: header
+        name: X-AG-Gateway-Slug
+        type: string
+      - description: OpenAI Chat Completions request body
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      summary: Proxy chat completion
+      tags:
+      - proxy
   /healthz:
     get:
       description: Reports whether the process is alive.
@@ -2162,6 +2326,98 @@ paths:
       summary: Attach a registry to a consumer
       tags:
       - consumers
+  /v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id}:
+    delete:
+      description: Removes the association between a role and a consumer (idempotent).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: role_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Detach a role from a consumer
+      tags:
+      - consumers
+    post:
+      description: Associates a role with a role_based consumer (idempotent). Returns
+        409 for inline consumers.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: role_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Attach a role to a consumer
+      tags:
+      - consumers
   /v1/gateways/{gateway_id}/policies:
     get:
       description: Returns a paginated list of policies in a gateway.
@@ -2776,6 +3032,318 @@ paths:
       summary: Test a backend connection
       tags:
       - registries
+  /v1/gateways/{gateway_id}/roles:
+    get:
+      description: Returns a paginated list of roles in a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Filter by name (substring match)
+        in: query
+        name: name
+        type: string
+      - description: Page number (1-based)
+        in: query
+        name: page
+        type: integer
+      - description: Page size
+        in: query
+        name: size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ListRoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List roles
+      tags:
+      - roles
+    post:
+      consumes:
+      - application/json
+      description: Creates a new role in a gateway. model_policies cannot be set on
+        create; bind registries first, then update the role.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.CreateRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create a role
+      tags:
+      - roles
+  /v1/gateways/{gateway_id}/roles/{id}:
+    delete:
+      description: Deletes a role from a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Delete a role
+      tags:
+      - roles
+    get:
+      description: Returns a role by id within a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get a role
+      tags:
+      - roles
+    put:
+      consumes:
+      - application/json
+      description: Updates a role. model_policies may only reference registries already
+        attached to the role.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Role fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.UpdateRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update a role
+      tags:
+      - roles
+  /v1/gateways/{gateway_id}/roles/{role_id}/registries/{registry_id}:
+    delete:
+      description: Removes the association between a registry and a role (idempotent).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: role_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: registry_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Detach a registry from a role
+      tags:
+      - roles
+    post:
+      description: Associates a registry with a role (idempotent).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: role_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: registry_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Attach a registry to a role
+      tags:
+      - roles
   /v1/gateways/{id}:
     delete:
       description: Deletes a gateway. Fails if it still has dependent resources.

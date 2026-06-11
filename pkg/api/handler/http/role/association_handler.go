@@ -15,6 +15,20 @@ func NewAssociationHandler(associator approle.Associator) *AssociationHandler {
 	return &AssociationHandler{associator: associator}
 }
 
+// AttachRegistry godoc
+// @Summary      Attach a registry to a role
+// @Description  Associates a registry with a role (idempotent).
+// @Tags         roles
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id   path  string  true  "Gateway id"   format(uuid)
+// @Param        role_id      path  string  true  "Role id"      format(uuid)
+// @Param        registry_id  path  string  true  "Registry id"  format(uuid)
+// @Success      204          "No Content"
+// @Failure      400          {object}  helpers.ErrorBody
+// @Failure      401          {object}  helpers.ErrorBody
+// @Failure      404          {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/roles/{role_id}/registries/{registry_id} [post]
 func (h *AssociationHandler) AttachRegistry(c *fiber.Ctx) error {
 	gatewayID, roleID, registryID, err := parseAssociationIDs(c)
 	if err != nil {
@@ -26,6 +40,21 @@ func (h *AssociationHandler) AttachRegistry(c *fiber.Ctx) error {
 	return helpers.WriteNoContent(c)
 }
 
+// DetachRegistry godoc
+// @Summary      Detach a registry from a role
+// @Description  Removes the association between a registry and a role (idempotent).
+// @Tags         roles
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id   path  string  true  "Gateway id"   format(uuid)
+// @Param        role_id      path  string  true  "Role id"      format(uuid)
+// @Param        registry_id  path  string  true  "Registry id"  format(uuid)
+// @Success      204          "No Content"
+// @Failure      400          {object}  helpers.ErrorBody
+// @Failure      401          {object}  helpers.ErrorBody
+// @Failure      404          {object}  helpers.ErrorBody
+// @Failure      409          {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/roles/{role_id}/registries/{registry_id} [delete]
 func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
 	gatewayID, roleID, registryID, err := parseAssociationIDs(c)
 	if err != nil {
