@@ -59,6 +59,61 @@ func TestPayloadNormalization_CrossFormat(t *testing.T) {
 			"the routing prefix must never leak upstream")
 	})
 
+	t.Run("anthropic streaming request receives anthropic SSE events", func(t *testing.T) {
+		up := newStreamUpstream(t, "cross-stream-token")
+		apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+		payload := anthropicChatRequest("@openai/gpt-4o-mini")
+		payload["stream"] = true
+		status, _, body := proxyPost(t, apiKey, "/"+slug+"/v1/messages", payload)
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "content_block_delta",
+			"the client must receive anthropic stream events")
+		assert.Contains(t, string(body), "cross-stream-token")
+		assert.NotContains(t, string(body), "[DONE]",
+			"the OpenAI stream terminator must not leak into an anthropic stream")
+		assert.Equal(t, 1, up.Hits())
+	})
+
+	t.Run("responses request to an openai upstream is adapted both ways", func(t *testing.T) {
+		up := newJSONUpstream(t, "responses-served")
+		apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+		payload := map[string]any{"model": "@openai/gpt-4o-mini", "input": "Hello"}
+		status, _, body := proxyPost(t, apiKey, "/"+slug+"/v1/responses", payload)
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), `"object":"response"`,
+			"the client must receive a responses-format payload")
+		assert.Contains(t, string(body), "responses-served")
+		assert.Equal(t, 1, up.Hits())
+		assert.Contains(t, string(up.LastBody()), `"messages"`,
+			"the upstream must receive a chat-completions body")
+		assert.Contains(t, string(up.LastBody()), `"model":"gpt-4o-mini"`)
+	})
+
+	t.Run("gemini request with the model in the path is adapted both ways", func(t *testing.T) {
+		up := newJSONUpstream(t, "gemini-served")
+		apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+		payload := map[string]any{
+			"contents": []map[string]any{
+				{"role": "user", "parts": []map[string]any{{"text": "Hello"}}},
+			},
+		}
+		status, _, body := proxyPost(t, apiKey,
+			"/"+slug+"/v1beta/models/gpt-4o-mini:generateContent", payload)
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), `"candidates"`,
+			"the client must receive a gemini-format response")
+		assert.Contains(t, string(body), "gemini-served")
+		assert.Equal(t, 1, up.Hits())
+		assert.Contains(t, string(up.LastBody()), `"model":"gpt-4o-mini"`,
+			"the path model must be stamped into the upstream body")
+	})
+
 	t.Run("pool alias never leaks to the upstream regardless of source format", func(t *testing.T) {
 		up := newJSONUpstream(t, "pool-cross-served")
 		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("norm-pool-gw")})
@@ -97,6 +152,16 @@ func TestProxyPaths_FixedRoutes(t *testing.T) {
 		apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4o-mini"}, "")
 
 		status, _, _ := proxyPost(t, apiKey, "/"+slug+"/v1/embeddings", chatRequest(false))
+
+		assert.Equal(t, http.StatusNotFound, status)
+		assert.Equal(t, 0, up.Hits())
+	})
+
+	t.Run("gemini route with an empty model segment returns 404", func(t *testing.T) {
+		up := newJSONUpstream(t, "must-not-serve")
+		apiKey, slug := setupSlugRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+		status, _, _ := proxyPost(t, apiKey, "/"+slug+"/v1beta/models/:generateContent", map[string]any{})
 
 		assert.Equal(t, http.StatusNotFound, status)
 		assert.Equal(t, 0, up.Hits())

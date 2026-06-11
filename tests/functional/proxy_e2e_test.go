@@ -414,6 +414,54 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 		assert.Contains(t, string(up.LastBody()), `"gpt-4o-mini"`,
 			"the default model must be injected into the upstream request body")
 	})
+
+	t.Run("missing model with an allow-list but no default returns 403", func(t *testing.T) {
+		up := newJSONUpstream(t, "must-not-serve")
+		apiKey, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestNoModel())
+
+		assert.Equal(t, http.StatusForbidden, status, "body: %s", body)
+		assert.Contains(t, string(body), "model_not_allowed")
+		assert.Equal(t, 0, up.Hits())
+	})
+
+	t.Run("empty model string is not replaced by the default and returns 403", func(t *testing.T) {
+		up := newJSONUpstream(t, "must-not-serve")
+		apiKey, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "gpt-4o-mini")
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel(""))
+
+		assert.Equal(t, http.StatusForbidden, status, "body: %s", body)
+		assert.Contains(t, string(body), "model_not_allowed")
+		assert.Equal(t, 0, up.Hits(), "default injection only applies when the model field is absent")
+	})
+
+	t.Run("non-string model is rejected and never reaches upstream", func(t *testing.T) {
+		up := newJSONUpstream(t, "must-not-serve")
+		apiKey, path := setupModelPolicyRoute(t, up, []string{"gpt-4o-mini"}, "gpt-4o-mini")
+
+		payload := map[string]any{
+			"model":    123,
+			"messages": []map[string]string{{"role": "user", "content": "Hello"}},
+		}
+		status, _, body := proxyPost(t, apiKey, path, payload)
+
+		assert.Equal(t, http.StatusForbidden, status, "body: %s", body)
+		assert.Equal(t, 0, up.Hits())
+	})
+
+	t.Run("missing model without any policy is forwarded untouched", func(t *testing.T) {
+		up := newJSONUpstream(t, "passthrough-served")
+		apiKey, path := setupRoute(t, "", up)
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestNoModel())
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Equal(t, 1, up.Hits())
+		assert.NotContains(t, string(up.LastBody()), `"model"`,
+			"without a policy default the gateway must not invent a model")
+	})
 }
 
 // setupFallbackRoute wires a gateway whose consumer routes to primary and, when
@@ -501,6 +549,31 @@ func TestProxyE2E_Fallback(t *testing.T) {
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Contains(t, string(body), "rescued-from-429")
 		assert.Equal(t, 1, fallback.Hits())
+	})
+
+	t.Run("408 with timeout trigger fails over to the chain", func(t *testing.T) {
+		primary := newFailingUpstream(t, http.StatusRequestTimeout)
+		fallback := newJSONUpstream(t, "rescued-from-timeout")
+		apiKey, path := setupFallbackRoute(t, primary, fallback, true, "timeout")
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "rescued-from-timeout")
+		assert.Equal(t, expectedAttempts(), primary.Hits(), "primary must exhaust its retry budget before failover")
+		assert.Equal(t, 1, fallback.Hits())
+	})
+
+	t.Run("408 with only http_5xx trigger relays the timeout without using the chain", func(t *testing.T) {
+		primary := newFailingUpstream(t, http.StatusRequestTimeout)
+		fallback := newJSONUpstream(t, "must-not-serve")
+		apiKey, path := setupFallbackRoute(t, primary, fallback, true, "http_5xx")
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
+
+		assert.Equal(t, http.StatusRequestTimeout, status, "the 408 must be relayed verbatim, body: %s", body)
+		assert.Equal(t, expectedAttempts(), primary.Hits(), "primary retries are not gated by triggers")
+		assert.Equal(t, 0, fallback.Hits(), "a timeout must not use the chain when only http_5xx triggers it")
 	})
 
 	t.Run("disabled fallback never fails over", func(t *testing.T) {

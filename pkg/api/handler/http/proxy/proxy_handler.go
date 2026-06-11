@@ -31,8 +31,6 @@ var errNotAuthenticated = errors.New("request is not authenticated")
 var errPathNotFound = errors.New("no consumer matches the request path")
 var errForbidden = errors.New("credential is not authorized for the matched consumer")
 
-// Machine-readable error codes returned in the proxy error body and stamped as
-// Status.Reason on the emitted request event.
 const (
 	errCodePluginRejected     = "plugin_rejected"
 	errCodeUnauthenticated    = "unauthenticated"
@@ -335,8 +333,6 @@ func mapProxyError(err error) (int, helpers.ErrorBody) {
 		errors.Is(err, appproxy.ErrModelNotAllowed):
 		return fiber.StatusForbidden, helpers.ErrorBody{Error: errCodeModelNotAllowed, Message: err.Error()}
 	case errors.Is(err, registrydomain.ErrCredentialAcquisition):
-		// Sanitized on purpose: the identity provider's response carries
-		// tenant/app identifiers that must not reach the client.
 		return fiber.StatusBadGateway, helpers.ErrorBody{
 			Error:   errCodeProviderCredential,
 			Message: registrydomain.ErrCredentialAcquisition.Error(),

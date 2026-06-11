@@ -54,8 +54,6 @@ func triggersFrom(fb *consumerdomain.Fallback) fallbackTriggers {
 	}
 }
 
-// failureKind classifies a retryable failure into the fallback trigger class
-// that must be enabled for the failure to advance into the fallback chain.
 type failureKind int
 
 const (
@@ -67,9 +65,6 @@ const (
 	failurePluginRejection
 )
 
-// classifyFailure maps a retryable outcome to its trigger class. Transport
-// errors that are not timeouts count as http_5xx: the upstream is unreachable,
-// which is operationally equivalent to a server-side failure.
 func classifyFailure(resp *ProviderResponse, err error) failureKind {
 	if err != nil {
 		if isTimeoutError(err) {
@@ -102,8 +97,6 @@ func isTimeoutError(err error) bool {
 	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
-// allowsFallback reports whether the configured triggers permit advancing into
-// the fallback chain after a failure of the given kind.
 func (t fallbackTriggers) allowsFallback(kind failureKind) bool {
 	switch kind {
 	case failureHTTP5xx:

@@ -52,9 +52,6 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *rout
 	return intent, candidates, nil
 }
 
-// logRejectedIntent explains at debug level why a routing intent was discarded
-// before reaching any backend. It logs model/provider references only, never
-// credentials or claims.
 func (f *forwarder) logRejectedIntent(rc *appconsumer.RoutableConsumer, ref string, err error) {
 	if f.logger == nil {
 		return

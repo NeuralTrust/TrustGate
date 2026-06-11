@@ -47,10 +47,6 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 		deleteGatewayAliases(s.gatewayCache, evt.GatewayID)
 	}
 	if s.consumerCache != nil {
-		// Deleting an auth cascades consumer_auth rows in the database, so
-		// cached consumer entities may hold stale auth bindings. Entries are
-		// keyed by bare consumer ID and the affected set is unknown here;
-		// gateway-data mutations are rare admin operations, so flush the map.
 		s.consumerCache.Clear()
 	}
 	if s.consumerDataCache != nil {

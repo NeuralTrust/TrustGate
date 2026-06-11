@@ -45,10 +45,6 @@ func (s *InvalidateRegistryCacheEventSubscriber) OnEvent(_ context.Context, evt 
 		s.backendCache.Delete(evt.RegistryID)
 	}
 	if s.consumerCache != nil {
-		// Deleting a registry cascades consumer_registry rows in the database,
-		// so cached consumer entities may hold stale registry bindings. Entries
-		// are keyed by bare consumer ID and the affected set is unknown here;
-		// registry mutations are rare admin operations, so flush the map.
 		s.consumerCache.Clear()
 	}
 	if s.consumerDataCache != nil {
