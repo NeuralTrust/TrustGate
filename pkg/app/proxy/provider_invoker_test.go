@@ -181,6 +181,36 @@ func TestProviderInvoke_SourceFormatHeaderTrustedVsAutoDetect(t *testing.T) {
 		assert.Equal(t, "anthropic", req.SourceFormat, "format auto-detected from body")
 	})
 
+	t.Run("bedrock X-Provider hint is rejected", func(t *testing.T) {
+		locator := factorymocks.NewProviderLocator(t)
+		locator.EXPECT().Get("bedrock").Return(providermocks.NewClient(t), nil).Once()
+
+		inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+		req := &infracontext.RequestContext{
+			Context:      context.Background(),
+			Body:         []byte(openaiRequestBody),
+			SourceFormat: "bedrock",
+		}
+		_, err := inv.Invoke(context.Background(), apiKeyTarget("bedrock"), req)
+
+		require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+	})
+
+	t.Run("unknown X-Provider hint is rejected", func(t *testing.T) {
+		locator := factorymocks.NewProviderLocator(t)
+		locator.EXPECT().Get("openai").Return(providermocks.NewClient(t), nil).Once()
+
+		inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
+		req := &infracontext.RequestContext{
+			Context:      context.Background(),
+			Body:         []byte(openaiRequestBody),
+			SourceFormat: "not-a-format",
+		}
+		_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+
+		require.ErrorIs(t, err, appproxy.ErrInvalidRequestPayload)
+	})
+
 	t.Run("trusted X-Provider hint", func(t *testing.T) {
 		client := providermocks.NewClient(t)
 		client.EXPECT().

@@ -56,21 +56,17 @@ func EnforceModel(body []byte, allowedModels []string, defaultModel string) ([]b
 	return body, model, nil
 }
 
-// ExtractModelField returns only the universal "model" field from a JSON body.
-// Provider-specific fields such as Bedrock's "modelId" are intentionally
-// ignored: they hold native identifiers (which may contain '/', e.g. ARNs) and
-// must never be parsed as routing syntax.
-func ExtractModelField(body []byte) (string, error) {
+func ExtractModelField(body []byte) (model string, hasModelID bool, err error) {
 	var probe struct {
-		Model string `json:"model"`
+		Model   string          `json:"model"`
+		ModelID json.RawMessage `json:"modelId"`
 	}
 	if err := json.Unmarshal(body, &probe); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return probe.Model, nil
+	return probe.Model, probe.ModelID != nil, nil
 }
 
-// ExtractModel returns the "model" or "modelId" field from a JSON body without modifying it.
 func ExtractModel(body []byte) (string, error) {
 	var probe struct {
 		Model   string `json:"model"`

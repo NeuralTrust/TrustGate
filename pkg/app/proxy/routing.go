@@ -24,10 +24,11 @@ type routedBackend struct {
 }
 
 func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.RoutingIntent, *routingdomain.CandidateSet, error) {
-	intent, err := parseIntent(in.Request)
+	intent, ref, err := parseIntent(in.Request)
 	if err != nil {
 		return intent, nil, err
 	}
+	in.Request.RequestedModel = ref
 	if intent.IsZero() && !isRoleBased(in.Consumer) {
 		return intent, nil, nil
 	}
@@ -50,16 +51,20 @@ func isRoleBased(rc *appconsumer.RoutableConsumer) bool {
 	return rc.Consumer.RoutingMode == consumerdomain.RoutingModeRoleBased
 }
 
-func parseIntent(req *infracontext.RequestContext) (routingdomain.RoutingIntent, error) {
+func parseIntent(req *infracontext.RequestContext) (routingdomain.RoutingIntent, string, error) {
 	if req == nil || len(req.Body) == 0 {
-		return routingdomain.RoutingIntent{}, nil
+		return routingdomain.RoutingIntent{}, "", nil
 	}
-	ref, err := adapter.ExtractModelField(req.Body)
+	ref, hasModelID, err := adapter.ExtractModelField(req.Body)
 	if err != nil {
-		return routingdomain.RoutingIntent{}, nil
+		return routingdomain.RoutingIntent{}, "", nil
 	}
-	req.RequestedModel = strings.TrimSpace(ref)
-	return routingdomain.ParseModelRef(ref)
+	if hasModelID {
+		return routingdomain.RoutingIntent{}, "", fmt.Errorf(
+			"%w: modelId is not universal payload syntax, use the model field", routingdomain.ErrInvalidModelRef)
+	}
+	intent, err := routingdomain.ParseModelRef(ref)
+	return intent, strings.TrimSpace(ref), err
 }
 
 func applyIntentToBody(req *infracontext.RequestContext, intent routingdomain.RoutingIntent) {

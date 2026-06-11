@@ -127,4 +127,33 @@ func TestXProvider_SourceFormatOnly(t *testing.T) {
 		assert.Contains(t, string(body), "model_not_allowed")
 		assert.Equal(t, 0, up.Hits())
 	})
+
+	t.Run("x-provider bedrock is rejected as a source format", func(t *testing.T) {
+		up := newJSONUpstream(t, "must-not-serve")
+		apiKey, path := setupIntentRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+		status, _, body := proxyPostWithHeaders(t, apiKey, path,
+			anthropicChatRequest("gpt-4o-mini"),
+			map[string]string{"X-Provider": "bedrock"})
+
+		assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
+		assert.Contains(t, string(body), "invalid_request")
+		assert.Equal(t, 0, up.Hits(), "bedrock-native input is not part of the universal payload contract")
+	})
+
+	t.Run("client-supplied modelId is rejected as non-universal payload", func(t *testing.T) {
+		up := newJSONUpstream(t, "must-not-serve")
+		apiKey, path := setupIntentRoute(t, up, []string{"gpt-4o-mini"}, "")
+
+		payload := map[string]any{
+			"model":    "openai/gpt-4o-mini",
+			"modelId":  "forbidden-model",
+			"messages": []map[string]string{{"role": "user", "content": "Hello"}},
+		}
+		status, _, body := proxyPostWithHeaders(t, apiKey, path, payload, nil)
+
+		assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
+		assert.Contains(t, string(body), "invalid_model")
+		assert.Equal(t, 0, up.Hits(), "modelId is not part of the universal payload contract")
+	})
 }

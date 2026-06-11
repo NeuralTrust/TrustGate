@@ -23,30 +23,16 @@ import (
 
 var newline = []byte("\n")
 
-// streamErrorEvent is the SSE payload written when an upstream stream aborts
-// mid-flight. It carries no internal error detail to avoid leaking backend
-// internals to clients.
 var streamErrorEvent = []byte(`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`)
 
 const (
-	// HeaderProvider is an optional client hint for the inbound request's wire
-	// format. When present it is trusted as the source format; otherwise the
-	// format is auto-detected from the body.
 	HeaderProvider = "X-Provider"
 )
 
-// errNotAuthenticated means the auth middleware did not attach a gateway +
-// consumer.Data to the request context (no resolvable identity).
 var errNotAuthenticated = errors.New("request is not authenticated")
-
-// errPathNotFound means no consumer of the resolved gateway has a path that
-// exactly matches the inbound request path.
 var errPathNotFound = errors.New("no consumer matches the request path")
-
 var errForbidden = errors.New("credential is not authorized for the matched consumer")
 
-// hopByHopHeaders are connection-scoped headers that must not be relayed from
-// the backend response back to the client.
 var hopByHopHeaders = map[string]struct{}{
 	"Connection":          {},
 	"Keep-Alive":          {},

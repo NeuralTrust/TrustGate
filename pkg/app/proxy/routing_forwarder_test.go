@@ -3,7 +3,6 @@ package proxy_test
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
@@ -500,7 +499,7 @@ func TestForward_SpanRecordsRouteSource(t *testing.T) {
 	}
 }
 
-func TestForward_BedrockModelIDIsNeverParsedAsRoutingSyntax(t *testing.T) {
+func TestForward_ClientSuppliedModelIDIsRejected(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	bedrock := backendFor(gatewayID, "bedrock")
 	rc := routableConsumerWith(gatewayID, bedrock)
@@ -508,20 +507,10 @@ func TestForward_BedrockModelIDIsNeverParsedAsRoutingSyntax(t *testing.T) {
 	const arn = `arn:aws:bedrock:eu-west-1:123456789012:inference-profile/eu.anthropic.claude-sonnet-4-v1:0`
 	body := []byte(`{"modelId":"` + arn + `","messages":[]}`)
 
-	var invokedBody []byte
 	invoker := proxymocks.NewProviderInvoker(t)
-	invoker.EXPECT().
-		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
-			return bk.ID == bedrock.ID
-		}), mock.Anything).
-		Run(func(_ context.Context, _ *registrydomain.Registry, req *infracontext.RequestContext) {
-			invokedBody = req.Body
-		}).
-		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
-		Once()
 
 	fwd := newTestForwarder(t, invoker)
-	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
@@ -529,14 +518,8 @@ func TestForward_BedrockModelIDIsNeverParsedAsRoutingSyntax(t *testing.T) {
 			Body:    body,
 		},
 	})
-	if err != nil {
-		t.Fatalf("Forward: %v", err)
-	}
-	if res.StatusCode != 200 {
-		t.Fatalf("expected 200, got %d", res.StatusCode)
-	}
-	if !strings.Contains(string(invokedBody), arn) {
-		t.Fatalf("native modelId must reach the provider untouched, got %s", invokedBody)
+	if !errors.Is(err, routingdomain.ErrInvalidModelRef) {
+		t.Fatalf("expected ErrInvalidModelRef for client-supplied modelId, got %v", err)
 	}
 }
 

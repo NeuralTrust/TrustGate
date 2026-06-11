@@ -28,10 +28,12 @@ const (
 //  1. Has "contents" key                        → Gemini
 //  2. Has "anthropic_version" key               → Anthropic
 //  3. Has top-level "system" (string or array) AND "messages" → Anthropic
-//  4. Has "modelId" key                         → Bedrock
-//  5. Has "inputText" key                       → Bedrock (Titan)
-//  6. Has "prompt" key without "messages"        → Bedrock (legacy Claude v2)
-//  7. Default (has "messages")                  → OpenAI
+//  4. Has "input" without "messages"            → OpenAI Responses
+//  5. Default (has "messages")                  → OpenAI
+//
+// Bedrock is intentionally never detected: the gateway only accepts universal
+// payloads as input, so provider-native Bedrock bodies (modelId, inputText,
+// prompt) are not a supported source format.
 func DetectFormat(body []byte) Format {
 	// Quick probe: unmarshal into a thin map that only captures keys we care
 	// about. Values are kept as json.RawMessage to avoid allocating real
@@ -42,9 +44,6 @@ func DetectFormat(body []byte) Format {
 		System           json.RawMessage `json:"system"`
 		Messages         json.RawMessage `json:"messages"`
 		Input            json.RawMessage `json:"input"`
-		ModelID          json.RawMessage `json:"modelId"`
-		InputText        json.RawMessage `json:"inputText"`
-		Prompt           json.RawMessage `json:"prompt"`
 	}
 	if err := json.Unmarshal(body, &probe); err != nil {
 		return FormatOpenAI // safe default
@@ -79,22 +78,21 @@ func DetectFormat(body []byte) Format {
 		return FormatOpenAIResponses
 	}
 
-	if probe.ModelID != nil {
-		return FormatBedrock
-	}
-
-	// 5. Bedrock Titan uses "inputText".
-	if probe.InputText != nil {
-		return FormatBedrock
-	}
-
-	// 6. Bedrock legacy Claude v2 uses "prompt" without "messages".
-	if probe.Prompt != nil && probe.Messages == nil {
-		return FormatBedrock
-	}
-
-	// 7. Default: OpenAI chat-completion format.
+	// 5. Default: OpenAI chat-completion format.
 	return FormatOpenAI
+}
+
+// SupportedSourceFormat reports whether a Format is accepted as the wire
+// format of an inbound request body (X-Provider header). Bedrock is excluded:
+// clients must send universal payloads, never provider-native Bedrock bodies.
+func SupportedSourceFormat(f Format) bool {
+	switch f {
+	case FormatOpenAI, FormatOpenAIResponses, FormatAnthropic, FormatGemini,
+		FormatAzure, FormatGroq, FormatVertex, FormatMistral:
+		return true
+	default:
+		return false
+	}
 }
 
 // RequestWantsStream reports whether the body carries an explicit "stream" flag

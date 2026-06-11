@@ -14,13 +14,13 @@ The `model` field accepts three universal forms:
 
 Values that do not match these forms are treated as native model identifiers and passed through untouched. In particular, a provider part that is not a plain identifier (for example a Bedrock ARN such as `arn:aws:bedrock:...:inference-profile/eu.anthropic.claude-sonnet-4-v1:0`) is never parsed as `provider/model`.
 
-## `modelId` (Bedrock)
+## `modelId` (Bedrock) is not an input field
 
-`modelId` is a provider-native field, not universal routing syntax. It is never parsed for routing intent and reaches the Bedrock client untouched, where it is passed as the `ModelId` API parameter and stripped from the JSON body. Model allow-lists (`model_policies`) still apply to `modelId` values via enforcement.
+The inbound payload is always universal: Bedrock is **not** a supported source wire format. `modelId` is a Bedrock-internal concept that only exists after the gateway adapts the universal payload to Bedrock's native format; it is never accepted from the inbound request. A request carrying `modelId` is rejected with `400 invalid_model`, so it can never reach the Bedrock client or bypass model allow-lists. Bedrock models are addressed with the universal `model` field (`bedrock/anthropic.claude-sonnet-4`, or a native identifier such as an ARN).
 
 ## `X-Provider` header: source wire format only
 
-`X-Provider` is an optional hint declaring the **wire format of the inbound request body** (`openai`, `anthropic`, `google`, `bedrock`, ...). It exists so the proxy can skip format auto-detection and adapt the body to the selected registry's native format.
+`X-Provider` is an optional hint declaring the **wire format of the inbound request body** (`openai`, `anthropic`, `google`, `mistral`, ...). It exists so the proxy can skip format auto-detection and adapt the body to the selected registry's native format. `bedrock` and unknown values are rejected with `400 invalid_request`.
 
 It does **not**:
 
