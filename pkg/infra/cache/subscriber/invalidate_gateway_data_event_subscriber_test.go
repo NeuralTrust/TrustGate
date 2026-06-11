@@ -29,12 +29,14 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	gw := gatewaydomain.RehydrateWithSlug(id, "Gateway", "acme", "active", nil, nil, nil, now, now)
 
 	gatewayMap := cache.NewTTLMap(cache.GatewayCacheTTL)
+	consumerMap := cache.NewTTLMap(cache.ConsumerCacheTTL)
 	consumerDataMap := cache.NewTTLMap(cache.ConsumerDataCacheTTL)
 	loadBalancerMap := cache.NewTTLMap(cache.LoadBalancerCacheTTL)
 	roleMap := cache.NewTTLMap(cache.RoleCacheTTL)
 	gatewayMap.Set("id:"+gatewayID, gw)
 	gatewayMap.Set("slug:acme", gw)
 	gatewayMap.Set("id:"+otherID, "keep")
+	consumerMap.Set("consumer-1", "entity")
 	consumerDataMap.Set(gatewayID, "aggregate")
 	consumerDataMap.Set(otherID, "keep")
 	loadBalancerMap.Set(gatewayID+":consumer-1", "lb")
@@ -44,6 +46,7 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 
 	client := cachemocks.NewClient(t)
 	client.EXPECT().GetTTLMap(cache.GatewayTTLName).Return(gatewayMap).Once()
+	client.EXPECT().GetTTLMap(cache.ConsumerTTLName).Return(consumerMap).Once()
 	client.EXPECT().GetTTLMap(cache.ConsumerDataTTLName).Return(consumerDataMap).Once()
 	client.EXPECT().GetTTLMap(cache.LoadBalancerTTLName).Return(loadBalancerMap).Once()
 	client.EXPECT().GetTTLMap(cache.RoleTTLName).Return(roleMap).Once()
@@ -59,6 +62,9 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	}
 	if _, ok := gatewayMap.Get("slug:acme"); ok {
 		t.Fatal("gateway slug alias was not evicted")
+	}
+	if _, ok := consumerMap.Get("consumer-1"); ok {
+		t.Fatal("consumer entity cache was not flushed; it may hold stale auth bindings")
 	}
 	if _, ok := consumerDataMap.Get(gatewayID); ok {
 		t.Fatal("consumer-data entry was not evicted")

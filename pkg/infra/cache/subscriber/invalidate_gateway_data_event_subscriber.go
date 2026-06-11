@@ -19,6 +19,7 @@ type InvalidateGatewayDataEventSubscriber struct {
 	logger            *slog.Logger
 	cache             cache.Client
 	gatewayCache      *cache.TTLMap
+	consumerCache     *cache.TTLMap
 	consumerDataCache *cache.TTLMap
 	loadBalancerCache *cache.TTLMap
 	roleCache         *cache.TTLMap
@@ -32,6 +33,7 @@ func NewInvalidateGatewayDataEventSubscriber(
 		logger:            logger,
 		cache:             c,
 		gatewayCache:      c.GetTTLMap(cache.GatewayTTLName),
+		consumerCache:     c.GetTTLMap(cache.ConsumerTTLName),
 		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
 		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
 		roleCache:         c.GetTTLMap(cache.RoleTTLName),
@@ -43,6 +45,9 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 
 	if s.gatewayCache != nil {
 		deleteGatewayAliases(s.gatewayCache, evt.GatewayID)
+	}
+	if s.consumerCache != nil {
+		s.consumerCache.Clear()
 	}
 	if s.consumerDataCache != nil {
 		s.consumerDataCache.Delete(evt.GatewayID)

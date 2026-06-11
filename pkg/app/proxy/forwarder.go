@@ -268,9 +268,6 @@ func (f *forwarder) attemptsPerBackend() int {
 	return f.maxRetries + 1
 }
 
-// nextCandidate picks the next backend after a failure: load-balancer members
-// are always eligible (health-driven), while the fallback chain is only
-// consulted when the failure kind matches an enabled fallback trigger.
 func (f *forwarder) nextCandidate(
 	lb *loadbalancer.LoadBalancer,
 	rc *appconsumer.RoutableConsumer,

@@ -173,7 +173,7 @@ func (c *client) bearerToken(ctx context.Context, az *providers.Azure) (string, 
 	}
 	token, err := tokenSource(ctx, az)
 	if err != nil {
-		return "", fmt.Errorf("failed to get Azure bearer token: %w", err)
+		return "", fmt.Errorf("%w: failed to get Azure bearer token: %w", registry.ErrCredentialAcquisition, err)
 	}
 	return token, nil
 }

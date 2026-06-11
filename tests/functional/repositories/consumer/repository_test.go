@@ -538,16 +538,25 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	}
 }
 
-func TestRepository_DeleteBackend_FailsWhenReferencedByConsumer(t *testing.T) {
+func TestRepository_DeleteBackend_CascadesConsumerBinding(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-bd")
 	beID := seedRegistry(t, f.be, gwID, "be-bd")
 
-	saveWithRegistries(t, f, validConsumer(t, gwID, "uses-be", beID))
-	err := f.be.Delete(ctx, beID)
-	if !errors.Is(err, registrydomain.ErrHasDependents) {
-		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
+	c := validConsumer(t, gwID, "uses-be", beID)
+	saveWithRegistries(t, f, c)
+
+	if err := f.be.Delete(ctx, beID); err != nil {
+		t.Fatalf("Delete: %v, want cascade to consumer_registry", err)
+	}
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.RegistryIDs) != 0 {
+		t.Fatalf("RegistryIDs = %v, want the binding removed by cascade", got.RegistryIDs)
 	}
 }
 

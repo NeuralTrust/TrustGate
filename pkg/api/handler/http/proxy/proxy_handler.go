@@ -16,6 +16,7 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
@@ -29,6 +30,19 @@ var streamErrorEvent = []byte(`data: {"error":{"message":"upstream stream termin
 var errNotAuthenticated = errors.New("request is not authenticated")
 var errPathNotFound = errors.New("no consumer matches the request path")
 var errForbidden = errors.New("credential is not authorized for the matched consumer")
+
+const (
+	errCodePluginRejected     = "plugin_rejected"
+	errCodeUnauthenticated    = "unauthenticated"
+	errCodeForbidden          = "forbidden"
+	errCodeNotFound           = "not_found"
+	errCodeNoBackendAvailable = "no_backend_available"
+	errCodeInvalidRequest     = "invalid_request"
+	errCodeInvalidModel       = "invalid_model"
+	errCodeModelNotAllowed    = "model_not_allowed"
+	errCodeProviderCredential = "provider_credential_error"
+	errCodeBackendError       = "backend_error"
+)
 
 var hopByHopHeaders = map[string]struct{}{
 	"Connection":          {},
@@ -296,29 +310,34 @@ func writeProxyError(c *fiber.Ctx, err error) error {
 
 func mapProxyError(err error) (int, helpers.ErrorBody) {
 	if pe, ok := appplugins.AsPluginError(err); ok {
-		return pe.StatusCode, helpers.ErrorBody{Error: "plugin_rejected", Message: pe.Message}
+		return pe.StatusCode, helpers.ErrorBody{Error: errCodePluginRejected, Message: pe.Message}
 	}
 	switch {
 	case errors.Is(err, errNotAuthenticated):
-		return fiber.StatusUnauthorized, helpers.ErrorBody{Error: "unauthenticated", Message: err.Error()}
+		return fiber.StatusUnauthorized, helpers.ErrorBody{Error: errCodeUnauthenticated, Message: err.Error()}
 	case errors.Is(err, errForbidden):
-		return fiber.StatusForbidden, helpers.ErrorBody{Error: "forbidden", Message: err.Error()}
+		return fiber.StatusForbidden, helpers.ErrorBody{Error: errCodeForbidden, Message: err.Error()}
 	case errors.Is(err, errPathNotFound),
 		errors.Is(err, commonerrors.ErrNotFound):
-		return fiber.StatusNotFound, helpers.ErrorBody{Error: "not_found"}
+		return fiber.StatusNotFound, helpers.ErrorBody{Error: errCodeNotFound}
 	case errors.Is(err, appproxy.ErrNoBackendAvailable),
 		errors.Is(err, appproxy.ErrNoBackendsInPool):
-		return fiber.StatusServiceUnavailable, helpers.ErrorBody{Error: "no_backend_available", Message: err.Error()}
+		return fiber.StatusServiceUnavailable, helpers.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload):
-		return fiber.StatusBadRequest, helpers.ErrorBody{Error: "invalid_request", Message: err.Error()}
+		return fiber.StatusBadRequest, helpers.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrInvalidModelRef),
 		errors.Is(err, routingdomain.ErrUnknownPoolAlias),
 		errors.Is(err, routingdomain.ErrAmbiguousModel):
-		return fiber.StatusBadRequest, helpers.ErrorBody{Error: "invalid_model", Message: err.Error()}
+		return fiber.StatusBadRequest, helpers.ErrorBody{Error: errCodeInvalidModel, Message: err.Error()}
 	case errors.Is(err, routingdomain.ErrModelDenied),
 		errors.Is(err, appproxy.ErrModelNotAllowed):
-		return fiber.StatusForbidden, helpers.ErrorBody{Error: "model_not_allowed", Message: err.Error()}
+		return fiber.StatusForbidden, helpers.ErrorBody{Error: errCodeModelNotAllowed, Message: err.Error()}
+	case errors.Is(err, registrydomain.ErrCredentialAcquisition):
+		return fiber.StatusBadGateway, helpers.ErrorBody{
+			Error:   errCodeProviderCredential,
+			Message: registrydomain.ErrCredentialAcquisition.Error(),
+		}
 	default:
-		return fiber.StatusBadGateway, helpers.ErrorBody{Error: "backend_error"}
+		return fiber.StatusBadGateway, helpers.ErrorBody{Error: errCodeBackendError}
 	}
 }

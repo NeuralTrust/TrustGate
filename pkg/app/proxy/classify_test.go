@@ -3,8 +3,11 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
+
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 func TestBackendFailureStatus(t *testing.T) {
@@ -48,6 +51,13 @@ func TestClassifyOutcome(t *testing.T) {
 	}{
 		{"transport error", nil, errors.New("boom"), fallbackTriggers{}, OutcomeRetryable},
 		{"model not allowed is terminal", nil, ErrModelNotAllowed, fallbackTriggers{}, OutcomeTerminal},
+		{
+			"credential acquisition is terminal",
+			nil,
+			fmt.Errorf("provider completions: %w: secret expired", registrydomain.ErrCredentialAcquisition),
+			fallbackTriggers{},
+			OutcomeTerminal,
+		},
 		{"invalid payload is terminal", nil, ErrInvalidRequestPayload, fallbackTriggers{}, OutcomeTerminal},
 		{"nil response no error", nil, nil, fallbackTriggers{}, OutcomeRetryable},
 		{"committed stream", committedStream, nil, fallbackTriggers{}, OutcomeSuccess},

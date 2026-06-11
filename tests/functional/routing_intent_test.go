@@ -201,6 +201,77 @@ func TestRoutingIntent_FallbackAuthorization(t *testing.T) {
 	})
 }
 
+func TestRoutingIntent_PinVersusLB(t *testing.T) {
+	defer Track(t, "RoutingIntent")()
+
+	t.Run("qualified pin bypasses an enabled load balancer", func(t *testing.T) {
+		pinned := newJSONUpstream(t, "pinned-served")
+		other := newJSONUpstream(t, "lb-member-served")
+		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("pinlb-gw")})
+		pinnedID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-oai"), pinned.URL()))
+		otherID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-compat"), other.URL()))
+		coID := CreateConsumer(t, gatewayID, map[string]any{
+			"name": uniqueName("cons"),
+			"registries": []map[string]any{
+				{"id": pinnedID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"}},
+				{"id": otherID, "model_policies": map[string]any{"allowed": []string{"compat-model"}, "default": "compat-model"}},
+			},
+			"lb_config": map[string]any{
+				"enabled":   true,
+				"algorithm": "round-robin",
+				"members": []map[string]any{
+					{"registry_id": pinnedID},
+					{"registry_id": otherID},
+				},
+			},
+		})
+		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+		path := chatCompletionsPath(t, coID)
+
+		const total = 4
+		for i := 0; i < total; i++ {
+			status, _, body := proxyPost(t, apiKey, path, chatRequestModel("@openai/gpt-4o-mini"))
+			assert.Equal(t, http.StatusOK, status, "request %d body: %s", i, body)
+			assert.Contains(t, string(body), "pinned-served",
+				"request %d must be served by the pinned provider", i)
+		}
+
+		assert.Equal(t, total, pinned.Hits(), "every pinned request must hit the pinned provider")
+		assert.Equal(t, 0, other.Hits(), "the load balancer must never route a pinned request")
+	})
+
+	t.Run("qualified pin never fails over, even to a same-provider chain", func(t *testing.T) {
+		primary := newFailingUpstream(t, http.StatusInternalServerError)
+		chain := newFailingUpstream(t, http.StatusServiceUnavailable)
+		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("pinfb-gw")})
+		primaryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-primary"), primary.URL()))
+		chainID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-chain"), chain.URL()))
+		coID := CreateConsumer(t, gatewayID, map[string]any{
+			"name": uniqueName("cons"),
+			"registries": []map[string]any{
+				{"id": primaryID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}}},
+				{"id": chainID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}}},
+			},
+			"fallback": map[string]any{
+				"enabled":  true,
+				"triggers": []string{"http_5xx"},
+				"chain":    []string{chainID},
+			},
+		})
+		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+
+		status, _, body := proxyPost(t, apiKey, chatCompletionsPath(t, coID),
+			chatRequestModel("@openai/gpt-4o-mini"))
+
+		assert.GreaterOrEqual(t, status, http.StatusInternalServerError,
+			"the pinned backend error must be relayed, body: %s", body)
+		assert.Equal(t, expectedAttempts(), primary.Hits()+chain.Hits(),
+			"a pinned request must retry a single backend and never fail over")
+		assert.True(t, primary.Hits() == 0 || chain.Hits() == 0,
+			"only the pinned candidate may receive traffic (primary=%d chain=%d)", primary.Hits(), chain.Hits())
+	})
+}
+
 func TestRoutingIntent_ShortModel(t *testing.T) {
 	defer Track(t, "RoutingIntent")()
 

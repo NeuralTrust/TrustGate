@@ -102,9 +102,6 @@ func (t *RequestTrace) SetConsumer(id, name string) {
 
 func (t *RequestTrace) StartedAt() time.Time { return t.startedAt }
 
-// SetStatusReason records the machine-readable error code returned to the
-// client (e.g. model_not_allowed, no_backend_available) so rejections are
-// auditable in the emitted event. It must never carry claims or tokens.
 func (t *RequestTrace) SetStatusReason(reason string) {
 	if reason == "" {
 		return
