@@ -31,10 +31,11 @@ type RequestTrace struct {
 	pending  int64
 	emitOnce sync.Once
 
-	mu      sync.Mutex
-	endedAt time.Time
-	spans   []*Span
-	emitFn  func()
+	mu           sync.Mutex
+	endedAt      time.Time
+	spans        []*Span
+	emitFn       func()
+	statusReason string
 }
 
 func New(traceID string, meta Metadata) *RequestTrace {
@@ -100,6 +101,24 @@ func (t *RequestTrace) SetConsumer(id, name string) {
 }
 
 func (t *RequestTrace) StartedAt() time.Time { return t.startedAt }
+
+// SetStatusReason records the machine-readable error code returned to the
+// client (e.g. model_not_allowed, no_backend_available) so rejections are
+// auditable in the emitted event. It must never carry claims or tokens.
+func (t *RequestTrace) SetStatusReason(reason string) {
+	if reason == "" {
+		return
+	}
+	t.mu.Lock()
+	t.statusReason = reason
+	t.mu.Unlock()
+}
+
+func (t *RequestTrace) StatusReason() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.statusReason
+}
 
 func (t *RequestTrace) SetGating(requestTraces, pluginTraces bool) {
 	t.requestTracesEnabled.Store(requestTraces)

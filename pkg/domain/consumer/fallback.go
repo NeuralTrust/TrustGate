@@ -30,7 +30,6 @@ func (t FallbackTrigger) IsValid() bool {
 type FallbackBudget struct {
 	MaxAttempts     int           `json:"max_attempts"`
 	MaxTotalLatency time.Duration `json:"max_total_latency,omitempty"`
-	MaxCostUSD      float64       `json:"max_cost_usd,omitempty"`
 }
 
 type Fallback struct {
@@ -84,9 +83,6 @@ func (f *Fallback) Validate() error {
 	}
 	if f.Budget.MaxTotalLatency < 0 {
 		return fmt.Errorf("%w: budget.max_total_latency cannot be negative", ErrInvalidFallback)
-	}
-	if f.Budget.MaxCostUSD < 0 {
-		return fmt.Errorf("%w: budget.max_cost_usd cannot be negative", ErrInvalidFallback)
 	}
 	if len(f.Chain) == 0 {
 		return fmt.Errorf("%w: chain requires at least one backend when enabled", ErrInvalidFallback)

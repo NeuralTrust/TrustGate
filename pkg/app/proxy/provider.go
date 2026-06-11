@@ -199,10 +199,7 @@ func (p *providerInvoker) prepare(
 		return nil, fmt.Errorf("resolve provider client: %w", err)
 	}
 
-	sourceFormat, err := p.resolveSourceFormat(req)
-	if err != nil {
-		return nil, err
-	}
+	sourceFormat := sourceFormatFromRequest(req)
 	targetFormat := adapter.ResolveTargetFormat(bk.Provider, bk.ProviderOptions)
 
 	req.Provider = bk.Provider
@@ -309,22 +306,12 @@ func streamHeaders(provider string) map[string][]string {
 	}
 }
 
-// resolveSourceFormat returns the client's request wire format. A non-empty
-// req.SourceFormat (set from the X-Provider header) is trusted after being
-// validated against the supported source formats; DetectFormat is still run to
-// debug-log a mismatch. Otherwise the format is auto-detected from the body.
-func (p *providerInvoker) resolveSourceFormat(req *infracontext.RequestContext) (adapter.Format, error) {
-	if req.SourceFormat != "" {
-		trusted := adapter.Format(req.SourceFormat)
-		if !adapter.SupportedSourceFormat(trusted) {
-			return "", fmt.Errorf("%w: unsupported X-Provider source format %q", ErrInvalidRequestPayload, req.SourceFormat)
-		}
-		if detected := adapter.DetectFormat(req.Body); detected != trusted {
-			p.logger.Debug("X-Provider source format hint differs from detected format",
-				slog.String("hint", string(trusted)),
-				slog.String("detected", string(detected)))
-		}
-		return trusted, nil
+// sourceFormatFromRequest returns the client request wire format as stamped
+// by the proxy path resolver. Requests without a stamped format (internal
+// callers) default to OpenAI.
+func sourceFormatFromRequest(req *infracontext.RequestContext) adapter.Format {
+	if req.SourceFormat == "" {
+		return adapter.FormatOpenAI
 	}
-	return adapter.DetectFormat(req.Body), nil
+	return adapter.Format(req.SourceFormat)
 }

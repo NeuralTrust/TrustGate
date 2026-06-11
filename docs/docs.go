@@ -2908,7 +2908,6 @@ const docTemplate = `{
                     "additionalProperties": {}
                 },
                 "provider_options_schema": {
-                    "description": "ProviderOptionsSchema lists provider-specific connection settings that are\nnot credentials (e.g. base_url, project, location).",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.ProviderOptionField"
@@ -2973,8 +2972,11 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
-                "path": {
-                    "type": "string"
+                "registries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest"
+                    }
                 },
                 "routing_mode": {
                     "type": "string"
@@ -3003,9 +3005,6 @@ const docTemplate = `{
             "properties": {
                 "max_attempts": {
                     "type": "integer"
-                },
-                "max_cost_usd": {
-                    "type": "number"
                 },
                 "max_total_latency_ms": {
                     "type": "integer"
@@ -3089,6 +3088,31 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "model_policies": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest": {
+            "type": "object",
+            "properties": {
+                "allowed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "default": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.UpdateConsumerRequest": {
             "type": "object",
             "properties": {
@@ -3114,9 +3138,6 @@ const docTemplate = `{
                     }
                 },
                 "name": {
-                    "type": "string"
-                },
-                "path": {
                     "type": "string"
                 },
                 "routing_mode": {
@@ -3169,9 +3190,6 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
-                "path": {
-                    "type": "string"
-                },
                 "registry_ids": {
                     "type": "array",
                     "items": {
@@ -3185,6 +3203,9 @@ const docTemplate = `{
                     }
                 },
                 "routing_mode": {
+                    "type": "string"
+                },
+                "slug": {
                     "type": "string"
                 },
                 "type": {
@@ -3238,9 +3259,6 @@ const docTemplate = `{
             "properties": {
                 "max_attempts": {
                     "type": "integer"
-                },
-                "max_cost_usd": {
-                    "type": "number"
                 },
                 "max_total_latency_ms": {
                     "type": "integer"
@@ -4098,6 +4116,7 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthField": {
             "type": "object",
             "properties": {
+                "default": {},
                 "description": {
                     "type": "string"
                 },
@@ -4145,6 +4164,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "type": {
+                    "type": "string"
+                },
+                "variant": {
                     "type": "string"
                 }
             }

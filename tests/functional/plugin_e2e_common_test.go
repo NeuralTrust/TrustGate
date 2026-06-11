@@ -69,17 +69,13 @@ func setupPolicyRoute(t *testing.T, up *fakeUpstream, pluginEntries ...map[strin
 		policyIDs = append(policyIDs, CreatePolicy(t, gatewayID, payload))
 	}
 
-	// The consumer's routing path is derived from its name by
-	// validConsumerPayload, so the returned path must match that exact name or
-	// MatchPath would 404 on the proxy plane.
 	name := uniqueName("cons")
-	path := "/v1/" + name
 	coID := CreateConsumerWithRegistries(t, gatewayID, name, backendID)
 	for _, policyID := range policyIDs {
 		AttachPolicy(t, gatewayID, coID, policyID)
 	}
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
-	return apiKey, path
+	return apiKey, chatCompletionsPath(t, coID)
 }
 
 // proxyRequest forwards an arbitrary-method request through the proxy plane

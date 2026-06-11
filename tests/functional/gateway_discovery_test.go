@@ -28,8 +28,8 @@ func setupDiscoveryRoute(t *testing.T) (slug, apiKey, path string) {
 	up := newJSONUpstream(t, "discovery-upstream")
 	registryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("disc-be"), up.URL()))
 
-	path = "/v1/" + uniqueName("disc-route")
-	coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("disc-co"), "path": path})
+	coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("disc-co")})
+	path = chatCompletionsPath(t, coID)
 	AttachRegistry(t, gatewayID, coID, registryID)
 	apiKey = createAndAttachAPIKey(t, gatewayID, coID)
 	return slug, apiKey, path

@@ -68,7 +68,6 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 		GatewayID:     gatewayID,
 		Name:          req.Name,
 		Type:          req.ToType(),
-		Path:          req.Path,
 		RoutingMode:   req.ToRoutingMode(),
 		LBConfig:      lbConfig,
 		Headers:       req.Headers,

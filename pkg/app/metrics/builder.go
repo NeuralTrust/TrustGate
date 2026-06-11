@@ -73,7 +73,7 @@ func (b *Builder) Build(
 
 	b.fillRequest(evt, req, served)
 	b.fillResponse(evt, resp, served, totalMs)
-	b.fillStatus(evt, resp, served)
+	b.fillStatus(evt, resp, served, requestTrace)
 	b.fillUsageAndCost(ctx, evt, served)
 
 	return evt
@@ -100,6 +100,7 @@ func (b *Builder) foldLLMSpans(requestTrace *trace.RequestTrace) (*trace.LLMAttr
 			Provider:   attrs.Provider,
 			Attempt:    attrs.Attempt,
 			Fallback:   attrs.Fallback,
+			Pinned:     attrs.Pinned,
 			Route:      attrs.Route,
 			Outcome:    attrs.Outcome,
 			StatusCode: span.StatusCode(),
@@ -209,15 +210,25 @@ func (b *Builder) fillResponse(evt *events.Event, resp *infracontext.ResponseCon
 	}
 }
 
-func (b *Builder) fillStatus(evt *events.Event, resp *infracontext.ResponseContext, served *trace.LLMAttrs) {
+func (b *Builder) fillStatus(
+	evt *events.Event,
+	resp *infracontext.ResponseContext,
+	served *trace.LLMAttrs,
+	requestTrace *trace.RequestTrace,
+) {
 	outcome := ""
 	if served != nil {
 		outcome = served.Outcome
+	}
+	reason := ""
+	if requestTrace != nil {
+		reason = requestTrace.StatusReason()
 	}
 	evt.Status = events.Status{
 		Code:      resp.StatusCode,
 		IsTimeout: resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusGatewayTimeout,
 		Outcome:   outcome,
+		Reason:    reason,
 	}
 }
 

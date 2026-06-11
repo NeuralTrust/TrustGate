@@ -19,7 +19,6 @@ import (
 	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/consumer"
 	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
 	registryrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/registry"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -102,7 +101,6 @@ func validConsumer(t *testing.T, gwID ids.GatewayID, name string, beIDs ...ids.R
 		GatewayID:   gwID,
 		Name:        name,
 		Type:        domain.TypeLLM,
-		Path:        "/v1/" + uuid.NewString(),
 		RegistryIDs: beIDs,
 	})
 	if err != nil {
@@ -151,8 +149,8 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.Headers["X-Tenant"] != "acme" {
 		t.Fatalf("Headers lost data: %+v", got.Headers)
 	}
-	if got.Path != c.Path {
-		t.Fatalf("Path = %q, want %q", got.Path, c.Path)
+	if got.Slug != c.Slug {
+		t.Fatalf("Slug = %q, want %q", got.Slug, c.Slug)
 	}
 	if got.RoutingMode != domain.RoutingModeInline {
 		t.Fatalf("RoutingMode = %q, want %q", got.RoutingMode, domain.RoutingModeInline)
@@ -170,7 +168,7 @@ func TestRepository_SaveAndFindByID_RoundTripsFallback(t *testing.T) {
 	c.Fallback = &domain.Fallback{
 		Enabled:  true,
 		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx, domain.TriggerHTTP429},
-		Budget:   domain.FallbackBudget{MaxAttempts: 6, MaxTotalLatency: 5 * time.Second, MaxCostUSD: 1.5},
+		Budget:   domain.FallbackBudget{MaxAttempts: 6, MaxTotalLatency: 5 * time.Second},
 		Chain:    registrydomain.Registries{fbBE},
 	}
 
@@ -262,26 +260,25 @@ func TestRepository_Save_DuplicateNameForSameGateway(t *testing.T) {
 	}
 }
 
-func TestRepository_Save_DuplicatePathForSameGateway(t *testing.T) {
+func TestRepository_Save_DuplicateSlug(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
-	gwID := seedGateway(t, f.gw, "pool-path")
-	beID := seedRegistry(t, f.be, gwID, "be-path")
+	gwID := seedGateway(t, f.gw, "pool-slug")
+	beID := seedRegistry(t, f.be, gwID, "be-slug")
 
 	c1 := validConsumer(t, gwID, "first", beID)
-	c1.Path = "/v1/shared/path"
 	if err := f.repo.Save(ctx, c1); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
 	c2 := validConsumer(t, gwID, "second", beID)
-	c2.Path = "/v1/shared/path"
+	c2.Slug = c1.Slug
 	err := f.repo.Save(ctx, c2)
-	if !errors.Is(err, domain.ErrPathAlreadyExists) {
-		t.Fatalf("err = %v, want ErrPathAlreadyExists", err)
+	if !errors.Is(err, domain.ErrSlugAlreadyExists) {
+		t.Fatalf("err = %v, want ErrSlugAlreadyExists", err)
 	}
 }
 
-func TestRepository_Save_SamePathDifferentGatewaysAllowed(t *testing.T) {
+func TestRepository_Save_DuplicateSlugAcrossGatewaysRejected(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gw1 := seedGateway(t, f.gw, "g-p1")
@@ -290,14 +287,13 @@ func TestRepository_Save_SamePathDifferentGatewaysAllowed(t *testing.T) {
 	be2 := seedRegistry(t, f.be, gw2, "be-p2")
 
 	c1 := validConsumer(t, gw1, "c1", be1)
-	c1.Path = "/v1/chat/completions"
 	if err := f.repo.Save(ctx, c1); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
 	c2 := validConsumer(t, gw2, "c2", be2)
-	c2.Path = "/v1/chat/completions"
-	if err := f.repo.Save(ctx, c2); err != nil {
-		t.Fatalf("second Save: %v", err)
+	c2.Slug = c1.Slug
+	if err := f.repo.Save(ctx, c2); !errors.Is(err, domain.ErrSlugAlreadyExists) {
+		t.Fatalf("err = %v, want ErrSlugAlreadyExists (slug uniqueness is global)", err)
 	}
 }
 

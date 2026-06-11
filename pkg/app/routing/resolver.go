@@ -20,7 +20,7 @@ const (
 type RegistryLookup func(ids.RegistryID) (*registrydomain.Registry, bool)
 
 type ResolveInput struct {
-	Intent     routingdomain.RoutingIntent
+	Intent     routingdomain.Intent
 	Consumer   *appconsumer.RoutableConsumer
 	Roles      []*roledomain.Role
 	Registries RegistryLookup

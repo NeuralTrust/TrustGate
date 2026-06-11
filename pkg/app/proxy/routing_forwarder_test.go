@@ -42,7 +42,7 @@ func TestForward_QualifiedIntentRestrictsPoolAndRewritesModel(t *testing.T) {
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
 			Context: context.Background(),
-			Body:    []byte(`{"model":"openai/gpt-5"}`),
+			Body:    []byte(`{"model":"@openai/gpt-5"}`),
 		},
 	})
 	if err != nil {
@@ -70,7 +70,7 @@ func TestForward_QualifiedIntentDeniedByPolicy(t *testing.T) {
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
 			Context: context.Background(),
-			Body:    []byte(`{"model":"openai/gpt-4o"}`),
+			Body:    []byte(`{"model":"@openai/gpt-4o"}`),
 		},
 	})
 	if !errors.Is(err, routingdomain.ErrModelDenied) {
@@ -222,7 +222,7 @@ func TestForward_RoleBasedDeniedModel(t *testing.T) {
 		RoleIDs:   []ids.RoleID{role.ID},
 		Request: &infracontext.RequestContext{
 			Context: context.Background(),
-			Body:    []byte(`{"model":"openai/gpt-4o"}`),
+			Body:    []byte(`{"model":"@openai/gpt-4o"}`),
 		},
 	})
 	if !errors.Is(err, routingdomain.ErrModelDenied) {
@@ -576,7 +576,7 @@ func TestForward_SpanRecordsRequestedModel(t *testing.T) {
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
 			Context: ctx,
-			Body:    []byte(`{"model":"openai/gpt-5"}`),
+			Body:    []byte(`{"model":"@openai/gpt-5"}`),
 		},
 	})
 	if err != nil {
@@ -586,7 +586,7 @@ func TestForward_SpanRecordsRequestedModel(t *testing.T) {
 	if len(spans) != 1 || spans[0].LLM == nil {
 		t.Fatalf("expected one LLM span, got %d", len(spans))
 	}
-	if spans[0].LLM.RequestedModel != "openai/gpt-5" {
+	if spans[0].LLM.RequestedModel != "@openai/gpt-5" {
 		t.Fatalf("expected original requested model, got %q", spans[0].LLM.RequestedModel)
 	}
 	if spans[0].LLM.Model != "gpt-5" {

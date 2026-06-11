@@ -203,10 +203,8 @@ func setupRoute(t *testing.T, algorithm string, upstreams ...*fakeUpstream) (str
 		registryIDs = append(registryIDs, CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL())))
 	}
 
-	path := "/v1/" + uniqueName("route")
 	consumer := map[string]any{
 		"name": uniqueName("cons"),
-		"path": path,
 	}
 	if algorithm != "" {
 		consumer["algorithm"] = algorithm
@@ -216,7 +214,7 @@ func setupRoute(t *testing.T, algorithm string, upstreams ...*fakeUpstream) (str
 		AttachRegistry(t, gatewayID, coID, registryID)
 	}
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
-	return apiKey, path
+	return apiKey, chatCompletionsPath(t, coID)
 }
 
 func TestProxyE2E_NonStreaming_NoLB(t *testing.T) {
@@ -279,11 +277,10 @@ func TestProxyE2E_OpenAICompatibleProvider(t *testing.T) {
 		t.Helper()
 		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("compat-gw")})
 		registryID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be"), up.URL()))
-		path := "/v1/" + uniqueName("route")
-		coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("cons"), "path": path})
+		coID := CreateConsumer(t, gatewayID, map[string]any{"name": uniqueName("cons")})
 		AttachRegistry(t, gatewayID, coID, registryID)
 		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
-		return apiKey, path
+		return apiKey, chatCompletionsPath(t, coID)
 	}
 
 	t.Run("non-streaming", func(t *testing.T) {
@@ -367,7 +364,6 @@ func setupModelPolicyRoute(t *testing.T, up *fakeUpstream, allowed []string, def
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mp-gw")})
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
 	name := uniqueName("cons")
-	path := "/v1/" + uniqueName("route")
 	policy := map[string]any{"allowed": allowed}
 	if defaultModel != "" {
 		policy["default"] = defaultModel
@@ -375,13 +371,12 @@ func setupModelPolicyRoute(t *testing.T, up *fakeUpstream, allowed []string, def
 	// The atomic create path binds the registry and its model policy in one POST.
 	coID := CreateConsumer(t, gatewayID, map[string]any{
 		"name": name,
-		"path": path,
 		"registries": []map[string]any{
 			{"id": backendID, "model_policies": policy},
 		},
 	})
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
-	return apiKey, path
+	return apiKey, chatCompletionsPath(t, coID)
 }
 
 func TestProxyE2E_ModelPolicies(t *testing.T) {
@@ -422,16 +417,19 @@ func TestProxyE2E_ModelPolicies(t *testing.T) {
 }
 
 // setupFallbackRoute wires a gateway whose consumer routes to primary and, when
-// fallbackEnabled, fails over to the fallback backend on 5xx responses. It
+// fallbackEnabled, fails over to the fallback backend on the given triggers. It
 // returns the api key attached to that consumer and the routing path.
-func setupFallbackRoute(t *testing.T, primary, fallback *fakeUpstream, fallbackEnabled bool) (string, string) {
+func setupFallbackRoute(t *testing.T, primary, fallback *fakeUpstream, fallbackEnabled bool, triggers ...string) (string, string) {
 	t.Helper()
+	if len(triggers) == 0 {
+		triggers = []string{"http_5xx"}
+	}
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("fb-gw")})
 	primaryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-primary"), primary.URL()))
 	fallbackID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-fallback"), fallback.URL()))
 	name := uniqueName("cons")
-	path := "/v1/" + uniqueName("route")
-	coID := CreateConsumer(t, gatewayID, map[string]any{"name": name, "path": path})
+	coID := CreateConsumer(t, gatewayID, map[string]any{"name": name})
+	path := chatCompletionsPath(t, coID)
 	AttachRegistry(t, gatewayID, coID, primaryID)
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
 
@@ -443,10 +441,9 @@ func setupFallbackRoute(t *testing.T, primary, fallback *fakeUpstream, fallbackE
 	AttachRegistry(t, gatewayID, coID, fallbackID)
 	UpdateConsumer(t, gatewayID, coID, map[string]any{
 		"name": name,
-		"path": path,
 		"fallback": map[string]any{
 			"enabled":  true,
-			"triggers": []string{"http_5xx"},
+			"triggers": triggers,
 			"chain":    []string{fallbackID},
 		},
 	})
@@ -480,6 +477,30 @@ func TestProxyE2E_Fallback(t *testing.T) {
 		assert.Equal(t, http.StatusBadGateway, status, "the final fallback error is relayed, body: %s", body)
 		assert.Equal(t, expectedAttempts(), primary.Hits(), "primary must be fully retried")
 		assert.Equal(t, expectedAttempts(), fallback.Hits(), "fallback must be fully retried before giving up")
+	})
+
+	t.Run("429 with only http_5xx trigger relays the 429 without using the chain", func(t *testing.T) {
+		primary := newFailingUpstream(t, http.StatusTooManyRequests)
+		fallback := newJSONUpstream(t, "must-not-serve")
+		apiKey, path := setupFallbackRoute(t, primary, fallback, true, "http_5xx")
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
+
+		assert.Equal(t, http.StatusTooManyRequests, status, "the 429 must be relayed verbatim, body: %s", body)
+		assert.Equal(t, expectedAttempts(), primary.Hits(), "primary retries are not gated by triggers")
+		assert.Equal(t, 0, fallback.Hits(), "the chain must not be used when the failure kind is not a configured trigger")
+	})
+
+	t.Run("429 with http_429 trigger fails over to the chain", func(t *testing.T) {
+		primary := newFailingUpstream(t, http.StatusTooManyRequests)
+		fallback := newJSONUpstream(t, "rescued-from-429")
+		apiKey, path := setupFallbackRoute(t, primary, fallback, true, "http_429")
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequest(false))
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "rescued-from-429")
+		assert.Equal(t, 1, fallback.Hits())
 	})
 
 	t.Run("disabled fallback never fails over", func(t *testing.T) {

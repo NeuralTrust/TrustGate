@@ -16,10 +16,12 @@ type AuthField struct {
 	Description string        `json:"description,omitempty"`
 	Required    bool          `json:"required,omitempty"`
 	Secret      bool          `json:"secret,omitempty"`
+	Default     any           `json:"default,omitempty"`
 }
 
 type AuthTypeOption struct {
 	Type        string      `json:"type"`
+	Variant     string      `json:"variant,omitempty"`
 	Label       string      `json:"label"`
 	Description string      `json:"description,omitempty"`
 	Fields      []AuthField `json:"fields"`
@@ -41,104 +43,145 @@ var (
 		},
 	}
 
-	azureAuthOption = AuthTypeOption{
-		Type:        "azure",
-		Label:       "Azure OpenAI",
-		Description: "Provide exactly one credential mode: API key, service principal (tenant_id + client_id + client_secret), or managed identity.",
-		Fields: []AuthField{
-			{
-				Key:         "endpoint",
-				Label:       "Endpoint",
-				Type:        AuthFieldTypeString,
-				Description: "Azure OpenAI resource endpoint URL.",
-				Required:    true,
+	azureEndpointField = AuthField{
+		Key:         "endpoint",
+		Label:       "Endpoint",
+		Type:        AuthFieldTypeString,
+		Description: "Azure OpenAI resource endpoint URL.",
+		Required:    true,
+	}
+	azureVersionField = AuthField{
+		Key:         "version",
+		Label:       "API Version",
+		Type:        AuthFieldTypeString,
+		Description: "Azure OpenAI API version (e.g. 2024-02-01).",
+	}
+
+	azureAuthOptions = []AuthTypeOption{
+		{
+			Type:    "azure",
+			Variant: "api_key",
+			Label:   "API Key",
+			Fields: []AuthField{
+				azureEndpointField,
+				azureVersionField,
+				{
+					Key:      "api_key",
+					Label:    "API Key",
+					Type:     AuthFieldTypeString,
+					Required: true,
+					Secret:   true,
+				},
 			},
-			{
-				Key:         "version",
-				Label:       "API Version",
-				Type:        AuthFieldTypeString,
-				Description: "Azure OpenAI API version (e.g. 2024-02-01).",
+		},
+		{
+			Type:    "azure",
+			Variant: "service_principal",
+			Label:   "Service principal",
+			Fields: []AuthField{
+				azureEndpointField,
+				{
+					Key:      "tenant_id",
+					Label:    "Tenant ID",
+					Type:     AuthFieldTypeString,
+					Required: true,
+				},
+				{
+					Key:      "client_id",
+					Label:    "Client ID",
+					Type:     AuthFieldTypeString,
+					Required: true,
+				},
+				{
+					Key:      "client_secret",
+					Label:    "Client Secret",
+					Type:     AuthFieldTypeString,
+					Required: true,
+					Secret:   true,
+				},
 			},
-			{
-				Key:         "api_key",
-				Label:       "API Key",
-				Type:        AuthFieldTypeString,
-				Description: "Azure OpenAI api-key. Use for the API key credential mode.",
-				Secret:      true,
-			},
-			{
-				Key:         "tenant_id",
-				Label:       "Tenant ID",
-				Type:        AuthFieldTypeString,
-				Description: "Service principal tenant ID.",
-			},
-			{
-				Key:         "client_id",
-				Label:       "Client ID",
-				Type:        AuthFieldTypeString,
-				Description: "Service principal client ID.",
-			},
-			{
-				Key:         "client_secret",
-				Label:       "Client Secret",
-				Type:        AuthFieldTypeString,
-				Description: "Service principal client secret.",
-				Secret:      true,
-			},
-			{
-				Key:         "use_managed_identity",
-				Label:       "Use Managed Identity",
-				Type:        AuthFieldTypeBoolean,
-				Description: "Authenticate using the default Azure managed identity.",
+		},
+		{
+			Type:    "azure",
+			Variant: "managed_identity",
+			Label:   "Managed identity",
+			Fields: []AuthField{
+				azureEndpointField,
+				{
+					Key:      "use_managed_identity",
+					Label:    "Use Managed Identity",
+					Type:     AuthFieldTypeBoolean,
+					Required: true,
+					Default:  true,
+				},
 			},
 		},
 	}
 
-	awsAuthOption = AuthTypeOption{
-		Type:        "aws",
-		Label:       "AWS",
-		Description: "AWS credentials used to sign Bedrock requests.",
-		Fields: []AuthField{
-			{
-				Key:         "region",
-				Label:       "Region",
-				Type:        AuthFieldTypeString,
-				Description: "AWS region hosting the Bedrock models.",
-				Required:    true,
+	awsRegionField = AuthField{
+		Key:         "region",
+		Label:       "Region",
+		Type:        AuthFieldTypeString,
+		Description: "AWS region hosting the Bedrock models.",
+		Required:    true,
+	}
+	awsAccessKeyField = AuthField{
+		Key:         "access_key_id",
+		Label:       "Access Key ID",
+		Type:        AuthFieldTypeString,
+		Description: "AWS access key ID.",
+		Required:    true,
+	}
+	awsSecretKeyField = AuthField{
+		Key:         "secret_access_key",
+		Label:       "Secret Access Key",
+		Type:        AuthFieldTypeString,
+		Description: "AWS secret access key.",
+		Required:    true,
+		Secret:      true,
+	}
+
+	awsAuthOptions = []AuthTypeOption{
+		{
+			Type:    "aws",
+			Variant: "access_key",
+			Label:   "Access key",
+			Fields: []AuthField{
+				awsRegionField,
+				awsAccessKeyField,
+				awsSecretKeyField,
+				{
+					Key:         "session_token",
+					Label:       "Session Token",
+					Type:        AuthFieldTypeString,
+					Description: "Temporary session token for STS credentials.",
+					Secret:      true,
+				},
 			},
-			{
-				Key:         "access_key_id",
-				Label:       "Access Key ID",
-				Type:        AuthFieldTypeString,
-				Description: "AWS access key ID.",
-				Required:    true,
-			},
-			{
-				Key:         "secret_access_key",
-				Label:       "Secret Access Key",
-				Type:        AuthFieldTypeString,
-				Description: "AWS secret access key.",
-				Required:    true,
-				Secret:      true,
-			},
-			{
-				Key:         "session_token",
-				Label:       "Session Token",
-				Type:        AuthFieldTypeString,
-				Description: "Temporary session token for STS credentials.",
-				Secret:      true,
-			},
-			{
-				Key:         "role",
-				Label:       "Role ARN",
-				Type:        AuthFieldTypeString,
-				Description: "IAM role ARN to assume.",
-			},
-			{
-				Key:         "use_role",
-				Label:       "Assume Role",
-				Type:        AuthFieldTypeBoolean,
-				Description: "Assume the configured IAM role instead of using static keys.",
+		},
+		{
+			Type:    "aws",
+			Variant: "assume_role",
+			Label:   "Assume role",
+			Fields: []AuthField{
+				awsRegionField,
+				awsAccessKeyField,
+				awsSecretKeyField,
+				{
+					Key:         "role",
+					Label:       "Role ARN",
+					Type:        AuthFieldTypeString,
+					Description: "IAM role ARN to assume.",
+					Required:    true,
+				},
+				{
+					Key:         "use_role",
+					Label:       "Assume Role",
+					Type:        AuthFieldTypeBoolean,
+					Description: "Assume the configured IAM role using the base credentials above.",
+					Required:    true,
+					Default:     true,
+				},
 			},
 		},
 	}
@@ -165,8 +208,8 @@ var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderGoogle:           {apiKeyAuthOption},
 	providers.ProviderVertex:           {gcpServiceAccountAuthOption},
 	providers.ProviderAnthropic:        {apiKeyAuthOption},
-	providers.ProviderBedrock:          {awsAuthOption},
-	providers.ProviderAzure:            {azureAuthOption},
+	providers.ProviderBedrock:          awsAuthOptions,
+	providers.ProviderAzure:            azureAuthOptions,
 	providers.ProviderMistral:          {apiKeyAuthOption},
 	providers.ProviderGroq:             {apiKeyAuthOption},
 }

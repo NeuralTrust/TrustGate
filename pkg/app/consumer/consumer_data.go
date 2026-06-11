@@ -1,8 +1,6 @@
 package consumer
 
 import (
-	"strings"
-
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
@@ -26,7 +24,7 @@ type Data struct {
 	GatewayID    ids.GatewayID
 	Consumers    []RoutableConsumer
 	Roles        []*roledomain.Role
-	byPath       map[string]*RoutableConsumer
+	bySlug       map[string]*RoutableConsumer
 	registryByID map[ids.RegistryID]*registrydomain.Registry
 }
 
@@ -35,7 +33,7 @@ func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer, roles ...[]*
 	if len(roles) > 0 {
 		d.Roles = roles[0]
 	}
-	d.indexByPath()
+	d.indexBySlug()
 	d.indexRegistries()
 	return d
 }
@@ -66,34 +64,21 @@ func (d *Data) indexRegistries() {
 	}
 }
 
-func (d *Data) MatchPath(path string) (*RoutableConsumer, bool) {
-	if d == nil || d.byPath == nil {
+func (d *Data) MatchSlug(slug string) (*RoutableConsumer, bool) {
+	if d == nil || d.bySlug == nil {
 		return nil, false
 	}
-	rc, ok := d.byPath[canonicalPath(path)]
+	rc, ok := d.bySlug[slug]
 	return rc, ok
 }
 
-func (d *Data) indexByPath() {
-	d.byPath = make(map[string]*RoutableConsumer, len(d.Consumers))
+func (d *Data) indexBySlug() {
+	d.bySlug = make(map[string]*RoutableConsumer, len(d.Consumers))
 	for i := range d.Consumers {
 		rc := &d.Consumers[i]
-		if rc.Consumer == nil || !rc.Consumer.Active {
+		if rc.Consumer == nil || !rc.Consumer.Active || rc.Consumer.Slug == "" {
 			continue
 		}
-		d.byPath[canonicalPath(rc.Consumer.Path)] = rc
+		d.bySlug[rc.Consumer.Slug] = rc
 	}
-}
-
-func canonicalPath(path string) string {
-	if path == "" {
-		return "/"
-	}
-	if len(path) > 1 {
-		path = strings.TrimRight(path, "/")
-		if path == "" {
-			return "/"
-		}
-	}
-	return path
 }

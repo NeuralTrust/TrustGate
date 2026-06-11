@@ -96,10 +96,9 @@ func setupGatewayBackend(t *testing.T, up *fakeUpstream) (string, string) {
 	return gatewayID, backendID
 }
 
-// addConsumerRoute creates a consumer whose routing path matches its name,
-// attaches the backend, any policies and a fresh api_key credential, and returns
-// the routing path together with that credential's key (to authenticate at the
-// proxy plane).
+// addConsumerRoute creates a consumer, attaches the backend, any policies and a
+// fresh api_key credential, and returns its fixed chat-completions route
+// together with that credential's key (to authenticate at the proxy plane).
 func addConsumerRoute(t *testing.T, gatewayID, backendID string, policyIDs ...string) (string, string) {
 	t.Helper()
 	name := uniqueName("cons")
@@ -108,7 +107,7 @@ func addConsumerRoute(t *testing.T, gatewayID, backendID string, policyIDs ...st
 		AttachPolicy(t, gatewayID, coID, pid)
 	}
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
-	return "/v1/" + name, apiKey
+	return chatCompletionsPath(t, coID), apiKey
 }
 
 // ---- global policies --------------------------------------------------------

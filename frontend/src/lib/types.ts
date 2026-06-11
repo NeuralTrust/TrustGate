@@ -40,6 +40,7 @@ export interface AzureAuth {
   use_managed_identity?: boolean;
   endpoint?: string;
   version?: string;
+  api_key?: string;
   client_id?: string;
   client_secret?: string;
   tenant_id?: string;
@@ -210,6 +211,36 @@ export interface Policy {
   updated_at: string;
 }
 
+export type AuthFieldType = "string" | "boolean";
+
+export interface CatalogAuthField {
+  key: string;
+  label: string;
+  type: AuthFieldType;
+  description?: string;
+  required?: boolean;
+  secret?: boolean;
+  default?: unknown;
+}
+
+export interface CatalogAuthTypeOption {
+  type: AuthKind;
+  variant?: string;
+  label: string;
+  description?: string;
+  fields: CatalogAuthField[];
+}
+
+export interface ProviderOptionField {
+  key: string;
+  label: string;
+  type: "string" | "enum" | "map";
+  description?: string;
+  required?: boolean;
+  default?: unknown;
+  enum?: string[];
+}
+
 export interface Provider {
   id: string;
   code: string;
@@ -217,6 +248,8 @@ export interface Provider {
   wire_format?: string;
   source?: string;
   metadata?: Record<string, unknown>;
+  auth_types?: CatalogAuthTypeOption[];
+  provider_options_schema?: ProviderOptionField[];
 }
 
 export interface Model {

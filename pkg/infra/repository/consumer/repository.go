@@ -31,12 +31,12 @@ const (
 	consumerRoleFKConstraint     = "consumer_role_role_id_fkey"
 	consumerAuthFKConstraint     = "consumer_auth_auth_id_fkey"
 	consumerPolicyFKConstraint   = "consumer_policy_policy_id_fkey"
-	consumerPathUniqueIndex      = "consumers_gateway_path_unique"
+	consumerSlugUniqueIndex      = "consumers_slug_unique_idx"
 	consumerRoutingModeCheck     = "consumers_routing_mode_check"
 )
 
 const consumerSelectColumns = `
-		SELECT c.id, c.gateway_id, c.name, c.type, c.path, c.routing_mode, c.lb_config, c.fallback, c.model_policies, c.headers, c.active,
+		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.routing_mode, c.lb_config, c.fallback, c.model_policies, c.headers, c.active,
 		       c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
@@ -77,7 +77,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	}
 	const insertConsumer = `
 		INSERT INTO consumers (
-			id, gateway_id, name, type, path, routing_mode, lb_config, fallback, model_policies, headers, active, created_at, updated_at
+			id, gateway_id, name, type, slug, routing_mode, lb_config, fallback, model_policies, headers, active, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 		)`
@@ -85,7 +85,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 		INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
-			c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
+			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
 			headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
@@ -123,14 +123,13 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		UPDATE consumers
 		   SET name             = $2,
 		       type             = $3,
-		       path             = $4,
-		       routing_mode     = $5,
-		       lb_config        = $6,
-		       fallback         = $7,
-		       model_policies   = $8,
-		       headers          = $9,
-		       active           = $10,
-		       updated_at       = $11
+		       routing_mode     = $4,
+		       lb_config        = $5,
+		       fallback         = $6,
+		       model_policies   = $7,
+		       headers          = $8,
+		       active           = $9,
+		       updated_at       = $10
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
@@ -143,7 +142,7 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 			return err
 		}
 		cmd, err := tx.Exec(ctx, updateConsumer,
-			c.ID, c.Name, string(c.Type), c.Path, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
+			c.ID, c.Name, string(c.Type), string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
 			headersBytes, c.Active, c.UpdatedAt,
 		)
 		if err != nil {
@@ -587,7 +586,7 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		authIDs          []uuid.UUID
 	)
 	if err := s.Scan(
-		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &routingMode, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &headersRaw, &c.Active,
+		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Slug, &routingMode, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
 		&registryIDs, &roleIDs, &authIDs,
 	); err != nil {
@@ -677,8 +676,8 @@ func mapPgError(err error) error {
 		case pgRoutingConflict:
 			return fmt.Errorf("%s: %w", pgErr.Message, commonerrors.ErrConflict)
 		case pgUniqueViolation:
-			if strings.Contains(pgErr.ConstraintName, consumerPathUniqueIndex) {
-				return domain.ErrPathAlreadyExists
+			if strings.Contains(pgErr.ConstraintName, consumerSlugUniqueIndex) {
+				return domain.ErrSlugAlreadyExists
 			}
 			return domain.ErrAlreadyExists
 		case pgCheckViolation:

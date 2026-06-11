@@ -18,20 +18,23 @@ import (
 	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/mock"
 )
 
-const proxyPath = "/v1/chat/completions"
+const consumerSlug = "cons1234"
+
+const proxyPath = "/" + consumerSlug + "/v1/chat/completions"
 
 // authStub mimics the auth middleware: it attaches a resolved gateway id, the
 // authenticating auth id and a consumer.Data read model (with one consumer bound
 // to proxyPath and authorized for that auth) to the request context, exactly as
 // the real api-key auth middleware does.
-func authStub(gatewayID ids.GatewayID, path string) fiber.Handler {
+func authStub(gatewayID ids.GatewayID, slug string) fiber.Handler {
 	authID := ids.New[ids.AuthKind]()
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Path: path, Active: true, AuthIDs: []ids.AuthID{authID}}},
+		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Slug: slug, Active: true, AuthIDs: []ids.AuthID{authID}}},
 	})
 	return func(c *fiber.Ctx) error {
 		authCtx := &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gatewayID, AuthID: authID}
@@ -44,18 +47,18 @@ func authStub(gatewayID ids.GatewayID, path string) fiber.Handler {
 	}
 }
 
-func authStubOAuth(gatewayID ids.GatewayID, path string) fiber.Handler {
-	return authStubWithMethod(gatewayID, path, appauth.MethodOAuth2)
+func authStubOAuth(gatewayID ids.GatewayID, slug string) fiber.Handler {
+	return authStubWithMethod(gatewayID, slug, appauth.MethodOAuth2)
 }
 
-func authStubOAuth2Client(gatewayID ids.GatewayID, path string) fiber.Handler {
-	return authStubWithMethod(gatewayID, path, appauth.MethodOAuth2Client)
+func authStubOAuth2Client(gatewayID ids.GatewayID, slug string) fiber.Handler {
+	return authStubWithMethod(gatewayID, slug, appauth.MethodOAuth2Client)
 }
 
-func authStubWithMethod(gatewayID ids.GatewayID, path string, method appauth.Method) fiber.Handler {
+func authStubWithMethod(gatewayID ids.GatewayID, slug string, method appauth.Method) fiber.Handler {
 	authID := ids.New[ids.AuthKind]()
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Path: path, Active: true, AuthIDs: []ids.AuthID{authID}}},
+		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Slug: slug, Active: true, AuthIDs: []ids.AuthID{authID}}},
 	})
 	return func(c *fiber.Ctx) error {
 		authCtx := &appauth.AuthContext{Method: method, GatewayID: gatewayID, AuthID: authID, Subject: "user-1"}
@@ -71,9 +74,9 @@ func authStubWithMethod(gatewayID ids.GatewayID, path string, method appauth.Met
 // authStubForbidden mimics the auth middleware authenticating a credential that
 // is valid for the gateway but NOT attached to the consumer that matches the
 // path, so the handler must reject the request with 403.
-func authStubForbidden(gatewayID ids.GatewayID, path string) fiber.Handler {
+func authStubForbidden(gatewayID ids.GatewayID, slug string) fiber.Handler {
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
-		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Path: path, Active: true, AuthIDs: []ids.AuthID{ids.New[ids.AuthKind]()}}},
+		{Consumer: &domainconsumer.Consumer{ID: ids.New[ids.ConsumerKind](), GatewayID: gatewayID, Slug: slug, Active: true, AuthIDs: []ids.AuthID{ids.New[ids.AuthKind]()}}},
 	})
 	return func(c *fiber.Ctx) error {
 		authCtx := &appauth.AuthContext{Method: appauth.MethodAPIKey, GatewayID: gatewayID, AuthID: ids.New[ids.AuthKind]()}
@@ -86,12 +89,12 @@ func authStubForbidden(gatewayID ids.GatewayID, path string) fiber.Handler {
 	}
 }
 
-func authStubRoleBased(gatewayID ids.GatewayID, path string, consumerRoles, effectiveRoles []ids.RoleID) fiber.Handler {
+func authStubRoleBased(gatewayID ids.GatewayID, slug string, consumerRoles, effectiveRoles []ids.RoleID) fiber.Handler {
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
 		{Consumer: &domainconsumer.Consumer{
 			ID:          ids.New[ids.ConsumerKind](),
 			GatewayID:   gatewayID,
-			Path:        path,
+			Slug:        slug,
 			Active:      true,
 			RoutingMode: domainconsumer.RoutingModeRoleBased,
 			RoleIDs:     consumerRoles,
@@ -111,9 +114,9 @@ func newTestApp(t *testing.T) (*fiber.App, *proxymocks.Forwarder) {
 	t.Helper()
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
-	app.Use(authStub(ids.New[ids.GatewayKind](), proxyPath))
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
 	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/v1/*", handler.Handle)
+	app.All("/*", handler.Handle)
 	return app, fwd
 }
 
@@ -124,7 +127,7 @@ func newUnauthenticatedApp(t *testing.T) (*fiber.App, *proxymocks.Forwarder) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
 	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/v1/*", handler.Handle)
+	app.All("/*", handler.Handle)
 	return app, fwd
 }
 
@@ -161,9 +164,9 @@ func TestHandle_Unauthenticated(t *testing.T) {
 func TestHandle_PathNotFound(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
-	app.Use(authStub(ids.New[ids.GatewayKind](), "/v1/some/other/path"))
+	app.Use(authStub(ids.New[ids.GatewayKind](), "other123"))
 	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/v1/*", handler.Handle)
+	app.All("/*", handler.Handle)
 
 	resp, err := app.Test(newProxyRequest())
 	if err != nil {
@@ -180,9 +183,9 @@ func TestHandle_PathNotFound(t *testing.T) {
 func TestHandle_Forbidden_ConsumerLacksCredential(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
-	app.Use(authStubForbidden(ids.New[ids.GatewayKind](), proxyPath))
+	app.Use(authStubForbidden(ids.New[ids.GatewayKind](), consumerSlug))
 	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/v1/*", handler.Handle)
+	app.All("/*", handler.Handle)
 
 	resp, err := app.Test(newProxyRequest())
 	if err != nil {
@@ -204,7 +207,7 @@ func TestHandle_Forbidden_APIKeyCannotAuthorizeRoleBasedConsumer(t *testing.T) {
 		{Consumer: &domainconsumer.Consumer{
 			ID:          ids.New[ids.ConsumerKind](),
 			GatewayID:   gwID,
-			Path:        proxyPath,
+			Slug:        consumerSlug,
 			Active:      true,
 			RoutingMode: domainconsumer.RoutingModeRoleBased,
 			RoleIDs:     []ids.RoleID{roleID},
@@ -222,7 +225,7 @@ func TestHandle_Forbidden_APIKeyCannotAuthorizeRoleBasedConsumer(t *testing.T) {
 		return c.Next()
 	})
 	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/v1/*", handler.Handle)
+	app.All("/*", handler.Handle)
 
 	resp, err := app.Test(newProxyRequest())
 	if err != nil {
@@ -238,9 +241,9 @@ func TestHandle_RoleBasedIDPIntersectionSucceeds(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	roleID := ids.New[ids.RoleKind]()
 	app := fiber.New()
-	app.Use(authStubRoleBased(gwID, proxyPath, []ids.RoleID{roleID}, []ids.RoleID{roleID}))
+	app.Use(authStubRoleBased(gwID, consumerSlug, []ids.RoleID{roleID}, []ids.RoleID{roleID}))
 	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/v1/*", handler.Handle)
+	app.All("/*", handler.Handle)
 	fwd.EXPECT().
 		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
 			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Consumer.Consumer.RoutingMode == domainconsumer.RoutingModeRoleBased
@@ -260,9 +263,9 @@ func TestHandle_RoleBasedIDPIntersectionSucceeds(t *testing.T) {
 func TestHandle_OAuthInlineSucceeds(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
-	app.Use(authStubOAuth(ids.New[ids.GatewayKind](), proxyPath))
+	app.Use(authStubOAuth(ids.New[ids.GatewayKind](), consumerSlug))
 	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/v1/*", handler.Handle)
+	app.All("/*", handler.Handle)
 	fwd.EXPECT().
 		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
 			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
@@ -282,9 +285,9 @@ func TestHandle_OAuthInlineSucceeds(t *testing.T) {
 func TestHandle_OAuth2ClientInlineSucceeds(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
-	app.Use(authStubOAuth2Client(ids.New[ids.GatewayKind](), proxyPath))
+	app.Use(authStubOAuth2Client(ids.New[ids.GatewayKind](), consumerSlug))
 	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/v1/*", handler.Handle)
+	app.All("/*", handler.Handle)
 	fwd.EXPECT().
 		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
 			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
@@ -304,9 +307,9 @@ func TestHandle_OAuth2ClientInlineSucceeds(t *testing.T) {
 func TestHandle_Forbidden_IDPLacksRole(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
-	app.Use(authStubRoleBased(ids.New[ids.GatewayKind](), proxyPath, []ids.RoleID{ids.New[ids.RoleKind]()}, []ids.RoleID{ids.New[ids.RoleKind]()}))
+	app.Use(authStubRoleBased(ids.New[ids.GatewayKind](), consumerSlug, []ids.RoleID{ids.New[ids.RoleKind]()}, []ids.RoleID{ids.New[ids.RoleKind]()}))
 	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/v1/*", handler.Handle)
+	app.All("/*", handler.Handle)
 
 	resp, err := app.Test(newProxyRequest())
 	if err != nil {
@@ -423,7 +426,7 @@ func TestHandle_Streaming_InvokesFinalizerWithCapturedOutput(t *testing.T) {
 		owned      bool
 	)
 	app := fiber.New()
-	app.Use(authStub(ids.New[ids.GatewayKind](), proxyPath))
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
 	app.Use(func(c *fiber.Ctx) error {
 		c.Locals(infracontext.StreamMetricsFinalizerKey, infracontext.StreamMetricsFinalizer(
 			func(req *infracontext.RequestContext, output []byte, statusCode int, _ map[string][]string) {
@@ -441,7 +444,7 @@ func TestHandle_Streaming_InvokesFinalizerWithCapturedOutput(t *testing.T) {
 		return err
 	})
 	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/v1/*", handler.Handle)
+	app.All("/*", handler.Handle)
 
 	resp, err := app.Test(newProxyRequest())
 	if err != nil {
@@ -503,5 +506,34 @@ func TestHandle_NoBackendAvailable(t *testing.T) {
 	}
 	if resp.StatusCode != fiber.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestHandle_RejectionStampsStatusReasonOnTrace(t *testing.T) {
+	fwd := proxymocks.NewForwarder(t)
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, appproxy.ErrModelNotAllowed).
+		Once()
+
+	rt := trace.New("trace-reason", trace.Metadata{})
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.SetUserContext(trace.NewContext(c.UserContext(), rt))
+		return c.Next()
+	})
+	app.Use(authStub(ids.New[ids.GatewayKind](), consumerSlug))
+	handler := proxyhttp.NewForwardedHandler(fwd)
+	app.All("/*", handler.Handle)
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	if got := rt.StatusReason(); got != "model_not_allowed" {
+		t.Fatalf("trace status reason = %q, want model_not_allowed", got)
 	}
 }

@@ -14,7 +14,6 @@ import (
 type CreateConsumerRequest struct {
 	Name          string                   `json:"name"`
 	Type          string                   `json:"type,omitempty"`
-	Path          string                   `json:"path"`
 	RoutingMode   string                   `json:"routing_mode,omitempty"`
 	LBConfig      *LBConfigRequest         `json:"lb_config,omitempty"`
 	Headers       map[string]string        `json:"headers,omitempty"`
@@ -48,9 +47,8 @@ type FallbackRequest struct {
 }
 
 type FallbackBudgetRequest struct {
-	MaxAttempts       int     `json:"max_attempts,omitempty"`
-	MaxTotalLatencyMs int     `json:"max_total_latency_ms,omitempty"`
-	MaxCostUSD        float64 `json:"max_cost_usd,omitempty"`
+	MaxAttempts       int `json:"max_attempts,omitempty"`
+	MaxTotalLatencyMs int `json:"max_total_latency_ms,omitempty"`
 }
 
 type LBConfigRequest struct {
@@ -82,7 +80,6 @@ func (r *FallbackRequest) ToFallback() (*domain.Fallback, error) {
 	if r.Budget != nil {
 		budget.MaxAttempts = r.Budget.MaxAttempts
 		budget.MaxTotalLatency = time.Duration(r.Budget.MaxTotalLatencyMs) * time.Millisecond
-		budget.MaxCostUSD = r.Budget.MaxCostUSD
 	}
 	return &domain.Fallback{
 		Enabled:  r.Enabled,
@@ -134,9 +131,6 @@ func (r CreateConsumerRequest) Validate() error {
 	}
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
-	}
-	if strings.TrimSpace(r.Path) == "" {
-		return fmt.Errorf("path is required: %w", commonerrors.ErrValidation)
 	}
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"net/url"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
+	apiresolver "github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
@@ -24,10 +25,6 @@ import (
 var newline = []byte("\n")
 
 var streamErrorEvent = []byte(`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`)
-
-const (
-	HeaderProvider = "X-Provider"
-)
 
 var errNotAuthenticated = errors.New("request is not authenticated")
 var errPathNotFound = errors.New("no consumer matches the request path")
@@ -54,7 +51,11 @@ func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
 }
 
 func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, consumer, authCtx, err := resolveConsumer(c)
+	route, err := proxyRoute(c)
+	if err != nil {
+		return writeProxyError(c, err)
+	}
+	gatewayID, consumer, authCtx, err := resolveConsumer(c, route)
 	if err != nil {
 		return writeProxyError(c, err)
 	}
@@ -62,7 +63,7 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 	stampConsumerTrace(c, consumer)
 
 	data, _ := appconsumer.DataFromContext(c.UserContext())
-	reqCtx := buildRequestContext(c, gatewayID)
+	reqCtx := buildRequestContext(c, gatewayID, route)
 	result, err := h.forwarder.Forward(c.UserContext(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  consumer,
@@ -147,7 +148,21 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 	return nil
 }
 
-func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer, *appauth.AuthContext, error) {
+func proxyRoute(c *fiber.Ctx) (apiresolver.ProxyRoute, error) {
+	if route, ok := c.Locals(apiresolver.ProxyRouteLocalsKey).(apiresolver.ProxyRoute); ok {
+		return route, nil
+	}
+	route, err := apiresolver.ResolveProxyPath(c.Path())
+	if err != nil {
+		return apiresolver.ProxyRoute{}, errPathNotFound
+	}
+	return route, nil
+}
+
+func resolveConsumer(
+	c *fiber.Ctx,
+	route apiresolver.ProxyRoute,
+) (ids.GatewayID, *appconsumer.RoutableConsumer, *appauth.AuthContext, error) {
 	gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
 	if !ok {
 		return ids.GatewayID{}, nil, nil, errNotAuthenticated
@@ -162,7 +177,7 @@ func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer
 	}
 	rc, ok := appconsumer.ConsumerFromContext(c.UserContext())
 	if !ok {
-		rc, ok = data.MatchPath(c.Path())
+		rc, ok = data.MatchSlug(route.ConsumerSlug)
 		if !ok {
 			return ids.GatewayID{}, nil, nil, errPathNotFound
 		}
@@ -235,7 +250,7 @@ func consumerHasRole(rc *appconsumer.RoutableConsumer, roleIDs []ids.RoleID) boo
 	return false
 }
 
-func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID) *infracontext.RequestContext {
+func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolver.ProxyRoute) *infracontext.RequestContext {
 	headers := make(map[string][]string)
 	c.Request().Header.VisitAll(func(key, value []byte) {
 		name := string(key)
@@ -257,12 +272,10 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID) *infracontext.Re
 		Body:         c.Body(),
 		IP:           c.IP(),
 		SessionID:    sessionIDFromContext(c),
-		SourceFormat: c.Get(HeaderProvider),
+		SourceFormat: string(route.SourceFormat),
 	}
 }
 
-// sessionIDFromContext reads the session identifier stamped by the session
-// middleware, preferring the request context value and falling back to Locals.
 func sessionIDFromContext(c *fiber.Ctx) string {
 	if v, ok := c.UserContext().Value(infracontext.SessionContextKey).(string); ok && v != "" {
 		return v
@@ -275,6 +288,9 @@ func sessionIDFromContext(c *fiber.Ctx) string {
 
 func writeProxyError(c *fiber.Ctx, err error) error {
 	status, body := mapProxyError(err)
+	if rt := trace.FromContext(c.UserContext()); rt != nil {
+		rt.SetStatusReason(body.Error)
+	}
 	return c.Status(status).JSON(body)
 }
 

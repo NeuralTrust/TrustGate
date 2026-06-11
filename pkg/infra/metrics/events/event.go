@@ -41,6 +41,7 @@ type Status struct {
 	Code      int    `json:"code"`
 	IsTimeout bool   `json:"is_timeout"`
 	Outcome   string `json:"outcome,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 type Request struct {
@@ -97,6 +98,7 @@ type Attempt struct {
 	Provider   string `json:"provider,omitempty"`
 	Attempt    int    `json:"attempt"`
 	Fallback   bool   `json:"fallback"`
+	Pinned     bool   `json:"pinned"`
 	Route      string `json:"route,omitempty"`
 	Outcome    string `json:"outcome,omitempty"`
 	StatusCode int    `json:"status_code"`
