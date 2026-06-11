@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 type Outcome int
@@ -122,7 +123,9 @@ func (t fallbackTriggers) allowsFallback(kind failureKind) bool {
 
 func classifyOutcome(resp *ProviderResponse, err error, triggers fallbackTriggers) Outcome {
 	if err != nil {
-		if errors.Is(err, ErrModelNotAllowed) || errors.Is(err, ErrInvalidRequestPayload) {
+		if errors.Is(err, ErrModelNotAllowed) ||
+			errors.Is(err, ErrInvalidRequestPayload) ||
+			errors.Is(err, registrydomain.ErrCredentialAcquisition) {
 			return OutcomeTerminal
 		}
 		return OutcomeRetryable

@@ -7,6 +7,13 @@ import (
 	"strings"
 )
 
+// ErrCredentialAcquisition marks failures obtaining provider credentials
+// (e.g. an expired Azure client secret rejected by the identity provider).
+// These are configuration errors: retrying cannot fix them, and the identity
+// provider's response must never be relayed to the client because it carries
+// tenant/app identifiers.
+var ErrCredentialAcquisition = errors.New("provider credential acquisition failed")
+
 // BackendError represents a non-2xx response received from a backend target
 // (the upstream LLM provider). It carries the status code and raw body so the
 // proxy can relay the backend's error to the client verbatim.

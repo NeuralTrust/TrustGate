@@ -387,6 +387,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('registry_id', pm.response.json().id);",
                   "}"
@@ -447,7 +448,21 @@
                 "registries"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Create Azure Registry (API Key)",
@@ -476,7 +491,21 @@
                 "registries"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Create Azure Registry (DefaultAzureCredential)",
@@ -505,7 +534,21 @@
                 "registries"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "List Registries",
@@ -1993,7 +2036,21 @@
               ]
             }
           },
-          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "2c. Create Registry (Vertex)",
@@ -2022,7 +2079,21 @@
               ]
             }
           },
-          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "2d. Create Registry (Anthropic)",
@@ -2051,7 +2122,21 @@
               ]
             }
           },
-          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "2e. Create Registry (Bedrock)",
@@ -2080,7 +2165,21 @@
               ]
             }
           },
-          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "2f. Create Registry (Azure OAuth Service Principal)",
@@ -2109,7 +2208,21 @@
               ]
             }
           },
-          "description": "Default Azure auth mode: OAuth via service principal (auth.type=azure with tenant_id, client_id, client_secret). Optional provider payload; does not overwrite registry_id used by later E2E steps."
+          "description": "Default Azure auth mode: OAuth via service principal (auth.type=azure with tenant_id, client_id, client_secret). Optional provider payload; does not overwrite registry_id used by later E2E steps.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "2g. Create Registry (Azure API Key)",
@@ -2138,7 +2251,21 @@
               ]
             }
           },
-          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "2h. Create Registry (Mistral)",
@@ -2167,7 +2294,21 @@
               ]
             }
           },
-          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "2i. Create Registry (Groq)",
@@ -2196,7 +2337,21 @@
               ]
             }
           },
-          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "3. Create Policy",

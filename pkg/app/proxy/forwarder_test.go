@@ -3,6 +3,7 @@ package proxy_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -345,6 +346,31 @@ func TestForward_FallbackTriggerGating(t *testing.T) {
 			assert.Equal(t, tc.wantStatus, res.StatusCode)
 		})
 	}
+}
+
+func TestForward_CredentialAcquisitionFailureIsTerminal(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	primary := backendFor(gatewayID, "azure")
+	chainBk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, primary)
+	rc.Consumer.Fallback = enabledFallback(chainBk.ID)
+	rc.FallbackBackends = []*registrydomain.Registry{chainBk}
+
+	credentialErr := fmt.Errorf("provider completions: %w: secret expired", registrydomain.ErrCredentialAcquisition)
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, credentialErr).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Context: context.Background()},
+	})
+	require.ErrorIs(t, err, registrydomain.ErrCredentialAcquisition,
+		"a credential misconfiguration must fail fast without retries or fallback")
 }
 
 func TestForward_LBFailoverNotGatedByTriggers(t *testing.T) {

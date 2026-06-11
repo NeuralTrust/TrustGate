@@ -16,6 +16,7 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	routingdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
@@ -318,6 +319,13 @@ func mapProxyError(err error) (int, helpers.ErrorBody) {
 	case errors.Is(err, routingdomain.ErrModelDenied),
 		errors.Is(err, appproxy.ErrModelNotAllowed):
 		return fiber.StatusForbidden, helpers.ErrorBody{Error: "model_not_allowed", Message: err.Error()}
+	case errors.Is(err, registrydomain.ErrCredentialAcquisition):
+		// Sanitized on purpose: the identity provider's response carries
+		// tenant/app identifiers that must not reach the client.
+		return fiber.StatusBadGateway, helpers.ErrorBody{
+			Error:   "backend_error",
+			Message: registrydomain.ErrCredentialAcquisition.Error(),
+		}
 	default:
 		return fiber.StatusBadGateway, helpers.ErrorBody{Error: "backend_error"}
 	}

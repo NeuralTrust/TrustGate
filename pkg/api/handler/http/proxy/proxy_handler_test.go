@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
 	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
@@ -506,6 +508,33 @@ func TestHandle_NoBackendAvailable(t *testing.T) {
 	}
 	if resp.StatusCode != fiber.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestHandle_CredentialAcquisitionReturnsSanitized502(t *testing.T) {
+	app, fwd := newTestApp(t)
+	idpDetail := "AADSTS7000222: secret expired for app 'ee8407bd' tenant '5ce772a7'"
+	fwd.EXPECT().
+		Forward(mock.Anything, mock.Anything).
+		Return(nil, fmt.Errorf("provider completions: %w: %s", registrydomain.ErrCredentialAcquisition, idpDetail)).
+		Once()
+
+	resp, err := app.Test(newProxyRequest())
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", resp.StatusCode)
+	}
+	eb := decodeError(t, resp.Body)
+	if eb.Error != "backend_error" {
+		t.Fatalf("error = %q, want backend_error", eb.Error)
+	}
+	if eb.Message != registrydomain.ErrCredentialAcquisition.Error() {
+		t.Fatalf("message = %q, want sanitized credential message", eb.Message)
+	}
+	if strings.Contains(eb.Message, "AADSTS") {
+		t.Fatal("identity provider details must never be relayed to the client")
 	}
 }
 
