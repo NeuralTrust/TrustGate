@@ -1880,7 +1880,7 @@
     },
     {
       "name": "E2E Flow",
-      "description": "End-to-end flow that provisions a gateway with an OpenAI backend, a policy, an API-key credential and a consumer, then sends a real chat-completion through the proxy plane (:8081). Run the requests top-to-bottom (Collection Runner runs them in order). Set the `openai_api_key` variable to a real OpenAI key before running. Step 4 generates the consumer API key server-side and captures it into `consumer_api_key`; step 6 sends it in the fixed `X-AG-API-Key` header (no `X-Gateway-Id` is used).",
+      "description": "End-to-end flow that provisions a gateway with an OpenAI backend, a policy, an API-key credential and a consumer, then sends a real chat-completion through the proxy plane (:8081). Run the requests top-to-bottom (Collection Runner runs them in order). Set the `openai_api_key` variable to a real OpenAI key before running. Step 4 generates the consumer API key server-side and captures it into `consumer_api_key`; step 5a binds the OpenAI registry with model policies at create time; step 6 sends the key in the fixed `X-AG-API-Key` header (no `X-Gateway-Id` is used).",
       "item": [
         {
           "name": "1. Create Gateway",
@@ -2083,7 +2083,7 @@
           "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
         },
         {
-          "name": "2f. Create Registry (Azure API Key)",
+          "name": "2f. Create Registry (Azure OAuth Service Principal)",
           "request": {
             "method": "POST",
             "header": [
@@ -2094,7 +2094,36 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"azure-primary-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI registry using API key auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"api_key\": \"{{azure_openai_api_key}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"azure-oauth-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI registry using OAuth service principal auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"tenant_id\": \"{{azure_tenant_id}}\",\n      \"client_id\": \"{{azure_client_id}}\",\n      \"client_secret\": \"{{azure_client_secret}}\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
+          },
+          "description": "Default Azure auth mode: OAuth via service principal (auth.type=azure with tenant_id, client_id, client_secret). Optional provider payload; does not overwrite registry_id used by later E2E steps."
+        },
+        {
+          "name": "2g. Create Registry (Azure API Key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"azure-api-key-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI registry using API key auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"api_key\": \"{{azure_openai_api_key}}\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -2112,7 +2141,7 @@
           "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
         },
         {
-          "name": "2g. Create Registry (Mistral)",
+          "name": "2h. Create Registry (Mistral)",
           "request": {
             "method": "POST",
             "header": [
@@ -2141,7 +2170,7 @@
           "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
         },
         {
-          "name": "2h. Create Registry (Groq)",
+          "name": "2i. Create Registry (Groq)",
           "request": {
             "method": "POST",
             "header": [
@@ -2268,8 +2297,11 @@
                 "exec": [
                   "pm.test('consumer created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
-                  "  pm.environment.set('consumer_id', pm.response.json().id);",
-                  "  pm.environment.set('consumer_slug', pm.response.json().slug);",
+                  "  const body = pm.response.json();",
+                  "  pm.environment.set('consumer_id', body.id);",
+                  "  pm.environment.set('consumer_slug', body.slug);",
+                  "  pm.test('registry bound at create', () => (body.registry_ids || []).includes(pm.environment.get('registry_id')));",
+                  "  pm.test('model policy returned', () => (body.model_policies || []).some((p) => p.registry_id === pm.environment.get('registry_id')));",
                   "}"
                 ]
               }
@@ -2285,7 +2317,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {}\n}"
+              "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
@@ -2298,7 +2330,8 @@
                 "{{gateway_id}}",
                 "consumers"
               ]
-            }
+            },
+            "description": "Binds the OpenAI registry and its model policy atomically via the nested `registries[].model_policies` field. Uses `gpt-4o-mini` to match step 6."
           }
         },
         {
@@ -2309,7 +2342,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('registry attached', () => [200, 201, 204].includes(pm.response.code));"
+                  "pm.test('registry attached (idempotent)', () => [200, 201, 204].includes(pm.response.code));"
                 ]
               }
             }
@@ -2331,7 +2364,8 @@
                 "registries",
                 "{{registry_id}}"
               ]
-            }
+            },
+            "description": "Optional: registry was already bound in step 5a; this attach is idempotent (ON CONFLICT DO NOTHING)."
           }
         },
         {
