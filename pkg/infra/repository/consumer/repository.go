@@ -286,6 +286,33 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 	return items, nil
 }
 
+func (r *Repository) FindActiveByPath(ctx context.Context, path string) ([]*domain.Consumer, error) {
+	// Paths are matched in canonical form (no trailing slash); tolerate a
+	// stored trailing slash so admin input variations still resolve.
+	query := consumerSelectColumns + `
+		  FROM consumers c
+		 WHERE c.active AND (c.path = $1 OR c.path = $1 || '/')
+		 ORDER BY c.created_at ASC, c.id`
+	rows, err := r.conn.Pool.Query(ctx, query, path)
+	if err != nil {
+		return nil, fmt.Errorf("consumer repository: find active by path: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]*domain.Consumer, 0)
+	for rows.Next() {
+		c, err := scanConsumer(rows)
+		if err != nil {
+			return nil, fmt.Errorf("consumer repository: scan: %w", err)
+		}
+		items = append(items, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("consumer repository: iter: %w", err)
+	}
+	return items, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

@@ -17,10 +17,15 @@ import (
 )
 
 type fakeUpstream struct {
-	tools    []mcpclient.Tool
-	listErr  error
-	lastCall string
-	result   json.RawMessage
+	tools      []mcpclient.Tool
+	prompts    []mcpclient.Prompt
+	resources  []mcpclient.Resource
+	templates  []mcpclient.ResourceTemplate
+	listErr    error
+	lastCall   string
+	lastPrompt string
+	lastRead   string
+	result     json.RawMessage
 }
 
 func (f *fakeUpstream) ListTools(context.Context) ([]mcpclient.Tool, error) {
@@ -31,6 +36,42 @@ func (f *fakeUpstream) CallTool(_ context.Context, name string, _ json.RawMessag
 	f.lastCall = name
 	return f.result, nil
 }
+
+func (f *fakeUpstream) ListResources(context.Context) ([]mcpclient.Resource, error) {
+	return f.resources, f.listErr
+}
+
+func (f *fakeUpstream) ListResourceTemplates(context.Context) ([]mcpclient.ResourceTemplate, error) {
+	return f.templates, f.listErr
+}
+
+func (f *fakeUpstream) ReadResource(_ context.Context, uri string) (json.RawMessage, error) {
+	if !f.SupportsResources() {
+		return nil, mcpclient.ErrNotSupported
+	}
+	for _, r := range f.resources {
+		if r.URI == uri {
+			f.lastRead = uri
+			return f.result, nil
+		}
+	}
+	return nil, errors.New("unknown resource")
+}
+
+func (f *fakeUpstream) ListPrompts(context.Context) ([]mcpclient.Prompt, error) {
+	return f.prompts, f.listErr
+}
+
+func (f *fakeUpstream) GetPrompt(_ context.Context, name string, _ map[string]string) (json.RawMessage, error) {
+	if !f.SupportsPrompts() {
+		return nil, mcpclient.ErrNotSupported
+	}
+	f.lastPrompt = name
+	return f.result, nil
+}
+
+func (f *fakeUpstream) SupportsResources() bool { return len(f.resources) > 0 }
+func (f *fakeUpstream) SupportsPrompts() bool   { return len(f.prompts) > 0 }
 
 func (f *fakeUpstream) Close(context.Context) {}
 
@@ -68,7 +109,7 @@ func routable(consumer *consumerdomain.Consumer, registries ...*registrydomain.R
 
 func newTestComposer(dialer Dialer) Composer {
 	mgr := cache.NewTTLMapManager(time.Minute)
-	return NewComposer(dialer, mgr, slog.New(slog.DiscardHandler))
+	return NewComposer(dialer, nil, mgr, slog.New(slog.DiscardHandler))
 }
 
 func tools(names ...string) []mcpclient.Tool {
@@ -224,5 +265,222 @@ func TestComposer_NoMCPRegistries(t *testing.T) {
 	_, err := c.ListTools(context.Background(), routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}))
 	if !errors.Is(err, ErrNoMCPRegistries) {
 		t.Fatalf("error = %v, want ErrNoMCPRegistries", err)
+	}
+}
+
+func prompts(names ...string) []mcpclient.Prompt {
+	out := make([]mcpclient.Prompt, 0, len(names))
+	for _, n := range names {
+		out = append(out, mcpclient.Prompt{Name: n})
+	}
+	return out
+}
+
+func TestComposer_ListPrompts_MergesAndPrefixesCollisions(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
+	regB := mcpRegistry(t, "slack", "https://b.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.example.com/mcp": {prompts: prompts("summarize", "triage")},
+		"https://b.example.com/mcp": {prompts: prompts("summarize")},
+	}}
+	c := newTestComposer(dialer)
+
+	got, err := c.ListPrompts(context.Background(), routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA, regB))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	names := make([]string, 0, len(got))
+	for _, p := range got {
+		names = append(names, p.Name)
+	}
+	want := []string{"github_summarize", "triage", "slack_summarize"}
+	if len(names) != 3 || names[0] != want[0] || names[1] != want[1] || names[2] != want[2] {
+		t.Fatalf("prompts = %v, want %v", names, want)
+	}
+}
+
+func TestComposer_GetPrompt_RoutesToOwningUpstream(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
+	regB := mcpRegistry(t, "slack", "https://b.example.com/mcp")
+	upA := &fakeUpstream{prompts: prompts("summarize"), result: json.RawMessage(`{"messages":[]}`)}
+	upB := &fakeUpstream{prompts: prompts("summarize"), result: json.RawMessage(`{"messages":[]}`)}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.example.com/mcp": upA,
+		"https://b.example.com/mcp": upB,
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA, regB)
+
+	res, err := c.GetPrompt(context.Background(), rc, "slack_summarize", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(res) != `{"messages":[]}` {
+		t.Fatalf("result = %s", res)
+	}
+	if upB.lastPrompt != "summarize" || upA.lastPrompt != "" {
+		t.Fatalf("prompt routed to wrong upstream: a=%q b=%q", upA.lastPrompt, upB.lastPrompt)
+	}
+
+	if _, err := c.GetPrompt(context.Background(), rc, "missing", nil); !errors.Is(err, ErrPromptNotFound) {
+		t.Fatalf("error = %v, want ErrPromptNotFound", err)
+	}
+}
+
+func TestComposer_ListResources_MergesUpstreams(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
+	regB := mcpRegistry(t, "slack", "https://b.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.example.com/mcp": {resources: []mcpclient.Resource{{URI: "repo://a", Name: "a"}}},
+		"https://b.example.com/mcp": {resources: []mcpclient.Resource{{URI: "chan://b", Name: "b"}}},
+	}}
+	c := newTestComposer(dialer)
+
+	got, err := c.ListResources(context.Background(), routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA, regB))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got[0].URI != "repo://a" || got[1].URI != "chan://b" {
+		t.Fatalf("resources = %+v", got)
+	}
+}
+
+func TestComposer_Toolkit_GovernsAllSurfaces(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
+	upA := &fakeUpstream{
+		tools:     tools("create_issue", "delete_repo"),
+		prompts:   prompts("summarize", "triage"),
+		resources: []mcpclient.Resource{{URI: "repo://github/readme"}, {URI: "secret://keys"}},
+		templates: []mcpclient.ResourceTemplate{{Name: "files", URITemplate: "repo://github/{path}"}},
+		result:    json.RawMessage(`{"contents":[]}`),
+	}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{"https://a.example.com/mcp": upA}}
+	c := newTestComposer(dialer)
+
+	consumer := &consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		Toolkit: consumerdomain.Toolkit{
+			{RegistryID: regA.ID, Tool: "create_issue"},
+			{RegistryID: regA.ID, Prompt: "summarize", ExposeAs: "gh_summarize"},
+			{RegistryID: regA.ID, Resource: "repo://github/*"},
+		},
+	}
+	rc := routable(consumer, regA)
+
+	gotTools, err := c.ListTools(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	if len(gotTools) != 1 || gotTools[0].Name != "create_issue" {
+		t.Fatalf("tools = %v, want only create_issue", toolNames(gotTools))
+	}
+
+	gotPrompts, err := c.ListPrompts(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("list prompts: %v", err)
+	}
+	if len(gotPrompts) != 1 || gotPrompts[0].Name != "gh_summarize" {
+		t.Fatalf("prompts = %+v, want only gh_summarize", gotPrompts)
+	}
+	if _, err := c.GetPrompt(context.Background(), rc, "gh_summarize", nil); err != nil {
+		t.Fatalf("get renamed prompt: %v", err)
+	}
+	if upA.lastPrompt != "summarize" {
+		t.Fatalf("upstream prompt = %q, want summarize", upA.lastPrompt)
+	}
+	if _, err := c.GetPrompt(context.Background(), rc, "triage", nil); !errors.Is(err, ErrPromptNotFound) {
+		t.Fatalf("unlisted prompt error = %v, want ErrPromptNotFound", err)
+	}
+
+	gotResources, err := c.ListResources(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	if len(gotResources) != 1 || gotResources[0].URI != "repo://github/readme" {
+		t.Fatalf("resources = %+v, want only repo://github/readme", gotResources)
+	}
+	if _, err := c.ReadResource(context.Background(), rc, "repo://github/readme"); err != nil {
+		t.Fatalf("read allowed resource: %v", err)
+	}
+	if _, err := c.ReadResource(context.Background(), rc, "secret://keys"); !errors.Is(err, ErrResourceNotFound) {
+		t.Fatalf("denied resource error = %v, want ErrResourceNotFound", err)
+	}
+
+	gotTemplates, err := c.ListResourceTemplates(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("list templates: %v", err)
+	}
+	if len(gotTemplates) != 1 {
+		t.Fatalf("templates = %+v, want the registry's templates (it has resource entries)", gotTemplates)
+	}
+}
+
+func TestComposer_Toolkit_ToolOnlyEntriesHidePromptsAndResources(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
+	upA := &fakeUpstream{
+		tools:     tools("create_issue"),
+		prompts:   prompts("summarize"),
+		resources: []mcpclient.Resource{{URI: "repo://github/readme"}},
+		templates: []mcpclient.ResourceTemplate{{Name: "files", URITemplate: "repo://github/{path}"}},
+		result:    json.RawMessage(`{"contents":[]}`),
+	}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{"https://a.example.com/mcp": upA}}
+	c := newTestComposer(dialer)
+
+	consumer := &consumerdomain.Consumer{
+		Type:    consumerdomain.TypeMCP,
+		Toolkit: consumerdomain.Toolkit{{RegistryID: regA.ID, Tool: consumerdomain.ToolWildcard}},
+	}
+	rc := routable(consumer, regA)
+
+	gotPrompts, err := c.ListPrompts(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("list prompts: %v", err)
+	}
+	if len(gotPrompts) != 0 {
+		t.Fatalf("prompts = %+v, want none without prompt entries", gotPrompts)
+	}
+	gotResources, err := c.ListResources(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	if len(gotResources) != 0 {
+		t.Fatalf("resources = %+v, want none without resource entries", gotResources)
+	}
+	gotTemplates, err := c.ListResourceTemplates(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("list templates: %v", err)
+	}
+	if len(gotTemplates) != 0 {
+		t.Fatalf("templates = %+v, want none without resource entries", gotTemplates)
+	}
+	if _, err := c.ReadResource(context.Background(), rc, "repo://github/readme"); !errors.Is(err, ErrResourceNotFound) {
+		t.Fatalf("read error = %v, want ErrResourceNotFound", err)
+	}
+}
+
+func TestComposer_ReadResource_RoutesByURI(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
+	regB := mcpRegistry(t, "slack", "https://b.example.com/mcp")
+	upA := &fakeUpstream{resources: []mcpclient.Resource{{URI: "repo://a"}}, result: json.RawMessage(`{"contents":[]}`)}
+	upB := &fakeUpstream{resources: []mcpclient.Resource{{URI: "chan://b"}}, result: json.RawMessage(`{"contents":[]}`)}
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.example.com/mcp": upA,
+		"https://b.example.com/mcp": upB,
+	}}
+	c := newTestComposer(dialer)
+	rc := routable(&consumerdomain.Consumer{Type: consumerdomain.TypeMCP}, regA, regB)
+
+	if _, err := c.ReadResource(context.Background(), rc, "chan://b"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if upB.lastRead != "chan://b" || upA.lastRead != "" {
+		t.Fatalf("read routed to wrong upstream: a=%q b=%q", upA.lastRead, upB.lastRead)
 	}
 }

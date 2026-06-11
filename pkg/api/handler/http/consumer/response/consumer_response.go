@@ -32,7 +32,9 @@ type ConsumerResponse struct {
 
 type ToolkitEntryResponse struct {
 	RegistryID ids.RegistryID `json:"registry_id"`
-	Tool       string         `json:"tool"`
+	Tool       string         `json:"tool,omitempty"`
+	Prompt     string         `json:"prompt,omitempty"`
+	Resource   string         `json:"resource,omitempty"`
 	ExposeAs   string         `json:"expose_as,omitempty"`
 }
 
@@ -120,6 +122,8 @@ func fromToolkit(t domain.Toolkit) []ToolkitEntryResponse {
 		out = append(out, ToolkitEntryResponse{
 			RegistryID: e.RegistryID,
 			Tool:       e.Tool,
+			Prompt:     e.Prompt,
+			Resource:   e.Resource,
 			ExposeAs:   e.ExposeAs,
 		})
 	}

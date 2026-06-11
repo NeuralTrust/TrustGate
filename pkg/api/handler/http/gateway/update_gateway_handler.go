@@ -53,6 +53,7 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 		ID:              id,
 		Name:            req.Name,
 		Status:          req.Status,
+		Domain:          req.Domain,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
 		SessionConfig:   req.SessionConfig,

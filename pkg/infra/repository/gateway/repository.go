@@ -46,11 +46,11 @@ func (r *Repository) Save(ctx context.Context, g *domain.Gateway) error {
 		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
 	}
 	const query = `
-		INSERT INTO gateways (id, name, status, telemetry, client_tls, session_config, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		INSERT INTO gateways (id, name, status, domain, telemetry, client_tls, session_config, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			g.ID, g.Name, g.Status, telemetryBytes, clientTLSBytes, sessionBytes, g.CreatedAt, g.UpdatedAt,
+			g.ID, g.Name, g.Status, g.Domain, telemetryBytes, clientTLSBytes, sessionBytes, g.CreatedAt, g.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -78,14 +78,15 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 		UPDATE gateways
 		   SET name           = $2,
 		       status         = $3,
-		       telemetry      = $4,
-		       client_tls     = $5,
-		       session_config = $6,
-		       updated_at     = $7
+		       domain         = $4,
+		       telemetry      = $5,
+		       client_tls     = $6,
+		       session_config = $7,
+		       updated_at     = $8
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			g.ID, g.Name, g.Status, telemetryBytes, clientTLSBytes, sessionBytes, g.UpdatedAt,
+			g.ID, g.Name, g.Status, g.Domain, telemetryBytes, clientTLSBytes, sessionBytes, g.UpdatedAt,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -113,7 +114,7 @@ func (r *Repository) Delete(ctx context.Context, id ids.GatewayID) error {
 
 func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, name, status, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, name, status, domain, telemetry, client_tls, session_config, created_at, updated_at
 		  FROM gateways
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -123,6 +124,22 @@ func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Ga
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("gateway repository: find: %w", err)
+	}
+	return g, nil
+}
+
+func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gateway, error) {
+	const query = `
+		SELECT id, name, status, domain, telemetry, client_tls, session_config, created_at, updated_at
+		  FROM gateways
+		 WHERE domain = $1 AND domain <> ''`
+	row := r.conn.Pool.QueryRow(ctx, query, host)
+	g, err := scanGateway(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("gateway repository: find by domain: %w", err)
 	}
 	return g, nil
 }
@@ -146,7 +163,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, name, status, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, name, status, domain, telemetry, client_tls, session_config, created_at, updated_at
 		  FROM gateways
 		 WHERE ($1 = '' OR lower(name) LIKE '%' || lower($1) || '%')
 		 ORDER BY created_at DESC, id
@@ -179,7 +196,7 @@ func scanGateway(s rowScanner) (*domain.Gateway, error) {
 	g := &domain.Gateway{}
 	var telemetryRaw, clientTLSRaw, sessionRaw []byte
 	if err := s.Scan(
-		&g.ID, &g.Name, &g.Status,
+		&g.ID, &g.Name, &g.Status, &g.Domain,
 		&telemetryRaw, &clientTLSRaw, &sessionRaw,
 		&g.CreatedAt, &g.UpdatedAt,
 	); err != nil {

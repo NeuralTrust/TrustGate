@@ -14,11 +14,11 @@ import (
 )
 
 const (
-	HealthPath          = "/healthz"
-	ReadyPath           = "/readyz"
-	VersionPath         = "/__/version"
-	DocsPath            = "/docs/*"
-	GatewaysPath        = "/v1/gateways"
+	HealthPath            = "/healthz"
+	ReadyPath             = "/readyz"
+	VersionPath           = "/__/version"
+	DocsPath              = "/docs/*"
+	GatewaysPath          = "/v1/gateways"
 	ProvidersCatalog      = "/v1/providers-catalog"
 	ModelsCatalogPath     = "/v1/models-catalog"
 	PoliciesCatalogPath   = "/v1/policies-catalog"

@@ -1,0 +1,186 @@
+package oauth
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+)
+
+type fakeCredentialFinder struct {
+	oauth2 []*authdomain.Auth
+	err    error
+}
+
+func (f *fakeCredentialFinder) OAuth2Auths(context.Context) ([]*authdomain.Auth, error) {
+	return f.oauth2, f.err
+}
+
+func (f *fakeCredentialFinder) MTLSAuths(context.Context) ([]*authdomain.Auth, error) {
+	return nil, nil
+}
+
+func oauth2Auth(t *testing.T, cfg authdomain.OAuth2Config) *authdomain.Auth {
+	t.Helper()
+	c := cfg
+	if c.JWKSURL == "" {
+		c.JWKSURL = c.Issuer + "/jwks"
+	}
+	return &authdomain.Auth{Config: authdomain.Config{OAuth2: &c}}
+}
+
+func TestProtectedResourceMetadata(t *testing.T) {
+	t.Parallel()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com", RequiredScopes: []string{"mcp:use", "openid"}}),
+		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com", RequiredScopes: []string{"mcp:use"}}),
+	}}
+	svc := NewMetadataService(finder, nil, nil)
+
+	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/v1/mcp/dev")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.Resource != "https://gw.example.com/v1/mcp/dev" {
+		t.Fatalf("unexpected resource: %s", meta.Resource)
+	}
+	// The gateway brokers the flow, so it advertises itself as the AS.
+	if len(meta.AuthorizationServers) != 1 || meta.AuthorizationServers[0] != "https://gw.example.com" {
+		t.Fatalf("expected the gateway as authorization server, got %v", meta.AuthorizationServers)
+	}
+	if len(meta.ScopesSupported) != 2 {
+		t.Fatalf("expected deduplicated scopes [mcp:use openid], got %v", meta.ScopesSupported)
+	}
+	if meta.BearerMethodsSupported[0] != "header" {
+		t.Fatalf("expected header bearer method, got %v", meta.BearerMethodsSupported)
+	}
+}
+
+// A resource that maps to a consumer advertises only that consumer's scopes,
+// not the union across tenants.
+func TestProtectedResourceMetadataScopedByResource(t *testing.T) {
+	t.Parallel()
+	authA := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com", RequiredScopes: []string{"tenant-a:use"}})
+	authB := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com", RequiredScopes: []string{"tenant-b:use"}})
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{authA, authB}}
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/v1/mcp/tenant-b": {{GatewayID: authB.GatewayID, Auths: []*authdomain.Auth{authB}}},
+	}}
+	svc := NewMetadataService(finder, paths, nil)
+
+	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/v1/mcp/tenant-b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta.ScopesSupported) != 1 || meta.ScopesSupported[0] != "tenant-b:use" {
+		t.Fatalf("expected tenant B's scopes only, got %v", meta.ScopesSupported)
+	}
+
+	// Unknown path: fall back to the union.
+	meta, err = svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/v1/mcp/unknown")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta.ScopesSupported) != 2 {
+		t.Fatalf("expected union of scopes for unknown resource, got %v", meta.ScopesSupported)
+	}
+}
+
+func TestProtectedResourceMetadataWithoutIdP(t *testing.T) {
+	t.Parallel()
+	svc := NewMetadataService(&fakeCredentialFinder{}, nil, nil)
+	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta.AuthorizationServers) != 0 {
+		t.Fatalf("expected no authorization servers, got %v", meta.AuthorizationServers)
+	}
+}
+
+func TestAuthorizationServerMetadataIsGatewayFacade(t *testing.T) {
+	t.Parallel()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp.access"}}),
+	}}
+	svc := NewMetadataService(finder, nil, nil)
+
+	doc, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doc["issuer"] != "https://gw.example.com" {
+		t.Fatalf("expected gateway issuer, got %v", doc["issuer"])
+	}
+	if doc["authorization_endpoint"] != "https://gw.example.com/oauth/authorize" {
+		t.Fatalf("unexpected authorization_endpoint: %v", doc["authorization_endpoint"])
+	}
+	if doc["token_endpoint"] != "https://gw.example.com/oauth/token" {
+		t.Fatalf("unexpected token_endpoint: %v", doc["token_endpoint"])
+	}
+	if doc["registration_endpoint"] != "https://gw.example.com/oauth/register" {
+		t.Fatalf("unexpected registration_endpoint: %v", doc["registration_endpoint"])
+	}
+}
+
+func TestAuthorizationServerMetadataErrors(t *testing.T) {
+	t.Parallel()
+
+	svc := NewMetadataService(&fakeCredentialFinder{}, nil, nil)
+	if _, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com"); !errors.Is(err, ErrNoAuthorizationServer) {
+		t.Fatalf("expected ErrNoAuthorizationServer, got %v", err)
+	}
+
+	// Multiple issuers no longer block the document: the gateway's own
+	// endpoints are IdP-independent and the resource indicator selects the
+	// IdP per request.
+	svc = NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com"}),
+		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com"}),
+	}}, nil, nil)
+	doc, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com")
+	if err != nil {
+		t.Fatalf("expected metadata with multiple issuers, got %v", err)
+	}
+	if doc["issuer"] != "https://gw.example.com" {
+		t.Fatalf("unexpected issuer: %v", doc["issuer"])
+	}
+}
+
+func TestRegisterClient(t *testing.T) {
+	t.Parallel()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com"}), // no client_id, skipped
+		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com", ClientID: "mcp-public-client"}),
+	}}
+	svc := NewMetadataService(finder, nil, nil)
+
+	res, err := svc.RegisterClient(context.Background(), RegisterRequest{
+		RedirectURIs: []string{"cursor://anysphere.cursor-mcp/oauth/callback"},
+		ClientName:   "Cursor",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ClientID != "mcp-public-client" {
+		t.Fatalf("unexpected client_id: %s", res.ClientID)
+	}
+	if res.TokenEndpointAuthMethod != "none" {
+		t.Fatalf("expected public client, got %s", res.TokenEndpointAuthMethod)
+	}
+	if len(res.RedirectURIs) != 1 || res.RedirectURIs[0] != "cursor://anysphere.cursor-mcp/oauth/callback" {
+		t.Fatalf("expected redirect_uris echoed, got %v", res.RedirectURIs)
+	}
+}
+
+func TestRegisterClientUnavailable(t *testing.T) {
+	t.Parallel()
+	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com"}),
+	}}, nil, nil)
+	if _, err := svc.RegisterClient(context.Background(), RegisterRequest{}); !errors.Is(err, ErrRegistrationUnavailable) {
+		t.Fatalf("expected ErrRegistrationUnavailable, got %v", err)
+	}
+}

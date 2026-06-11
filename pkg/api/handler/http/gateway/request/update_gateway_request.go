@@ -10,8 +10,11 @@ import (
 )
 
 type UpdateGatewayRequest struct {
-	Name            *string                 `json:"name,omitempty"`
-	Status          *string                 `json:"status,omitempty"`
+	Name   *string `json:"name,omitempty"`
+	Status *string `json:"status,omitempty"`
+	// Domain is the hostname the gateway answers on; "" detaches the
+	// gateway from host-based routing.
+	Domain          *string                 `json:"domain,omitempty"`
 	Telemetry       *telemetry.Telemetry    `json:"telemetry,omitempty"`
 	ClientTLSConfig *domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig   `json:"session_config,omitempty"`

@@ -15,6 +15,7 @@ type UpdateInput struct {
 	ID              ids.GatewayID
 	Name            *string
 	Status          *string
+	Domain          *string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig *domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
@@ -58,6 +59,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	}
 	if in.Status != nil {
 		g.Status = *in.Status
+	}
+	if in.Domain != nil {
+		g.Domain = *in.Domain
 	}
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry

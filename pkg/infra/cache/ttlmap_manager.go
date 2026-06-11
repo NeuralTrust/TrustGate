@@ -18,6 +18,9 @@ const (
 	// proxy plane's cost computation, so pricing avoids a DB round-trip on the
 	// hot path after the first lookup.
 	CatalogModelTTLName = "catalog_model"
+	// ConsumerPathTTLName indexes consumers by "host|path" across gateways
+	// for path-first credential resolution and the resource-scoped AS facade.
+	ConsumerPathTTLName = "consumer_path"
 	// MCPToolsTTLName caches upstream MCP tool lists by registry id so
 	// tools/list and tools/call avoid re-discovering on every request.
 	MCPToolsTTLName = "mcp_tools"

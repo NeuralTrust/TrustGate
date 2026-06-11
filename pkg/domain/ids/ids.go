@@ -7,7 +7,7 @@ import (
 )
 
 type Kind interface {
-	GatewayKind | RegistryKind | ConsumerKind | PolicyKind | AuthKind | ProviderKind | ModelKind
+	GatewayKind | RegistryKind | ConsumerKind | PolicyKind | AuthKind | ProviderKind | ModelKind | VaultKind
 }
 
 type (
@@ -18,6 +18,7 @@ type (
 	AuthKind     struct{}
 	ProviderKind struct{}
 	ModelKind    struct{}
+	VaultKind    struct{}
 )
 
 type ID[K Kind] uuid.UUID
@@ -30,6 +31,7 @@ type (
 	AuthID     = ID[AuthKind]
 	ProviderID = ID[ProviderKind]
 	ModelID    = ID[ModelKind]
+	VaultID    = ID[VaultKind]
 )
 
 // New returns a random (v4) identifier of the requested kind.

@@ -1,7 +1,11 @@
 // Package mcp exposes consumer-scoped virtual MCP servers over Streamable
-// HTTP (JSON-RPC 2.0). One POST endpoint serves initialize, ping, tools/list,
-// and tools/call; the tool surface is composed from the consumer's MCP
+// HTTP (JSON-RPC 2.0). One POST endpoint serves initialize, ping, tools/*,
+// resources/*, and prompts/*; the surface is composed from the consumer's MCP
 // registries and toolkit.
+//
+// Elicitation and sampling are not relayed: the gateway answers each POST
+// with a single JSON-RPC response and does not advertise those capabilities
+// upstream, so spec-compliant servers degrade gracefully.
 package mcp
 
 import (
@@ -10,6 +14,7 @@ import (
 	"fmt"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
 	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
@@ -18,10 +23,20 @@ import (
 )
 
 const (
-	serverName      = "agentgateway"
-	serverVersion   = "1.0"
-	protocolVersion = mcpclient.ProtocolVersion
+	serverName    = "agentgateway"
+	serverVersion = "1.0"
+	// latestProtocolVersion is what the gateway answers when the client
+	// requests a revision it does not know.
+	latestProtocolVersion = "2025-06-18"
 )
+
+// supportedProtocolVersions are the MCP revisions the server plane speaks;
+// initialize echoes the client's requested version when it is one of these.
+var supportedProtocolVersions = map[string]bool{
+	"2024-11-05": true,
+	"2025-03-26": true,
+	"2025-06-18": true,
+}
 
 // JSON-RPC 2.0 error codes.
 const (
@@ -60,6 +75,15 @@ type rpcError struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
+// MethodNotAllowed answers the optional Streamable HTTP legs we do not
+// support: GET (server-initiated SSE stream) and DELETE (client-initiated
+// session termination). The spec mandates 405 here; anything else (401/404)
+// sends clients like Cursor into an endless re-authentication loop.
+func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
+	c.Set(fiber.HeaderAllow, fiber.MethodPost)
+	return c.SendStatus(fiber.StatusMethodNotAllowed)
+}
+
 // Handle serves a single JSON-RPC message on the consumer's virtual MCP path.
 func (h *Handler) Handle(c *fiber.Ctx) error {
 	rc, err := resolveMCPConsumer(c)
@@ -89,24 +113,38 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return h.handleToolsList(c, req, rc)
 	case "tools/call":
 		return h.handleToolsCall(c, req, rc)
-	// Resources and prompts are not federated in v1; answer with empty
-	// collections so spec-compliant clients degrade gracefully.
 	case "resources/list":
-		return writeRPCResult(c, req.ID, fiber.Map{"resources": []any{}})
+		return h.handleResourcesList(c, req, rc)
 	case "resources/templates/list":
-		return writeRPCResult(c, req.ID, fiber.Map{"resourceTemplates": []any{}})
+		return h.handleResourceTemplatesList(c, req, rc)
+	case "resources/read":
+		return h.handleResourcesRead(c, req, rc)
 	case "prompts/list":
-		return writeRPCResult(c, req.ID, fiber.Map{"prompts": []any{}})
+		return h.handlePromptsList(c, req, rc)
+	case "prompts/get":
+		return h.handlePromptsGet(c, req, rc)
 	default:
 		return writeRPCError(c, req.ID, codeMethodNotFound, fmt.Sprintf("method not found: %s", req.Method))
 	}
 }
 
+type initializeParams struct {
+	ProtocolVersion string `json:"protocolVersion"`
+}
+
 func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest) error {
+	var params initializeParams
+	_ = json.Unmarshal(req.Params, &params)
+	version := latestProtocolVersion
+	if supportedProtocolVersions[params.ProtocolVersion] {
+		version = params.ProtocolVersion
+	}
 	return writeRPCResult(c, req.ID, fiber.Map{
-		"protocolVersion": protocolVersion,
+		"protocolVersion": version,
 		"capabilities": fiber.Map{
-			"tools": fiber.Map{"listChanged": false},
+			"tools":     fiber.Map{"listChanged": false},
+			"resources": fiber.Map{"subscribe": false, "listChanged": false},
+			"prompts":   fiber.Map{"listChanged": false},
 		},
 		"serverInfo": fiber.Map{
 			"name":    serverName,
@@ -143,18 +181,120 @@ func (h *Handler) handleToolsCall(c *fiber.Ctx, req rpcRequest, rc *appconsumer.
 	return writeRawRPCResult(c, req.ID, result)
 }
 
+func (h *Handler) handleResourcesList(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
+	resources, err := h.composer.ListResources(c.UserContext(), rc)
+	if err != nil {
+		return writeComposerError(c, req.ID, err)
+	}
+	if resources == nil {
+		resources = []mcpclient.Resource{}
+	}
+	return writeRPCResult(c, req.ID, fiber.Map{"resources": resources})
+}
+
+func (h *Handler) handleResourceTemplatesList(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
+	templates, err := h.composer.ListResourceTemplates(c.UserContext(), rc)
+	if err != nil {
+		return writeComposerError(c, req.ID, err)
+	}
+	if templates == nil {
+		templates = []mcpclient.ResourceTemplate{}
+	}
+	return writeRPCResult(c, req.ID, fiber.Map{"resourceTemplates": templates})
+}
+
+type readResourceParams struct {
+	URI string `json:"uri"`
+}
+
+func (h *Handler) handleResourcesRead(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
+	var params readResourceParams
+	if err := json.Unmarshal(req.Params, &params); err != nil || params.URI == "" {
+		return writeRPCError(c, req.ID, codeInvalidParams, "resources/read requires params.uri")
+	}
+	result, err := h.composer.ReadResource(c.UserContext(), rc, params.URI)
+	if err != nil {
+		return writeComposerError(c, req.ID, err)
+	}
+	return writeRawRPCResult(c, req.ID, result)
+}
+
+func (h *Handler) handlePromptsList(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
+	prompts, err := h.composer.ListPrompts(c.UserContext(), rc)
+	if err != nil {
+		return writeComposerError(c, req.ID, err)
+	}
+	if prompts == nil {
+		prompts = []mcpclient.Prompt{}
+	}
+	return writeRPCResult(c, req.ID, fiber.Map{"prompts": prompts})
+}
+
+type getPromptParams struct {
+	Name      string            `json:"name"`
+	Arguments map[string]string `json:"arguments,omitempty"`
+}
+
+func (h *Handler) handlePromptsGet(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
+	var params getPromptParams
+	if err := json.Unmarshal(req.Params, &params); err != nil || params.Name == "" {
+		return writeRPCError(c, req.ID, codeInvalidParams, "prompts/get requires params.name")
+	}
+	result, err := h.composer.GetPrompt(c.UserContext(), rc, params.Name, params.Arguments)
+	if err != nil {
+		return writeComposerError(c, req.ID, err)
+	}
+	return writeRawRPCResult(c, req.ID, result)
+}
+
+// codeConsentRequired is an implementation-defined JSON-RPC error: the user
+// must link a third-party account at data.connect_url before the call can
+// succeed (forwarded downstream auth, Phase 4).
+const codeConsentRequired = -32003
+
+// codeResourceNotFound is the spec-defined error for resources/read on an
+// unknown URI.
+const codeResourceNotFound = -32002
+
 func writeComposerError(c *fiber.Ctx, id json.RawMessage, err error) error {
-	var rpcErr *mcpclient.RPCError
+	var (
+		rpcErr     *mcpclient.RPCError
+		consentErr *appmcp.ConsentRequiredError
+	)
 	switch {
 	case errors.As(err, &rpcErr):
 		// Pass upstream JSON-RPC errors through unchanged.
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
-			Error:   &rpcError{Code: rpcErr.Code, Message: rpcErr.Message, Data: rpcErr.Data},
+			Error:   &rpcError{Code: int(rpcErr.Code), Message: rpcErr.Message, Data: rpcErr.Data},
 		})
-	case errors.Is(err, appmcp.ErrToolNotFound):
+	case errors.As(err, &consentErr):
+		connectURL := fmt.Sprintf("%s%s/connect?ticket=%s", c.BaseURL(), consentErr.Path, consentErr.Ticket)
+		data, _ := json.Marshal(fiber.Map{
+			"provider":    consentErr.Provider,
+			"connect_url": connectURL,
+		})
+		return writeJSON(c, rpcResponse{
+			JSONRPC: "2.0",
+			ID:      normalizeID(id),
+			Error: &rpcError{
+				Code:    codeConsentRequired,
+				Message: fmt.Sprintf("user consent required: open %s to connect %s", connectURL, consentErr.Provider),
+				Data:    data,
+			},
+		})
+	case errors.Is(err, sts.ErrInteractionRequired):
+		// IdP claims challenge: surface as 401 so the OAuth challenge
+		// middleware adds WWW-Authenticate (never swallowed as a 500).
+		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
+	case errors.Is(err, appmcp.ErrNoPrincipal), errors.Is(err, appmcp.ErrAudienceMismatch),
+		errors.Is(err, sts.ErrNoUserIdentity):
+		return writeRPCError(c, id, codeInvalidRequest, err.Error())
+	case errors.Is(err, appmcp.ErrToolNotFound), errors.Is(err, appmcp.ErrPromptNotFound):
 		return writeRPCError(c, id, codeInvalidParams, err.Error())
+	case errors.Is(err, appmcp.ErrResourceNotFound):
+		return writeRPCError(c, id, codeResourceNotFound, err.Error())
 	case errors.Is(err, appmcp.ErrNoMCPRegistries):
 		return writeRPCError(c, id, codeInvalidRequest, err.Error())
 	default:

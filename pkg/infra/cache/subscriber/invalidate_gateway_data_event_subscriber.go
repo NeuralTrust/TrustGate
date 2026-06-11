@@ -20,6 +20,8 @@ type InvalidateGatewayDataEventSubscriber struct {
 	gatewayCache      *cache.TTLMap
 	consumerDataCache *cache.TTLMap
 	loadBalancerCache *cache.TTLMap
+	authCache         *cache.TTLMap
+	consumerPathCache *cache.TTLMap
 }
 
 func NewInvalidateGatewayDataEventSubscriber(
@@ -32,6 +34,8 @@ func NewInvalidateGatewayDataEventSubscriber(
 		gatewayCache:      c.GetTTLMap(cache.GatewayTTLName),
 		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
 		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
+		authCache:         c.GetTTLMap(cache.AuthTTLName),
+		consumerPathCache: c.GetTTLMap(cache.ConsumerPathTTLName),
 	}
 }
 
@@ -49,6 +53,20 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 		// balancer of this gateway so the next request rebuilds it from the
 		// refreshed consumer/backend configuration.
 		s.loadBalancerCache.DeleteByPrefix(evt.GatewayID + ":")
+	}
+	if s.authCache != nil {
+		// Auth entries are cached both per-ID and as cross-gateway candidate
+		// lists ("enabled:oauth2"/"enabled:mtls") consumed by the credential
+		// chain and the OAuth AS facade. The event does not carry auth IDs,
+		// so clear the whole map: auth mutations are rare and a stale list
+		// here makes the AS metadata flap (e.g. "multiple authorization
+		// servers" long after a duplicate was deleted).
+		s.authCache.Clear()
+	}
+	if s.consumerPathCache != nil {
+		// Path matches are keyed by "host|path" and may span gateways, so
+		// the whole index is rebuilt on any gateway mutation.
+		s.consumerPathCache.Clear()
 	}
 
 	if err := s.cache.DeleteAllByGatewayID(ctx, evt.GatewayID); err != nil {

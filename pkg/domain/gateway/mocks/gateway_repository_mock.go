@@ -70,6 +70,65 @@ func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, ids.ID[
 	return _c
 }
 
+// FindByDomain provides a mock function with given fields: ctx, domain
+func (_m *Repository) FindByDomain(ctx context.Context, domain string) (*gateway.Gateway, error) {
+	ret := _m.Called(ctx, domain)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindByDomain")
+	}
+
+	var r0 *gateway.Gateway
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (*gateway.Gateway, error)); ok {
+		return rf(ctx, domain)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) *gateway.Gateway); ok {
+		r0 = rf(ctx, domain)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*gateway.Gateway)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, domain)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_FindByDomain_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindByDomain'
+type Repository_FindByDomain_Call struct {
+	*mock.Call
+}
+
+// FindByDomain is a helper method to define mock.On call
+//   - ctx context.Context
+//   - domain string
+func (_e *Repository_Expecter) FindByDomain(ctx interface{}, domain interface{}) *Repository_FindByDomain_Call {
+	return &Repository_FindByDomain_Call{Call: _e.mock.On("FindByDomain", ctx, domain)}
+}
+
+func (_c *Repository_FindByDomain_Call) Run(run func(ctx context.Context, domain string)) *Repository_FindByDomain_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_FindByDomain_Call) Return(_a0 *gateway.Gateway, _a1 error) *Repository_FindByDomain_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_FindByDomain_Call) RunAndReturn(run func(context.Context, string) (*gateway.Gateway, error)) *Repository_FindByDomain_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // FindByID provides a mock function with given fields: ctx, id
 func (_m *Repository) FindByID(ctx context.Context, id ids.ID[ids.GatewayKind]) (*gateway.Gateway, error) {
 	ret := _m.Called(ctx, id)

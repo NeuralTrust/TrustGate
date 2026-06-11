@@ -6,158 +6,86 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"sync"
+	"sync/atomic"
 	"testing"
 
 	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 	mcpclient "github.com/NeuralTrust/AgentGateway/pkg/infra/mcp/client"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-type memoryStore struct {
-	mu   sync.Mutex
-	pins map[string]appmcp.Pin
+// upstreamStub is a real SDK MCP server that counts initialize calls and can
+// be swapped out to simulate upstream session loss.
+type upstreamStub struct {
+	srv     *httptest.Server
+	handler atomic.Pointer[http.Handler]
+	inits   atomic.Int64
 }
 
-func newMemoryStore() *memoryStore {
-	return &memoryStore{pins: map[string]appmcp.Pin{}}
+func newUpstreamStub(t *testing.T) *upstreamStub {
+	t.Helper()
+	u := &upstreamStub{}
+	u.reset()
+	u.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		(*u.handler.Load()).ServeHTTP(w, r)
+	}))
+	t.Cleanup(u.srv.Close)
+	return u
 }
 
-func (s *memoryStore) Get(_ context.Context, key string) (*appmcp.Pin, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if pin, ok := s.pins[key]; ok {
-		return &pin, nil
-	}
-	return nil, nil
-}
-
-func (s *memoryStore) Set(_ context.Context, key string, pin appmcp.Pin) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pins[key] = pin
-	return nil
-}
-
-func (s *memoryStore) Delete(_ context.Context, key string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.pins, key)
-	return nil
-}
-
-// sessionServer is a minimal stateful MCP upstream: it issues session ids on
-// initialize and rejects unknown sessions with 404 (Streamable HTTP spec).
-type sessionServer struct {
-	mu         sync.Mutex
-	inits      int
-	valid      map[string]bool
-	nextID     int
-	callResult string
-}
-
-func newSessionServer() *sessionServer {
-	return &sessionServer{valid: map[string]bool{}, callResult: `{"content":[{"type":"text","text":"ok"}]}`}
-}
-
-func (s *sessionServer) expireAll() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.valid = map[string]bool{}
-}
-
-func (s *sessionServer) handler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID     json.RawMessage `json:"id"`
-			Method string          `json:"method"`
+// reset swaps in a fresh MCP server: previously issued session ids become
+// unknown, which is exactly what an upstream restart or session reap does.
+func (u *upstreamStub) reset() {
+	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)
+	server.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
+		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
+			if method == "initialize" {
+				u.inits.Add(1)
+			}
+			return next(ctx, method, req)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
+	})
+	server.AddTool(
+		&sdk.Tool{Name: "echo", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: "ok"}}}, nil
+		},
+	)
+	var handler http.Handler = sdk.NewStreamableHTTPHandler(
+		func(*http.Request) *sdk.Server { return server }, nil)
+	u.handler.Store(&handler)
+}
+
+func newCachedDialer() appmcp.Dialer {
+	return appmcp.NewCachedDialer(mcpclient.New(), slog.New(slog.DiscardHandler))
+}
+
+func TestCachedDialer_ReusesSessionPerPinKey(t *testing.T) {
+	t.Parallel()
+	upstream := newUpstreamStub(t)
+	dialer := newCachedDialer()
+	target := mcpclient.Target{URL: upstream.srv.URL, PinKey: "gw:consumer:reg"}
+
+	for i := 0; i < 3; i++ {
+		up, err := dialer.Connect(context.Background(), target)
+		if err != nil {
+			t.Fatalf("connect %d: %v", i, err)
 		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		sid := r.Header.Get("Mcp-Session-Id")
-		if req.Method == "initialize" {
-			s.inits++
-			s.nextID++
-			newSID := "sess-" + string(rune('a'+s.nextID))
-			s.valid[newSID] = true
-			w.Header().Set("Mcp-Session-Id", newSID)
-			writeJSON(w, req.ID, map[string]any{
-				"protocolVersion": mcpclient.ProtocolVersion,
-				"serverInfo":      map[string]any{"name": "stub", "version": "1"},
-			})
-			return
+		if _, err := up.ListTools(context.Background()); err != nil {
+			t.Fatalf("list %d: %v", i, err)
 		}
-		if sid != "" && !s.valid[sid] {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		if len(req.ID) == 0 || string(req.ID) == "null" {
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		switch req.Method {
-		case "tools/list":
-			writeJSON(w, req.ID, map[string]any{"tools": []map[string]any{{"name": "echo"}}})
-		case "tools/call":
-			writeJSON(w, req.ID, json.RawMessage(s.callResult))
-		default:
-			writeJSON(w, req.ID, map[string]any{})
-		}
+		up.Close(context.Background())
+	}
+	if got := upstream.inits.Load(); got != 1 {
+		t.Fatalf("expected 1 initialize for a pinned target, got %d", got)
 	}
 }
 
-func writeJSON(w http.ResponseWriter, id json.RawMessage, result any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
-}
-
-func TestPinnedDialer_ReusesStoredSession(t *testing.T) {
-	upstream := newSessionServer()
-	srv := httptest.NewServer(upstream.handler())
-	defer srv.Close()
-
-	store := newMemoryStore()
-	dialer := appmcp.NewPinnedDialer(mcpclient.New(), store, slog.New(slog.DiscardHandler))
-	target := mcpclient.Target{URL: srv.URL, PinKey: "gw:consumer:reg"}
-
-	up, err := dialer.Connect(context.Background(), target)
-	if err != nil {
-		t.Fatalf("first connect: %v", err)
-	}
-	if _, err := up.ListTools(context.Background()); err != nil {
-		t.Fatalf("first list: %v", err)
-	}
-	if upstream.inits != 1 {
-		t.Fatalf("expected 1 initialize, got %d", upstream.inits)
-	}
-	if pin, _ := store.Get(context.Background(), target.PinKey); pin == nil {
-		t.Fatal("expected pin to be stored after connect")
-	}
-
-	// Second connect must resume the stored session without re-initializing.
-	up2, err := dialer.Connect(context.Background(), target)
-	if err != nil {
-		t.Fatalf("second connect: %v", err)
-	}
-	if _, err := up2.ListTools(context.Background()); err != nil {
-		t.Fatalf("second list: %v", err)
-	}
-	if upstream.inits != 1 {
-		t.Fatalf("expected resumed session (1 initialize), got %d", upstream.inits)
-	}
-}
-
-func TestPinnedDialer_ReinitializesExpiredSession(t *testing.T) {
-	upstream := newSessionServer()
-	srv := httptest.NewServer(upstream.handler())
-	defer srv.Close()
-
-	store := newMemoryStore()
-	dialer := appmcp.NewPinnedDialer(mcpclient.New(), store, slog.New(slog.DiscardHandler))
-	target := mcpclient.Target{URL: srv.URL, PinKey: "gw:consumer:reg"}
+func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
+	t.Parallel()
+	upstream := newUpstreamStub(t)
+	dialer := newCachedDialer()
+	target := mcpclient.Target{URL: upstream.srv.URL, PinKey: "gw:consumer:reg"}
 
 	up, err := dialer.Connect(context.Background(), target)
 	if err != nil {
@@ -167,41 +95,63 @@ func TestPinnedDialer_ReinitializesExpiredSession(t *testing.T) {
 		t.Fatalf("call: %v", err)
 	}
 
-	// Simulate upstream session expiry: the pinned id is now unknown (404).
-	upstream.expireAll()
+	// Simulate upstream restart: the cached session id is now unknown.
+	upstream.reset()
 
 	up2, err := dialer.Connect(context.Background(), target)
 	if err != nil {
 		t.Fatalf("reconnect: %v", err)
 	}
 	if _, err := up2.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err != nil {
-		t.Fatalf("call after expiry should re-init and retry: %v", err)
+		t.Fatalf("call after upstream restart should re-initialize and retry: %v", err)
 	}
-	if upstream.inits != 2 {
-		t.Fatalf("expected re-initialize after expiry (2 inits), got %d", upstream.inits)
-	}
-	pin, _ := store.Get(context.Background(), target.PinKey)
-	if pin == nil {
-		t.Fatal("expected refreshed pin after re-init")
+	// One initialize for the first session plus exactly one re-initialize
+	// after the restart.
+	if got := upstream.inits.Load(); got != 2 {
+		t.Fatalf("expected 2 initializes in total (initial + recovery), got %d", got)
 	}
 }
 
-func TestPinnedDialer_NoPinKeyConnectsDirect(t *testing.T) {
-	upstream := newSessionServer()
-	srv := httptest.NewServer(upstream.handler())
-	defer srv.Close()
+func TestCachedDialer_NoPinKeyConnectsFresh(t *testing.T) {
+	t.Parallel()
+	upstream := newUpstreamStub(t)
+	dialer := newCachedDialer()
+	target := mcpclient.Target{URL: upstream.srv.URL}
 
-	store := newMemoryStore()
-	dialer := appmcp.NewPinnedDialer(mcpclient.New(), store, slog.New(slog.DiscardHandler))
+	for i := 0; i < 2; i++ {
+		up, err := dialer.Connect(context.Background(), target)
+		if err != nil {
+			t.Fatalf("connect %d: %v", i, err)
+		}
+		if _, err := up.ListTools(context.Background()); err != nil {
+			t.Fatalf("list %d: %v", i, err)
+		}
+		up.Close(context.Background())
+	}
+	if got := upstream.inits.Load(); got != 2 {
+		t.Fatalf("expected a fresh session per connect without a pin key, got %d inits", got)
+	}
+}
 
-	up, err := dialer.Connect(context.Background(), mcpclient.Target{URL: srv.URL})
-	if err != nil {
-		t.Fatalf("connect: %v", err)
+func TestCachedDialer_CredentialChangeGetsNewSession(t *testing.T) {
+	t.Parallel()
+	upstream := newUpstreamStub(t)
+	dialer := newCachedDialer()
+
+	for _, token := range []string{"Bearer a", "Bearer b"} {
+		up, err := dialer.Connect(context.Background(), mcpclient.Target{
+			URL:     upstream.srv.URL,
+			PinKey:  "gw:consumer:reg:user",
+			Headers: map[string]string{"Authorization": token},
+		})
+		if err != nil {
+			t.Fatalf("connect with %q: %v", token, err)
+		}
+		if _, err := up.ListTools(context.Background()); err != nil {
+			t.Fatalf("list with %q: %v", token, err)
+		}
 	}
-	if _, err := up.ListTools(context.Background()); err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(store.pins) != 0 {
-		t.Fatalf("expected no pins without a pin key, got %d", len(store.pins))
+	if got := upstream.inits.Load(); got != 2 {
+		t.Fatalf("expected distinct sessions per credential fingerprint, got %d inits", got)
 	}
 }

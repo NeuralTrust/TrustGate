@@ -156,6 +156,40 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, aut
 	return out, nil
 }
 
+func (r *Repository) FindEnabledByTypes(ctx context.Context, types []domain.Type) ([]*domain.Auth, error) {
+	if len(types) == 0 {
+		return nil, nil
+	}
+	typeNames := make([]string, 0, len(types))
+	for _, t := range types {
+		typeNames = append(typeNames, string(t))
+	}
+	const query = `
+		SELECT id, gateway_id, name, type, enabled, config, key_hash, created_at, updated_at
+		  FROM auths
+		 WHERE enabled = TRUE
+		   AND type = ANY($1::text[])
+		 ORDER BY created_at`
+	rows, err := r.conn.Pool.Query(ctx, query, typeNames)
+	if err != nil {
+		return nil, fmt.Errorf("auth repository: find enabled by types: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*domain.Auth
+	for rows.Next() {
+		a, err := scanAuth(rows)
+		if err != nil {
+			return nil, fmt.Errorf("auth repository: scan: %w", err)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("auth repository: iter: %w", err)
+	}
+	return out, nil
+}
+
 func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Auth, int, error) {
 	if filter.Page < 1 {
 		filter.Page = 1

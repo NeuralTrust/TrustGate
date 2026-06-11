@@ -37,7 +37,7 @@ func (d *Data) MatchPath(path string) (*RoutableConsumer, bool) {
 	if d == nil || d.byPath == nil {
 		return nil, false
 	}
-	rc, ok := d.byPath[canonicalPath(path)]
+	rc, ok := d.byPath[CanonicalPath(path)]
 	return rc, ok
 }
 
@@ -48,11 +48,13 @@ func (d *Data) indexByPath() {
 		if rc.Consumer == nil || !rc.Consumer.Active {
 			continue
 		}
-		d.byPath[canonicalPath(rc.Consumer.Path)] = rc
+		d.byPath[CanonicalPath(rc.Consumer.Path)] = rc
 	}
 }
 
-func canonicalPath(path string) string {
+// CanonicalPath normalizes a consumer path for matching: "" becomes "/" and
+// trailing slashes are dropped.
+func CanonicalPath(path string) string {
 	if path == "" {
 		return "/"
 	}

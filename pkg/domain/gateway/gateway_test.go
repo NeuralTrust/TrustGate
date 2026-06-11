@@ -76,6 +76,38 @@ func TestValidate_NameRequired(t *testing.T) {
 	}
 }
 
+func TestValidate_DomainNormalized(t *testing.T) {
+	t.Parallel()
+	g := &Gateway{Name: "alpha", Domain: "  Tenant-A.Example.COM "}
+	if err := g.Validate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if g.Domain != "tenant-a.example.com" {
+		t.Fatalf("Domain = %q, want normalized lowercase", g.Domain)
+	}
+}
+
+func TestValidate_DomainRejectsNonHostnames(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{"https://x.com", "x.com/path", "x.com:8082", "two words"} {
+		g := &Gateway{Name: "alpha", Domain: bad}
+		if err := g.Validate(); !errors.Is(err, ErrInvalidDomain) {
+			t.Fatalf("Domain %q: err = %v, want ErrInvalidDomain", bad, err)
+		}
+	}
+}
+
+func TestValidate_EmptyDomainAllowed(t *testing.T) {
+	t.Parallel()
+	g := &Gateway{Name: "alpha"}
+	if err := g.Validate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if g.Domain != "" {
+		t.Fatalf("Domain = %q, want empty", g.Domain)
+	}
+}
+
 func TestRepositorySentinelsWrapCommonErrors(t *testing.T) {
 	t.Parallel()
 	if !errors.Is(ErrNotFound, commonerrors.ErrNotFound) {

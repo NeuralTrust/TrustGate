@@ -1,0 +1,279 @@
+// Package oauth implements the MCP OAuth 2.1 Resource Server surface:
+// RFC 9728 protected-resource metadata, RFC 8414 authorization-server
+// metadata (proxied from the trusted IdP), and RFC 7591 dynamic client
+// registration backed by the admin-configured IdP client.
+package oauth
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+)
+
+var (
+	// ErrNoAuthorizationServer means no oauth2 Auth entry is configured, so
+	// there is no IdP to advertise.
+	ErrNoAuthorizationServer = errors.New("oauth: no authorization server configured")
+	// ErrAmbiguousAuthorizationServer means multiple distinct issuers are
+	// configured and the request did not carry an RFC 8707 resource
+	// indicator that selects one of them.
+	ErrAmbiguousAuthorizationServer = errors.New("oauth: multiple authorization servers configured")
+	// ErrRegistrationUnavailable means no admin-registered IdP client exists
+	// to hand out via DCR.
+	ErrRegistrationUnavailable = errors.New("oauth: dynamic client registration unavailable")
+)
+
+const asMetadataTTL = time.Hour
+
+// ProtectedResourceMetadata is the RFC 9728 document advertised to MCP
+// clients so they can discover which IdPs can issue tokens for this gateway.
+type ProtectedResourceMetadata struct {
+	Resource               string   `json:"resource"`
+	AuthorizationServers   []string `json:"authorization_servers,omitempty"`
+	BearerMethodsSupported []string `json:"bearer_methods_supported"`
+	ScopesSupported        []string `json:"scopes_supported,omitempty"`
+}
+
+// RegisterRequest is the RFC 7591 client registration request subset we accept.
+type RegisterRequest struct {
+	RedirectURIs []string `json:"redirect_uris"`
+	ClientName   string   `json:"client_name,omitempty"`
+}
+
+// RegisterResponse is the RFC 7591 registration response. Corporate IdPs
+// (Entra, Okta) rarely allow open DCR, so registration is adapted: the
+// admin-registered public client is handed out and PKCE secures the flow.
+type RegisterResponse struct {
+	ClientID                string   `json:"client_id"`
+	RedirectURIs            []string `json:"redirect_uris,omitempty"`
+	ClientName              string   `json:"client_name,omitempty"`
+	GrantTypes              []string `json:"grant_types"`
+	ResponseTypes           []string `json:"response_types"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+}
+
+type MetadataService interface {
+	// ProtectedResource builds the RFC 9728 document for the given resource
+	// URL. The gateway advertises itself as the authorization server (AS
+	// facade); clients never talk to the corporate IdP directly.
+	ProtectedResource(ctx context.Context, baseURL, resource string) (*ProtectedResourceMetadata, error)
+	// AuthorizationServer returns the gateway's own RFC 8414 document, with
+	// authorize/token/registration endpoints served by the gateway and
+	// brokered to the configured IdP.
+	AuthorizationServer(ctx context.Context, baseURL string) (map[string]any, error)
+	// RegisterClient serves RFC 7591 registration from the admin-configured client.
+	RegisterClient(ctx context.Context, req RegisterRequest) (*RegisterResponse, error)
+}
+
+var _ MetadataService = (*metadataService)(nil)
+
+type metadataService struct {
+	credentials appauth.CredentialFinder
+	paths       appconsumer.PathResolver
+	client      *http.Client
+
+	mu      sync.Mutex
+	asCache map[string]asCacheEntry
+}
+
+type asCacheEntry struct {
+	doc       map[string]any
+	fetchedAt time.Time
+}
+
+func NewMetadataService(credentials appauth.CredentialFinder, paths appconsumer.PathResolver, client *http.Client) MetadataService {
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	return &metadataService{credentials: credentials, paths: paths, client: client, asCache: map[string]asCacheEntry{}}
+}
+
+func (s *metadataService) ProtectedResource(ctx context.Context, baseURL, resource string) (*ProtectedResourceMetadata, error) {
+	auths, err := s.resourceAuths(ctx, resource)
+	if err != nil {
+		return nil, err
+	}
+	meta := &ProtectedResourceMetadata{
+		Resource:               resource,
+		BearerMethodsSupported: []string{"header"},
+		ScopesSupported:        scopesOf(auths),
+	}
+	if len(issuersOf(auths)) > 0 {
+		meta.AuthorizationServers = []string{baseURL}
+	}
+	return meta, nil
+}
+
+// resourceAuths scopes the advertised metadata to the consumer addressed by
+// the resource URL (its attached oauth2 auths). When the path does not map
+// to a consumer, every enabled oauth2 auth is advertised (single-tenant
+// behavior, and the discovery probe on the bare base URL).
+func (s *metadataService) resourceAuths(ctx context.Context, resource string) ([]*authdomain.Auth, error) {
+	if s.paths != nil && resource != "" {
+		if u, err := url.Parse(resource); err == nil && u.Path != "" {
+			matches, err := s.paths.Match(ctx, u.Host, u.Path)
+			if err == nil && len(matches) > 0 {
+				var out []*authdomain.Auth
+				for _, m := range matches {
+					for _, a := range m.Auths {
+						if a.Enabled && a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2 != nil {
+							out = append(out, a)
+						}
+					}
+				}
+				if len(out) > 0 {
+					return out, nil
+				}
+			}
+		}
+	}
+	auths, err := s.credentials.OAuth2Auths(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
+	}
+	return auths, nil
+}
+
+// AuthorizationServer advertises the gateway's own endpoints. They are
+// IdP-independent (the resource indicator selects the IdP per request), so
+// the document is served as long as at least one IdP is configured.
+func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL string) (map[string]any, error) {
+	auths, err := s.credentials.OAuth2Auths(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
+	}
+	if len(issuersOf(auths)) == 0 {
+		return nil, ErrNoAuthorizationServer
+	}
+	doc := map[string]any{
+		"issuer":                                baseURL,
+		"authorization_endpoint":                baseURL + "/oauth/authorize",
+		"token_endpoint":                        baseURL + "/oauth/token",
+		"registration_endpoint":                 baseURL + "/oauth/register",
+		"response_types_supported":              []string{"code"},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
+		"code_challenge_methods_supported":      []string{"S256"},
+		"token_endpoint_auth_methods_supported": []string{"none"},
+	}
+	if scopes := scopesOf(auths); len(scopes) > 0 {
+		doc["scopes_supported"] = scopes
+	}
+	return doc, nil
+}
+
+func (s *metadataService) RegisterClient(ctx context.Context, req RegisterRequest) (*RegisterResponse, error) {
+	auths, err := s.credentials.OAuth2Auths(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
+	}
+	for _, a := range auths {
+		cfg := a.Config.OAuth2
+		if cfg == nil || cfg.ClientID == "" {
+			continue
+		}
+		return &RegisterResponse{
+			ClientID:                cfg.ClientID,
+			RedirectURIs:            req.RedirectURIs,
+			ClientName:              req.ClientName,
+			GrantTypes:              []string{"authorization_code", "refresh_token"},
+			ResponseTypes:           []string{"code"},
+			TokenEndpointAuthMethod: "none", // public client; PKCE is mandatory in OAuth 2.1
+		}, nil
+	}
+	return nil, ErrRegistrationUnavailable
+}
+
+// fetchASMetadata proxies the issuer's RFC 8414 metadata, falling back to the
+// OIDC discovery document (identical shape for the fields clients need).
+func (s *metadataService) fetchASMetadata(ctx context.Context, issuer string) (map[string]any, error) {
+	s.mu.Lock()
+	if e, ok := s.asCache[issuer]; ok && time.Since(e.fetchedAt) < asMetadataTTL {
+		s.mu.Unlock()
+		return e.doc, nil
+	}
+	s.mu.Unlock()
+
+	base := strings.TrimSuffix(issuer, "/")
+	var lastErr error
+	for _, wellKnown := range []string{
+		base + "/.well-known/oauth-authorization-server",
+		base + "/.well-known/openid-configuration",
+	} {
+		doc, err := s.fetchJSON(ctx, wellKnown)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		s.mu.Lock()
+		s.asCache[issuer] = asCacheEntry{doc: doc, fetchedAt: time.Now()}
+		s.mu.Unlock()
+		return doc, nil
+	}
+	return nil, fmt.Errorf("oauth: fetch AS metadata for %s: %w", issuer, lastErr)
+}
+
+func (s *metadataService) fetchJSON(ctx context.Context, url string) (map[string]any, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d from %s", res.StatusCode, url)
+	}
+	var doc map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
+func issuersOf(auths []*authdomain.Auth) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, a := range auths {
+		cfg := a.Config.OAuth2
+		if cfg == nil || cfg.Issuer == "" {
+			continue
+		}
+		if _, ok := seen[cfg.Issuer]; ok {
+			continue
+		}
+		seen[cfg.Issuer] = struct{}{}
+		out = append(out, cfg.Issuer)
+	}
+	return out
+}
+
+func scopesOf(auths []*authdomain.Auth) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, a := range auths {
+		cfg := a.Config.OAuth2
+		if cfg == nil {
+			continue
+		}
+		for _, s := range cfg.RequiredScopes {
+			if _, ok := seen[s]; ok {
+				continue
+			}
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	return out
+}

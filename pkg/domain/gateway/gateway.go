@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
@@ -11,9 +12,14 @@ import (
 )
 
 type Gateway struct {
-	ID              ids.GatewayID        `json:"id"`
-	Name            string               `json:"name"`
-	Status          string               `json:"status"`
+	ID     ids.GatewayID `json:"id"`
+	Name   string        `json:"name"`
+	Status string        `json:"status"`
+	// Domain is the optional hostname this gateway answers on. When set,
+	// requests carrying that Host are resolved against this gateway only
+	// (tenant isolation at the edge); empty means the gateway is reachable
+	// on any host.
+	Domain          string               `json:"domain,omitempty"`
 	Telemetry       *telemetry.Telemetry `json:"telemetry,omitempty"`
 	ClientTLSConfig ClientTLSConfig      `json:"client_tls,omitempty"`
 	SessionConfig   *SessionConfig       `json:"session_config,omitempty"`
@@ -58,7 +64,7 @@ func New(name string) (*Gateway, error) {
 
 func Rehydrate(
 	id ids.GatewayID,
-	name, status string,
+	name, status, domain string,
 	tel *telemetry.Telemetry,
 	clientTLS ClientTLSConfig,
 	session *SessionConfig,
@@ -68,6 +74,7 @@ func Rehydrate(
 		ID:              id,
 		Name:            name,
 		Status:          status,
+		Domain:          domain,
 		Telemetry:       tel,
 		ClientTLSConfig: clientTLS,
 		SessionConfig:   session,
@@ -106,5 +113,24 @@ func (g *Gateway) Validate() error {
 		g.Status = "active"
 	}
 
+	domain, err := NormalizeDomain(g.Domain)
+	if err != nil {
+		return err
+	}
+	g.Domain = domain
+
 	return nil
+}
+
+// NormalizeDomain canonicalizes a gateway hostname: lowercase, no scheme,
+// no path, no port. Empty is valid (gateway answers on any host).
+func NormalizeDomain(domain string) (string, error) {
+	d := strings.ToLower(strings.TrimSpace(domain))
+	if d == "" {
+		return "", nil
+	}
+	if strings.ContainsAny(d, "/:?# ") {
+		return "", fmt.Errorf("%w: %q must be a bare hostname (no scheme, port or path)", ErrInvalidDomain, domain)
+	}
+	return d, nil
 }

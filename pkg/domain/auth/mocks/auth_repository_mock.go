@@ -70,6 +70,65 @@ func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, ids.ID[
 	return _c
 }
 
+// FindEnabledByTypes provides a mock function with given fields: ctx, types
+func (_m *Repository) FindEnabledByTypes(ctx context.Context, types []auth.Type) ([]*auth.Auth, error) {
+	ret := _m.Called(ctx, types)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindEnabledByTypes")
+	}
+
+	var r0 []*auth.Auth
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, []auth.Type) ([]*auth.Auth, error)); ok {
+		return rf(ctx, types)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, []auth.Type) []*auth.Auth); ok {
+		r0 = rf(ctx, types)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*auth.Auth)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, []auth.Type) error); ok {
+		r1 = rf(ctx, types)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_FindEnabledByTypes_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindEnabledByTypes'
+type Repository_FindEnabledByTypes_Call struct {
+	*mock.Call
+}
+
+// FindEnabledByTypes is a helper method to define mock.On call
+//   - ctx context.Context
+//   - types []auth.Type
+func (_e *Repository_Expecter) FindEnabledByTypes(ctx interface{}, types interface{}) *Repository_FindEnabledByTypes_Call {
+	return &Repository_FindEnabledByTypes_Call{Call: _e.mock.On("FindEnabledByTypes", ctx, types)}
+}
+
+func (_c *Repository_FindEnabledByTypes_Call) Run(run func(ctx context.Context, types []auth.Type)) *Repository_FindEnabledByTypes_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].([]auth.Type))
+	})
+	return _c
+}
+
+func (_c *Repository_FindEnabledByTypes_Call) Return(_a0 []*auth.Auth, _a1 error) *Repository_FindEnabledByTypes_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_FindEnabledByTypes_Call) RunAndReturn(run func(context.Context, []auth.Type) ([]*auth.Auth, error)) *Repository_FindEnabledByTypes_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // FindByID provides a mock function with given fields: ctx, id
 func (_m *Repository) FindByID(ctx context.Context, id ids.ID[ids.AuthKind]) (*auth.Auth, error) {
 	ret := _m.Called(ctx, id)

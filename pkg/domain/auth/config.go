@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
@@ -70,9 +71,46 @@ func (c OAuth2Config) validate() error {
 		return fmt.Errorf("%w: oauth2.issuer is required", ErrInvalidConfig)
 	}
 	if strings.TrimSpace(c.JWKSURL) == "" && strings.TrimSpace(c.IntrospectionURL) == "" {
-		return fmt.Errorf("%w: oauth2 requires jwks_url or introspection_url", ErrInvalidConfig)
+		// Without an explicit endpoint the JWKS is resolved via OIDC
+		// discovery, which needs the issuer to be a resolvable http(s) URL.
+		u, err := url.Parse(strings.TrimSpace(c.Issuer))
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%w: oauth2 requires jwks_url or introspection_url, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
+		}
 	}
 	return nil
+}
+
+// ConflictsWith reports whether two oauth2 configs cover the same inbound
+// tokens: same issuer and at least one audience in common. An entry without
+// audiences accepts any audience of its issuer, so it conflicts with every
+// other entry on that issuer. Used as an admin-time guardrail; the request
+// path disambiguates at runtime, but duplicate (issuer, audience) pairs make
+// token attribution ambiguous everywhere else.
+func (c *OAuth2Config) ConflictsWith(other *OAuth2Config) bool {
+	if c == nil || other == nil {
+		return false
+	}
+	if strings.TrimSpace(c.Issuer) != strings.TrimSpace(other.Issuer) {
+		return false
+	}
+	if len(c.Audiences) == 0 || len(other.Audiences) == 0 {
+		return true
+	}
+	for _, a := range c.Audiences {
+		for _, b := range other.Audiences {
+			if normalizeAudience(a) == normalizeAudience(b) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// normalizeAudience treats an "api://" resource URI and its bare identifier
+// as the same audience (Entra v1 vs v2 aud claim forms).
+func normalizeAudience(aud string) string {
+	return strings.TrimPrefix(strings.TrimSpace(aud), "api://")
 }
 
 func (c MTLSConfig) validate() error {

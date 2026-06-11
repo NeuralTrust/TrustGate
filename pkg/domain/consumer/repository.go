@@ -23,6 +23,12 @@ type Repository interface {
 
 	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Consumer, error)
 
+	// FindActiveByPath lists every active consumer (across gateways)
+	// listening on the given canonical path. Multiple results mean the same
+	// path is served by different gateways; callers disambiguate by host or
+	// by the credential attached to the request.
+	FindActiveByPath(ctx context.Context, path string) ([]*Consumer, error)
+
 	AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error
 	DetachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error
 	AttachAuth(ctx context.Context, consumerID ids.ConsumerID, authID ids.AuthID) error

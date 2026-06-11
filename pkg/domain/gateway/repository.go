@@ -18,5 +18,9 @@ type Repository interface {
 	Update(ctx context.Context, g *Gateway) error
 	Delete(ctx context.Context, id ids.GatewayID) error
 	FindByID(ctx context.Context, id ids.GatewayID) (*Gateway, error)
+	// FindByDomain resolves the gateway claiming the given hostname
+	// (host-based tenant routing). Returns ErrNotFound when no gateway
+	// claims it.
+	FindByDomain(ctx context.Context, domain string) (*Gateway, error)
 	List(ctx context.Context, filter ListFilter) (items []*Gateway, total int, err error)
 }

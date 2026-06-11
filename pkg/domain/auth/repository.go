@@ -21,5 +21,8 @@ type Repository interface {
 	FindByID(ctx context.Context, id ids.AuthID) (*Auth, error)
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*Auth, error)
 	FindByAPIKeyHash(ctx context.Context, keyHash string) (*Auth, error)
+	// FindEnabledByTypes lists every enabled Auth of the given types across all
+	// gateways (credential-chain candidate lookup, e.g. by token issuer).
+	FindEnabledByTypes(ctx context.Context, types []Type) ([]*Auth, error)
 	List(ctx context.Context, filter ListFilter) (items []*Auth, total int, err error)
 }

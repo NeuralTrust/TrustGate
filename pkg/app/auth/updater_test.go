@@ -72,6 +72,7 @@ func TestUpdater_Update_Partial_PreservesTypeAndConfig(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	existing := existingOAuth2Auth(gwID)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).Return(nil, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
 			return a.Name == "renamed" && a.Type == domain.TypeOAuth2 &&
@@ -103,6 +104,7 @@ func TestUpdater_Update_PreservesSecretWhenMasked(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	existing := existingOAuth2Auth(gwID)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).Return(nil, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
 			return a.Config.OAuth2 != nil && a.Config.OAuth2.ClientSecret == "real-secret"

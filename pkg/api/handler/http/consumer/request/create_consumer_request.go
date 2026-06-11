@@ -23,9 +23,15 @@ type CreateConsumerRequest struct {
 	FailMode        string                  `json:"fail_mode,omitempty"`
 }
 
+// ToolkitEntryRequest selects one item of an attached MCP registry: exactly
+// one of tool, prompt, or resource per entry ("*" selects all; resource also
+// accepts trailing-asterisk URI prefixes like "repo://github/*"). expose_as
+// renames tools and prompts on the virtual MCP surface.
 type ToolkitEntryRequest struct {
 	RegistryID string `json:"registry_id"`
-	Tool       string `json:"tool"`
+	Tool       string `json:"tool,omitempty"`
+	Prompt     string `json:"prompt,omitempty"`
+	Resource   string `json:"resource,omitempty"`
 	ExposeAs   string `json:"expose_as,omitempty"`
 }
 
@@ -42,6 +48,8 @@ func parseToolkit(raw []ToolkitEntryRequest) (domain.Toolkit, error) {
 		out = append(out, domain.ToolkitEntry{
 			RegistryID: id,
 			Tool:       e.Tool,
+			Prompt:     e.Prompt,
+			Resource:   e.Resource,
 			ExposeAs:   e.ExposeAs,
 		})
 	}

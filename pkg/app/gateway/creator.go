@@ -14,6 +14,7 @@ import (
 
 type CreateInput struct {
 	Name            string
+	Domain          string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
@@ -45,11 +46,15 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	if err != nil {
 		return nil, err
 	}
+	g.Domain = in.Domain
 	g.Telemetry = in.Telemetry
 	g.ClientTLSConfig = in.ClientTLSConfig
 	g.SessionConfig = in.SessionConfig
 	if g.SessionConfig == nil {
 		g.SessionConfig = domain.DefaultSessionConfig()
+	}
+	if err := g.Validate(); err != nil {
+		return nil, err
 	}
 	if err := c.repo.Save(ctx, g); err != nil {
 		return nil, err

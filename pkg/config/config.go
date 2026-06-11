@@ -101,8 +101,14 @@ type ServerConfig struct {
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
 	// SecretKey signs and verifies admin-plane JWTs. Empty disables admin auth
-	// token acceptance (every token is rejected).
+	// token acceptance (every token is rejected). It also derives the vault
+	// at-rest encryption key.
 	SecretKey string
+	// STSIssuer is the iss claim of TrustGate-minted downstream tokens.
+	STSIssuer string
+	// STSSigningKey is the RSA private key (PEM) used to sign STS tokens.
+	// Empty generates an ephemeral key at boot (dev only).
+	STSSigningKey string
 }
 
 type DatabaseConfig struct {
@@ -218,13 +224,15 @@ func LoadConfig() (*Config, error) {
 
 func getServerConfig() ServerConfig {
 	return ServerConfig{
-		AdminPort:    getEnvInt("SERVER_ADMIN_PORT", defaultServerAdminPort),
-		ProxyPort:    getEnvInt("SERVER_PROXY_PORT", defaultServerProxyPort),
-		MCPPort:      getEnvInt("SERVER_MCP_PORT", defaultServerMCPPort),
-		ReadTimeout:  getEnvDuration("SERVER_READ_TIMEOUT", defaultServerReadTimeout),
-		WriteTimeout: getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
-		IdleTimeout:  getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),
-		SecretKey:    getEnv("SERVER_SECRET_KEY", ""),
+		AdminPort:     getEnvInt("SERVER_ADMIN_PORT", defaultServerAdminPort),
+		ProxyPort:     getEnvInt("SERVER_PROXY_PORT", defaultServerProxyPort),
+		MCPPort:       getEnvInt("SERVER_MCP_PORT", defaultServerMCPPort),
+		ReadTimeout:   getEnvDuration("SERVER_READ_TIMEOUT", defaultServerReadTimeout),
+		WriteTimeout:  getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
+		IdleTimeout:   getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),
+		SecretKey:     getEnv("SERVER_SECRET_KEY", ""),
+		STSIssuer:     getEnv("STS_ISSUER", "trustgate"),
+		STSSigningKey: getEnv("STS_SIGNING_KEY", ""),
 	}
 }
 

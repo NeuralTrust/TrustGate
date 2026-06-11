@@ -138,11 +138,11 @@ func TestNewAuth_Validation(t *testing.T) {
 			wantErr:   ErrInvalidConfig,
 		},
 		{
-			name:      "oauth2 missing jwks and introspection",
+			name:      "oauth2 missing jwks and introspection with non-URL issuer",
 			gatewayID: gwID,
 			authName:  "k",
 			authType:  TypeOAuth2,
-			config:    Config{OAuth2: &OAuth2Config{Issuer: "https://issuer"}},
+			config:    Config{OAuth2: &OAuth2Config{Issuer: "not-a-url"}},
 			wantErr:   ErrInvalidConfig,
 		},
 		{
@@ -188,6 +188,9 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 		"oauth2": {TypeOAuth2, Config{OAuth2: &OAuth2Config{
 			Issuer:  "https://issuer",
 			JWKSURL: "https://issuer/.well-known/jwks.json",
+		}}},
+		"oauth2 issuer-only (JWKS via OIDC discovery)": {TypeOAuth2, Config{OAuth2: &OAuth2Config{
+			Issuer: "https://login.microsoftonline.com/tenant-id/v2.0",
 		}}},
 		"mtls": {TypeMTLS, Config{MTLS: &MTLSConfig{CACert: "-----BEGIN CERTIFICATE-----"}}},
 	}

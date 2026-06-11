@@ -6,6 +6,7 @@ import (
 
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
 	mcphttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/mcp"
+	oauthhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/oauth"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
@@ -20,24 +21,45 @@ type mcpMiddlewares struct {
 	PanicRecover    *middleware.PanicRecoverMiddleware
 	AccessLog       *middleware.AccessLogMiddleware
 	SecurityHeaders *middleware.SecurityHeadersMiddleware
+	OAuthChallenge  *middleware.OAuthChallengeMiddleware
 	Auth            *middleware.AuthMiddleware
 }
 
-func mcpTransport(m mcpMiddlewares) *middleware.Transport {
+// mcpBaseTransport carries the observability middlewares installed before any
+// route, so the public OAuth surface (discovery, token, callbacks) is logged
+// too.
+func mcpBaseTransport(m mcpMiddlewares) *middleware.Transport {
 	return middleware.NewTransport(
 		m.RequestID,
 		m.SecurityHeaders,
 		m.PanicRecover,
 		m.AccessLog,
+	)
+}
+
+// mcpAuthTransport guards only the consumer JSON-RPC surface.
+func mcpAuthTransport(m mcpMiddlewares) *middleware.Transport {
+	return middleware.NewTransport(
+		// Challenge must wrap Auth so 401s carry WWW-Authenticate.
+		m.OAuthChallenge,
 		m.Auth,
 	)
 }
 
 type mcpRouterParams struct {
 	dig.In
-	Transport     *middleware.Transport `name:"mcp"`
-	HealthHandler *apihandler.HealthHandler
-	MCPHandler    *mcphttp.Handler
+	BaseTransport              *middleware.Transport `name:"mcpBase"`
+	AuthTransport              *middleware.Transport `name:"mcpAuth"`
+	HealthHandler              *apihandler.HealthHandler
+	MCPHandler                 *mcphttp.Handler
+	ProtectedResourceHandler   *oauthhttp.ProtectedResourceHandler
+	AuthorizationServerHandler *oauthhttp.AuthorizationServerHandler
+	RegisterHandler            *oauthhttp.RegisterHandler
+	AuthorizeHandler           *oauthhttp.AuthorizeHandler
+	CallbackHandler            *oauthhttp.CallbackHandler
+	TokenHandler               *oauthhttp.TokenHandler
+	ConnectHandler             *oauthhttp.ConnectHandler
+	JWKSHandler                *oauthhttp.JWKSHandler
 }
 
 type mcpServerParams struct {
@@ -48,12 +70,28 @@ type mcpServerParams struct {
 }
 
 func ServerMCP(c *container.Container) error {
-	if err := c.Provide(mcpTransport, dig.Name("mcp")); err != nil {
+	if err := c.Provide(mcpBaseTransport, dig.Name("mcpBase")); err != nil {
+		return err
+	}
+	if err := c.Provide(mcpAuthTransport, dig.Name("mcpAuth")); err != nil {
 		return err
 	}
 	if err := c.Provide(
 		func(p mcpRouterParams) router.ServerRouter {
-			return router.NewMCPRouter(p.Transport, p.HealthHandler, p.MCPHandler)
+			return router.NewMCPRouter(
+				p.BaseTransport,
+				p.AuthTransport,
+				p.HealthHandler,
+				p.MCPHandler,
+				p.ProtectedResourceHandler,
+				p.AuthorizationServerHandler,
+				p.RegisterHandler,
+				p.AuthorizeHandler,
+				p.CallbackHandler,
+				p.TokenHandler,
+				p.ConnectHandler,
+				p.JWKSHandler,
+			)
 		},
 		dig.Name("mcp"),
 	); err != nil {

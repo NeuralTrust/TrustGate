@@ -8,6 +8,7 @@ import (
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	identitydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
@@ -19,6 +20,9 @@ var ErrUnauthenticated = errors.New("unauthenticated")
 type Identity struct {
 	GatewayID ids.GatewayID
 	AuthID    ids.AuthID
+	// Principal is the authenticated subject built by the credential chain;
+	// nil for resolvers that authenticate without building one.
+	Principal *identitydomain.Principal
 }
 
 type IdentityResolver interface {
@@ -90,5 +94,8 @@ func (m *AuthMiddleware) attach(c *fiber.Ctx, identity Identity, gw *gatewaydoma
 	ctx = appconsumer.WithAuthID(ctx, identity.AuthID)
 	ctx = appconsumer.WithData(ctx, data)
 	ctx = appgateway.WithGateway(ctx, gw)
+	if identity.Principal != nil {
+		ctx = identitydomain.WithPrincipal(ctx, identity.Principal)
+	}
 	c.SetUserContext(ctx)
 }

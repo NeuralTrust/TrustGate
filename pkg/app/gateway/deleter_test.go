@@ -25,7 +25,7 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	mgr := newCacheManager()
 	// Pre-populate the cache: the deleter must wipe it.
 	now := time.Now().UTC()
-	mgr.GetTTLMap(cache.GatewayTTLName).Set(id.String(), domain.Rehydrate(id, "x", "active", nil, nil, nil, now, now))
+	mgr.GetTTLMap(cache.GatewayTTLName).Set(id.String(), domain.Rehydrate(id, "x", "active", "", nil, nil, nil, now, now))
 
 	deleter := appgateway.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
 	if err := deleter.Delete(context.Background(), id); err != nil {
