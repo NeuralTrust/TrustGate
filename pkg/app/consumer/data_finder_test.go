@@ -23,7 +23,7 @@ func routableConsumer(gwID ids.GatewayID, authIDs []ids.AuthID) *domain.Consumer
 	now := time.Now().UTC()
 	return domain.Rehydrate(
 		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
-		"/v1/chat", domain.RoutingModeInline, nil,
+		"X84Yhsy8", domain.RoutingModeInline, nil,
 		nil, true,
 		[]ids.RegistryID{ids.New[ids.RegistryKind]()}, nil, authIDs,
 		nil,
@@ -148,7 +148,7 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(
 		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
-		"/v1/chat", domain.RoutingModeInline, nil,
+		"X84Yhsy8", domain.RoutingModeInline, nil,
 		nil, true,
 		[]ids.RegistryID{poolID}, nil, nil,
 		&domain.Fallback{

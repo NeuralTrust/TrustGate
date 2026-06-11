@@ -19,8 +19,9 @@ import (
 const functionalGatewayBaseDomain = "gw.neuraltrust.ai"
 
 var (
-	gatewayHosts sync.Map
-	proxyHosts   sync.Map
+	gatewayHosts  sync.Map
+	proxyHosts    sync.Map
+	consumerSlugs sync.Map
 )
 
 // uniqueName returns a name that cannot collide across runs or
@@ -101,18 +102,36 @@ func CreateConsumer(t *testing.T, gatewayID string, payload map[string]any) stri
 	id, ok := body["id"].(string)
 	require.True(t, ok, "create consumer response missing id: %v", body)
 	require.NotEmpty(t, id)
+
+	slug, ok := body["slug"].(string)
+	require.True(t, ok, "create consumer response missing slug: %v", body)
+	require.NotEmpty(t, slug)
+	consumerSlugs.Store(id, slug)
 	return id
 }
 
-// validConsumerPayload returns a minimal payload accepted by Validate() (name
-// plus an exact-match path). Associations (registries, auths, policies) are
-// attached after creation via the dedicated link endpoints. The path is derived
-// from the (already unique) name so it stays unique per gateway. Callers may
-// override fields.
+// ConsumerSlug returns the auto-generated slug captured when the consumer was
+// created through CreateConsumer.
+func ConsumerSlug(t *testing.T, consumerID string) string {
+	t.Helper()
+	slug, ok := consumerSlugs.Load(consumerID)
+	require.True(t, ok, "slug not captured for consumer %s", consumerID)
+	return slug.(string)
+}
+
+// chatCompletionsPath returns the fixed OpenAI-compatible proxy route for the
+// given consumer: /{consumer_slug}/v1/chat/completions.
+func chatCompletionsPath(t *testing.T, consumerID string) string {
+	t.Helper()
+	return "/" + ConsumerSlug(t, consumerID) + "/v1/chat/completions"
+}
+
+// validConsumerPayload returns a minimal payload accepted by Validate().
+// Associations (registries, auths, policies) are attached after creation via
+// the dedicated link endpoints. The routing slug is generated server-side.
 func validConsumerPayload(name string) map[string]any {
 	return map[string]any{
 		"name": name,
-		"path": "/v1/" + name,
 	}
 }
 

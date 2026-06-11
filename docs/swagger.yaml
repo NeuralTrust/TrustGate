@@ -287,9 +287,6 @@ definitions:
         additionalProperties: {}
         type: object
       provider_options_schema:
-        description: |-
-          ProviderOptionsSchema lists provider-specific connection settings that are
-          not credentials (e.g. base_url, project, location).
         items:
           $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.ProviderOptionField'
         type: array
@@ -332,8 +329,10 @@ definitions:
         type: array
       name:
         type: string
-      path:
-        type: string
+      registries:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest'
+        type: array
       routing_mode:
         type: string
       type:
@@ -352,8 +351,6 @@ definitions:
     properties:
       max_attempts:
         type: integer
-      max_cost_usd:
-        type: number
       max_total_latency_ms:
         type: integer
     type: object
@@ -407,6 +404,22 @@ definitions:
       registry_id:
         type: string
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest:
+    properties:
+      id:
+        type: string
+      model_policies:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest'
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest:
+    properties:
+      allowed:
+        items:
+          type: string
+        type: array
+      default:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.UpdateConsumerRequest:
     properties:
       active:
@@ -424,8 +437,6 @@ definitions:
           $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
         type: array
       name:
-        type: string
-      path:
         type: string
       routing_mode:
         type: string
@@ -460,8 +471,6 @@ definitions:
         type: array
       name:
         type: string
-      path:
-        type: string
       registry_ids:
         items:
           type: string
@@ -471,6 +480,8 @@ definitions:
           type: string
         type: array
       routing_mode:
+        type: string
+      slug:
         type: string
       type:
         type: string
@@ -506,8 +517,6 @@ definitions:
     properties:
       max_attempts:
         type: integer
-      max_cost_usd:
-        type: number
       max_total_latency_ms:
         type: integer
     type: object
@@ -1075,6 +1084,7 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthField:
     properties:
+      default: {}
       description:
         type: string
       key:
@@ -1107,6 +1117,8 @@ definitions:
       label:
         type: string
       type:
+        type: string
+      variant:
         type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_app_catalog.OptionFieldType:

@@ -42,7 +42,7 @@ func TestForward_QualifiedIntentRestrictsPoolAndRewritesModel(t *testing.T) {
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
 			Context: context.Background(),
-			Body:    []byte(`{"model":"openai/gpt-5"}`),
+			Body:    []byte(`{"model":"@openai/gpt-5"}`),
 		},
 	})
 	if err != nil {
@@ -70,7 +70,7 @@ func TestForward_QualifiedIntentDeniedByPolicy(t *testing.T) {
 		Consumer:  rc,
 		Request: &infracontext.RequestContext{
 			Context: context.Background(),
-			Body:    []byte(`{"model":"openai/gpt-4o"}`),
+			Body:    []byte(`{"model":"@openai/gpt-4o"}`),
 		},
 	})
 	if !errors.Is(err, routingdomain.ErrModelDenied) {
@@ -222,7 +222,7 @@ func TestForward_RoleBasedDeniedModel(t *testing.T) {
 		RoleIDs:   []ids.RoleID{role.ID},
 		Request: &infracontext.RequestContext{
 			Context: context.Background(),
-			Body:    []byte(`{"model":"openai/gpt-4o"}`),
+			Body:    []byte(`{"model":"@openai/gpt-4o"}`),
 		},
 	})
 	if !errors.Is(err, routingdomain.ErrModelDenied) {
@@ -496,6 +496,101 @@ func TestForward_SpanRecordsRouteSource(t *testing.T) {
 				t.Fatalf("expected route %q, got %q", wantRoute, spans[0].LLM.Route)
 			}
 		})
+	}
+}
+
+func TestForward_ClientSuppliedModelIDIsRejected(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bedrock := backendFor(gatewayID, "bedrock")
+	rc := routableConsumerWith(gatewayID, bedrock)
+
+	const arn = `arn:aws:bedrock:eu-west-1:123456789012:inference-profile/eu.anthropic.claude-sonnet-4-v1:0`
+	body := []byte(`{"modelId":"` + arn + `","messages":[]}`)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+
+	fwd := newTestForwarder(t, invoker)
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Context: context.Background(),
+			Body:    body,
+		},
+	})
+	if !errors.Is(err, routingdomain.ErrInvalidModelRef) {
+		t.Fatalf("expected ErrInvalidModelRef for client-supplied modelId, got %v", err)
+	}
+}
+
+func TestForward_ArnInModelFieldStaysNative(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bedrock := backendFor(gatewayID, "bedrock")
+	rc := routableConsumerWith(gatewayID, bedrock)
+
+	const arn = `arn:aws:bedrock:eu-west-1:123456789012:inference-profile/eu.anthropic.claude-sonnet-4-v1:0`
+	rc.Consumer.ModelPolicies = domainconsumer.ModelPolicies{
+		bedrock.ID: {Allowed: []string{arn}},
+	}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Context: context.Background(),
+			Body:    []byte(`{"model":"` + arn + `","messages":[]}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res.StatusCode)
+	}
+}
+
+func TestForward_SpanRecordsRequestedModel(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	openai := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, openai)
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok"), Model: "gpt-5"}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	rt := trace.New("trace-requested", trace.Metadata{})
+	ctx := trace.NewContext(context.Background(), rt)
+
+	_, err := fwd.Forward(ctx, appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Context: ctx,
+			Body:    []byte(`{"model":"@openai/gpt-5"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	spans := rt.Spans()
+	if len(spans) != 1 || spans[0].LLM == nil {
+		t.Fatalf("expected one LLM span, got %d", len(spans))
+	}
+	if spans[0].LLM.RequestedModel != "@openai/gpt-5" {
+		t.Fatalf("expected original requested model, got %q", spans[0].LLM.RequestedModel)
+	}
+	if spans[0].LLM.Model != "gpt-5" {
+		t.Fatalf("expected final native model, got %q", spans[0].LLM.Model)
 	}
 }
 

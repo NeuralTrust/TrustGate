@@ -50,6 +50,7 @@ type forwardRequestDTO struct {
 	backend     *domain.Registry
 	candidates  *routingdomain.CandidateSet
 	routeSource string
+	pinned      bool
 	request     *infracontext.RequestContext
 	response    *infracontext.ResponseContext
 	policies    []*policydomain.Policy
@@ -145,6 +146,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	dto := &forwardRequestDTO{
 		backend:     route.backend,
 		candidates:  candidates,
+		pinned:      route.pinned,
 		request:     in.Request,
 		response:    resp,
 		policies:    policies,
@@ -174,6 +176,7 @@ func (f *forwarder) invokeWithFailover(
 	}
 
 	last := failoverState{}
+	lastKind := failureNone
 	current := dto.backend
 	fromFallback := route.fromFallback
 	for current != nil {
@@ -189,7 +192,7 @@ func (f *forwarder) invokeWithFailover(
 			resp, err := f.invokeOnce(ctx, current, dto.request, stream)
 			elapsed := time.Since(startedAt)
 			outcome := classifyOutcome(resp, err, triggers)
-			span := f.recordSpan(ctx, current, fromFallback, dto.routeSource, budget.attempts, outcome, resp, elapsed)
+			span := f.recordSpan(ctx, dto, current, fromFallback, budget.attempts, outcome, resp, elapsed)
 			switch outcome {
 			case OutcomeSuccess:
 				reportSuccess(lb, current)
@@ -207,6 +210,7 @@ func (f *forwarder) invokeWithFailover(
 				}
 
 				last = failoverState{rejection: result}
+				lastKind = failurePluginRejection
 				f.logRetry(current, pe, budget)
 			case OutcomeTerminal:
 				if resp == nil {
@@ -218,13 +222,17 @@ func (f *forwarder) invokeWithFailover(
 				reason := failureReason(resp, err)
 				reportFailure(lb, current, reason)
 				last = failoverState{resp: resp, err: err}
+				lastKind = classifyFailure(resp, err)
 				f.logRetry(current, reason, budget)
 				continue
 			}
 			break
 		}
 		excluded[current.ID] = struct{}{}
-		current, fromFallback = f.nextCandidate(lb, rc, dto.request, excluded)
+		if route.pinned {
+			break
+		}
+		current, fromFallback = f.nextCandidate(lb, rc, dto.request, excluded, triggers.allowsFallback(lastKind))
 	}
 
 	return f.relayLast(ctx, dto, last)
@@ -260,11 +268,15 @@ func (f *forwarder) attemptsPerBackend() int {
 	return f.maxRetries + 1
 }
 
+// nextCandidate picks the next backend after a failure: load-balancer members
+// are always eligible (health-driven), while the fallback chain is only
+// consulted when the failure kind matches an enabled fallback trigger.
 func (f *forwarder) nextCandidate(
 	lb *loadbalancer.LoadBalancer,
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
 	excluded map[ids.RegistryID]struct{},
+	allowChain bool,
 ) (*domain.Registry, bool) {
 	if isRoleBased(rc) {
 		return nil, false
@@ -275,6 +287,9 @@ func (f *forwarder) nextCandidate(
 				return bk, false
 			}
 		}
+	}
+	if !allowChain {
+		return nil, false
 	}
 	if bk := firstAvailableFallback(rc, excluded); bk != nil {
 		return bk, true
@@ -296,9 +311,9 @@ func reportFailure(lb *loadbalancer.LoadBalancer, bk *domain.Registry, reason er
 
 func (f *forwarder) recordSpan(
 	ctx context.Context,
+	dto *forwardRequestDTO,
 	bk *domain.Registry,
 	fromFallback bool,
-	route string,
 	attempt int,
 	outcome Outcome,
 	resp *ProviderResponse,
@@ -313,12 +328,14 @@ func (f *forwarder) recordSpan(
 		Name:      bk.Provider,
 		StartedAt: time.Now().Add(-elapsed),
 		LLM: &trace.LLMAttrs{
-			RegistryID: bk.ID.String(),
-			Provider:   bk.Provider,
-			Attempt:    attempt,
-			Fallback:   fromFallback,
-			Route:      route,
-			Outcome:    outcome.String(),
+			RegistryID:     bk.ID.String(),
+			Provider:       bk.Provider,
+			RequestedModel: dto.request.RequestedModel,
+			Attempt:        attempt,
+			Fallback:       fromFallback,
+			Pinned:         dto.pinned,
+			Route:          dto.routeSource,
+			Outcome:        outcome.String(),
 		},
 	}
 	if resp != nil {

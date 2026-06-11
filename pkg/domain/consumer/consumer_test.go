@@ -14,7 +14,6 @@ func validParams() CreateParams {
 		GatewayID:   ids.New[ids.GatewayKind](),
 		Name:        "openai-chat",
 		Type:        TypeLLM,
-		Path:        "/v1/chat/completions",
 		RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
 	}
 }
@@ -43,6 +42,9 @@ func TestConsumer_New_HappyPath(t *testing.T) {
 	}
 	if c.CreatedAt.IsZero() || c.UpdatedAt.IsZero() {
 		t.Fatal("timestamps are zero")
+	}
+	if !IsValidSlug(c.Slug) {
+		t.Fatalf("Slug = %q, want a valid generated slug", c.Slug)
 	}
 }
 
@@ -96,9 +98,14 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 			wantErr: ErrInvalidType,
 		},
 		{
-			name:    "empty path",
-			mutate:  func(c *Consumer) { c.Path = "" },
-			wantErr: ErrInvalidPath,
+			name:    "empty slug",
+			mutate:  func(c *Consumer) { c.Slug = "" },
+			wantErr: ErrInvalidSlug,
+		},
+		{
+			name:    "malformed slug",
+			mutate:  func(c *Consumer) { c.Slug = "bad/slug" },
+			wantErr: ErrInvalidSlug,
 		},
 		{
 			name:    "invalid routing mode",
@@ -162,7 +169,7 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 				GatewayID:   ids.New[ids.GatewayKind](),
 				Name:        "x",
 				Type:        TypeLLM,
-				Path:        "/v1/chat",
+				Slug:        "X84Yhsy8",
 				RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
 			}
 			tc.mutate(c)
@@ -203,7 +210,7 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	now := time.Now().UTC()
 	c := Rehydrate(
 		id, gwID, "x", TypeMCP,
-		"/v1/messages", RoutingModeInline, nil,
+		"X84Yhsy8", RoutingModeInline, nil,
 		map[string]string{"X-K": "v"},
 		true,
 		[]ids.RegistryID{beID}, nil, nil,
@@ -217,8 +224,8 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	if c.Type != TypeMCP {
 		t.Fatalf("Type = %q", c.Type)
 	}
-	if c.Path != "/v1/messages" {
-		t.Fatalf("Path = %q", c.Path)
+	if c.Slug != "X84Yhsy8" {
+		t.Fatalf("Slug = %q", c.Slug)
 	}
 	if !c.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")

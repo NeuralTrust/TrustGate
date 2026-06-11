@@ -121,7 +121,7 @@ func (s *CandidateSet) Registries() []*registrydomain.Registry {
 	return out
 }
 
-func (s *CandidateSet) ResolveIntent(intent RoutingIntent) (*CandidateSet, error) {
+func (s *CandidateSet) ResolveIntent(intent Intent) (*CandidateSet, error) {
 	if s == nil || intent.IsZero() {
 		return s, nil
 	}
@@ -188,7 +188,7 @@ func (s *CandidateSet) resolveShortModel(model string) (*CandidateSet, error) {
 func qualifiedAlternatives(providers map[string]struct{}, model string) []string {
 	out := make([]string, 0, len(providers))
 	for provider := range providers {
-		out = append(out, provider+"/"+model)
+		out = append(out, qualifiedPrefix+provider+"/"+model)
 	}
 	sort.Strings(out)
 	return out

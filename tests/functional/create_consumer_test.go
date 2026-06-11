@@ -101,19 +101,22 @@ func TestCreateConsumer_ValidationEmptyName(t *testing.T) {
 	assert.Equal(t, "validation_failed", body["error"])
 }
 
-func TestCreateConsumer_ValidationEmptyPath(t *testing.T) {
+func TestCreateConsumer_GeneratesSlug(t *testing.T) {
 	defer Track(t, "CreateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-emptypath-gw")})
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-slug-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
-		nil, map[string]any{
-			"name": uniqueName("co-empty-path"),
-			"path": "",
-		},
+		nil, map[string]any{"name": uniqueName("co-slug")},
 	)
-	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
-	assert.Equal(t, "validation_failed", body["error"])
+	require.Equal(t, http.StatusCreated, status, "body=%v", body)
+	slug, ok := body["slug"].(string)
+	require.True(t, ok, "response must expose the generated slug: %v", body)
+	assert.Len(t, slug, 8, "slug must be 8 chars")
+	for _, c := range slug {
+		assert.True(t, (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'),
+			"slug must be alphanumeric, got %q", slug)
+	}
 }
 
 func TestCreateConsumer_InvalidBody(t *testing.T) {

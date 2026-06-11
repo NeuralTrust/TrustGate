@@ -11,7 +11,6 @@ import (
 type UpdateConsumerRequest struct {
 	Name          *string               `json:"name,omitempty"`
 	Type          *string               `json:"type,omitempty"`
-	Path          *string               `json:"path,omitempty"`
 	RoutingMode   *string               `json:"routing_mode,omitempty"`
 	LBConfig      *LBConfigRequest      `json:"lb_config,omitempty"`
 	Headers       *map[string]string    `json:"headers,omitempty"`
@@ -28,9 +27,6 @@ func (r UpdateConsumerRequest) Validate() error {
 		if len(*r.Name) > 255 {
 			return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 		}
-	}
-	if r.Path != nil && strings.TrimSpace(*r.Path) == "" {
-		return fmt.Errorf("path is required: %w", commonerrors.ErrValidation)
 	}
 	return nil
 }

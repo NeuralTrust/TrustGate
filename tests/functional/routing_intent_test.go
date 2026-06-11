@@ -13,30 +13,28 @@ func setupIntentRoute(t *testing.T, up *fakeUpstream, allowed []string, defaultM
 	t.Helper()
 	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("intent-gw")})
 	backendID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be"), up.URL()))
-	path := "/v1/" + uniqueName("route")
 	policy := map[string]any{"allowed": allowed}
 	if defaultModel != "" {
 		policy["default"] = defaultModel
 	}
 	coID := CreateConsumer(t, gatewayID, map[string]any{
 		"name": uniqueName("cons"),
-		"path": path,
 		"registries": []map[string]any{
 			{"id": backendID, "model_policies": policy},
 		},
 	})
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
-	return apiKey, path
+	return apiKey, chatCompletionsPath(t, coID)
 }
 
 func TestRoutingIntent_QualifiedModel(t *testing.T) {
 	defer Track(t, "RoutingIntent")()
 
-	t.Run("allowed provider/model is rewritten to the native model", func(t *testing.T) {
+	t.Run("allowed @provider/model is rewritten to the native model", func(t *testing.T) {
 		up := newJSONUpstream(t, "qualified-served")
 		apiKey, path := setupIntentRoute(t, up, []string{"gpt-4o-mini"}, "")
 
-		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("openai/gpt-4o-mini"))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("@openai/gpt-4o-mini"))
 
 		assert.Equal(t, http.StatusOK, status, "body: %s", body)
 		assert.Contains(t, string(body), "qualified-served")
@@ -49,7 +47,7 @@ func TestRoutingIntent_QualifiedModel(t *testing.T) {
 		up := newJSONUpstream(t, "must-not-serve")
 		apiKey, path := setupIntentRoute(t, up, []string{"gpt-4o-mini"}, "")
 
-		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("openai/gpt-4-forbidden"))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("@openai/gpt-4-forbidden"))
 
 		assert.Equal(t, http.StatusForbidden, status, "body: %s", body)
 		assert.Contains(t, string(body), "model_not_allowed")
@@ -60,7 +58,7 @@ func TestRoutingIntent_QualifiedModel(t *testing.T) {
 		up := newJSONUpstream(t, "must-not-serve")
 		apiKey, path := setupIntentRoute(t, up, []string{"gpt-4o-mini"}, "")
 
-		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("anthropic/claude-4"))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("@anthropic/claude-4"))
 
 		assert.Equal(t, http.StatusForbidden, status, "body: %s", body)
 		assert.Contains(t, string(body), "model_not_allowed")
@@ -71,7 +69,7 @@ func TestRoutingIntent_QualifiedModel(t *testing.T) {
 		up := newJSONUpstream(t, "must-not-serve")
 		apiKey, path := setupIntentRoute(t, up, []string{"gpt-4o-mini"}, "")
 
-		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("openai/"))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("@openai/"))
 
 		assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
 		assert.Contains(t, string(body), "invalid_model")
@@ -88,10 +86,8 @@ func TestRoutingIntent_PoolAlias(t *testing.T) {
 		memberAID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-a"), memberA.URL()))
 		memberBID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-b"), memberB.URL()))
 		outsideID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-out"), outside.URL()))
-		path := "/v1/" + uniqueName("route")
 		coID := CreateConsumer(t, gatewayID, map[string]any{
 			"name": uniqueName("cons"),
-			"path": path,
 			"registries": []map[string]any{
 				{"id": memberAID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"}},
 				{"id": memberBID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"}},
@@ -108,7 +104,7 @@ func TestRoutingIntent_PoolAlias(t *testing.T) {
 			},
 		})
 		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
-		return apiKey, path
+		return apiKey, chatCompletionsPath(t, coID)
 	}
 
 	t.Run("valid alias balances across members only", func(t *testing.T) {
@@ -163,10 +159,8 @@ func TestRoutingIntent_FallbackAuthorization(t *testing.T) {
 		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("fbauth-gw")})
 		primaryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-primary"), primary.URL()))
 		fallbackID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-fallback"), fallback.URL()))
-		path := "/v1/" + uniqueName("route")
 		coID := CreateConsumer(t, gatewayID, map[string]any{
 			"name": uniqueName("cons"),
-			"path": path,
 			"registries": []map[string]any{
 				{"id": primaryID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"}},
 				{"id": fallbackID, "model_policies": map[string]any{"allowed": []string{"compat-model"}, "default": "compat-model"}},
@@ -178,7 +172,7 @@ func TestRoutingIntent_FallbackAuthorization(t *testing.T) {
 			},
 		})
 		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
-		return apiKey, path
+		return apiKey, chatCompletionsPath(t, coID)
 	}
 
 	t.Run("multi-provider chain rescues a request without intent", func(t *testing.T) {
@@ -199,7 +193,7 @@ func TestRoutingIntent_FallbackAuthorization(t *testing.T) {
 		fallback := newJSONUpstream(t, "must-not-serve")
 		apiKey, path := setupCrossProviderFallback(t, primary, fallback)
 
-		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("openai/gpt-4o-mini"))
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("@openai/gpt-4o-mini"))
 
 		assert.Equal(t, http.StatusInternalServerError, status, "body: %s", body)
 		assert.Equal(t, expectedAttempts(), primary.Hits(), "the authorized candidate must be fully retried")
@@ -215,17 +209,15 @@ func TestRoutingIntent_ShortModel(t *testing.T) {
 		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("short-gw")})
 		openaiID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-oai"), openaiUp.URL()))
 		compatID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-compat"), compatUp.URL()))
-		path := "/v1/" + uniqueName("route")
 		coID := CreateConsumer(t, gatewayID, map[string]any{
 			"name": uniqueName("cons"),
-			"path": path,
 			"registries": []map[string]any{
 				{"id": openaiID, "model_policies": map[string]any{"allowed": openaiModels}},
 				{"id": compatID, "model_policies": map[string]any{"allowed": compatModels}},
 			},
 		})
 		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
-		return apiKey, path
+		return apiKey, chatCompletionsPath(t, coID)
 	}
 
 	t.Run("unique short model resolves to its only provider", func(t *testing.T) {
@@ -252,8 +244,8 @@ func TestRoutingIntent_ShortModel(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, status, "body: %s", body)
 		assert.Contains(t, string(body), "invalid_model")
-		assert.Contains(t, string(body), "openai/shared-model")
-		assert.Contains(t, string(body), "openai_compatible/shared-model")
+		assert.Contains(t, string(body), "@openai/shared-model")
+		assert.Contains(t, string(body), "@openai_compatible/shared-model")
 		assert.Equal(t, 0, openaiUp.Hits()+compatUp.Hits())
 	})
 

@@ -94,22 +94,14 @@ func TestDetectFormat(t *testing.T) {
 			expect: FormatGemini,
 		},
 		{
-			name:   "bedrock titan with inputText",
+			name:   "bedrock-native body with modelId is never detected as a source format",
+			body:   `{"modelId":"eu.amazon.nova-micro-v1:0","messages":[{"role":"user","content":[{"text":"hi"}]}]}`,
+			expect: FormatOpenAI,
+		},
+		{
+			name:   "bedrock titan inputText body falls back to openai",
 			body:   `{"inputText":"hello world"}`,
-			expect: FormatBedrock,
-		},
-		{
-			name:   "bedrock legacy claude with prompt",
-			body:   `{"prompt":"Human: hi\n\nAssistant:","max_tokens_to_sample":200}`,
-			expect: FormatBedrock,
-		},
-		{
-			name: "bedrock native with modelId and messages",
-			body: `{
-				"modelId": "eu.amazon.nova-micro-v1:0",
-				"messages": [{"role":"user","content":[{"text":"hi"}]}]
-			}`,
-			expect: FormatBedrock,
+			expect: FormatOpenAI,
 		},
 		{
 			name:   "invalid json defaults to openai",

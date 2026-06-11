@@ -46,14 +46,19 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 			}
 			return internalError(c, "failed to resolve gateway")
 		}
+		route, err := resolver.ResolveProxyPath(c.Path())
+		if err != nil {
+			return notFound(c)
+		}
 		data, err := m.dataFinder.FindByGateway(c.UserContext(), gw.ID)
 		if err != nil {
 			return internalError(c, "failed to load gateway data")
 		}
-		rc, ok := data.MatchPath(c.Path())
+		rc, ok := data.MatchSlug(route.ConsumerSlug)
 		if !ok {
 			return notFound(c)
 		}
+		c.Locals(resolver.ProxyRouteLocalsKey, route)
 		authCtx, err := m.resolver.Resolve(c, gw, rc)
 		if err != nil {
 			if errors.Is(err, resolver.ErrUnauthenticated) && apiKeyAttachedElsewhere(c.Get(resolver.HeaderAPIKey), data, rc) {

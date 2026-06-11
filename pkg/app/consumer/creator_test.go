@@ -46,7 +46,6 @@ func TestCreator_Create_Success(t *testing.T) {
 		GatewayID: gwID,
 		Name:      "chat",
 		Type:      domain.TypeLLM,
-		Path:      "/v1/chat/completions",
 	})
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
@@ -89,7 +88,6 @@ func TestCreator_Create_WithRegistries_BindsAtomically(t *testing.T) {
 		GatewayID:     gwID,
 		Name:          "chat",
 		Type:          domain.TypeLLM,
-		Path:          "/v1/chat/completions",
 		RegistryIDs:   []ids.RegistryID{registryID},
 		ModelPolicies: domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}},
 	})
@@ -118,7 +116,6 @@ func TestCreator_Create_RejectsRegistryFromAnotherGateway(t *testing.T) {
 		GatewayID:   gwID,
 		Name:        "chat",
 		Type:        domain.TypeLLM,
-		Path:        "/v1/chat/completions",
 		RegistryIDs: []ids.RegistryID{registryID},
 	})
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
@@ -176,7 +173,6 @@ func TestCreator_Create_RejectsRegistryReferencesBeforeAssociation(t *testing.T)
 			tc.input.GatewayID = gwID
 			tc.input.Name = "chat"
 			tc.input.Type = domain.TypeLLM
-			tc.input.Path = "/v1/chat/completions"
 
 			_, err := creator.Create(context.Background(), tc.input)
 			if !errors.Is(err, tc.wantErr) {
@@ -194,10 +190,30 @@ func TestCreator_Create_RejectsInvalidDomain(t *testing.T) {
 		GatewayID: ids.New[ids.GatewayKind](),
 		Name:      "",
 		Type:      domain.TypeLLM,
-		Path:      "/v1/chat/completions",
 	})
 	if !errors.Is(err, domain.ErrInvalidName) {
 		t.Fatalf("err = %v, want ErrInvalidName", err)
+	}
+}
+
+func TestCreator_Create_RetriesOnSlugCollision(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(domain.ErrSlugAlreadyExists).Once()
+	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
+
+	creator := appconsumer.NewCreator(repo, registrymocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+
+	c, err := creator.Create(context.Background(), appconsumer.CreateInput{
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "chat",
+		Type:      domain.TypeLLM,
+	})
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if !domain.IsValidSlug(c.Slug) {
+		t.Fatalf("Slug = %q, want regenerated valid slug", c.Slug)
 	}
 }
 
@@ -212,7 +228,6 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 		GatewayID: ids.New[ids.GatewayKind](),
 		Name:      "dupe",
 		Type:      domain.TypeLLM,
-		Path:      "/v1/chat/completions",
 	})
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)

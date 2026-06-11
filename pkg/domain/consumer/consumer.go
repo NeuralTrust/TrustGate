@@ -48,7 +48,7 @@ type Consumer struct {
 	GatewayID     ids.GatewayID     `json:"gateway_id"`
 	Name          string            `json:"name"`
 	Type          Type              `json:"type"`
-	Path          string            `json:"path"`
+	Slug          string            `json:"slug"`
 	RoutingMode   RoutingMode       `json:"routing_mode"`
 	LBConfig      *LBConfig         `json:"lb_config,omitempty"`
 	Headers       map[string]string `json:"headers,omitempty"`
@@ -66,7 +66,6 @@ type CreateParams struct {
 	GatewayID     ids.GatewayID
 	Name          string
 	Type          Type
-	Path          string
 	RoutingMode   RoutingMode
 	LBConfig      *LBConfig
 	Headers       map[string]string
@@ -83,6 +82,10 @@ func New(params CreateParams) (*Consumer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("consumer: generate uuid: %w", err)
 	}
+	slug, err := NewSlug()
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
 	active := true
 	if params.Active != nil {
@@ -93,7 +96,7 @@ func New(params CreateParams) (*Consumer, error) {
 		GatewayID:     params.GatewayID,
 		Name:          params.Name,
 		Type:          params.Type,
-		Path:          params.Path,
+		Slug:          slug,
 		RoutingMode:   params.RoutingMode,
 		LBConfig:      params.LBConfig,
 		Headers:       params.Headers,
@@ -117,7 +120,7 @@ func Rehydrate(
 	gatewayID ids.GatewayID,
 	name string,
 	consumerType Type,
-	path string,
+	slug string,
 	routingMode RoutingMode,
 	lbConfig *LBConfig,
 	headers map[string]string,
@@ -134,7 +137,7 @@ func Rehydrate(
 		GatewayID:     gatewayID,
 		Name:          name,
 		Type:          consumerType,
-		Path:          path,
+		Slug:          slug,
 		RoutingMode:   routingMode,
 		LBConfig:      lbConfig,
 		Headers:       headers,
@@ -162,8 +165,8 @@ func (c *Consumer) Validate() error {
 	if !IsValidType(c.Type) {
 		return fmt.Errorf("%w: %q", ErrInvalidType, c.Type)
 	}
-	if strings.TrimSpace(c.Path) == "" {
-		return fmt.Errorf("%w: path is required", ErrInvalidPath)
+	if !IsValidSlug(c.Slug) {
+		return fmt.Errorf("%w: %q", ErrInvalidSlug, c.Slug)
 	}
 	if c.RoutingMode == "" {
 		c.RoutingMode = RoutingModeInline

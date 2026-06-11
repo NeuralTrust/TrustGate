@@ -56,7 +56,17 @@ func EnforceModel(body []byte, allowedModels []string, defaultModel string) ([]b
 	return body, model, nil
 }
 
-// ExtractModel returns the "model" or "modelId" field from a JSON body without modifying it.
+func ExtractModelField(body []byte) (model string, hasModelID bool, err error) {
+	var probe struct {
+		Model   string          `json:"model"`
+		ModelID json.RawMessage `json:"modelId"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return "", false, err
+	}
+	return probe.Model, probe.ModelID != nil, nil
+}
+
 func ExtractModel(body []byte) (string, error) {
 	var probe struct {
 		Model   string `json:"model"`

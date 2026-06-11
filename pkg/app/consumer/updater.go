@@ -17,7 +17,6 @@ type UpdateInput struct {
 	GatewayID     ids.GatewayID
 	Name          *string
 	Type          *domain.Type
-	Path          *string
 	RoutingMode   *domain.RoutingMode
 	LBConfig      *domain.LBConfig
 	Headers       *map[string]string
@@ -67,9 +66,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	}
 	if in.Type != nil {
 		existing.Type = *in.Type
-	}
-	if in.Path != nil {
-		existing.Path = *in.Path
 	}
 	previousMode := existing.RoutingMode
 	if in.RoutingMode != nil {

@@ -15,7 +15,7 @@ type ConsumerResponse struct {
 	GatewayID     ids.GatewayID         `json:"gateway_id"`
 	Name          string                `json:"name"`
 	Type          string                `json:"type"`
-	Path          string                `json:"path"`
+	Slug          string                `json:"slug"`
 	RoutingMode   string                `json:"routing_mode"`
 	LBConfig      *LBConfigResponse     `json:"lb_config,omitempty"`
 	Headers       map[string]string     `json:"headers,omitempty"`
@@ -71,9 +71,8 @@ type FallbackResponse struct {
 }
 
 type FallbackBudgetResponse struct {
-	MaxAttempts       int     `json:"max_attempts"`
-	MaxTotalLatencyMs int64   `json:"max_total_latency_ms,omitempty"`
-	MaxCostUSD        float64 `json:"max_cost_usd,omitempty"`
+	MaxAttempts       int   `json:"max_attempts"`
+	MaxTotalLatencyMs int64 `json:"max_total_latency_ms,omitempty"`
 }
 
 func FromConsumer(c *domain.Consumer) ConsumerResponse {
@@ -97,7 +96,7 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		GatewayID:     c.GatewayID,
 		Name:          c.Name,
 		Type:          string(c.Type),
-		Path:          c.Path,
+		Slug:          c.Slug,
 		RoutingMode:   string(c.RoutingMode),
 		LBConfig:      fromLBConfig(c.LBConfig),
 		Headers:       c.Headers,
@@ -190,7 +189,6 @@ func fromFallback(f *domain.Fallback) *FallbackResponse {
 		Budget: FallbackBudgetResponse{
 			MaxAttempts:       f.Budget.MaxAttempts,
 			MaxTotalLatencyMs: f.Budget.MaxTotalLatency.Milliseconds(),
-			MaxCostUSD:        f.Budget.MaxCostUSD,
 		},
 		Chain: chain,
 	}

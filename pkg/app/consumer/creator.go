@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -15,7 +16,6 @@ type CreateInput struct {
 	GatewayID     ids.GatewayID
 	Name          string
 	Type          domain.Type
-	Path          string
 	RoutingMode   domain.RoutingMode
 	LBConfig      *domain.LBConfig
 	Headers       map[string]string
@@ -56,12 +56,13 @@ func NewCreator(
 	}
 }
 
+const maxSlugCollisionRetries = 3
+
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer, error) {
 	cons, err := domain.New(domain.CreateParams{
 		GatewayID:     in.GatewayID,
 		Name:          in.Name,
 		Type:          in.Type,
-		Path:          in.Path,
 		RoutingMode:   in.RoutingMode,
 		LBConfig:      in.LBConfig,
 		Headers:       in.Headers,
@@ -79,12 +80,26 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer,
 	if err := c.ensureRegistriesInGateway(ctx, in.GatewayID, in.RegistryIDs); err != nil {
 		return nil, err
 	}
-	if err := c.repo.Save(ctx, cons); err != nil {
+	if err := c.saveWithSlugRetry(ctx, cons); err != nil {
 		return nil, err
 	}
 	c.memoryCache.Set(cons.ID.String(), cons)
 	publishGatewayDataInvalidation(ctx, c.publisher, c.logger, cons.GatewayID)
 	return cons, nil
+}
+
+func (c *creator) saveWithSlugRetry(ctx context.Context, cons *domain.Consumer) error {
+	for attempt := 0; ; attempt++ {
+		err := c.repo.Save(ctx, cons)
+		if !errors.Is(err, domain.ErrSlugAlreadyExists) || attempt == maxSlugCollisionRetries-1 {
+			return err
+		}
+		slug, slugErr := domain.NewSlug()
+		if slugErr != nil {
+			return slugErr
+		}
+		cons.Slug = slug
+	}
 }
 
 func (c *creator) ensureRegistriesInGateway(ctx context.Context, gatewayID ids.GatewayID, registryIDs []ids.RegistryID) error {

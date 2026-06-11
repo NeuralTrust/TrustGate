@@ -81,7 +81,7 @@ func TestCandidateSet_ResolveQualified(t *testing.T) {
 	s.Add(routing.Candidate{Registry: openai, Allowed: []string{"gpt-5"}})
 	s.Add(routing.Candidate{Registry: azure, Allowed: []string{"gpt-5"}})
 
-	out, err := s.ResolveIntent(routing.RoutingIntent{Provider: "openai", Model: "gpt-5"})
+	out, err := s.ResolveIntent(routing.Intent{Provider: "openai", Model: "gpt-5"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestCandidateSet_ResolveQualifiedDeniedModel(t *testing.T) {
 	s := routing.NewCandidateSet()
 	s.Add(routing.Candidate{Registry: openai, Allowed: []string{"gpt-5"}})
 
-	_, err := s.ResolveIntent(routing.RoutingIntent{Provider: "openai", Model: "gpt-4o"})
+	_, err := s.ResolveIntent(routing.Intent{Provider: "openai", Model: "gpt-4o"})
 	if !errors.Is(err, routing.ErrModelDenied) {
 		t.Fatalf("expected ErrModelDenied, got %v", err)
 	}
@@ -112,7 +112,7 @@ func TestCandidateSet_ResolveQualifiedUnknownProvider(t *testing.T) {
 	s := routing.NewCandidateSet()
 	s.Add(routing.Candidate{Registry: openai})
 
-	_, err := s.ResolveIntent(routing.RoutingIntent{Provider: "anthropic", Model: "claude-4"})
+	_, err := s.ResolveIntent(routing.Intent{Provider: "anthropic", Model: "claude-4"})
 	if !errors.Is(err, routing.ErrModelDenied) {
 		t.Fatalf("expected ErrModelDenied, got %v", err)
 	}
@@ -126,7 +126,7 @@ func TestCandidateSet_ResolveShortModelSingleProvider(t *testing.T) {
 	s.Add(routing.Candidate{Registry: a, Allowed: []string{"gpt-5"}})
 	s.Add(routing.Candidate{Registry: b, Allowed: []string{"gpt-5", "gpt-5-mini"}})
 
-	out, err := s.ResolveIntent(routing.RoutingIntent{Model: "gpt-5"})
+	out, err := s.ResolveIntent(routing.Intent{Model: "gpt-5"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestCandidateSet_ResolveShortModelAmbiguous(t *testing.T) {
 	s.Add(routing.Candidate{Registry: newTestRegistry(t, "openai"), Allowed: []string{"gpt-5"}})
 	s.Add(routing.Candidate{Registry: newTestRegistry(t, "azure"), Allowed: []string{"gpt-5"}})
 
-	_, err := s.ResolveIntent(routing.RoutingIntent{Model: "gpt-5"})
+	_, err := s.ResolveIntent(routing.Intent{Model: "gpt-5"})
 	if !errors.Is(err, routing.ErrAmbiguousModel) {
 		t.Fatalf("expected ErrAmbiguousModel, got %v", err)
 	}
@@ -155,7 +155,7 @@ func TestCandidateSet_ResolveShortModelDenied(t *testing.T) {
 	s := routing.NewCandidateSet()
 	s.Add(routing.Candidate{Registry: newTestRegistry(t, "openai"), Allowed: []string{"gpt-5"}})
 
-	_, err := s.ResolveIntent(routing.RoutingIntent{Model: "claude-4"})
+	_, err := s.ResolveIntent(routing.Intent{Model: "claude-4"})
 	if !errors.Is(err, routing.ErrModelDenied) {
 		t.Fatalf("expected ErrModelDenied, got %v", err)
 	}
@@ -166,7 +166,7 @@ func TestCandidateSet_ZeroIntentKeepsSet(t *testing.T) {
 	s := routing.NewCandidateSet()
 	s.Add(routing.Candidate{Registry: newTestRegistry(t, "openai")})
 
-	out, err := s.ResolveIntent(routing.RoutingIntent{})
+	out, err := s.ResolveIntent(routing.Intent{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

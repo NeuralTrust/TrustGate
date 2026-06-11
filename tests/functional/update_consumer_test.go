@@ -122,7 +122,7 @@ func TestUpdateConsumer_Partial(t *testing.T) {
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-upd-partial-gw")})
 	name := uniqueName("co-upd-partial")
 	coID := CreateConsumer(t, gwID, validConsumerPayload(name))
-	expectedPath := "/v1/" + name
+	expectedSlug := ConsumerSlug(t, coID)
 
 	renamed := uniqueName("co-upd-partial-to")
 	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID)
@@ -133,7 +133,7 @@ func TestUpdateConsumer_Partial(t *testing.T) {
 	status, body = sendRequest(t, http.MethodGet, url, nil, nil)
 	require.Equal(t, http.StatusOK, status)
 	assert.Equal(t, renamed, body["name"])
-	assert.Equal(t, expectedPath, body["path"], "path must be preserved on a partial update")
+	assert.Equal(t, expectedSlug, body["slug"], "slug must be preserved on a partial update")
 }
 
 func TestUpdateConsumer_Partial_EmptyTypePreservesExisting(t *testing.T) {

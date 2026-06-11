@@ -154,7 +154,6 @@ const (
 type FallbackBudget struct {
     MaxAttempts     int           `json:"max_attempts"`      // intentos totales (incl. primario), p.ej. 3
     MaxTotalLatency time.Duration `json:"max_total_latency"` // presupuesto wall-clock entre hops
-    MaxCostUSD      float64       `json:"max_cost_usd,omitempty"` // fase 2 (requiere usage→coste)
 }
 
 type Fallback struct {

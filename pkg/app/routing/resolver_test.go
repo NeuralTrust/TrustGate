@@ -76,7 +76,7 @@ func TestResolver_InlineQualifiedHonorsPolicies(t *testing.T) {
 	rc := inlineConsumer([]*registrydomain.Registry{openai, azure}, policies, nil)
 
 	cs, err := approuting.NewResolver().Resolve(approuting.ResolveInput{
-		Intent:   routingdomain.RoutingIntent{Provider: "openai", Model: "gpt-5"},
+		Intent:   routingdomain.Intent{Provider: "openai", Model: "gpt-5"},
 		Consumer: rc,
 	})
 	if err != nil {
@@ -87,7 +87,7 @@ func TestResolver_InlineQualifiedHonorsPolicies(t *testing.T) {
 	}
 
 	_, err = approuting.NewResolver().Resolve(approuting.ResolveInput{
-		Intent:   routingdomain.RoutingIntent{Provider: "azure", Model: "gpt-5"},
+		Intent:   routingdomain.Intent{Provider: "azure", Model: "gpt-5"},
 		Consumer: rc,
 	})
 	if !errors.Is(err, routingdomain.ErrModelDenied) {
@@ -116,7 +116,7 @@ func TestResolver_InlinePoolAlias(t *testing.T) {
 	rc := inlineConsumer([]*registrydomain.Registry{a, b, c}, policies, lb)
 
 	cs, err := approuting.NewResolver().Resolve(approuting.ResolveInput{
-		Intent:   routingdomain.RoutingIntent{PoolAlias: "fast-chat"},
+		Intent:   routingdomain.Intent{PoolAlias: "fast-chat"},
 		Consumer: rc,
 	})
 	if err != nil {
@@ -141,7 +141,7 @@ func TestResolver_InlineUnknownPoolAlias(t *testing.T) {
 	rc := inlineConsumer([]*registrydomain.Registry{reg}, nil, nil)
 
 	_, err := approuting.NewResolver().Resolve(approuting.ResolveInput{
-		Intent:   routingdomain.RoutingIntent{PoolAlias: "missing"},
+		Intent:   routingdomain.Intent{PoolAlias: "missing"},
 		Consumer: rc,
 	})
 	if !errors.Is(err, routingdomain.ErrUnknownPoolAlias) {
@@ -194,7 +194,7 @@ func TestResolver_RoleBasedDeniedOutsideRoles(t *testing.T) {
 	}
 
 	_, err := approuting.NewResolver().Resolve(approuting.ResolveInput{
-		Intent:     routingdomain.RoutingIntent{Provider: "openai", Model: "gpt-4o"},
+		Intent:     routingdomain.Intent{Provider: "openai", Model: "gpt-4o"},
 		Consumer:   roleBasedConsumer(),
 		Roles:      []*roledomain.Role{role},
 		Registries: lookupFor(openai),
@@ -207,7 +207,7 @@ func TestResolver_RoleBasedDeniedOutsideRoles(t *testing.T) {
 func TestResolver_RoleBasedRejectsPoolAlias(t *testing.T) {
 	t.Parallel()
 	_, err := approuting.NewResolver().Resolve(approuting.ResolveInput{
-		Intent:   routingdomain.RoutingIntent{PoolAlias: "fast"},
+		Intent:   routingdomain.Intent{PoolAlias: "fast"},
 		Consumer: roleBasedConsumer(),
 	})
 	if !errors.Is(err, routingdomain.ErrUnknownPoolAlias) {

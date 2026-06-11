@@ -21,7 +21,7 @@ func existingConsumer(gwID ids.GatewayID, beID ids.RegistryID) *domain.Consumer 
 	now := time.Now().UTC()
 	return domain.Rehydrate(
 		ids.New[ids.ConsumerKind](), gwID, "old", domain.TypeLLM,
-		"/v1/chat", domain.RoutingModeInline, nil,
+		"X84Yhsy8", domain.RoutingModeInline, nil,
 		nil, true,
 		[]ids.RegistryID{beID}, nil, nil,
 		nil,
@@ -53,7 +53,6 @@ func TestUpdater_Update_Success(t *testing.T) {
 		GatewayID: gwID,
 		Name:      ptr("new"),
 		Type:      ptr(domain.TypeMCP),
-		Path:      ptr("/v1/messages"),
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -73,7 +72,7 @@ func TestUpdater_Update_Partial_PreservesFieldsAndAssociations(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			return c.Name == "renamed" && c.Path == "/v1/chat" &&
+			return c.Name == "renamed" && c.Slug == "X84Yhsy8" &&
 				c.RoutingMode == domain.RoutingModeInline && c.Type == domain.TypeLLM &&
 				len(c.RegistryIDs) == 1 && c.RegistryIDs[0] == beID
 		})).
@@ -89,7 +88,7 @@ func TestUpdater_Update_Partial_PreservesFieldsAndAssociations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.Path != "/v1/chat" || got.RoutingMode != domain.RoutingModeInline {
+	if got.Slug != "X84Yhsy8" || got.RoutingMode != domain.RoutingModeInline {
 		t.Fatalf("fields not preserved: %+v", got)
 	}
 	if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != beID {
@@ -128,7 +127,6 @@ func TestUpdater_Update_RejectsModelPolicyForUnassociatedRegistry(t *testing.T) 
 		GatewayID: gwID,
 		Name:      ptr("n"),
 		Type:      ptr(domain.TypeLLM),
-		Path:      ptr("/v1/chat"),
 		ModelPolicies: ptr(domain.ModelPolicies{
 			ids.New[ids.RegistryKind](): {},
 		}),
@@ -155,7 +153,6 @@ func TestUpdater_Update_AllowsModelPolicyForAssociatedRegistry(t *testing.T) {
 		GatewayID: gwID,
 		Name:      ptr("n"),
 		Type:      ptr(domain.TypeLLM),
-		Path:      ptr("/v1/chat"),
 		ModelPolicies: ptr(domain.ModelPolicies{
 			beID: {Allowed: []string{"gpt-4o"}, Default: "gpt-4o"},
 		}),
@@ -271,7 +268,7 @@ func TestUpdater_Update_SwitchToInlineClearsRoles(t *testing.T) {
 	now := time.Now().UTC()
 	existing := domain.Rehydrate(
 		ids.New[ids.ConsumerKind](), gwID, "old", domain.TypeLLM,
-		"/v1/chat", domain.RoutingModeRoleBased, nil,
+		"X84Yhsy8", domain.RoutingModeRoleBased, nil,
 		nil, true,
 		nil, []ids.RoleID{ids.New[ids.RoleKind]()}, nil,
 		nil,

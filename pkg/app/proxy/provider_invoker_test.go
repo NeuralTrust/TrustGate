@@ -163,8 +163,8 @@ func TestProviderInvoke_BackendErrorPassthrough(t *testing.T) {
 	assert.Equal(t, []string{"application/json"}, resp.Headers["Content-Type"])
 }
 
-func TestProviderInvoke_SourceFormatHeaderTrustedVsAutoDetect(t *testing.T) {
-	t.Run("auto-detect from body", func(t *testing.T) {
+func TestProviderInvoke_SourceFormatFromPath(t *testing.T) {
+	t.Run("empty source format defaults to openai", func(t *testing.T) {
 		client := providermocks.NewClient(t)
 		client.EXPECT().
 			Completions(mock.Anything, mock.Anything, mock.Anything).
@@ -174,32 +174,38 @@ func TestProviderInvoke_SourceFormatHeaderTrustedVsAutoDetect(t *testing.T) {
 		locator.EXPECT().Get("openai").Return(client, nil).Once()
 
 		inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
-		req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(anthropicRequestBody)}
+		req := &infracontext.RequestContext{Context: context.Background(), Body: []byte(openaiRequestBody)}
 		_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
 
 		require.NoError(t, err)
-		assert.Equal(t, "anthropic", req.SourceFormat, "format auto-detected from body")
+		assert.Equal(t, "openai", req.SourceFormat)
 	})
 
-	t.Run("trusted X-Provider hint", func(t *testing.T) {
+	t.Run("stamped anthropic source adapts request and response cross-format", func(t *testing.T) {
 		client := providermocks.NewClient(t)
 		client.EXPECT().
-			Completions(mock.Anything, mock.Anything, mock.Anything).
+			Completions(mock.Anything, mock.Anything, mock.MatchedBy(func(body []byte) bool {
+				return adapter.DetectFormat(body) == adapter.FormatOpenAI
+			})).
 			Return([]byte(openaiResponseBody), nil).
 			Once()
 		locator := factorymocks.NewProviderLocator(t)
 		locator.EXPECT().Get("openai").Return(client, nil).Once()
 
 		inv := appproxy.NewProviderInvoker(locator, adapter.NewRegistry(), newTestLogger())
-		// Body looks like anthropic, but the trusted hint wins.
 		req := &infracontext.RequestContext{
 			Context:      context.Background(),
 			Body:         []byte(anthropicRequestBody),
-			SourceFormat: "openai",
+			SourceFormat: string(adapter.FormatAnthropic),
 		}
-		_, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
+		resp, err := inv.Invoke(context.Background(), apiKeyTarget("openai"), req)
 
 		require.NoError(t, err)
-		assert.Equal(t, "openai", req.SourceFormat, "trusted hint overrides auto-detection")
+		assert.Equal(t, "anthropic", req.SourceFormat, "stamped source format is preserved")
+		var anthropicResp struct {
+			Type string `json:"type"`
+		}
+		require.NoError(t, json.Unmarshal(resp.Body, &anthropicResp))
+		assert.Equal(t, "message", anthropicResp.Type, "response adapted back to anthropic")
 	})
 }

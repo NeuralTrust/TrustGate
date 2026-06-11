@@ -67,9 +67,8 @@
       "type": "string"
     },
     {
-      "key": "consumer_path",
-      "value": "/v1/chat/completions",
-      "type": "string"
+      "key": "consumer_slug",
+      "value": ""
     },
     {
       "key": "gateway_id",
@@ -150,6 +149,26 @@
       "key": "gcp_service_account",
       "value": "replace-with-gcp-service-account-json",
       "type": "string"
+    },
+    {
+      "key": "gateway_slug",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "role_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "oauth_client_id",
+      "value": "replace-with-oauth-client-id",
+      "type": "string"
+    },
+    {
+      "key": "oauth_client_secret",
+      "value": "replace-with-oauth-client-secret",
+      "type": "string"
     }
   ],
   "item": [
@@ -229,6 +248,7 @@
                 "exec": [
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('gateway_id', pm.response.json().id);",
+                  "  pm.environment.set('gateway_slug', pm.response.json().slug);",
                   "}"
                 ]
               }
@@ -244,7 +264,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"my-gateway-{{$guid}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"name\": \"my-gateway-{{$guid}}\",\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -255,7 +275,8 @@
                 "v1",
                 "gateways"
               ]
-            }
+            },
+            "description": "Optional `slug` (lowercase DNS label) identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header (GATEWAY_DISCOVERY_MODE=header, default) or `{slug}.<GATEWAY_BASE_DOMAIN>` host (subdomain mode). Omitted slugs are derived from the name."
           }
         },
         {
@@ -945,6 +966,7 @@
                 "exec": [
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('consumer_id', pm.response.json().id);",
+                  "  pm.environment.set('consumer_slug', pm.response.json().slug);",
                   "}"
                 ]
               }
@@ -960,7 +982,51 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a-{{$guid}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"model_policies\": {\n        \"allowed\": [\"gpt-4o\"],\n        \"default\": \"gpt-4o\"\n      }\n    }\n  ]\n}"
+              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o\"\n        ],\n        \"default\": \"gpt-4o\"\n      }\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"round-robin\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\"\n      }\n    ]\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers"
+              ]
+            },
+            "description": "`routing_mode` is `inline` (default) or `role_based`. Inline consumers own their registries, model policies, `lb_config` (with optional `pool_alias` addressable as `pool:<alias>` in the payload) and `fallback`. LB and fallback never apply to role_based consumers."
+          }
+        },
+        {
+          "name": "Create Consumer (Role-Based)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('consumer_id', pm.response.json().id);",
+                  "  pm.environment.set('consumer_slug', pm.response.json().slug);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Role-based consumers authorize through roles (attach with POST .../consumers/:id/roles/:role_id) and authenticate via IDP or OAuth2 client credentials. They cannot hold registries, lb_config or fallback.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"idp-team-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"role_based\",\n  \"active\": true\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
@@ -1042,7 +1108,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/team-a-{{$guid}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"model_policies\": {\n        \"allowed\": [\"gpt-4o\"],\n        \"default\": \"gpt-4o\"\n      }\n    }\n  ],\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\"http_5xx\"],\n    \"chain\": [\"{{registry_id}}\"],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000,\n      \"max_cost_usd\": 0.5\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\n        \"gpt-4o\"\n      ],\n      \"default\": \"gpt-4o\"\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"round-robin\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\"\n      }\n    ]\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
@@ -1056,7 +1122,8 @@
                 "consumers",
                 "{{consumer_id}}"
               ]
-            }
+            },
+            "description": "Partial update. Registries are managed via attach/detach endpoints; `model_policies` here updates policies for already-bound registries. Send `lb_config`/`fallback` with `enabled: false` to clear them."
           }
         },
         {
@@ -1215,6 +1282,232 @@
               ]
             }
           }
+        },
+        {
+          "name": "Attach Role",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Only valid for role_based consumers. Returns 409 for inline consumers.",
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/roles/{{role_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "roles",
+                "{{role_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Detach Role",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/roles/{{role_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "roles",
+                "{{role_id}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Roles",
+      "description": "Roles own model/MCP policies and map IDP claims to access. Create the role, attach registries, then update it with model_policies for those registries.",
+      "item": [
+        {
+          "name": "Create Role",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('role_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "`model_policies` cannot be set on create: bind registries first, then update the role. `idp_mapping` grants the role to IDP tokens whose claims match.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"analysts-{{$guid}}\",\n  \"idp_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"groups\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"ai-analysts\"\n        ]\n      },\n      {\n        \"path\": \"scope\",\n        \"op\": \"contains_all\",\n        \"values\": [\n          \"llm:read\"\n        ]\n      }\n    ]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Role",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles/{{role_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles",
+                "{{role_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Role",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "`model_policies` may only reference registries already attached to the role.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"analysts-{{$guid}}\",\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\n        \"gpt-4o\"\n      ],\n      \"default\": \"gpt-4o\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles/{{role_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles",
+                "{{role_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Attach Registry to Role",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles/{{role_id}}/registries/{{registry_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles",
+                "{{role_id}}",
+                "registries",
+                "{{registry_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Detach Registry from Role",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles/{{role_id}}/registries/{{registry_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles",
+                "{{role_id}}",
+                "registries",
+                "{{registry_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Role",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles/{{role_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles",
+                "{{role_id}}"
+              ]
+            }
+          }
         }
       ]
     },
@@ -1222,7 +1515,7 @@
       "name": "Auth Credentials",
       "item": [
         {
-          "name": "Create Auth",
+          "name": "Create Auth (API Key)",
           "event": [
             {
               "listen": "test",
@@ -1252,6 +1545,174 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"client-key-{{$guid}}\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Auth (OAuth2 JWT)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('auth_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Validates bearer JWTs issued by an external authorization server (JWKS or introspection).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"oauth2-{{$guid}}\",\n  \"type\": \"oauth2\",\n  \"enabled\": true,\n  \"config\": {\n    \"oauth2\": {\n      \"issuer\": \"https://auth.example.com\",\n      \"audiences\": [\n        \"agentgateway\"\n      ],\n      \"jwks_url\": \"https://auth.example.com/.well-known/jwks.json\",\n      \"required_scopes\": [\n        \"llm:invoke\"\n      ],\n      \"allowed_algorithms\": [\n        \"RS256\"\n      ]\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Auth (OAuth2 Client Credentials)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('auth_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "The gateway issues tokens via the client_credentials grant. Used by role_based consumers.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"oauth2-client-{{$guid}}\",\n  \"type\": \"oauth2_client\",\n  \"enabled\": true,\n  \"config\": {\n    \"oauth2_client\": {\n      \"token_url\": \"https://auth.example.com/oauth/token\",\n      \"client_id\": \"{{oauth_client_id}}\",\n      \"client_secret\": \"{{oauth_client_secret}}\",\n      \"scopes\": [\n        \"llm:invoke\"\n      ],\n      \"audience\": \"agentgateway\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Auth (IDP)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('auth_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Validates IDP-issued JWTs; claims are matched against role idp_mapping rules. Role-based consumers only.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"https://login.example.com/tenant\",\n      \"audiences\": [\n        \"agentgateway\"\n      ],\n      \"jwks_url\": \"https://login.example.com/tenant/discovery/v2.0/keys\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Auth (mTLS)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('auth_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Authenticates clients by TLS certificate against a CA plus CN/DNS/fingerprint allow-lists.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"mtls-{{$guid}}\",\n  \"type\": \"mtls\",\n  \"enabled\": true,\n  \"config\": {\n    \"mtls\": {\n      \"ca_cert\": \"-----BEGIN CERTIFICATE-----\\n...\\n-----END CERTIFICATE-----\",\n      \"allowed_common_names\": [\n        \"client.example.com\"\n      ]\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
@@ -1432,6 +1893,7 @@
                   "pm.test('gateway created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('gateway_id', pm.response.json().id);",
+                  "  pm.environment.set('gateway_slug', pm.response.json().slug);",
                   "}"
                 ]
               }
@@ -1447,7 +1909,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"e2e-gateway-{{$guid}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+              "raw": "{\n  \"name\": \"e2e-gateway-{{$guid}}\",\n  \"slug\": \"team-a-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways",
@@ -1458,7 +1920,8 @@
                 "v1",
                 "gateways"
               ]
-            }
+            },
+            "description": "Optional `slug` (lowercase DNS label) identifies the gateway on the proxy plane: `X-AG-Gateway-Slug` header (GATEWAY_DISCOVERY_MODE=header, default) or `{slug}.<GATEWAY_BASE_DOMAIN>` host (subdomain mode). Omitted slugs are derived from the name."
           }
         },
         {
@@ -1806,6 +2269,7 @@
                   "pm.test('consumer created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('consumer_id', pm.response.json().id);",
+                  "  pm.environment.set('consumer_slug', pm.response.json().slug);",
                   "}"
                 ]
               }
@@ -1821,7 +2285,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"path\": \"/v1/chat/completions-{{$guid}}\",\n  \"algorithm\": \"round-robin\",\n  \"active\": true,\n  \"headers\": {}\n}"
+              "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {}\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
@@ -1963,6 +2427,11 @@
               {
                 "key": "X-AG-API-Key",
                 "value": "{{consumer_api_key}}"
+              },
+              {
+                "key": "X-AG-Gateway-Slug",
+                "value": "{{gateway_slug}}",
+                "description": "Gateway discovery in header mode; in subdomain mode use Host {slug}.<GATEWAY_BASE_DOMAIN> instead."
               }
             ],
             "body": {
@@ -1970,11 +2439,12 @@
               "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from AgentGateway\" }\n  ]\n}"
             },
             "url": {
-              "raw": "{{proxy_url}}{{consumer_path}}",
+              "raw": "{{proxy_url}}/{{consumer_slug}}/v1/chat/completions",
               "host": [
                 "{{proxy_url}}"
               ],
               "path": [
+                "{{consumer_slug}}",
                 "v1",
                 "chat",
                 "completions"

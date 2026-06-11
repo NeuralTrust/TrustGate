@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
@@ -21,13 +22,16 @@ type routedBackend struct {
 	backend      *domain.Registry
 	excluded     map[ids.RegistryID]struct{}
 	fromFallback bool
+	pinned       bool
 }
 
-func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.RoutingIntent, *routingdomain.CandidateSet, error) {
-	intent, err := parseIntent(in.Request)
+func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.Intent, *routingdomain.CandidateSet, error) {
+	intent, ref, err := parseIntent(in.Request)
 	if err != nil {
+		f.logRejectedIntent(in.Consumer, ref, err)
 		return intent, nil, err
 	}
+	in.Request.RequestedModel = ref
 	if intent.IsZero() && !isRoleBased(in.Consumer) {
 		return intent, nil, nil
 	}
@@ -38,30 +42,69 @@ func (f *forwarder) resolveRouting(in ForwardInput) (routingdomain.RoutingIntent
 		Registries: registryLookup(in.Data),
 	})
 	if err != nil {
+		f.logRejectedIntent(in.Consumer, ref, err)
 		return intent, nil, err
 	}
 	if candidates.Len() == 0 {
+		f.logRejectedIntent(in.Consumer, ref, ErrNoBackendsInPool)
 		return intent, nil, ErrNoBackendsInPool
 	}
 	return intent, candidates, nil
+}
+
+// logRejectedIntent explains at debug level why a routing intent was discarded
+// before reaching any backend. It logs model/provider references only, never
+// credentials or claims.
+func (f *forwarder) logRejectedIntent(rc *appconsumer.RoutableConsumer, ref string, err error) {
+	if f.logger == nil {
+		return
+	}
+	consumerID := ""
+	if rc != nil && rc.Consumer != nil {
+		consumerID = rc.Consumer.ID.String()
+	}
+	f.logger.Debug("routing intent rejected",
+		slog.String("consumer_id", consumerID),
+		slog.String("intent", ref),
+		slog.String("reason", err.Error()),
+	)
 }
 
 func isRoleBased(rc *appconsumer.RoutableConsumer) bool {
 	return rc.Consumer.RoutingMode == consumerdomain.RoutingModeRoleBased
 }
 
-func parseIntent(req *infracontext.RequestContext) (routingdomain.RoutingIntent, error) {
-	if req == nil || len(req.Body) == 0 {
-		return routingdomain.RoutingIntent{}, nil
+func parseIntent(req *infracontext.RequestContext) (routingdomain.Intent, string, error) {
+	if req == nil {
+		return routingdomain.Intent{}, "", nil
 	}
-	ref, err := adapter.ExtractModel(req.Body)
+	ref, err := modelRefFromRequest(req)
 	if err != nil {
-		return routingdomain.RoutingIntent{}, nil
+		return routingdomain.Intent{}, "", err
 	}
-	return routingdomain.ParseModelRef(ref)
+	intent, err := routingdomain.ParseModelRef(ref)
+	return intent, strings.TrimSpace(ref), err
 }
 
-func applyIntentToBody(req *infracontext.RequestContext, intent routingdomain.RoutingIntent) {
+func modelRefFromRequest(req *infracontext.RequestContext) (string, error) {
+	if adapter.Format(req.SourceFormat) == adapter.FormatGemini {
+		return adapter.GeminiModelFromPath(req.Path), nil
+	}
+	if len(req.Body) == 0 {
+		return "", nil
+	}
+	ref, hasModelID, err := adapter.ExtractModelField(req.Body)
+	if err != nil {
+		return "", nil
+	}
+	if hasModelID {
+		return "", fmt.Errorf(
+			"%w: modelId is not a supported request field, use the model field", routingdomain.ErrInvalidModelRef)
+	}
+	return ref, nil
+}
+
+func applyIntentToBody(req *infracontext.RequestContext, intent routingdomain.Intent) {
 	if req == nil || intent.IsZero() {
 		return
 	}
@@ -70,6 +113,12 @@ func applyIntentToBody(req *infracontext.RequestContext, intent routingdomain.Ro
 		return
 	}
 	if intent.IsQualified() {
+		req.Body = adapter.OverrideModel(req.Body, intent.Model)
+		return
+	}
+	// Gemini clients send the model in the path, not the body; stamp it so
+	// adapters and the upstream client can resolve it.
+	if intent.IsShortModel() && adapter.Format(req.SourceFormat) == adapter.FormatGemini {
 		req.Body = adapter.OverrideModel(req.Body, intent.Model)
 	}
 }
@@ -104,13 +153,20 @@ func registryLookup(data *appconsumer.Data) approuting.RegistryLookup {
 func (f *forwarder) routeBackend(
 	rc *appconsumer.RoutableConsumer,
 	req *infracontext.RequestContext,
-	intent routingdomain.RoutingIntent,
+	intent routingdomain.Intent,
 	candidates *routingdomain.CandidateSet,
 ) (routedBackend, error) {
 	if isRoleBased(rc) {
 		return routedBackend{
 			backend:  candidates.Candidates()[0].Registry,
 			excluded: make(map[ids.RegistryID]struct{}),
+		}, nil
+	}
+	if intent.IsQualified() {
+		return routedBackend{
+			backend:  candidates.Candidates()[0].Registry,
+			excluded: make(map[ids.RegistryID]struct{}),
+			pinned:   true,
 		}, nil
 	}
 	if len(rc.Registries) == 0 {
@@ -133,7 +189,7 @@ func (f *forwarder) routeBackend(
 
 func (f *forwarder) routeLoadBalancer(
 	rc *appconsumer.RoutableConsumer,
-	intent routingdomain.RoutingIntent,
+	intent routingdomain.Intent,
 	candidates *routingdomain.CandidateSet,
 ) (*loadbalancer.LoadBalancer, error) {
 	if intent.IsPool() {

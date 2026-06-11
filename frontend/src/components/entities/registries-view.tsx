@@ -20,9 +20,20 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-import { Field, Input, Label } from "@/components/ui/field";
-import { SwitchRow, Grid2 } from "@/components/ui/form-bits";
-import type { Registry, Provider, TargetAuth, AuthKind } from "@/lib/types";
+import { Field, Input, Label, Select } from "@/components/ui/field";
+import { SwitchRow } from "@/components/ui/form-bits";
+import {
+  authOptionKey,
+  buildTargetAuth,
+  emptyFieldValues,
+  fieldValuesFromAuth,
+  findAuthOption,
+  inferAuthOption,
+  missingRequiredFields,
+  providerAuthOptions,
+  type AuthFieldValues,
+} from "@/lib/auth-catalog";
+import type { CatalogAuthField, Registry, Provider } from "@/lib/types";
 
 export function RegistriesView() {
   const { data: registries, isLoading } = useList<Registry>("registries");
@@ -100,7 +111,11 @@ export function RegistriesView() {
           open={form.open}
           onOpenChange={handleOpenChange}
           registry={editing}
-          initialProvider={connect?.code}
+          providerEntry={
+            connect ??
+            providers?.find((provider) => provider.code === editing?.provider) ??
+            null
+          }
           initialName={connect?.display_name}
           onDelete={
             editing
@@ -212,119 +227,38 @@ function DeleteRegistryDialog({
   );
 }
 
-// Most providers authenticate with a simple API key; the cloud providers need
-// their native credential scheme. This drives the default so the common case
-// shows nothing but an API key field.
-function defaultAuthType(provider: string): AuthKind {
-  switch (provider) {
-    case "azure":
-      return "azure";
-    case "bedrock":
-      return "aws";
-    case "vertex":
-      return "gcp_service_account";
-    default:
-      return "api_key";
+function CatalogAuthFieldInput({
+  field,
+  value,
+  onChange,
+}: {
+  field: CatalogAuthField;
+  value: string | boolean | undefined;
+  onChange: (value: string | boolean) => void;
+}) {
+  if (field.type === "boolean") {
+    return (
+      <SwitchRow
+        label={field.label}
+        checked={Boolean(value)}
+        onCheckedChange={onChange}
+      />
+    );
   }
-}
 
-interface AuthState {
-  type: AuthKind;
-  apiKey: string;
-  headerName: string;
-  headerValue: string;
-  azureEndpoint: string;
-  azureVersion: string;
-  azureClientId: string;
-  azureClientSecret: string;
-  azureTenantId: string;
-  azureManagedIdentity: boolean;
-  awsAccessKeyId: string;
-  awsSecretAccessKey: string;
-  awsRegion: string;
-  awsRole: string;
-  awsUseRole: boolean;
-  oauthTokenUrl: string;
-  oauthGrantType: string;
-  oauthClientId: string;
-  oauthClientSecret: string;
-  oauthScopes: string;
-  gcpServiceAccount: string;
-}
+  const inputType = field.secret ? "password" : "text";
+  const isMultiline = field.key === "gcp_service_account";
 
-function emptyAuth(type: AuthKind = "api_key"): AuthState {
-  return {
-    type,
-    apiKey: "",
-    headerName: "",
-    headerValue: "",
-    azureEndpoint: "",
-    azureVersion: "",
-    azureClientId: "",
-    azureClientSecret: "",
-    azureTenantId: "",
-    azureManagedIdentity: false,
-    awsAccessKeyId: "",
-    awsSecretAccessKey: "",
-    awsRegion: "",
-    awsRole: "",
-    awsUseRole: false,
-    oauthTokenUrl: "",
-    oauthGrantType: "client_credentials",
-    oauthClientId: "",
-    oauthClientSecret: "",
-    oauthScopes: "",
-    gcpServiceAccount: "",
-  };
-}
-
-function buildAuth(a: AuthState): TargetAuth {
-  switch (a.type) {
-    case "api_key":
-      return {
-        type: "api_key",
-        api_key: {
-          ...(a.apiKey ? { api_key: a.apiKey } : {}),
-          ...(a.headerName ? { header_name: a.headerName, header_value: a.headerValue } : {}),
-        },
-      };
-    case "azure":
-      return {
-        type: "azure",
-        azure: {
-          use_managed_identity: a.azureManagedIdentity,
-          endpoint: a.azureEndpoint,
-          version: a.azureVersion,
-          client_id: a.azureClientId,
-          client_secret: a.azureClientSecret,
-          tenant_id: a.azureTenantId,
-        },
-      };
-    case "aws":
-      return {
-        type: "aws",
-        aws: {
-          access_key_id: a.awsAccessKeyId,
-          secret_access_key: a.awsSecretAccessKey,
-          region: a.awsRegion,
-          role: a.awsRole,
-          use_role: a.awsUseRole,
-        },
-      };
-    case "oauth2":
-      return {
-        type: "oauth2",
-        oauth: {
-          token_url: a.oauthTokenUrl,
-          grant_type: a.oauthGrantType,
-          client_id: a.oauthClientId,
-          client_secret: a.oauthClientSecret,
-          scopes: a.oauthScopes ? a.oauthScopes.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
-        },
-      };
-    case "gcp_service_account":
-      return { type: "gcp_service_account", gcp_service_account: a.gcpServiceAccount };
-  }
+  return (
+    <Field label={field.label} hint={field.required ? "required" : undefined}>
+      <Input
+        type={inputType}
+        value={typeof value === "string" ? value : ""}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={field.description ?? (isMultiline ? '{"type":"service_account",...}' : undefined)}
+      />
+    </Field>
+  );
 }
 
 interface HeaderRow {
@@ -353,14 +287,14 @@ function RegistryFormDialog({
   open,
   onOpenChange,
   registry,
-  initialProvider,
+  providerEntry,
   initialName,
   onDelete,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   registry: Registry | null;
-  initialProvider?: string;
+  providerEntry: Provider | null;
   initialName?: string;
   onDelete?: () => void;
 }) {
@@ -369,20 +303,37 @@ function RegistryFormDialog({
   const { toast } = useToast();
   const isEdit = registry !== null;
 
-  // Provider is chosen by clicking a catalog row, and the connection name just
-  // mirrors the provider — neither needs a form field.
-  const provider = registry?.provider ?? initialProvider ?? "openai";
+  const provider = registry?.provider ?? providerEntry?.code ?? "openai";
   const name = registry?.name ?? initialName ?? provider;
+  const authOptions = providerAuthOptions(provider, providerEntry?.auth_types);
+  const defaultOption = authOptions[0]!;
+  const initialOption = registry?.auth
+    ? inferAuthOption(registry.auth, authOptions)
+    : defaultOption;
 
-  const [auth, setAuth] = useState<AuthState>(
-    emptyAuth((registry?.auth?.type as AuthKind) ?? defaultAuthType(provider)),
+  const [selectedAuthKey, setSelectedAuthKey] = useState(() => authOptionKey(initialOption));
+  const [fieldValues, setFieldValues] = useState<AuthFieldValues>(() =>
+    registry?.auth
+      ? fieldValuesFromAuth(registry.auth, initialOption)
+      : emptyFieldValues(initialOption),
   );
   const [baseUrl, setBaseUrl] = useState(() => readBaseUrl(registry?.provider_options));
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() => readHeaderRows(registry?.provider_options));
   const [submitting, setSubmitting] = useState(false);
 
-  function set<K extends keyof AuthState>(key: K, value: AuthState[K]) {
-    setAuth((prev) => ({ ...prev, [key]: value }));
+  const selectedOption = findAuthOption(authOptions, selectedAuthKey) ?? defaultOption;
+
+  function setFieldValue(key: string, value: string | boolean) {
+    setFieldValues((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function selectAuthOption(key: string) {
+    const option = findAuthOption(authOptions, key);
+    if (!option) {
+      return;
+    }
+    setSelectedAuthKey(key);
+    setFieldValues(emptyFieldValues(option));
   }
 
   function updateHeaderRow(index: number, field: keyof HeaderRow, value: string) {
@@ -398,11 +349,21 @@ function RegistryFormDialog({
   }
 
   async function submit() {
+    const missing = missingRequiredFields(selectedOption, fieldValues, isEdit);
+    if (missing.length > 0) {
+      toast({
+        variant: "error",
+        title: "Missing required fields",
+        description: missing.map((field) => field.label).join(", "),
+      });
+      return;
+    }
+
     const body: Record<string, unknown> = {
       name,
       provider,
       weight: 1,
-      auth: buildAuth(auth),
+      auth: buildTargetAuth(selectedOption, fieldValues),
     };
     if (provider === PROVIDER_OPTIONS_PROVIDER) {
       if (!baseUrl.trim()) {
@@ -505,97 +466,30 @@ function RegistryFormDialog({
             </>
           )}
 
-          {auth.type === "api_key" && (
-            <Field label="API key">
-              <Input
-                type="password"
-                value={auth.apiKey}
-                onChange={(e) => set("apiKey", e.target.value)}
-                placeholder="sk-..."
-              />
+          {authOptions.length > 1 && (
+            <Field label="Credential mode">
+              <Select value={selectedAuthKey} onChange={(event) => selectAuthOption(event.target.value)}>
+                {authOptions.map((option) => (
+                  <option key={authOptionKey(option)} value={authOptionKey(option)}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
             </Field>
           )}
 
-          {auth.type === "azure" && (
-            <>
-              <SwitchRow
-                label="Use managed identity"
-                checked={auth.azureManagedIdentity}
-                onCheckedChange={(v) => set("azureManagedIdentity", v)}
-              />
-              <Grid2>
-                <Field label="Endpoint">
-                  <Input value={auth.azureEndpoint} onChange={(e) => set("azureEndpoint", e.target.value)} />
-                </Field>
-                <Field label="API version">
-                  <Input value={auth.azureVersion} onChange={(e) => set("azureVersion", e.target.value)} />
-                </Field>
-              </Grid2>
-              <Grid2>
-                <Field label="Client ID">
-                  <Input value={auth.azureClientId} onChange={(e) => set("azureClientId", e.target.value)} />
-                </Field>
-                <Field label="Client secret">
-                  <Input type="password" value={auth.azureClientSecret} onChange={(e) => set("azureClientSecret", e.target.value)} />
-                </Field>
-              </Grid2>
-              <Field label="Tenant ID">
-                <Input value={auth.azureTenantId} onChange={(e) => set("azureTenantId", e.target.value)} />
-              </Field>
-            </>
+          {selectedOption.description && (
+            <p className="text-[13px] text-muted">{selectedOption.description}</p>
           )}
 
-          {auth.type === "aws" && (
-            <>
-              <SwitchRow label="Assume role" checked={auth.awsUseRole} onCheckedChange={(v) => set("awsUseRole", v)} />
-              <Grid2>
-                <Field label="Access key ID">
-                  <Input value={auth.awsAccessKeyId} onChange={(e) => set("awsAccessKeyId", e.target.value)} />
-                </Field>
-                <Field label="Secret access key">
-                  <Input type="password" value={auth.awsSecretAccessKey} onChange={(e) => set("awsSecretAccessKey", e.target.value)} />
-                </Field>
-              </Grid2>
-              <Grid2>
-                <Field label="Region">
-                  <Input value={auth.awsRegion} onChange={(e) => set("awsRegion", e.target.value)} placeholder="us-east-1" />
-                </Field>
-                <Field label="Role ARN" hint="optional">
-                  <Input value={auth.awsRole} onChange={(e) => set("awsRole", e.target.value)} />
-                </Field>
-              </Grid2>
-            </>
-          )}
-
-          {auth.type === "oauth2" && (
-            <>
-              <Grid2>
-                <Field label="Token URL">
-                  <Input value={auth.oauthTokenUrl} onChange={(e) => set("oauthTokenUrl", e.target.value)} />
-                </Field>
-                <Field label="Grant type">
-                  <Input value={auth.oauthGrantType} onChange={(e) => set("oauthGrantType", e.target.value)} />
-                </Field>
-              </Grid2>
-              <Grid2>
-                <Field label="Client ID">
-                  <Input value={auth.oauthClientId} onChange={(e) => set("oauthClientId", e.target.value)} />
-                </Field>
-                <Field label="Client secret">
-                  <Input type="password" value={auth.oauthClientSecret} onChange={(e) => set("oauthClientSecret", e.target.value)} />
-                </Field>
-              </Grid2>
-              <Field label="Scopes" hint="comma-separated">
-                <Input value={auth.oauthScopes} onChange={(e) => set("oauthScopes", e.target.value)} placeholder="read, write" />
-              </Field>
-            </>
-          )}
-
-          {auth.type === "gcp_service_account" && (
-            <Field label="Service account JSON">
-              <Input value={auth.gcpServiceAccount} onChange={(e) => set("gcpServiceAccount", e.target.value)} placeholder='{"type":"service_account",...}' />
-            </Field>
-          )}
+          {selectedOption.fields.map((field) => (
+            <CatalogAuthFieldInput
+              key={field.key}
+              field={field}
+              value={fieldValues[field.key]}
+              onChange={(value) => setFieldValue(field.key, value)}
+            />
+          ))}
         </DialogBody>
         <DialogFooter>
           {isEdit && onDelete && (
