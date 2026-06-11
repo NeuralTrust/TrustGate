@@ -19,6 +19,7 @@ type InvalidateGatewayDataEventSubscriber struct {
 	logger            *slog.Logger
 	cache             cache.Client
 	gatewayCache      *cache.TTLMap
+	consumerCache     *cache.TTLMap
 	consumerDataCache *cache.TTLMap
 	loadBalancerCache *cache.TTLMap
 	roleCache         *cache.TTLMap
@@ -32,6 +33,7 @@ func NewInvalidateGatewayDataEventSubscriber(
 		logger:            logger,
 		cache:             c,
 		gatewayCache:      c.GetTTLMap(cache.GatewayTTLName),
+		consumerCache:     c.GetTTLMap(cache.ConsumerTTLName),
 		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
 		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
 		roleCache:         c.GetTTLMap(cache.RoleTTLName),
@@ -43,6 +45,13 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 
 	if s.gatewayCache != nil {
 		deleteGatewayAliases(s.gatewayCache, evt.GatewayID)
+	}
+	if s.consumerCache != nil {
+		// Deleting an auth cascades consumer_auth rows in the database, so
+		// cached consumer entities may hold stale auth bindings. Entries are
+		// keyed by bare consumer ID and the affected set is unknown here;
+		// gateway-data mutations are rare admin operations, so flush the map.
+		s.consumerCache.Clear()
 	}
 	if s.consumerDataCache != nil {
 		s.consumerDataCache.Delete(evt.GatewayID)
