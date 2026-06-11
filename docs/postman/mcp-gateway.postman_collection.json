@@ -1,33 +1,96 @@
 {
   "info": {
     "name": "TrustGate MCP Gateway",
-    "description": "One folder per flow, every folder SELF-CONTAINED: it creates its own gateway, auths, registries and consumers, exercises the flow, and tears everything down at the end. Run any single folder top to bottom - no cross-folder prerequisites.\n\nFolders:\n1. Flow A - Simple proxy: one upstream (DeepWiki) behind a virtual MCP, API-key auth, JSON-RPC surface, toolkit curation.\n2. Flow B - Composition hub: several upstream MCP servers federated behind one virtual path.\n3. Flow C - Inbound OAuth with Microsoft Entra ID (JWT validation, M2M tokens, anti-downgrade).\n4. Flow D - OAuth 2.1 discovery surface: every step an MCP client (Cursor) performs automatically.\n5. Flow E - Downstream credentials: registry auth modes (static, exchange/STS, forwarded manual/auto).\n6. Flow F - Linear end-to-end: forwarded + auto registration (DCR), consent flow, Cursor walkthrough.\n7. Diagnostics - admin introspection, catalog, health (standalone utilities).\n\nFolders share collection variable slots (gateway_id, registry_id, consumer_id, ...): run ONE folder at a time, top to bottom, finishing with its Cleanup. Jumping between half-run folders overwrites the ids.\n\nIMPORTANT (Entra folders C, D, F): the admin API rejects (409) a second ENABLED oauth2 auth covering the same (issuer, audience) pair. Run a folder's Cleanup before starting another Entra folder, or the 'Create oauth2 auth' step fails with 409.\n\nCollection variables to set first:\n- admin_url (default http://localhost:8080)\n- mcp_url (default http://localhost:8082)\n- admin_token (mint with: set -a; source .env; set +a; bash scripts/generate_jwt_token.sh)\n\nFor flows C, D and F also set entra_tenant_id / entra_client_id / entra_client_secret. Entra app prerequisites (skipping any causes a silent 'Authenticating...' loop in Cursor):\n1. Expose an API: Application ID URI api://{client_id} and a SCOPE named mcp.access (admins and users) - else AADSTS65005.\n2. API permissions: add the app's own delegated mcp.access permission, grant admin consent.\n3. Manifest: requestedAccessTokenVersion: 2 (tokens must carry the /v2.0 issuer).\n4. Authentication: Web redirect URI {{mcp_url}}/oauth/callback.\n\nMULTI-TENANT (enterprise): multiple gateways/consumers may share the same IdP. Resolution is path-first: the request path picks the consumer(s) and only their ATTACHED auths can authenticate the request. The AS facade is resource-scoped: when several issuers are enabled, clients must send the RFC 8707 'resource' parameter (the virtual MCP URL) on authorize and token requests so the gateway picks the right IdP; with a single issuer the resource is optional. Guardrails: the admin API rejects (409) a second ENABLED oauth2 auth covering the same (issuer, audience) pair - scope each tenant with a distinct audience. Optional host isolation: set 'domain' on a gateway (e.g. tenant-a.gw.example.com) and requests carrying that Host resolve against that gateway only.",
+    "description": "One folder per flow, every folder SELF-CONTAINED: it creates its own gateway, auths, registries and consumers, exercises the flow, and tears everything down at the end. Run any single folder top to bottom - no cross-folder prerequisites.\n\nFolders:\n1. Flow A - Simple proxy: one upstream (DeepWiki) behind a virtual MCP, API-key auth, JSON-RPC surface, toolkit curation.\n2. Flow B - Composition hub: several upstream MCP servers federated behind one virtual path.\n3. Flow C - Inbound OAuth with Microsoft Entra ID (JWT validation, M2M tokens, anti-downgrade).\n4. Flow D - OAuth 2.1 discovery surface: every step an MCP client (Cursor) performs automatically.\n5. Flow E - Downstream credentials: registry auth modes (static, exchange/STS, forwarded manual/auto).\n6. Flow F - Linear end-to-end: forwarded + auto registration (DCR), consent flow, Cursor walkthrough.\n7. Flow G - Full MCP surface: prompts, resources and resource templates federation, toolkit as per-surface allowlist (needs the local 'everything' reference server).\n8. Diagnostics - admin introspection, catalog, health (standalone utilities).\n\nFolders share collection variable slots (gateway_id, registry_id, consumer_id, ...): run ONE folder at a time, top to bottom, finishing with its Cleanup. Jumping between half-run folders overwrites the ids.\n\nIMPORTANT (Entra folders C, D, F): the admin API rejects (409) a second ENABLED oauth2 auth covering the same (issuer, audience) pair. Run a folder's Cleanup before starting another Entra folder, or the 'Create oauth2 auth' step fails with 409.\n\nCollection variables to set first:\n- admin_url (default http://localhost:8080)\n- mcp_url (default http://localhost:8082)\n- admin_token (mint with: set -a; source .env; set +a; bash scripts/generate_jwt_token.sh)\n\nFor flows C, D and F also set entra_tenant_id / entra_client_id / entra_client_secret. Entra app prerequisites (skipping any causes a silent 'Authenticating...' loop in Cursor):\n1. Expose an API: Application ID URI api://{client_id} and a SCOPE named mcp.access (admins and users) - else AADSTS65005.\n2. API permissions: add the app's own delegated mcp.access permission, grant admin consent.\n3. Manifest: requestedAccessTokenVersion: 2 (tokens must carry the /v2.0 issuer).\n4. Authentication: Web redirect URI {{mcp_url}}/oauth/callback.\n\nMULTI-TENANT (enterprise): multiple gateways/consumers may share the same IdP. Resolution is path-first: the request path picks the consumer(s) and only their ATTACHED auths can authenticate the request. The AS facade is resource-scoped: when several issuers are enabled, clients must send the RFC 8707 'resource' parameter (the virtual MCP URL) on authorize and token requests so the gateway picks the right IdP; with a single issuer the resource is optional. Guardrails: the admin API rejects (409) a second ENABLED oauth2 auth covering the same (issuer, audience) pair - scope each tenant with a distinct audience. Optional host isolation: set 'domain' on a gateway (e.g. tenant-a.gw.example.com) and requests carrying that Host resolve against that gateway only.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "admin_url", "value": "http://localhost:8080" },
-    { "key": "mcp_url", "value": "http://localhost:8082" },
-    { "key": "admin_token", "value": "" },
-    { "key": "gateway_id", "value": "" },
-    { "key": "auth_id", "value": "" },
-    { "key": "api_key", "value": "" },
-    { "key": "oauth2_auth_id", "value": "" },
-    { "key": "registry_id", "value": "" },
-    { "key": "registry_hf_id", "value": "" },
-    { "key": "consumer_id", "value": "" },
-    { "key": "mcp_session_id", "value": "" },
-    { "key": "entra_tenant_id", "value": "" },
-    { "key": "entra_client_id", "value": "" },
-    { "key": "entra_client_secret", "value": "" },
-    { "key": "entra_token", "value": "" },
-    { "key": "connect_ticket", "value": "" },
-    { "key": "upstream_mcp_url", "value": "https://mcp.example.com/mcp" },
-    { "key": "github_client_id", "value": "" },
-    { "key": "github_client_secret", "value": "" }
+    {
+      "key": "admin_url",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "mcp_url",
+      "value": "http://localhost:8082"
+    },
+    {
+      "key": "admin_token",
+      "value": ""
+    },
+    {
+      "key": "gateway_id",
+      "value": ""
+    },
+    {
+      "key": "auth_id",
+      "value": ""
+    },
+    {
+      "key": "api_key",
+      "value": ""
+    },
+    {
+      "key": "oauth2_auth_id",
+      "value": ""
+    },
+    {
+      "key": "registry_id",
+      "value": ""
+    },
+    {
+      "key": "registry_hf_id",
+      "value": ""
+    },
+    {
+      "key": "consumer_id",
+      "value": ""
+    },
+    {
+      "key": "mcp_session_id",
+      "value": ""
+    },
+    {
+      "key": "entra_tenant_id",
+      "value": ""
+    },
+    {
+      "key": "entra_client_id",
+      "value": ""
+    },
+    {
+      "key": "entra_client_secret",
+      "value": ""
+    },
+    {
+      "key": "entra_token",
+      "value": ""
+    },
+    {
+      "key": "connect_ticket",
+      "value": ""
+    },
+    {
+      "key": "upstream_mcp_url",
+      "value": "https://mcp.example.com/mcp"
+    },
+    {
+      "key": "github_client_id",
+      "value": ""
+    },
+    {
+      "key": "github_client_secret",
+      "value": ""
+    }
   ],
   "auth": {
     "type": "bearer",
-    "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }]
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{admin_token}}",
+        "type": "string"
+      }
+    ]
   },
   "item": [
     {
@@ -49,7 +112,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways",
             "body": {
               "mode": "raw",
@@ -75,7 +143,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths",
             "body": {
               "mode": "raw",
@@ -99,7 +172,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries",
             "body": {
               "mode": "raw",
@@ -122,7 +200,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
             "body": {
               "mode": "raw",
@@ -159,11 +242,19 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-simple",
             "body": {
@@ -175,11 +266,19 @@
         {
           "name": "notifications/initialized",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-simple",
             "body": {
@@ -191,11 +290,19 @@
         {
           "name": "ping",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-simple",
             "body": {
@@ -207,11 +314,19 @@
         {
           "name": "tools/list",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-simple",
             "body": {
@@ -223,11 +338,19 @@
         {
           "name": "tools/call read_wiki_structure",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-simple",
             "body": {
@@ -240,7 +363,12 @@
           "name": "Curate toolkit (select + rename)",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
             "body": {
               "mode": "raw",
@@ -252,11 +380,19 @@
         {
           "name": "tools/call deepwiki_ask (renamed via toolkit)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-simple",
             "body": {
@@ -269,7 +405,12 @@
           "name": "Clear toolkit (expose all tools)",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
             "body": {
               "mode": "raw",
@@ -278,35 +419,53 @@
           }
         },
         {
-          "name": "resources/list (empty in v1)",
+          "name": "resources/list (DeepWiki exposes none)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-simple",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 6,\n  \"method\": \"resources/list\"\n}"
-            }
+            },
+            "description": "Resources ARE federated now (see Flow G), but DeepWiki is a tools-only upstream, so the merged list is empty here."
           }
         },
         {
-          "name": "prompts/list (empty in v1)",
+          "name": "prompts/list (DeepWiki exposes none)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-simple",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"method\": \"prompts/list\"\n}"
-            }
+            },
+            "description": "Prompts ARE federated now (see Flow G), but DeepWiki is a tools-only upstream, so the merged list is empty here."
           }
         },
         {
@@ -359,7 +518,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways",
             "body": {
               "mode": "raw",
@@ -384,7 +548,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths",
             "body": {
               "mode": "raw",
@@ -407,7 +576,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries",
             "body": {
               "mode": "raw",
@@ -430,7 +604,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries",
             "body": {
               "mode": "raw",
@@ -454,7 +633,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
             "body": {
               "mode": "raw",
@@ -502,11 +686,19 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-hub",
             "body": {
@@ -519,11 +711,19 @@
         {
           "name": "tools/call ask_question (routed to DeepWiki)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-hub",
             "body": {
@@ -536,11 +736,19 @@
         {
           "name": "tools/call hub_repo_search (routed to Hugging Face)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-hub",
             "body": {
@@ -554,7 +762,12 @@
           "name": "Curate hub toolkit (cherry-pick + rename across servers)",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
             "body": {
               "mode": "raw",
@@ -566,11 +779,19 @@
         {
           "name": "tools/call hf_models (renamed via toolkit)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-hub",
             "body": {
@@ -636,7 +857,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways",
             "body": {
               "mode": "raw",
@@ -659,7 +885,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths",
             "body": {
               "mode": "raw",
@@ -685,7 +916,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths",
             "body": {
               "mode": "raw",
@@ -709,7 +945,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries",
             "body": {
               "mode": "raw",
@@ -732,7 +973,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
             "body": {
               "mode": "raw",
@@ -785,16 +1031,30 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "url": "https://login.microsoftonline.com/{{entra_tenant_id}}/oauth2/v2.0/token",
             "body": {
               "mode": "urlencoded",
               "urlencoded": [
-                { "key": "grant_type", "value": "client_credentials" },
-                { "key": "client_id", "value": "{{entra_client_id}}" },
-                { "key": "client_secret", "value": "{{entra_client_secret}}" },
-                { "key": "scope", "value": "api://{{entra_client_id}}/.default" }
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{entra_client_id}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{entra_client_secret}}"
+                },
+                {
+                  "key": "scope",
+                  "value": "api://{{entra_client_id}}/.default"
+                }
               ]
             },
             "description": "M2M token for Postman testing; the scope must be your own app's .default (a Graph scope produces a token TrustGate cannot validate). NOTE: client-credentials tokens carry app permissions in the roles claim (no scp). For required_scopes validation to pass, the Entra app must also define an APPLICATION permission (app role) named mcp.access and assign it to itself - otherwise this M2M token is rejected with 401 and only the browser user flow works."
@@ -805,10 +1065,21 @@
           "request": {
             "auth": {
               "type": "bearer",
-              "bearer": [{ "key": "token", "value": "{{entra_token}}", "type": "string" }]
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{entra_token}}",
+                  "type": "string"
+                }
+              ]
             },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{mcp_url}}/mcp-entra",
             "body": {
               "mode": "raw",
@@ -822,10 +1093,21 @@
           "request": {
             "auth": {
               "type": "bearer",
-              "bearer": [{ "key": "token", "value": "{{entra_token}}", "type": "string" }]
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{entra_token}}",
+                  "type": "string"
+                }
+              ]
             },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{mcp_url}}/mcp-entra",
             "body": {
               "mode": "raw",
@@ -850,12 +1132,23 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJodHRwczovL2V2aWwuZXhhbXBsZS5jb20ifQ.invalid" },
-              { "key": "X-AG-API-Key", "value": "{{api_key}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJodHRwczovL2V2aWwuZXhhbXBsZS5jb20ifQ.invalid"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
             ],
             "url": "{{mcp_url}}/mcp-entra",
             "body": {
@@ -922,7 +1215,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways",
             "body": {
               "mode": "raw",
@@ -945,7 +1243,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths",
             "body": {
               "mode": "raw",
@@ -969,7 +1272,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries",
             "body": {
               "mode": "raw",
@@ -992,7 +1300,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
             "body": {
               "mode": "raw",
@@ -1031,9 +1344,16 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{mcp_url}}/mcp-discovery",
             "body": {
               "mode": "raw",
@@ -1059,7 +1379,9 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{mcp_url}}/mcp-discovery",
             "description": "Streamable HTTP clients probe GET for the optional server-initiated SSE stream. The gateway does not offer one and must answer 405 per spec - a 401/404 here makes clients misread it as a credential problem and loop on re-authentication. Same for DELETE (session termination)."
@@ -1068,7 +1390,9 @@
         {
           "name": "Protected resource metadata (RFC 9728)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{mcp_url}}/.well-known/oauth-protected-resource",
             "description": "Lists the authorization servers (issuers of enabled oauth2 auths) that can issue tokens for this MCP plane."
@@ -1077,7 +1401,9 @@
         {
           "name": "Protected resource metadata, path-scoped",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{mcp_url}}/.well-known/oauth-protected-resource/mcp-discovery",
             "description": "Same document scoped to a specific virtual MCP path, per the MCP authorization spec: scopes_supported reflects only the auths attached to the consumer on this path."
@@ -1086,7 +1412,9 @@
         {
           "name": "Authorization server metadata (RFC 8414)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{mcp_url}}/.well-known/oauth-authorization-server",
             "description": "The gateway advertises itself as the authorization server (AS facade): authorize/token/register endpoints all point at the gateway, which brokers to the IdP. 404 until an oauth2 auth exists. With several distinct issuers enabled, clients must pass the RFC 8707 resource parameter on authorize/token so the facade picks the right IdP."
@@ -1095,9 +1423,16 @@
         {
           "name": "Dynamic client registration (RFC 7591)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{mcp_url}}/oauth/register",
             "body": {
               "mode": "raw",
@@ -1126,9 +1461,13 @@
               }
             }
           ],
-          "protocolProfileBehavior": { "followRedirects": false },
+          "protocolProfileBehavior": {
+            "followRedirects": false
+          },
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{mcp_url}}/oauth/authorize?response_type=code&client_id={{entra_client_id}}&redirect_uri=http%3A%2F%2Flocalhost%3A1234%2Fcallback&state=sanity&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&resource={{mcp_url}}%2Fmcp-discovery",
             "description": "Replays the first leg of the browser flow without a browser. The Location header must point at login.microsoftonline.com AND carry a scope parameter (api://{client_id}/mcp.access). The resource parameter (RFC 8707, the virtual MCP URL) selects which consumer's IdP brokers the flow - required when several issuers are enabled on the plane, optional with one. The same parameter is honored on POST /oauth/token (refresh grants). A redirect without scope means the facade picked a stale oauth2 auth entry without required_scopes - find and delete it."
@@ -1137,7 +1476,9 @@
         {
           "name": "STS JWKS (public)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{mcp_url}}/.well-known/jwks.json",
             "description": "Verification keys for TrustGate-minted downstream tokens (Flow E exchange modes). Configure upstreams to trust iss = STS_ISSUER with this JWKS."
@@ -1192,7 +1533,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways",
             "body": {
               "mode": "raw",
@@ -1215,7 +1561,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries",
             "body": {
               "mode": "raw",
@@ -1228,7 +1579,12 @@
           "name": "Set registry auth: static header",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}",
             "body": {
               "mode": "raw",
@@ -1241,7 +1597,12 @@
           "name": "Set registry auth: exchange/impersonation (STS)",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}",
             "body": {
               "mode": "raw",
@@ -1254,7 +1615,12 @@
           "name": "Set registry auth: forwarded + manual registration (GitHub)",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}",
             "body": {
               "mode": "raw",
@@ -1267,7 +1633,12 @@
           "name": "Set registry auth: forwarded + auto registration (DCR)",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}",
             "body": {
               "mode": "raw",
@@ -1311,7 +1682,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways",
             "body": {
               "mode": "raw",
@@ -1334,7 +1710,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths",
             "body": {
               "mode": "raw",
@@ -1358,7 +1739,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries",
             "body": {
               "mode": "raw",
@@ -1382,7 +1768,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
             "body": {
               "mode": "raw",
@@ -1408,7 +1799,12 @@
           "name": "Set toolkit (all Linear tools)",
           "request": {
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
             "body": {
               "mode": "raw",
@@ -1440,16 +1836,30 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "url": "https://login.microsoftonline.com/{{entra_tenant_id}}/oauth2/v2.0/token",
             "body": {
               "mode": "urlencoded",
               "urlencoded": [
-                { "key": "grant_type", "value": "client_credentials" },
-                { "key": "client_id", "value": "{{entra_client_id}}" },
-                { "key": "client_secret", "value": "{{entra_client_secret}}" },
-                { "key": "scope", "value": "api://{{entra_client_id}}/.default" }
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{entra_client_id}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{entra_client_secret}}"
+                },
+                {
+                  "key": "scope",
+                  "value": "api://{{entra_client_id}}/.default"
+                }
               ]
             },
             "description": "M2M token for Postman testing; the scope must be your own app's .default (a Graph scope produces a token TrustGate cannot validate). NOTE: client-credentials tokens carry app permissions in the roles claim (no scp). For required_scopes validation to pass, the Entra app must also define an APPLICATION permission (app role) named mcp.access and assign it to itself - otherwise this M2M token is rejected with 401 and only the browser user flow works."
@@ -1470,11 +1880,19 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{entra_token}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{entra_token}}"
+              }
             ],
             "url": "{{mcp_url}}/v1/mcp/linear",
             "body": {
@@ -1506,11 +1924,19 @@
             }
           ],
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{entra_token}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{entra_token}}"
+              }
             ],
             "url": "{{mcp_url}}/v1/mcp/linear",
             "body": {
@@ -1523,7 +1949,9 @@
         {
           "name": "Connect page (browser UI)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{mcp_url}}/v1/mcp/linear/connect?ticket={{connect_ticket}}",
             "description": "The ticket-authenticated consent page: one button per forwarded provider behind this virtual MCP, with linked/unlinked status. Normally opened in a browser via the connect_url from the -32003 error, or automatically right after the Entra leg (chained consent). Tickets expire after 15 minutes."
@@ -1532,11 +1960,19 @@
         {
           "name": "tools/call list_issues (after linking)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{entra_token}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{entra_token}}"
+              }
             ],
             "url": "{{mcp_url}}/v1/mcp/linear",
             "body": {
@@ -1549,7 +1985,9 @@
         {
           "name": "Disconnect Linear (revoke vaulted token)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "url": "{{mcp_url}}/oauth/disconnect/linear?ticket={{connect_ticket}}",
             "description": "Deletes the vaulted credential for (gateway, principal, linear). The next tools call returns the -32003 consent error again - also handy to re-trigger the chained consent page."
@@ -1586,7 +2024,529 @@
       ]
     },
     {
-      "name": "7. Diagnostics (standalone)",
+      "name": "7. Flow G - Full MCP surface (prompts, resources, toolkit governance)",
+      "description": "Self-contained. Demonstrates the full federated MCP surface - tools, prompts, resources, resource templates - and the toolkit as a per-surface allowlist.\n\nPREREQUISITE - start the reference 'everything' MCP server locally (it exposes tools, prompts AND resources):\n\n    npx -y @modelcontextprotocol/server-everything streamableHttp\n\nIt listens on http://localhost:3001/mcp. The registry below uses host.docker.internal:3001 so the dockerized gateway can reach it; change it to localhost:3001 if you run the gateway natively.\n\nFlow: full surface first (everything exposed - empty toolkit), then curate the toolkit and watch each surface shrink to the allowlist: one tool, one renamed prompt, one resource URI. Reads outside the allowlist fail with the spec error -32002.\n\nToolkit semantics: an EMPTY toolkit exposes every tool, prompt and resource. A NON-EMPTY toolkit is an allowlist per surface - a registry with only tool entries exposes NO prompts and NO resources. Resource selectors accept exact URIs, trailing-asterisk prefixes (repo://github/*) or *.\n\nVirtual MCP path: /mcp-surface.",
+      "item": [
+        {
+          "name": "Create gateway",
+          "request": {
+            "method": "POST",
+            "url": "{{admin_url}}/v1/gateways",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"flow-g-surface\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create api_key auth",
+          "request": {
+            "method": "POST",
+            "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"flow-g-key\",\n  \"type\": \"api_key\",\n  \"config\": {}\n}"
+            },
+            "description": "The api_key value is only returned once, on create; the test script stores it in {{api_key}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "pm.collectionVariables.set('auth_id', res.id);",
+                  "pm.collectionVariables.set('api_key', res.api_key);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create MCP registry (everything server, local)",
+          "request": {
+            "method": "POST",
+            "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"everything\",\n  \"type\": \"MCP\",\n  \"mcp_target\": {\n    \"url\": \"http://host.docker.internal:3001/mcp\",\n    \"transport\": \"streamable-http\"\n  }\n}"
+            },
+            "description": "The reference server @modelcontextprotocol/server-everything: tools (echo, add, ...), prompts (simple_prompt, complex_prompt) and 100 test resources (test://static/resource/{1..100}) plus a resource template."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create MCP consumer (/mcp-surface)",
+          "request": {
+            "method": "POST",
+            "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"flow-g-surface\",\n  \"type\": \"MCP\",\n  \"path\": \"/mcp-surface\",\n  \"fail_mode\": \"closed\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Attach auth to consumer",
+          "request": {
+            "method": "POST",
+            "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}"
+          }
+        },
+        {
+          "name": "Attach registry to consumer",
+          "request": {
+            "method": "POST",
+            "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}"
+          }
+        },
+        {
+          "name": "initialize",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"initialize\",\n  \"params\": {\n    \"protocolVersion\": \"2025-06-18\",\n    \"capabilities\": {},\n    \"clientInfo\": {\n      \"name\": \"postman\",\n      \"version\": \"1.0\"\n    }\n  }\n}"
+            },
+            "description": "The gateway negotiates the protocol version (echoes 2025-06-18) and advertises tools, resources AND prompts capabilities."
+          }
+        },
+        {
+          "name": "notifications/initialized",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"notifications/initialized\"\n}"
+            }
+          }
+        },
+        {
+          "name": "tools/list (full surface)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"tools/list\"\n}"
+            },
+            "description": "Empty toolkit: every upstream tool is exposed."
+          }
+        },
+        {
+          "name": "prompts/list (full surface)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"prompts/list\"\n}"
+            },
+            "description": "Empty toolkit: every upstream prompt is exposed. Name collisions across registries would be auto-prefixed {server}_{prompt}, like tools."
+          }
+        },
+        {
+          "name": "prompts/get simple_prompt",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"prompts/get\",\n  \"params\": {\n    \"name\": \"simple_prompt\"\n  }\n}"
+            },
+            "description": "Routed to the owning upstream and rendered there; the result passes through verbatim."
+          }
+        },
+        {
+          "name": "resources/list (full surface)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 5,\n  \"method\": \"resources/list\"\n}"
+            },
+            "description": "Resources are URI-addressed: merged across upstreams, no renaming."
+          }
+        },
+        {
+          "name": "resources/templates/list",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 6,\n  \"method\": \"resources/templates/list\"\n}"
+            }
+          }
+        },
+        {
+          "name": "resources/read test://static/resource/1",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"method\": \"resources/read\",\n  \"params\": {\n    \"uri\": \"test://static/resource/1\"\n  }\n}"
+            },
+            "description": "The gateway routes the URI to the upstream that lists it; template-addressed URIs fall back to trying each resource-capable upstream."
+          }
+        },
+        {
+          "name": "Curate toolkit (allowlist all three surfaces)",
+          "request": {
+            "method": "PUT",
+            "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"toolkit\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"tool\": \"echo\"\n    },\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"prompt\": \"simple_prompt\",\n      \"expose_as\": \"demo_prompt\"\n    },\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"resource\": \"test://static/resource/1\"\n    }\n  ]\n}"
+            },
+            "description": "One entry per surface: only the echo tool, only simple_prompt (renamed demo_prompt), only resource URI test://static/resource/1. Everything else disappears from the virtual MCP. Exactly one of tool|prompt|resource per entry; expose_as renames tools and prompts (not resources)."
+          }
+        },
+        {
+          "name": "tools/list (only echo)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 8,\n  \"method\": \"tools/list\"\n}"
+            },
+            "description": "The toolkit is now a per-surface allowlist: expect exactly one tool."
+          }
+        },
+        {
+          "name": "prompts/list (only demo_prompt)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 9,\n  \"method\": \"prompts/list\"\n}"
+            },
+            "description": "simple_prompt is exposed under its alias demo_prompt; complex_prompt is gone."
+          }
+        },
+        {
+          "name": "prompts/get demo_prompt (renamed)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 10,\n  \"method\": \"prompts/get\",\n  \"params\": {\n    \"name\": \"demo_prompt\"\n  }\n}"
+            },
+            "description": "The alias resolves back to the upstream prompt name. Calling the original name simple_prompt now fails."
+          }
+        },
+        {
+          "name": "resources/list (only resource/1)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 11,\n  \"method\": \"resources/list\"\n}"
+            },
+            "description": "Only URIs matching a resource entry survive. Use a prefix selector (test://static/resource/*) to allow a subtree."
+          }
+        },
+        {
+          "name": "resources/read denied (resource/2 -> -32002)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-AG-API-Key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": "{{mcp_url}}/mcp-surface",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 12,\n  \"method\": \"resources/read\",\n  \"params\": {\n    \"uri\": \"test://static/resource/2\"\n  }\n}"
+            },
+            "description": "The URI is outside the allowlist: expect JSON-RPC error -32002 (resource not found). Enforced at read time too, so template-expanded URIs cannot bypass the list filter."
+          }
+        },
+        {
+          "name": "Clear toolkit (expose everything again)",
+          "request": {
+            "method": "PUT",
+            "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"toolkit\": []\n}"
+            }
+          }
+        },
+        {
+          "name": "Cleanup: delete consumer",
+          "request": {
+            "method": "DELETE",
+            "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}"
+          }
+        },
+        {
+          "name": "Cleanup: delete registry",
+          "request": {
+            "method": "DELETE",
+            "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}"
+          }
+        },
+        {
+          "name": "Cleanup: delete api_key auth",
+          "request": {
+            "method": "DELETE",
+            "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths/{{auth_id}}"
+          }
+        },
+        {
+          "name": "Cleanup: delete gateway",
+          "request": {
+            "method": "DELETE",
+            "url": "{{admin_url}}/v1/gateways/{{gateway_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Diagnostics (standalone)",
       "description": "Utilities that need no setup of their own. The id-based requests (introspect/get) read whatever {{gateway_id}}/{{registry_id}}/{{consumer_id}} the last-run flow stored - run them mid-flow, before that flow's Cleanup.",
       "item": [
         {
@@ -1644,7 +2604,9 @@
         {
           "name": "MCP plane health (no auth)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "url": "{{mcp_url}}/healthz"
           }
