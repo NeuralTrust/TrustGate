@@ -31,6 +31,27 @@ func TestDeleteRegistry_Success(t *testing.T) {
 	assert.Equal(t, "not_found", body["error"])
 }
 
+func TestDeleteRegistry_CascadesConsumerAttachment(t *testing.T) {
+	defer Track(t, "DeleteRegistry")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-casc-gw")})
+	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("be-del-casc-be")))
+	coID := CreateConsumer(t, gwID, validConsumerPayload(uniqueName("be-del-casc-cons")))
+	AttachRegistry(t, gwID, coID, beID)
+
+	status, body := sendRequest(t, http.MethodDelete,
+		fmt.Sprintf("%s/v1/gateways/%s/registries/%s", AdminURL, gwID, beID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusNoContent, status, "an attached registry must be deletable, body=%v", body)
+
+	status, body = sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "the consumer must survive the registry deletion, body=%v", body)
+	assert.Empty(t, body["registry_ids"], "the consumer_registry relation must be removed in cascade")
+}
+
 func TestDeleteRegistry_NotFound(t *testing.T) {
 	defer Track(t, "DeleteRegistry")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("be-del-notfound-gw")})

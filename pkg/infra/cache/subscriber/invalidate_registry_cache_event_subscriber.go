@@ -17,6 +17,7 @@ var _ cache.EventSubscriber[event.InvalidateRegistryCacheEvent] = (*InvalidateRe
 type InvalidateRegistryCacheEventSubscriber struct {
 	logger            *slog.Logger
 	backendCache      *cache.TTLMap
+	consumerCache     *cache.TTLMap
 	consumerDataCache *cache.TTLMap
 	loadBalancerCache *cache.TTLMap
 }
@@ -28,6 +29,7 @@ func NewInvalidateRegistryCacheEventSubscriber(
 	return &InvalidateRegistryCacheEventSubscriber{
 		logger:            logger,
 		backendCache:      c.GetTTLMap(cache.RegistryTTLName),
+		consumerCache:     c.GetTTLMap(cache.ConsumerTTLName),
 		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
 		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
 	}
@@ -41,6 +43,13 @@ func (s *InvalidateRegistryCacheEventSubscriber) OnEvent(_ context.Context, evt 
 
 	if s.backendCache != nil {
 		s.backendCache.Delete(evt.RegistryID)
+	}
+	if s.consumerCache != nil {
+		// Deleting a registry cascades consumer_registry rows in the database,
+		// so cached consumer entities may hold stale registry bindings. Entries
+		// are keyed by bare consumer ID and the affected set is unknown here;
+		// registry mutations are rare admin operations, so flush the map.
+		s.consumerCache.Clear()
 	}
 	if s.consumerDataCache != nil {
 		s.consumerDataCache.Delete(evt.GatewayID)

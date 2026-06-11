@@ -79,16 +79,22 @@ func TestDeleteGateway_FailsWhenItHasConsumers(t *testing.T) {
 	assert.Equal(t, "has_dependents", body["error"])
 }
 
-func TestDeleteRegistry_FailsWhenReferencedByConsumer(t *testing.T) {
+func TestDeleteRegistry_CascadesInlineConsumerBinding(t *testing.T) {
 	defer Track(t, "DeleteConsumer")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-del-be-ref-gw")})
 	beID := CreateRegistry(t, gwID, validRegistryPayload(uniqueName("co-del-be-ref-be")))
-	_ = CreateConsumerWithRegistries(t, gwID, uniqueName("co-del-be-ref"), beID)
+	coID := CreateConsumerWithRegistries(t, gwID, uniqueName("co-del-be-ref"), beID)
 
 	status, body := sendRequest(t, http.MethodDelete,
 		fmt.Sprintf("%s/v1/gateways/%s/registries/%s", AdminURL, gwID, beID),
 		nil, nil,
 	)
-	require.Equal(t, http.StatusConflict, status, "body=%v", body)
-	assert.Equal(t, "has_dependents", body["error"])
+	require.Equal(t, http.StatusNoContent, status, "an attached registry must be deletable, body=%v", body)
+
+	status, body = sendRequest(t, http.MethodGet,
+		fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gwID, coID),
+		nil, nil,
+	)
+	require.Equal(t, http.StatusOK, status, "body=%v", body)
+	assert.Empty(t, body["registry_ids"], "the registry binding must be removed in cascade")
 }

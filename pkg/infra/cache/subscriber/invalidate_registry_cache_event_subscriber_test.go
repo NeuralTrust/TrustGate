@@ -18,10 +18,12 @@ func TestInvalidateRegistryCacheEventSubscriber_OnEvent_EvictsRegistryDataAndGat
 	otherRegistryID := "be-2"
 
 	backendMap := cache.NewTTLMap(cache.RegistryCacheTTL)
+	consumerMap := cache.NewTTLMap(cache.ConsumerCacheTTL)
 	consumerDataMap := cache.NewTTLMap(cache.ConsumerDataCacheTTL)
 	loadBalancerMap := cache.NewTTLMap(cache.LoadBalancerCacheTTL)
 	backendMap.Set(backendID, "backend")
 	backendMap.Set(otherRegistryID, "keep")
+	consumerMap.Set("consumer-1", "entity")
 	consumerDataMap.Set(gatewayID, "aggregate")
 	consumerDataMap.Set(otherGateway, "keep")
 	loadBalancerMap.Set(gatewayID+":consumer-1", "lb")
@@ -29,6 +31,7 @@ func TestInvalidateRegistryCacheEventSubscriber_OnEvent_EvictsRegistryDataAndGat
 
 	client := cachemocks.NewClient(t)
 	client.EXPECT().GetTTLMap(cache.RegistryTTLName).Return(backendMap).Once()
+	client.EXPECT().GetTTLMap(cache.ConsumerTTLName).Return(consumerMap).Once()
 	client.EXPECT().GetTTLMap(cache.ConsumerDataTTLName).Return(consumerDataMap).Once()
 	client.EXPECT().GetTTLMap(cache.LoadBalancerTTLName).Return(loadBalancerMap).Once()
 
@@ -40,6 +43,9 @@ func TestInvalidateRegistryCacheEventSubscriber_OnEvent_EvictsRegistryDataAndGat
 
 	if _, ok := backendMap.Get(backendID); ok {
 		t.Fatal("backend entry was not evicted")
+	}
+	if _, ok := consumerMap.Get("consumer-1"); ok {
+		t.Fatal("consumer entity cache was not flushed; it may hold stale registry bindings")
 	}
 	if _, ok := consumerDataMap.Get(gatewayID); ok {
 		t.Fatal("consumer-data entry for the gateway was not evicted")

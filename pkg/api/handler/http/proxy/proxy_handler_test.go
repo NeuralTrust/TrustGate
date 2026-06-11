@@ -527,8 +527,8 @@ func TestHandle_CredentialAcquisitionReturnsSanitized502(t *testing.T) {
 		t.Fatalf("status = %d, want 502", resp.StatusCode)
 	}
 	eb := decodeError(t, resp.Body)
-	if eb.Error != "backend_error" {
-		t.Fatalf("error = %q, want backend_error", eb.Error)
+	if eb.Error != "provider_credential_error" {
+		t.Fatalf("error = %q, want provider_credential_error", eb.Error)
 	}
 	if eb.Message != registrydomain.ErrCredentialAcquisition.Error() {
 		t.Fatalf("message = %q, want sanitized credential message", eb.Message)
