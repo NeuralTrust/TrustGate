@@ -2217,6 +2217,20 @@
         },
         {
           "name": "2f. Create Registry (Azure OAuth Service Principal)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
@@ -2242,7 +2256,10 @@
               ]
             }
           },
-          "description": "Default Azure auth mode: OAuth via service principal (auth.type=azure with tenant_id, client_id, client_secret). Optional provider payload; does not overwrite registry_id used by later E2E steps.",
+          "description": "Default Azure auth mode: OAuth via service principal (auth.type=azure with tenant_id, client_id, client_secret). Optional provider payload; does not overwrite registry_id used by later E2E steps."
+        },
+        {
+          "name": "2g. Create Registry (Azure API Key)",
           "event": [
             {
               "listen": "test",
@@ -2256,10 +2273,7 @@
                 ]
               }
             }
-          ]
-        },
-        {
-          "name": "2g. Create Registry (Azure API Key)",
+          ],
           "request": {
             "method": "POST",
             "header": [
@@ -2285,21 +2299,7 @@
               ]
             }
           },
-          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps.",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('registry created', () => pm.response.code === 201);",
-                  "if (pm.response.code === 201) {",
-                  "  pm.environment.set('registry_id', pm.response.json().id);",
-                  "}"
-                ]
-              }
-            }
-          ]
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps."
         },
         {
           "name": "2h. Create Registry (Mistral)",
