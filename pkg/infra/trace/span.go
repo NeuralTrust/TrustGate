@@ -25,6 +25,7 @@ type LLMAttrs struct {
 	TurnID       string
 	Attempt      int
 	Fallback     bool
+	Route        string
 	Outcome      string
 	Usage        *adapter.CanonicalUsage
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"strings"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
@@ -48,6 +49,7 @@ type ForwardResult struct {
 type forwardRequestDTO struct {
 	backend     *domain.Registry
 	candidates  *routingdomain.CandidateSet
+	routeSource string
 	request     *infracontext.RequestContext
 	response    *infracontext.ResponseContext
 	policies    []*policydomain.Policy
@@ -120,7 +122,7 @@ func (f *forwarder) Forward(ctx context.Context, in ForwardInput) (*ForwardResul
 	f.stampConsumerScope(in)
 	f.stampContinuation(ctx, in.Request)
 
-	route, err := f.routeBackend(in.Consumer, in.Request, candidates)
+	route, err := f.routeBackend(in.Consumer, in.Request, intent, candidates)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +189,7 @@ func (f *forwarder) invokeWithFailover(
 			resp, err := f.invokeOnce(ctx, current, dto.request, stream)
 			elapsed := time.Since(startedAt)
 			outcome := classifyOutcome(resp, err, triggers)
-			span := f.recordSpan(ctx, current, fromFallback, budget.attempts, outcome, resp, elapsed)
+			span := f.recordSpan(ctx, current, fromFallback, dto.routeSource, budget.attempts, outcome, resp, elapsed)
 			switch outcome {
 			case OutcomeSuccess:
 				reportSuccess(lb, current)
@@ -264,6 +266,9 @@ func (f *forwarder) nextCandidate(
 	req *infracontext.RequestContext,
 	excluded map[ids.RegistryID]struct{},
 ) (*domain.Registry, bool) {
+	if isRoleBased(rc) {
+		return nil, false
+	}
 	if lb != nil {
 		if bk, err := lb.NextBackend(req, excluded); err == nil && bk != nil {
 			if _, seen := excluded[bk.ID]; !seen {
@@ -293,6 +298,7 @@ func (f *forwarder) recordSpan(
 	ctx context.Context,
 	bk *domain.Registry,
 	fromFallback bool,
+	route string,
 	attempt int,
 	outcome Outcome,
 	resp *ProviderResponse,
@@ -311,6 +317,7 @@ func (f *forwarder) recordSpan(
 			Provider:   bk.Provider,
 			Attempt:    attempt,
 			Fallback:   fromFallback,
+			Route:      route,
 			Outcome:    outcome.String(),
 		},
 	}
@@ -518,47 +525,60 @@ func (f *forwarder) finalizeBodyGated(
 	}, nil
 }
 
-func (f *forwarder) selectBackend(
-	rc *appconsumer.RoutableConsumer,
-	req *infracontext.RequestContext,
-	excluded map[ids.RegistryID]struct{},
-) (*loadbalancer.LoadBalancer, *domain.Registry, error) {
-	lb, err := f.loadBalancerFor(rc)
-	if err != nil {
-		return nil, nil, err
-	}
-	bk, err := lb.NextBackend(req, excluded)
-	if err != nil {
-		return lb, nil, fmt.Errorf("%w: %s", ErrNoBackendAvailable, err.Error())
-	}
-	return lb, bk, nil
-}
-
 func (f *forwarder) loadBalancerFor(rc *appconsumer.RoutableConsumer) (*loadbalancer.LoadBalancer, error) {
 	key := loadBalancerCacheKey(rc.Consumer.GatewayID, rc.Consumer.ID)
-	if lb, ok := f.cachedLoadBalancer(key); ok {
-		return lb, nil
-	}
-
-	built, err, _ := f.lbGroup.Do(key, func() (interface{}, error) {
-		if lb, ok := f.cachedLoadBalancer(key); ok {
-			return lb, nil
-		}
-		lbAlgorithm := algorithm.RoundRobin
-		var embeddingConfig *domain.EmbeddingConfig
-		if lbCfg := rc.Consumer.LBConfig; lbCfg != nil && lbCfg.Enabled {
-			if lbCfg.Algorithm != "" {
-				lbAlgorithm = lbCfg.Algorithm
-			}
-			embeddingConfig = lbCfg.EmbeddingConfig
-		}
-		pool := loadbalancer.Pool{
+	return f.cachedOrBuildLoadBalancer(key, func() loadbalancer.Pool {
+		lbAlgorithm, embeddingConfig := lbSettings(rc)
+		return loadbalancer.Pool{
 			ID:              key,
 			Registries:      rc.Registries,
 			Algorithm:       lbAlgorithm,
 			EmbeddingConfig: embeddingConfig,
 		}
-		lb, err := loadbalancer.NewLoadBalancer(f.factory, pool, f.logger, f.cache)
+	})
+}
+
+func (f *forwarder) poolLoadBalancerFor(
+	rc *appconsumer.RoutableConsumer,
+	alias string,
+	candidates *routingdomain.CandidateSet,
+) (*loadbalancer.LoadBalancer, error) {
+	key := poolLoadBalancerCacheKey(rc.Consumer.GatewayID, rc.Consumer.ID, alias)
+	return f.cachedOrBuildLoadBalancer(key, func() loadbalancer.Pool {
+		lbAlgorithm, embeddingConfig := lbSettings(rc)
+		return loadbalancer.Pool{
+			ID:              key,
+			Registries:      candidates.Registries(),
+			Algorithm:       lbAlgorithm,
+			EmbeddingConfig: embeddingConfig,
+		}
+	})
+}
+
+func lbSettings(rc *appconsumer.RoutableConsumer) (string, *domain.EmbeddingConfig) {
+	lbAlgorithm := algorithm.RoundRobin
+	var embeddingConfig *domain.EmbeddingConfig
+	if lbCfg := rc.Consumer.LBConfig; lbCfg != nil && lbCfg.Enabled {
+		if lbCfg.Algorithm != "" {
+			lbAlgorithm = lbCfg.Algorithm
+		}
+		embeddingConfig = lbCfg.EmbeddingConfig
+	}
+	return lbAlgorithm, embeddingConfig
+}
+
+func (f *forwarder) cachedOrBuildLoadBalancer(
+	key string,
+	buildPool func() loadbalancer.Pool,
+) (*loadbalancer.LoadBalancer, error) {
+	if lb, ok := f.cachedLoadBalancer(key); ok {
+		return lb, nil
+	}
+	built, err, _ := f.lbGroup.Do(key, func() (interface{}, error) {
+		if lb, ok := f.cachedLoadBalancer(key); ok {
+			return lb, nil
+		}
+		lb, err := loadbalancer.NewLoadBalancer(f.factory, buildPool(), f.logger, f.cache)
 		if err != nil {
 			return nil, err
 		}
@@ -588,4 +608,8 @@ func (f *forwarder) cachedLoadBalancer(key string) (*loadbalancer.LoadBalancer, 
 
 func loadBalancerCacheKey(gatewayID ids.GatewayID, consumerID ids.ConsumerID) string {
 	return gatewayID.String() + ":" + consumerID.String()
+}
+
+func poolLoadBalancerCacheKey(gatewayID ids.GatewayID, consumerID ids.ConsumerID, alias string) string {
+	return gatewayID.String() + ":" + consumerID.String() + ":pool:" + strings.ToLower(alias)
 }

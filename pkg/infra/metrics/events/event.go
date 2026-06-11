@@ -96,6 +96,7 @@ type Attempt struct {
 	Provider   string `json:"provider,omitempty"`
 	Attempt    int    `json:"attempt"`
 	Fallback   bool   `json:"fallback"`
+	Route      string `json:"route,omitempty"`
 	Outcome    string `json:"outcome,omitempty"`
 	StatusCode int    `json:"status_code"`
 	LatencyMs  int64  `json:"latency_ms"`

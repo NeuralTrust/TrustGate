@@ -155,6 +155,58 @@ func TestRoutingIntent_PoolAlias(t *testing.T) {
 	})
 }
 
+func TestRoutingIntent_FallbackAuthorization(t *testing.T) {
+	defer Track(t, "RoutingIntent")()
+
+	setupCrossProviderFallback := func(t *testing.T, primary, fallback *fakeUpstream) (string, string) {
+		t.Helper()
+		gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("fbauth-gw")})
+		primaryID := CreateRegistry(t, gatewayID, openaiBackendPayload(uniqueName("be-primary"), primary.URL()))
+		fallbackID := CreateRegistry(t, gatewayID, openaiCompatibleBackendPayload(uniqueName("be-fallback"), fallback.URL()))
+		path := "/v1/" + uniqueName("route")
+		coID := CreateConsumer(t, gatewayID, map[string]any{
+			"name": uniqueName("cons"),
+			"path": path,
+			"registries": []map[string]any{
+				{"id": primaryID, "model_policies": map[string]any{"allowed": []string{"gpt-4o-mini"}, "default": "gpt-4o-mini"}},
+				{"id": fallbackID, "model_policies": map[string]any{"allowed": []string{"compat-model"}, "default": "compat-model"}},
+			},
+			"fallback": map[string]any{
+				"enabled":  true,
+				"triggers": []string{"http_5xx"},
+				"chain":    []string{fallbackID},
+			},
+		})
+		apiKey := createAndAttachAPIKey(t, gatewayID, coID)
+		return apiKey, path
+	}
+
+	t.Run("multi-provider chain rescues a request without intent", func(t *testing.T) {
+		primary := newFailingUpstream(t, http.StatusInternalServerError)
+		fallback := newJSONUpstream(t, "fallback-served")
+		apiKey, path := setupCrossProviderFallback(t, primary, fallback)
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestNoModel())
+
+		assert.Equal(t, http.StatusOK, status, "body: %s", body)
+		assert.Contains(t, string(body), "fallback-served")
+		assert.Equal(t, expectedAttempts(), primary.Hits(), "primary must exhaust its retry budget before failover")
+		assert.Equal(t, 1, fallback.Hits(), "the cross-provider fallback must serve exactly once")
+	})
+
+	t.Run("qualified intent excludes other-provider fallback and relays the error", func(t *testing.T) {
+		primary := newFailingUpstream(t, http.StatusInternalServerError)
+		fallback := newJSONUpstream(t, "must-not-serve")
+		apiKey, path := setupCrossProviderFallback(t, primary, fallback)
+
+		status, _, body := proxyPost(t, apiKey, path, chatRequestModel("openai/gpt-4o-mini"))
+
+		assert.Equal(t, http.StatusInternalServerError, status, "body: %s", body)
+		assert.Equal(t, expectedAttempts(), primary.Hits(), "the authorized candidate must be fully retried")
+		assert.Equal(t, 0, fallback.Hits(), "a fallback outside the requested provider must never serve")
+	})
+}
+
 func TestRoutingIntent_ShortModel(t *testing.T) {
 	defer Track(t, "RoutingIntent")()
 

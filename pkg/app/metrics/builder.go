@@ -100,6 +100,7 @@ func (b *Builder) foldLLMSpans(requestTrace *trace.RequestTrace) (*trace.LLMAttr
 			Provider:   attrs.Provider,
 			Attempt:    attrs.Attempt,
 			Fallback:   attrs.Fallback,
+			Route:      attrs.Route,
 			Outcome:    attrs.Outcome,
 			StatusCode: span.StatusCode(),
 			LatencyMs:  span.Latency().Milliseconds(),
