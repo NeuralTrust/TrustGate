@@ -173,6 +173,33 @@ func (r *Repository) FindByID(ctx context.Context, id ids.RoleID) (*domain.Role,
 	return role, nil
 }
 
+func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, roleIDs []ids.RoleID) ([]*domain.Role, error) {
+	if len(roleIDs) == 0 {
+		return nil, nil
+	}
+	query := roleSelectColumns + `
+		  FROM roles r
+		 WHERE r.gateway_id = $1
+		   AND r.id = ANY($2::uuid[])`
+	rows, err := r.conn.Pool.Query(ctx, query, gatewayID.UUID(), ids.ToUUIDs(roleIDs))
+	if err != nil {
+		return nil, fmt.Errorf("role repository: find by ids: %w", err)
+	}
+	defer rows.Close()
+	out := make([]*domain.Role, 0, len(roleIDs))
+	for rows.Next() {
+		role, err := scanRole(rows)
+		if err != nil {
+			return nil, fmt.Errorf("role repository: scan: %w", err)
+		}
+		out = append(out, role)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("role repository: iter: %w", err)
+	}
+	return out, nil
+}
+
 func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Role, int, error) {
 	if filter.Page < 1 {
 		filter.Page = 1

@@ -159,6 +159,23 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 			},
 			wantErr: ErrInvalidRoutingMode,
 		},
+		{
+			name: "inline rejects roles",
+			mutate: func(c *Consumer) {
+				c.RoleIDs = []ids.RoleID{ids.New[ids.RoleKind]()}
+			},
+			wantErr: ErrInvalidRoutingMode,
+		},
+		{
+			name: "role based rejects duplicate roles",
+			mutate: func(c *Consumer) {
+				c.RoutingMode = RoutingModeRoleBased
+				c.RegistryIDs = nil
+				id := ids.New[ids.RoleKind]()
+				c.RoleIDs = []ids.RoleID{id, id}
+			},
+			wantErr: ErrInvalidRoutingMode,
+		},
 	}
 	for _, tc := range tests {
 		tc := tc

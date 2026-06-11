@@ -83,6 +83,8 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 		)`
 	const insertConsumerRegistry = `
 		INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+	const insertConsumerRole = `
+		INSERT INTO consumer_role (consumer_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
 			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
@@ -92,6 +94,11 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 		}
 		for _, registryID := range c.RegistryIDs {
 			if _, err := tx.Exec(ctx, insertConsumerRegistry, c.ID, registryID); err != nil {
+				return mapPgError(err)
+			}
+		}
+		for _, roleID := range c.RoleIDs {
+			if _, err := tx.Exec(ctx, insertConsumerRole, c.ID, roleID); err != nil {
 				return mapPgError(err)
 			}
 		}

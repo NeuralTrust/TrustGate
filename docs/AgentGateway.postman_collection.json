@@ -1096,10 +1096,10 @@
                 "value": "application/json"
               }
             ],
-            "description": "Role-based consumers authorize through roles (attach with POST .../consumers/:id/roles/:role_id) and authenticate via IDP or OAuth2 client credentials. They cannot hold registries, lb_config or fallback.",
+            "description": "Role-based consumers authorize through roles and authenticate via IDP or OAuth2 client credentials. They cannot hold registries, lb_config or fallback. Existing roles can be bound atomically at creation via `roles` (or attached later with POST .../consumers/:id/roles/:role_id).",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"idp-team-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"role_based\",\n  \"active\": true\n}"
+              "raw": "{\n  \"name\": \"idp-team-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"role_based\",\n  \"active\": true,\n  \"roles\": [\n    \"{{role_id}}\"\n  ]\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",

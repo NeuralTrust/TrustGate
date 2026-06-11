@@ -20,6 +20,7 @@ type CreateConsumerRequest struct {
 	Active        *bool                    `json:"active,omitempty"`
 	Fallback      *FallbackRequest         `json:"fallback,omitempty"`
 	Registries    []RegistryBindingRequest `json:"registries,omitempty"`
+	Roles         []string                 `json:"roles,omitempty"`
 	ModelPolicies []ModelPolicyRequest     `json:"model_policies,omitempty"`
 }
 
@@ -189,6 +190,13 @@ func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, domain.Mo
 		}
 	}
 	return registryIDs, policies, nil
+}
+
+func (r CreateConsumerRequest) ToRoleIDs() ([]ids.RoleID, error) {
+	if len(r.Roles) == 0 {
+		return nil, nil
+	}
+	return parseUUIDList[ids.RoleKind](r.Roles, "roles")
 }
 
 func (r *LBConfigRequest) ToDomain() (*domain.LBConfig, error) {

@@ -19,6 +19,7 @@ type Repository interface {
 	Update(ctx context.Context, r *Role) error
 	Delete(ctx context.Context, id ids.RoleID) error
 	FindByID(ctx context.Context, id ids.RoleID) (*Role, error)
+	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, roleIDs []ids.RoleID) ([]*Role, error)
 	List(ctx context.Context, filter ListFilter) (items []*Role, total int, err error)
 	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Role, error)
 	AttachRegistry(ctx context.Context, roleID ids.RoleID, registryID ids.RegistryID) error

@@ -21,6 +21,9 @@ func (repositoryStub) Delete(context.Context, ids.RoleID) error   { return nil }
 func (repositoryStub) FindByID(context.Context, ids.RoleID) (*domain.Role, error) {
 	return nil, domain.ErrNotFound
 }
+func (repositoryStub) FindByIDs(context.Context, ids.GatewayID, []ids.RoleID) ([]*domain.Role, error) {
+	return nil, nil
+}
 func (repositoryStub) List(context.Context, domain.ListFilter) ([]*domain.Role, int, error) {
 	return nil, 0, nil
 }

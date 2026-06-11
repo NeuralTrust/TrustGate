@@ -50,6 +50,15 @@ func (s *roleRepositoryStub) FindByID(context.Context, ids.RoleID) (*roledomain.
 	}
 	return s.role, nil
 }
+func (s *roleRepositoryStub) FindByIDs(context.Context, ids.GatewayID, []ids.RoleID) ([]*roledomain.Role, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.role == nil {
+		return nil, nil
+	}
+	return []*roledomain.Role{s.role}, nil
+}
 func (s *roleRepositoryStub) List(context.Context, roledomain.ListFilter) ([]*roledomain.Role, int, error) {
 	return nil, 0, nil
 }

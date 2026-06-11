@@ -192,7 +192,10 @@ func (c *Consumer) Validate() error {
 	if err := c.LBConfig.Validate(c.ModelPolicies); err != nil {
 		return err
 	}
-	return validateUniqueIDs(c.RoleIDs, ErrInvalidRoutingMode, "role")
+	if len(c.RoleIDs) > 0 {
+		return fmt.Errorf("%w: roles are only valid in role_based mode", ErrInvalidRoutingMode)
+	}
+	return nil
 }
 
 func (c *Consumer) validateRoleBased() error {

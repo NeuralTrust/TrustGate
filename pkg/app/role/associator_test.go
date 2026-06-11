@@ -30,6 +30,9 @@ func (s associatorRoleRepositoryStub) FindByID(context.Context, ids.RoleID) (*do
 	}
 	return s.role, nil
 }
+func (s associatorRoleRepositoryStub) FindByIDs(context.Context, ids.GatewayID, []ids.RoleID) ([]*domain.Role, error) {
+	return nil, nil
+}
 func (s associatorRoleRepositoryStub) List(context.Context, domain.ListFilter) ([]*domain.Role, int, error) {
 	return nil, 0, nil
 }
