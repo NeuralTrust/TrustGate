@@ -120,7 +120,7 @@ func adaptStream(
 	// source they speak expects it. Other source formats use their own terminator.
 	forwardDone := crossFormat && adapter.IsSameWireFormat(source, adapter.FormatOpenAI)
 
-	return func(yield func([]byte, error) bool) {
+	stream := func(yield func([]byte, error) bool) {
 		emit := func(lines [][]byte) bool {
 			for _, l := range lines {
 				if !yield(l, nil) {
@@ -178,6 +178,11 @@ func adaptStream(
 			// TODO(B.3): plugin chunk forwarding hook here.
 		}
 	}
+
+	if source != adapter.FormatOpenAIResponses && adapter.IsSameWireFormat(source, adapter.FormatOpenAI) {
+		return coalesceOpenAIToolCallStream(stream)
+	}
+	return stream
 }
 
 // isSSEDone reports whether line is the SSE "data: [DONE]" end-of-stream marker.
