@@ -103,6 +103,18 @@ export function fallbackAuthOptions(providerCode: string): CatalogAuthTypeOption
           ],
         },
       ];
+    case "openai_compatible":
+      return [
+        {
+          type: "api_key",
+          label: "API Key",
+          fields: [
+            { key: "api_key", label: "API Key", type: "string", secret: true },
+            { key: "header_name", label: "Header Name", type: "string" },
+            { key: "header_value", label: "Header Value", type: "string", secret: true },
+          ],
+        },
+      ];
     default:
       return [
         {
@@ -192,7 +204,7 @@ export function fieldValuesFromAuth(
 function authPayload(auth: TargetAuth): Record<string, unknown> {
   switch (auth.type) {
     case "api_key":
-      return { api_key: auth.api_key?.api_key ?? "" };
+      return { ...(auth.api_key ?? {}) };
     case "azure":
       return { ...(auth.azure ?? {}) };
     case "aws":
@@ -214,10 +226,13 @@ export function buildTargetAuth(
 
   switch (option.type) {
     case "api_key": {
-      const apiKey = stringValue(values, "api_key");
+      const apiKey: NonNullable<TargetAuth["api_key"]> = {};
+      assignApiKeyField(apiKey, allowed, values, "api_key");
+      assignApiKeyField(apiKey, allowed, values, "header_name");
+      assignApiKeyField(apiKey, allowed, values, "header_value");
       return {
         type: "api_key",
-        api_key: apiKey ? { api_key: apiKey } : {},
+        api_key: apiKey,
       };
     }
     case "azure": {
@@ -267,6 +282,21 @@ export function buildTargetAuth(
       };
     default:
       return { type: option.type as AuthKind };
+  }
+}
+
+function assignApiKeyField(
+  apiKey: NonNullable<TargetAuth["api_key"]>,
+  allowed: Set<string>,
+  values: AuthFieldValues,
+  key: keyof NonNullable<TargetAuth["api_key"]>,
+) {
+  if (!allowed.has(key)) {
+    return;
+  }
+  const value = stringValue(values, key);
+  if (value) {
+    apiKey[key] = value;
   }
 }
 
