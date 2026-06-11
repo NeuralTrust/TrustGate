@@ -43,6 +43,34 @@ var (
 		},
 	}
 
+	openAICompatibleAuthOption = AuthTypeOption{
+		Type:        "api_key",
+		Label:       "API Key",
+		Description: "Authenticate with a bearer API key and/or a custom header pair.",
+		Fields: []AuthField{
+			{
+				Key:         "api_key",
+				Label:       "API Key",
+				Type:        AuthFieldTypeString,
+				Description: "Secret API key sent as a Bearer token (optional if using a custom header).",
+				Secret:      true,
+			},
+			{
+				Key:         "header_name",
+				Label:       "Header Name",
+				Type:        AuthFieldTypeString,
+				Description: "Custom HTTP header name used to authenticate requests.",
+			},
+			{
+				Key:         "header_value",
+				Label:       "Header Value",
+				Type:        AuthFieldTypeString,
+				Description: "Value for the custom authentication header.",
+				Secret:      true,
+			},
+		},
+	}
+
 	azureEndpointField = AuthField{
 		Key:         "endpoint",
 		Label:       "Endpoint",
@@ -204,7 +232,7 @@ var (
 
 var providerAuthCatalog = map[string][]AuthTypeOption{
 	providers.ProviderOpenAI:           {apiKeyAuthOption},
-	providers.ProviderOpenAICompatible: {apiKeyAuthOption},
+	providers.ProviderOpenAICompatible: {openAICompatibleAuthOption},
 	providers.ProviderGoogle:           {apiKeyAuthOption},
 	providers.ProviderVertex:           {gcpServiceAccountAuthOption},
 	providers.ProviderAnthropic:        {apiKeyAuthOption},

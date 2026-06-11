@@ -104,6 +104,28 @@ func TestProviderAuthOptions_SimpleProvidersOmitVariant(t *testing.T) {
 	}
 }
 
+func TestProviderAuthOptions_OpenAICompatibleHeaderFields(t *testing.T) {
+	t.Parallel()
+
+	opts := ProviderAuthOptions(providers.ProviderOpenAICompatible)
+	if len(opts) != 1 {
+		t.Fatalf("len(auth_types) = %d, want 1", len(opts))
+	}
+
+	opt := opts[0]
+	if opt.Type != "api_key" {
+		t.Fatalf("type = %q, want api_key", opt.Type)
+	}
+	for _, key := range []string{"api_key", "header_name", "header_value"} {
+		if !fieldPresent(opt.Fields, key) {
+			t.Fatalf("missing field %q: %+v", key, opt.Fields)
+		}
+	}
+	if fieldRequired(opt.Fields, "api_key") {
+		t.Fatal("api_key must not be required when header auth is supported")
+	}
+}
+
 func fieldRequired(fields []AuthField, key string) bool {
 	for _, field := range fields {
 		if field.Key == key {
