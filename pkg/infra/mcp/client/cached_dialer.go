@@ -1,4 +1,4 @@
-package mcp
+package client
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	mcpclient "github.com/NeuralTrust/AgentGateway/pkg/infra/mcp/client"
+	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 )
 
 // sessionIdleTTL evicts cached upstream sessions that have not been used for
@@ -25,7 +25,7 @@ const sessionIdleTTL = 30 * time.Minute
 //
 // Sessions are process-local: each gateway replica holds its own upstream
 // sessions, which the Streamable HTTP spec explicitly allows.
-func NewCachedDialer(client *mcpclient.Client, logger *slog.Logger) Dialer {
+func NewCachedDialer(client *Client, logger *slog.Logger) appmcp.Dialer {
 	return &cachedDialer{
 		client:  client,
 		logger:  logger,
@@ -34,7 +34,7 @@ func NewCachedDialer(client *mcpclient.Client, logger *slog.Logger) Dialer {
 }
 
 type cachedDialer struct {
-	client *mcpclient.Client
+	client *Client
 	logger *slog.Logger
 
 	mu      sync.Mutex
@@ -42,11 +42,11 @@ type cachedDialer struct {
 }
 
 type sessionEntry struct {
-	session  *mcpclient.Session
+	session  *Session
 	lastUsed time.Time
 }
 
-func (d *cachedDialer) Connect(ctx context.Context, target mcpclient.Target) (Upstream, error) {
+func (d *cachedDialer) Connect(ctx context.Context, target appmcp.Target) (appmcp.Upstream, error) {
 	if target.PinKey == "" {
 		sess, err := d.client.Connect(ctx, target)
 		if err != nil {
@@ -65,7 +65,7 @@ func (d *cachedDialer) Connect(ctx context.Context, target mcpclient.Target) (Up
 	return &cachedUpstream{dialer: d, key: key, target: target, session: sess}, nil
 }
 
-func (d *cachedDialer) lookup(key string) *mcpclient.Session {
+func (d *cachedDialer) lookup(key string) *Session {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.evictIdleLocked()
@@ -77,7 +77,7 @@ func (d *cachedDialer) lookup(key string) *mcpclient.Session {
 	return e.session
 }
 
-func (d *cachedDialer) connectAndStore(ctx context.Context, key string, target mcpclient.Target) (*mcpclient.Session, error) {
+func (d *cachedDialer) connectAndStore(ctx context.Context, key string, target appmcp.Target) (*Session, error) {
 	sess, err := d.client.Connect(ctx, target)
 	if err != nil {
 		return nil, err
@@ -95,7 +95,7 @@ func (d *cachedDialer) connectAndStore(ctx context.Context, key string, target m
 	return sess, nil
 }
 
-func (d *cachedDialer) drop(ctx context.Context, key string, sess *mcpclient.Session) {
+func (d *cachedDialer) drop(ctx context.Context, key string, sess *Session) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if e, ok := d.entries[key]; ok && e.session == sess {
@@ -142,11 +142,11 @@ func credentialFingerprint(headers map[string]string) string {
 type cachedUpstream struct {
 	dialer  *cachedDialer
 	key     string
-	target  mcpclient.Target
-	session *mcpclient.Session
+	target  appmcp.Target
+	session *Session
 }
 
-func (u *cachedUpstream) ListTools(ctx context.Context) ([]mcpclient.Tool, error) {
+func (u *cachedUpstream) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
 	out, err := u.session.ListTools(ctx)
 	if u.refresh(ctx, err) {
 		return u.session.ListTools(ctx)
@@ -162,7 +162,7 @@ func (u *cachedUpstream) CallTool(ctx context.Context, name string, arguments js
 	return res, err
 }
 
-func (u *cachedUpstream) ListResources(ctx context.Context) ([]mcpclient.Resource, error) {
+func (u *cachedUpstream) ListResources(ctx context.Context) ([]appmcp.Resource, error) {
 	out, err := u.session.ListResources(ctx)
 	if u.refresh(ctx, err) {
 		return u.session.ListResources(ctx)
@@ -170,7 +170,7 @@ func (u *cachedUpstream) ListResources(ctx context.Context) ([]mcpclient.Resourc
 	return out, err
 }
 
-func (u *cachedUpstream) ListResourceTemplates(ctx context.Context) ([]mcpclient.ResourceTemplate, error) {
+func (u *cachedUpstream) ListResourceTemplates(ctx context.Context) ([]appmcp.ResourceTemplate, error) {
 	out, err := u.session.ListResourceTemplates(ctx)
 	if u.refresh(ctx, err) {
 		return u.session.ListResourceTemplates(ctx)
@@ -186,7 +186,7 @@ func (u *cachedUpstream) ReadResource(ctx context.Context, uri string) (json.Raw
 	return res, err
 }
 
-func (u *cachedUpstream) ListPrompts(ctx context.Context) ([]mcpclient.Prompt, error) {
+func (u *cachedUpstream) ListPrompts(ctx context.Context) ([]appmcp.Prompt, error) {
 	out, err := u.session.ListPrompts(ctx)
 	if u.refresh(ctx, err) {
 		return u.session.ListPrompts(ctx)
@@ -212,7 +212,7 @@ func (u *cachedUpstream) Close(context.Context) {
 // refresh replaces a failed shared session with a freshly initialized one and
 // reports whether the failed operation should be retried.
 func (u *cachedUpstream) refresh(ctx context.Context, err error) bool {
-	if err == nil || mcpclient.IsRPCError(err) {
+	if err == nil || appmcp.IsRPCError(err) {
 		return false
 	}
 	u.dialer.drop(ctx, u.key, u.session)

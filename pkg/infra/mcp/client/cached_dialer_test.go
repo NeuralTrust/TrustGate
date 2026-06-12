@@ -1,4 +1,4 @@
-package mcp_test
+package client_test
 
 import (
 	"context"
@@ -57,14 +57,14 @@ func (u *upstreamStub) reset() {
 }
 
 func newCachedDialer() appmcp.Dialer {
-	return appmcp.NewCachedDialer(mcpclient.New(), slog.New(slog.DiscardHandler))
+	return mcpclient.NewCachedDialer(mcpclient.New(), slog.New(slog.DiscardHandler))
 }
 
 func TestCachedDialer_ReusesSessionPerPinKey(t *testing.T) {
 	t.Parallel()
 	upstream := newUpstreamStub(t)
 	dialer := newCachedDialer()
-	target := mcpclient.Target{URL: upstream.srv.URL, PinKey: "gw:consumer:reg"}
+	target := appmcp.Target{URL: upstream.srv.URL, PinKey: "gw:consumer:reg"}
 
 	for i := 0; i < 3; i++ {
 		up, err := dialer.Connect(context.Background(), target)
@@ -85,7 +85,7 @@ func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
 	t.Parallel()
 	upstream := newUpstreamStub(t)
 	dialer := newCachedDialer()
-	target := mcpclient.Target{URL: upstream.srv.URL, PinKey: "gw:consumer:reg"}
+	target := appmcp.Target{URL: upstream.srv.URL, PinKey: "gw:consumer:reg"}
 
 	up, err := dialer.Connect(context.Background(), target)
 	if err != nil {
@@ -116,7 +116,7 @@ func TestCachedDialer_NoPinKeyConnectsFresh(t *testing.T) {
 	t.Parallel()
 	upstream := newUpstreamStub(t)
 	dialer := newCachedDialer()
-	target := mcpclient.Target{URL: upstream.srv.URL}
+	target := appmcp.Target{URL: upstream.srv.URL}
 
 	for i := 0; i < 2; i++ {
 		up, err := dialer.Connect(context.Background(), target)
@@ -139,7 +139,7 @@ func TestCachedDialer_CredentialChangeGetsNewSession(t *testing.T) {
 	dialer := newCachedDialer()
 
 	for _, token := range []string{"Bearer a", "Bearer b"} {
-		up, err := dialer.Connect(context.Background(), mcpclient.Target{
+		up, err := dialer.Connect(context.Background(), appmcp.Target{
 			URL:     upstream.srv.URL,
 			PinKey:  "gw:consumer:reg:user",
 			Headers: map[string]string{"Authorization": token},

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -15,17 +16,6 @@ const (
 	clientVersion  = "1.0"
 	defaultTimeout = 30 * time.Second
 )
-
-// Target identifies one upstream MCP server endpoint.
-type Target struct {
-	URL string
-	// Headers are sent on every request (static auth, custom headers).
-	Headers map[string]string
-	// PinKey, when set, lets session-caching dialers reuse one initialized
-	// upstream session across requests (scoped per principal for per-user
-	// downstream auth modes).
-	PinKey string
-}
 
 // Client dials upstream MCP servers via the official SDK's Streamable HTTP
 // transport.
@@ -39,9 +29,11 @@ type Session struct {
 	url string
 }
 
+var _ appmcp.Upstream = (*Session)(nil)
+
 // Connect performs the initialize handshake (the SDK negotiates the protocol
 // version and sends notifications/initialized).
-func (c *Client) Connect(ctx context.Context, target Target) (*Session, error) {
+func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, error) {
 	transport := &sdk.StreamableClientTransport{
 		Endpoint: target.URL,
 		HTTPClient: &http.Client{
@@ -94,15 +86,15 @@ func (s *Session) SupportsResources() bool { return s.capabilities().Resources !
 func (s *Session) SupportsPrompts() bool { return s.capabilities().Prompts != nil }
 
 // ListTools fetches all tools, following pagination cursors.
-func (s *Session) ListTools(ctx context.Context) ([]Tool, error) {
-	var out []Tool
+func (s *Session) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
+	var items []*sdk.Tool
 	for t, err := range s.cs.Tools(ctx, nil) {
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: tools/list: %w", err)
+			return nil, fmt.Errorf("mcp client: tools/list: %w", mapRPCError(err))
 		}
-		out = append(out, *t)
+		items = append(items, t)
 	}
-	return out, nil
+	return mapItems[appmcp.Tool]("tools/list", items)
 }
 
 // CallTool invokes a tool and returns the raw CallToolResult, which the
@@ -114,79 +106,79 @@ func (s *Session) CallTool(ctx context.Context, name string, arguments json.RawM
 	}
 	res, err := s.cs.CallTool(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, mapRPCError(err)
 	}
 	return marshalResult("tools/call", res)
 }
 
 // ListResources fetches all resources, following pagination cursors. Servers
 // without the resources capability yield an empty list.
-func (s *Session) ListResources(ctx context.Context) ([]Resource, error) {
+func (s *Session) ListResources(ctx context.Context) ([]appmcp.Resource, error) {
 	if !s.SupportsResources() {
 		return nil, nil
 	}
-	var out []Resource
+	var items []*sdk.Resource
 	for r, err := range s.cs.Resources(ctx, nil) {
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: resources/list: %w", err)
+			return nil, fmt.Errorf("mcp client: resources/list: %w", mapRPCError(err))
 		}
-		out = append(out, *r)
+		items = append(items, r)
 	}
-	return out, nil
+	return mapItems[appmcp.Resource]("resources/list", items)
 }
 
 // ListResourceTemplates fetches all resource templates, following pagination
 // cursors. Servers without the resources capability yield an empty list.
-func (s *Session) ListResourceTemplates(ctx context.Context) ([]ResourceTemplate, error) {
+func (s *Session) ListResourceTemplates(ctx context.Context) ([]appmcp.ResourceTemplate, error) {
 	if !s.SupportsResources() {
 		return nil, nil
 	}
-	var out []ResourceTemplate
+	var items []*sdk.ResourceTemplate
 	for t, err := range s.cs.ResourceTemplates(ctx, nil) {
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: resources/templates/list: %w", err)
+			return nil, fmt.Errorf("mcp client: resources/templates/list: %w", mapRPCError(err))
 		}
-		out = append(out, *t)
+		items = append(items, t)
 	}
-	return out, nil
+	return mapItems[appmcp.ResourceTemplate]("resources/templates/list", items)
 }
 
 // ReadResource reads one resource by URI and returns the raw result.
 func (s *Session) ReadResource(ctx context.Context, uri string) (json.RawMessage, error) {
 	if !s.SupportsResources() {
-		return nil, fmt.Errorf("%w: resources/read: %s", ErrNotSupported, s.url)
+		return nil, fmt.Errorf("%w: resources/read: %s", appmcp.ErrNotSupported, s.url)
 	}
 	res, err := s.cs.ReadResource(ctx, &sdk.ReadResourceParams{URI: uri})
 	if err != nil {
-		return nil, err
+		return nil, mapRPCError(err)
 	}
 	return marshalResult("resources/read", res)
 }
 
 // ListPrompts fetches all prompts, following pagination cursors. Servers
 // without the prompts capability yield an empty list.
-func (s *Session) ListPrompts(ctx context.Context) ([]Prompt, error) {
+func (s *Session) ListPrompts(ctx context.Context) ([]appmcp.Prompt, error) {
 	if !s.SupportsPrompts() {
 		return nil, nil
 	}
-	var out []Prompt
+	var items []*sdk.Prompt
 	for p, err := range s.cs.Prompts(ctx, nil) {
 		if err != nil {
-			return nil, fmt.Errorf("mcp client: prompts/list: %w", err)
+			return nil, fmt.Errorf("mcp client: prompts/list: %w", mapRPCError(err))
 		}
-		out = append(out, *p)
+		items = append(items, p)
 	}
-	return out, nil
+	return mapItems[appmcp.Prompt]("prompts/list", items)
 }
 
 // GetPrompt renders one prompt and returns the raw result.
 func (s *Session) GetPrompt(ctx context.Context, name string, arguments map[string]string) (json.RawMessage, error) {
 	if !s.SupportsPrompts() {
-		return nil, fmt.Errorf("%w: prompts/get: %s", ErrNotSupported, s.url)
+		return nil, fmt.Errorf("%w: prompts/get: %s", appmcp.ErrNotSupported, s.url)
 	}
 	res, err := s.cs.GetPrompt(ctx, &sdk.GetPromptParams{Name: name, Arguments: arguments})
 	if err != nil {
-		return nil, err
+		return nil, mapRPCError(err)
 	}
 	return marshalResult("prompts/get", res)
 }

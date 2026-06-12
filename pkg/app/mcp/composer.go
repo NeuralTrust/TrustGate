@@ -19,49 +19,22 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	mcpclient "github.com/NeuralTrust/AgentGateway/pkg/infra/mcp/client"
 )
-
-// Upstream is one initialized connection to an upstream MCP server.
-type Upstream interface {
-	ListTools(ctx context.Context) ([]mcpclient.Tool, error)
-	CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error)
-	ListResources(ctx context.Context) ([]mcpclient.Resource, error)
-	ListResourceTemplates(ctx context.Context) ([]mcpclient.ResourceTemplate, error)
-	ReadResource(ctx context.Context, uri string) (json.RawMessage, error)
-	ListPrompts(ctx context.Context) ([]mcpclient.Prompt, error)
-	GetPrompt(ctx context.Context, name string, arguments map[string]string) (json.RawMessage, error)
-	SupportsResources() bool
-	SupportsPrompts() bool
-	Close(ctx context.Context)
-}
-
-// Dialer opens connections to upstream MCP servers.
-type Dialer interface {
-	Connect(ctx context.Context, target mcpclient.Target) (Upstream, error)
-}
-
-// DialerFunc adapts a function to the Dialer interface.
-type DialerFunc func(ctx context.Context, target mcpclient.Target) (Upstream, error)
-
-func (f DialerFunc) Connect(ctx context.Context, target mcpclient.Target) (Upstream, error) {
-	return f(ctx, target)
-}
 
 //go:generate mockery --name=Composer --dir=. --output=./mocks --filename=mcp_composer_mock.go --case=underscore --with-expecter
 type Composer interface {
 	// ListTools returns the composed tool surface of the consumer's virtual MCP.
-	ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]mcpclient.Tool, error)
+	ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error)
 	// CallTool routes an exposed tool name to its upstream server and invokes it.
 	CallTool(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments json.RawMessage) (json.RawMessage, error)
 	// ListResources merges the resources of every upstream (URI-addressed; no renaming).
-	ListResources(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]mcpclient.Resource, error)
+	ListResources(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Resource, error)
 	// ListResourceTemplates merges the resource templates of every upstream.
-	ListResourceTemplates(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]mcpclient.ResourceTemplate, error)
+	ListResourceTemplates(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]ResourceTemplate, error)
 	// ReadResource routes a resource URI to the upstream that serves it.
 	ReadResource(ctx context.Context, rc *appconsumer.RoutableConsumer, uri string) (json.RawMessage, error)
 	// ListPrompts returns the composed prompt surface (collisions auto-prefixed).
-	ListPrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]mcpclient.Prompt, error)
+	ListPrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Prompt, error)
 	// GetPrompt routes an exposed prompt name to its upstream server and renders it.
 	GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments map[string]string) (json.RawMessage, error)
 }
@@ -87,16 +60,16 @@ func NewComposer(dialer Dialer, creds CredentialResolver, manager *cache.TTLMapM
 // binding maps an exposed tool name to its upstream registry and tool.
 type binding struct {
 	registry *registrydomain.Registry
-	tool     mcpclient.Tool
+	tool     Tool
 	exposed  string
 }
 
-func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]mcpclient.Tool, error) {
+func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error) {
 	bindings, err := c.compose(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]mcpclient.Tool, 0, len(bindings))
+	out := make([]Tool, 0, len(bindings))
 	for _, b := range bindings {
 		t := b.tool
 		t.Name = b.exposed
@@ -160,17 +133,17 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 
 // ListResources merges the resources of every reachable upstream, filtered by
 // the consumer toolkit. Resources are URI-addressed, so no renaming applies.
-func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]mcpclient.Resource, error) {
+func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Resource, error) {
 	toolkit := rc.Consumer.Toolkit
 	return federate(c, ctx, rc, "resources",
-		func(ctx context.Context, up Upstream) ([]mcpclient.Resource, error) {
+		func(ctx context.Context, up Upstream) ([]Resource, error) {
 			return up.ListResources(ctx)
 		},
-		func(reg *registrydomain.Registry, resources []mcpclient.Resource) []mcpclient.Resource {
+		func(reg *registrydomain.Registry, resources []Resource) []Resource {
 			if len(toolkit) == 0 {
 				return resources
 			}
-			out := make([]mcpclient.Resource, 0, len(resources))
+			out := make([]Resource, 0, len(resources))
 			for _, r := range resources {
 				if toolkit.AllowsResource(reg.ID, r.URI) {
 					out = append(out, r)
@@ -184,13 +157,13 @@ func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableCo
 // upstream. With a non-empty toolkit, a registry's templates are exposed only
 // when the registry has at least one resource entry; the URIs expanded from a
 // template are still enforced individually at read time.
-func (c *composer) ListResourceTemplates(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]mcpclient.ResourceTemplate, error) {
+func (c *composer) ListResourceTemplates(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]ResourceTemplate, error) {
 	toolkit := rc.Consumer.Toolkit
 	return federate(c, ctx, rc, "resource-templates",
-		func(ctx context.Context, up Upstream) ([]mcpclient.ResourceTemplate, error) {
+		func(ctx context.Context, up Upstream) ([]ResourceTemplate, error) {
 			return up.ListResourceTemplates(ctx)
 		},
-		func(reg *registrydomain.Registry, templates []mcpclient.ResourceTemplate) []mcpclient.ResourceTemplate {
+		func(reg *registrydomain.Registry, templates []ResourceTemplate) []ResourceTemplate {
 			if len(toolkit) == 0 || len(toolkit.ResourceEntriesFor(reg.ID)) > 0 {
 				return templates
 			}
@@ -211,7 +184,7 @@ func (c *composer) ReadResource(ctx context.Context, rc *appconsumer.RoutableCon
 		if !toolkit.AllowsResource(reg.ID, uri) {
 			continue
 		}
-		resources, err := discoverCached(c, ctx, rc, reg, "resources", func(ctx context.Context, up Upstream) ([]mcpclient.Resource, error) {
+		resources, err := discoverCached(c, ctx, rc, reg, "resources", func(ctx context.Context, up Upstream) ([]Resource, error) {
 			return up.ListResources(ctx)
 		})
 		if err != nil {
@@ -232,7 +205,7 @@ func (c *composer) ReadResource(ctx context.Context, rc *appconsumer.RoutableCon
 		if err == nil {
 			return raw, nil
 		}
-		if errors.Is(err, mcpclient.ErrNotSupported) {
+		if errors.Is(err, ErrNotSupported) {
 			continue
 		}
 		lastErr = err
@@ -258,12 +231,12 @@ func (c *composer) readFrom(ctx context.Context, rc *appconsumer.RoutableConsume
 
 // ListPrompts returns the composed prompt surface; name collisions across
 // upstreams are auto-prefixed with the registry name like tools.
-func (c *composer) ListPrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]mcpclient.Prompt, error) {
+func (c *composer) ListPrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Prompt, error) {
 	bindings, err := c.composePrompts(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]mcpclient.Prompt, 0, len(bindings))
+	out := make([]Prompt, 0, len(bindings))
 	for _, b := range bindings {
 		p := b.prompt
 		p.Name = b.exposed
@@ -299,7 +272,7 @@ func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsum
 // promptBinding maps an exposed prompt name to its upstream registry and prompt.
 type promptBinding struct {
 	registry *registrydomain.Registry
-	prompt   mcpclient.Prompt
+	prompt   Prompt
 	exposed  string
 }
 
@@ -314,7 +287,7 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 	var candidates []promptBinding
 	reachable := 0
 	for _, reg := range registries {
-		prompts, err := discoverCached(c, ctx, rc, reg, "prompts", func(ctx context.Context, up Upstream) ([]mcpclient.Prompt, error) {
+		prompts, err := discoverCached(c, ctx, rc, reg, "prompts", func(ctx context.Context, up Upstream) ([]Prompt, error) {
 			return up.ListPrompts(ctx)
 		})
 		if err != nil {
@@ -344,7 +317,7 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 // selectPrompts applies the consumer toolkit to one registry's prompt list,
 // mirroring selectTools: an empty toolkit exposes everything; otherwise only
 // listed prompt entries (wildcard or exact) are exposed, with optional renames.
-func selectPrompts(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, prompts []mcpclient.Prompt) []promptBinding {
+func selectPrompts(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, prompts []Prompt) []promptBinding {
 	if len(toolkit) == 0 {
 		out := make([]promptBinding, 0, len(prompts))
 		for _, p := range prompts {
@@ -356,7 +329,7 @@ func selectPrompts(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry,
 	if len(entries) == 0 {
 		return nil
 	}
-	byName := make(map[string]mcpclient.Prompt, len(prompts))
+	byName := make(map[string]Prompt, len(prompts))
 	for _, p := range prompts {
 		byName[p.Name] = p
 	}
@@ -439,8 +412,8 @@ func mcpRegistries(rc *appconsumer.RoutableConsumer) []*registrydomain.Registry 
 
 // discover lists the tools of one upstream, with a short-lived cache keyed by
 // registry id + updated_at so config changes invalidate immediately.
-func (c *composer) discover(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) ([]mcpclient.Tool, error) {
-	return discoverCached(c, ctx, rc, reg, "tools", func(ctx context.Context, up Upstream) ([]mcpclient.Tool, error) {
+func (c *composer) discover(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) ([]Tool, error) {
+	return discoverCached(c, ctx, rc, reg, "tools", func(ctx context.Context, up Upstream) ([]Tool, error) {
 		return up.ListTools(ctx)
 	})
 }
@@ -482,7 +455,7 @@ func discoverCached[T any](
 // selectTools applies the consumer toolkit to one registry's tool list. An
 // empty toolkit exposes everything; otherwise only listed entries (wildcard
 // or exact) are exposed, with optional renames.
-func selectTools(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, tools []mcpclient.Tool) []binding {
+func selectTools(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, tools []Tool) []binding {
 	if len(toolkit) == 0 {
 		out := make([]binding, 0, len(tools))
 		for _, t := range tools {
@@ -494,7 +467,7 @@ func selectTools(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, t
 	if len(entries) == 0 {
 		return nil
 	}
-	byName := make(map[string]mcpclient.Tool, len(tools))
+	byName := make(map[string]Tool, len(tools))
 	for _, t := range tools {
 		byName[t.Name] = t
 	}
@@ -588,11 +561,11 @@ func sanitizeName(s string) string {
 // target builds the upstream connection target: static config (none/static
 // modes, headers, session pin key) plus the per-principal credential for the
 // passthrough/exchange/forwarded modes via the resolver.
-func (c *composer) target(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) (mcpclient.Target, error) {
+func (c *composer) target(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) (Target, error) {
 	t := targetFor(ctx, rc, reg)
 	if c.creds != nil {
 		if err := c.creds.Apply(ctx, rc, reg, &t); err != nil {
-			return mcpclient.Target{}, err
+			return Target{}, err
 		}
 	}
 	return t, nil
@@ -601,8 +574,8 @@ func (c *composer) target(ctx context.Context, rc *appconsumer.RoutableConsumer,
 // targetFor builds the upstream connection target, applying the registry's
 // downstream auth config (none/static) and the session pin key. Per-user
 // downstream modes get a per-principal pin so sessions never cross users.
-func targetFor(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) mcpclient.Target {
-	t := Target(reg)
+func targetFor(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) Target {
+	t := StaticTarget(reg)
 	if rc != nil && rc.Consumer != nil {
 		t.PinKey = fmt.Sprintf("%s:%s:%s", rc.Consumer.GatewayID, rc.Consumer.ID, reg.ID)
 		if perPrincipalAuth(reg) {
@@ -625,9 +598,9 @@ func perPrincipalAuth(reg *registrydomain.Registry) bool {
 	return false
 }
 
-// Target builds the raw connection target for an MCP registry (no session
-// pinning). Used by the composer and by admin tool introspection.
-func Target(reg *registrydomain.Registry) mcpclient.Target {
+// StaticTarget builds the raw connection target for an MCP registry (no
+// session pinning). Used by the composer and by admin tool introspection.
+func StaticTarget(reg *registrydomain.Registry) Target {
 	t := reg.MCPTarget
 	headers := make(map[string]string, len(t.Headers)+1)
 	for k, v := range t.Headers {
@@ -636,5 +609,5 @@ func Target(reg *registrydomain.Registry) mcpclient.Target {
 	if t.Auth != nil && t.Auth.Mode == registrydomain.MCPAuthModeStatic {
 		headers[t.Auth.Header] = t.Auth.Value
 	}
-	return mcpclient.Target{URL: t.URL, Headers: headers}
+	return Target{URL: t.URL, Headers: headers}
 }

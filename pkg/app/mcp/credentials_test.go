@@ -18,7 +18,6 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
-	mcpclient "github.com/NeuralTrust/AgentGateway/pkg/infra/mcp/client"
 )
 
 type stubExchanger struct {
@@ -114,7 +113,7 @@ func TestCredentialResolver_Passthrough(t *testing.T) {
 		ctx := principalCtx(&identity.Principal{
 			Subject: "alice", RawToken: "tok", Claims: map[string]any{"aud": "api://up"},
 		})
-		target := mcpclient.Target{}
+		target := Target{}
 		if err := r.Apply(ctx, mcpConsumer(gw), reg, &target); err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -128,7 +127,7 @@ func TestCredentialResolver_Passthrough(t *testing.T) {
 		ctx := principalCtx(&identity.Principal{
 			Subject: "alice", RawToken: "tok", Claims: map[string]any{"aud": "gateway"},
 		})
-		target := mcpclient.Target{}
+		target := Target{}
 		if err := r.Apply(ctx, mcpConsumer(gw), reg, &target); !errors.Is(err, ErrAudienceMismatch) {
 			t.Fatalf("error = %v, want ErrAudienceMismatch", err)
 		}
@@ -136,7 +135,7 @@ func TestCredentialResolver_Passthrough(t *testing.T) {
 
 	t.Run("rejects when no principal", func(t *testing.T) {
 		t.Parallel()
-		target := mcpclient.Target{}
+		target := Target{}
 		if err := r.Apply(context.Background(), mcpConsumer(gw), reg, &target); !errors.Is(err, ErrNoPrincipal) {
 			t.Fatalf("error = %v, want ErrNoPrincipal", err)
 		}
@@ -153,7 +152,7 @@ func TestCredentialResolver_Exchange_InjectsAndIsolatesCacheKey(t *testing.T) {
 	})
 	rc := mcpConsumer(gw)
 	ctx := principalCtx(&identity.Principal{Subject: "alice"})
-	target := mcpclient.Target{}
+	target := Target{}
 	if err := r.Apply(ctx, rc, reg, &target); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -179,7 +178,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		t.Parallel()
 		r := NewCredentialResolver(nil, &memVault{}, &stubConnect{ticket: "tckt"}, appoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
-		target := mcpclient.Target{}
+		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
 		var consent *ConsentRequiredError
 		if !errors.As(err, &consent) {
@@ -197,7 +196,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		_ = vault.Upsert(context.Background(), cred)
 		r := NewCredentialResolver(nil, vault, &stubConnect{}, appoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
-		target := mcpclient.Target{}
+		target := Target{}
 		if err := r.Apply(ctx, mcpConsumer(gw), reg, &target); err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -213,7 +212,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		_ = vault.Upsert(context.Background(), cred)
 		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t2"}, appoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "bob"})
-		target := mcpclient.Target{}
+		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
 		var consent *ConsentRequiredError
 		if !errors.As(err, &consent) {
@@ -241,7 +240,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		}}
 		r := NewCredentialResolver(nil, vault, connect, appoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
-		target := mcpclient.Target{}
+		target := Target{}
 		if err := r.Apply(ctx, mcpConsumer(gw), reg, &target); err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
@@ -261,7 +260,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		connect := &stubConnect{ticket: "t4", refreshErr: errors.New("client registration evicted")}
 		r := NewCredentialResolver(nil, vault, connect, appoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
-		target := mcpclient.Target{}
+		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
 		var consent *ConsentRequiredError
 		if !errors.As(err, &consent) || consent.Ticket != "t4" {
@@ -276,7 +275,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		_ = vault.Upsert(context.Background(), cred)
 		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t3"}, appoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
-		target := mcpclient.Target{}
+		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
 		var consent *ConsentRequiredError
 		if !errors.As(err, &consent) {
@@ -294,7 +293,7 @@ func TestCredentialResolver_NoneAndStaticAreNoops(t *testing.T) {
 		{Mode: registrydomain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer static"},
 	} {
 		reg := regWithAuth(gw, auth)
-		target := mcpclient.Target{}
+		target := Target{}
 		if err := r.Apply(context.Background(), mcpConsumer(gw), reg, &target); err != nil {
 			t.Fatalf("Apply(%s): %v", auth.Mode, err)
 		}

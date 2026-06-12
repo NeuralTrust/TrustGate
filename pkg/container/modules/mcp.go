@@ -29,7 +29,7 @@ func MCP(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(client *mcpclient.Client, logger *slog.Logger) appmcp.Dialer {
-		return appmcp.NewCachedDialer(client, logger)
+		return mcpclient.NewCachedDialer(client, logger)
 	}); err != nil {
 		return err
 	}

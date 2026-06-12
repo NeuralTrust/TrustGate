@@ -13,14 +13,13 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	mcpclient "github.com/NeuralTrust/AgentGateway/pkg/infra/mcp/client"
 )
 
 type fakeUpstream struct {
-	tools      []mcpclient.Tool
-	prompts    []mcpclient.Prompt
-	resources  []mcpclient.Resource
-	templates  []mcpclient.ResourceTemplate
+	tools      []Tool
+	prompts    []Prompt
+	resources  []Resource
+	templates  []ResourceTemplate
 	listErr    error
 	lastCall   string
 	lastPrompt string
@@ -28,7 +27,7 @@ type fakeUpstream struct {
 	result     json.RawMessage
 }
 
-func (f *fakeUpstream) ListTools(context.Context) ([]mcpclient.Tool, error) {
+func (f *fakeUpstream) ListTools(context.Context) ([]Tool, error) {
 	return f.tools, f.listErr
 }
 
@@ -37,17 +36,17 @@ func (f *fakeUpstream) CallTool(_ context.Context, name string, _ json.RawMessag
 	return f.result, nil
 }
 
-func (f *fakeUpstream) ListResources(context.Context) ([]mcpclient.Resource, error) {
+func (f *fakeUpstream) ListResources(context.Context) ([]Resource, error) {
 	return f.resources, f.listErr
 }
 
-func (f *fakeUpstream) ListResourceTemplates(context.Context) ([]mcpclient.ResourceTemplate, error) {
+func (f *fakeUpstream) ListResourceTemplates(context.Context) ([]ResourceTemplate, error) {
 	return f.templates, f.listErr
 }
 
 func (f *fakeUpstream) ReadResource(_ context.Context, uri string) (json.RawMessage, error) {
 	if !f.SupportsResources() {
-		return nil, mcpclient.ErrNotSupported
+		return nil, ErrNotSupported
 	}
 	for _, r := range f.resources {
 		if r.URI == uri {
@@ -58,13 +57,13 @@ func (f *fakeUpstream) ReadResource(_ context.Context, uri string) (json.RawMess
 	return nil, errors.New("unknown resource")
 }
 
-func (f *fakeUpstream) ListPrompts(context.Context) ([]mcpclient.Prompt, error) {
+func (f *fakeUpstream) ListPrompts(context.Context) ([]Prompt, error) {
 	return f.prompts, f.listErr
 }
 
 func (f *fakeUpstream) GetPrompt(_ context.Context, name string, _ map[string]string) (json.RawMessage, error) {
 	if !f.SupportsPrompts() {
-		return nil, mcpclient.ErrNotSupported
+		return nil, ErrNotSupported
 	}
 	f.lastPrompt = name
 	return f.result, nil
@@ -80,7 +79,7 @@ type fakeDialer struct {
 	dialErr   map[string]error
 }
 
-func (f *fakeDialer) Connect(_ context.Context, target mcpclient.Target) (Upstream, error) {
+func (f *fakeDialer) Connect(_ context.Context, target Target) (Upstream, error) {
 	if err := f.dialErr[target.URL]; err != nil {
 		return nil, err
 	}
@@ -112,15 +111,15 @@ func newTestComposer(dialer Dialer) Composer {
 	return NewComposer(dialer, nil, mgr, slog.New(slog.DiscardHandler))
 }
 
-func tools(names ...string) []mcpclient.Tool {
-	out := make([]mcpclient.Tool, 0, len(names))
+func tools(names ...string) []Tool {
+	out := make([]Tool, 0, len(names))
 	for _, n := range names {
-		out = append(out, mcpclient.Tool{Name: n})
+		out = append(out, Tool{Name: n})
 	}
 	return out
 }
 
-func toolNames(ts []mcpclient.Tool) []string {
+func toolNames(ts []Tool) []string {
 	out := make([]string, 0, len(ts))
 	for _, t := range ts {
 		out = append(out, t.Name)
@@ -200,7 +199,7 @@ func TestComposer_FailMode(t *testing.T) {
 			"https://a.example.com/mcp": {tools: tools("alive")},
 		},
 		dialErr: map[string]error{
-			"https://b.example.com/mcp": mcpclient.ErrUnreachable,
+			"https://b.example.com/mcp": ErrUnreachable,
 		},
 	}
 	c := newTestComposer(dialer)
@@ -268,10 +267,10 @@ func TestComposer_NoMCPRegistries(t *testing.T) {
 	}
 }
 
-func prompts(names ...string) []mcpclient.Prompt {
-	out := make([]mcpclient.Prompt, 0, len(names))
+func prompts(names ...string) []Prompt {
+	out := make([]Prompt, 0, len(names))
 	for _, n := range names {
-		out = append(out, mcpclient.Prompt{Name: n})
+		out = append(out, Prompt{Name: n})
 	}
 	return out
 }
@@ -334,8 +333,8 @@ func TestComposer_ListResources_MergesUpstreams(t *testing.T) {
 	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
 	regB := mcpRegistry(t, "slack", "https://b.example.com/mcp")
 	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
-		"https://a.example.com/mcp": {resources: []mcpclient.Resource{{URI: "repo://a", Name: "a"}}},
-		"https://b.example.com/mcp": {resources: []mcpclient.Resource{{URI: "chan://b", Name: "b"}}},
+		"https://a.example.com/mcp": {resources: []Resource{{URI: "repo://a", Name: "a"}}},
+		"https://b.example.com/mcp": {resources: []Resource{{URI: "chan://b", Name: "b"}}},
 	}}
 	c := newTestComposer(dialer)
 
@@ -354,8 +353,8 @@ func TestComposer_Toolkit_GovernsAllSurfaces(t *testing.T) {
 	upA := &fakeUpstream{
 		tools:     tools("create_issue", "delete_repo"),
 		prompts:   prompts("summarize", "triage"),
-		resources: []mcpclient.Resource{{URI: "repo://github/readme"}, {URI: "secret://keys"}},
-		templates: []mcpclient.ResourceTemplate{{Name: "files", URITemplate: "repo://github/{path}"}},
+		resources: []Resource{{URI: "repo://github/readme"}, {URI: "secret://keys"}},
+		templates: []ResourceTemplate{{Name: "files", URITemplate: "repo://github/{path}"}},
 		result:    json.RawMessage(`{"contents":[]}`),
 	}
 	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{"https://a.example.com/mcp": upA}}
@@ -425,8 +424,8 @@ func TestComposer_Toolkit_ToolOnlyEntriesHidePromptsAndResources(t *testing.T) {
 	upA := &fakeUpstream{
 		tools:     tools("create_issue"),
 		prompts:   prompts("summarize"),
-		resources: []mcpclient.Resource{{URI: "repo://github/readme"}},
-		templates: []mcpclient.ResourceTemplate{{Name: "files", URITemplate: "repo://github/{path}"}},
+		resources: []Resource{{URI: "repo://github/readme"}},
+		templates: []ResourceTemplate{{Name: "files", URITemplate: "repo://github/{path}"}},
 		result:    json.RawMessage(`{"contents":[]}`),
 	}
 	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{"https://a.example.com/mcp": upA}}
@@ -468,8 +467,8 @@ func TestComposer_ReadResource_RoutesByURI(t *testing.T) {
 	t.Parallel()
 	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
 	regB := mcpRegistry(t, "slack", "https://b.example.com/mcp")
-	upA := &fakeUpstream{resources: []mcpclient.Resource{{URI: "repo://a"}}, result: json.RawMessage(`{"contents":[]}`)}
-	upB := &fakeUpstream{resources: []mcpclient.Resource{{URI: "chan://b"}}, result: json.RawMessage(`{"contents":[]}`)}
+	upA := &fakeUpstream{resources: []Resource{{URI: "repo://a"}}, result: json.RawMessage(`{"contents":[]}`)}
+	upB := &fakeUpstream{resources: []Resource{{URI: "chan://b"}}, result: json.RawMessage(`{"contents":[]}`)}
 	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
 		"https://a.example.com/mcp": upA,
 		"https://b.example.com/mcp": upB,

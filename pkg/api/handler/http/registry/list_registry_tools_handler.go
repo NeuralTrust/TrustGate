@@ -6,7 +6,6 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	mcpclient "github.com/NeuralTrust/AgentGateway/pkg/infra/mcp/client"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -19,7 +18,7 @@ func NewListRegistryToolsHandler(introspector appmcp.Introspector) *ListRegistry
 }
 
 type ListRegistryToolsResponse struct {
-	Tools []mcpclient.Tool `json:"tools"`
+	Tools []appmcp.Tool `json:"tools"`
 }
 
 // Handle godoc
@@ -49,7 +48,7 @@ func (h *ListRegistryToolsHandler) Handle(c *fiber.Ctx) error {
 		return helpers.WriteError(c, err)
 	}
 	if tools == nil {
-		tools = []mcpclient.Tool{}
+		tools = []appmcp.Tool{}
 	}
 	return helpers.WriteOK(c, ListRegistryToolsResponse{Tools: tools})
 }

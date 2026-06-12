@@ -13,7 +13,6 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
-	mcpclient "github.com/NeuralTrust/AgentGateway/pkg/infra/mcp/client"
 )
 
 // ErrNoPrincipal: the target's auth mode needs a user identity that the
@@ -42,7 +41,7 @@ func (e *ConsentRequiredError) Error() string {
 //
 //go:generate mockery --name=CredentialResolver --dir=. --output=./mocks --filename=mcp_credential_resolver_mock.go --case=underscore --with-expecter
 type CredentialResolver interface {
-	Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *mcpclient.Target) error
+	Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error
 }
 
 var _ CredentialResolver = (*credentialResolver)(nil)
@@ -66,7 +65,7 @@ func NewCredentialResolver(
 // vaultRefreshSkew refreshes vaulted tokens slightly before expiry.
 const vaultRefreshSkew = 60 * time.Second
 
-func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *mcpclient.Target) error {
+func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error {
 	cfg := reg.MCPTarget.Auth
 	if cfg == nil {
 		return nil
@@ -85,7 +84,7 @@ func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.Routable
 	}
 }
 
-func (r *credentialResolver) passthrough(ctx context.Context, cfg *registrydomain.MCPAuth, target *mcpclient.Target) error {
+func (r *credentialResolver) passthrough(ctx context.Context, cfg *registrydomain.MCPAuth, target *Target) error {
 	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil || principal.RawToken == "" {
 		return ErrNoPrincipal
@@ -97,7 +96,7 @@ func (r *credentialResolver) passthrough(ctx context.Context, cfg *registrydomai
 	return nil
 }
 
-func (r *credentialResolver) exchange(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, cfg *registrydomain.MCPAuth, target *mcpclient.Target) error {
+func (r *credentialResolver) exchange(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, cfg *registrydomain.MCPAuth, target *Target) error {
 	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil {
 		return ErrNoPrincipal
@@ -113,7 +112,7 @@ func (r *credentialResolver) exchange(ctx context.Context, rc *appconsumer.Routa
 	return nil
 }
 
-func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *mcpclient.Target) error {
+func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error {
 	cfg := reg.MCPTarget.Auth
 	principal := identity.PrincipalFromContext(ctx)
 	if principal == nil {
@@ -163,7 +162,7 @@ func (r *credentialResolver) consentRequired(ctx context.Context, rc *appconsume
 	return &ConsentRequiredError{Provider: provider, Ticket: ticket, Path: rc.Consumer.Path}
 }
 
-func setAuthorization(target *mcpclient.Target, value string) {
+func setAuthorization(target *Target, value string) {
 	if target.Headers == nil {
 		target.Headers = map[string]string{}
 	}

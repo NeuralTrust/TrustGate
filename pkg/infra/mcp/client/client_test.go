@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 	mcpclient "github.com/NeuralTrust/AgentGateway/pkg/infra/mcp/client"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -47,7 +48,7 @@ func addEchoTool(server *sdk.Server) {
 	)
 }
 
-func connect(t *testing.T, target mcpclient.Target) *mcpclient.Session {
+func connect(t *testing.T, target appmcp.Target) *mcpclient.Session {
 	t.Helper()
 	sess, err := mcpclient.New().Connect(context.Background(), target)
 	if err != nil {
@@ -59,8 +60,8 @@ func connect(t *testing.T, target mcpclient.Target) *mcpclient.Session {
 
 func TestConnect_UnreachableUpstream(t *testing.T) {
 	t.Parallel()
-	_, err := mcpclient.New().Connect(context.Background(), mcpclient.Target{URL: "http://127.0.0.1:1/mcp"})
-	if !errors.Is(err, mcpclient.ErrUnreachable) {
+	_, err := mcpclient.New().Connect(context.Background(), appmcp.Target{URL: "http://127.0.0.1:1/mcp"})
+	if !errors.Is(err, appmcp.ErrUnreachable) {
 		t.Fatalf("error = %v, want ErrUnreachable", err)
 	}
 }
@@ -68,7 +69,7 @@ func TestConnect_UnreachableUpstream(t *testing.T) {
 func TestListTools_AndCallTool(t *testing.T) {
 	t.Parallel()
 	srv := newUpstream(t, addEchoTool, nil)
-	sess := connect(t, mcpclient.Target{URL: srv.URL})
+	sess := connect(t, appmcp.Target{URL: srv.URL})
 
 	tools, err := sess.ListTools(context.Background())
 	if err != nil {
@@ -90,13 +91,13 @@ func TestListTools_AndCallTool(t *testing.T) {
 func TestCallTool_UnknownToolIsRPCError(t *testing.T) {
 	t.Parallel()
 	srv := newUpstream(t, addEchoTool, nil)
-	sess := connect(t, mcpclient.Target{URL: srv.URL})
+	sess := connect(t, appmcp.Target{URL: srv.URL})
 
 	_, err := sess.CallTool(context.Background(), "missing", nil)
 	if err == nil {
 		t.Fatal("expected an error for an unknown tool")
 	}
-	if !mcpclient.IsRPCError(err) {
+	if !appmcp.IsRPCError(err) {
 		t.Fatalf("error = %v, want a JSON-RPC error", err)
 	}
 }
@@ -112,7 +113,7 @@ func TestHeadersInjectedOnEveryRequest(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 	})
-	sess := connect(t, mcpclient.Target{
+	sess := connect(t, appmcp.Target{
 		URL:     srv.URL,
 		Headers: map[string]string{"Authorization": "Bearer secret"},
 	})
@@ -136,7 +137,7 @@ func TestResources_ListAndRead(t *testing.T) {
 			},
 		)
 	}, nil)
-	sess := connect(t, mcpclient.Target{URL: srv.URL})
+	sess := connect(t, appmcp.Target{URL: srv.URL})
 
 	if !sess.SupportsResources() {
 		t.Fatal("expected the upstream to advertise resources")
@@ -170,7 +171,7 @@ func TestPrompts_ListAndGet(t *testing.T) {
 			},
 		)
 	}, nil)
-	sess := connect(t, mcpclient.Target{URL: srv.URL})
+	sess := connect(t, appmcp.Target{URL: srv.URL})
 
 	if !sess.SupportsPrompts() {
 		t.Fatal("expected the upstream to advertise prompts")
@@ -195,7 +196,7 @@ func TestPrompts_ListAndGet(t *testing.T) {
 func TestCapabilityGating_ToolsOnlyUpstream(t *testing.T) {
 	t.Parallel()
 	srv := newUpstream(t, addEchoTool, nil)
-	sess := connect(t, mcpclient.Target{URL: srv.URL})
+	sess := connect(t, appmcp.Target{URL: srv.URL})
 
 	resources, err := sess.ListResources(context.Background())
 	if err != nil || len(resources) != 0 {
@@ -205,10 +206,10 @@ func TestCapabilityGating_ToolsOnlyUpstream(t *testing.T) {
 	if err != nil || len(prompts) != 0 {
 		t.Fatalf("prompts = %v, %v; want empty without error", prompts, err)
 	}
-	if _, err := sess.ReadResource(context.Background(), "file:///x"); !errors.Is(err, mcpclient.ErrNotSupported) {
+	if _, err := sess.ReadResource(context.Background(), "file:///x"); !errors.Is(err, appmcp.ErrNotSupported) {
 		t.Fatalf("read error = %v, want ErrNotSupported", err)
 	}
-	if _, err := sess.GetPrompt(context.Background(), "x", nil); !errors.Is(err, mcpclient.ErrNotSupported) {
+	if _, err := sess.GetPrompt(context.Background(), "x", nil); !errors.Is(err, appmcp.ErrNotSupported) {
 		t.Fatalf("get prompt error = %v, want ErrNotSupported", err)
 	}
 }
@@ -216,7 +217,7 @@ func TestCapabilityGating_ToolsOnlyUpstream(t *testing.T) {
 func TestPing(t *testing.T) {
 	t.Parallel()
 	srv := newUpstream(t, nil, nil)
-	sess := connect(t, mcpclient.Target{URL: srv.URL})
+	sess := connect(t, appmcp.Target{URL: srv.URL})
 	if err := sess.Ping(context.Background()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}

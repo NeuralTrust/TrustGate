@@ -1,11 +1,3 @@
-// Package mcp exposes consumer-scoped virtual MCP servers over Streamable
-// HTTP (JSON-RPC 2.0). One POST endpoint serves initialize, ping, tools/*,
-// resources/*, and prompts/*; the surface is composed from the consumer's MCP
-// registries and toolkit.
-//
-// Elicitation and sampling are not relayed: the gateway answers each POST
-// with a single JSON-RPC response and does not advertise those capabilities
-// upstream, so spec-compliant servers degrade gracefully.
 package mcp
 
 import (
@@ -18,7 +10,6 @@ import (
 	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	mcpclient "github.com/NeuralTrust/AgentGateway/pkg/infra/mcp/client"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -75,10 +66,6 @@ type rpcError struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
-// MethodNotAllowed answers the optional Streamable HTTP legs we do not
-// support: GET (server-initiated SSE stream) and DELETE (client-initiated
-// session termination). The spec mandates 405 here; anything else (401/404)
-// sends clients like Cursor into an endless re-authentication loop.
 func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 	c.Set(fiber.HeaderAllow, fiber.MethodPost)
 	return c.SendStatus(fiber.StatusMethodNotAllowed)
@@ -159,7 +146,7 @@ func (h *Handler) handleToolsList(c *fiber.Ctx, req rpcRequest, rc *appconsumer.
 		return writeComposerError(c, req.ID, err)
 	}
 	if tools == nil {
-		tools = []mcpclient.Tool{}
+		tools = []appmcp.Tool{}
 	}
 	return writeRPCResult(c, req.ID, fiber.Map{"tools": tools})
 }
@@ -187,7 +174,7 @@ func (h *Handler) handleResourcesList(c *fiber.Ctx, req rpcRequest, rc *appconsu
 		return writeComposerError(c, req.ID, err)
 	}
 	if resources == nil {
-		resources = []mcpclient.Resource{}
+		resources = []appmcp.Resource{}
 	}
 	return writeRPCResult(c, req.ID, fiber.Map{"resources": resources})
 }
@@ -198,7 +185,7 @@ func (h *Handler) handleResourceTemplatesList(c *fiber.Ctx, req rpcRequest, rc *
 		return writeComposerError(c, req.ID, err)
 	}
 	if templates == nil {
-		templates = []mcpclient.ResourceTemplate{}
+		templates = []appmcp.ResourceTemplate{}
 	}
 	return writeRPCResult(c, req.ID, fiber.Map{"resourceTemplates": templates})
 }
@@ -225,7 +212,7 @@ func (h *Handler) handlePromptsList(c *fiber.Ctx, req rpcRequest, rc *appconsume
 		return writeComposerError(c, req.ID, err)
 	}
 	if prompts == nil {
-		prompts = []mcpclient.Prompt{}
+		prompts = []appmcp.Prompt{}
 	}
 	return writeRPCResult(c, req.ID, fiber.Map{"prompts": prompts})
 }
@@ -258,7 +245,7 @@ const codeResourceNotFound = -32002
 
 func writeComposerError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	var (
-		rpcErr     *mcpclient.RPCError
+		rpcErr     *appmcp.RPCError
 		consentErr *appmcp.ConsentRequiredError
 	)
 	switch {
