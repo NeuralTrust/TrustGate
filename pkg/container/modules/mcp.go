@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"fmt"
 	"log/slog"
 
 	mcphttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/mcp"
@@ -43,6 +44,11 @@ func MCP(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(cfg *config.Config, logger *slog.Logger) (*sts.Signer, error) {
+		// An ephemeral per-replica key in prod breaks JWKS verification across
+		// replicas (each one would publish a different key), so refuse to boot.
+		if cfg.Server.STSSigningKey == "" && cfg.AppEnv == "prod" {
+			return nil, fmt.Errorf("sts: STS_SIGNING_KEY is required when APP_ENV=prod (ephemeral keys are not shared across replicas)")
+		}
 		return sts.NewSigner(cfg.Server.STSIssuer, cfg.Server.STSSigningKey, logger)
 	}); err != nil {
 		return err
