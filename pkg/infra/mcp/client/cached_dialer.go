@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sort"
 	"sync"
@@ -85,21 +86,37 @@ func (d *cachedDialer) connectAndStore(ctx context.Context, key string, target a
 
 func (d *cachedDialer) drop(ctx context.Context, key string, sess *Session) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	var toClose *Session
 	if e, ok := d.entries[key]; ok && e.session == sess {
 		delete(d.entries, key)
-		e.session.Close(ctx)
+		toClose = e.session
+	}
+	d.mu.Unlock()
+	if toClose != nil {
+		toClose.Close(ctx)
 	}
 }
 
+// evictIdleLocked removes idle entries from the map; the network Close runs
+// outside the dialer lock so a slow upstream cannot stall every other
+// connection through the dialer.
 func (d *cachedDialer) evictIdleLocked() {
 	cutoff := time.Now().Add(-sessionIdleTTL)
+	var stale []*Session
 	for key, e := range d.entries {
 		if e.lastUsed.Before(cutoff) {
 			delete(d.entries, key)
-			e.session.Close(context.Background())
+			stale = append(stale, e.session)
 		}
 	}
+	if len(stale) == 0 {
+		return
+	}
+	go func() {
+		for _, s := range stale {
+			s.Close(context.Background())
+		}
+	}()
 }
 
 func credentialFingerprint(headers map[string]string) string {
@@ -136,10 +153,13 @@ func (u *cachedUpstream) ListTools(ctx context.Context) ([]appmcp.Tool, error) {
 	return out, err
 }
 
+// CallTool never retries: a tool invocation that failed at the transport
+// layer may still have executed upstream, and replaying it would duplicate
+// side effects. The broken session is dropped so the next call reconnects.
 func (u *cachedUpstream) CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
 	res, err := u.session.CallTool(ctx, name, arguments)
-	if u.refresh(ctx, err) {
-		return u.session.CallTool(ctx, name, arguments)
+	if err != nil && shouldDrop(ctx, err) {
+		u.dialer.drop(ctx, u.key, u.session)
 	}
 	return res, err
 }
@@ -191,7 +211,7 @@ func (u *cachedUpstream) Close(context.Context) {
 }
 
 func (u *cachedUpstream) refresh(ctx context.Context, err error) bool {
-	if err == nil || appmcp.IsRPCError(err) {
+	if err == nil || !shouldDrop(ctx, err) {
 		return false
 	}
 	u.dialer.drop(ctx, u.key, u.session)
@@ -202,5 +222,19 @@ func (u *cachedUpstream) refresh(ctx context.Context, err error) bool {
 		return false
 	}
 	u.session = sess
+	return true
+}
+
+// shouldDrop reports whether an error indicates a broken session. RPC errors
+// come from a healthy transport, ErrNotSupported is a stable capability fact,
+// and context errors belong to the caller's request — none of them justify
+// tearing down a session shared with other requests.
+func shouldDrop(ctx context.Context, err error) bool {
+	if appmcp.IsRPCError(err) || errors.Is(err, appmcp.ErrNotSupported) {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+		return false
+	}
 	return true
 }

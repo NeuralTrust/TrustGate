@@ -12,10 +12,24 @@ import (
 )
 
 const (
-	clientName     = "agentgateway"
-	clientVersion  = "1.0"
-	defaultTimeout = 30 * time.Second
+	clientName    = "agentgateway"
+	clientVersion = "1.0"
+
+	responseHeaderTimeout = 30 * time.Second
 )
+
+// upstreamTransport bounds connection setup and time-to-first-byte without
+// capping the whole exchange: long-running tools/call invocations are limited
+// only by the caller's context, not by a global http.Client timeout.
+var upstreamTransport = func() http.RoundTripper {
+	t, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultTransport
+	}
+	cloned := t.Clone()
+	cloned.ResponseHeaderTimeout = responseHeaderTimeout
+	return cloned
+}()
 
 type Client struct{}
 
@@ -32,7 +46,6 @@ func (c *Client) Connect(ctx context.Context, target appmcp.Target) (*Session, e
 	transport := &sdk.StreamableClientTransport{
 		Endpoint: target.URL,
 		HTTPClient: &http.Client{
-			Timeout:   defaultTimeout,
 			Transport: &headerRoundTripper{headers: target.Headers},
 		},
 		DisableStandaloneSSE: true,
@@ -56,7 +69,7 @@ func (t *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	for k, v := range t.headers {
 		req.Header.Set(k, v)
 	}
-	return http.DefaultTransport.RoundTrip(req)
+	return upstreamTransport.RoundTrip(req)
 }
 
 func (s *Session) capabilities() *sdk.ServerCapabilities {

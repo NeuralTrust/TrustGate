@@ -97,8 +97,46 @@ func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconnect: %v", err)
 	}
-	if _, err := up2.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err != nil {
-		t.Fatalf("call after upstream restart should re-initialize and retry: %v", err)
+	// tools/call must never be silently replayed: the first call on the dead
+	// session surfaces the error and evicts it from the cache.
+	if _, err := up2.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err == nil {
+		t.Fatal("call on a lost session must propagate the error instead of retrying")
+	}
+
+	up3, err := dialer.Connect(context.Background(), target)
+	if err != nil {
+		t.Fatalf("reconnect after eviction: %v", err)
+	}
+	if _, err := up3.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("call after re-dial: %v", err)
+	}
+	if got := upstream.inits.Load(); got != 2 {
+		t.Fatalf("expected 2 initializes in total (initial + recovery), got %d", got)
+	}
+}
+
+func TestCachedDialer_ListRetriesAfterLostSession(t *testing.T) {
+	t.Parallel()
+	upstream := newUpstreamStub(t)
+	dialer := newCachedDialer()
+	target := appmcp.Target{URL: upstream.srv.URL, PinKey: "gw:consumer:reg"}
+
+	up, err := dialer.Connect(context.Background(), target)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if _, err := up.ListTools(context.Background()); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	upstream.reset()
+
+	up2, err := dialer.Connect(context.Background(), target)
+	if err != nil {
+		t.Fatalf("reconnect: %v", err)
+	}
+	if _, err := up2.ListTools(context.Background()); err != nil {
+		t.Fatalf("read-only list should transparently re-initialize and retry: %v", err)
 	}
 	if got := upstream.inits.Load(); got != 2 {
 		t.Fatalf("expected 2 initializes in total (initial + recovery), got %d", got)
