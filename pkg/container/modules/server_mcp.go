@@ -25,9 +25,6 @@ type mcpMiddlewares struct {
 	Auth            *middleware.AuthMiddleware
 }
 
-// mcpBaseTransport carries the observability middlewares installed before any
-// route, so the public OAuth surface (discovery, token, callbacks) is logged
-// too.
 func mcpBaseTransport(m mcpMiddlewares) *middleware.Transport {
 	return middleware.NewTransport(
 		m.RequestID,
@@ -37,10 +34,8 @@ func mcpBaseTransport(m mcpMiddlewares) *middleware.Transport {
 	)
 }
 
-// mcpAuthTransport guards only the consumer JSON-RPC surface.
 func mcpAuthTransport(m mcpMiddlewares) *middleware.Transport {
 	return middleware.NewTransport(
-		// Challenge must wrap Auth so 401s carry WWW-Authenticate.
 		m.OAuthChallenge,
 		m.Auth,
 	)

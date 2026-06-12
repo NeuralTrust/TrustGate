@@ -7,19 +7,13 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
-// ToolWildcard selects every tool (or prompt) exposed by the upstream MCP
-// server; on resource entries it selects every resource URI.
 const ToolWildcard = "*"
 
-// FailMode controls virtual-MCP behavior when an upstream MCP server is
-// unreachable during tool discovery.
 type FailMode string
 
 const (
-	// FailModeClosed rejects the request when any upstream is unreachable.
 	FailModeClosed FailMode = "closed"
-	// FailModeOpen serves the tools of the reachable upstreams.
-	FailModeOpen FailMode = "open"
+	FailModeOpen   FailMode = "open"
 )
 
 func (m FailMode) Validate() error {
@@ -30,13 +24,6 @@ func (m FailMode) Validate() error {
 	return fmt.Errorf("%w: %q", ErrInvalidFailMode, m)
 }
 
-// ToolkitEntry grants a consumer access to one item of an attached MCP
-// registry. Exactly one selector is set per entry:
-//
-//   - Tool: a tool name or "*", optionally renamed via ExposeAs.
-//   - Prompt: a prompt name or "*", optionally renamed via ExposeAs.
-//   - Resource: a resource URI, a prefix pattern ("repo://github/*"), or "*".
-//     Resources are URI-addressed, so ExposeAs does not apply.
 type ToolkitEntry struct {
 	RegistryID ids.RegistryID `json:"registry_id"`
 	Tool       string         `json:"tool,omitempty"`
@@ -45,7 +32,6 @@ type ToolkitEntry struct {
 	ExposeAs   string         `json:"expose_as,omitempty"`
 }
 
-// selector returns the surface kind and value of the entry's single selector.
 func (e ToolkitEntry) selector() (kind, value string, err error) {
 	set := 0
 	if v := strings.TrimSpace(e.Tool); v != "" {
@@ -64,11 +50,6 @@ func (e ToolkitEntry) selector() (kind, value string, err error) {
 	return kind, value, nil
 }
 
-// Toolkit is the inline MCP authorization config of a consumer. An empty
-// toolkit on an MCP consumer exposes every tool, prompt, and resource of
-// every attached registry. A non-empty toolkit is an allowlist per surface:
-// only the listed tools/prompts/resources are exposed, and a registry with no
-// entries for a surface exposes nothing on that surface.
 type Toolkit []ToolkitEntry
 
 func (t Toolkit) Validate(known map[ids.RegistryID]struct{}) error {
@@ -110,17 +91,14 @@ func (t Toolkit) Validate(known map[ids.RegistryID]struct{}) error {
 	return nil
 }
 
-// EntriesFor returns the tool entries that target the given registry.
 func (t Toolkit) EntriesFor(registryID ids.RegistryID) []ToolkitEntry {
 	return t.entriesFor(registryID, func(e ToolkitEntry) string { return e.Tool })
 }
 
-// PromptEntriesFor returns the prompt entries that target the given registry.
 func (t Toolkit) PromptEntriesFor(registryID ids.RegistryID) []ToolkitEntry {
 	return t.entriesFor(registryID, func(e ToolkitEntry) string { return e.Prompt })
 }
 
-// ResourceEntriesFor returns the resource entries that target the given registry.
 func (t Toolkit) ResourceEntriesFor(registryID ids.RegistryID) []ToolkitEntry {
 	return t.entriesFor(registryID, func(e ToolkitEntry) string { return e.Resource })
 }
@@ -135,8 +113,6 @@ func (t Toolkit) entriesFor(registryID ids.RegistryID, selector func(ToolkitEntr
 	return out
 }
 
-// AllowsResource reports whether the toolkit exposes the given resource URI
-// on the given registry. An empty toolkit allows everything.
 func (t Toolkit) AllowsResource(registryID ids.RegistryID, uri string) bool {
 	if len(t) == 0 {
 		return true
@@ -149,8 +125,6 @@ func (t Toolkit) AllowsResource(registryID ids.RegistryID, uri string) bool {
 	return false
 }
 
-// MatchResource matches a resource selector against a URI: exact match, the
-// global wildcard "*", or a trailing-asterisk prefix ("repo://github/*").
 func MatchResource(pattern, uri string) bool {
 	if pattern == ToolWildcard {
 		return true

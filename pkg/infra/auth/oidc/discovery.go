@@ -12,8 +12,6 @@ import (
 
 const discoveryTTL = time.Hour
 
-// discovery resolves and caches the jwks_uri for an issuer via the OIDC
-// well-known endpoint (RFC 8414 / OIDC Discovery).
 type discovery struct {
 	client *http.Client
 

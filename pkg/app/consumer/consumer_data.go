@@ -52,8 +52,6 @@ func (d *Data) indexByPath() {
 	}
 }
 
-// CanonicalPath normalizes a consumer path for matching: "" becomes "/" and
-// trailing slashes are dropped.
 func CanonicalPath(path string) string {
 	if path == "" {
 		return "/"

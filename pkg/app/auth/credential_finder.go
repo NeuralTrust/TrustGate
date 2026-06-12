@@ -8,15 +8,9 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
 
-// CredentialFinder serves the credential-chain candidate lookups: every
-// enabled oauth2 / mtls Auth entry across gateways, cached briefly so the
-// hot path does not query the database per request.
-//
 //go:generate mockery --name=CredentialFinder --dir=. --output=./mocks --filename=auth_credential_finder_mock.go --case=underscore --with-expecter
 type CredentialFinder interface {
-	// OAuth2Auths returns all enabled Auth entries of type oauth2.
 	OAuth2Auths(ctx context.Context) ([]*domain.Auth, error)
-	// MTLSAuths returns all enabled Auth entries of type mtls.
 	MTLSAuths(ctx context.Context) ([]*domain.Auth, error)
 }
 

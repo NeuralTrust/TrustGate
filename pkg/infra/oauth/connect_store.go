@@ -24,9 +24,6 @@ var (
 	_ appoauth.ClientStore  = (*ConnectStore)(nil)
 )
 
-// ConnectStore persists consent tickets (reusable until expiry, so the user
-// can link several providers from one page) and per-provider consent states
-// (single-use) in Redis.
 type ConnectStore struct {
 	rdb *redis.Client
 }
@@ -73,8 +70,6 @@ func (s *ConnectStore) TakeConnect(ctx context.Context, state string) (*appoauth
 	return &c, nil
 }
 
-// SaveClient persists a DCR registration without expiry: losing it would
-// orphan the registered client at the upstream and churn its client table.
 func (s *ConnectStore) SaveClient(ctx context.Context, key string, c appoauth.RegisteredClient) error {
 	return s.set(ctx, clientPrefix+key, c, 0)
 }

@@ -59,7 +59,6 @@ func TestCreator_RejectsDuplicateIssuerAudience(t *testing.T) {
 
 func TestCreator_RejectsAudienceEquivalence(t *testing.T) {
 	t.Parallel()
-	// api://{guid} (Entra v1) and the bare guid (v2) are the same audience.
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
 		Return([]*domain.Auth{enabledOAuth2(t, "https://idp.example.com", "api://abc")}, nil).Once()
@@ -72,7 +71,6 @@ func TestCreator_RejectsAudienceEquivalence(t *testing.T) {
 
 func TestCreator_RejectsWildcardAudienceOverlap(t *testing.T) {
 	t.Parallel()
-	// An entry without audiences accepts any audience of its issuer.
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
 		Return([]*domain.Auth{enabledOAuth2(t, "https://idp.example.com")}, nil).Once()
@@ -122,8 +120,6 @@ func TestUpdater_AllowsUpdatingSameEntry(t *testing.T) {
 	existing := enabledOAuth2(t, "https://idp.example.com", "api://abc")
 
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
-	// The candidate list contains the entry being updated: it must not
-	// conflict with itself.
 	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
 		Return([]*domain.Auth{existing}, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()

@@ -1,6 +1,3 @@
-// Package oauth persists short-lived OAuth authorization-flow state (pending
-// authorizations and minted codes) in Redis, so any gateway replica can serve
-// any leg of the brokered flow.
 package oauth
 
 import (
@@ -68,8 +65,6 @@ func (s *Store) save(ctx context.Context, key string, v any, ttl time.Duration) 
 	return nil
 }
 
-// take reads and deletes atomically (GETDEL) so codes and pending states are
-// single-use even under concurrent redemption attempts.
 func (s *Store) take(ctx context.Context, key string, out any) (bool, error) {
 	raw, err := s.rdb.GetDel(ctx, key).Bytes()
 	if errors.Is(err, redis.Nil) {

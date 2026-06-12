@@ -4,9 +4,6 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
 )
 
-// MCPServerCatalog serves the curated, read-only list of well-known remote
-// MCP servers (sibling of the providers catalog, code-defined like the
-// policies catalog).
 type MCPServerCatalog interface {
 	ListMCPServers() []domain.MCPServer
 }

@@ -14,20 +14,12 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
 
-// PathMatch is one consumer (with its attached Auth entries) listening on a
-// request path. Multiple matches mean distinct gateways serve the same path;
-// the request host or the presented credential disambiguates.
 type PathMatch struct {
 	GatewayID ids.GatewayID
 	Consumer  *domain.Consumer
 	Auths     []*authdomain.Auth
 }
 
-// PathResolver resolves a request (host, path) to candidate consumers across
-// every gateway: path-first resolution. When a gateway claims the host
-// (Gateway.Domain), candidates are restricted to that gateway, giving full
-// tenant isolation at the edge.
-//
 //go:generate go run github.com/vektra/mockery/v2@v2.53.5 --name=PathResolver --dir=. --output=./mocks --filename=path_resolver_mock.go --case=underscore --with-expecter
 type PathResolver interface {
 	Match(ctx context.Context, host, path string) ([]PathMatch, error)
@@ -109,9 +101,6 @@ func (r *pathResolver) load(ctx context.Context, host, path string) ([]PathMatch
 	return matches, nil
 }
 
-// filterByHost restricts candidates to the gateway claiming the request host,
-// when one does. Unclaimed hosts leave the candidate set untouched so
-// single-tenant deployments keep working without configuring domains.
 func (r *pathResolver) filterByHost(ctx context.Context, host string, consumers []*domain.Consumer) ([]*domain.Consumer, error) {
 	if host == "" || len(consumers) == 0 {
 		return consumers, nil
@@ -139,8 +128,6 @@ func (r *pathResolver) attachedAuths(ctx context.Context, c *domain.Consumer) ([
 	return r.auths.FindByIDs(ctx, c.GatewayID, c.AuthIDs)
 }
 
-// normalizeHost lowercases the request host and strips any port, matching
-// the canonical form enforced on Gateway.Domain.
 func normalizeHost(host string) string {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if h, _, err := net.SplitHostPort(host); err == nil {

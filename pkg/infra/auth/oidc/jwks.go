@@ -1,6 +1,3 @@
-// Package oidc implements inbound JWT validation against IdP-published JWKS
-// (Entra, Okta, Keycloak, Auth0, Google, generic OIDC), with endpoint
-// discovery and a refresh-on-unknown-kid key cache.
 package oidc
 
 import (
@@ -23,14 +20,10 @@ import (
 var ErrKeyNotFound = errors.New("oidc: signing key not found")
 
 const (
-	jwksTTL = time.Hour
-	// minRefresh rate-limits refresh-on-unknown-kid so a flood of bogus kids
-	// cannot hammer the IdP.
+	jwksTTL    = time.Hour
 	minRefresh = 30 * time.Second
 )
 
-// JWKSCache fetches and caches JWKS documents per URL. Unknown kids trigger a
-// rate-limited refresh (key rotation); known keys are served from memory.
 type JWKSCache struct {
 	client *http.Client
 
@@ -50,7 +43,6 @@ func NewJWKSCache(client *http.Client) *JWKSCache {
 	return &JWKSCache{client: client, sets: map[string]*keySet{}}
 }
 
-// Key returns the public key for kid from the JWKS at url.
 func (c *JWKSCache) Key(ctx context.Context, url, kid string) (crypto.PublicKey, error) {
 	c.mu.Lock()
 	set := c.sets[url]
@@ -59,7 +51,6 @@ func (c *JWKSCache) Key(ctx context.Context, url, kid string) (crypto.PublicKey,
 			c.mu.Unlock()
 			return key, nil
 		}
-		// Unknown kid: only refetch if the rate limit allows it.
 		if time.Since(set.fetchedAt) < minRefresh {
 			c.mu.Unlock()
 			return nil, fmt.Errorf("%w: kid %q", ErrKeyNotFound, kid)

@@ -6,11 +6,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// OAuthChallengeMiddleware implements the MCP authorization challenge: every
-// 401 leaving the MCP plane carries a WWW-Authenticate header pointing at the
-// RFC 9728 protected-resource metadata, so MCP clients can bootstrap the
-// OAuth 2.1 discovery + authorization flow. It must wrap (run before) the
-// Auth middleware.
 type OAuthChallengeMiddleware struct{}
 
 func NewOAuthChallengeMiddleware() *OAuthChallengeMiddleware {

@@ -7,11 +7,6 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 )
 
-// ensureNoOAuth2Conflict is the admin-time guardrail against ambiguous
-// inbound token attribution: no two enabled oauth2 Auth entries may cover the
-// same (issuer, audience) pair, anywhere on the plane. Runtime resolution is
-// path-first, but surfaces without a consumer path (AS facade fallback,
-// unmatched routes) still need every enabled entry to be distinguishable.
 func ensureNoOAuth2Conflict(ctx context.Context, repo domain.Repository, candidate *domain.Auth) error {
 	if candidate.Type != domain.TypeOAuth2 || !candidate.Enabled || candidate.Config.OAuth2 == nil {
 		return nil

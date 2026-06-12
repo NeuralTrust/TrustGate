@@ -45,8 +45,6 @@ func initializeMemoryCache(mgr *cache.TTLMapManager) {
 	mgr.CreateTTLMap(cache.MCPToolsTTLName, cache.MCPToolsCacheTTL)
 
 	lbMap := mgr.CreateTTLMap(cache.LoadBalancerTTLName, cache.LoadBalancerCacheTTL)
-	// Cached load balancers own a background goroutine; close it when the entry
-	// is evicted (invalidation, replacement or TTL expiry) so it cannot leak.
 	lbMap.SetOnEvict(func(value any) {
 		if lb, ok := value.(*loadbalancer.LoadBalancer); ok {
 			lb.Close()

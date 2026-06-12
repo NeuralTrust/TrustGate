@@ -1,8 +1,5 @@
 package catalog
 
-// MCPServer is one curated remote MCP server entry. The catalog feeds the
-// admin UI pick-list so creating an MCP registry starts from a known server
-// (URL, transport, auth hint) instead of a blank form.
 type MCPServer struct {
 	Code        string         `json:"code"`
 	DisplayName string         `json:"display_name"`

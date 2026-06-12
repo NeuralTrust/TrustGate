@@ -1,7 +1,3 @@
-// Package crypto provides authenticated encryption for secrets at rest
-// (vaulted third-party tokens). AES-256-GCM with a key derived from the
-// server secret; swap the key source for KMS/secret-manager in production
-// per the cross-cutting secret rules.
 package crypto
 
 import (
@@ -18,8 +14,6 @@ type Cipher struct {
 	aead cipher.AEAD
 }
 
-// NewCipher derives a 256-bit key from the secret. The secret must be
-// non-empty: storing third-party refresh tokens unencrypted is not an option.
 func NewCipher(secret string) (*Cipher, error) {
 	if secret == "" {
 		return nil, errors.New("crypto: encryption secret is required (set SERVER_SECRET_KEY)")
@@ -36,7 +30,6 @@ func NewCipher(secret string) (*Cipher, error) {
 	return &Cipher{aead: aead}, nil
 }
 
-// Encrypt seals the plaintext and returns base64(nonce || ciphertext).
 func (c *Cipher) Encrypt(plaintext string) (string, error) {
 	if plaintext == "" {
 		return "", nil
@@ -49,7 +42,6 @@ func (c *Cipher) Encrypt(plaintext string) (string, error) {
 	return base64.StdEncoding.EncodeToString(sealed), nil
 }
 
-// Decrypt reverses Encrypt.
 func (c *Cipher) Decrypt(encoded string) (string, error) {
 	if encoded == "" {
 		return "", nil

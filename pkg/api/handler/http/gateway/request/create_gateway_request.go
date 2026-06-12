@@ -10,9 +10,7 @@ import (
 )
 
 type CreateGatewayRequest struct {
-	Name string `json:"name"`
-	// Domain is the optional hostname the gateway answers on (host-based
-	// tenant routing). Bare hostname, e.g. "tenant-a.gw.example.com".
+	Name            string                 `json:"name"`
 	Domain          string                 `json:"domain,omitempty"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`

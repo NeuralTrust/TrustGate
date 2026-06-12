@@ -58,7 +58,6 @@ func TestPathResolver_MatchAcrossGateways(t *testing.T) {
 
 	resolver := appconsumer.NewPathResolver(consumers, auths, gateways, cache.NewTTLMapManager(time.Hour), newTestLogger())
 
-	// Trailing slash and no host: canonicalized, both gateways match.
 	matches, err := resolver.Match(context.Background(), "", "/v1/mcp/hub/")
 	require.NoError(t, err)
 	require.Len(t, matches, 2)
@@ -66,7 +65,6 @@ func TestPathResolver_MatchAcrossGateways(t *testing.T) {
 	require.Equal(t, authA.ID, matches[0].Auths[0].ID)
 	require.Equal(t, gwB, matches[1].GatewayID)
 
-	// Second call is served from the cache (mocks expect a single call).
 	matches, err = resolver.Match(context.Background(), "", "/v1/mcp/hub/")
 	require.NoError(t, err)
 	require.Len(t, matches, 2)
@@ -90,7 +88,6 @@ func TestPathResolver_HostFiltersToClaimingGateway(t *testing.T) {
 
 	resolver := appconsumer.NewPathResolver(consumers, auths, gateways, cache.NewTTLMapManager(time.Hour), newTestLogger())
 
-	// Host carries a port and mixed case: normalized before the lookup.
 	matches, err := resolver.Match(context.Background(), "Tenant-B.example.com:8082", "/v1/mcp/hub")
 	require.NoError(t, err)
 	require.Len(t, matches, 1)

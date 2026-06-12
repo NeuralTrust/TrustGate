@@ -12,13 +12,9 @@ import (
 )
 
 type Gateway struct {
-	ID     ids.GatewayID `json:"id"`
-	Name   string        `json:"name"`
-	Status string        `json:"status"`
-	// Domain is the optional hostname this gateway answers on. When set,
-	// requests carrying that Host are resolved against this gateway only
-	// (tenant isolation at the edge); empty means the gateway is reachable
-	// on any host.
+	ID              ids.GatewayID        `json:"id"`
+	Name            string               `json:"name"`
+	Status          string               `json:"status"`
 	Domain          string               `json:"domain,omitempty"`
 	Telemetry       *telemetry.Telemetry `json:"telemetry,omitempty"`
 	ClientTLSConfig ClientTLSConfig      `json:"client_tls,omitempty"`
@@ -122,8 +118,6 @@ func (g *Gateway) Validate() error {
 	return nil
 }
 
-// NormalizeDomain canonicalizes a gateway hostname: lowercase, no scheme,
-// no path, no port. Empty is valid (gateway answers on any host).
 func NormalizeDomain(domain string) (string, error) {
 	d := strings.ToLower(strings.TrimSpace(domain))
 	if d == "" {

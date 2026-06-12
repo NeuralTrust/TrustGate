@@ -20,8 +20,6 @@ var ErrUnauthenticated = errors.New("unauthenticated")
 type Identity struct {
 	GatewayID ids.GatewayID
 	AuthID    ids.AuthID
-	// Principal is the authenticated subject built by the credential chain;
-	// nil for resolvers that authenticate without building one.
 	Principal *identitydomain.Principal
 }
 

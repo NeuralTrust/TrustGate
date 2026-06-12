@@ -94,20 +94,14 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	AdminPort    int
-	ProxyPort    int
-	MCPPort      int
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-	IdleTimeout  time.Duration
-	// SecretKey signs and verifies admin-plane JWTs. Empty disables admin auth
-	// token acceptance (every token is rejected). It also derives the vault
-	// at-rest encryption key.
-	SecretKey string
-	// STSIssuer is the iss claim of TrustGate-minted downstream tokens.
-	STSIssuer string
-	// STSSigningKey is the RSA private key (PEM) used to sign STS tokens.
-	// Empty generates an ephemeral key at boot (dev only).
+	AdminPort     int
+	ProxyPort     int
+	MCPPort       int
+	ReadTimeout   time.Duration
+	WriteTimeout  time.Duration
+	IdleTimeout   time.Duration
+	SecretKey     string
+	STSIssuer     string
 	STSSigningKey string
 }
 

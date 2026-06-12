@@ -287,8 +287,6 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 }
 
 func (r *Repository) FindActiveByPath(ctx context.Context, path string) ([]*domain.Consumer, error) {
-	// Paths are matched in canonical form (no trailing slash); tolerate a
-	// stored trailing slash so admin input variations still resolve.
 	query := consumerSelectColumns + `
 		  FROM consumers c
 		 WHERE c.active AND (c.path = $1 OR c.path = $1 || '/')
