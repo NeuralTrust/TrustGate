@@ -48,12 +48,49 @@ func TestUpdater_Update_Success(t *testing.T) {
 		t.Fatalf("unexpected gateway: %+v", got)
 	}
 
-	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get(id.String())
+	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("id:" + id.String())
 	if !ok {
 		t.Fatal("updated gateway was not refreshed in cache")
 	}
 	if cached.(*domain.Gateway).Name != "new" {
 		t.Fatal("cache holds stale name after update")
+	}
+}
+
+func TestUpdater_UpdateSlug_InvalidatesOldSlugCache(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	existing := domain.RehydrateWithSlug(id, "old", "old", "active", nil, nil, nil, now, now)
+
+	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
+	repo.EXPECT().
+		Update(mock.Anything, mock.MatchedBy(func(g *domain.Gateway) bool {
+			return g.Slug == "new"
+		})).
+		Return(nil).
+		Once()
+
+	mgr := newCacheManager()
+	mgr.GetTTLMap(cache.GatewayTTLName).Set("slug:old", existing)
+	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
+
+	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
+		ID:   id,
+		Slug: ptr("new"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Slug != "new" {
+		t.Fatalf("Slug = %q, want new", got.Slug)
+	}
+	if _, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("slug:old"); ok {
+		t.Fatal("old slug cache key was not invalidated")
+	}
+	if _, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("slug:new"); !ok {
+		t.Fatal("new slug cache key was not populated")
 	}
 }
 

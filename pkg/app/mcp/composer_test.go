@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
@@ -104,16 +105,25 @@ func routable(consumer *consumerdomain.Consumer, registries ...*registrydomain.R
 	return &appconsumer.RoutableConsumer{Consumer: consumer, Registries: registries}
 }
 
-type mapCache struct{ m map[string]any }
+type mapCache struct {
+	mu sync.Mutex
+	m  map[string]any
+}
 
 func newMapCache() *mapCache { return &mapCache{m: map[string]any{}} }
 
 func (c *mapCache) Get(key string) (any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	v, ok := c.m[key]
 	return v, ok
 }
 
-func (c *mapCache) Set(key string, value any) { c.m[key] = value }
+func (c *mapCache) Set(key string, value any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[key] = value
+}
 
 func newTestComposer(dialer Dialer) Composer {
 	return NewComposer(dialer, nil, newMapCache(), slog.New(slog.DiscardHandler))

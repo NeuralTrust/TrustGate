@@ -4,14 +4,18 @@ import (
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
 	oauthhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/oauth"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
+	"github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
 	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
+	idpauth "github.com/NeuralTrust/AgentGateway/pkg/infra/auth/idp"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/introspection"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/mtls"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oauthclient"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oidc"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/fingerprint"
@@ -74,6 +78,34 @@ func API(c *container.Container) error {
 			cfg.Server.TrustXFCCFrom,
 		)
 	}); err != nil {
+		return err
+	}
+	if err := c.Provide(idpauth.NewVerifier); err != nil {
+		return err
+	}
+	if err := c.Provide(func() appauth.OAuth2ClientTokenSource {
+		return oauthclient.NewTokenSource(nil)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(cfg *config.Config, finder appgateway.Finder) resolver.GatewayResolver {
+		return resolver.NewGatewayResolver(finder, cfg.Server.GatewayDiscoveryMode, cfg.Server.GatewayBaseDomain)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(resolver.NewAPIKeyIdentityResolver); err != nil {
+		return err
+	}
+	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
+		return err
+	}
+	if err := c.Provide(resolver.NewOAuth2ClientIdentityResolver); err != nil {
+		return err
+	}
+	if err := c.Provide(resolver.NewIDPIdentityResolver); err != nil {
+		return err
+	}
+	if err := c.Provide(resolver.NewIdentityResolver); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewAuthMiddleware); err != nil {

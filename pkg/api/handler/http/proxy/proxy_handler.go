@@ -8,12 +8,16 @@ import (
 	"net/url"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
+	apiresolver "github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
+	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
-	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	routingdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
@@ -21,30 +25,25 @@ import (
 
 var newline = []byte("\n")
 
-// streamErrorEvent is the SSE payload written when an upstream stream aborts
-// mid-flight. It carries no internal error detail to avoid leaking backend
-// internals to clients.
 var streamErrorEvent = []byte(`data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}`)
 
-const (
-	// HeaderProvider is an optional client hint for the inbound request's wire
-	// format. When present it is trusted as the source format; otherwise the
-	// format is auto-detected from the body.
-	HeaderProvider = "X-Provider"
-)
-
-// errNotAuthenticated means the auth middleware did not attach a gateway +
-// consumer.Data to the request context (no resolvable identity).
 var errNotAuthenticated = errors.New("request is not authenticated")
-
-// errPathNotFound means no consumer of the resolved gateway has a path that
-// exactly matches the inbound request path.
 var errPathNotFound = errors.New("no consumer matches the request path")
-
 var errForbidden = errors.New("credential is not authorized for the matched consumer")
 
-// hopByHopHeaders are connection-scoped headers that must not be relayed from
-// the backend response back to the client.
+const (
+	errCodePluginRejected     = "plugin_rejected"
+	errCodeUnauthenticated    = "unauthenticated"
+	errCodeForbidden          = "forbidden"
+	errCodeNotFound           = "not_found"
+	errCodeNoBackendAvailable = "no_backend_available"
+	errCodeInvalidRequest     = "invalid_request"
+	errCodeInvalidModel       = "invalid_model"
+	errCodeModelNotAllowed    = "model_not_allowed"
+	errCodeProviderCredential = "provider_credential_error"
+	errCodeBackendError       = "backend_error"
+)
+
 var hopByHopHeaders = map[string]struct{}{
 	"Connection":          {},
 	"Keep-Alive":          {},
@@ -65,18 +64,43 @@ func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
 	return &ForwardedHandler{forwarder: forwarder}
 }
 
+// Handle godoc
+// @Summary      Proxy chat completion
+// @Description  Forwards an OpenAI Chat Completions request to the selected provider. Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses).
+// @Tags         proxy
+// @Accept       json
+// @Produce      json
+// @Param        consumer_slug      path   string  true   "Consumer slug"
+// @Param        X-AG-API-Key       header string  false  "API key for inline consumers"
+// @Param        Authorization      header string  false  "Bearer token for OAuth2 or IDP consumers"
+// @Param        X-AG-Gateway-Slug  header string  false  "Gateway slug when using header-based gateway discovery"
+// @Param        body               body   object  true   "OpenAI Chat Completions request body"
+// @Success      200                {object}  map[string]interface{}
+// @Failure      400                {object}  helpers.ErrorBody
+// @Failure      401                {object}  helpers.ErrorBody
+// @Failure      403                {object}  helpers.ErrorBody
+// @Failure      404                {object}  helpers.ErrorBody
+// @Failure      502                {object}  helpers.ErrorBody
+// @Router       /{consumer_slug}/v1/chat/completions [post]
 func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
-	gatewayID, consumer, err := resolveConsumer(c)
+	route, err := proxyRoute(c)
+	if err != nil {
+		return writeProxyError(c, err)
+	}
+	gatewayID, consumer, authCtx, err := resolveConsumer(c, route)
 	if err != nil {
 		return writeProxyError(c, err)
 	}
 
 	stampConsumerTrace(c, consumer)
 
-	reqCtx := buildRequestContext(c, gatewayID)
+	data, _ := appconsumer.DataFromContext(c.UserContext())
+	reqCtx := buildRequestContext(c, gatewayID, route)
 	result, err := h.forwarder.Forward(c.UserContext(), appproxy.ForwardInput{
 		GatewayID: gatewayID,
 		Consumer:  consumer,
+		Data:      data,
+		RoleIDs:   authCtx.RoleIDs,
 		Request:   reqCtx,
 	})
 	if err != nil {
@@ -156,30 +180,47 @@ func writeStream(c *fiber.Ctx, result *appproxy.ForwardResult, req *infracontext
 	return nil
 }
 
-func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer, error) {
+func proxyRoute(c *fiber.Ctx) (apiresolver.ProxyRoute, error) {
+	if route, ok := c.Locals(apiresolver.ProxyRouteLocalsKey).(apiresolver.ProxyRoute); ok {
+		return route, nil
+	}
+	route, err := apiresolver.ResolveProxyPath(c.Path())
+	if err != nil {
+		return apiresolver.ProxyRoute{}, errPathNotFound
+	}
+	return route, nil
+}
+
+func resolveConsumer(
+	c *fiber.Ctx,
+	route apiresolver.ProxyRoute,
+) (ids.GatewayID, *appconsumer.RoutableConsumer, *appauth.AuthContext, error) {
 	gatewayID, ok := appconsumer.GatewayIDFromContext(c.UserContext())
 	if !ok {
-		return ids.GatewayID{}, nil, errNotAuthenticated
+		return ids.GatewayID{}, nil, nil, errNotAuthenticated
 	}
-	authID, ok := appconsumer.AuthIDFromContext(c.UserContext())
+	authCtx, ok := appauth.AuthContextFromContext(c.UserContext())
 	if !ok {
-		return ids.GatewayID{}, nil, errNotAuthenticated
+		return ids.GatewayID{}, nil, nil, errNotAuthenticated
 	}
 	data, ok := appconsumer.DataFromContext(c.UserContext())
 	if !ok || data == nil {
-		return ids.GatewayID{}, nil, errNotAuthenticated
+		return ids.GatewayID{}, nil, nil, errNotAuthenticated
 	}
-	rc, ok := data.MatchPath(c.Path())
+	rc, ok := appconsumer.ConsumerFromContext(c.UserContext())
 	if !ok {
-		return ids.GatewayID{}, nil, errPathNotFound
+		rc, ok = data.MatchSlug(route.ConsumerSlug)
+		if !ok {
+			return ids.GatewayID{}, nil, nil, errPathNotFound
+		}
 	}
-	if rc.Consumer == nil || (rc.Consumer.Type != consumerdomain.TypeLLM && rc.Consumer.Type != "") {
-		return ids.GatewayID{}, nil, errPathNotFound
+	if rc.Consumer == nil || (rc.Consumer.Type != domainconsumer.TypeLLM && rc.Consumer.Type != "") {
+		return ids.GatewayID{}, nil, nil, errPathNotFound
 	}
-	if !consumerHasAuth(rc, authID) {
-		return ids.GatewayID{}, nil, errForbidden
+	if !isAuthorizedForConsumer(rc, authCtx) {
+		return ids.GatewayID{}, nil, nil, errForbidden
 	}
-	return gatewayID, rc, nil
+	return gatewayID, rc, authCtx, nil
 }
 
 func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
@@ -191,6 +232,29 @@ func stampConsumerTrace(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) {
 		return
 	}
 	rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
+}
+
+func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.AuthContext) bool {
+	if rc == nil || rc.Consumer == nil || authCtx == nil {
+		return false
+	}
+	switch rc.Consumer.RoutingMode {
+	case "", domainconsumer.RoutingModeInline:
+		return isInlineAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)
+	case domainconsumer.RoutingModeRoleBased:
+		return authCtx.Method == appauth.MethodIDP && consumerHasRole(rc, authCtx.RoleIDs)
+	default:
+		return false
+	}
+}
+
+func isInlineAuthMethod(method appauth.Method) bool {
+	switch method {
+	case appauth.MethodAPIKey, appauth.MethodOAuth2, appauth.MethodOAuth2Client:
+		return true
+	default:
+		return false
+	}
 }
 
 func consumerHasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {
@@ -205,7 +269,23 @@ func consumerHasAuth(rc *appconsumer.RoutableConsumer, authID ids.AuthID) bool {
 	return false
 }
 
-func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID) *infracontext.RequestContext {
+func consumerHasRole(rc *appconsumer.RoutableConsumer, roleIDs []ids.RoleID) bool {
+	if rc == nil || rc.Consumer == nil {
+		return false
+	}
+	effective := make(map[ids.RoleID]struct{}, len(roleIDs))
+	for _, id := range roleIDs {
+		effective[id] = struct{}{}
+	}
+	for _, id := range rc.Consumer.RoleIDs {
+		if _, ok := effective[id]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID, route apiresolver.ProxyRoute) *infracontext.RequestContext {
 	headers := make(map[string][]string)
 	c.Request().Header.VisitAll(func(key, value []byte) {
 		name := string(key)
@@ -227,12 +307,10 @@ func buildRequestContext(c *fiber.Ctx, gatewayID ids.GatewayID) *infracontext.Re
 		Body:         c.Body(),
 		IP:           c.IP(),
 		SessionID:    sessionIDFromContext(c),
-		SourceFormat: c.Get(HeaderProvider),
+		SourceFormat: string(route.SourceFormat),
 	}
 }
 
-// sessionIDFromContext reads the session identifier stamped by the session
-// middleware, preferring the request context value and falling back to Locals.
 func sessionIDFromContext(c *fiber.Ctx) string {
 	if v, ok := c.UserContext().Value(infracontext.SessionContextKey).(string); ok && v != "" {
 		return v
@@ -245,29 +323,42 @@ func sessionIDFromContext(c *fiber.Ctx) string {
 
 func writeProxyError(c *fiber.Ctx, err error) error {
 	status, body := mapProxyError(err)
+	if rt := trace.FromContext(c.UserContext()); rt != nil {
+		rt.SetStatusReason(body.Error)
+	}
 	return c.Status(status).JSON(body)
 }
 
 func mapProxyError(err error) (int, helpers.ErrorBody) {
 	if pe, ok := appplugins.AsPluginError(err); ok {
-		return pe.StatusCode, helpers.ErrorBody{Error: "plugin_rejected", Message: pe.Message}
+		return pe.StatusCode, helpers.ErrorBody{Error: errCodePluginRejected, Message: pe.Message}
 	}
 	switch {
 	case errors.Is(err, errNotAuthenticated):
-		return fiber.StatusUnauthorized, helpers.ErrorBody{Error: "unauthenticated", Message: err.Error()}
+		return fiber.StatusUnauthorized, helpers.ErrorBody{Error: errCodeUnauthenticated, Message: err.Error()}
 	case errors.Is(err, errForbidden):
-		return fiber.StatusForbidden, helpers.ErrorBody{Error: "forbidden", Message: err.Error()}
+		return fiber.StatusForbidden, helpers.ErrorBody{Error: errCodeForbidden, Message: err.Error()}
 	case errors.Is(err, errPathNotFound),
 		errors.Is(err, commonerrors.ErrNotFound):
-		return fiber.StatusNotFound, helpers.ErrorBody{Error: "not_found"}
+		return fiber.StatusNotFound, helpers.ErrorBody{Error: errCodeNotFound}
 	case errors.Is(err, appproxy.ErrNoBackendAvailable),
 		errors.Is(err, appproxy.ErrNoBackendsInPool):
-		return fiber.StatusServiceUnavailable, helpers.ErrorBody{Error: "no_backend_available", Message: err.Error()}
+		return fiber.StatusServiceUnavailable, helpers.ErrorBody{Error: errCodeNoBackendAvailable, Message: err.Error()}
 	case errors.Is(err, appproxy.ErrInvalidRequestPayload):
-		return fiber.StatusBadRequest, helpers.ErrorBody{Error: "invalid_request", Message: err.Error()}
-	case errors.Is(err, appproxy.ErrModelNotAllowed):
-		return fiber.StatusForbidden, helpers.ErrorBody{Error: "model_not_allowed", Message: err.Error()}
+		return fiber.StatusBadRequest, helpers.ErrorBody{Error: errCodeInvalidRequest, Message: err.Error()}
+	case errors.Is(err, routingdomain.ErrInvalidModelRef),
+		errors.Is(err, routingdomain.ErrUnknownPoolAlias),
+		errors.Is(err, routingdomain.ErrAmbiguousModel):
+		return fiber.StatusBadRequest, helpers.ErrorBody{Error: errCodeInvalidModel, Message: err.Error()}
+	case errors.Is(err, routingdomain.ErrModelDenied),
+		errors.Is(err, appproxy.ErrModelNotAllowed):
+		return fiber.StatusForbidden, helpers.ErrorBody{Error: errCodeModelNotAllowed, Message: err.Error()}
+	case errors.Is(err, registrydomain.ErrCredentialAcquisition):
+		return fiber.StatusBadGateway, helpers.ErrorBody{
+			Error:   errCodeProviderCredential,
+			Message: registrydomain.ErrCredentialAcquisition.Error(),
+		}
 	default:
-		return fiber.StatusBadGateway, helpers.ErrorBody{Error: "backend_error"}
+		return fiber.StatusBadGateway, helpers.ErrorBody{Error: errCodeBackendError}
 	}
 }

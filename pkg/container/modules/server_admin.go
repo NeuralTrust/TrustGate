@@ -11,6 +11,7 @@ import (
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
 	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
+	rolehttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
@@ -74,6 +75,13 @@ type adminRouterParams struct {
 	DeleteConsumer      *consumerhttp.DeleteConsumerHandler
 	ConsumerAssociation *consumerhttp.AssociationHandler
 
+	CreateRole      *rolehttp.CreateRoleHandler
+	GetRole         *rolehttp.GetRoleHandler
+	ListRole        *rolehttp.ListRoleHandler
+	UpdateRole      *rolehttp.UpdateRoleHandler
+	DeleteRole      *rolehttp.DeleteRoleHandler
+	RoleAssociation *rolehttp.AssociationHandler
+
 	CreateAuth *authhttp.CreateAuthHandler
 	GetAuth    *authhttp.GetAuthHandler
 	ListAuth   *authhttp.ListAuthHandler
@@ -129,6 +137,12 @@ func ServerAdmin(c *container.Container) error {
 				UpdateConsumer:         p.UpdateConsumer,
 				DeleteConsumer:         p.DeleteConsumer,
 				ConsumerAssociation:    p.ConsumerAssociation,
+				CreateRole:             p.CreateRole,
+				GetRole:                p.GetRole,
+				ListRole:               p.ListRole,
+				UpdateRole:             p.UpdateRole,
+				DeleteRole:             p.DeleteRole,
+				RoleAssociation:        p.RoleAssociation,
 				CreateAuth:             p.CreateAuth,
 				GetAuth:                p.GetAuth,
 				ListAuth:               p.ListAuth,

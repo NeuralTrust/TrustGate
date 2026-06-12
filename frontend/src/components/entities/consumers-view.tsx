@@ -103,7 +103,7 @@ export function ConsumersView() {
                 </TD>
                 <TD>
                   <span className="text-[12px] text-muted">
-                    {c.registry_ids.length}r · {c.auth_ids.length}a
+                    {c.registries.length}r · {c.auth_ids.length}a
                   </span>
                 </TD>
                 <TD>

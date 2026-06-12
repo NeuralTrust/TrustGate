@@ -87,7 +87,7 @@ func principalCtx(p *identity.Principal) context.Context {
 func mcpConsumer(gw ids.GatewayID) *appconsumer.RoutableConsumer {
 	return &appconsumer.RoutableConsumer{Consumer: &consumerdomain.Consumer{
 		ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
-		Type: consumerdomain.TypeMCP, Path: "/v1/mcp/dev", Active: true,
+		Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
 	}}
 }
 
@@ -185,7 +185,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		if !errors.As(err, &consent) {
 			t.Fatalf("error = %v, want ConsentRequiredError", err)
 		}
-		if consent.Provider != "github" || consent.Ticket != "tckt" || consent.Path != "/v1/mcp/dev" {
+		if consent.Provider != "github" || consent.Ticket != "tckt" || consent.Path != "/dev/mcp" {
 			t.Fatalf("consent = %+v", consent)
 		}
 	})

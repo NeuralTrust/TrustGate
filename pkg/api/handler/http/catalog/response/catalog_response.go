@@ -1,17 +1,20 @@
 package response
 
 import (
+	appcatalog "github.com/NeuralTrust/AgentGateway/pkg/app/catalog"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/catalog"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type ProviderResponse struct {
-	ID          ids.ProviderID `json:"id"`
-	Code        string         `json:"code"`
-	DisplayName string         `json:"display_name"`
-	WireFormat  string         `json:"wire_format"`
-	Source      string         `json:"source"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	ID                    ids.ProviderID                   `json:"id"`
+	Code                  string                           `json:"code"`
+	DisplayName           string                           `json:"display_name"`
+	WireFormat            string                           `json:"wire_format"`
+	Source                string                           `json:"source"`
+	Metadata              map[string]any                   `json:"metadata,omitempty"`
+	AuthTypes             []appcatalog.AuthTypeOption      `json:"auth_types"`
+	ProviderOptionsSchema []appcatalog.ProviderOptionField `json:"provider_options_schema"`
 }
 
 type ModelResponse struct {
@@ -37,6 +40,9 @@ func FromProvider(p domain.Provider) ProviderResponse {
 		WireFormat:  p.WireFormat,
 		Source:      p.Source,
 		Metadata:    p.Metadata,
+		AuthTypes:   appcatalog.ProviderAuthOptions(p.Code),
+
+		ProviderOptionsSchema: appcatalog.ProviderOptions(p.Code),
 	}
 }
 

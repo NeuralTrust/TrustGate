@@ -19,16 +19,17 @@ func (s *connectService) ChainURL(ctx context.Context, baseURL string, gatewayID
 	if rc == nil {
 		return "", nil
 	}
+	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
 	id, err := s.mintTicket(ctx, ConnectTicket{
 		GatewayID:    gatewayID.String(),
 		PrincipalSub: principalSub,
-		ConsumerPath: rc.Consumer.Path,
+		ConsumerPath: consumerPath,
 		ResumeURL:    resumeURL,
 	})
 	if err != nil {
 		return "", err
 	}
-	return baseURL + rc.Consumer.Path + "/connect?ticket=" + id, nil
+	return baseURL + consumerPath + "/connect?ticket=" + id, nil
 }
 
 func (s *connectService) chainTarget(ctx context.Context, data *appconsumer.Data, gatewayID ids.GatewayID, resource, principalSub string) *appconsumer.RoutableConsumer {

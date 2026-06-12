@@ -47,20 +47,40 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err := req.Validate(); err != nil {
 		return helpers.WriteError(c, err)
 	}
-	llm, mcp, err := req.ToPolicies()
+	fallback, err := req.ToFallback()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	mcp, err := req.ToMCPPolicy()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	lbConfig, err := req.ToLBConfig()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	registryIDs, modelPolicies, err := req.ToRegistryBindings()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	roleIDs, err := req.ToRoleIDs()
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
-		GatewayID: gatewayID,
-		Name:      req.Name,
-		Type:      req.ToType(),
-		Path:      req.Path,
-		Headers:   req.Headers,
-		Active:    req.Active,
-		LLM:       llm,
-		MCP:       mcp,
+		GatewayID:     gatewayID,
+		Name:          req.Name,
+		Type:          req.ToType(),
+		RoutingMode:   req.ToRoutingMode(),
+		LBConfig:      lbConfig,
+		Headers:       req.Headers,
+		Active:        req.Active,
+		Fallback:      fallback,
+		RegistryIDs:   registryIDs,
+		RoleIDs:       roleIDs,
+		ModelPolicies: modelPolicies,
+		MCP:           mcp,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

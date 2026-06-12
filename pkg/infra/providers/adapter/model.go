@@ -56,7 +56,17 @@ func EnforceModel(body []byte, allowedModels []string, defaultModel string) ([]b
 	return body, model, nil
 }
 
-// ExtractModel returns the "model" or "modelId" field from a JSON body without modifying it.
+func ExtractModelField(body []byte) (model string, hasModelID bool, err error) {
+	var probe struct {
+		Model   string          `json:"model"`
+		ModelID json.RawMessage `json:"modelId"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return "", false, err
+	}
+	return probe.Model, probe.ModelID != nil, nil
+}
+
 func ExtractModel(body []byte) (string, error) {
 	var probe struct {
 		Model   string `json:"model"`
@@ -81,4 +91,49 @@ func isAllowed(model string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+func OverrideModel(body []byte, model string) []byte {
+	if model == "" {
+		return body
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return body
+	}
+	encoded, err := json.Marshal(model)
+	if err != nil {
+		return body
+	}
+	key := modelKey
+	if _, ok := raw[modelKey]; !ok {
+		if _, ok := raw[modelIDKey]; ok {
+			key = modelIDKey
+		}
+	}
+	raw[key] = encoded
+	out, err := json.Marshal(raw)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+func StripModel(body []byte) []byte {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return body
+	}
+	if _, hasModel := raw[modelKey]; !hasModel {
+		if _, hasModelID := raw[modelIDKey]; !hasModelID {
+			return body
+		}
+	}
+	delete(raw, modelKey)
+	delete(raw, modelIDKey)
+	out, err := json.Marshal(raw)
+	if err != nil {
+		return body
+	}
+	return out
 }

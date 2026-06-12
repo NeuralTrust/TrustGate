@@ -34,6 +34,12 @@ func Auth(c *container.Container) error {
 	if err := c.Provide(appauth.NewCredentialFinder); err != nil {
 		return err
 	}
+	if err := c.Provide(appauth.NewIDPFinder); err != nil {
+		return err
+	}
+	if err := c.Provide(appauth.NewOAuth2Verifier); err != nil {
+		return err
+	}
 
 	if err := c.Provide(authhttp.NewCreateAuthHandler); err != nil {
 		return err

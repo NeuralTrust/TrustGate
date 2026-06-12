@@ -71,9 +71,20 @@ func TestCreator_RejectsAudienceEquivalence(t *testing.T) {
 
 func TestCreator_RejectsWildcardAudienceOverlap(t *testing.T) {
 	t.Parallel()
+	legacyNoAudiences := &domain.Auth{
+		ID:        ids.New[ids.AuthKind](),
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "idp",
+		Type:      domain.TypeOAuth2,
+		Enabled:   true,
+		Config: domain.Config{OAuth2: &domain.OAuth2Config{
+			Issuer:  "https://idp.example.com",
+			JWKSURL: "https://idp.example.com/jwks",
+		}},
+	}
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
-		Return([]*domain.Auth{enabledOAuth2(t, "https://idp.example.com")}, nil).Once()
+		Return([]*domain.Auth{legacyNoAudiences}, nil).Once()
 
 	err := createOAuth2(t, repo, "api://abc")
 	if !errors.Is(err, domain.ErrDuplicateOAuth2) {

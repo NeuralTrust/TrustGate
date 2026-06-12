@@ -76,7 +76,6 @@ func seedConsumer(t *testing.T, conn *database.Connection, gwID ids.GatewayID, n
 		GatewayID:   gwID,
 		Name:        name,
 		Type:        consumerdomain.TypeLLM,
-		Path:        "/v1/" + name,
 		RegistryIDs: []ids.RegistryID{reg.ID},
 	})
 	if err != nil {

@@ -1,14 +1,13 @@
 package consumer
 
 import (
-	"strings"
-
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
 )
 
 type RoutableConsumer struct {
@@ -22,45 +21,76 @@ type RoutableConsumer struct {
 }
 
 type Data struct {
-	GatewayID ids.GatewayID
-	Consumers []RoutableConsumer
-	byPath    map[string]*RoutableConsumer
+	GatewayID    ids.GatewayID
+	Consumers    []RoutableConsumer
+	Roles        []*roledomain.Role
+	bySlug       map[string]*RoutableConsumer
+	registryByID map[ids.RegistryID]*registrydomain.Registry
 }
 
-func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer) *Data {
+func NewData(gatewayID ids.GatewayID, consumers []RoutableConsumer, roles ...[]*roledomain.Role) *Data {
 	d := &Data{GatewayID: gatewayID, Consumers: consumers}
-	d.indexByPath()
+	if len(roles) > 0 {
+		d.Roles = roles[0]
+	}
+	d.indexBySlug()
+	d.indexRegistries()
 	return d
 }
 
-func (d *Data) MatchPath(path string) (*RoutableConsumer, bool) {
-	if d == nil || d.byPath == nil {
+func (d *Data) SetRegistryIndex(byID map[ids.RegistryID]*registrydomain.Registry) {
+	for id, reg := range byID {
+		d.registryByID[id] = reg
+	}
+}
+
+func (d *Data) RegistryByID(id ids.RegistryID) (*registrydomain.Registry, bool) {
+	if d == nil || d.registryByID == nil {
 		return nil, false
 	}
-	rc, ok := d.byPath[CanonicalPath(path)]
+	reg, ok := d.registryByID[id]
+	return reg, ok
+}
+
+func (d *Data) indexRegistries() {
+	d.registryByID = make(map[ids.RegistryID]*registrydomain.Registry)
+	for i := range d.Consumers {
+		for _, reg := range d.Consumers[i].Registries {
+			d.registryByID[reg.ID] = reg
+		}
+		for _, reg := range d.Consumers[i].FallbackBackends {
+			d.registryByID[reg.ID] = reg
+		}
+	}
+}
+
+func (d *Data) MatchSlug(slug string) (*RoutableConsumer, bool) {
+	if d == nil || d.bySlug == nil {
+		return nil, false
+	}
+	rc, ok := d.bySlug[slug]
 	return rc, ok
 }
 
-func (d *Data) indexByPath() {
-	d.byPath = make(map[string]*RoutableConsumer, len(d.Consumers))
-	for i := range d.Consumers {
-		rc := &d.Consumers[i]
-		if rc.Consumer == nil || !rc.Consumer.Active {
-			continue
-		}
-		d.byPath[CanonicalPath(rc.Consumer.Path)] = rc
+func (d *Data) MatchPath(path string) (*RoutableConsumer, bool) {
+	slug := SlugFromMCPPath(path)
+	if slug == "" {
+		return nil, false
 	}
+	return d.MatchSlug(slug)
 }
 
-func CanonicalPath(path string) string {
-	if path == "" {
-		return "/"
-	}
-	if len(path) > 1 {
-		path = strings.TrimRight(path, "/")
-		if path == "" {
-			return "/"
+func MCPPath(slug string) string {
+	return "/" + slug + "/mcp"
+}
+
+func (d *Data) indexBySlug() {
+	d.bySlug = make(map[string]*RoutableConsumer, len(d.Consumers))
+	for i := range d.Consumers {
+		rc := &d.Consumers[i]
+		if rc.Consumer == nil || !rc.Consumer.Active || rc.Consumer.Slug == "" {
+			continue
 		}
+		d.bySlug[rc.Consumer.Slug] = rc
 	}
-	return path
 }

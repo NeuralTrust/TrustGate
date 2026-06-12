@@ -88,6 +88,9 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.ID != g.ID || got.Name != "alpha" || got.Status != "active" {
 		t.Fatalf("FindByID returned %+v", got)
 	}
+	if got.Slug != "alpha" {
+		t.Fatalf("Slug = %q, want alpha", got.Slug)
+	}
 	if got.Telemetry == nil || got.Telemetry.ExtraParams["env"] != "prod" {
 		t.Fatalf("Telemetry round-trip lost data: %+v", got.Telemetry)
 	}
@@ -127,6 +130,27 @@ func TestRepository_SaveAndFindByID_NullableJSONB(t *testing.T) {
 	}
 }
 
+func TestRepository_FindBySlug(t *testing.T) {
+	r, _ := setupRepo(t)
+	ctx := context.Background()
+
+	g, err := domain.New("Alpha", "acme")
+	if err != nil {
+		t.Fatalf("domain.New: %v", err)
+	}
+	if err := r.Save(ctx, g); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := r.FindBySlug(ctx, "acme")
+	if err != nil {
+		t.Fatalf("FindBySlug: %v", err)
+	}
+	if got.ID != g.ID {
+		t.Fatalf("FindBySlug returned gateway %s, want %s", got.ID, g.ID)
+	}
+}
+
 func TestRepository_FindByID_NotFound(t *testing.T) {
 	r, _ := setupRepo(t)
 	_, err := r.FindByID(context.Background(), ids.New[ids.GatewayKind]())
@@ -147,6 +171,21 @@ func TestRepository_Save_Duplicate(t *testing.T) {
 		t.Fatalf("first Save: %v", err)
 	}
 	g2, _ := domain.New("dupe")
+	err := r.Save(ctx, g2)
+	if !errors.Is(err, domain.ErrAlreadyExists) {
+		t.Fatalf("err = %v, want ErrAlreadyExists", err)
+	}
+}
+
+func TestRepository_Save_DuplicateSlug(t *testing.T) {
+	r, _ := setupRepo(t)
+	ctx := context.Background()
+
+	g1, _ := domain.New("first", "shared")
+	if err := r.Save(ctx, g1); err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	g2, _ := domain.New("second", "shared")
 	err := r.Save(ctx, g2)
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want ErrAlreadyExists", err)

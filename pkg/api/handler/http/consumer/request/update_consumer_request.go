@@ -6,21 +6,19 @@ import (
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 type UpdateConsumerRequest struct {
-	Name            *string                 `json:"name,omitempty"`
-	Type            *string                 `json:"type,omitempty"`
-	Path            *string                 `json:"path,omitempty"`
-	Algorithm       *string                 `json:"algorithm,omitempty"`
-	EmbeddingConfig *EmbeddingConfigRequest `json:"embedding_config,omitempty"`
-	Headers         *map[string]string      `json:"headers,omitempty"`
-	Active          *bool                   `json:"active,omitempty"`
-	Fallback        *FallbackRequest        `json:"fallback,omitempty"`
-	ModelPolicies   *[]ModelPolicyRequest   `json:"model_policies,omitempty"`
-	Toolkit         *[]ToolkitEntryRequest  `json:"toolkit,omitempty"`
-	FailMode        *string                 `json:"fail_mode,omitempty"`
+	Name          *string                `json:"name,omitempty"`
+	Type          *string                `json:"type,omitempty"`
+	RoutingMode   *string                `json:"routing_mode,omitempty"`
+	LBConfig      *LBConfigRequest       `json:"lb_config,omitempty"`
+	Headers       *map[string]string     `json:"headers,omitempty"`
+	Active        *bool                  `json:"active,omitempty"`
+	Fallback      *FallbackRequest       `json:"fallback,omitempty"`
+	ModelPolicies *[]ModelPolicyRequest  `json:"model_policies,omitempty"`
+	Toolkit       *[]ToolkitEntryRequest `json:"toolkit,omitempty"`
+	FailMode      *string                `json:"fail_mode,omitempty"`
 }
 
 func (r UpdateConsumerRequest) Validate() error {
@@ -31,9 +29,6 @@ func (r UpdateConsumerRequest) Validate() error {
 		if len(*r.Name) > 255 {
 			return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 		}
-	}
-	if r.Path != nil && strings.TrimSpace(*r.Path) == "" {
-		return fmt.Errorf("path is required: %w", commonerrors.ErrValidation)
 	}
 	return nil
 }
@@ -46,15 +41,16 @@ func (r UpdateConsumerRequest) ToType() *domain.Type {
 	return &t
 }
 
-func (r UpdateConsumerRequest) ToAlgorithm() *string {
-	if r.Algorithm == nil || strings.TrimSpace(*r.Algorithm) == "" {
+func (r UpdateConsumerRequest) ToRoutingMode() *domain.RoutingMode {
+	if r.RoutingMode == nil || strings.TrimSpace(*r.RoutingMode) == "" {
 		return nil
 	}
-	return r.Algorithm
+	mode := domain.RoutingMode(*r.RoutingMode)
+	return &mode
 }
 
-func (r UpdateConsumerRequest) ToEmbeddingConfig() *registrydomain.EmbeddingConfig {
-	return r.EmbeddingConfig.ToDomain()
+func (r UpdateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {
+	return r.LBConfig.ToDomain()
 }
 
 func (r UpdateConsumerRequest) ToFallback() (*domain.Fallback, error) {

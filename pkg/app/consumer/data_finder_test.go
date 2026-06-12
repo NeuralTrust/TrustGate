@@ -26,8 +26,8 @@ func routableConsumer(gwID ids.GatewayID, authIDs []ids.AuthID) *domain.Consumer
 		GatewayID:   gwID,
 		Name:        "c",
 		Type:        domain.TypeLLM,
-		Path:        "/v1/chat",
-		LLM:         &domain.LLMPolicy{Algorithm: "round-robin"},
+		Slug:        "X84Yhsy8",
+		RoutingMode: domain.RoutingModeInline,
 		Active:      true,
 		RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
 		AuthIDs:     authIDs,
@@ -83,7 +83,7 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 		FindByIDs(mock.Anything, gwID, mock.Anything).
 		Return(nil, nil).Once()
 
-	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, newCacheManager(), newTestLogger())
+	finder := appconsumer.NewDataFinder(repo, registryRepo, policyRepo, authRepo, nil, nil, newCacheManager(), newTestLogger())
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
 	if err != nil {
@@ -147,19 +147,17 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	fb1, fb2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(domain.RehydrateParams{
-		ID:        ids.New[ids.ConsumerKind](),
-		GatewayID: gwID,
-		Name:      "c",
-		Type:      domain.TypeLLM,
-		Path:      "/v1/chat",
-		LLM: &domain.LLMPolicy{
-			Algorithm: "round-robin",
-			Fallback: &domain.Fallback{
-				Enabled:  true,
-				Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
-				Budget:   domain.FallbackBudget{MaxAttempts: 9},
-				Chain:    []ids.RegistryID{fb2, fb1},
-			},
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gwID,
+		Name:        "c",
+		Type:        domain.TypeLLM,
+		Slug:        "X84Yhsy8",
+		RoutingMode: domain.RoutingModeInline,
+		Fallback: &domain.Fallback{
+			Enabled:  true,
+			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+			Budget:   domain.FallbackBudget{MaxAttempts: 9},
+			Chain:    []ids.RegistryID{fb2, fb1},
 		},
 		Active:      true,
 		RegistryIDs: []ids.RegistryID{poolID},
@@ -187,7 +185,7 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, registryRepo,
 		policyRepo, authmocks.NewRepository(t),
-		nil, newCacheManager(), newTestLogger(),
+		nil, nil, newCacheManager(), newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)
@@ -216,7 +214,7 @@ func TestDataFinder_FindByGateway_CacheHitSkipsRepositories(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repomocks.NewRepository(t), backendmocks.NewRepository(t),
 		policymocks.NewRepository(t), authmocks.NewRepository(t),
-		nil, mgr, newTestLogger(),
+		nil, nil, mgr, newTestLogger(),
 	)
 
 	got, err := finder.FindByGateway(context.Background(), gwID)
@@ -243,7 +241,7 @@ func TestDataFinder_FindByGateway_RecoversFromCorruptCacheEntry(t *testing.T) {
 	finder := appconsumer.NewDataFinder(
 		repo, backendmocks.NewRepository(t),
 		policyRepo, authmocks.NewRepository(t),
-		nil, mgr, newTestLogger(),
+		nil, nil, mgr, newTestLogger(),
 	)
 
 	data, err := finder.FindByGateway(context.Background(), gwID)

@@ -135,7 +135,7 @@ func connectFixture(t *testing.T, providerTokenURL string) (oauth.ConnectService
 	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
 			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
-			Type: consumerdomain.TypeMCP, Path: "/v1/mcp/dev", Active: true,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
 		},
 		Registries: []*registrydomain.Registry{reg},
 	}})
@@ -161,7 +161,7 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 	svc, vault, gw := connectFixture(t, provider.URL)
 	ctx := context.Background()
 
-	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/v1/mcp/dev")
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
 			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
-			Type: consumerdomain.TypeMCP, Path: "/v1/mcp/dev", Active: true,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
 		},
 		Registries: []*registrydomain.Registry{reg},
 	}})
@@ -295,7 +295,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 	svc := oauth.NewConnectService(store, vault, &stubDataFinder{data: data}, infraoauth.NewProviderClient(nil), registrar)
 	ctx := context.Background()
 
-	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/v1/mcp/dev")
+	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
 	if err != nil {
 		t.Fatalf("CreateTicket: %v", err)
 	}
@@ -375,14 +375,14 @@ func TestConnectService_AutoRegistrationUpstreamNotDiscoverable(t *testing.T) {
 	data := appconsumer.NewData(gw, []appconsumer.RoutableConsumer{{
 		Consumer: &consumerdomain.Consumer{
 			ID: ids.New[ids.ConsumerKind](), GatewayID: gw,
-			Type: consumerdomain.TypeMCP, Path: "/v1/mcp/dev", Active: true,
+			Type: consumerdomain.TypeMCP, Slug: "dev", Active: true,
 		},
 		Registries: []*registrydomain.Registry{reg},
 	}})
 	store := newMemConnectStore()
 	svc := oauth.NewConnectService(store, &memVaultRepo{}, &stubDataFinder{data: data}, infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil))
 	ctx := context.Background()
-	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/v1/mcp/dev")
+	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
 	if _, err := svc.Start(ctx, "https://gw", ticket, "legacy"); !errors.Is(err, oauth.ErrUpstreamNotDiscoverable) {
 		t.Fatalf("error = %v, want oauth.ErrUpstreamNotDiscoverable", err)
 	}
@@ -396,7 +396,7 @@ func TestConnectService_StateIsSingleUse(t *testing.T) {
 	defer provider.Close()
 	svc, _, gw := connectFixture(t, provider.URL)
 	ctx := context.Background()
-	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/v1/mcp/dev")
+	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
 	location, _ := svc.Start(ctx, "https://gw", ticket, "github")
 	u, _ := url.Parse(location)
 	state := u.Query().Get("state")
@@ -416,7 +416,7 @@ func TestConnectService_UnknownTicketAndProvider(t *testing.T) {
 	if _, err := svc.Page(ctx, "missing"); !errors.Is(err, oauth.ErrTicketNotFound) {
 		t.Fatalf("error = %v, want oauth.ErrTicketNotFound", err)
 	}
-	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/v1/mcp/dev")
+	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
 	if _, err := svc.Start(ctx, "https://gw", ticket, "slack"); !errors.Is(err, oauth.ErrProviderNotFound) {
 		t.Fatalf("error = %v, want oauth.ErrProviderNotFound", err)
 	}
@@ -428,14 +428,14 @@ func TestConnectService_ChainURL(t *testing.T) {
 	ctx := context.Background()
 	resume := "cursor://anysphere.cursor-mcp/oauth/callback?code=gw-code&state=s"
 
-	loc, err := svc.ChainURL(ctx, "https://gw.example.com", gw, "https://gw.example.com/v1/mcp/dev", "alice", resume)
+	loc, err := svc.ChainURL(ctx, "https://gw.example.com", gw, "https://gw.example.com/dev/mcp", "alice", resume)
 	if err != nil {
 		t.Fatalf("ChainURL: %v", err)
 	}
-	if !strings.HasPrefix(loc, "https://gw.example.com/v1/mcp/dev/connect?ticket=") {
+	if !strings.HasPrefix(loc, "https://gw.example.com/dev/mcp/connect?ticket=") {
 		t.Fatalf("expected connect page URL, got %q", loc)
 	}
-	ticket := strings.TrimPrefix(loc, "https://gw.example.com/v1/mcp/dev/connect?ticket=")
+	ticket := strings.TrimPrefix(loc, "https://gw.example.com/dev/mcp/connect?ticket=")
 	page, err := svc.Page(ctx, ticket)
 	if err != nil {
 		t.Fatalf("Page: %v", err)
@@ -451,7 +451,7 @@ func TestConnectService_ChainURL(t *testing.T) {
 	if err := vault.Upsert(ctx, cred); err != nil {
 		t.Fatalf("vault: %v", err)
 	}
-	if loc, err := svc.ChainURL(ctx, "https://gw.example.com", gw, "https://gw.example.com/v1/mcp/dev", "alice", resume); err != nil || loc != "" {
+	if loc, err := svc.ChainURL(ctx, "https://gw.example.com", gw, "https://gw.example.com/dev/mcp", "alice", resume); err != nil || loc != "" {
 		t.Fatalf("linked principal: loc=%q err=%v, want no detour", loc, err)
 	}
 
@@ -460,8 +460,8 @@ func TestConnectService_ChainURL(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resource %q: %v", resource, err)
 		}
-		if !strings.HasPrefix(loc, "https://gw.example.com/v1/mcp/dev/connect?ticket=") {
-			t.Fatalf("resource %q: expected fallback detour to /v1/mcp/dev, got %q", resource, loc)
+		if !strings.HasPrefix(loc, "https://gw.example.com/dev/mcp/connect?ticket=") {
+			t.Fatalf("resource %q: expected fallback detour to /dev/mcp, got %q", resource, loc)
 		}
 	}
 
@@ -474,7 +474,7 @@ func TestConnectService_ProviderDenialRelaysTicket(t *testing.T) {
 	t.Parallel()
 	svc, vault, gw := connectFixture(t, "https://unused")
 	ctx := context.Background()
-	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/v1/mcp/dev")
+	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/dev/mcp")
 	location, _ := svc.Start(ctx, "https://gw", ticket, "github")
 	u, _ := url.Parse(location)
 	state := u.Query().Get("state")

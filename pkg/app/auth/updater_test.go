@@ -24,6 +24,7 @@ func oauth2Config(clientSecret string) domain.Config {
 	return domain.Config{
 		OAuth2: &domain.OAuth2Config{
 			Issuer:       "https://issuer.example.com",
+			Audiences:    []string{"gateway"},
 			JWKSURL:      "https://issuer.example.com/jwks",
 			ClientID:     "client-123",
 			ClientSecret: clientSecret,

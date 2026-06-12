@@ -3,6 +3,7 @@ package gateway
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
@@ -22,6 +23,9 @@ func TestNew(t *testing.T) {
 		}
 		if g.Name != "alpha" {
 			t.Fatalf("Name = %q, want alpha", g.Name)
+		}
+		if g.Slug != "alpha" {
+			t.Fatalf("Slug = %q, want alpha", g.Slug)
 		}
 		if g.Status != "active" {
 			t.Fatalf("Status = %q, want active (default)", g.Status)
@@ -44,6 +48,61 @@ func TestNew(t *testing.T) {
 			t.Fatalf("expected nil aggregate on error, got %+v", g)
 		}
 	})
+}
+
+func TestNew_ExplicitSlug(t *testing.T) {
+	t.Parallel()
+	g, err := New("Alpha Gateway", "acme")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if g.Slug != "acme" {
+		t.Fatalf("Slug = %q, want acme", g.Slug)
+	}
+}
+
+func TestSlugFromName(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "lowercase dns label", in: "Acme Gateway", want: "acme-gateway"},
+		{name: "trims separators", in: "---Acme---", want: "acme"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SlugFromName(tt.in); got != tt.want {
+				t.Fatalf("SlugFromName(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSlugFromName_FallbackIsUniqueAndValid(t *testing.T) {
+	t.Parallel()
+	first := SlugFromName("!!!")
+	second := SlugFromName("日本語")
+	for _, slug := range []string{first, second} {
+		if !strings.HasPrefix(slug, "gateway-") {
+			t.Fatalf("fallback slug = %q, want gateway- prefix", slug)
+		}
+		if !IsValidSlug(slug) {
+			t.Fatalf("fallback slug %q is not a valid slug", slug)
+		}
+	}
+	if first == second {
+		t.Fatalf("fallback slugs must be unique, both were %q", first)
+	}
+}
+
+func TestValidate_InvalidSlug(t *testing.T) {
+	t.Parallel()
+	g := &Gateway{Name: "alpha", Slug: "-bad"}
+	if err := g.Validate(); err == nil {
+		t.Fatal("expected invalid slug error, got nil")
+	}
 }
 
 func TestValidate_StatusDefault(t *testing.T) {

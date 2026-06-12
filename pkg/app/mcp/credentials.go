@@ -178,11 +178,12 @@ func (r *credentialResolver) refreshCredential(
 var errGrantExhausted = errors.New("mcp credentials: stored grant cannot be refreshed")
 
 func (r *credentialResolver) consentRequired(ctx context.Context, rc *appconsumer.RoutableConsumer, provider, principalSub string) error {
-	ticket, err := r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, rc.Consumer.Path)
+	consumerPath := appconsumer.MCPPath(rc.Consumer.Slug)
+	ticket, err := r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, consumerPath)
 	if err != nil {
 		return err
 	}
-	return &ConsentRequiredError{Provider: provider, Ticket: ticket, Path: rc.Consumer.Path}
+	return &ConsentRequiredError{Provider: provider, Ticket: ticket, Path: consumerPath}
 }
 
 func setAuthorization(target *Target, value string) {

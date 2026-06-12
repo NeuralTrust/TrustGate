@@ -13,11 +13,42 @@ func TestConfig_Validate_RejectsRedactedClientSecret(t *testing.T) {
 	t.Parallel()
 	cfg := Config{OAuth2: &OAuth2Config{
 		Issuer:       "https://issuer.example.com",
+		Audiences:    []string{"gateway"},
 		JWKSURL:      "https://issuer.example.com/jwks",
 		ClientSecret: secret.Redacted,
 	}}
 	if err := cfg.Validate(TypeOAuth2); err == nil {
 		t.Fatal("Validate() = nil, want rejection of redaction placeholder")
+	}
+}
+
+func TestConfig_Validate_RejectsRedactedOAuth2ClientSecret(t *testing.T) {
+	t.Parallel()
+	cfg := Config{OAuth2Client: &OAuth2ClientConfig{
+		TokenURL:     "https://as.example.com/token",
+		ClientID:     "client-id",
+		ClientSecret: secret.Redacted,
+	}}
+	if err := cfg.Validate(TypeOAuth2Client); err == nil {
+		t.Fatal("Validate() = nil, want rejection of redaction placeholder")
+	}
+}
+
+func TestConfig_ResolveSecretsFrom_KeepsOAuth2ClientSecret(t *testing.T) {
+	t.Parallel()
+	prev := Config{OAuth2Client: &OAuth2ClientConfig{
+		TokenURL:     "https://as.example.com/token",
+		ClientID:     "client-id",
+		ClientSecret: "stored-secret",
+	}}
+	next := Config{OAuth2Client: &OAuth2ClientConfig{
+		TokenURL:     "https://as.example.com/token",
+		ClientID:     "client-id",
+		ClientSecret: secret.Mask("stored-secret"),
+	}}
+	next.ResolveSecretsFrom(prev)
+	if next.OAuth2Client.ClientSecret != "stored-secret" {
+		t.Fatalf("ClientSecret = %q, want stored value kept", next.OAuth2Client.ClientSecret)
 	}
 }
 
@@ -142,7 +173,15 @@ func TestNewAuth_Validation(t *testing.T) {
 			gatewayID: gwID,
 			authName:  "k",
 			authType:  TypeOAuth2,
-			config:    Config{OAuth2: &OAuth2Config{Issuer: "not-a-url"}},
+			config:    Config{OAuth2: &OAuth2Config{Issuer: "not-a-url", Audiences: []string{"gateway"}}},
+			wantErr:   ErrInvalidConfig,
+		},
+		{
+			name:      "oauth2 missing audiences",
+			gatewayID: gwID,
+			authName:  "k",
+			authType:  TypeOAuth2,
+			config:    Config{OAuth2: &OAuth2Config{Issuer: "https://issuer", JWKSURL: "https://x/jwks"}},
 			wantErr:   ErrInvalidConfig,
 		},
 		{
@@ -154,12 +193,76 @@ func TestNewAuth_Validation(t *testing.T) {
 			wantErr:   ErrInvalidConfig,
 		},
 		{
+			name:      "idp missing key material",
+			gatewayID: gwID,
+			authName:  "k",
+			authType:  TypeIDP,
+			config:    Config{IDP: &IDPConfig{Issuer: "https://issuer", Audiences: []string{"gateway"}}},
+			wantErr:   ErrInvalidConfig,
+		},
+		{
+			name:      "idp rejects hs algorithms",
+			gatewayID: gwID,
+			authName:  "k",
+			authType:  TypeIDP,
+			config: Config{IDP: &IDPConfig{
+				Issuer:            "https://issuer",
+				Audiences:         []string{"gateway"},
+				JWKSURL:           "https://issuer/.well-known/jwks.json",
+				AllowedAlgorithms: []string{"HS256"},
+			}},
+			wantErr: ErrInvalidConfig,
+		},
+		{
 			name:      "oauth2 with extra mtls payload",
 			gatewayID: gwID,
 			authName:  "k",
 			authType:  TypeOAuth2,
 			config:    Config{OAuth2: &OAuth2Config{Issuer: "https://issuer", JWKSURL: "https://x/jwks"}, MTLS: &MTLSConfig{CACert: "pem"}},
 			wantErr:   ErrInvalidConfig,
+		},
+		{
+			name:      "oauth2_client missing token_url",
+			gatewayID: gwID,
+			authName:  "k",
+			authType:  TypeOAuth2Client,
+			config:    Config{OAuth2Client: &OAuth2ClientConfig{ClientID: "id", ClientSecret: "secret"}},
+			wantErr:   ErrInvalidConfig,
+		},
+		{
+			name:      "oauth2_client non-https token_url",
+			gatewayID: gwID,
+			authName:  "k",
+			authType:  TypeOAuth2Client,
+			config:    Config{OAuth2Client: &OAuth2ClientConfig{TokenURL: "http://as.example.com/token", ClientID: "id", ClientSecret: "secret"}},
+			wantErr:   ErrInvalidConfig,
+		},
+		{
+			name:      "oauth2_client missing client_id",
+			gatewayID: gwID,
+			authName:  "k",
+			authType:  TypeOAuth2Client,
+			config:    Config{OAuth2Client: &OAuth2ClientConfig{TokenURL: "https://as.example.com/token", ClientSecret: "secret"}},
+			wantErr:   ErrInvalidConfig,
+		},
+		{
+			name:      "oauth2_client missing client_secret",
+			gatewayID: gwID,
+			authName:  "k",
+			authType:  TypeOAuth2Client,
+			config:    Config{OAuth2Client: &OAuth2ClientConfig{TokenURL: "https://as.example.com/token", ClientID: "id"}},
+			wantErr:   ErrInvalidConfig,
+		},
+		{
+			name:      "oauth2_client with extra idp payload",
+			gatewayID: gwID,
+			authName:  "k",
+			authType:  TypeOAuth2Client,
+			config: Config{
+				OAuth2Client: &OAuth2ClientConfig{TokenURL: "https://as.example.com/token", ClientID: "id", ClientSecret: "secret"},
+				IDP:          &IDPConfig{Issuer: "https://issuer", Audiences: []string{"gateway"}, JWKSURL: "https://x/jwks"},
+			},
+			wantErr: ErrInvalidConfig,
 		},
 	}
 	for _, tt := range tests {
@@ -186,13 +289,28 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 	}{
 		"api_key": {TypeAPIKey, Config{}},
 		"oauth2": {TypeOAuth2, Config{OAuth2: &OAuth2Config{
-			Issuer:  "https://issuer",
-			JWKSURL: "https://issuer/.well-known/jwks.json",
+			Issuer:    "https://issuer",
+			Audiences: []string{"gateway"},
+			JWKSURL:   "https://issuer/.well-known/jwks.json",
+		}}},
+		"oauth2_client": {TypeOAuth2Client, Config{OAuth2Client: &OAuth2ClientConfig{
+			TokenURL:     "https://as.example.com/oauth/token",
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			Scopes:       []string{"chat"},
+			Audience:     "https://api.example.com",
 		}}},
 		"oauth2 issuer-only (JWKS via OIDC discovery)": {TypeOAuth2, Config{OAuth2: &OAuth2Config{
-			Issuer: "https://login.microsoftonline.com/tenant-id/v2.0",
+			Issuer:    "https://login.microsoftonline.com/tenant-id/v2.0",
+			Audiences: []string{"agentgateway"},
 		}}},
 		"mtls": {TypeMTLS, Config{MTLS: &MTLSConfig{CACert: "-----BEGIN CERTIFICATE-----"}}},
+		"idp": {TypeIDP, Config{IDP: &IDPConfig{
+			Issuer:            "https://issuer",
+			Audiences:         []string{"gateway"},
+			JWKSURL:           "https://issuer/.well-known/jwks.json",
+			AllowedAlgorithms: []string{"RS256"},
+		}}},
 	}
 	for name, tc := range cases {
 		tc := tc
@@ -211,7 +329,7 @@ func TestConfig_ScanNil(t *testing.T) {
 	if err := c.Scan(nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if c.OAuth2 != nil || c.MTLS != nil {
+	if c.OAuth2 != nil || c.IDP != nil || c.MTLS != nil {
 		t.Fatal("expected empty config after scanning nil")
 	}
 }
@@ -219,8 +337,9 @@ func TestConfig_ScanNil(t *testing.T) {
 func TestConfig_ValueRoundTrip(t *testing.T) {
 	t.Parallel()
 	original := Config{OAuth2: &OAuth2Config{
-		Issuer:  "https://issuer",
-		JWKSURL: "https://issuer/.well-known/jwks.json",
+		Issuer:    "https://issuer",
+		Audiences: []string{"gateway"},
+		JWKSURL:   "https://issuer/.well-known/jwks.json",
 	}}
 	v, err := original.Value()
 	if err != nil {

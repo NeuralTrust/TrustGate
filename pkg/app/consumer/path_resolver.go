@@ -55,8 +55,11 @@ func NewPathResolver(
 
 func (r *pathResolver) Match(ctx context.Context, host, path string) ([]PathMatch, error) {
 	host = normalizeHost(host)
-	path = CanonicalPath(path)
-	key := host + "|" + path
+	slug := SlugFromMCPPath(path)
+	if slug == "" {
+		return nil, nil
+	}
+	key := host + "|" + slug
 	if cached, ok := r.cached(key); ok {
 		return cached, nil
 	}
@@ -64,7 +67,7 @@ func (r *pathResolver) Match(ctx context.Context, host, path string) ([]PathMatc
 		if cached, ok := r.cached(key); ok {
 			return cached, nil
 		}
-		matches, err := r.load(ctx, host, path)
+		matches, err := r.load(ctx, host, slug)
 		if err != nil {
 			return nil, err
 		}
@@ -79,6 +82,18 @@ func (r *pathResolver) Match(ctx context.Context, host, path string) ([]PathMatc
 		return nil, errors.New("consumer path resolver: unexpected singleflight result type")
 	}
 	return matches, nil
+}
+
+func SlugFromMCPPath(path string) string {
+	trimmed := strings.Trim(path, "/")
+	if trimmed == "" {
+		return ""
+	}
+	segments := strings.Split(trimmed, "/")
+	if len(segments) < 2 || segments[len(segments)-1] != "mcp" {
+		return ""
+	}
+	return strings.ToLower(segments[len(segments)-2])
 }
 
 func (r *pathResolver) cached(key string) ([]PathMatch, bool) {
@@ -96,11 +111,15 @@ func (r *pathResolver) cached(key string) ([]PathMatch, bool) {
 	return matches, true
 }
 
-func (r *pathResolver) load(ctx context.Context, host, path string) ([]PathMatch, error) {
-	consumers, err := r.consumers.FindActiveByPath(ctx, path)
+func (r *pathResolver) load(ctx context.Context, host, slug string) ([]PathMatch, error) {
+	c, err := r.consumers.FindActiveBySlug(ctx, slug)
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return []PathMatch{}, nil
+		}
 		return nil, err
 	}
+	consumers := []*domain.Consumer{c}
 	consumers, err = r.filterByHost(ctx, host, consumers)
 	if err != nil {
 		return nil, err

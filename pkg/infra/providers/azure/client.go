@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -158,6 +159,10 @@ func (c *client) resolveAuth(ctx context.Context, config *providers.Config) (aut
 	case providers.AzureAuthModeServicePrincipal, providers.AzureAuthModeDefaultAzureCredential:
 		token, err := c.bearerToken(ctx, az)
 		if err != nil {
+			slog.WarnContext(ctx, "azure bearer token acquisition failed",
+				slog.String("auth_mode", string(azureAuthMode(az))),
+				slog.String("error", err.Error()),
+			)
 			return authHeader{}, err
 		}
 		return authHeader{name: "Authorization", value: "Bearer " + token}, nil
@@ -173,7 +178,7 @@ func (c *client) bearerToken(ctx context.Context, az *providers.Azure) (string, 
 	}
 	token, err := tokenSource(ctx, az)
 	if err != nil {
-		return "", fmt.Errorf("failed to get Azure bearer token: %w", err)
+		return "", fmt.Errorf("%w: failed to get Azure bearer token: %w", registry.ErrCredentialAcquisition, err)
 	}
 	return token, nil
 }

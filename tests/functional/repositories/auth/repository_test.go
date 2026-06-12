@@ -79,6 +79,20 @@ func validAuth(t *testing.T, gwID ids.GatewayID, name string) *domain.Auth {
 	return a
 }
 
+func validIDPAuth(t *testing.T, gwID ids.GatewayID, name string, enabled bool) *domain.Auth {
+	t.Helper()
+	a, err := domain.NewAuth(gwID, name, domain.TypeIDP, enabled, domain.Config{IDP: &domain.IDPConfig{
+		Issuer:            "https://issuer.example.com",
+		Audiences:         []string{"gateway"},
+		JWKSURL:           "https://issuer.example.com/.well-known/jwks.json",
+		AllowedAlgorithms: []string{"RS256"},
+	}})
+	if err != nil {
+		t.Fatalf("auth domain.NewAuth: %v", err)
+	}
+	return a
+}
+
 func TestRepository_SaveAndFindByID(t *testing.T) {
 	r, gw := setupRepo(t)
 	ctx := context.Background()
@@ -134,6 +148,33 @@ func TestRepository_FindByAPIKeyHash_NotFound(t *testing.T) {
 	}
 }
 
+func TestRepository_ListEnabledByGatewayAndType(t *testing.T) {
+	r, gw := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, gw, "agw-idp")
+	otherGwID := seedGateway(t, gw, "agw-idp-other")
+
+	enabled := validIDPAuth(t, gwID, "enabled-idp", true)
+	for _, a := range []*domain.Auth{
+		enabled,
+		validIDPAuth(t, gwID, "disabled-idp", false),
+		validAuth(t, gwID, "api-key"),
+		validIDPAuth(t, otherGwID, "other-idp", true),
+	} {
+		if err := r.Save(ctx, a); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+	}
+
+	got, err := r.ListEnabledByGatewayAndType(ctx, gwID, domain.TypeIDP)
+	if err != nil {
+		t.Fatalf("ListEnabledByGatewayAndType: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != enabled.ID {
+		t.Fatalf("got %+v, want only enabled idp", got)
+	}
+}
+
 func TestRepository_FindByID_NotFound(t *testing.T) {
 	r, _ := setupRepo(t)
 	_, err := r.FindByID(context.Background(), ids.New[ids.AuthKind]())
@@ -180,8 +221,9 @@ func TestRepository_Update(t *testing.T) {
 	a.Name = "alpha-renamed"
 	a.Type = domain.TypeOAuth2
 	a.Config = domain.Config{OAuth2: &domain.OAuth2Config{
-		Issuer:  "https://issuer",
-		JWKSURL: "https://issuer/.well-known/jwks.json",
+		Issuer:    "https://issuer",
+		Audiences: []string{"gateway"},
+		JWKSURL:   "https://issuer/.well-known/jwks.json",
 	}}
 	a.UpdatedAt = time.Now().UTC()
 	if err := r.Update(ctx, a); err != nil {

@@ -153,7 +153,7 @@ function BindingsTab({ consumer }: { consumer: Consumer }) {
         kind="registries"
         title="Registries"
         icon={<Server className="h-4 w-4" />}
-        boundIds={consumer.registry_ids}
+        boundIds={consumer.registries.map((r) => r.id)}
         useItems={() => useList<Registry>("registries")}
       />
       <BindingSection
@@ -281,7 +281,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
   const { toast } = useToast();
   const { data: registries } = useList<Registry>("registries");
 
-  const attached = (registries ?? []).filter((r) => consumer.registry_ids.includes(r.id));
+  const attached = (registries ?? []).filter((r) => consumer.registries.some((b) => b.id === r.id));
 
   const [strategy, setStrategy] = useState<Strategy>(strategyOf(consumer));
   const [embProvider, setEmbProvider] = useState(consumer.embedding_config?.provider ?? "");
@@ -607,13 +607,14 @@ function ModelPoliciesTab({ consumer, onClose }: { consumer: Consumer; onClose: 
   const { toast } = useToast();
   const { data: registries } = useList<Registry>("registries");
 
-  const attached = (registries ?? []).filter((r) => consumer.registry_ids.includes(r.id));
+  const attached = (registries ?? []).filter((r) => consumer.registries.some((b) => b.id === r.id));
 
   const initial: Record<string, { allowed: string; default: string }> = {};
-  for (const mp of consumer.model_policies ?? []) {
-    initial[mp.registry_id] = {
-      allowed: (mp.allowed ?? []).join(", "),
-      default: mp.default ?? "",
+  for (const binding of consumer.registries) {
+    if (!binding.model_policies) continue;
+    initial[binding.id] = {
+      allowed: (binding.model_policies.allowed ?? []).join(", "),
+      default: binding.model_policies.default ?? "",
     };
   }
   const [state, setState] = useState(initial);
@@ -627,15 +628,12 @@ function ModelPoliciesTab({ consumer, onClose }: { consumer: Consumer; onClose: 
   }
 
   async function save() {
-    const modelPolicies = attached
-      .map((r) => {
-        const entry = state[r.id];
-        if (!entry) return null;
-        const allowed = entry.allowed.split(",").map((s) => s.trim()).filter(Boolean);
-        if (allowed.length === 0 && !entry.default) return null;
-        return { registry_id: r.id, allowed, default: entry.default || undefined };
-      })
-      .filter(Boolean);
+    const registryBindings = attached.map((r) => {
+      const entry = state[r.id];
+      const allowed = entry ? entry.allowed.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      if (allowed.length === 0 && !entry?.default) return { id: r.id };
+      return { id: r.id, model_policies: { allowed, default: entry?.default || undefined } };
+    });
 
     const body = consumerBaseBody(consumer);
     if (consumer.fallback) {
@@ -650,7 +648,7 @@ function ModelPoliciesTab({ consumer, onClose }: { consumer: Consumer; onClose: 
         },
       };
     }
-    body.model_policies = modelPolicies;
+    body.registries = registryBindings;
 
     setSaving(true);
     try {

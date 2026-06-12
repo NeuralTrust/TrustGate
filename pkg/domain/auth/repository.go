@@ -22,5 +22,6 @@ type Repository interface {
 	FindByIDs(ctx context.Context, gatewayID ids.GatewayID, authIDs []ids.AuthID) ([]*Auth, error)
 	FindByAPIKeyHash(ctx context.Context, keyHash string) (*Auth, error)
 	FindEnabledByTypes(ctx context.Context, types []Type) ([]*Auth, error)
+	ListEnabledByGatewayAndType(ctx context.Context, gatewayID ids.GatewayID, authType Type) ([]*Auth, error)
 	List(ctx context.Context, filter ListFilter) (items []*Auth, total int, err error)
 }

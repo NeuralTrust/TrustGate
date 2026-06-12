@@ -120,7 +120,6 @@ func TestConsumer_Validate_ToolkitAndFailMode(t *testing.T) {
 			GatewayID:   gwID,
 			Name:        "llm-consumer",
 			Type:        TypeLLM,
-			Path:        "/llm",
 			RegistryIDs: []ids.RegistryID{regID},
 			MCP:         &MCPPolicy{Toolkit: Toolkit{{RegistryID: regID, Tool: ToolWildcard}}},
 		})
@@ -135,7 +134,6 @@ func TestConsumer_Validate_ToolkitAndFailMode(t *testing.T) {
 			GatewayID:   gwID,
 			Name:        "mcp-consumer",
 			Type:        TypeMCP,
-			Path:        "/mcp/dev",
 			RegistryIDs: []ids.RegistryID{regID},
 			MCP:         &MCPPolicy{Toolkit: Toolkit{{RegistryID: regID, Tool: ToolWildcard}}},
 		})
@@ -153,7 +151,6 @@ func TestConsumer_Validate_ToolkitAndFailMode(t *testing.T) {
 			GatewayID: gwID,
 			Name:      "mcp-consumer",
 			Type:      TypeMCP,
-			Path:      "/mcp/dev",
 			MCP:       &MCPPolicy{FailMode: "explode"},
 		})
 		if !errors.Is(err, ErrInvalidFailMode) {

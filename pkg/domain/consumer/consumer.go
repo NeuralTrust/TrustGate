@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 type Type string
@@ -29,48 +28,39 @@ func IsValidType(t Type) bool {
 	return false
 }
 
+type RoutingMode string
+
+const (
+	RoutingModeInline    RoutingMode = "inline"
+	RoutingModeRoleBased RoutingMode = "role_based"
+)
+
+func (m RoutingMode) IsValid() bool {
+	switch m {
+	case RoutingModeInline, RoutingModeRoleBased:
+		return true
+	}
+	return false
+}
+
 type Consumer struct {
-	ID          ids.ConsumerID      `json:"id"`
-	GatewayID   ids.GatewayID       `json:"gateway_id"`
-	Name        string              `json:"name"`
-	Type        Type                `json:"type"`
-	Path        string              `json:"path"`
-	Headers     map[string]string   `json:"headers,omitempty"`
-	Active      bool                `json:"active"`
-	RegistryIDs registry.Registries `json:"registry_ids"`
-	AuthIDs     []ids.AuthID        `json:"auth_ids"`
-	LLM         *LLMPolicy          `json:"llm,omitempty"`
-	MCP         *MCPPolicy          `json:"mcp,omitempty"`
-	CreatedAt   time.Time           `json:"created_at"`
-	UpdatedAt   time.Time           `json:"updated_at"`
-}
-
-func (c *Consumer) Algorithm() string {
-	if c.LLM == nil {
-		return ""
-	}
-	return c.LLM.Algorithm
-}
-
-func (c *Consumer) EmbeddingConfig() *registry.EmbeddingConfig {
-	if c.LLM == nil {
-		return nil
-	}
-	return c.LLM.EmbeddingConfig
-}
-
-func (c *Consumer) ModelPolicies() ModelPolicies {
-	if c.LLM == nil {
-		return nil
-	}
-	return c.LLM.ModelPolicies
-}
-
-func (c *Consumer) Fallback() *Fallback {
-	if c.LLM == nil {
-		return nil
-	}
-	return c.LLM.Fallback
+	ID            ids.ConsumerID    `json:"id"`
+	GatewayID     ids.GatewayID     `json:"gateway_id"`
+	Name          string            `json:"name"`
+	Type          Type              `json:"type"`
+	Slug          string            `json:"slug"`
+	RoutingMode   RoutingMode       `json:"routing_mode"`
+	LBConfig      *LBConfig         `json:"lb_config,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
+	Active        bool              `json:"active"`
+	RegistryIDs   []ids.RegistryID  `json:"registry_ids"`
+	RoleIDs       []ids.RoleID      `json:"role_ids"`
+	AuthIDs       []ids.AuthID      `json:"auth_ids"`
+	Fallback      *Fallback         `json:"fallback,omitempty"`
+	ModelPolicies ModelPolicies     `json:"model_policies,omitempty"`
+	MCP           *MCPPolicy        `json:"mcp,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
 }
 
 func (c *Consumer) Toolkit() Toolkit {
@@ -88,16 +78,19 @@ func (c *Consumer) FailMode() FailMode {
 }
 
 type CreateParams struct {
-	GatewayID   ids.GatewayID
-	Name        string
-	Type        Type
-	Path        string
-	Headers     map[string]string
-	Active      *bool
-	RegistryIDs []ids.RegistryID
-	AuthIDs     []ids.AuthID
-	LLM         *LLMPolicy
-	MCP         *MCPPolicy
+	GatewayID     ids.GatewayID
+	Name          string
+	Type          Type
+	RoutingMode   RoutingMode
+	LBConfig      *LBConfig
+	Headers       map[string]string
+	Active        *bool
+	RegistryIDs   []ids.RegistryID
+	RoleIDs       []ids.RoleID
+	AuthIDs       []ids.AuthID
+	Fallback      *Fallback
+	ModelPolicies ModelPolicies
+	MCP           *MCPPolicy
 }
 
 func New(params CreateParams) (*Consumer, error) {
@@ -105,25 +98,33 @@ func New(params CreateParams) (*Consumer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("consumer: generate uuid: %w", err)
 	}
+	slug, err := NewSlug()
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
 	active := true
 	if params.Active != nil {
 		active = *params.Active
 	}
 	c := &Consumer{
-		ID:          id,
-		GatewayID:   params.GatewayID,
-		Name:        params.Name,
-		Type:        params.Type,
-		Path:        params.Path,
-		Headers:     params.Headers,
-		Active:      active,
-		RegistryIDs: params.RegistryIDs,
-		AuthIDs:     params.AuthIDs,
-		LLM:         params.LLM,
-		MCP:         params.MCP,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:            id,
+		GatewayID:     params.GatewayID,
+		Name:          params.Name,
+		Type:          params.Type,
+		Slug:          slug,
+		RoutingMode:   params.RoutingMode,
+		LBConfig:      params.LBConfig,
+		Headers:       params.Headers,
+		Active:        active,
+		RegistryIDs:   params.RegistryIDs,
+		RoleIDs:       params.RoleIDs,
+		AuthIDs:       params.AuthIDs,
+		Fallback:      params.Fallback,
+		ModelPolicies: params.ModelPolicies,
+		MCP:           params.MCP,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -132,36 +133,44 @@ func New(params CreateParams) (*Consumer, error) {
 }
 
 type RehydrateParams struct {
-	ID          ids.ConsumerID
-	GatewayID   ids.GatewayID
-	Name        string
-	Type        Type
-	Path        string
-	Headers     map[string]string
-	Active      bool
-	RegistryIDs []ids.RegistryID
-	AuthIDs     []ids.AuthID
-	LLM         *LLMPolicy
-	MCP         *MCPPolicy
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID            ids.ConsumerID
+	GatewayID     ids.GatewayID
+	Name          string
+	Type          Type
+	Slug          string
+	RoutingMode   RoutingMode
+	LBConfig      *LBConfig
+	Headers       map[string]string
+	Active        bool
+	RegistryIDs   []ids.RegistryID
+	RoleIDs       []ids.RoleID
+	AuthIDs       []ids.AuthID
+	Fallback      *Fallback
+	ModelPolicies ModelPolicies
+	MCP           *MCPPolicy
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 func Rehydrate(params RehydrateParams) *Consumer {
 	return &Consumer{
-		ID:          params.ID,
-		GatewayID:   params.GatewayID,
-		Name:        params.Name,
-		Type:        params.Type,
-		Path:        params.Path,
-		Headers:     params.Headers,
-		Active:      params.Active,
-		RegistryIDs: params.RegistryIDs,
-		AuthIDs:     params.AuthIDs,
-		LLM:         params.LLM,
-		MCP:         params.MCP,
-		CreatedAt:   params.CreatedAt,
-		UpdatedAt:   params.UpdatedAt,
+		ID:            params.ID,
+		GatewayID:     params.GatewayID,
+		Name:          params.Name,
+		Type:          params.Type,
+		Slug:          params.Slug,
+		RoutingMode:   params.RoutingMode,
+		LBConfig:      params.LBConfig,
+		Headers:       params.Headers,
+		Active:        params.Active,
+		RegistryIDs:   params.RegistryIDs,
+		RoleIDs:       params.RoleIDs,
+		AuthIDs:       params.AuthIDs,
+		Fallback:      params.Fallback,
+		ModelPolicies: params.ModelPolicies,
+		MCP:           params.MCP,
+		CreatedAt:     params.CreatedAt,
+		UpdatedAt:     params.UpdatedAt,
 	}
 }
 
@@ -178,59 +187,68 @@ func (c *Consumer) Validate() error {
 	if !IsValidType(c.Type) {
 		return fmt.Errorf("%w: %q", ErrInvalidType, c.Type)
 	}
-	if strings.TrimSpace(c.Path) == "" {
-		return fmt.Errorf("%w: path is required", ErrInvalidPath)
+	if !IsValidSlug(c.Slug) {
+		return fmt.Errorf("%w: %q", ErrInvalidSlug, c.Slug)
 	}
-	c.Path = canonicalPath(c.Path)
-	if err := c.RegistryIDs.Validate(); err != nil {
-		return err
+	if c.RoutingMode == "" {
+		c.RoutingMode = RoutingModeInline
+	}
+	if !c.RoutingMode.IsValid() {
+		return fmt.Errorf("%w: %q", ErrInvalidRoutingMode, c.RoutingMode)
 	}
 	if err := validateUniqueIDs(c.AuthIDs, ErrInvalidAuthID, "auth"); err != nil {
 		return err
 	}
-	switch c.Type {
-	case TypeLLM:
-		if c.MCP != nil {
-			return fmt.Errorf("%w: mcp policy is only valid for MCP consumers", ErrInvalidType)
-		}
-		if c.LLM == nil {
-			c.LLM = &LLMPolicy{}
-		}
-		return c.LLM.Validate(c.knownRegistryIDs())
-	case TypeMCP:
-		if c.LLM != nil {
-			return fmt.Errorf("%w: llm policy is only valid for LLM consumers", ErrInvalidType)
-		}
+	if c.Type != TypeMCP && c.MCP != nil {
+		return fmt.Errorf("%w: mcp policy is only valid for MCP consumers", ErrInvalidType)
+	}
+	if c.RoutingMode == RoutingModeRoleBased {
+		return c.validateRoleBased()
+	}
+	if err := validateUniqueIDs(c.RegistryIDs, ErrInvalidModelPolicy, "registry"); err != nil {
+		return err
+	}
+	if err := c.Fallback.Validate(); err != nil {
+		return err
+	}
+	if err := c.ModelPolicies.Validate(c.knownRegistryIDs()); err != nil {
+		return err
+	}
+	if err := c.LBConfig.Validate(c.ModelPolicies); err != nil {
+		return err
+	}
+	if len(c.RoleIDs) > 0 {
+		return fmt.Errorf("%w: roles are only valid in role_based mode", ErrInvalidRoutingMode)
+	}
+	if c.Type == TypeMCP {
 		if c.MCP == nil {
 			c.MCP = &MCPPolicy{}
 		}
 		return c.MCP.Validate(c.knownRegistryIDs())
-	case TypeA2A:
-		if c.LLM != nil {
-			return fmt.Errorf("%w: llm policy is only valid for LLM consumers", ErrInvalidType)
-		}
-		if c.MCP != nil {
-			return fmt.Errorf("%w: mcp policy is only valid for MCP consumers", ErrInvalidType)
-		}
-		return nil
-	default:
-		return fmt.Errorf("%w: %q", ErrInvalidType, c.Type)
 	}
+	return nil
 }
 
-func canonicalPath(path string) string {
-	path = strings.TrimSpace(path)
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
+func (c *Consumer) validateRoleBased() error {
+	if len(c.RegistryIDs) > 0 {
+		return fmt.Errorf("%w: registry_ids are only valid in inline mode", ErrInvalidRoutingMode)
 	}
-	if len(path) > 1 {
-		if trimmed := strings.TrimRight(path, "/"); trimmed != "" {
-			path = trimmed
-		} else {
-			path = "/"
-		}
+	if c.LBConfig != nil {
+		return fmt.Errorf("%w: lb_config is only valid in inline mode", ErrInvalidRoutingMode)
 	}
-	return path
+	if c.Fallback != nil && c.Fallback.Enabled {
+		return fmt.Errorf("%w: fallback is only valid in inline mode", ErrInvalidRoutingMode)
+	}
+	if len(c.ModelPolicies) > 0 {
+		return fmt.Errorf("%w: model_policies are only valid in inline mode", ErrInvalidRoutingMode)
+	}
+	if c.MCP != nil {
+		return fmt.Errorf("%w: mcp policy is only valid in inline mode", ErrInvalidRoutingMode)
+	}
+	if err := validateUniqueIDs(c.RoleIDs, ErrInvalidRoutingMode, "role"); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *Consumer) knownRegistryIDs() map[ids.RegistryID]struct{} {
@@ -238,8 +256,8 @@ func (c *Consumer) knownRegistryIDs() map[ids.RegistryID]struct{} {
 	for _, id := range c.RegistryIDs {
 		known[id] = struct{}{}
 	}
-	if fb := c.Fallback(); fb != nil {
-		for _, id := range fb.Chain {
+	if c.Fallback != nil {
+		for _, id := range c.Fallback.Chain {
 			known[id] = struct{}{}
 		}
 	}

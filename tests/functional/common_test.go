@@ -8,11 +8,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+const functionalGatewayBaseDomain = "gw.neuraltrust.ai"
+
+var (
+	gatewayHosts  sync.Map
+	proxyHosts    sync.Map
+	consumerSlugs sync.Map
 )
 
 // uniqueName returns a name that cannot collide across runs or
@@ -31,6 +40,10 @@ func CreateGateway(t *testing.T, payload map[string]any) string {
 	id, ok := body["id"].(string)
 	require.True(t, ok, "create response missing id: %v", body)
 	require.NotEmpty(t, id)
+	slug, ok := body["slug"].(string)
+	require.True(t, ok, "create response missing slug: %v", body)
+	require.NotEmpty(t, slug)
+	gatewayHosts.Store(id, slug+"."+functionalGatewayBaseDomain)
 	return id
 }
 
@@ -44,6 +57,20 @@ func CreateRegistry(t *testing.T, gatewayID string, payload map[string]any) stri
 
 	id, ok := body["id"].(string)
 	require.True(t, ok, "create registry response missing id: %v", body)
+	require.NotEmpty(t, id)
+	return id
+}
+
+// CreateRole issues a POST /v1/gateways/:gateway_id/roles and returns the new
+// role id. Aborts the calling test on any failure.
+func CreateRole(t *testing.T, gatewayID string, payload map[string]any) string {
+	t.Helper()
+	url := fmt.Sprintf("%s/v1/gateways/%s/roles", AdminURL, gatewayID)
+	status, body := sendRequest(t, http.MethodPost, url, nil, payload)
+	require.Equal(t, http.StatusCreated, status, "create role failed: %v", body)
+
+	id, ok := body["id"].(string)
+	require.True(t, ok, "create role response missing id: %v", body)
 	require.NotEmpty(t, id)
 	return id
 }
@@ -89,31 +116,50 @@ func CreateConsumer(t *testing.T, gatewayID string, payload map[string]any) stri
 	id, ok := body["id"].(string)
 	require.True(t, ok, "create consumer response missing id: %v", body)
 	require.NotEmpty(t, id)
+
+	slug, ok := body["slug"].(string)
+	require.True(t, ok, "create consumer response missing slug: %v", body)
+	require.NotEmpty(t, slug)
+	consumerSlugs.Store(id, slug)
 	return id
 }
 
-// validConsumerPayload returns a minimal payload accepted by Validate() (name
-// plus an exact-match path). Associations (registries, auths, policies) are
-// attached after creation via the dedicated link endpoints. The path is derived
-// from the (already unique) name so it stays unique per gateway. Callers may
-// override fields.
+// ConsumerSlug returns the auto-generated slug captured when the consumer was
+// created through CreateConsumer.
+func ConsumerSlug(t *testing.T, consumerID string) string {
+	t.Helper()
+	slug, ok := consumerSlugs.Load(consumerID)
+	require.True(t, ok, "slug not captured for consumer %s", consumerID)
+	return slug.(string)
+}
+
+// chatCompletionsPath returns the fixed OpenAI-compatible proxy route for the
+// given consumer: /{consumer_slug}/v1/chat/completions.
+func chatCompletionsPath(t *testing.T, consumerID string) string {
+	t.Helper()
+	return "/" + ConsumerSlug(t, consumerID) + "/v1/chat/completions"
+}
+
+// validConsumerPayload returns a minimal payload accepted by Validate().
+// Associations (registries, auths, policies) are attached after creation via
+// the dedicated link endpoints. The routing slug is generated server-side.
 func validConsumerPayload(name string) map[string]any {
 	return map[string]any{
 		"name": name,
-		"path": "/v1/" + name,
 	}
 }
 
-// CreateConsumerWithRegistries creates a base consumer and attaches each
-// registry through the association endpoint, returning the consumer id. This is
-// the common multi-step setup now that registries live outside the create body.
+// CreateConsumerWithRegistries creates a consumer with the given registries
+// bound atomically through the nested registries array of the create body.
 func CreateConsumerWithRegistries(t *testing.T, gatewayID, name string, registryIDs ...string) string {
 	t.Helper()
-	id := CreateConsumer(t, gatewayID, validConsumerPayload(name))
+	payload := validConsumerPayload(name)
+	bindings := make([]map[string]any, 0, len(registryIDs))
 	for _, registryID := range registryIDs {
-		AttachRegistry(t, gatewayID, id, registryID)
+		bindings = append(bindings, map[string]any{"id": registryID})
 	}
-	return id
+	payload["registries"] = bindings
+	return CreateConsumer(t, gatewayID, payload)
 }
 
 // AttachRegistry links a registry to a consumer via the association endpoint,
@@ -156,8 +202,8 @@ func SetPolicyGlobal(t *testing.T, gatewayID, policyID string) {
 }
 
 // UpdateConsumer issues a PUT /v1/gateways/:gateway_id/consumers/:id, asserting
-// the 200 contract. Registry-referencing config (model_policies, fallback) is
-// configured here, after the registries have been attached.
+// the 200 contract. Registry-referencing config (nested registries policies,
+// fallback) must reference registries already attached to the consumer.
 func UpdateConsumer(t *testing.T, gatewayID, consumerID string, payload map[string]any) {
 	t.Helper()
 	url := fmt.Sprintf("%s/v1/gateways/%s/consumers/%s", AdminURL, gatewayID, consumerID)
@@ -212,6 +258,9 @@ func createAndAttachAPIKey(t *testing.T, gatewayID, consumerID string) string {
 	t.Helper()
 	authID, key := CreateAPIKeyAuth(t, gatewayID, uniqueName("proxy-key"))
 	AttachAuth(t, gatewayID, consumerID, authID)
+	host, ok := gatewayHosts.Load(gatewayID)
+	require.True(t, ok, "gateway host missing for %s", gatewayID)
+	proxyHosts.Store(key, host.(string))
 	return key
 }
 

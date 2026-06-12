@@ -3,6 +3,7 @@ package proxy_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	proxymocks "github.com/NeuralTrust/AgentGateway/pkg/app/proxy/mocks"
+	approuting "github.com/NeuralTrust/AgentGateway/pkg/app/routing"
 	appsession "github.com/NeuralTrust/AgentGateway/pkg/app/session"
 	domainconsumer "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
@@ -45,8 +47,8 @@ func routableConsumerWith(gatewayID ids.GatewayID, registries ...*registrydomain
 			ID:        ids.New[ids.ConsumerKind](),
 			GatewayID: gatewayID,
 			Name:      "test-consumer",
-			Path:      "/v1/chat/completions",
-			LLM:       &domainconsumer.LLMPolicy{Algorithm: loadbalancer.AlgorithmRoundRobin},
+			Slug:      "cons1234",
+			LBConfig:  &domainconsumer.LBConfig{Algorithm: loadbalancer.AlgorithmRoundRobin},
 		},
 		Registries: registries,
 	}
@@ -57,6 +59,7 @@ func backendFor(gatewayID ids.GatewayID, provider string) *registrydomain.Regist
 		ID:        ids.New[ids.RegistryKind](),
 		GatewayID: gatewayID,
 		Name:      "test-backend",
+		Type:      registrydomain.TypeLLM,
 		Weight:    1,
 		LLMTarget: &registrydomain.LLMTarget{
 			Provider: provider,
@@ -69,7 +72,7 @@ func newTestForwarder(t *testing.T, invoker appproxy.ProviderInvoker) appproxy.F
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, nil, nil, nil, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, nil, nil, approuting.NewResolver(), nil, newTestLogger(),
 	)
 }
 
@@ -90,7 +93,7 @@ func newTestForwarderWithStore(t *testing.T, invoker appproxy.ProviderInvoker, s
 	mgr := cache.NewTTLMapManager(time.Minute)
 	return appproxy.NewForwarder(
 		loadbalancer.NewBaseFactory(nil, nil),
-		newPermissiveCache(t), mgr, invoker, nil, store, nil, newTestLogger(),
+		newPermissiveCache(t), mgr, invoker, nil, store, approuting.NewResolver(), nil, newTestLogger(),
 	)
 }
 
@@ -138,7 +141,7 @@ func TestForward_FallbackChainAfterPoolExhausted(t *testing.T) {
 	pool := backendFor(gatewayID, "openai")
 	fallbackBk := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, pool)
-	rc.Consumer.LLM.Fallback = enabledFallback(fallbackBk.ID)
+	rc.Consumer.Fallback = enabledFallback(fallbackBk.ID)
 	rc.FallbackBackends = []*registrydomain.Registry{fallbackBk}
 
 	invoker := proxymocks.NewProviderInvoker(t)
@@ -165,12 +168,45 @@ func TestForward_FallbackChainAfterPoolExhausted(t *testing.T) {
 	}
 }
 
+func TestForward_QualifiedPinSkipsFallback(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	pinned := backendFor(gatewayID, "openai")
+	fallbackBk := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, pinned)
+	rc.Consumer.Fallback = enabledFallback(fallbackBk.ID)
+	rc.FallbackBackends = []*registrydomain.Registry{fallbackBk}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+			return bk.ID == pinned.ID
+		}), mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request: &infracontext.RequestContext{
+			Context: context.Background(),
+			Body:    []byte(`{"model":"@openai/gpt-5"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 503 {
+		t.Fatalf("pinned @provider/model must not fail over, got %d", res.StatusCode)
+	}
+}
+
 func TestForward_AllCandidatesFailRelaysLast5xx(t *testing.T) {
 	gatewayID := ids.New[ids.GatewayKind]()
 	pool := backendFor(gatewayID, "openai")
 	fallbackBk := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, pool)
-	rc.Consumer.LLM.Fallback = enabledFallback(fallbackBk.ID)
+	rc.Consumer.Fallback = enabledFallback(fallbackBk.ID)
 	rc.FallbackBackends = []*registrydomain.Registry{fallbackBk}
 
 	invoker := proxymocks.NewProviderInvoker(t)
@@ -190,6 +226,181 @@ func TestForward_AllCandidatesFailRelaysLast5xx(t *testing.T) {
 	if res.StatusCode != 502 {
 		t.Fatalf("expected last 5xx relayed verbatim, got %d", res.StatusCode)
 	}
+}
+
+func fallbackWithTriggers(chain ids.RegistryID, triggers ...domainconsumer.FallbackTrigger) *domainconsumer.Fallback {
+	return &domainconsumer.Fallback{
+		Enabled:  true,
+		Triggers: triggers,
+		Budget:   domainconsumer.FallbackBudget{MaxAttempts: 10},
+		Chain:    []ids.RegistryID{chain},
+	}
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+func TestForward_FallbackTriggerGating(t *testing.T) {
+	cases := []struct {
+		name        string
+		triggers    []domainconsumer.FallbackTrigger
+		primaryResp *appproxy.ProviderResponse
+		primaryErr  error
+		wantChain   bool
+		wantStatus  int
+		wantErr     bool
+	}{
+		{
+			name:        "429 with only http_5xx does not reach the chain",
+			triggers:    []domainconsumer.FallbackTrigger{domainconsumer.TriggerHTTP5xx},
+			primaryResp: &appproxy.ProviderResponse{StatusCode: 429, Body: []byte("rate limited")},
+			wantChain:   false,
+			wantStatus:  429,
+		},
+		{
+			name:        "429 with http_429 reaches the chain",
+			triggers:    []domainconsumer.FallbackTrigger{domainconsumer.TriggerHTTP429},
+			primaryResp: &appproxy.ProviderResponse{StatusCode: 429, Body: []byte("rate limited")},
+			wantChain:   true,
+			wantStatus:  200,
+		},
+		{
+			name:        "503 with only http_429 does not reach the chain",
+			triggers:    []domainconsumer.FallbackTrigger{domainconsumer.TriggerHTTP429},
+			primaryResp: &appproxy.ProviderResponse{StatusCode: 503, Body: []byte("down")},
+			wantChain:   false,
+			wantStatus:  503,
+		},
+		{
+			name:       "network timeout with timeout trigger reaches the chain",
+			triggers:   []domainconsumer.FallbackTrigger{domainconsumer.TriggerTimeout},
+			primaryErr: timeoutErr{},
+			wantChain:  true,
+			wantStatus: 200,
+		},
+		{
+			name:       "network timeout with only http_5xx does not reach the chain",
+			triggers:   []domainconsumer.FallbackTrigger{domainconsumer.TriggerHTTP5xx},
+			primaryErr: timeoutErr{},
+			wantChain:  false,
+			wantErr:    true,
+		},
+		{
+			name:       "deadline exceeded with timeout trigger reaches the chain",
+			triggers:   []domainconsumer.FallbackTrigger{domainconsumer.TriggerTimeout},
+			primaryErr: context.DeadlineExceeded,
+			wantChain:  true,
+			wantStatus: 200,
+		},
+		{
+			name:       "connection error counts as http_5xx",
+			triggers:   []domainconsumer.FallbackTrigger{domainconsumer.TriggerHTTP5xx},
+			primaryErr: errors.New("connection refused"),
+			wantChain:  true,
+			wantStatus: 200,
+		},
+		{
+			name:        "408 with timeout trigger reaches the chain",
+			triggers:    []domainconsumer.FallbackTrigger{domainconsumer.TriggerTimeout},
+			primaryResp: &appproxy.ProviderResponse{StatusCode: 408, Body: []byte("timeout")},
+			wantChain:   true,
+			wantStatus:  200,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gatewayID := ids.New[ids.GatewayKind]()
+			primary := backendFor(gatewayID, "openai")
+			chainBk := backendFor(gatewayID, "anthropic")
+			rc := routableConsumerWith(gatewayID, primary)
+			rc.Consumer.Fallback = fallbackWithTriggers(chainBk.ID, tc.triggers...)
+			rc.FallbackBackends = []*registrydomain.Registry{chainBk}
+
+			invoker := proxymocks.NewProviderInvoker(t)
+			invoker.EXPECT().
+				Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+					return bk.ID == primary.ID
+				}), mock.Anything).
+				Return(tc.primaryResp, tc.primaryErr).
+				Once()
+			if tc.wantChain {
+				invoker.EXPECT().
+					Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+						return bk.ID == chainBk.ID
+					}), mock.Anything).
+					Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("rescued")}, nil).
+					Once()
+			}
+
+			fwd := newTestForwarder(t, invoker)
+			res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+				GatewayID: gatewayID,
+				Consumer:  rc,
+				Request:   &infracontext.RequestContext{Context: context.Background()},
+			})
+			if tc.wantErr {
+				require.Error(t, err, "the failure must be relayed as an error without fallback")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantStatus, res.StatusCode)
+		})
+	}
+}
+
+func TestForward_CredentialAcquisitionFailureIsTerminal(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	primary := backendFor(gatewayID, "azure")
+	chainBk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, primary)
+	rc.Consumer.Fallback = enabledFallback(chainBk.ID)
+	rc.FallbackBackends = []*registrydomain.Registry{chainBk}
+
+	credentialErr := fmt.Errorf("provider completions: %w: secret expired", registrydomain.ErrCredentialAcquisition)
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, credentialErr).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+	_, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Context: context.Background()},
+	})
+	require.ErrorIs(t, err, registrydomain.ErrCredentialAcquisition,
+		"a credential misconfiguration must fail fast without retries or fallback")
+}
+
+func TestForward_LBFailoverNotGatedByTriggers(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bk1 := backendFor(gatewayID, "openai")
+	bk2 := backendFor(gatewayID, "mistral")
+	chainBk := backendFor(gatewayID, "anthropic")
+	rc := routableConsumerWith(gatewayID, bk1, bk2)
+	rc.Consumer.Fallback = fallbackWithTriggers(chainBk.ID, domainconsumer.TriggerHTTP5xx)
+	rc.FallbackBackends = []*registrydomain.Registry{chainBk}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.MatchedBy(func(bk *registrydomain.Registry) bool {
+			return bk.ID == bk1.ID || bk.ID == bk2.ID
+		}), mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 429, Body: []byte("rate limited")}, nil).
+		Twice()
+
+	fwd := newTestForwarder(t, invoker)
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Context: context.Background()},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 429, res.StatusCode, "both LB members must be tried, chain must not (429 not in triggers)")
 }
 
 func TestForward_SyncSuccess(t *testing.T) {
@@ -215,6 +426,33 @@ func TestForward_SyncSuccess(t *testing.T) {
 	}
 	if res.StatusCode != 200 || string(res.Body) != "ok" {
 		t.Fatalf("unexpected result: %+v", res)
+	}
+}
+
+func TestForward_DisabledLBConfigIsIgnored(t *testing.T) {
+	gatewayID := ids.New[ids.GatewayKind]()
+	bk := backendFor(gatewayID, "openai")
+	rc := routableConsumerWith(gatewayID, bk)
+	rc.Consumer.LBConfig = &domainconsumer.LBConfig{Enabled: false, Algorithm: "unsupported-algorithm"}
+
+	invoker := proxymocks.NewProviderInvoker(t)
+	invoker.EXPECT().
+		Invoke(mock.Anything, mock.Anything, mock.Anything).
+		Return(&appproxy.ProviderResponse{StatusCode: 200, Body: []byte("ok")}, nil).
+		Once()
+
+	fwd := newTestForwarder(t, invoker)
+
+	res, err := fwd.Forward(context.Background(), appproxy.ForwardInput{
+		GatewayID: gatewayID,
+		Consumer:  rc,
+		Request:   &infracontext.RequestContext{Context: context.Background()},
+	})
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if res.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
 	}
 }
 

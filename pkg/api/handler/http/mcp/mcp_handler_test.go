@@ -28,7 +28,7 @@ func newApp(t *testing.T, composer appmcp.Composer, consumerType consumerdomain.
 		GatewayID: gwID,
 		Name:      "virtual",
 		Type:      consumerType,
-		Path:      mcpPath,
+		Slug:      "virtual",
 		Active:    true,
 	}
 	if authorized {

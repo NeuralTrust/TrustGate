@@ -33,26 +33,26 @@ func TestUpdateConsumerRequest_ToType(t *testing.T) {
 	}
 }
 
-func TestUpdateConsumerRequest_ToAlgorithm(t *testing.T) {
+func TestUpdateConsumerRequest_ToRoutingMode(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		in   *string
-		want *string
+		want *domain.RoutingMode
 	}{
 		{"omitted", nil, nil},
 		{"empty", strPtr(""), nil},
 		{"whitespace", strPtr("   "), nil},
-		{"value", strPtr("round-robin"), strPtr("round-robin")},
+		{"value", strPtr("role_based"), func() *domain.RoutingMode { v := domain.RoutingModeRoleBased; return &v }()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := UpdateConsumerRequest{Algorithm: tc.in}.ToAlgorithm()
+			got := UpdateConsumerRequest{RoutingMode: tc.in}.ToRoutingMode()
 			if (got == nil) != (tc.want == nil) {
-				t.Fatalf("ToAlgorithm() nilness mismatch: got=%v want=%v", got, tc.want)
+				t.Fatalf("ToRoutingMode() nilness mismatch: got=%v want=%v", got, tc.want)
 			}
 			if got != nil && *got != *tc.want {
-				t.Fatalf("ToAlgorithm() = %q, want %q", *got, *tc.want)
+				t.Fatalf("ToRoutingMode() = %q, want %q", *got, *tc.want)
 			}
 		})
 	}

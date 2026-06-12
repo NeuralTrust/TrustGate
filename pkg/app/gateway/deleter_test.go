@@ -25,13 +25,13 @@ func TestDeleter_Delete_Success(t *testing.T) {
 	mgr := newCacheManager()
 	// Pre-populate the cache: the deleter must wipe it.
 	now := time.Now().UTC()
-	mgr.GetTTLMap(cache.GatewayTTLName).Set(id.String(), domain.Rehydrate(id, "x", "active", "", nil, nil, nil, now, now))
+	mgr.GetTTLMap(cache.GatewayTTLName).Set("id:"+id.String(), domain.Rehydrate(id, "x", "active", "", nil, nil, nil, now, now))
 
 	deleter := appgateway.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
 	if err := deleter.Delete(context.Background(), id); err != nil {
 		t.Fatalf("Delete error: %v", err)
 	}
-	if _, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get(id.String()); ok {
+	if _, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("id:" + id.String()); ok {
 		t.Fatal("cache entry was not invalidated after delete")
 	}
 }
@@ -43,7 +43,7 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 	repo.EXPECT().Delete(mock.Anything, id).Return(domain.ErrNotFound).Once()
 
 	mgr := newCacheManager()
-	mgr.GetTTLMap(cache.GatewayTTLName).Set(id.String(), &domain.Gateway{ID: id})
+	mgr.GetTTLMap(cache.GatewayTTLName).Set("id:"+id.String(), &domain.Gateway{ID: id})
 
 	deleter := appgateway.NewDeleter(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
 	err := deleter.Delete(context.Background(), id)
@@ -52,7 +52,7 @@ func TestDeleter_Delete_NotFound(t *testing.T) {
 	}
 	// On failure the cache entry is intentionally left untouched —
 	// the repo did not change state.
-	if _, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get(id.String()); !ok {
+	if _, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("id:" + id.String()); !ok {
 		t.Fatal("cache entry was wiped on repo failure")
 	}
 }

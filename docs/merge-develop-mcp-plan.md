@@ -1,7 +1,12 @@
 # Plan: merge de `develop` (Phase 1-6 auth/roles) en `feat/mcp_gateway` (PR #50)
 
 Fecha: 2026-06-12
-Estado: en ejecución
+Estado: Fases 0-2 completadas (merge resuelto, build + tests + race + lint verdes).
+D1 implementado durante la Fase 2: `FindActiveByPath` → `FindActiveBySlug`, el plano
+MCP resuelve `/{consumer_slug}/mcp` (`PathResolver` extrae el slug del path). Las
+migraciones de ambas ramas resultaron compatibles sin renumerar (toolkit/fail_mode se
+añaden en 20260609, develop elimina `path` en 20260611 con `IF EXISTS`). Pendiente:
+Fase 3 (D2 unificación auth entrante, D5 revisión oauthclient) y Fase 4 (smoke manual).
 
 ## Contexto
 

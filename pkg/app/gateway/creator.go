@@ -11,6 +11,7 @@ import (
 
 type CreateInput struct {
 	Name            string
+	Slug            string
 	Domain          string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig domain.ClientTLSConfig
@@ -39,7 +40,7 @@ func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, logger *sl
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, error) {
-	g, err := domain.New(in.Name)
+	g, err := domain.New(in.Name, in.Slug)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +57,6 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, 
 	if err := c.repo.Save(ctx, g); err != nil {
 		return nil, err
 	}
-	c.memoryCache.Set(g.ID.String(), g)
+	setGatewayCache(c.memoryCache, g)
 	return g, nil
 }

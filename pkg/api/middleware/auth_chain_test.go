@@ -18,6 +18,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type fakeAPIKeyFinder struct {
+	auth *authdomain.Auth
+	err  error
+}
+
+func (f fakeAPIKeyFinder) FindByAPIKey(_ context.Context, _ string) (*authdomain.Auth, error) {
+	return f.auth, f.err
+}
+
 type fakeCredentialFinder struct {
 	oauth2 []*authdomain.Auth
 	mtls   []*authdomain.Auth
@@ -53,7 +62,7 @@ func (f *fakeMTLSValidator) Validate(_ *x509.Certificate, _ *authdomain.MTLSConf
 
 func oauth2Auth(t *testing.T, issuer string, jwks bool) *authdomain.Auth {
 	t.Helper()
-	cfg := &authdomain.OAuth2Config{Issuer: issuer}
+	cfg := &authdomain.OAuth2Config{Issuer: issuer, Audiences: []string{"agentgateway"}}
 	if jwks {
 		cfg.JWKSURL = "https://idp.example.com/jwks"
 	} else {

@@ -38,10 +38,24 @@ func NewDeleter(
 }
 
 func (d *deleter) Delete(ctx context.Context, id ids.GatewayID) error {
+	g, _ := cachedGatewayForDelete(d.memoryCache, id)
 	if err := d.repo.Delete(ctx, id); err != nil {
 		return err
 	}
-	d.memoryCache.Delete(id.String())
+	deleteGatewayCache(d.memoryCache, g)
+	d.memoryCache.Delete(gatewayIDCacheKey(id))
 	publishGatewayDataInvalidation(ctx, d.publisher, d.logger, id)
 	return nil
+}
+
+func cachedGatewayForDelete(memoryCache *cache.TTLMap, id ids.GatewayID) (*domain.Gateway, bool) {
+	cached, ok := memoryCache.Get(gatewayIDCacheKey(id))
+	if !ok {
+		return nil, false
+	}
+	g, ok := cached.(*domain.Gateway)
+	if !ok {
+		return nil, false
+	}
+	return g, true
 }
