@@ -2,98 +2,13 @@ package oauth
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net/url"
-	"time"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
 )
-
-// The OAuth broker links third-party accounts (GitHub, Slack...) to a
-// Principal through one-time consent, storing the tokens in the vault.
-// Browsers cannot carry the inbound Bearer token, so the consent surface is
-// authenticated by a short-lived single-purpose ticket minted during an
-// authenticated MCP call (the elicitation URL).
-
-var (
-	ErrTicketNotFound   = errors.New("oauth connect: ticket expired or unknown")
-	ErrProviderNotFound = errors.New("oauth connect: provider not configured for this consumer")
-)
-
-// ConnectTicket identifies the principal and virtual MCP a consent flow
-// belongs to. It is the browser-side stand-in for the inbound credential.
-type ConnectTicket struct {
-	GatewayID    string `json:"gateway_id"`
-	PrincipalSub string `json:"principal_sub"`
-	ConsumerPath string `json:"consumer_path"`
-	// ResumeURL, when set, is the parked client redirect (code + state) of an
-	// inbound OAuth flow: the connect page offers a "Continue" action so the
-	// user returns to their MCP client after linking providers.
-	ResumeURL string `json:"resume_url,omitempty"`
-}
-
-// ConnectState parks one in-flight provider consent leg, keyed by the OAuth
-// state sent to the third party. Verifier is the PKCE code_verifier minted
-// at Start and redeemed at Callback.
-type ConnectState struct {
-	Ticket   ConnectTicket `json:"ticket"`
-	TicketID string        `json:"ticket_id"`
-	Provider string        `json:"provider"`
-	Verifier string        `json:"verifier,omitempty"`
-}
-
-// ConnectStore persists tickets (reusable until expiry) and consent states
-// (single-use) in Redis.
-type ConnectStore interface {
-	SaveTicket(ctx context.Context, id string, t ConnectTicket) error
-	GetTicket(ctx context.Context, id string) (*ConnectTicket, error)
-	SaveConnect(ctx context.Context, state string, s ConnectState) error
-	TakeConnect(ctx context.Context, state string) (*ConnectState, error)
-}
-
-// ProviderStatus is one third-party provider on the connect page.
-type ProviderStatus struct {
-	Provider   string
-	Registry   string
-	Linked     bool
-	AccountRef string
-	ExpiresAt  time.Time
-}
-
-// ConnectPage is the data behind the consent UI.
-type ConnectPage struct {
-	ConsumerPath string
-	Providers    []ProviderStatus
-	// ResumeURL carries the parked client redirect during a chained consent
-	// flow ("" otherwise).
-	ResumeURL string
-}
-
-//go:generate mockery --name=ConnectService --dir=. --output=./mocks --filename=oauth_connect_service_mock.go --case=underscore --with-expecter
-type ConnectService interface {
-	// CreateTicket mints the consent ticket embedded in elicitation URLs.
-	CreateTicket(ctx context.Context, gatewayID ids.GatewayID, principalSub, consumerPath string) (string, error)
-	// Page resolves a ticket into the provider list with linked status.
-	Page(ctx context.Context, ticketID string) (*ConnectPage, error)
-	// Start begins the consent flow for one provider; returns the redirect URL.
-	Start(ctx context.Context, baseURL, ticketID, provider string) (string, error)
-	// Callback completes the consent flow and vaults the tokens. Returns the
-	// ticket id so the UI can navigate back to the connect page.
-	Callback(ctx context.Context, baseURL, provider, state, code, errCode, errDesc string) (string, error)
-	// Disconnect revokes a linked account.
-	Disconnect(ctx context.Context, ticketID, provider string) error
-	// RefreshAuth returns the provider config usable for token refresh: the
-	// manual config as-is, or the cached auto-registered client plus the
-	// discovered endpoints. It never registers a new client.
-	RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error)
-	// ChainURL implements ConsentChainer: connect-page URL when the principal
-	// has unlinked forwarded providers behind the resource, "" otherwise.
-	ChainURL(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource, principalSub, resumeURL string) (string, error)
-}
 
 var _ ConnectService = (*connectService)(nil)
 
@@ -132,70 +47,6 @@ func (s *connectService) mintTicket(ctx context.Context, t ConnectTicket) (strin
 		return "", err
 	}
 	return id, nil
-}
-
-// ChainURL is the chained-consent hook: called at the end of the inbound IdP
-// leg, it mints a resume-carrying ticket and returns the connect page URL when
-// the principal still has unlinked forwarded providers.
-func (s *connectService) ChainURL(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource, principalSub, resumeURL string) (string, error) {
-	data, err := s.consumers.FindByGateway(ctx, gatewayID)
-	if err != nil {
-		return "", err
-	}
-	rc := s.chainTarget(ctx, data, gatewayID, resource, principalSub)
-	if rc == nil {
-		return "", nil
-	}
-	id, err := s.mintTicket(ctx, ConnectTicket{
-		GatewayID:    gatewayID.String(),
-		PrincipalSub: principalSub,
-		ConsumerPath: rc.Consumer.Path,
-		ResumeURL:    resumeURL,
-	})
-	if err != nil {
-		return "", err
-	}
-	return baseURL + rc.Consumer.Path + "/connect?ticket=" + id, nil
-}
-
-// chainTarget picks the consumer whose connect page should interrupt the
-// inbound flow: the one addressed by the RFC 8707 resource when present,
-// otherwise any MCP consumer with forwarded providers the principal has not
-// linked yet (clients do not always send a resource indicator).
-func (s *connectService) chainTarget(ctx context.Context, data *appconsumer.Data, gatewayID ids.GatewayID, resource, principalSub string) *appconsumer.RoutableConsumer {
-	if resource != "" {
-		if res, err := url.Parse(resource); err == nil && res.Path != "" {
-			if rc, ok := data.MatchPath(res.Path); ok {
-				if s.hasUnlinked(ctx, gatewayID, rc, principalSub) {
-					return rc
-				}
-				return nil
-			}
-		}
-	}
-	for i := range data.Consumers {
-		rc := &data.Consumers[i]
-		if rc.Consumer == nil || !rc.Consumer.Active {
-			continue
-		}
-		if s.hasUnlinked(ctx, gatewayID, rc, principalSub) {
-			return rc
-		}
-	}
-	return nil
-}
-
-func (s *connectService) hasUnlinked(ctx context.Context, gatewayID ids.GatewayID, rc *appconsumer.RoutableConsumer, principalSub string) bool {
-	for _, reg := range rc.Registries {
-		cfg := forwardedAuth(reg)
-		if cfg == nil {
-			continue
-		}
-		if _, err := s.vault.Find(ctx, gatewayID, principalSub, cfg.Provider); err != nil {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPage, error) {
@@ -292,73 +143,6 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 		return st.TicketID, err
 	}
 	return st.TicketID, nil
-}
-
-// effectiveAuth resolves the OAuth client the gateway uses against the
-// provider. Manual registration returns the admin-configured app; auto
-// registration discovers the upstream's authorization server and registers
-// (or reuses) a DCR client, defaulting scopes and the RFC 8707 resource from
-// the upstream's metadata.
-func (s *connectService) effectiveAuth(ctx context.Context, baseURL string, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
-	cfg := forwardedAuth(reg)
-	if cfg == nil {
-		return nil, ErrProviderNotFound
-	}
-	if cfg.Registration != registrydomain.RegistrationAuto {
-		return cfg, nil
-	}
-	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
-	if err != nil {
-		return nil, err
-	}
-	client, err := s.registrar.EnsureClient(ctx, clientKey(gatewayID, reg), meta, connectCallbackURL(baseURL, cfg.Provider))
-	if err != nil {
-		return nil, err
-	}
-	return autoAuth(cfg, meta, client), nil
-}
-
-func (s *connectService) RefreshAuth(ctx context.Context, gatewayID ids.GatewayID, reg *registrydomain.Registry) (*registrydomain.MCPAuth, error) {
-	cfg := forwardedAuth(reg)
-	if cfg == nil {
-		return nil, ErrProviderNotFound
-	}
-	if cfg.Registration != registrydomain.RegistrationAuto {
-		return cfg, nil
-	}
-	meta, err := s.registrar.Discover(ctx, reg.MCPTarget.URL)
-	if err != nil {
-		return nil, err
-	}
-	client, err := s.registrar.CachedClient(ctx, clientKey(gatewayID, reg))
-	if err != nil {
-		return nil, err
-	}
-	if client == nil {
-		return nil, fmt.Errorf("oauth connect: no registered client for provider %q; consent flow required", cfg.Provider)
-	}
-	return autoAuth(cfg, meta, client), nil
-}
-
-// autoAuth merges the registry config with discovered metadata and the
-// registered client into the config the ProviderClient consumes.
-func autoAuth(cfg *registrydomain.MCPAuth, meta *UpstreamAuthServer, client *RegisteredClient) *registrydomain.MCPAuth {
-	out := *cfg
-	out.ClientID = client.ClientID
-	out.ClientSecret = client.ClientSecret
-	out.AuthorizeURL = meta.AuthorizationEndpoint
-	out.TokenURL = meta.TokenEndpoint
-	if len(out.Scopes) == 0 {
-		out.Scopes = meta.ScopesSupported
-	}
-	if out.Resource == "" {
-		out.Resource = meta.Resource
-	}
-	return &out
-}
-
-func clientKey(gatewayID ids.GatewayID, reg *registrydomain.Registry) string {
-	return gatewayID.String() + "|" + reg.ID.String()
 }
 
 func (s *connectService) Disconnect(ctx context.Context, ticketID, provider string) error {
