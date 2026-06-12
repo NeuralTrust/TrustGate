@@ -69,6 +69,7 @@ func API(c *container.Container) error {
 			oidc.NewValidator(nil),
 			introspection.NewValidator(nil),
 			mtls.NewValidator(),
+			mtls.NewXFCCExtractor(),
 		)
 	}); err != nil {
 		return err

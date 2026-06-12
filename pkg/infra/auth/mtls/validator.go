@@ -77,6 +77,16 @@ func (v *Validator) Validate(cert *x509.Certificate, cfg *authdomain.MTLSConfig)
 	}, nil
 }
 
+// XFCCExtractor implements the app ClientCertificateExtractor port over the
+// Envoy-style XFCC encoding.
+type XFCCExtractor struct{}
+
+func NewXFCCExtractor() *XFCCExtractor { return &XFCCExtractor{} }
+
+func (XFCCExtractor) FromXFCC(header string) (*x509.Certificate, error) {
+	return CertFromXFCC(header)
+}
+
 // CertFromXFCC extracts the leaf certificate from an Envoy-style
 // X-Forwarded-Client-Cert header (the `Cert="<url-encoded PEM>"` element of
 // the first, i.e. closest, entry).

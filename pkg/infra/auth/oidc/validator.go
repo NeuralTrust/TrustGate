@@ -81,7 +81,7 @@ func (v *Validator) Validate(ctx context.Context, raw string, cfg *authdomain.OA
 	}
 	if len(cfg.Audiences) > 0 {
 		aud, _ := claims.GetAudience()
-		if !anyMatch(aud, cfg.Audiences) {
+		if !identity.AudienceMatches(aud, cfg.Audiences) {
 			return nil, fmt.Errorf("%w: audience mismatch", ErrInvalidToken)
 		}
 	}
@@ -99,21 +99,6 @@ func (v *Validator) Validate(ctx context.Context, raw string, cfg *authdomain.OA
 		return nil, fmt.Errorf("%w: missing required scopes", ErrInvalidToken)
 	}
 	return principal, nil
-}
-
-// anyMatch compares token audiences against the configured ones. An "api://"
-// resource URI and its bare identifier are treated as equivalent: Entra
-// advertises the resource as api://{client_id} but v2.0 access tokens carry
-// the bare GUID in aud (the URI form is v1.0 behavior).
-func anyMatch(have []string, want []string) bool {
-	for _, h := range have {
-		for _, w := range want {
-			if h == w || h == strings.TrimPrefix(w, "api://") || w == strings.TrimPrefix(h, "api://") {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // subjectOf prefers the IdP's stable object id (Entra `oid`) over `sub`.

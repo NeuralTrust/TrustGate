@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
@@ -89,7 +88,7 @@ func (r *credentialResolver) passthrough(ctx context.Context, cfg *registrydomai
 	if principal == nil || principal.RawToken == "" {
 		return ErrNoPrincipal
 	}
-	if !hasAudience(principal, cfg.ExpectedAudience) {
+	if !principal.HasAudience(cfg.ExpectedAudience) {
 		return ErrAudienceMismatch
 	}
 	setAuthorization(target, "Bearer "+principal.RawToken)
@@ -167,30 +166,4 @@ func setAuthorization(target *Target, value string) {
 		target.Headers = map[string]string{}
 	}
 	target.Headers["Authorization"] = value
-}
-
-// hasAudience checks the inbound token aud claim (string or array) against
-// the configured expected audience.
-func hasAudience(p *identity.Principal, expected string) bool {
-	expected = strings.TrimSpace(expected)
-	if expected == "" {
-		return false
-	}
-	switch aud := p.Claims["aud"].(type) {
-	case string:
-		return aud == expected
-	case []any:
-		for _, a := range aud {
-			if s, ok := a.(string); ok && s == expected {
-				return true
-			}
-		}
-	case []string:
-		for _, a := range aud {
-			if a == expected {
-				return true
-			}
-		}
-	}
-	return false
 }

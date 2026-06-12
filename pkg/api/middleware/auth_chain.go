@@ -11,25 +11,13 @@ import (
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/mtls"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// JWTValidator validates a JWT against one Auth entry's OAuth2 config (JWKS).
-type JWTValidator interface {
-	Validate(ctx context.Context, raw string, cfg *authdomain.OAuth2Config) (*identity.Principal, error)
-}
-
-// IntrospectionValidator validates an opaque token via RFC 7662.
-type IntrospectionValidator interface {
-	Validate(ctx context.Context, raw string, cfg *authdomain.OAuth2Config) (*identity.Principal, error)
-}
-
-// MTLSValidator validates a client certificate against one Auth entry's mTLS config.
-type MTLSValidator interface {
-	Validate(cert *x509.Certificate, cfg *authdomain.MTLSConfig) (*identity.Principal, error)
-}
+// headerXFCC is the de-facto header edge proxies use to forward the client
+// certificate after terminating TLS.
+const headerXFCC = "X-Forwarded-Client-Cert"
 
 // chainIdentityResolver runs the credential chain in fixed precedence:
 // mTLS -> JWT -> introspection -> API key. Anti-downgrade: a credential that
@@ -45,18 +33,20 @@ type chainIdentityResolver struct {
 	apiKeys     appauth.APIKeyFinder
 	credentials appauth.CredentialFinder
 	paths       appconsumer.PathResolver
-	jwt         JWTValidator
-	intro       IntrospectionValidator
-	mtls        MTLSValidator
+	jwt         appauth.JWTValidator
+	intro       appauth.IntrospectionValidator
+	mtls        appauth.MTLSValidator
+	certs       appauth.ClientCertificateExtractor
 }
 
 func NewChainIdentityResolver(
 	apiKeys appauth.APIKeyFinder,
 	credentials appauth.CredentialFinder,
 	paths appconsumer.PathResolver,
-	jwtValidator JWTValidator,
-	introValidator IntrospectionValidator,
-	mtlsValidator MTLSValidator,
+	jwtValidator appauth.JWTValidator,
+	introValidator appauth.IntrospectionValidator,
+	mtlsValidator appauth.MTLSValidator,
+	certExtractor appauth.ClientCertificateExtractor,
 ) IdentityResolver {
 	return &chainIdentityResolver{
 		apiKeys:     apiKeys,
@@ -65,6 +55,7 @@ func NewChainIdentityResolver(
 		jwt:         jwtValidator,
 		intro:       introValidator,
 		mtls:        mtlsValidator,
+		certs:       certExtractor,
 	}
 }
 
@@ -83,7 +74,7 @@ func (s authScope) allows(id ids.AuthID) bool {
 
 func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 	scope := r.pathScope(c)
-	if cert := clientCertificate(c); cert != nil {
+	if cert := r.clientCertificate(c); cert != nil {
 		return r.resolveMTLS(c.UserContext(), cert, scope)
 	}
 	if token := bearerToken(c); token != "" {
@@ -208,12 +199,15 @@ func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string
 // clientCertificate returns the client certificate from the TLS connection
 // state (direct termination) or the X-Forwarded-Client-Cert header (edge
 // termination). Returns nil when no certificate was presented.
-func clientCertificate(c *fiber.Ctx) *x509.Certificate {
+func (r *chainIdentityResolver) clientCertificate(c *fiber.Ctx) *x509.Certificate {
 	if state := c.Context().TLSConnectionState(); state != nil && len(state.PeerCertificates) > 0 {
 		return state.PeerCertificates[0]
 	}
-	if xfcc := c.Get(mtls.HeaderXFCC); xfcc != "" {
-		cert, err := mtls.CertFromXFCC(xfcc)
+	if r.certs == nil {
+		return nil
+	}
+	if xfcc := c.Get(headerXFCC); xfcc != "" {
+		cert, err := r.certs.FromXFCC(xfcc)
 		if err != nil {
 			return nil
 		}

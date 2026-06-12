@@ -78,7 +78,7 @@ func (v *Validator) Validate(ctx context.Context, raw string, cfg *authdomain.OA
 	if !res.Active {
 		return nil, fmt.Errorf("%w: token inactive", ErrInvalidToken)
 	}
-	if len(cfg.Audiences) > 0 && !audMatch(res.Aud, cfg.Audiences) {
+	if len(cfg.Audiences) > 0 && !identity.AudienceMatches(identity.AudiencesFromClaim(res.Aud), cfg.Audiences) {
 		return nil, fmt.Errorf("%w: audience mismatch", ErrInvalidToken)
 	}
 
@@ -167,29 +167,4 @@ func (v *Validator) sweepLocked() {
 			delete(v.cache, k)
 		}
 	}
-}
-
-// audMatch handles RFC 7662 aud being either a string or an array.
-func audMatch(aud any, want []string) bool {
-	switch a := aud.(type) {
-	case string:
-		for _, w := range want {
-			if a == w {
-				return true
-			}
-		}
-	case []any:
-		for _, item := range a {
-			s, ok := item.(string)
-			if !ok {
-				continue
-			}
-			for _, w := range want {
-				if s == w {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
