@@ -51,7 +51,10 @@ func (c *TokenClient) tokenEndpointFor(ctx context.Context, issuer string) strin
 
 	endpoint := c.discoverTokenEndpoint(ctx, issuer)
 	if endpoint == "" {
-		endpoint = fallbackTokenEndpoint(issuer)
+		// A transient discovery failure must not pin a guessed endpoint for
+		// an hour; use the heuristic for this call only and retry discovery
+		// on the next one.
+		return fallbackTokenEndpoint(issuer)
 	}
 	c.mu.Lock()
 	c.endpoints[issuer] = endpointEntry{tokenEndpoint: endpoint, fetchedAt: time.Now()}

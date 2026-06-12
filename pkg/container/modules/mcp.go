@@ -3,6 +3,7 @@ package modules
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	mcphttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/mcp"
 	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
@@ -43,8 +44,9 @@ func MCP(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(func(cfg *config.Config, logger *slog.Logger) (sts.TokenSigner, error) {
-		if cfg.Server.STSSigningKey == "" && cfg.AppEnv == "prod" {
-			return nil, fmt.Errorf("sts: STS_SIGNING_KEY is required when APP_ENV=prod (ephemeral keys are not shared across replicas)")
+		env := strings.ToLower(strings.TrimSpace(cfg.AppEnv))
+		if cfg.Server.STSSigningKey == "" && (env == "prod" || env == "production") {
+			return nil, fmt.Errorf("sts: STS_SIGNING_KEY is required when APP_ENV=%s (ephemeral keys are not shared across replicas)", cfg.AppEnv)
 		}
 		return infrasts.NewSigner(cfg.Server.STSIssuer, cfg.Server.STSSigningKey, logger)
 	}); err != nil {

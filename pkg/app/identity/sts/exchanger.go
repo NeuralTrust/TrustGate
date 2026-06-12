@@ -14,6 +14,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -41,6 +42,7 @@ type exchanger struct {
 	credentials appauth.CredentialFinder
 	idp         IdPTokenClient
 
+	sf        singleflight.Group
 	mu        sync.Mutex
 	cache     map[string]*Token
 	lastSweep time.Time
@@ -61,37 +63,55 @@ func (e *exchanger) Exchange(ctx context.Context, principal *identity.Principal,
 	if principal == nil {
 		return nil, ErrNoUserIdentity
 	}
-	e.mu.Lock()
-	if t, ok := e.cache[cacheKey]; ok && time.Now().Add(refreshSkew).Before(t.ExpiresAt) {
-		e.mu.Unlock()
+	if t, ok := e.cached(cacheKey); ok {
 		return t, nil
 	}
-	e.mu.Unlock()
-
-	var (
-		token *Token
-		err   error
-	)
-	switch cfg.Pattern {
-	case registrydomain.ExchangeImpersonation:
-		token, err = e.mint(principal, cfg, false)
-	case registrydomain.ExchangeDelegation:
-		token, err = e.mint(principal, cfg, true)
-	case registrydomain.ExchangeOBO:
-		token, err = e.entraOBO(ctx, principal, cfg)
-	case registrydomain.ExchangeTokenExchange:
-		token, err = e.tokenExchange(ctx, principal, cfg)
-	default:
-		return nil, fmt.Errorf("sts: unknown exchange pattern %q", cfg.Pattern)
-	}
+	v, err, _ := e.sf.Do(cacheKey, func() (any, error) {
+		if t, ok := e.cached(cacheKey); ok {
+			return t, nil
+		}
+		token, err := e.exchange(ctx, principal, cfg)
+		if err != nil {
+			return nil, err
+		}
+		e.mu.Lock()
+		e.sweepLocked()
+		e.cache[cacheKey] = token
+		e.mu.Unlock()
+		return token, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	e.mu.Lock()
-	e.sweepLocked()
-	e.cache[cacheKey] = token
-	e.mu.Unlock()
+	token, ok := v.(*Token)
+	if !ok {
+		return nil, errors.New("sts: unexpected singleflight result type")
+	}
 	return token, nil
+}
+
+func (e *exchanger) cached(cacheKey string) (*Token, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if t, ok := e.cache[cacheKey]; ok && time.Now().Add(refreshSkew).Before(t.ExpiresAt) {
+		return t, true
+	}
+	return nil, false
+}
+
+func (e *exchanger) exchange(ctx context.Context, principal *identity.Principal, cfg *registrydomain.MCPAuth) (*Token, error) {
+	switch cfg.Pattern {
+	case registrydomain.ExchangeImpersonation:
+		return e.mint(principal, cfg, false)
+	case registrydomain.ExchangeDelegation:
+		return e.mint(principal, cfg, true)
+	case registrydomain.ExchangeOBO:
+		return e.entraOBO(ctx, principal, cfg)
+	case registrydomain.ExchangeTokenExchange:
+		return e.tokenExchange(ctx, principal, cfg)
+	default:
+		return nil, fmt.Errorf("sts: unknown exchange pattern %q", cfg.Pattern)
+	}
 }
 
 const cacheSweepInterval = time.Minute
@@ -148,8 +168,12 @@ func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal,
 	return e.idp.Call(ctx, principal.Issuer, form)
 }
 
+// tokenExchange only forwards IdP-issued bearer tokens as subject_token.
+// Principals from other methods (api_key, mtls) carry gateway-local secrets
+// in RawToken that must never be sent to an external IdP.
 func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Principal, cfg *registrydomain.MCPAuth) (*Token, error) {
-	if principal.RawToken == "" {
+	if principal.RawToken == "" ||
+		(principal.Method != identity.MethodJWT && principal.Method != identity.MethodIntrospection) {
 		return nil, ErrNoUserIdentity
 	}
 	idp, err := e.idpFor(ctx, principal.Issuer)

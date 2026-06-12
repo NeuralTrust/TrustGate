@@ -216,6 +216,22 @@ func TestExchanger_OBO_RequiresUserJWT(t *testing.T) {
 	}
 }
 
+func TestExchanger_TokenExchange_RejectsNonIdPTokens(t *testing.T) {
+	t.Parallel()
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: idpAuths("https://idp.example.com")}, &fakeIdP{})
+	cfg := &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange,
+		Audience: "https://up.example.com",
+	}
+	apiKeyPrincipal := &identity.Principal{
+		Subject: "m2m", Method: identity.MethodAPIKey, RawToken: "gateway-api-key",
+		Issuer: "https://idp.example.com",
+	}
+	if _, err := ex.Exchange(context.Background(), apiKeyPrincipal, cfg, "k-apikey"); !errors.Is(err, ErrNoUserIdentity) {
+		t.Fatalf("error = %v, want ErrNoUserIdentity (api keys must never reach the IdP)", err)
+	}
+}
+
 func TestExchanger_MissingIdPConfigFails(t *testing.T) {
 	t.Parallel()
 	ex := NewExchanger(&fakeSigner{}, &stubCredentials{}, &fakeIdP{})
