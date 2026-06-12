@@ -123,5 +123,8 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(mcphttp.NewRPCGateway); err != nil {
 		return err
 	}
+	if err := c.Provide(appmcp.NewRoleScoper); err != nil {
+		return err
+	}
 	return c.Provide(mcphttp.NewHandler)
 }

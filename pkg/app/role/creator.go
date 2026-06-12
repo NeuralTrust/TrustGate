@@ -11,10 +11,9 @@ import (
 )
 
 type CreateInput struct {
-	GatewayID   ids.GatewayID
-	Name        string
-	McpPolicies json.RawMessage
-	IDPMapping  json.RawMessage
+	GatewayID  ids.GatewayID
+	Name       string
+	IDPMapping json.RawMessage
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=role_creator_mock.go --case=underscore --with-expecter
@@ -47,10 +46,9 @@ func NewCreator(
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Role, error) {
 	role, err := domain.New(domain.CreateParams{
-		GatewayID:   in.GatewayID,
-		Name:        in.Name,
-		McpPolicies: in.McpPolicies,
-		IDPMapping:  in.IDPMapping,
+		GatewayID:  in.GatewayID,
+		Name:       in.Name,
+		IDPMapping: in.IDPMapping,
 	})
 	if err != nil {
 		return nil, err

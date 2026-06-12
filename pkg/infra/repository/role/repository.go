@@ -49,11 +49,15 @@ func (r *Repository) Save(ctx context.Context, role *domain.Role) error {
 	if err != nil {
 		return fmt.Errorf("role repository: marshal model_policies: %w", err)
 	}
+	mcpPoliciesBytes, err := marshalMCPPolicies(role.MCPPolicies)
+	if err != nil {
+		return fmt.Errorf("role repository: marshal mcp_policies: %w", err)
+	}
 	const query = `
 		INSERT INTO roles (id, gateway_id, name, model_policies, mcp_policies, idp_mapping, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	if _, err := r.conn.Pool.Exec(ctx, query,
-		role.ID, role.GatewayID, role.Name, modelPoliciesBytes, nullableJSON(role.McpPolicies), nullableJSON(role.IDPMapping),
+		role.ID, role.GatewayID, role.Name, modelPoliciesBytes, nullableJSON(mcpPoliciesBytes), nullableJSON(role.IDPMapping),
 		role.CreatedAt, role.UpdatedAt,
 	); err != nil {
 		return mapPgError(err)
@@ -68,6 +72,10 @@ func (r *Repository) Update(ctx context.Context, role *domain.Role) error {
 	modelPoliciesBytes, err := marshalModelPolicies(role.ModelPolicies)
 	if err != nil {
 		return fmt.Errorf("role repository: marshal model_policies: %w", err)
+	}
+	mcpPoliciesBytes, err := marshalMCPPolicies(role.MCPPolicies)
+	if err != nil {
+		return fmt.Errorf("role repository: marshal mcp_policies: %w", err)
 	}
 	const query = `
 		UPDATE roles
@@ -85,7 +93,7 @@ func (r *Repository) Update(ctx context.Context, role *domain.Role) error {
 			return err
 		}
 		cmd, err := tx.Exec(ctx, query,
-			role.ID, role.Name, modelPoliciesBytes, nullableJSON(role.McpPolicies), nullableJSON(role.IDPMapping), role.UpdatedAt,
+			role.ID, role.Name, modelPoliciesBytes, nullableJSON(mcpPoliciesBytes), nullableJSON(role.IDPMapping), role.UpdatedAt,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -346,14 +354,35 @@ func lockRoleModelPolicies(ctx context.Context, tx pgx.Tx, roleID ids.RoleID) (*
 }
 
 func roleReferencesRegistry(role *domain.Role, registryID ids.RegistryID) bool {
-	_, ok := role.ModelPolicies[registryID]
-	return ok
+	if _, ok := role.ModelPolicies[registryID]; ok {
+		return true
+	}
+	if role.MCPPolicies == nil {
+		return false
+	}
+	for _, entry := range role.MCPPolicies.Toolkit {
+		if entry.RegistryID == registryID {
+			return true
+		}
+	}
+	return false
 }
 
 func roleRegistryReferences(role *domain.Role) []ids.RegistryID {
+	seen := make(map[ids.RegistryID]struct{}, len(role.ModelPolicies))
 	refs := make([]ids.RegistryID, 0, len(role.ModelPolicies))
 	for id := range role.ModelPolicies {
+		seen[id] = struct{}{}
 		refs = append(refs, id)
+	}
+	if role.MCPPolicies != nil {
+		for _, entry := range role.MCPPolicies.Toolkit {
+			if _, dup := seen[entry.RegistryID]; dup {
+				continue
+			}
+			seen[entry.RegistryID] = struct{}{}
+			refs = append(refs, entry.RegistryID)
+		}
 	}
 	return refs
 }
@@ -383,7 +412,13 @@ func scanRole(s rowScanner) (*domain.Role, error) {
 		}
 		role.ModelPolicies = policies
 	}
-	role.McpPolicies = mcpPoliciesRaw
+	if len(mcpPoliciesRaw) > 0 {
+		var mcpPolicies domain.MCPPolicies
+		if err := json.Unmarshal(mcpPoliciesRaw, &mcpPolicies); err != nil {
+			return nil, fmt.Errorf("scan mcp_policies: %w", err)
+		}
+		role.MCPPolicies = &mcpPolicies
+	}
 	role.IDPMapping = idpMappingRaw
 	role.RegistryIDs = ids.FromUUIDs[ids.RegistryKind](registryIDs)
 	if role.RegistryIDs == nil {
@@ -397,6 +432,13 @@ func marshalModelPolicies(m domain.ModelPolicies) ([]byte, error) {
 		return nil, nil
 	}
 	return json.Marshal(m)
+}
+
+func marshalMCPPolicies(p *domain.MCPPolicies) ([]byte, error) {
+	if p == nil {
+		return nil, nil
+	}
+	return json.Marshal(p)
 }
 
 func nullableJSON(raw []byte) any {

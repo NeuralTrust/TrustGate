@@ -39,11 +39,12 @@ const (
 )
 
 type Handler struct {
-	gateway *RPCGateway
+	gateway    *RPCGateway
+	roleScoper appmcp.RoleScoper
 }
 
-func NewHandler(gateway *RPCGateway) *Handler {
-	return &Handler{gateway: gateway}
+func NewHandler(gateway *RPCGateway, roleScoper appmcp.RoleScoper) *Handler {
+	return &Handler{gateway: gateway, roleScoper: roleScoper}
 }
 
 type rpcRequest struct {
@@ -73,6 +74,10 @@ func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 
 func (h *Handler) Handle(c *fiber.Ctx) error {
 	rc, err := resolveMCPConsumer(c)
+	if err != nil {
+		return err
+	}
+	rc, err = h.scopeByRoles(c, rc)
 	if err != nil {
 		return err
 	}
@@ -212,6 +217,27 @@ func normalizeID(id json.RawMessage) json.RawMessage {
 		return json.RawMessage("null")
 	}
 	return id
+}
+
+func (h *Handler) scopeByRoles(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) (*appconsumer.RoutableConsumer, error) {
+	if rc.Consumer.RoutingMode != consumerdomain.RoutingModeRoleBased {
+		return rc, nil
+	}
+	if h.roleScoper == nil {
+		return nil, fiber.NewError(fiber.StatusInternalServerError, "role scoping is not configured")
+	}
+	data, ok := appconsumer.DataFromContext(c.UserContext())
+	if !ok || data == nil {
+		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")
+	}
+	scoped, err := h.roleScoper.Scope(c.UserContext(), rc, data)
+	if err != nil {
+		if errors.Is(err, appmcp.ErrNoRoleAccess) {
+			return nil, fiber.NewError(fiber.StatusForbidden, err.Error())
+		}
+		return nil, fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	return scoped, nil
 }
 
 func resolveMCPConsumer(c *fiber.Ctx) (*appconsumer.RoutableConsumer, error) {

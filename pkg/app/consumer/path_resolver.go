@@ -93,7 +93,7 @@ func SlugFromMCPPath(path string) string {
 	if len(segments) < 2 || segments[len(segments)-1] != "mcp" {
 		return ""
 	}
-	return strings.ToLower(segments[len(segments)-2])
+	return segments[len(segments)-2]
 }
 
 func (r *pathResolver) cached(key string) ([]PathMatch, bool) {

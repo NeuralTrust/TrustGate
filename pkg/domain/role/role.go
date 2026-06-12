@@ -6,15 +6,21 @@ import (
 	"strings"
 	"time"
 
+	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
+
+// MCPPolicies mirrors the inline consumer MCP policy ({toolkit, fail_mode})
+// so the wire format is identical whether the policy lives on the consumer
+// (routing_mode=inline) or on a role (routing_mode=role_based).
+type MCPPolicies = consumerdomain.MCPPolicy
 
 type Role struct {
 	ID            ids.RoleID       `json:"id"`
 	GatewayID     ids.GatewayID    `json:"gateway_id"`
 	Name          string           `json:"name"`
 	ModelPolicies ModelPolicies    `json:"model_policies,omitempty"`
-	McpPolicies   json.RawMessage  `json:"mcp_policies,omitempty"`
+	MCPPolicies   *MCPPolicies     `json:"mcp_policies,omitempty"`
 	IDPMapping    json.RawMessage  `json:"idp_mapping,omitempty"`
 	RegistryIDs   []ids.RegistryID `json:"registry_ids,omitempty"`
 	CreatedAt     time.Time        `json:"created_at"`
@@ -25,7 +31,7 @@ type CreateParams struct {
 	GatewayID     ids.GatewayID
 	Name          string
 	ModelPolicies ModelPolicies
-	McpPolicies   json.RawMessage
+	MCPPolicies   *MCPPolicies
 	IDPMapping    json.RawMessage
 	RegistryIDs   []ids.RegistryID
 }
@@ -41,7 +47,7 @@ func New(params CreateParams) (*Role, error) {
 		GatewayID:     params.GatewayID,
 		Name:          params.Name,
 		ModelPolicies: params.ModelPolicies,
-		McpPolicies:   params.McpPolicies,
+		MCPPolicies:   params.MCPPolicies,
 		IDPMapping:    params.IDPMapping,
 		RegistryIDs:   params.RegistryIDs,
 		CreatedAt:     now,
@@ -58,7 +64,7 @@ func Rehydrate(
 	gatewayID ids.GatewayID,
 	name string,
 	modelPolicies ModelPolicies,
-	mcpPolicies json.RawMessage,
+	mcpPolicies *MCPPolicies,
 	idpMapping json.RawMessage,
 	registryIDs []ids.RegistryID,
 	createdAt, updatedAt time.Time,
@@ -68,7 +74,7 @@ func Rehydrate(
 		GatewayID:     gatewayID,
 		Name:          name,
 		ModelPolicies: modelPolicies,
-		McpPolicies:   mcpPolicies,
+		MCPPolicies:   mcpPolicies,
 		IDPMapping:    idpMapping,
 		RegistryIDs:   registryIDs,
 		CreatedAt:     createdAt,
@@ -83,8 +89,10 @@ func (r *Role) Validate() error {
 	if strings.TrimSpace(r.Name) == "" {
 		return fmt.Errorf("%w: name is required", ErrInvalidName)
 	}
-	if !validRawJSON(r.McpPolicies) {
-		return fmt.Errorf("%w: mcp_policies", ErrInvalidJSON)
+	if r.MCPPolicies != nil {
+		if err := r.MCPPolicies.Validate(r.BoundRegistrySet()); err != nil {
+			return err
+		}
 	}
 	if !validRawJSON(r.IDPMapping) {
 		return fmt.Errorf("%w: idp_mapping", ErrInvalidJSON)

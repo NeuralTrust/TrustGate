@@ -52,13 +52,18 @@ func (h *UpdateRoleHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	mcpPolicies, mcpPoliciesSet, err := req.ToMCPPolicies()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 	role, err := h.updater.Update(c.UserContext(), approle.UpdateInput{
-		ID:            id,
-		GatewayID:     gatewayID,
-		Name:          req.Name,
-		ModelPolicies: modelPolicies,
-		McpPolicies:   req.McpPolicies,
-		IDPMapping:    req.IDPMapping,
+		ID:             id,
+		GatewayID:      gatewayID,
+		Name:           req.Name,
+		ModelPolicies:  modelPolicies,
+		MCPPolicies:    mcpPolicies,
+		MCPPoliciesSet: mcpPoliciesSet,
+		IDPMapping:     req.IDPMapping,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

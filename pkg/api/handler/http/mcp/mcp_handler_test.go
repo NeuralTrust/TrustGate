@@ -11,6 +11,7 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 	"github.com/NeuralTrust/AgentGateway/pkg/app/mcp/mocks"
+	approle "github.com/NeuralTrust/AgentGateway/pkg/app/role"
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
@@ -43,7 +44,7 @@ func newApp(t *testing.T, composer appmcp.Composer, consumerType consumerdomain.
 		c.SetUserContext(ctx)
 		return c.Next()
 	})
-	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer))
+	handler := mcphttp.NewHandler(mcphttp.NewRPCGateway(composer), appmcp.NewRoleScoper(approle.NewIDPResolver()))
 	app.Post(mcpPath, handler.Handle)
 	app.Get(mcpPath, handler.MethodNotAllowed)
 	return app

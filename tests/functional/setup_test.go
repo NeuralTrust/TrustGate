@@ -34,10 +34,12 @@ var (
 	redisDB           *redis.Client
 	adminCmd          *exec.Cmd
 	proxyCmd          *exec.Cmd
+	mcpCmd            *exec.Cmd
 	gatewayBinaryPath string
 
 	AdminURL   = getEnv("ADMIN_URL", "")
 	ProxyURL   = getEnv("PROXY_URL", "")
+	MCPURL     = getEnv("MCP_URL", "")
 	BaseDomain = getEnv("BASE_DOMAIN", "")
 
 	// AdminToken is a JWT signed with the same secret the admin server boots
@@ -99,6 +101,7 @@ func setupTestEnvironment() {
 
 	AdminURL = getEnv("ADMIN_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.AdminPort))
 	ProxyURL = getEnv("PROXY_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.ProxyPort))
+	MCPURL = getEnv("MCP_URL", fmt.Sprintf("http://localhost:%d", cfg.Server.MCPPort))
 	BaseDomain = getEnv("BASE_DOMAIN", "example.com")
 
 	token, err := jwt.NewJwtManager(&cfg.Server).CreateToken()
@@ -107,7 +110,7 @@ func setupTestEnvironment() {
 	}
 	AdminToken = token
 
-	killProcessesOnPorts([]int{cfg.Server.AdminPort, cfg.Server.ProxyPort})
+	killProcessesOnPorts([]int{cfg.Server.AdminPort, cfg.Server.ProxyPort, cfg.Server.MCPPort})
 
 	dropTestDB(dbName)
 	createTestDB(dbName)
@@ -128,10 +131,19 @@ func setupTestEnvironment() {
 	proxyCmd = startServer("PROXY", "proxy", cmdEnv)
 	waitForServerReady(fmt.Sprintf("%s/healthz", ProxyURL), "proxy server", cfg.Server.ProxyPort)
 
+	// The MCP plane serves the virtual MCP server E2E tests.
+	mcpCmd = startServer("MCP", "mcp", cmdEnv)
+	waitForServerReady(fmt.Sprintf("%s/healthz", MCPURL), "mcp server", cfg.Server.MCPPort)
+
 	fmt.Println("Test Environment Ready")
 }
 
 func teardownTestEnvironment() {
+	if mcpCmd != nil && mcpCmd.Process != nil {
+		if err := syscall.Kill(-mcpCmd.Process.Pid, syscall.SIGKILL); err != nil {
+			log.Printf("error killing mcp server: %v", err)
+		}
+	}
 	if proxyCmd != nil && proxyCmd.Process != nil {
 		if err := syscall.Kill(-proxyCmd.Process.Pid, syscall.SIGKILL); err != nil {
 			log.Printf("error killing proxy server: %v", err)
