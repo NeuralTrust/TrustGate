@@ -106,7 +106,7 @@ func MCP(c *container.Container) error {
 		manager *cache.TTLMapManager,
 		logger *slog.Logger,
 	) appmcp.Composer {
-		return appmcp.NewComposer(dialer, creds, manager, logger)
+		return appmcp.NewComposer(dialer, creds, manager.GetTTLMap(cache.MCPToolsTTLName), logger)
 	}); err != nil {
 		return err
 	}

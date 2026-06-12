@@ -6,13 +6,11 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
-	"time"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
 
 type fakeUpstream struct {
@@ -106,9 +104,20 @@ func routable(consumer *consumerdomain.Consumer, registries ...*registrydomain.R
 	return &appconsumer.RoutableConsumer{Consumer: consumer, Registries: registries}
 }
 
+// mapCache is a no-TTL DiscoveryCache for tests.
+type mapCache struct{ m map[string]any }
+
+func newMapCache() *mapCache { return &mapCache{m: map[string]any{}} }
+
+func (c *mapCache) Get(key string) (any, bool) {
+	v, ok := c.m[key]
+	return v, ok
+}
+
+func (c *mapCache) Set(key string, value any) { c.m[key] = value }
+
 func newTestComposer(dialer Dialer) Composer {
-	mgr := cache.NewTTLMapManager(time.Minute)
-	return NewComposer(dialer, nil, mgr, slog.New(slog.DiscardHandler))
+	return NewComposer(dialer, nil, newMapCache(), slog.New(slog.DiscardHandler))
 }
 
 func tools(names ...string) []Tool {

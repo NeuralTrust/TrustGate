@@ -1,0 +1,109 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+)
+
+// ListResources merges the resources of every reachable upstream, filtered by
+// the consumer toolkit. Resources are URI-addressed, so no renaming applies.
+func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Resource, error) {
+	toolkit := rc.Consumer.Toolkit
+	return federate(c, ctx, rc, "resources",
+		func(ctx context.Context, up Upstream) ([]Resource, error) {
+			return up.ListResources(ctx)
+		},
+		func(reg *registrydomain.Registry, resources []Resource) []Resource {
+			if len(toolkit) == 0 {
+				return resources
+			}
+			out := make([]Resource, 0, len(resources))
+			for _, r := range resources {
+				if toolkit.AllowsResource(reg.ID, r.URI) {
+					out = append(out, r)
+				}
+			}
+			return out
+		})
+}
+
+// ListResourceTemplates merges the resource templates of every reachable
+// upstream. With a non-empty toolkit, a registry's templates are exposed only
+// when the registry has at least one resource entry; the URIs expanded from a
+// template are still enforced individually at read time.
+func (c *composer) ListResourceTemplates(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]ResourceTemplate, error) {
+	toolkit := rc.Consumer.Toolkit
+	return federate(c, ctx, rc, "resource-templates",
+		func(ctx context.Context, up Upstream) ([]ResourceTemplate, error) {
+			return up.ListResourceTemplates(ctx)
+		},
+		func(reg *registrydomain.Registry, templates []ResourceTemplate) []ResourceTemplate {
+			if len(toolkit) == 0 || len(toolkit.ResourceEntriesFor(reg.ID)) > 0 {
+				return templates
+			}
+			return nil
+		})
+}
+
+// ReadResource routes a URI to the upstream that serves it: the upstream
+// listing the exact URI wins; template-addressed URIs fall back to trying
+// each resource-capable upstream in attachment order.
+func (c *composer) ReadResource(ctx context.Context, rc *appconsumer.RoutableConsumer, uri string) (json.RawMessage, error) {
+	registries := mcpRegistries(rc)
+	if len(registries) == 0 {
+		return nil, ErrNoMCPRegistries
+	}
+	toolkit := rc.Consumer.Toolkit
+	for _, reg := range registries {
+		if !toolkit.AllowsResource(reg.ID, uri) {
+			continue
+		}
+		resources, err := discoverCached(c, ctx, rc, reg, "resources", func(ctx context.Context, up Upstream) ([]Resource, error) {
+			return up.ListResources(ctx)
+		})
+		if err != nil {
+			continue // unreachable upstreams are handled by the fallback pass
+		}
+		for _, r := range resources {
+			if r.URI == uri {
+				return c.readFrom(ctx, rc, reg, uri)
+			}
+		}
+	}
+	var lastErr error
+	for _, reg := range registries {
+		if !toolkit.AllowsResource(reg.ID, uri) {
+			continue
+		}
+		raw, err := c.readFrom(ctx, rc, reg, uri)
+		if err == nil {
+			return raw, nil
+		}
+		if errors.Is(err, ErrNotSupported) {
+			continue
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("%w: %s", ErrResourceNotFound, uri)
+}
+
+func (c *composer) readFrom(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, uri string) (json.RawMessage, error) {
+	target, err := c.target(ctx, rc, reg)
+	if err != nil {
+		return nil, err
+	}
+	up, err := c.dialer.Connect(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	defer up.Close(ctx)
+	return up.ReadResource(ctx, uri)
+}
