@@ -45,7 +45,7 @@ func AudiencesFromClaim(aud any) []string {
 // HasAudience checks the principal's aud claim against one expected audience.
 func (p *Principal) HasAudience(expected string) bool {
 	expected = strings.TrimSpace(expected)
-	if expected == "" {
+	if expected == "" || p == nil {
 		return false
 	}
 	return AudienceMatches(AudiencesFromClaim(p.Claims["aud"]), []string{expected})

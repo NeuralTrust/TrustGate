@@ -6,17 +6,19 @@ package vault
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
+// Sentinels wrap the package-wide errors so the HTTP layer maps them to
+// 400/404 like every other aggregate.
 var (
-	ErrInvalidCredential = errors.New("vault: invalid credential")
-	ErrNotFound          = errors.New("vault: credential not found")
+	ErrInvalidCredential = fmt.Errorf("vault: invalid credential: %w", commonerrors.ErrValidation)
+	ErrNotFound          = fmt.Errorf("vault: credential not found: %w", commonerrors.ErrNotFound)
 )
 
 // Credential is one linked third-party account, strictly isolated per
@@ -54,9 +56,13 @@ func NewCredential(
 	if accessToken == "" {
 		return nil, fmt.Errorf("%w: access token is required", ErrInvalidCredential)
 	}
+	id, err := ids.NewV7[ids.VaultKind]()
+	if err != nil {
+		return nil, fmt.Errorf("vault: generate uuid: %w", err)
+	}
 	now := time.Now().UTC()
 	return &Credential{
-		ID:           ids.New[ids.VaultKind](),
+		ID:           id,
 		GatewayID:    gatewayID,
 		PrincipalSub: principalSub,
 		Provider:     provider,

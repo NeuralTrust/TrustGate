@@ -191,19 +191,43 @@ func (c *Consumer) Validate() error {
 	if err := c.ModelPolicies.Validate(c.knownRegistryIDs()); err != nil {
 		return err
 	}
+	if c.Type == TypeMCP {
+		return c.validateMCP()
+	}
+	return c.validateNonMCP()
+}
+
+// validateMCP rejects LLM-only semantics on MCP consumers and applies the
+// MCP defaults (fail mode guards partial federation results).
+func (c *Consumer) validateMCP() error {
+	if len(c.ModelPolicies) > 0 {
+		return fmt.Errorf("%w: model_policies are only valid for LLM consumers", ErrInvalidModelPolicy)
+	}
+	if c.Fallback != nil {
+		return fmt.Errorf("%w: fallback is only valid for LLM consumers", ErrInvalidFallback)
+	}
+	if c.EmbeddingConfig != nil {
+		return fmt.Errorf("%w: embedding_config is only valid for LLM consumers", ErrInvalidEmbeddingConfig)
+	}
 	if c.FailMode == "" {
 		c.FailMode = FailModeClosed
 	}
 	if err := c.FailMode.Validate(); err != nil {
 		return err
 	}
+	if err := c.Toolkit.Validate(c.knownRegistryIDs()); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateNonMCP rejects MCP-only semantics on LLM/A2A consumers.
+func (c *Consumer) validateNonMCP() error {
+	if c.FailMode != "" {
+		return fmt.Errorf("%w: fail_mode is only valid for MCP consumers", ErrInvalidFailMode)
+	}
 	if len(c.Toolkit) > 0 {
-		if c.Type != TypeMCP {
-			return fmt.Errorf("%w: toolkit is only valid for MCP consumers", ErrInvalidToolkit)
-		}
-		if err := c.Toolkit.Validate(c.knownRegistryIDs()); err != nil {
-			return err
-		}
+		return fmt.Errorf("%w: toolkit is only valid for MCP consumers", ErrInvalidToolkit)
 	}
 	return nil
 }

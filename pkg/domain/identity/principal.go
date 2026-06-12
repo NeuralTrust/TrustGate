@@ -34,6 +34,11 @@ func (p *Principal) HasScopes(required []string) bool {
 	if len(required) == 0 {
 		return true
 	}
+	// PrincipalFromContext legitimately returns nil on unauthenticated
+	// requests; a nil principal holds no scopes.
+	if p == nil {
+		return false
+	}
 	held := make(map[string]struct{}, len(p.Scopes))
 	for _, s := range p.Scopes {
 		held[s] = struct{}{}
