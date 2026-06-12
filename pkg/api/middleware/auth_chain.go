@@ -158,6 +158,9 @@ func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string,
 }
 
 func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
+	if scope == nil && r.paths != nil {
+		return Identity{}, resolver.ErrUnauthenticated
+	}
 	issuer := unverifiedIssuer(token)
 	for _, a := range candidates {
 		cfg := a.Config.OAuth2

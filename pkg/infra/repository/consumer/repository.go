@@ -92,7 +92,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
 			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-			toolkitBytes, string(c.FailMode()), headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
+			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -160,7 +160,7 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		}
 		cmd, err := tx.Exec(ctx, updateConsumer,
 			c.ID, c.Name, string(c.Type), string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-			toolkitBytes, string(c.FailMode()), headersBytes, c.Active, c.UpdatedAt,
+			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.UpdatedAt,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -613,7 +613,7 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		fallbackRaw      []byte
 		modelPoliciesRaw []byte
 		toolkitRaw       []byte
-		failModeRaw      string
+		failModeRaw      *string
 		consumerType     string
 		routingMode      string
 		registryIDs      []uuid.UUID
@@ -655,8 +655,12 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		}
 		c.ModelPolicies = mp
 	}
-	if len(toolkitRaw) > 0 || failModeRaw != "" {
-		mcp := &domain.MCPPolicy{FailMode: domain.FailMode(failModeRaw)}
+	failMode := ""
+	if failModeRaw != nil {
+		failMode = *failModeRaw
+	}
+	if len(toolkitRaw) > 0 || failMode != "" {
+		mcp := &domain.MCPPolicy{FailMode: domain.FailMode(failMode)}
 		if len(toolkitRaw) > 0 {
 			if err := json.Unmarshal(toolkitRaw, &mcp.Toolkit); err != nil {
 				return nil, fmt.Errorf("scan toolkit: %w", err)
@@ -714,6 +718,13 @@ func marshalToolkit(t domain.Toolkit) ([]byte, error) {
 		return nil, nil
 	}
 	return json.Marshal(t)
+}
+
+func nullableFailMode(fm domain.FailMode) any {
+	if fm == "" {
+		return nil
+	}
+	return string(fm)
 }
 
 func nullableUUID(id uuid.UUID) any {

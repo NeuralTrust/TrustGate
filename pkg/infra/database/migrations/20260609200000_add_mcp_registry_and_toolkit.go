@@ -21,7 +21,8 @@ func init() {
 				ALTER TABLE registries ALTER COLUMN auth DROP NOT NULL;
 
 				ALTER TABLE consumers ADD COLUMN IF NOT EXISTS toolkit JSONB;
-				ALTER TABLE consumers ADD COLUMN IF NOT EXISTS fail_mode TEXT NOT NULL DEFAULT 'closed';
+				-- Nullable on purpose: fail_mode only applies to MCP consumers (NULL for LLM/A2A).
+				ALTER TABLE consumers ADD COLUMN IF NOT EXISTS fail_mode TEXT;
 				ALTER TABLE consumers DROP CONSTRAINT IF EXISTS consumers_fail_mode_check;
 				ALTER TABLE consumers ADD CONSTRAINT consumers_fail_mode_check CHECK (fail_mode IN ('closed', 'open'));`
 			_, err := tx.Exec(ctx, ddl)

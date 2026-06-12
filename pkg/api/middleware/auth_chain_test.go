@@ -254,7 +254,7 @@ func TestChain_PathFirst_UnattachedCredentialRejected(t *testing.T) {
 	require.Equal(t, 0, jwtVal.calls)
 }
 
-func TestChain_PathFirst_NoConsumerMatchFallsBackUnrestricted(t *testing.T) {
+func TestChain_PathFirst_NoConsumerMatchRejectsJWT(t *testing.T) {
 	a := oauth2Auth(t, "https://idp.example.com", true)
 	jwtVal := &fakeTokenValidator{principal: &identity.Principal{Subject: "u1", Method: identity.MethodJWT}}
 	resolver := middleware.NewChainIdentityResolver(
@@ -264,11 +264,13 @@ func TestChain_PathFirst_NoConsumerMatchFallsBackUnrestricted(t *testing.T) {
 		jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil,
 	)
 
-	id, err := resolveChain(t, resolver, map[string]string{
+	// Issuer+audience pairs are only exclusive per gateway, so a JWT on a path
+	// without a consumer match cannot be attributed unambiguously and must be
+	// rejected (same contract as opaque tokens).
+	_, err := resolveChain(t, resolver, map[string]string{
 		"Authorization": "Bearer " + unsignedJWT(t, "https://idp.example.com"),
 	})
-	require.NoError(t, err)
-	require.Equal(t, a.ID, id.AuthID)
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
 }
 
 func TestChain_PathFirst_APIKeyMustBeAttached(t *testing.T) {

@@ -16,7 +16,7 @@ func ensureNoOAuth2Conflict(ctx context.Context, repo domain.Repository, candida
 		return fmt.Errorf("auth: check oauth2 conflicts: %w", err)
 	}
 	for _, a := range existing {
-		if a.ID == candidate.ID || a.Config.OAuth2 == nil {
+		if a.ID == candidate.ID || a.GatewayID != candidate.GatewayID || a.Config.OAuth2 == nil {
 			continue
 		}
 		if candidate.Config.OAuth2.ConflictsWith(a.Config.OAuth2) {
