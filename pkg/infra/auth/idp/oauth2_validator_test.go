@@ -1,4 +1,4 @@
-package oidc_test
+package idp_test
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"time"
 
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oidc"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/idp"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -82,11 +82,15 @@ func (s *idpStub) config() *authdomain.OAuth2Config {
 	}
 }
 
-func TestValidator_ValidToken(t *testing.T) {
-	idp := newIDPStub(t)
-	v := oidc.NewValidator(nil)
+func newValidator() *idp.OAuth2TokenValidator {
+	return idp.NewOAuth2TokenValidator(idp.NewVerifier(), nil)
+}
 
-	principal, err := v.Validate(context.Background(), idp.sign(t, idp.baseClaims()), idp.config())
+func TestOAuth2TokenValidator_ValidToken(t *testing.T) {
+	stub := newIDPStub(t)
+	v := newValidator()
+
+	principal, err := v.Validate(context.Background(), stub.sign(t, stub.baseClaims()), stub.config())
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
@@ -101,108 +105,125 @@ func TestValidator_ValidToken(t *testing.T) {
 	}
 }
 
-func TestValidator_DiscoversJWKSWhenURLNotConfigured(t *testing.T) {
-	idp := newIDPStub(t)
-	v := oidc.NewValidator(nil)
-	cfg := idp.config()
+func TestOAuth2TokenValidator_DiscoversJWKSWhenURLNotConfigured(t *testing.T) {
+	stub := newIDPStub(t)
+	v := newValidator()
+	cfg := stub.config()
 	cfg.JWKSURL = ""
 
-	if _, err := v.Validate(context.Background(), idp.sign(t, idp.baseClaims()), cfg); err != nil {
+	if _, err := v.Validate(context.Background(), stub.sign(t, stub.baseClaims()), cfg); err != nil {
 		t.Fatalf("validate via discovery: %v", err)
 	}
 }
 
-func TestValidator_RejectsWrongIssuer(t *testing.T) {
-	idp := newIDPStub(t)
-	v := oidc.NewValidator(nil)
-	claims := idp.baseClaims()
+func TestOAuth2TokenValidator_RejectsWrongIssuer(t *testing.T) {
+	stub := newIDPStub(t)
+	v := newValidator()
+	claims := stub.baseClaims()
 	claims["iss"] = "https://evil.example.com"
 
-	if _, err := v.Validate(context.Background(), idp.sign(t, claims), idp.config()); err == nil {
+	if _, err := v.Validate(context.Background(), stub.sign(t, claims), stub.config()); err == nil {
 		t.Fatal("expected issuer rejection")
 	}
 }
 
-func TestValidator_RejectsWrongAudience(t *testing.T) {
-	idp := newIDPStub(t)
-	v := oidc.NewValidator(nil)
-	claims := idp.baseClaims()
+func TestOAuth2TokenValidator_RejectsWrongAudience(t *testing.T) {
+	stub := newIDPStub(t)
+	v := newValidator()
+	claims := stub.baseClaims()
 	claims["aud"] = "someone-else"
 
-	if _, err := v.Validate(context.Background(), idp.sign(t, claims), idp.config()); err == nil {
+	if _, err := v.Validate(context.Background(), stub.sign(t, claims), stub.config()); err == nil {
 		t.Fatal("expected audience rejection")
 	}
 }
 
-func TestValidator_RejectsExpiredToken(t *testing.T) {
-	idp := newIDPStub(t)
-	v := oidc.NewValidator(nil)
-	claims := idp.baseClaims()
+func TestOAuth2TokenValidator_RejectsExpiredToken(t *testing.T) {
+	stub := newIDPStub(t)
+	v := newValidator()
+	claims := stub.baseClaims()
 	claims["exp"] = time.Now().Add(-time.Hour).Unix()
 
-	if _, err := v.Validate(context.Background(), idp.sign(t, claims), idp.config()); err == nil {
+	if _, err := v.Validate(context.Background(), stub.sign(t, claims), stub.config()); err == nil {
 		t.Fatal("expected expiry rejection")
 	}
 }
 
-func TestValidator_RejectsMissingRequiredScopes(t *testing.T) {
-	idp := newIDPStub(t)
-	v := oidc.NewValidator(nil)
-	cfg := idp.config()
+func TestOAuth2TokenValidator_RejectsMissingRequiredScopes(t *testing.T) {
+	stub := newIDPStub(t)
+	v := newValidator()
+	cfg := stub.config()
 	cfg.RequiredScopes = []string{"mcp.admin"}
 
-	if _, err := v.Validate(context.Background(), idp.sign(t, idp.baseClaims()), cfg); err == nil {
+	if _, err := v.Validate(context.Background(), stub.sign(t, stub.baseClaims()), cfg); err == nil {
 		t.Fatal("expected scope rejection")
 	}
 }
 
-func TestValidator_AudienceResourceURIEquivalence(t *testing.T) {
-	idp := newIDPStub(t)
-	v := oidc.NewValidator(nil)
+func TestOAuth2TokenValidator_AcceptsScopesFromPermissionsClaim(t *testing.T) {
+	stub := newIDPStub(t)
+	v := newValidator()
+	cfg := stub.config()
+	cfg.RequiredScopes = []string{"mcp.admin"}
+	claims := stub.baseClaims()
+	claims["permissions"] = []any{"mcp.admin"}
+
+	principal, err := v.Validate(context.Background(), stub.sign(t, claims), cfg)
+	if err != nil {
+		t.Fatalf("permissions claim must satisfy required scopes: %v", err)
+	}
+	if !principal.HasScopes([]string{"mcp.admin"}) {
+		t.Fatal("permissions claim must be merged into scopes")
+	}
+}
+
+func TestOAuth2TokenValidator_AudienceResourceURIEquivalence(t *testing.T) {
+	stub := newIDPStub(t)
+	v := newValidator()
 
 	// Entra v2.0: token aud is the bare client id, config uses the api:// URI.
-	cfg := idp.config()
+	cfg := stub.config()
 	cfg.Audiences = []string{"api://client-guid"}
-	claims := idp.baseClaims()
+	claims := stub.baseClaims()
 	claims["aud"] = "client-guid"
-	if _, err := v.Validate(context.Background(), idp.sign(t, claims), cfg); err != nil {
+	if _, err := v.Validate(context.Background(), stub.sign(t, claims), cfg); err != nil {
 		t.Fatalf("bare-guid aud must satisfy api:// audience config: %v", err)
 	}
 
 	// Entra v1.0: token aud is the api:// URI, config uses the bare client id.
 	cfg.Audiences = []string{"client-guid"}
 	claims["aud"] = "api://client-guid"
-	if _, err := v.Validate(context.Background(), idp.sign(t, claims), cfg); err != nil {
+	if _, err := v.Validate(context.Background(), stub.sign(t, claims), cfg); err != nil {
 		t.Fatalf("api:// aud must satisfy bare-guid audience config: %v", err)
 	}
 
 	cfg.Audiences = []string{"api://other"}
-	if _, err := v.Validate(context.Background(), idp.sign(t, claims), cfg); err == nil {
+	if _, err := v.Validate(context.Background(), stub.sign(t, claims), cfg); err == nil {
 		t.Fatal("expected audience rejection for unrelated resource")
 	}
 }
 
-func TestValidator_RejectsUnsignedToken(t *testing.T) {
-	idp := newIDPStub(t)
-	v := oidc.NewValidator(nil)
-	token := jwt.NewWithClaims(jwt.SigningMethodNone, idp.baseClaims())
+func TestOAuth2TokenValidator_RejectsUnsignedToken(t *testing.T) {
+	stub := newIDPStub(t)
+	v := newValidator()
+	token := jwt.NewWithClaims(jwt.SigningMethodNone, stub.baseClaims())
 	raw, err := token.SignedString(jwt.UnsafeAllowNoneSignatureType)
 	if err != nil {
 		t.Fatalf("sign none: %v", err)
 	}
 
-	if _, err := v.Validate(context.Background(), raw, idp.config()); err == nil {
+	if _, err := v.Validate(context.Background(), raw, stub.config()); err == nil {
 		t.Fatal("expected alg=none rejection")
 	}
 }
 
-func TestValidator_EntraStyleOIDSubject(t *testing.T) {
-	idp := newIDPStub(t)
-	v := oidc.NewValidator(nil)
-	claims := idp.baseClaims()
+func TestOAuth2TokenValidator_EntraStyleOIDSubject(t *testing.T) {
+	stub := newIDPStub(t)
+	v := newValidator()
+	claims := stub.baseClaims()
 	claims["oid"] = "object-id-42"
 
-	principal, err := v.Validate(context.Background(), idp.sign(t, claims), idp.config())
+	principal, err := v.Validate(context.Background(), stub.sign(t, claims), stub.config())
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}

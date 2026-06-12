@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
@@ -91,7 +92,7 @@ func (s authScope) allows(id ids.AuthID) bool {
 func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 	scope, err := r.pathScope(c)
 	if err != nil {
-		return Identity{}, ErrUnauthenticated
+		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if cert := r.clientCertificate(c); cert != nil {
 		return r.resolveMTLS(c.UserContext(), cert, scope)
@@ -99,10 +100,10 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 	if token := bearerToken(c); token != "" {
 		return r.resolveBearer(c.UserContext(), token, scope)
 	}
-	if rawKey := c.Get(HeaderAPIKey); rawKey != "" {
+	if rawKey := c.Get(resolver.HeaderAPIKey); rawKey != "" {
 		return r.resolveAPIKey(c.UserContext(), rawKey, scope)
 	}
-	return Identity{}, ErrUnauthenticated
+	return Identity{}, resolver.ErrUnauthenticated
 }
 
 func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
@@ -130,7 +131,7 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 func (r *chainIdentityResolver) resolveMTLS(ctx context.Context, cert *x509.Certificate, scope authScope) (Identity, error) {
 	candidates, err := r.credentials.MTLSAuths(ctx)
 	if err != nil {
-		return Identity{}, ErrUnauthenticated
+		return Identity{}, resolver.ErrUnauthenticated
 	}
 	for _, a := range candidates {
 		if !scope.allows(a.ID) {
@@ -142,13 +143,13 @@ func (r *chainIdentityResolver) resolveMTLS(ctx context.Context, cert *x509.Cert
 		}
 		return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, ErrUnauthenticated
+	return Identity{}, resolver.ErrUnauthenticated
 }
 
 func (r *chainIdentityResolver) resolveBearer(ctx context.Context, token string, scope authScope) (Identity, error) {
 	candidates, err := r.credentials.OAuth2Auths(ctx)
 	if err != nil {
-		return Identity{}, ErrUnauthenticated
+		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if isJWT(token) {
 		return r.resolveJWT(ctx, token, candidates, scope)
@@ -175,12 +176,12 @@ func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, ca
 		}
 		return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, ErrUnauthenticated
+	return Identity{}, resolver.ErrUnauthenticated
 }
 
 func (r *chainIdentityResolver) resolveOpaque(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
 	if scope == nil && r.paths != nil {
-		return Identity{}, ErrUnauthenticated
+		return Identity{}, resolver.ErrUnauthenticated
 	}
 	for _, a := range candidates {
 		cfg := a.Config.OAuth2
@@ -193,16 +194,16 @@ func (r *chainIdentityResolver) resolveOpaque(ctx context.Context, token string,
 		}
 		return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
 	}
-	return Identity{}, ErrUnauthenticated
+	return Identity{}, resolver.ErrUnauthenticated
 }
 
 func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string, scope authScope) (Identity, error) {
 	a, err := r.apiKeys.FindByAPIKey(ctx, rawKey)
 	if err != nil || a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey {
-		return Identity{}, ErrUnauthenticated
+		return Identity{}, resolver.ErrUnauthenticated
 	}
 	if !scope.allows(a.ID) {
-		return Identity{}, ErrUnauthenticated
+		return Identity{}, resolver.ErrUnauthenticated
 	}
 	principal := &identity.Principal{
 		Subject: a.Name,

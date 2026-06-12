@@ -22,7 +22,7 @@ type mcpMiddlewares struct {
 	AccessLog       *middleware.AccessLogMiddleware
 	SecurityHeaders *middleware.SecurityHeadersMiddleware
 	OAuthChallenge  *middleware.OAuthChallengeMiddleware
-	Auth            *middleware.AuthMiddleware
+	Auth            *middleware.MCPAuthMiddleware
 }
 
 func mcpBaseTransport(m mcpMiddlewares) *middleware.Transport {

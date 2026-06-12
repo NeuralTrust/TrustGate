@@ -12,47 +12,9 @@ import (
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
-	identitydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
-
-// HeaderAPIKey, ErrUnauthenticated, Identity and IdentityResolver back the
-// MCP-plane chain resolver (auth_chain.go). They will be folded into the
-// unified resolver package during the post-merge auth consolidation.
-const HeaderAPIKey = "X-AG-API-Key" // #nosec G101 -- HTTP header name, not a credential
-
-var ErrUnauthenticated = errors.New("unauthenticated")
-
-type Identity struct {
-	GatewayID ids.GatewayID
-	AuthID    ids.AuthID
-	Principal *identitydomain.Principal
-}
-
-type IdentityResolver interface {
-	Resolve(c *fiber.Ctx) (Identity, error)
-}
-
-type apiKeyIdentityResolver struct {
-	finder appauth.APIKeyFinder
-}
-
-func NewAPIKeyIdentityResolver(finder appauth.APIKeyFinder) IdentityResolver {
-	return apiKeyIdentityResolver{finder: finder}
-}
-
-func (r apiKeyIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
-	rawKey := c.Get(HeaderAPIKey)
-	if rawKey == "" {
-		return Identity{}, ErrUnauthenticated
-	}
-	a, err := r.finder.FindByAPIKey(c.UserContext(), rawKey)
-	if err != nil || a == nil || !a.Enabled || a.Type != authdomain.TypeAPIKey {
-		return Identity{}, ErrUnauthenticated
-	}
-	return Identity{GatewayID: a.GatewayID, AuthID: a.ID}, nil
-}
 
 type AuthMiddleware struct {
 	resolver        resolver.IdentityResolver

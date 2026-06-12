@@ -1,12 +1,37 @@
 # Plan: merge de `develop` (Phase 1-6 auth/roles) en `feat/mcp_gateway` (PR #50)
 
 Fecha: 2026-06-12
-Estado: Fases 0-2 completadas (merge resuelto, build + tests + race + lint verdes).
-D1 implementado durante la Fase 2: `FindActiveByPath` → `FindActiveBySlug`, el plano
-MCP resuelve `/{consumer_slug}/mcp` (`PathResolver` extrae el slug del path). Las
-migraciones de ambas ramas resultaron compatibles sin renumerar (toolkit/fail_mode se
-añaden en 20260609, develop elimina `path` en 20260611 con `IF EXISTS`). Pendiente:
-Fase 3 (D2 unificación auth entrante, D5 revisión oauthclient) y Fase 4 (smoke manual).
+Estado: Fases 0-3 completadas (merge resuelto, reconciliación semántica hecha, build +
+tests + race + lint verdes).
+
+- **D1** (Fase 2): `FindActiveByPath` → `FindActiveBySlug`, el plano MCP resuelve
+  `/{consumer_slug}/mcp` (`PathResolver` extrae el slug del path). Migraciones de ambas
+  ramas compatibles sin renumerar (toolkit/fail_mode en 20260609, develop elimina
+  `path` en 20260611 con `IF EXISTS`).
+- **D2** (Fase 3): motor JWT único. `infra/auth/oidc` eliminado; el discovery OIDC
+  (TTL + singleflight) se portó a `infra/auth/idp/discovery.go` y el nuevo adaptador
+  `idp.OAuth2TokenValidator` implementa el puerto `appauth.JWTValidator` del plano MCP
+  sobre el `idp.Verifier` de develop, produciendo `identity.Principal` con `RawToken`
+  (preferencia de subject `oid` Entra y scopes enriquecidos con `permissions`/`roles`
+  preservadas del validador anterior). `idp.hasAudience` ahora delega en
+  `identity.AudienceMatches` (equivalencia `api://` Entra v1/v2 en ambos planos).
+  Decisión de integración: cada plano conserva su middleware — el proxy usa el
+  `AuthMiddleware` de develop (slug + roles) y el plano MCP usa el nuevo
+  `MCPAuthMiddleware` + `ChainIdentityResolver` (mTLS > bearer JWT/introspection >
+  API key, con scoping por path). El merge había dejado `server_mcp.go` cableado al
+  `AuthMiddleware` del proxy (bug funcional: resolvía rutas `/{slug}/v1/...` en el
+  server MCP); corregido y cubierto con `mcp_auth_test.go`.
+- **D3** (verificado): `Consumer.Validate` rechaza `MCP != nil` con type ≠ MCP y con
+  `routing_mode=role_based` (tests "mcp policy on llm consumer" y "role based rejects
+  mcp policy" en `consumer_test.go`). Soporte de mcp_policies en role = follow-up.
+- **D5** (revisado): no hay solape real. `infra/auth/oauthclient.TokenClient` =
+  client_credentials con cache en memoria y singleflight (proxy saliente, develop);
+  `infra/oauth.providerClient` = authorization_code + PKCE + refresh por usuario
+  contra providers MCP upstream con persistencia en vault (nuestro). Tipos de config
+  distintos (`OAuth2ClientConfig` vs `registry.MCPAuth`); lo único común es el POST
+  form-encoded al token endpoint (~10 líneas), no justifica helper compartido.
+
+Pendiente: Fase 4 (smoke manual + descripción de la PR).
 
 ## Contexto
 

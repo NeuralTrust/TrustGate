@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
+	apiresolver "github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
@@ -139,7 +140,7 @@ func TestChain_JWTBearer_NoIssuerMatch_Unauthenticated(t *testing.T) {
 	_, err := resolveChain(t, resolver, map[string]string{
 		"Authorization": "Bearer " + unsignedJWT(t, "https://other-idp.example.com"),
 	})
-	require.ErrorIs(t, err, middleware.ErrUnauthenticated)
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
 	require.Equal(t, 0, jwtVal.calls)
 }
 
@@ -166,10 +167,10 @@ func TestChain_AntiDowngrade_InvalidBearerDoesNotFallThroughToAPIKey(t *testing.
 	)
 
 	_, err = resolveChain(t, resolver, map[string]string{
-		"Authorization":         "Bearer " + unsignedJWT(t, "https://idp.example.com"),
-		middleware.HeaderAPIKey: apiKeyAuth.RawKey,
+		"Authorization":          "Bearer " + unsignedJWT(t, "https://idp.example.com"),
+		apiresolver.HeaderAPIKey: apiKeyAuth.RawKey,
 	})
-	require.ErrorIs(t, err, middleware.ErrUnauthenticated)
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
 	require.Equal(t, 1, jwtVal.calls)
 }
 
@@ -180,7 +181,7 @@ func TestChain_APIKeyFallback_BuildsPrincipal(t *testing.T) {
 		fakeAPIKeyFinder{auth: apiKeyAuth}, fakeCredentialFinder{}, nil, &fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil,
 	)
 
-	id, err := resolveChain(t, resolver, map[string]string{middleware.HeaderAPIKey: apiKeyAuth.RawKey})
+	id, err := resolveChain(t, resolver, map[string]string{apiresolver.HeaderAPIKey: apiKeyAuth.RawKey})
 	require.NoError(t, err)
 	require.Equal(t, apiKeyAuth.GatewayID, id.GatewayID)
 	require.NotNil(t, id.Principal)
@@ -194,7 +195,7 @@ func TestChain_NoCredential_Unauthenticated(t *testing.T) {
 	)
 
 	_, err := resolveChain(t, resolver, nil)
-	require.ErrorIs(t, err, middleware.ErrUnauthenticated)
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
 }
 
 type fakePathResolver struct {
@@ -249,7 +250,7 @@ func TestChain_PathFirst_UnattachedCredentialRejected(t *testing.T) {
 	_, err := resolveChain(t, resolver, map[string]string{
 		"Authorization": "Bearer " + unsignedJWT(t, "https://idp.example.com"),
 	})
-	require.ErrorIs(t, err, middleware.ErrUnauthenticated)
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
 	require.Equal(t, 0, jwtVal.calls)
 }
 
@@ -281,8 +282,8 @@ func TestChain_PathFirst_APIKeyMustBeAttached(t *testing.T) {
 		&fakeTokenValidator{}, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil, nil,
 	)
 
-	_, err = resolveChain(t, resolver, map[string]string{middleware.HeaderAPIKey: apiKeyAuth.RawKey})
-	require.ErrorIs(t, err, middleware.ErrUnauthenticated)
+	_, err = resolveChain(t, resolver, map[string]string{apiresolver.HeaderAPIKey: apiKeyAuth.RawKey})
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated)
 }
 
 type fakeCertExtractor struct {
@@ -313,7 +314,7 @@ func TestChain_XFCC_IgnoredWithoutTrustedPeerConfig(t *testing.T) {
 	_, err = resolveChain(t, resolver, map[string]string{
 		"X-Forwarded-Client-Cert": `Cert="fake"`,
 	})
-	require.ErrorIs(t, err, middleware.ErrUnauthenticated,
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated,
 		"XFCC must be ignored unless TRUST_XFCC_FROM allows the peer")
 	require.Equal(t, 0, extractor.calls)
 }
@@ -354,7 +355,7 @@ func TestChain_PathFirst_LookupErrorFailsClosed(t *testing.T) {
 	_, err := resolveChain(t, resolver, map[string]string{
 		"Authorization": "Bearer " + unsignedJWT(t, "https://idp.example.com"),
 	})
-	require.ErrorIs(t, err, middleware.ErrUnauthenticated,
+	require.ErrorIs(t, err, apiresolver.ErrUnauthenticated,
 		"a path-scope lookup failure must not degrade to unrestricted auth")
 	require.Equal(t, 0, jwtVal.calls)
 }

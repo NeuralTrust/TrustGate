@@ -16,7 +16,6 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/mtls"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oauthclient"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oidc"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/fingerprint"
 	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
@@ -65,19 +64,23 @@ func API(c *container.Container) error {
 		apiKeys appauth.APIKeyFinder,
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
+		verifier appauth.IDPVerifier,
 		cfg *config.Config,
 	) middleware.IdentityResolver {
 		return middleware.NewChainIdentityResolver(
 			apiKeys,
 			credentials,
 			paths,
-			oidc.NewValidator(nil),
+			idpauth.NewOAuth2TokenValidator(verifier, nil),
 			introspection.NewValidator(nil),
 			mtls.NewValidator(),
 			mtls.NewXFCCExtractor(),
 			cfg.Server.TrustXFCCFrom,
 		)
 	}); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewMCPAuthMiddleware); err != nil {
 		return err
 	}
 	if err := c.Provide(idpauth.NewVerifier); err != nil {
