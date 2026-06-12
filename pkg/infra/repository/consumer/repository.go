@@ -424,7 +424,7 @@ func (r *Repository) FindActiveBySlug(ctx context.Context, slug string) (*domain
 		  FROM consumers c
 		 WHERE c.slug = $1
 		   AND c.active = TRUE`
-	row := r.conn.Pool.QueryRow(ctx, query, strings.ToLower(strings.TrimSpace(slug)))
+	row := r.conn.Pool.QueryRow(ctx, query, strings.TrimSpace(slug))
 	c, err := scanConsumer(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

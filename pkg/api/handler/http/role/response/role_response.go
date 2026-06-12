@@ -14,7 +14,7 @@ type RoleResponse struct {
 	GatewayID     ids.GatewayID         `json:"gateway_id"`
 	Name          string                `json:"name"`
 	ModelPolicies []ModelPolicyResponse `json:"model_policies,omitempty"`
-	McpPolicies   json.RawMessage       `json:"mcp_policies,omitempty"`
+	McpPolicies   *domain.MCPPolicies   `json:"mcp_policies,omitempty"`
 	IDPMapping    json.RawMessage       `json:"idp_mapping,omitempty"`
 	RegistryIDs   []ids.RegistryID      `json:"registry_ids"`
 	CreatedAt     time.Time             `json:"created_at"`
@@ -47,7 +47,7 @@ func FromRole(role *domain.Role) RoleResponse {
 		GatewayID:     role.GatewayID,
 		Name:          role.Name,
 		ModelPolicies: fromModelPolicies(role.ModelPolicies),
-		McpPolicies:   role.McpPolicies,
+		McpPolicies:   role.MCPPolicies,
 		IDPMapping:    role.IDPMapping,
 		RegistryIDs:   registryIDs,
 		CreatedAt:     role.CreatedAt,
