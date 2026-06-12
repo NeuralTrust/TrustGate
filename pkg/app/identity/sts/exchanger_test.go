@@ -202,15 +202,72 @@ func TestExchanger_OBO_RequiresUserJWT(t *testing.T) {
 	}
 }
 
-func TestTokenEndpointFor(t *testing.T) {
+func TestFallbackTokenEndpoint(t *testing.T) {
 	t.Parallel()
-	entra := tokenEndpointFor("https://login.microsoftonline.com/tid/v2.0")
+	entra := fallbackTokenEndpoint("https://login.microsoftonline.com/tid/v2.0")
 	if entra != "https://login.microsoftonline.com/tid/oauth2/v2.0/token" {
 		t.Fatalf("entra endpoint = %q", entra)
 	}
-	okta := tokenEndpointFor("https://org.okta.com/oauth2/default")
+	okta := fallbackTokenEndpoint("https://org.okta.com/oauth2/default")
 	if okta != "https://org.okta.com/oauth2/default/v1/token" {
 		t.Fatalf("okta endpoint = %q", okta)
+	}
+}
+
+// Regression for non-Entra/Okta IdPs (Keycloak, Auth0...): the token endpoint
+// must come from OIDC discovery, not from a URL convention guess.
+func TestExchanger_TokenEndpoint_ResolvedViaDiscovery(t *testing.T) {
+	t.Parallel()
+	var tokenPathHit string
+	var discoveryCalls int
+	mux := http.NewServeMux()
+	var idp *httptest.Server
+	mux.HandleFunc("/realms/acme/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		discoveryCalls++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"token_endpoint": idp.URL + "/realms/acme/protocol/openid-connect/token",
+		})
+	})
+	mux.HandleFunc("/realms/acme/protocol/openid-connect/token", func(w http.ResponseWriter, r *http.Request) {
+		tokenPathHit = r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "kc-token", "expires_in": 60})
+	})
+	idp = httptest.NewServer(mux)
+	defer idp.Close()
+
+	issuer := idp.URL + "/realms/acme"
+	creds := &stubCredentials{auths: []*authdomain.Auth{{
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer: issuer, ClientID: "id", ClientSecret: "s",
+		}},
+	}}}
+	ex := NewExchanger(newTestSigner(t), creds, nil)
+	cfg := &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange,
+		Audience: "https://up.example.com",
+	}
+	p := userPrincipal()
+	p.Issuer = issuer
+	tok, err := ex.Exchange(context.Background(), p, cfg, "k")
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if tok.AccessToken != "kc-token" {
+		t.Fatalf("AccessToken = %q", tok.AccessToken)
+	}
+	if tokenPathHit != "/realms/acme/protocol/openid-connect/token" {
+		t.Fatalf("token endpoint hit = %q, want the discovered one", tokenPathHit)
+	}
+	// The discovered endpoint is cached per issuer.
+	cfg2 := &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange,
+		Audience: "https://other.example.com",
+	}
+	if _, err := ex.Exchange(context.Background(), p, cfg2, "k2"); err != nil {
+		t.Fatalf("second Exchange: %v", err)
+	}
+	if discoveryCalls != 1 {
+		t.Fatalf("discovery calls = %d, want 1 (cached)", discoveryCalls)
 	}
 }
 
