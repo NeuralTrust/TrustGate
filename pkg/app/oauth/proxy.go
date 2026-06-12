@@ -32,11 +32,6 @@ import (
 // CallbackPath is the gateway's stable redirect URI path registered at the IdP.
 const CallbackPath = "/oauth/callback"
 
-const (
-	pendingTTL = 10 * time.Minute
-	codeTTL    = 5 * time.Minute
-)
-
 // OAuthError is an RFC 6749 error response (error + optional description).
 type OAuthError struct {
 	Code        string `json:"error"`

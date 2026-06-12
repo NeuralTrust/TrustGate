@@ -9,7 +9,7 @@ import (
 )
 
 // TokenPath is the gateway's OAuth 2.1 token endpoint for MCP clients.
-const TokenPath = "/oauth/token"
+const TokenPath = "/oauth/token" // #nosec G101 -- route path, not a credential
 
 type TokenHandler struct {
 	proxy appoauth.AuthProxy

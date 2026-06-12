@@ -168,7 +168,7 @@ func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash s
 		Flash:        flash,
 		Ticket:       ticket,
 		Providers:    page.Providers,
-		ResumeURL:    template.URL(page.ResumeURL),
+		ResumeURL:    template.URL(page.ResumeURL), // #nosec G203 -- gateway-built from the registered redirect_uri, never user input
 	})
 }
 
@@ -211,7 +211,7 @@ type deepLinkView struct {
 func renderDeepLinkPage(c *fiber.Ctx, location string) error {
 	return renderHTML(c, deepLinkPageTmpl, deepLinkView{
 		AppName:  appNameForLocation(location),
-		Location: template.URL(location),
+		Location: template.URL(location), // #nosec G203 -- redirect target validated against the client's registered redirect_uris
 	})
 }
 
