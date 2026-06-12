@@ -1,18 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Send, FlaskConical, KeyRound } from "lucide-react";
-import { api, gatewayScope } from "@/lib/admin-client";
-import { useActiveGatewayId } from "@/components/layout/gateway-context";
-import { useList, useInvalidate, errorMessage } from "@/lib/hooks";
+import { Send, FlaskConical } from "lucide-react";
+import { useList, errorMessage } from "@/lib/hooks";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader } from "@/components/ui/page";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { SwitchRow } from "@/components/ui/form-bits";
 import { EmptyState, PageLoader, Mono } from "@/components/ui/misc";
-import { ApiKeyDialog } from "./auth-view";
-import type { Auth, Consumer } from "@/lib/types";
+import type { Consumer } from "@/lib/types";
 
 interface ChatCompletionChunk {
   choices?: { delta?: { content?: string } }[];
@@ -39,56 +36,20 @@ export function PlaygroundView() {
   const { data: consumers, isLoading } = useList<Consumer>("consumers");
   const llmConsumers = (consumers ?? []).filter((c) => c.type === "LLM" && c.active);
 
-  const gatewayId = useActiveGatewayId();
-  const invalidate = useInvalidate();
   const { toast } = useToast();
   const [consumerId, setConsumerId] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
   const [stream, setStream] = useState(true);
   const [sending, setSending] = useState(false);
-  const [creatingKey, setCreatingKey] = useState(false);
-  const [generatedKey, setGeneratedKey] = useState<{ name: string; key: string } | null>(null);
   const [response, setResponse] = useState("");
   const [errorText, setErrorText] = useState<string | null>(null);
 
   const selected = llmConsumers.find((c) => c.id === consumerId) ?? llmConsumers[0];
 
-  async function createKey() {
-    if (!selected) {
-      toast({ variant: "error", title: "Select a consumer" });
-      return;
-    }
-    const slug = selected.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    const name = `playground-${slug || "consumer"}-${Date.now().toString(36)}`;
-
-    setCreatingKey(true);
-    try {
-      const base = gatewayScope(gatewayId);
-      const auth = await api.post<Auth>(`${base}/auths`, { name, type: "api_key", enabled: true, config: {} });
-      await api.post(`${base}/consumers/${selected.id}/auths/${auth.id}`);
-      if (auth.api_key) {
-        setApiKey(auth.api_key);
-        setGeneratedKey({ name: auth.name, key: auth.api_key });
-      }
-      void invalidate("auths");
-      void invalidate("consumers");
-      toast({ variant: "success", title: "API key created", description: `Bound to ${selected.name}` });
-    } catch (err) {
-      toast({ variant: "error", title: "Could not create key", description: errorMessage(err) });
-    } finally {
-      setCreatingKey(false);
-    }
-  }
-
   async function send() {
     if (!selected) {
       toast({ variant: "error", title: "Select a consumer" });
-      return;
-    }
-    if (!apiKey.trim()) {
-      toast({ variant: "error", title: "API key is required", description: "Paste a key bound to this consumer." });
       return;
     }
     if (!prompt.trim()) {
@@ -106,9 +67,9 @@ export function PlaygroundView() {
     setResponse("");
     setErrorText(null);
     try {
-      const res = await fetch(`/api/proxy${selected.path}`, {
+      const res = await fetch(`/api/playground${selected.path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-AG-API-Key": apiKey.trim() },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
 
@@ -136,7 +97,7 @@ export function PlaygroundView() {
 
   return (
     <div>
-      <PageHeader description="Send a test request through the gateway proxy to one of your consumer routes and inspect the response." />
+      <PageHeader description="Send a test request through the gateway proxy to one of your consumer routes and inspect the response. Requests authenticate automatically — no consumer credential needed." />
 
       {isLoading ? (
         <PageLoader />
@@ -163,22 +124,6 @@ export function PlaygroundView() {
                 Route <Mono>POST {selected.path}</Mono>
               </p>
             )}
-
-            <Field label="API key" hint="sent as X-AG-API-Key">
-              <div className="flex gap-2">
-                <Input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="paste a key bound to this consumer"
-                  className="flex-1"
-                />
-                <Button variant="secondary" onClick={createKey} loading={creatingKey} disabled={!selected}>
-                  <KeyRound className="h-4 w-4" />
-                  Create &amp; bind
-                </Button>
-              </div>
-            </Field>
 
             <Field label="Model" hint="optional — blank uses the route default">
               <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="gpt-4o-mini" />
@@ -226,8 +171,6 @@ export function PlaygroundView() {
           </div>
         </div>
       )}
-
-      <ApiKeyDialog data={generatedKey} onClose={() => setGeneratedKey(null)} />
     </div>
   );
 }

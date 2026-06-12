@@ -48,6 +48,12 @@ func (m *AdminAuthMiddleware) Middleware() fiber.Handler {
 			return m.unauthorized(c, "Invalid token", err)
 		}
 
+		// Purpose-tagged tokens (e.g. playground) are scoped to other planes
+		// and must never grant admin access.
+		if claims.Purpose != "" {
+			return m.unauthorized(c, "Token not valid for admin API", nil)
+		}
+
 		if claims.TeamID != "" {
 			c.Locals(string(infracontext.TeamIDContextKey), claims.TeamID)
 		}
