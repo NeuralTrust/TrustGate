@@ -5,8 +5,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// AuthorizePath starts the brokered authorization-code flow: the client's
-// request is parked and the user is redirected to the corporate IdP.
 const AuthorizePath = "/oauth/authorize"
 
 type AuthorizeHandler struct {

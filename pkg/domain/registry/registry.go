@@ -58,7 +58,6 @@ func NewRegistry(
 	return b, nil
 }
 
-// NewMCPRegistry builds a registry that fronts an upstream MCP server.
 func NewMCPRegistry(
 	gatewayID ids.GatewayID,
 	name, description string,
@@ -87,7 +86,6 @@ func NewMCPRegistry(
 	return b, nil
 }
 
-// IsMCP reports whether this registry fronts an MCP server.
 func (b *Registry) IsMCP() bool {
 	return b.Type == TypeMCP
 }
@@ -108,9 +106,6 @@ type RehydrateParams struct {
 	UpdatedAt       time.Time
 }
 
-// Rehydrate reconstitutes a persisted registry without regenerating identity
-// or timestamps. Type and MCPTarget must round-trip: dropping them would
-// coerce a rehydrated MCP registry into a corrupt LLM one.
 func Rehydrate(params RehydrateParams) *Registry {
 	regType := params.Type
 	if regType == "" {

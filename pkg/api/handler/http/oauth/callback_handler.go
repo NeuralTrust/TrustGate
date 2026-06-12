@@ -37,10 +37,6 @@ func (h *CallbackHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return writeOAuthError(c, err)
 	}
-	// Custom-scheme callbacks (cursor://, vscode://, ...) cannot be reached
-	// with a 302: browsers drop cross-site redirects into external protocols
-	// unless a user gesture triggers them. Serve an interstitial that
-	// auto-attempts the deep link and offers a click-through fallback.
 	if u, perr := url.Parse(location); perr == nil && u.Scheme != "http" && u.Scheme != "https" {
 		return renderDeepLinkPage(c, location)
 	}

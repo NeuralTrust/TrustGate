@@ -10,11 +10,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// The broker's browser-facing pages (account linking, deep-link handoff) are
-// rendered server-side from embedded templates: no SPA, no external assets,
-// contextual auto-escaping. Styling follows the NeuralTrust design system
-// (dark surface palette, #7c7cff accent, Inter).
-
 const pageCSS = `
 :root{
   --bg:#08080a;--surface:#0e0e11;--elevated:#18181d;--border:#232329;
@@ -116,11 +111,6 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 </div>{{end}}
 </div></body></html>`))
 
-// The browser's native "Open <app>?" dialog is the real UI of this page: the
-// deep link fires immediately over a bare dark backdrop, and the fallback
-// card stays hidden unless the user is still here a few seconds later
-// (dialog dismissed, app not installed) - then it fades in with a retry
-// button and a copy-link rescue.
 var deepLinkPageTmpl = template.Must(template.New("deeplink").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Authentication complete - NeuralTrust TrustGate</title><style>` + pageCSS + `
@@ -137,8 +127,6 @@ var deepLinkPageTmpl = template.Must(template.New("deeplink").Parse(`<!doctype h
 <script>
   var target = {{.Location}};
   window.location.href = target;
-  // Reveal the rescue card only if the handoff did not take the user away:
-  // dialog cancelled, "always allow" not yet granted, or app not installed.
   setTimeout(function () {
     document.getElementById('fallback').classList.add('show');
   }, 2500);
@@ -156,10 +144,7 @@ type connectPageView struct {
 	Flash        string
 	Ticket       string
 	Providers    []appoauth.ProviderStatus
-	// ResumeURL is typed template.URL: it may carry a custom scheme
-	// (cursor://...) that the standard URL sanitizer would reject, and it is
-	// gateway-built from the registered redirect_uri, never user input.
-	ResumeURL template.URL
+	ResumeURL    template.URL
 }
 
 func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash string) error {
@@ -172,9 +157,6 @@ func renderConnectPage(c *fiber.Ctx, page *appoauth.ConnectPage, ticket, flash s
 	})
 }
 
-// knownSchemeApps maps custom URI schemes to the product names shown on the
-// deep-link page, matching the wording of the browser's own "Open <app>?"
-// permission dialog.
 var knownSchemeApps = map[string]string{
 	"cursor":          "Cursor",
 	"vscode":          "VS Code",
@@ -199,15 +181,10 @@ func appNameForLocation(location string) string {
 }
 
 type deepLinkView struct {
-	AppName string
-	// Location is typed template.URL for the same reason as
-	// connectPageView.ResumeURL.
+	AppName  string
 	Location template.URL
 }
 
-// renderDeepLinkPage hands a custom-scheme redirect (cursor://, vscode://)
-// over to the browser: a 302 into an external protocol is dropped without a
-// user gesture, so the page auto-attempts the deep link and offers a button.
 func renderDeepLinkPage(c *fiber.Ctx, location string) error {
 	return renderHTML(c, deepLinkPageTmpl, deepLinkView{
 		AppName:  appNameForLocation(location),

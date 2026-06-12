@@ -104,8 +104,6 @@ func TestNewMCPRegistry_Rejects(t *testing.T) {
 	}
 }
 
-// Auto registration needs only the provider name: client and endpoints come
-// from upstream discovery + DCR at consent time.
 func TestMCPAuth_ForwardedAutoNeedsNoClient(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()

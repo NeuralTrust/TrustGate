@@ -8,9 +8,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// WellKnownProtectedResourcePath is where RFC 9728 metadata is served on the
-// MCP plane. The path-scoped variant (".../{mcp-path}") serves metadata for a
-// specific virtual MCP, per the MCP authorization spec.
 const WellKnownProtectedResourcePath = "/.well-known/oauth-protected-resource"
 
 type ProtectedResourceHandler struct {

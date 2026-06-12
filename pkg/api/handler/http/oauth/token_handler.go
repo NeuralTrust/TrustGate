@@ -8,7 +8,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// TokenPath is the gateway's OAuth 2.1 token endpoint for MCP clients.
 const TokenPath = "/oauth/token" // #nosec G101 -- route path, not a credential
 
 type TokenHandler struct {
@@ -53,8 +52,6 @@ func (h *TokenHandler) Handle(c *fiber.Ctx) error {
 	return helpers.WriteOK(c, token)
 }
 
-// writeOAuthError renders RFC 6749 error responses: structured OAuth errors
-// keep their code (400, or 401 for invalid_client); anything else is internal.
 func writeOAuthError(c *fiber.Ctx, err error) error {
 	var oe *appoauth.OAuthError
 	if errors.As(err, &oe) {

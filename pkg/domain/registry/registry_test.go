@@ -176,8 +176,6 @@ func TestBackend_Rehydrate_MCP(t *testing.T) {
 		CreatedAt: now,
 		UpdatedAt: now,
 	})
-	// Regression: Type and MCPTarget must round-trip through Rehydrate;
-	// dropping them coerced MCP registries into corrupt LLM ones.
 	if b.Type != TypeMCP {
 		t.Fatalf("Type = %q, want %q", b.Type, TypeMCP)
 	}

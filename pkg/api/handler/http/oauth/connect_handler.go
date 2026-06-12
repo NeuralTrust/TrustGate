@@ -7,18 +7,12 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// Broker paths: the connect page lives under the consumer path
-// ({consumer_path}/connect); the provider legs are gateway-global.
 const (
 	ConnectStartPath    = "/oauth/connect/:provider"
 	ConnectCallbackPath = "/oauth/callback/:provider"
 	DisconnectPath      = "/oauth/disconnect/:provider"
 )
 
-// ConnectHandler serves the third-party account linking surface (Phase 4
-// forwarded mode): a minimal consent page plus the OAuth legs against each
-// provider. Authentication is the short-lived ticket minted during an
-// authenticated MCP call; the browser never carries the inbound Bearer.
 type ConnectHandler struct {
 	connect appoauth.ConnectService
 }
@@ -78,8 +72,6 @@ func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
 		if ticketID == "" {
 			return h.pageError(c, err)
 		}
-		// Provider denials come back with the ticket: show them on the page
-		// instead of a bare error response.
 		return h.showPage(c, ticketID, err.Error())
 	}
 	return h.showPage(c, ticketID, "")
@@ -100,8 +92,6 @@ func (h *ConnectHandler) Disconnect(c *fiber.Ctx) error {
 	return h.showPage(c, ticket, "")
 }
 
-// showPage resolves the ticket into provider statuses and renders the
-// NeuralTrust-styled consent page; flash carries a provider-leg error.
 func (h *ConnectHandler) showPage(c *fiber.Ctx, ticket, flash string) error {
 	page, err := h.connect.Page(c.UserContext(), ticket)
 	if err != nil {

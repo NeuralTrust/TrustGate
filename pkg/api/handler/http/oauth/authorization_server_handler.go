@@ -8,9 +8,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// WellKnownAuthorizationServerPath serves the gateway's own RFC 8414
-// metadata: the gateway is the authorization-server facade, brokering
-// authorize/token to the configured corporate IdP.
 const WellKnownAuthorizationServerPath = "/.well-known/oauth-authorization-server"
 
 type AuthorizationServerHandler struct {

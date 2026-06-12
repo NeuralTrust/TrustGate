@@ -65,7 +65,6 @@ func TestProtectedResourceHandlerRootAndPathScoped(t *testing.T) {
 		if meta.Resource != wantResource {
 			t.Fatalf("%s: expected resource %q, got %q", path, wantResource, meta.Resource)
 		}
-		// The gateway brokers the flow, so it advertises itself as the AS.
 		if len(meta.AuthorizationServers) != 1 || meta.AuthorizationServers[0] != "http://gw.example.com" {
 			t.Fatalf("%s: unexpected authorization_servers %v", path, meta.AuthorizationServers)
 		}

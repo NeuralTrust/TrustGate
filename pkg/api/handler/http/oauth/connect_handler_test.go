@@ -44,8 +44,6 @@ func (s *stubConnectService) ChainURL(context.Context, string, ids.GatewayID, st
 	return "", nil
 }
 
-// The connect page route uses Fiber's greedy "+" wildcard so it works for any
-// consumer path depth ({consumer_path}/connect).
 func TestConnectPage_RouteMatchesNestedConsumerPaths(t *testing.T) {
 	t.Parallel()
 	h := NewConnectHandler(&stubConnectService{page: &appoauth.ConnectPage{

@@ -22,9 +22,6 @@ func renderToString(t *testing.T, handler fiber.Handler) string {
 	return string(body)
 }
 
-// Custom-scheme resume links (cursor://...) must survive templating:
-// html/template's URL sanitizer would replace them with #ZgotmplZ unless
-// they are typed template.URL.
 func TestConnectPage_RendersCustomSchemeResume(t *testing.T) {
 	t.Parallel()
 	body := renderToString(t, func(c *fiber.Ctx) error {
@@ -75,7 +72,6 @@ func TestDeepLinkPage_RendersCustomScheme(t *testing.T) {
 	if !strings.Contains(body, `href="cursor://anysphere.cursor-mcp/oauth/callback?code=abc"`) {
 		t.Fatal("missing fallback button link")
 	}
-	// The auto-redirect script needs the link as a quoted JS string.
 	if !strings.Contains(body, `var target = "cursor:`) {
 		t.Fatalf("missing JS auto-redirect target, body:\n%s", body)
 	}

@@ -8,7 +8,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// RegisterPath is the RFC 7591 dynamic client registration endpoint.
 const RegisterPath = "/oauth/register"
 
 type RegisterHandler struct {

@@ -1,11 +1,3 @@
-// Package mcp exposes consumer-scoped virtual MCP servers over Streamable
-// HTTP (JSON-RPC 2.0). One POST endpoint serves initialize, ping, tools/*,
-// resources/*, and prompts/*; the surface is composed from the consumer's MCP
-// registries and toolkit.
-//
-// Elicitation and sampling are not relayed: the gateway answers each POST
-// with a single JSON-RPC response and does not advertise those capabilities
-// upstream, so spec-compliant servers degrade gracefully.
 package mcp
 
 import (
@@ -22,22 +14,17 @@ import (
 )
 
 const (
-	serverName    = "agentgateway"
-	serverVersion = "1.0"
-	// latestProtocolVersion is what the gateway answers when the client
-	// requests a revision it does not know.
+	serverName            = "agentgateway"
+	serverVersion         = "1.0"
 	latestProtocolVersion = "2025-06-18"
 )
 
-// supportedProtocolVersions are the MCP revisions the server plane speaks;
-// initialize echoes the client's requested version when it is one of these.
 var supportedProtocolVersions = map[string]bool{
 	"2024-11-05": true,
 	"2025-03-26": true,
 	"2025-06-18": true,
 }
 
-// JSON-RPC 2.0 error codes.
 const (
 	codeParseError     = -32700
 	codeInvalidRequest = -32600
@@ -46,14 +33,10 @@ const (
 	codeInternalError  = -32603
 )
 
-// codeConsentRequired is an implementation-defined JSON-RPC error: the user
-// must link a third-party account at data.connect_url before the call can
-// succeed (forwarded downstream auth, Phase 4).
-const codeConsentRequired = -32003
-
-// codeResourceNotFound is the spec-defined error for resources/read on an
-// unknown URI.
-const codeResourceNotFound = -32002
+const (
+	codeConsentRequired   = -32003
+	codeResourceNotFound  = -32002
+)
 
 type Handler struct {
 	gateway *appmcp.RPCGateway
@@ -83,16 +66,11 @@ type rpcError struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
-// MethodNotAllowed answers the optional Streamable HTTP legs we do not
-// support: GET (server-initiated SSE stream) and DELETE (client-initiated
-// session termination). The spec mandates 405 here; anything else (401/404)
-// sends clients like Cursor into an endless re-authentication loop.
 func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 	c.Set(fiber.HeaderAllow, fiber.MethodPost)
 	return c.SendStatus(fiber.StatusMethodNotAllowed)
 }
 
-// Handle serves a single JSON-RPC message on the consumer's virtual MCP path.
 func (h *Handler) Handle(c *fiber.Ctx) error {
 	rc, err := resolveMCPConsumer(c)
 	if err != nil {
@@ -108,11 +86,9 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 	}
 
 	if isNotification(req) {
-		// notifications/initialized and friends: accept and ignore.
 		return c.SendStatus(fiber.StatusAccepted)
 	}
 
-	// Protocol negotiation stays in the transport layer.
 	switch req.Method {
 	case "initialize":
 		return h.handleInitialize(c, req)
@@ -155,7 +131,6 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest) error {
 	})
 }
 
-// writeAppError maps app-layer errors onto the JSON-RPC error surface.
 func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	var (
 		rpcErr        *appmcp.RPCError
@@ -164,7 +139,6 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	)
 	switch {
 	case errors.As(err, &rpcErr):
-		// Pass upstream JSON-RPC errors through unchanged.
 		return writeJSON(c, rpcResponse{
 			JSONRPC: "2.0",
 			ID:      normalizeID(id),
@@ -190,8 +164,6 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	case errors.Is(err, appmcp.ErrMethodNotFound):
 		return writeRPCError(c, id, codeMethodNotFound, err.Error())
 	case errors.Is(err, sts.ErrInteractionRequired):
-		// IdP claims challenge: surface as 401 so the OAuth challenge
-		// middleware adds WWW-Authenticate (never swallowed as a 500).
 		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
 	case errors.Is(err, appmcp.ErrNoPrincipal), errors.Is(err, appmcp.ErrAudienceMismatch),
 		errors.Is(err, sts.ErrNoUserIdentity):
@@ -232,7 +204,6 @@ func writeRPCError(c *fiber.Ctx, id json.RawMessage, code int, message string) e
 }
 
 func writeJSON(c *fiber.Ctx, body any) error {
-	// JSON-RPC errors ride on HTTP 200; transport-level failures use HTTP codes.
 	return c.Status(fiber.StatusOK).JSON(body)
 }
 

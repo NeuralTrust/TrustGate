@@ -29,8 +29,6 @@ func (e *EmbeddingConfig) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, e)
 }
 
-// ResolveSecretsFrom keeps previously stored embedding credentials when the
-// incoming update omits them (empty or the redaction placeholder).
 func (e *EmbeddingConfig) ResolveSecretsFrom(prev *EmbeddingConfig) {
 	if e == nil || prev == nil || e.Auth == nil || prev.Auth == nil {
 		return

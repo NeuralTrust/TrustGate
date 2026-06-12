@@ -19,8 +19,6 @@ import (
 
 const mcpPath = "/virtual/mcp"
 
-// newApp builds a fiber app with the MCP handler mounted behind a middleware
-// that injects the authenticated consumer data, mirroring the auth chain.
 func newApp(t *testing.T, composer appmcp.Composer, consumerType consumerdomain.Type, authorized bool) *fiber.App {
 	t.Helper()
 	authID := ids.New[ids.AuthKind]()
