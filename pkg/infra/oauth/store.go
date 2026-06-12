@@ -72,7 +72,6 @@ func (s *Store) GetGatewayClient(ctx context.Context, clientID string) (*appoaut
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return nil, fmt.Errorf("oauth flow store: decode client: %w", err)
 	}
-	// Sliding expiry: active clients stay registered without re-running DCR.
 	_ = s.rdb.Expire(ctx, gatewayClientPrefix+clientID, gatewayClientTTL).Err()
 	return &c, nil
 }

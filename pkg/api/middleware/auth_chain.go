@@ -51,9 +51,6 @@ func NewChainIdentityResolver(
 	}
 }
 
-// parseTrustedPeers accepts CIDRs ("10.0.0.0/8") and bare IPs ("10.1.2.3").
-// Malformed entries are dropped with a warning rather than silently widening
-// or narrowing the trust boundary at runtime.
 func parseTrustedPeers(entries []string) []*net.IPNet {
 	var out []*net.IPNet
 	for _, e := range entries {
@@ -108,9 +105,6 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 	return Identity{}, ErrUnauthenticated
 }
 
-// pathScope fails closed on lookup errors: degrading to "any configured auth
-// is acceptable" when the path store is down would collapse the per-path
-// tenant isolation that the scope exists to provide.
 func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 	if r.paths == nil {
 		return nil, nil
@@ -184,10 +178,6 @@ func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, ca
 	return Identity{}, ErrUnauthenticated
 }
 
-// resolveOpaque refuses to resolve opaque tokens on paths without an auth
-// binding: unlike JWTs (routed by their issuer claim), an opaque token can
-// only be identified by introspecting it, and broadcasting it to every
-// configured IdP would leak the token across tenants.
 func (r *chainIdentityResolver) resolveOpaque(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
 	if scope == nil && r.paths != nil {
 		return Identity{}, ErrUnauthenticated
@@ -238,9 +228,6 @@ func (r *chainIdentityResolver) clientCertificate(c *fiber.Ctx) *x509.Certificat
 	return nil
 }
 
-// trustsXFCCPeer gates the X-Forwarded-Client-Cert header behind an explicit
-// peer allowlist (TRUST_XFCC_FROM): the header is client-supplied, so without
-// a trusted TLS-terminating proxy in front it is trivially spoofable.
 func (r *chainIdentityResolver) trustsXFCCPeer(c *fiber.Ctx) bool {
 	if len(r.xfccPeers) == 0 {
 		return false

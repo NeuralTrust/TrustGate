@@ -136,9 +136,6 @@ func (r *pathResolver) filterByHost(ctx context.Context, host string, consumers 
 	return r.filterDomainlessGateways(ctx, consumers)
 }
 
-// filterDomainlessGateways keeps only consumers whose gateway has no domain
-// configured: a gateway with an explicit domain must never match a foreign
-// Host header just because that host is unknown.
 func (r *pathResolver) filterDomainlessGateways(ctx context.Context, consumers []*domain.Consumer) ([]*domain.Consumer, error) {
 	domainless := make(map[ids.GatewayID]bool, 2)
 	out := make([]*domain.Consumer, 0, len(consumers))

@@ -168,9 +168,6 @@ func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal,
 	return e.idp.Call(ctx, principal.Issuer, form)
 }
 
-// tokenExchange only forwards IdP-issued bearer tokens as subject_token.
-// Principals from other methods (api_key, mtls) carry gateway-local secrets
-// in RawToken that must never be sent to an external IdP.
 func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Principal, cfg *registrydomain.MCPAuth) (*Token, error) {
 	if principal.RawToken == "" ||
 		(principal.Method != identity.MethodJWT && principal.Method != identity.MethodIntrospection) {

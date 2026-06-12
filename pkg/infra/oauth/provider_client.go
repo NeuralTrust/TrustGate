@@ -122,10 +122,6 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 	case doc.ExpiresIn > 0:
 		out.ExpiresAt = time.Now().Add(time.Duration(doc.ExpiresIn) * time.Second)
 	case doc.RefreshToken != "":
-		// A refresh token implies the access token expires even if the
-		// provider omitted expires_in; assume a conservative TTL instead of
-		// treating it as non-expiring. Tokens without refresh_token and
-		// without expires_in (e.g. GitHub OAuth apps) really don't expire.
 		out.ExpiresAt = time.Now().Add(defaultProviderTokenTTL)
 	}
 	if doc.Scope != "" {

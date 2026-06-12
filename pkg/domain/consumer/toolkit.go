@@ -52,9 +52,6 @@ func (e ToolkitEntry) selector() (kind, value string, err error) {
 
 type Toolkit []ToolkitEntry
 
-// Validate also canonicalizes every entry in place (trimming whitespace) so
-// the values that passed validation are exactly the values the data plane
-// will match against at runtime.
 func (t Toolkit) Validate(known map[ids.RegistryID]struct{}) error {
 	seen := make(map[string]struct{}, len(t))
 	seenAliases := make(map[string]string, len(t))
@@ -146,8 +143,6 @@ func (t Toolkit) entriesFor(registryID ids.RegistryID, selector func(ToolkitEntr
 	return out
 }
 
-// AllowsResource: a nil toolkit allows everything; an empty (but present)
-// toolkit denies everything.
 func (t Toolkit) AllowsResource(registryID ids.RegistryID, uri string) bool {
 	if t == nil {
 		return true

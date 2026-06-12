@@ -81,8 +81,6 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 	var prm protectedResourceMeta
 	found := false
 	for _, c := range candidates {
-		// Fresh struct per candidate: a partial decode from a previous
-		// endpoint must not bleed fields into the next attempt.
 		var attempt protectedResourceMeta
 		if err := r.getJSON(ctx, c, &attempt); err == nil && len(attempt.AuthorizationServers) > 0 {
 			prm = attempt

@@ -288,10 +288,6 @@ type rowScanner interface {
 
 var errCorruptConsumerRow = errors.New("consumer repository: corrupt row")
 
-// collectConsumers skips rows whose jsonb payload cannot be decoded so a
-// single corrupt row degrades one consumer instead of taking down every
-// listing (and with it the whole gateway data plane). The corrupt row still
-// surfaces through FindByID.
 func collectConsumers(rows pgx.Rows) ([]*domain.Consumer, error) {
 	items := make([]*domain.Consumer, 0)
 	for rows.Next() {
@@ -418,8 +414,6 @@ func marshalModelPolicies(m domain.ModelPolicies) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// marshalToolkit persists the nil/empty distinction: NULL means allow-all,
-// [] means deny-all.
 func marshalToolkit(t domain.Toolkit) ([]byte, error) {
 	if t == nil {
 		return nil, nil

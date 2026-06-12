@@ -146,9 +146,6 @@ func (r CreateRegistryRequest) ToType() domain.Type {
 	return domain.Type(strings.ToUpper(strings.TrimSpace(r.Type)))
 }
 
-// ToLLMTarget maps the flat LLM fields whenever any of them is present so the
-// domain can reject type/payload mismatches instead of silently dropping
-// user input. ToMCPTarget mirrors the same contract.
 func (r CreateRegistryRequest) ToLLMTarget() *domain.LLMTarget {
 	if r.ToType() != domain.TypeLLM && r.Provider == "" && len(r.ProviderOptions) == 0 && r.Auth == nil && r.HealthChecks == nil {
 		return nil

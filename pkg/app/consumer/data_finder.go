@@ -251,8 +251,6 @@ func poolRegistryIDs(all []ids.RegistryID, chain []ids.RegistryID) []ids.Registr
 		}
 		out = append(out, id)
 	}
-	// A chain covering every associated registry would leave the primary pool
-	// empty and the request would fail before ever reaching the fallbacks.
 	if len(out) == 0 {
 		return all
 	}

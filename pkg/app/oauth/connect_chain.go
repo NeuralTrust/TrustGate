@@ -54,9 +54,6 @@ func (s *connectService) chainTarget(ctx context.Context, data *appconsumer.Data
 	return nil
 }
 
-// hasUnlinked treats only a definitive ErrNotFound as "needs consent": a
-// transient vault failure must not detour the user through a consent page
-// for providers they already linked.
 func (s *connectService) hasUnlinked(ctx context.Context, gatewayID ids.GatewayID, rc *appconsumer.RoutableConsumer, principalSub string) bool {
 	for _, reg := range rc.Registries {
 		cfg := forwardedAuth(reg)

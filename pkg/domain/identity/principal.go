@@ -30,8 +30,6 @@ var protocolScopes = map[string]struct{}{
 	"offline_access": {},
 }
 
-// IsProtocolScope reports whether the scope is an OIDC protocol scope that
-// access tokens do not carry; configs must not require them.
 func IsProtocolScope(scope string) bool {
 	_, ok := protocolScopes[scope]
 	return ok
@@ -65,10 +63,6 @@ func (p *Principal) HasScopes(required []string) bool {
 	return true
 }
 
-// resourceURILeaf extracts the bare scope name from an "api://" resource URI
-// (Entra emits the leaf alone in the scp claim of v2 access tokens). The
-// fallback is deliberately restricted to that prefix: a generic held scope
-// must not satisfy arbitrary namespaced requirements like "tenant/admin".
 func resourceURILeaf(scope string) (string, bool) {
 	if !strings.HasPrefix(scope, "api://") {
 		return "", false

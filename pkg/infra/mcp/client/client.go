@@ -18,9 +18,6 @@ const (
 	responseHeaderTimeout = 30 * time.Second
 )
 
-// upstreamTransport bounds connection setup and time-to-first-byte without
-// capping the whole exchange: long-running tools/call invocations are limited
-// only by the caller's context, not by a global http.Client timeout.
 var upstreamTransport = func() http.RoundTripper {
 	t, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {

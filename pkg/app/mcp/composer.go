@@ -115,7 +115,6 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	return resolveNames(candidates), nil
 }
 
-// selectTools treats a nil toolkit as allow-all and an empty one as deny-all.
 func selectTools(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, tools []Tool) []binding {
 	if toolkit == nil {
 		out := make([]binding, 0, len(tools))
@@ -134,8 +133,6 @@ func selectTools(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, t
 	}
 	var out []binding
 	seen := make(map[string]struct{}, len(tools))
-	// Specific entries bind first so their expose_as aliases win regardless
-	// of where a wildcard entry sits in the toolkit.
 	for _, e := range entries {
 		if e.Tool == consumerdomain.ToolWildcard {
 			continue

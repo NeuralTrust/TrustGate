@@ -14,9 +14,6 @@ type Cipher struct {
 	aead cipher.AEAD
 }
 
-// minSecretLen guards against low-entropy secrets: the AES key is derived
-// with a single unsalted SHA-256, so a short or guessable secret would make
-// the vault ciphertexts brute-forceable offline.
 const minSecretLen = 32
 
 func NewCipher(secret string) (*Cipher, error) {

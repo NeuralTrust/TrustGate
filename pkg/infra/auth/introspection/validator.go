@@ -101,8 +101,6 @@ func (v *Validator) introspect(ctx context.Context, raw string, cfg *authdomain.
 	}
 	v.mu.Unlock()
 
-	// Coalesce concurrent introspections of the same token so a burst of
-	// requests produces a single call to the IdP.
 	out, err, _ := v.sf.Do(key, func() (any, error) {
 		v.mu.Lock()
 		if e, ok := v.cache[key]; ok && time.Now().Before(e.expiresAt) {

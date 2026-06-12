@@ -61,8 +61,6 @@ func (c *JWKSCache) Key(ctx context.Context, url, kid string) (crypto.PublicKey,
 	}
 	c.mu.Unlock()
 
-	// Coalesce concurrent refreshes of the same JWKS URL so a burst of
-	// requests with an unknown kid produces a single upstream fetch.
 	v, err, _ := c.sf.Do(url, func() (any, error) {
 		fresh, err := c.fetch(ctx, url)
 		if err != nil {

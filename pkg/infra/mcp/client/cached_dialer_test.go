@@ -97,8 +97,6 @@ func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconnect: %v", err)
 	}
-	// tools/call must never be silently replayed: the first call on the dead
-	// session surfaces the error and evicts it from the cache.
 	if _, err := up2.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err == nil {
 		t.Fatal("call on a lost session must propagate the error instead of retrying")
 	}

@@ -141,8 +141,6 @@ func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL strin
 	return doc, nil
 }
 
-// RegisterClient issues a gateway-local client_id and persists the client's
-// redirect URIs so /oauth/authorize can enforce them as an exact allowlist.
 func (s *metadataService) RegisterClient(ctx context.Context, req RegisterRequest) (*RegisterResponse, error) {
 	auths, err := s.credentials.OAuth2Auths(ctx)
 	if err != nil {
@@ -193,7 +191,6 @@ func hasUpstreamClient(auths []*authdomain.Auth) bool {
 	return false
 }
 
-// IsAcceptableRedirectURI enforces OAuth 2.1 redirect rules for public
 func IsAcceptableRedirectURI(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.Fragment != "" {

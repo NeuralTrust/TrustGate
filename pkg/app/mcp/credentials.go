@@ -125,10 +125,6 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 	return nil
 }
 
-// refreshCredential funnels concurrent refreshes of the same grant through
-// singleflight: providers that rotate refresh tokens treat them as
-// single-use, so parallel refreshes would invalidate the grant and force the
-// user back through consent.
 func (r *credentialResolver) refreshCredential(
 	ctx context.Context,
 	rc *appconsumer.RoutableConsumer,

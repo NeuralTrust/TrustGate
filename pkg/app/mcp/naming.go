@@ -26,10 +26,6 @@ type exposedName struct {
 	registryID string
 }
 
-// resolveExposedNames disambiguates collisions with the registry name and,
-// when two registries share both name and tool name, with a registry-ID
-// fragment. Every step derives from stable identifiers so the exposed name
-// never depends on registry iteration order.
 func resolveExposedNames(items []exposedName) []string {
 	counts := make(map[string]int, len(items))
 	for _, it := range items {

@@ -77,9 +77,6 @@ func (XFCCExtractor) FromXFCC(header string) (*x509.Certificate, error) {
 	return CertFromXFCC(header)
 }
 
-// CertFromXFCC parses the entry appended by the proxy closest to the gateway
-// (the last comma-separated entry, per Envoy's APPEND_FORWARD semantics);
-// earlier entries traveled through untrusted hops and may be attacker-supplied.
 func CertFromXFCC(header string) (*x509.Certificate, error) {
 	if header == "" {
 		return nil, fmt.Errorf("%w: empty %s header", ErrInvalidCertificate, HeaderXFCC)

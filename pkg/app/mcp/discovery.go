@@ -106,10 +106,6 @@ func discoverCached[T any](
 	return items, nil
 }
 
-// discoveryKey scopes cached listings per principal whenever the upstream
-// sees a user-specific credential (passthrough/exchange/forwarded): those
-// servers may expose different tools per user, so sharing one cache entry
-// across principals would leak metadata between users.
 func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string) (string, bool) {
 	key := kind + ":" + reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000")
 	if !perPrincipalAuth(reg) {

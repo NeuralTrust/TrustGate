@@ -30,8 +30,6 @@ func NewWeightedRoundRobin(registries []*registry.Registry) *WeightedRoundRobin 
 	}
 }
 
-// effectiveWeight treats unset/zero weights as 1 so that registries created
-// without an explicit weight still receive traffic under WRR.
 func effectiveWeight(b *registry.Registry) int {
 	if b.Weight <= 0 {
 		return 1

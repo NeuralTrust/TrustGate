@@ -41,9 +41,6 @@ type CodeGrant struct {
 	Token         map[string]any `json:"token"`
 }
 
-// RegisteredGatewayClient is an MCP client registered against the gateway's
-// own DCR endpoint; its redirect URIs are the allowlist enforced at
-// /oauth/authorize.
 type RegisteredGatewayClient struct {
 	ClientID     string   `json:"client_id"`
 	RedirectURIs []string `json:"redirect_uris"`

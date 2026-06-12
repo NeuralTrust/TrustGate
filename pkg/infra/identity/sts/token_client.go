@@ -55,9 +55,6 @@ func (c *TokenClient) tokenEndpointFor(ctx context.Context, issuer string) (stri
 
 	endpoint := c.discoverTokenEndpoint(ctx, issuer)
 	if endpoint == "" {
-		// The form carries client credentials, so they must never be POSTed
-		// to a guessed URL. Entra is the one IdP with a fixed, documented
-		// convention and no discovery quirks worth failing over.
 		if fb, ok := entraTokenEndpoint(issuer); ok {
 			return fb, nil
 		}

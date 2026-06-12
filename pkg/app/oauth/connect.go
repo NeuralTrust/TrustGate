@@ -69,8 +69,6 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 			status.AccountRef = cred.AccountRef
 			status.ExpiresAt = cred.ExpiresAt
 		case !errors.Is(err, vaultdomain.ErrNotFound):
-			// A transient vault failure must not render the provider as
-			// unlinked and push the user through a redundant consent flow.
 			return nil, fmt.Errorf("oauth connect: check linked credential: %w", err)
 		}
 		page.Providers = append(page.Providers, status)

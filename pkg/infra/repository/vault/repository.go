@@ -121,9 +121,6 @@ func (r *Repository) scan(row pgx.Row) (*domain.Credential, error) {
 		&access, &refresh, &scopesJSON, &expiresAt, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return nil, err
 	}
-	// An undecryptable credential (rotated SERVER_SECRET_KEY, corrupt
-	// ciphertext) is permanently unusable: surfacing it as ErrNotFound lets
-	// callers route the user back through consent instead of a hard error.
 	var err error
 	if c.AccessToken, err = r.cipher.Decrypt(access); err != nil {
 		return nil, fmt.Errorf("%w: undecryptable access token for %s/%s: %v",
