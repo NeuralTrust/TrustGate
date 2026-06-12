@@ -62,6 +62,31 @@ func (p *authProxy) pendingAuth(ctx context.Context, pending *PendingAuthorizati
 	return p.authForResource(ctx, pending.Resource)
 }
 
+
+func (p *authProxy) validateClientRedirect(ctx context.Context, clientID, redirectURI string) error {
+	if clientID != "" && p.store != nil {
+		client, err := p.store.GetGatewayClient(ctx, clientID)
+		if err != nil {
+			return fmt.Errorf("oauth: load client registration: %w", err)
+		}
+		if client != nil {
+			for _, allowed := range client.RedirectURIs {
+				if allowed == redirectURI {
+					return nil
+				}
+			}
+			return oauthErr("invalid_request", "redirect_uri is not registered for this client")
+		}
+	}
+	if !p.knownClientID(ctx, clientID) {
+		return oauthErr("invalid_client", "unknown client_id; register via /oauth/register")
+	}
+	if !IsAcceptableRedirectURI(redirectURI) {
+		return oauthErr("invalid_request", "redirect_uri must be an https URL or an http loopback URL without a fragment")
+	}
+	return nil
+}
+
 func (p *authProxy) knownClientID(ctx context.Context, clientID string) bool {
 	if clientID == "" {
 		return true

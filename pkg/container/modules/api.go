@@ -80,8 +80,8 @@ func API(c *container.Container) error {
 	if err := c.Provide(middleware.NewOAuthChallengeMiddleware); err != nil {
 		return err
 	}
-	if err := c.Provide(func(credentials appauth.CredentialFinder, paths appconsumer.PathResolver) appoauth.MetadataService {
-		return appoauth.NewMetadataService(credentials, paths, nil)
+	if err := c.Provide(func(credentials appauth.CredentialFinder, paths appconsumer.PathResolver, store appoauth.FlowStore) appoauth.MetadataService {
+		return appoauth.NewMetadataService(credentials, paths, nil, store)
 	}); err != nil {
 		return err
 	}

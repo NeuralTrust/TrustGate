@@ -41,11 +41,22 @@ type CodeGrant struct {
 	Token         map[string]any `json:"token"`
 }
 
+// RegisteredGatewayClient is an MCP client registered against the gateway's
+// own DCR endpoint; its redirect URIs are the allowlist enforced at
+// /oauth/authorize.
+type RegisteredGatewayClient struct {
+	ClientID     string   `json:"client_id"`
+	RedirectURIs []string `json:"redirect_uris"`
+	ClientName   string   `json:"client_name,omitempty"`
+}
+
 type FlowStore interface {
 	SavePending(ctx context.Context, state string, p PendingAuthorization) error
 	TakePending(ctx context.Context, state string) (*PendingAuthorization, error)
 	SaveCode(ctx context.Context, code string, g CodeGrant) error
 	TakeCode(ctx context.Context, code string) (*CodeGrant, error)
+	SaveGatewayClient(ctx context.Context, c RegisteredGatewayClient) error
+	GetGatewayClient(ctx context.Context, clientID string) (*RegisteredGatewayClient, error)
 }
 
 type AuthorizeRequest struct {

@@ -3,6 +3,7 @@ package oauth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
@@ -37,7 +38,7 @@ func TestProtectedResourceMetadata(t *testing.T) {
 		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com", RequiredScopes: []string{"mcp:use", "openid"}}),
 		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com", RequiredScopes: []string{"mcp:use"}}),
 	}}
-	svc := NewMetadataService(finder, nil, nil)
+	svc := NewMetadataService(finder, nil, nil, newMemFlowStore())
 
 	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/v1/mcp/dev")
 	if err != nil {
@@ -68,7 +69,7 @@ func TestProtectedResourceMetadataScopedByResource(t *testing.T) {
 	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
 		"/v1/mcp/tenant-b": {{GatewayID: authB.GatewayID, Auths: []*authdomain.Auth{authB}}},
 	}}
-	svc := NewMetadataService(finder, paths, nil)
+	svc := NewMetadataService(finder, paths, nil, newMemFlowStore())
 
 	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com/v1/mcp/tenant-b")
 	if err != nil {
@@ -90,7 +91,7 @@ func TestProtectedResourceMetadataScopedByResource(t *testing.T) {
 
 func TestProtectedResourceMetadataWithoutIdP(t *testing.T) {
 	t.Parallel()
-	svc := NewMetadataService(&fakeCredentialFinder{}, nil, nil)
+	svc := NewMetadataService(&fakeCredentialFinder{}, nil, nil, newMemFlowStore())
 	meta, err := svc.ProtectedResource(context.Background(), "https://gw.example.com", "https://gw.example.com")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -105,7 +106,7 @@ func TestAuthorizationServerMetadataIsGatewayFacade(t *testing.T) {
 	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
 		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", RequiredScopes: []string{"mcp.access"}}),
 	}}
-	svc := NewMetadataService(finder, nil, nil)
+	svc := NewMetadataService(finder, nil, nil, newMemFlowStore())
 
 	doc, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com")
 	if err != nil {
@@ -128,7 +129,7 @@ func TestAuthorizationServerMetadataIsGatewayFacade(t *testing.T) {
 func TestAuthorizationServerMetadataErrors(t *testing.T) {
 	t.Parallel()
 
-	svc := NewMetadataService(&fakeCredentialFinder{}, nil, nil)
+	svc := NewMetadataService(&fakeCredentialFinder{}, nil, nil, newMemFlowStore())
 	if _, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com"); !errors.Is(err, ErrNoAuthorizationServer) {
 		t.Fatalf("expected ErrNoAuthorizationServer, got %v", err)
 	}
@@ -139,7 +140,7 @@ func TestAuthorizationServerMetadataErrors(t *testing.T) {
 	svc = NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{
 		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com"}),
 		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com"}),
-	}}, nil, nil)
+	}}, nil, nil, newMemFlowStore())
 	doc, err := svc.AuthorizationServer(context.Background(), "https://gw.example.com")
 	if err != nil {
 		t.Fatalf("expected metadata with multiple issuers, got %v", err)
@@ -155,7 +156,8 @@ func TestRegisterClient(t *testing.T) {
 		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com"}), // no client_id, skipped
 		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com", ClientID: "mcp-public-client"}),
 	}}
-	svc := NewMetadataService(finder, nil, nil)
+	store := newMemFlowStore()
+	svc := NewMetadataService(finder, nil, nil, store)
 
 	res, err := svc.RegisterClient(context.Background(), RegisterRequest{
 		RedirectURIs: []string{"cursor://anysphere.cursor-mcp/oauth/callback"},
@@ -164,8 +166,8 @@ func TestRegisterClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.ClientID != "mcp-public-client" {
-		t.Fatalf("unexpected client_id: %s", res.ClientID)
+	if !strings.HasPrefix(res.ClientID, "agw-") {
+		t.Fatalf("expected a gateway-issued client_id, got %s", res.ClientID)
 	}
 	if res.TokenEndpointAuthMethod != "none" {
 		t.Fatalf("expected public client, got %s", res.TokenEndpointAuthMethod)
@@ -173,13 +175,39 @@ func TestRegisterClient(t *testing.T) {
 	if len(res.RedirectURIs) != 1 || res.RedirectURIs[0] != "cursor://anysphere.cursor-mcp/oauth/callback" {
 		t.Fatalf("expected redirect_uris echoed, got %v", res.RedirectURIs)
 	}
+	saved, err := store.GetGatewayClient(context.Background(), res.ClientID)
+	if err != nil || saved == nil {
+		t.Fatalf("expected persisted registration, got %v (err %v)", saved, err)
+	}
+	if saved.RedirectURIs[0] != "cursor://anysphere.cursor-mcp/oauth/callback" {
+		t.Fatalf("persisted redirect_uris = %v", saved.RedirectURIs)
+	}
+}
+
+func TestRegisterClientRejectsUnsafeRedirects(t *testing.T) {
+	t.Parallel()
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{
+		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com", ClientID: "mcp-public-client"}),
+	}}
+	svc := NewMetadataService(finder, nil, nil, newMemFlowStore())
+
+	for _, uri := range []string{
+		"http://attacker.example.com/cb",
+		"javascript:alert(1)",
+		"https://ok.example.com/cb#frag",
+		"",
+	} {
+		if _, err := svc.RegisterClient(context.Background(), RegisterRequest{RedirectURIs: []string{uri}}); err == nil {
+			t.Fatalf("expected rejection for redirect uri %q", uri)
+		}
+	}
 }
 
 func TestRegisterClientUnavailable(t *testing.T) {
 	t.Parallel()
 	svc := NewMetadataService(&fakeCredentialFinder{oauth2: []*authdomain.Auth{
 		oauth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp.example.com"}),
-	}}, nil, nil)
+	}}, nil, nil, newMemFlowStore())
 	if _, err := svc.RegisterClient(context.Background(), RegisterRequest{}); !errors.Is(err, ErrRegistrationUnavailable) {
 		t.Fatalf("expected ErrRegistrationUnavailable, got %v", err)
 	}

@@ -83,10 +83,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	return existing, nil
 }
 
-// applyMCPTargetUpdate merges the incoming mcp_target over the stored one so
-// a partial payload (e.g. only url) does not silently wipe transport, headers
-// or the auth block with its credentials. Auth is cleared explicitly with
-// {"mode": "none"}; headers with an empty object.
 func applyMCPTargetUpdate(existing *domain.Registry, in UpdateInput) {
 	if in.MCPTarget == nil {
 		return

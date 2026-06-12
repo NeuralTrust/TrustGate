@@ -68,7 +68,7 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 	}
 	origin := u.Scheme + "://" + u.Host
 
-	var prm struct {
+	type protectedResourceMeta struct {
 		Resource             string   `json:"resource"`
 		AuthorizationServers []string `json:"authorization_servers"`
 		ScopesSupported      []string `json:"scopes_supported"`
@@ -78,9 +78,14 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 		candidates = append(candidates, origin+"/.well-known/oauth-protected-resource"+p)
 	}
 	candidates = append(candidates, origin+"/.well-known/oauth-protected-resource")
+	var prm protectedResourceMeta
 	found := false
 	for _, c := range candidates {
-		if err := r.getJSON(ctx, c, &prm); err == nil && len(prm.AuthorizationServers) > 0 {
+		// Fresh struct per candidate: a partial decode from a previous
+		// endpoint must not bleed fields into the next attempt.
+		var attempt protectedResourceMeta
+		if err := r.getJSON(ctx, c, &attempt); err == nil && len(attempt.AuthorizationServers) > 0 {
+			prm = attempt
 			found = true
 			break
 		}
@@ -104,7 +109,9 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 	}
 	ok := false
 	for _, c := range asCandidates {
-		if err := r.getJSON(ctx, c, &doc); err == nil && doc.AuthorizationEndpoint != "" && doc.TokenEndpoint != "" {
+		var attempt appoauth.UpstreamAuthServer
+		if err := r.getJSON(ctx, c, &attempt); err == nil && attempt.AuthorizationEndpoint != "" && attempt.TokenEndpoint != "" {
+			doc = attempt
 			ok = true
 			break
 		}

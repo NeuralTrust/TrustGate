@@ -25,7 +25,8 @@ func (h *RegisterHandler) Handle(c *fiber.Ctx) error {
 	}
 	res, err := h.metadata.RegisterClient(c.UserContext(), req)
 	if err != nil {
-		if errors.Is(err, appoauth.ErrRegistrationUnavailable) {
+		var oauthErr *appoauth.OAuthError
+		if errors.Is(err, appoauth.ErrRegistrationUnavailable) || errors.As(err, &oauthErr) {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 		return helpers.WriteError(c, err)

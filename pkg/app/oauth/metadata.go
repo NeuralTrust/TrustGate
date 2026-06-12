@@ -57,6 +57,7 @@ type metadataService struct {
 	credentials appauth.CredentialFinder
 	paths       appconsumer.PathResolver
 	client      *http.Client
+	clients     FlowStore
 
 	mu      sync.Mutex
 	asCache map[string]asCacheEntry
@@ -67,11 +68,11 @@ type asCacheEntry struct {
 	fetchedAt time.Time
 }
 
-func NewMetadataService(credentials appauth.CredentialFinder, paths appconsumer.PathResolver, client *http.Client) MetadataService {
+func NewMetadataService(credentials appauth.CredentialFinder, paths appconsumer.PathResolver, client *http.Client, clients FlowStore) MetadataService {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &metadataService{credentials: credentials, paths: paths, client: client, asCache: map[string]asCacheEntry{}}
+	return &metadataService{credentials: credentials, paths: paths, client: client, clients: clients, asCache: map[string]asCacheEntry{}}
 }
 
 func (s *metadataService) ProtectedResource(ctx context.Context, baseURL, resource string) (*ProtectedResourceMetadata, error) {
@@ -140,26 +141,75 @@ func (s *metadataService) AuthorizationServer(ctx context.Context, baseURL strin
 	return doc, nil
 }
 
+// RegisterClient issues a gateway-local client_id and persists the client's
+// redirect URIs so /oauth/authorize can enforce them as an exact allowlist.
 func (s *metadataService) RegisterClient(ctx context.Context, req RegisterRequest) (*RegisterResponse, error) {
 	auths, err := s.credentials.OAuth2Auths(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
 	}
-	for _, a := range auths {
-		cfg := a.Config.OAuth2
-		if cfg == nil || cfg.ClientID == "" {
-			continue
-		}
-		return &RegisterResponse{
-			ClientID:                cfg.ClientID,
-			RedirectURIs:            req.RedirectURIs,
-			ClientName:              req.ClientName,
-			GrantTypes:              []string{"authorization_code", "refresh_token"},
-			ResponseTypes:           []string{"code"},
-			TokenEndpointAuthMethod: "none",
-		}, nil
+	if !hasUpstreamClient(auths) {
+		return nil, ErrRegistrationUnavailable
 	}
-	return nil, ErrRegistrationUnavailable
+	if len(req.RedirectURIs) == 0 {
+		return nil, oauthErr("invalid_client_metadata", "redirect_uris is required")
+	}
+	for _, uri := range req.RedirectURIs {
+		if !IsAcceptableRedirectURI(uri) {
+			return nil, oauthErr("invalid_redirect_uri",
+				fmt.Sprintf("%q must be an https URL or an http loopback URL without a fragment", uri))
+		}
+	}
+	suffix, err := randomToken()
+	if err != nil {
+		return nil, err
+	}
+	client := RegisteredGatewayClient{
+		ClientID:     "agw-" + suffix,
+		RedirectURIs: req.RedirectURIs,
+		ClientName:   req.ClientName,
+	}
+	if s.clients != nil {
+		if err := s.clients.SaveGatewayClient(ctx, client); err != nil {
+			return nil, fmt.Errorf("oauth: persist client registration: %w", err)
+		}
+	}
+	return &RegisterResponse{
+		ClientID:                client.ClientID,
+		RedirectURIs:            client.RedirectURIs,
+		ClientName:              client.ClientName,
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		ResponseTypes:           []string{"code"},
+		TokenEndpointAuthMethod: "none",
+	}, nil
+}
+
+func hasUpstreamClient(auths []*authdomain.Auth) bool {
+	for _, a := range auths {
+		if cfg := a.Config.OAuth2; cfg != nil && cfg.ClientID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// IsAcceptableRedirectURI enforces OAuth 2.1 redirect rules for public
+func IsAcceptableRedirectURI(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Fragment != "" {
+		return false
+	}
+	switch u.Scheme {
+	case "https":
+		return u.Host != ""
+	case "http":
+		host := u.Hostname()
+		return host == "localhost" || host == "127.0.0.1" || host == "::1"
+	case "", "javascript", "data", "file", "vbscript", "blob":
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *metadataService) fetchASMetadata(ctx context.Context, issuer string) (map[string]any, error) {

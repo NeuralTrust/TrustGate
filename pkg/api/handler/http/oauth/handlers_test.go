@@ -24,8 +24,43 @@ func (f *fakeCredentialFinder) MTLSAuths(context.Context) ([]*authdomain.Auth, e
 	return nil, nil
 }
 
+type memFlowStore struct {
+	clients map[string]appoauth.RegisteredGatewayClient
+}
+
+func newMemFlowStore() *memFlowStore {
+	return &memFlowStore{clients: map[string]appoauth.RegisteredGatewayClient{}}
+}
+
+func (s *memFlowStore) SavePending(context.Context, string, appoauth.PendingAuthorization) error {
+	return nil
+}
+
+func (s *memFlowStore) TakePending(context.Context, string) (*appoauth.PendingAuthorization, error) {
+	return nil, nil
+}
+
+func (s *memFlowStore) SaveCode(context.Context, string, appoauth.CodeGrant) error { return nil }
+
+func (s *memFlowStore) TakeCode(context.Context, string) (*appoauth.CodeGrant, error) {
+	return nil, nil
+}
+
+func (s *memFlowStore) SaveGatewayClient(_ context.Context, c appoauth.RegisteredGatewayClient) error {
+	s.clients[c.ClientID] = c
+	return nil
+}
+
+func (s *memFlowStore) GetGatewayClient(_ context.Context, id string) (*appoauth.RegisteredGatewayClient, error) {
+	c, ok := s.clients[id]
+	if !ok {
+		return nil, nil
+	}
+	return &c, nil
+}
+
 func newTestApp(auths ...*authdomain.Auth) *fiber.App {
-	svc := appoauth.NewMetadataService(&fakeCredentialFinder{oauth2: auths}, nil, nil)
+	svc := appoauth.NewMetadataService(&fakeCredentialFinder{oauth2: auths}, nil, nil, newMemFlowStore())
 	app := fiber.New()
 	pr := NewProtectedResourceHandler(svc)
 	app.Get(WellKnownProtectedResourcePath, pr.Handle)
@@ -102,8 +137,8 @@ func TestRegisterHandler(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if out.ClientID != "mcp-public-client" {
-		t.Fatalf("unexpected client_id %q", out.ClientID)
+	if !strings.HasPrefix(out.ClientID, "agw-") {
+		t.Fatalf("expected gateway-issued client_id, got %q", out.ClientID)
 	}
 }
 

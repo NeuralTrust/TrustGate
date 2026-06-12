@@ -2,10 +2,12 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"net/url"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
 )
 
 func (s *connectService) ChainURL(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource, principalSub, resumeURL string) (string, error) {
@@ -52,13 +54,16 @@ func (s *connectService) chainTarget(ctx context.Context, data *appconsumer.Data
 	return nil
 }
 
+// hasUnlinked treats only a definitive ErrNotFound as "needs consent": a
+// transient vault failure must not detour the user through a consent page
+// for providers they already linked.
 func (s *connectService) hasUnlinked(ctx context.Context, gatewayID ids.GatewayID, rc *appconsumer.RoutableConsumer, principalSub string) bool {
 	for _, reg := range rc.Registries {
 		cfg := forwardedAuth(reg)
 		if cfg == nil {
 			continue
 		}
-		if _, err := s.vault.Find(ctx, gatewayID, principalSub, cfg.Provider); err != nil {
+		if _, err := s.vault.Find(ctx, gatewayID, principalSub, cfg.Provider); errors.Is(err, vaultdomain.ErrNotFound) {
 			return true
 		}
 	}

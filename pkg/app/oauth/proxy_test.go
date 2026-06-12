@@ -21,10 +21,32 @@ type memFlowStore struct {
 	mu      sync.Mutex
 	pending map[string]PendingAuthorization
 	codes   map[string]CodeGrant
+	clients map[string]RegisteredGatewayClient
 }
 
 func newMemFlowStore() *memFlowStore {
-	return &memFlowStore{pending: map[string]PendingAuthorization{}, codes: map[string]CodeGrant{}}
+	return &memFlowStore{
+		pending: map[string]PendingAuthorization{},
+		codes:   map[string]CodeGrant{},
+		clients: map[string]RegisteredGatewayClient{},
+	}
+}
+
+func (s *memFlowStore) SaveGatewayClient(_ context.Context, c RegisteredGatewayClient) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clients[c.ClientID] = c
+	return nil
+}
+
+func (s *memFlowStore) GetGatewayClient(_ context.Context, clientID string) (*RegisteredGatewayClient, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.clients[clientID]
+	if !ok {
+		return nil, nil
+	}
+	return &c, nil
 }
 
 func (s *memFlowStore) SavePending(_ context.Context, state string, p PendingAuthorization) error {
@@ -241,6 +263,58 @@ func TestExchangeRejectsRedirectMismatch(t *testing.T) {
 	var oe *OAuthError
 	if !errors.As(err, &oe) || oe.Code != "invalid_grant" {
 		t.Fatalf("expected invalid_grant, got %v", err)
+	}
+}
+
+func TestAuthorizeEnforcesRegisteredRedirectURIs(t *testing.T) {
+	t.Parallel()
+	idp, _ := fakeIdP(t)
+	store := newMemFlowStore()
+	_ = store.SaveGatewayClient(context.Background(), RegisteredGatewayClient{
+		ClientID:     "agw-abc",
+		RedirectURIs: []string{"cursor://anysphere.cursor-mcp/oauth/callback"},
+	})
+	proxy := newProxyUnderTest(t, idp.URL, store)
+
+	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "agw-abc",
+		RedirectURI:         "https://attacker.example.com/cb",
+		CodeChallenge:       s256("v"),
+		CodeChallengeMethod: "S256",
+	})
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
+		t.Fatalf("expected invalid_request for unregistered redirect_uri, got %v", err)
+	}
+
+	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "agw-abc",
+		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
+		CodeChallenge:       s256("v"),
+		CodeChallengeMethod: "S256",
+	})
+	if err != nil || !strings.HasPrefix(location, idp.URL+"/authorize?") {
+		t.Fatalf("registered redirect_uri must pass: %v (%s)", err, location)
+	}
+}
+
+func TestAuthorizeRejectsUnsafeRedirectForUnregisteredClients(t *testing.T) {
+	t.Parallel()
+	idp, _ := fakeIdP(t)
+	proxy := newProxyUnderTest(t, idp.URL, newMemFlowStore())
+
+	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "gw-client-id",
+		RedirectURI:         "http://attacker.example.com/cb",
+		CodeChallenge:       s256("v"),
+		CodeChallengeMethod: "S256",
+	})
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
+		t.Fatalf("expected invalid_request for non-loopback http redirect, got %v", err)
 	}
 }
 

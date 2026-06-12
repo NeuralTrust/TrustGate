@@ -12,10 +12,12 @@ import (
 )
 
 const (
-	pendingPrefix = "oauth:pending:"
-	codePrefix    = "oauth:code:"
-	pendingTTL    = 10 * time.Minute
-	codeTTL       = 5 * time.Minute
+	pendingPrefix       = "oauth:pending:"
+	codePrefix          = "oauth:code:"
+	gatewayClientPrefix = "oauth:gwclient:"
+	pendingTTL          = 10 * time.Minute
+	codeTTL             = 5 * time.Minute
+	gatewayClientTTL    = 30 * 24 * time.Hour
 )
 
 var _ appoauth.FlowStore = (*Store)(nil)
@@ -52,6 +54,27 @@ func (s *Store) TakeCode(ctx context.Context, code string) (*appoauth.CodeGrant,
 		return nil, err
 	}
 	return &g, nil
+}
+
+func (s *Store) SaveGatewayClient(ctx context.Context, c appoauth.RegisteredGatewayClient) error {
+	return s.save(ctx, gatewayClientPrefix+c.ClientID, c, gatewayClientTTL)
+}
+
+func (s *Store) GetGatewayClient(ctx context.Context, clientID string) (*appoauth.RegisteredGatewayClient, error) {
+	raw, err := s.rdb.Get(ctx, gatewayClientPrefix+clientID).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("oauth flow store: get client: %w", err)
+	}
+	var c appoauth.RegisteredGatewayClient
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return nil, fmt.Errorf("oauth flow store: decode client: %w", err)
+	}
+	// Sliding expiry: active clients stay registered without re-running DCR.
+	_ = s.rdb.Expire(ctx, gatewayClientPrefix+clientID, gatewayClientTTL).Err()
+	return &c, nil
 }
 
 func (s *Store) save(ctx context.Context, key string, v any, ttl time.Duration) error {

@@ -63,8 +63,8 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 		return "", err
 	}
 	cfg := auth.Config.OAuth2
-	if !p.knownClientID(ctx, req.ClientID) {
-		return "", oauthErr("invalid_client", "unknown client_id; register via /oauth/register")
+	if err := p.validateClientRedirect(ctx, req.ClientID, req.RedirectURI); err != nil {
+		return "", err
 	}
 	endpoints, err := p.idpEndpoints(ctx, cfg.Issuer)
 	if err != nil {
