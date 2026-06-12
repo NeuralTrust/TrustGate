@@ -51,8 +51,9 @@ type exchanger struct {
 	credentials appauth.CredentialFinder
 	client      *http.Client
 
-	mu    sync.Mutex
-	cache map[string]*Token
+	mu        sync.Mutex
+	cache     map[string]*Token
+	lastSweep time.Time
 
 	epMu      sync.Mutex
 	endpoints map[string]endpointEntry
@@ -109,9 +110,28 @@ func (e *exchanger) Exchange(ctx context.Context, principal *identity.Principal,
 		return nil, err
 	}
 	e.mu.Lock()
+	e.sweepLocked()
 	e.cache[cacheKey] = token
 	e.mu.Unlock()
 	return token, nil
+}
+
+const cacheSweepInterval = time.Minute
+
+// sweepLocked drops expired tokens at most once per cacheSweepInterval; the
+// cache is keyed per (principal x target), so without eviction it grows
+// unbounded with the tenant population. Callers must hold e.mu.
+func (e *exchanger) sweepLocked() {
+	now := time.Now()
+	if now.Sub(e.lastSweep) < cacheSweepInterval {
+		return
+	}
+	e.lastSweep = now
+	for k, t := range e.cache {
+		if now.After(t.ExpiresAt) {
+			delete(e.cache, k)
+		}
+	}
 }
 
 // mint issues a TrustGate-signed JWT: same subject, target audience, and for
@@ -288,6 +308,9 @@ func (e *exchanger) idpTokenCall(ctx context.Context, endpoint string, form url.
 			return nil, fmt.Errorf("%w: %s", ErrInteractionRequired, doc.ErrorDesc)
 		}
 		return nil, fmt.Errorf("sts: IdP exchange failed (%s): %s", doc.Error, doc.ErrorDesc)
+	}
+	if doc.AccessToken == "" {
+		return nil, fmt.Errorf("sts: IdP returned 200 with no access_token")
 	}
 	ttl := time.Duration(doc.ExpiresIn) * time.Second
 	if ttl <= 0 {

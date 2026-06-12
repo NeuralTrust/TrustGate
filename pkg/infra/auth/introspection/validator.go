@@ -28,6 +28,9 @@ const (
 	// maxTTL bounds cache entries so revocation is observed within this window
 	// even for long-lived tokens.
 	maxTTL = 5 * time.Minute
+	// sweepInterval bounds how often expired entries are purged; without a
+	// sweep the cache grows for every distinct token ever seen.
+	sweepInterval = time.Minute
 )
 
 type result struct {
@@ -49,8 +52,9 @@ type cacheEntry struct {
 type Validator struct {
 	client *http.Client
 
-	mu    sync.Mutex
-	cache map[string]cacheEntry
+	mu        sync.Mutex
+	cache     map[string]cacheEntry
+	lastSweep time.Time
 }
 
 func NewValidator(client *http.Client) *Validator {
@@ -130,18 +134,39 @@ func (v *Validator) introspect(ctx context.Context, raw string, cfg *authdomain.
 		return result{}, fmt.Errorf("introspection: decode response: %w", err)
 	}
 
+	// Cache for the token's remaining lifetime, clamped to maxTTL so
+	// revocation is observed; fallbackTTL covers responses without exp.
 	ttl := fallbackTTL
 	if res.Exp > 0 {
-		if until := time.Until(time.Unix(res.Exp, 0)); until > 0 && until < ttl {
-			ttl = until
-		} else if until > maxTTL {
-			ttl = maxTTL
-		}
+		ttl = time.Until(time.Unix(res.Exp, 0))
+	}
+	if ttl > maxTTL {
+		ttl = maxTTL
+	}
+	if ttl <= 0 {
+		return res, nil
 	}
 	v.mu.Lock()
+	v.sweepLocked()
 	v.cache[key] = cacheEntry{res: res, expiresAt: time.Now().Add(ttl)}
 	v.mu.Unlock()
 	return res, nil
+}
+
+// sweepLocked drops expired entries at most once per sweepInterval; expired
+// entries were previously only skipped on read, never deleted, so the cache
+// leaked one entry per distinct token forever. Callers must hold v.mu.
+func (v *Validator) sweepLocked() {
+	now := time.Now()
+	if now.Sub(v.lastSweep) < sweepInterval {
+		return
+	}
+	v.lastSweep = now
+	for k, e := range v.cache {
+		if now.After(e.expiresAt) {
+			delete(v.cache, k)
+		}
+	}
 }
 
 // audMatch handles RFC 7662 aud being either a string or an array.

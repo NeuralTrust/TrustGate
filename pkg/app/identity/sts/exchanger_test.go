@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
@@ -268,6 +269,33 @@ func TestExchanger_TokenEndpoint_ResolvedViaDiscovery(t *testing.T) {
 	}
 	if discoveryCalls != 1 {
 		t.Fatalf("discovery calls = %d, want 1 (cached)", discoveryCalls)
+	}
+}
+
+func TestExchanger_CacheSweepsExpiredTokens(t *testing.T) {
+	t.Parallel()
+	signer := newTestSigner(t)
+	ex := NewExchanger(signer, &stubCredentials{}, nil).(*exchanger)
+	now := time.Now()
+	ex.cache["stale"] = &Token{AccessToken: "old", ExpiresAt: now.Add(-time.Minute)}
+	ex.lastSweep = now.Add(-2 * cacheSweepInterval)
+
+	cfg := &registrydomain.MCPAuth{
+		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeImpersonation,
+		Audience: "https://up.example.com",
+	}
+	if _, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "fresh"); err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	ex.mu.Lock()
+	_, staleAlive := ex.cache["stale"]
+	_, freshAlive := ex.cache["fresh"]
+	ex.mu.Unlock()
+	if staleAlive {
+		t.Fatal("expired cache entry not purged on insert")
+	}
+	if !freshAlive {
+		t.Fatal("fresh entry must be cached")
 	}
 }
 
