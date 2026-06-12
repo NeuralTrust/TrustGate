@@ -17,9 +17,9 @@ import (
 )
 
 var (
-	ErrNoAuthorizationServer = errors.New("oauth: no authorization server configured")
+	ErrNoAuthorizationServer        = errors.New("oauth: no authorization server configured")
 	ErrAmbiguousAuthorizationServer = errors.New("oauth: multiple authorization servers configured")
-	ErrRegistrationUnavailable = errors.New("oauth: dynamic client registration unavailable")
+	ErrRegistrationUnavailable      = errors.New("oauth: dynamic client registration unavailable")
 )
 
 const asMetadataTTL = time.Hour

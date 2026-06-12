@@ -21,20 +21,6 @@ type ListRegistryToolsResponse struct {
 	Tools []appmcp.Tool `json:"tools"`
 }
 
-// Handle godoc
-// @Summary      List the tools of an MCP registry
-// @Description  Connects to the upstream MCP server and returns its discoverable tools, for building consumer toolkits.
-// @Tags         registries
-// @Produce      json
-// @Security     BearerAuth
-// @Param        gateway_id  path      string  true  "Gateway id"   format(uuid)
-// @Param        id          path      string  true  "Registry id"  format(uuid)
-// @Success      200         {object}  ListRegistryToolsResponse
-// @Failure      400         {object}  helpers.ErrorBody
-// @Failure      401         {object}  helpers.ErrorBody
-// @Failure      404         {object}  helpers.ErrorBody
-// @Failure      502         {object}  helpers.ErrorBody
-// @Router       /v1/gateways/{gateway_id}/registries/{id}/tools [get]
 func (h *ListRegistryToolsHandler) Handle(c *fiber.Ctx) error {
 	gatewayID, id, err := helpers.ParseGatewayScopedID[ids.RegistryKind](c)
 	if err != nil {

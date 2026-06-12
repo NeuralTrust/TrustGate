@@ -24,8 +24,6 @@ func TestFallbackTokenEndpoint(t *testing.T) {
 	}
 }
 
-// Regression for non-Entra/Okta IdPs (Keycloak, Auth0...): the token endpoint
-// must come from OIDC discovery, not from a URL convention guess.
 func TestTokenClient_EndpointResolvedViaDiscoveryAndCached(t *testing.T) {
 	t.Parallel()
 	var tokenPathHit string
@@ -89,8 +87,6 @@ func TestTokenClient_RejectsEmptyAccessTokenOn200(t *testing.T) {
 	}
 }
 
-// newIdPStub serves both the discovery document and the token endpoint with
-// the given token handler, returning the issuer URL.
 func newIdPStub(t *testing.T, token http.HandlerFunc) string {
 	t.Helper()
 	mux := http.NewServeMux()

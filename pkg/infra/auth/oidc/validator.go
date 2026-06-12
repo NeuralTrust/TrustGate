@@ -17,9 +17,6 @@ var ErrInvalidToken = errors.New("oidc: invalid token")
 
 const clockSkew = 60 * time.Second
 
-// defaultAlgorithms covers the asymmetric algorithms major IdPs sign with.
-// Symmetric algorithms (HS*) are deliberately excluded: inbound tokens are
-// validated against public keys only.
 var defaultAlgorithms = []string{
 	"RS256", "RS384", "RS512",
 	"PS256", "PS384", "PS512",
@@ -27,9 +24,6 @@ var defaultAlgorithms = []string{
 	"EdDSA",
 }
 
-// Validator verifies inbound JWTs against an Auth entry's OAuth2 config:
-// signature via JWKS (configured or discovered), issuer, audience, time
-// window, and required scopes.
 type Validator struct {
 	jwks      *JWKSCache
 	discovery *discovery
@@ -42,7 +36,6 @@ func NewValidator(client *http.Client) *Validator {
 	return &Validator{jwks: NewJWKSCache(client), discovery: newDiscovery(client)}
 }
 
-// Validate checks raw against cfg and returns the authenticated Principal.
 func (v *Validator) Validate(ctx context.Context, raw string, cfg *authdomain.OAuth2Config) (*identity.Principal, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("%w: no oauth2 config", ErrInvalidToken)
@@ -101,7 +94,6 @@ func (v *Validator) Validate(ctx context.Context, raw string, cfg *authdomain.OA
 	return principal, nil
 }
 
-// subjectOf prefers the IdP's stable object id (Entra `oid`) over `sub`.
 func subjectOf(claims jwt.MapClaims) string {
 	if oid, ok := claims["oid"].(string); ok && oid != "" {
 		return oid
@@ -110,10 +102,6 @@ func subjectOf(claims jwt.MapClaims) string {
 	return sub
 }
 
-// extractScopes normalizes the scope conventions across IdPs: `scp` (Entra:
-// space-delimited string; Okta: array), `scope` (RFC 8693 style), Auth0's
-// `permissions` array, and Entra app roles (`roles`, the permission claim in
-// client-credentials tokens).
 func extractScopes(claims jwt.MapClaims) []string {
 	var out []string
 	switch scp := claims["scp"].(type) {

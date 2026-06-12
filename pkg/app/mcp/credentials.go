@@ -14,16 +14,10 @@ import (
 	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
 )
 
-// ErrNoPrincipal: the target's auth mode needs a user identity that the
-// inbound credential (api_key / machine token) does not carry.
 var ErrNoPrincipal = errors.New("mcp: downstream auth mode requires an authenticated user identity")
 
-// ErrAudienceMismatch enforces the passthrough guardrail: forwarding a token
-// minted for a different audience is the MCP confused-deputy anti-pattern.
 var ErrAudienceMismatch = errors.New("mcp: inbound token audience does not match the upstream's expected audience")
 
-// ConsentRequiredError surfaces the elicitation URL: the user must link a
-// third-party account before the forwarded upstream can be reached.
 type ConsentRequiredError struct {
 	Provider string
 	Ticket   string
@@ -34,10 +28,6 @@ func (e *ConsentRequiredError) Error() string {
 	return fmt.Sprintf("user consent required to connect provider %q", e.Provider)
 }
 
-// CredentialResolver injects the downstream credential for one upstream MCP
-// target, per its auth mode (Phase 4: passthrough/exchange/forwarded; the
-// basic none/static modes are inlined in Target()).
-//
 //go:generate mockery --name=CredentialResolver --dir=. --output=./mocks --filename=mcp_credential_resolver_mock.go --case=underscore --with-expecter
 type CredentialResolver interface {
 	Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error
@@ -61,7 +51,6 @@ func NewCredentialResolver(
 	return &credentialResolver{exchanger: exchanger, vault: vault, connect: connect, provider: provider}
 }
 
-// vaultRefreshSkew refreshes vaulted tokens slightly before expiry.
 const vaultRefreshSkew = 60 * time.Second
 
 func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry, target *Target) error {
@@ -71,7 +60,7 @@ func (r *credentialResolver) Apply(ctx context.Context, rc *appconsumer.Routable
 	}
 	switch cfg.Mode {
 	case registrydomain.MCPAuthModeNone, registrydomain.MCPAuthModeStatic, "":
-		return nil // handled in Target()
+		return nil
 	case registrydomain.MCPAuthModePassthrough:
 		return r.passthrough(ctx, cfg, target)
 	case registrydomain.MCPAuthModeExchange:
@@ -100,8 +89,6 @@ func (r *credentialResolver) exchange(ctx context.Context, rc *appconsumer.Routa
 	if principal == nil {
 		return ErrNoPrincipal
 	}
-	// Strict per-principal isolation: the cache key pins subject + target +
-	// gateway so one user's token can never serve another's call.
 	cacheKey := fmt.Sprintf("%s|%s|%s", principal.Subject, reg.ID, rc.Consumer.GatewayID)
 	token, err := r.exchanger.Exchange(ctx, principal, cfg, cacheKey)
 	if err != nil {
@@ -129,15 +116,12 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		if cred.RefreshToken == "" {
 			return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject)
 		}
-		// RefreshAuth resolves the effective client: the manual app, or the
-		// DCR-registered one plus discovered endpoints in auto mode.
 		refreshCfg, err := r.connect.RefreshAuth(ctx, gatewayID, reg)
 		if err != nil {
 			return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject)
 		}
 		fresh, err := r.provider.Refresh(ctx, refreshCfg, cred.RefreshToken)
 		if err != nil {
-			// Refresh token revoked upstream: back to consent.
 			return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject)
 		}
 		cred.AccessToken = fresh.AccessToken

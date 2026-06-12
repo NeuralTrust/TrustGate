@@ -14,8 +14,6 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// upstreamStub is a real SDK MCP server that counts initialize calls and can
-// be swapped out to simulate upstream session loss.
 type upstreamStub struct {
 	srv     *httptest.Server
 	handler atomic.Pointer[http.Handler]
@@ -33,8 +31,6 @@ func newUpstreamStub(t *testing.T) *upstreamStub {
 	return u
 }
 
-// reset swaps in a fresh MCP server: previously issued session ids become
-// unknown, which is exactly what an upstream restart or session reap does.
 func (u *upstreamStub) reset() {
 	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)
 	server.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
@@ -95,7 +91,6 @@ func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
 		t.Fatalf("call: %v", err)
 	}
 
-	// Simulate upstream restart: the cached session id is now unknown.
 	upstream.reset()
 
 	up2, err := dialer.Connect(context.Background(), target)
@@ -105,8 +100,6 @@ func TestCachedDialer_RecoversFromLostUpstreamSession(t *testing.T) {
 	if _, err := up2.CallTool(context.Background(), "echo", json.RawMessage(`{}`)); err != nil {
 		t.Fatalf("call after upstream restart should re-initialize and retry: %v", err)
 	}
-	// One initialize for the first session plus exactly one re-initialize
-	// after the restart.
 	if got := upstream.inits.Load(); got != 2 {
 		t.Fatalf("expected 2 initializes in total (initial + recovery), got %d", got)
 	}

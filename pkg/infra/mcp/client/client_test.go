@@ -15,8 +15,6 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// newUpstream builds a real MCP server (official SDK) and serves it over
-// Streamable HTTP, optionally wrapping the handler with hooks.
 func newUpstream(t *testing.T, configure func(*sdk.Server), wrap func(http.Handler) http.Handler) *httptest.Server {
 	t.Helper()
 	server := sdk.NewServer(&sdk.Implementation{Name: "stub", Version: "1"}, nil)

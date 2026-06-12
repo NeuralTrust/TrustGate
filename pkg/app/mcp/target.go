@@ -9,9 +9,6 @@ import (
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
-// target builds the upstream connection target: static config (none/static
-// modes, headers, session pin key) plus the per-principal credential for the
-// passthrough/exchange/forwarded modes via the resolver.
 func (c *composer) target(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) (Target, error) {
 	t := targetFor(ctx, rc, reg)
 	if c.creds != nil {
@@ -22,9 +19,6 @@ func (c *composer) target(ctx context.Context, rc *appconsumer.RoutableConsumer,
 	return t, nil
 }
 
-// targetFor builds the upstream connection target, applying the registry's
-// downstream auth config (none/static) and the session pin key. Per-user
-// downstream modes get a per-principal pin so sessions never cross users.
 func targetFor(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) Target {
 	t := StaticTarget(reg)
 	if rc != nil && rc.Consumer != nil {
@@ -49,8 +43,6 @@ func perPrincipalAuth(reg *registrydomain.Registry) bool {
 	return false
 }
 
-// StaticTarget builds the raw connection target for an MCP registry (no
-// session pinning). Used by the composer and by admin tool introspection.
 func StaticTarget(reg *registrydomain.Registry) Target {
 	t := reg.MCPTarget
 	headers := make(map[string]string, len(t.Headers)+1)

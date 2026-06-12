@@ -34,8 +34,8 @@ const (
 )
 
 const (
-	codeConsentRequired   = -32003
-	codeResourceNotFound  = -32002
+	codeConsentRequired  = -32003
+	codeResourceNotFound = -32002
 )
 
 type Handler struct {

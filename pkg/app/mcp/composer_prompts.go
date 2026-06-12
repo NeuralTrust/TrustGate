@@ -10,8 +10,6 @@ import (
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
-// ListPrompts returns the composed prompt surface; name collisions across
-// upstreams are auto-prefixed with the registry name like tools.
 func (c *composer) ListPrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Prompt, error) {
 	bindings, err := c.composePrompts(ctx, rc)
 	if err != nil {
@@ -26,7 +24,6 @@ func (c *composer) ListPrompts(ctx context.Context, rc *appconsumer.RoutableCons
 	return out, nil
 }
 
-// GetPrompt routes an exposed prompt name to its upstream server and renders it.
 func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsumer, name string, arguments map[string]string) (json.RawMessage, error) {
 	bindings, err := c.composePrompts(ctx, rc)
 	if err != nil {
@@ -50,7 +47,6 @@ func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsum
 	return nil, fmt.Errorf("%w: %s", ErrPromptNotFound, name)
 }
 
-// promptBinding maps an exposed prompt name to its upstream registry and prompt.
 type promptBinding struct {
 	registry *registrydomain.Registry
 	prompt   Prompt
@@ -95,9 +91,6 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 	return candidates, nil
 }
 
-// selectPrompts applies the consumer toolkit to one registry's prompt list,
-// mirroring selectTools: an empty toolkit exposes everything; otherwise only
-// listed prompt entries (wildcard or exact) are exposed, with optional renames.
 func selectPrompts(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, prompts []Prompt) []promptBinding {
 	if len(toolkit) == 0 {
 		out := make([]promptBinding, 0, len(prompts))
@@ -129,7 +122,7 @@ func selectPrompts(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry,
 		}
 		p, ok := byName[e.Prompt]
 		if !ok {
-			continue // prompt disappeared upstream; expose the rest
+			continue
 		}
 		if _, dup := seen[p.Name]; dup {
 			continue

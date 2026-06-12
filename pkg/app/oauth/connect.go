@@ -122,8 +122,6 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
 	}
-	// Re-resolution is cache-hit only here: discovery and the DCR client
-	// were materialized at Start, so no secrets travel through the state.
 	cfg, err := s.effectiveAuth(ctx, baseURL, gatewayID, reg)
 	if err != nil {
 		return st.TicketID, err

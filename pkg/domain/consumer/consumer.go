@@ -122,9 +122,6 @@ type RehydrateParams struct {
 	UpdatedAt       time.Time
 }
 
-// Rehydrate reconstitutes a persisted consumer without regenerating identity
-// or timestamps. It must carry every persisted field: dropping Toolkit here
-// would silently widen an MCP consumer's allowlist (empty toolkit = expose all).
 func Rehydrate(params RehydrateParams) *Consumer {
 	return &Consumer{
 		ID:              params.ID,
@@ -197,8 +194,6 @@ func (c *Consumer) Validate() error {
 	return c.validateNonMCP()
 }
 
-// validateMCP rejects LLM-only semantics on MCP consumers and applies the
-// MCP defaults (fail mode guards partial federation results).
 func (c *Consumer) validateMCP() error {
 	if len(c.ModelPolicies) > 0 {
 		return fmt.Errorf("%w: model_policies are only valid for LLM consumers", ErrInvalidModelPolicy)
@@ -221,7 +216,6 @@ func (c *Consumer) validateMCP() error {
 	return nil
 }
 
-// validateNonMCP rejects MCP-only semantics on LLM/A2A consumers.
 func (c *Consumer) validateNonMCP() error {
 	if c.FailMode != "" {
 		return fmt.Errorf("%w: fail_mode is only valid for MCP consumers", ErrInvalidFailMode)

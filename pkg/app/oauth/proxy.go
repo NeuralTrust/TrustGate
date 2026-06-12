@@ -55,7 +55,6 @@ func (p *authProxy) Authorize(ctx context.Context, baseURL string, req Authorize
 	if req.RedirectURI == "" {
 		return "", oauthErr("invalid_request", "redirect_uri is required")
 	}
-	// OAuth 2.1: PKCE is mandatory for public clients.
 	if req.CodeChallenge == "" || (req.CodeChallengeMethod != "" && req.CodeChallengeMethod != "S256") {
 		return "", oauthErr("invalid_request", "PKCE with code_challenge_method=S256 is required")
 	}
@@ -117,7 +116,6 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 		return "", oauthErr("invalid_request", "unknown or expired authorization request")
 	}
 	if idpErr != "" {
-		// The IdP denied the flow (e.g. user cancelled consent): relay to the client.
 		return clientRedirect(pending.RedirectURI, url.Values{
 			"error":             {idpErr},
 			"error_description": {idpErrDesc},
@@ -168,10 +166,6 @@ func (p *authProxy) Callback(ctx context.Context, baseURL, state, code, idpErr, 
 	return resume, nil
 }
 
-// consentDetour decides whether the downstream consent UI should interrupt
-// the flow: with the user already in the browser, surface the provider links
-// (Connect Linear, ...) before handing the code back to the client.
-// Best-effort: any failure falls through to the normal redirect.
 func (p *authProxy) consentDetour(ctx context.Context, baseURL string, gatewayID ids.GatewayID, resource string, token map[string]any, resume string) string {
 	if p.chainer == nil {
 		return ""
@@ -192,9 +186,6 @@ func (p *authProxy) consentDetour(ctx context.Context, baseURL string, gatewayID
 	return detour
 }
 
-// subjectFromToken extracts the principal subject from the IdP access token,
-// preferring the stable object id (Entra oid). The token comes straight from
-// the IdP token endpoint over TLS, so it is parsed without re-verification.
 func subjectFromToken(token map[string]any) string {
 	raw, _ := token["access_token"].(string)
 	if raw == "" {
@@ -289,8 +280,6 @@ func (p *authProxy) idpEndpoints(ctx context.Context, issuer string) (*idpEndpoi
 	return &idpEndpoints{authorize: authorize, token: token}, nil
 }
 
-// idpTokenCall posts the form to the IdP token endpoint and returns the JSON
-// body. IdP OAuth errors are propagated as OAuthError.
 func (p *authProxy) idpTokenCall(ctx context.Context, endpoint string, form url.Values) (map[string]any, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {

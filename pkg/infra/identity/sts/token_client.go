@@ -16,9 +16,6 @@ import (
 
 var _ appsts.IdPTokenClient = (*TokenClient)(nil)
 
-// TokenClient implements the app IdPTokenClient port: it resolves the IdP
-// token endpoint via OIDC discovery (cached per issuer, heuristic fallback)
-// and posts token-grant forms.
 type TokenClient struct {
 	client *http.Client
 
@@ -44,11 +41,6 @@ func (c *TokenClient) Call(ctx context.Context, issuer string, form url.Values) 
 	return c.tokenCall(ctx, c.tokenEndpointFor(ctx, issuer), form)
 }
 
-// tokenEndpointFor resolves the IdP token endpoint via OIDC discovery
-// (cached per issuer). Guessing by URL convention breaks any IdP that is
-// not Entra or Okta (Auth0 uses /oauth/token, Keycloak
-// /protocol/openid-connect/token), so the heuristic is only a fallback
-// when the well-known document cannot be fetched.
 func (c *TokenClient) tokenEndpointFor(ctx context.Context, issuer string) string {
 	c.mu.Lock()
 	if ent, ok := c.endpoints[issuer]; ok && time.Since(ent.fetchedAt) < endpointTTL {
@@ -90,9 +82,6 @@ func (c *TokenClient) discoverTokenEndpoint(ctx context.Context, issuer string) 
 	return doc.TokenEndpoint
 }
 
-// fallbackTokenEndpoint derives the token endpoint from the issuer URL when
-// discovery is unavailable: Entra v2 issuers map to /oauth2/v2.0/token and
-// anything else gets the Okta org-server convention.
 func fallbackTokenEndpoint(issuer string) string {
 	base := strings.TrimSuffix(issuer, "/")
 	if strings.HasPrefix(base, "https://login.microsoftonline.com/") {

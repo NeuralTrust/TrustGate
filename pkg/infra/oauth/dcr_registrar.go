@@ -15,22 +15,14 @@ import (
 	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 )
 
-// Auto client registration (forwarded mode, registration: auto): the gateway
-// acts as a standard MCP/OAuth client toward the upstream. It discovers the
-// upstream's authorization server through RFC 9728 protected-resource
-// metadata, then registers itself via RFC 7591 Dynamic Client Registration -
-// so onboarding a spec-compliant SaaS MCP (Linear, Notion, ...) needs no
-// pre-registered OAuth app and no client secret in config.
-
 var _ appoauth.UpstreamRegistrar = (*upstreamRegistrar)(nil)
 
-// upstreamRegistrar implements the app UpstreamRegistrar port.
 type upstreamRegistrar struct {
 	clients appoauth.ClientStore
 	http    *http.Client
 
 	mu        sync.Mutex
-	discovery map[string]discoveryEntry // upstream URL -> cached metadata
+	discovery map[string]discoveryEntry
 }
 
 type discoveryEntry struct {
@@ -51,9 +43,6 @@ func NewUpstreamRegistrar(clients appoauth.ClientStore, client *http.Client) app
 	}
 }
 
-// Discover resolves the upstream MCP URL to its authorization-server
-// metadata: protected-resource metadata first (path-inserted, then root),
-// then the AS document (OAuth metadata, then OIDC discovery).
 func (r *upstreamRegistrar) Discover(ctx context.Context, upstreamURL string) (*appoauth.UpstreamAuthServer, error) {
 	r.mu.Lock()
 	if e, ok := r.discovery[upstreamURL]; ok && time.Now().Before(e.expires) {
@@ -84,7 +73,6 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 		AuthorizationServers []string `json:"authorization_servers"`
 		ScopesSupported      []string `json:"scopes_supported"`
 	}
-	// RFC 9728: path-inserted well-known first, then root.
 	candidates := []string{}
 	if p := strings.TrimSuffix(u.Path, "/"); p != "" && p != "/" {
 		candidates = append(candidates, origin+"/.well-known/oauth-protected-resource"+p)
@@ -109,7 +97,6 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 	}
 	asOrigin := asu.Scheme + "://" + asu.Host
 	asPath := strings.TrimSuffix(asu.Path, "/")
-	// RFC 8414 path-aware lookups, then OIDC discovery.
 	asCandidates := []string{
 		asOrigin + "/.well-known/oauth-authorization-server" + asPath,
 		asOrigin + "/.well-known/openid-configuration" + asPath,
@@ -135,8 +122,6 @@ func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 	return &doc, nil
 }
 
-// EnsureClient returns the gateway's registered client at the upstream,
-// registering via RFC 7591 on first use.
 func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *appoauth.UpstreamAuthServer, redirectURI string) (*appoauth.RegisteredClient, error) {
 	if c, err := r.clients.GetClient(ctx, key); err == nil && c != nil && c.RedirectURI == redirectURI {
 		return c, nil
@@ -144,7 +129,6 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 	if meta.RegistrationEndpoint == "" {
 		return nil, fmt.Errorf("%w: authorization server has no registration_endpoint", appoauth.ErrUpstreamNotDiscoverable)
 	}
-	// Public client + PKCE, mirroring how MCP clients register (RFC 7591).
 	body, _ := json.Marshal(map[string]any{
 		"client_name":                "TrustGate MCP Gateway",
 		"redirect_uris":              []string{redirectURI},
@@ -183,8 +167,6 @@ func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 	return client, nil
 }
 
-// CachedClient returns the stored registration without registering (used by
-// the refresh path, which must not mint new registrations).
 func (r *upstreamRegistrar) CachedClient(ctx context.Context, key string) (*appoauth.RegisteredClient, error) {
 	return r.clients.GetClient(ctx, key)
 }

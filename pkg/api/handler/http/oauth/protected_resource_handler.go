@@ -18,13 +18,6 @@ func NewProtectedResourceHandler(metadata appoauth.MetadataService) *ProtectedRe
 	return &ProtectedResourceHandler{metadata: metadata}
 }
 
-// Handle godoc
-// @Summary      OAuth protected resource metadata (RFC 9728)
-// @Description  Advertises this MCP plane as an OAuth 2.1 protected resource, listing the authorization servers (corporate IdPs) that can issue tokens for it.
-// @Tags         oauth
-// @Produce      json
-// @Success      200  {object}  appoauth.ProtectedResourceMetadata
-// @Router       /.well-known/oauth-protected-resource [get]
 func (h *ProtectedResourceHandler) Handle(c *fiber.Ctx) error {
 	resource := c.BaseURL()
 	if suffix := strings.Trim(c.Params("*"), "/"); suffix != "" {

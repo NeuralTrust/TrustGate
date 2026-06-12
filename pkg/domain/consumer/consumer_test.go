@@ -151,8 +151,6 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 
 func TestConsumer_New_AllowsZeroRegistries(t *testing.T) {
 	t.Parallel()
-	// Registries are attached after creation via the association endpoints, so a
-	// freshly-created consumer is allowed to have none.
 	p := validParams()
 	p.RegistryIDs = nil
 	c, err := New(p)
@@ -198,8 +196,6 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	if !c.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")
 	}
-	// Regression: a rehydrated MCP consumer must keep its toolkit allowlist
-	// (empty toolkit means "expose everything") and its fail mode.
 	if len(c.Toolkit) != 1 || c.Toolkit[0].Tool != "search" || c.Toolkit[0].ExposeAs != "gh_search" {
 		t.Fatalf("Toolkit lost on rehydrate: %+v", c.Toolkit)
 	}

@@ -9,16 +9,11 @@ import (
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
-// DiscoveryCache holds short-lived discovery results (tools, prompts,
-// resources of one upstream). Implemented in infra (TTL map); entries are
-// keyed so a registry config change invalidates immediately.
 type DiscoveryCache interface {
 	Get(key string) (any, bool)
 	Set(key string, value any)
 }
 
-// federate merges one list-shaped surface across every upstream, honoring the
-// consumer's fail_mode. filter applies the per-registry toolkit allowlist.
 func federate[T any](
 	c *composer,
 	ctx context.Context,
@@ -64,17 +59,12 @@ func mcpRegistries(rc *appconsumer.RoutableConsumer) []*registrydomain.Registry 
 	return out
 }
 
-// discover lists the tools of one upstream, with a short-lived cache keyed by
-// registry id + updated_at so config changes invalidate immediately.
 func (c *composer) discover(ctx context.Context, rc *appconsumer.RoutableConsumer, reg *registrydomain.Registry) ([]Tool, error) {
 	return discoverCached(c, ctx, rc, reg, "tools", func(ctx context.Context, up Upstream) ([]Tool, error) {
 		return up.ListTools(ctx)
 	})
 }
 
-// discoverCached lists one surface of one upstream, with a short-lived cache
-// keyed by kind + registry id + updated_at so config changes invalidate
-// immediately.
 func discoverCached[T any](
 	c *composer,
 	ctx context.Context,

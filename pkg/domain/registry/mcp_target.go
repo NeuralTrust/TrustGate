@@ -39,10 +39,10 @@ const (
 type MCPExchangePattern string
 
 const (
-	ExchangeImpersonation   MCPExchangePattern = "impersonation"
-	ExchangeDelegation      MCPExchangePattern = "delegation"
-	ExchangeOBO             MCPExchangePattern = "obo"
-	ExchangeTokenExchange   MCPExchangePattern = "token_exchange"
+	ExchangeImpersonation MCPExchangePattern = "impersonation"
+	ExchangeDelegation    MCPExchangePattern = "delegation"
+	ExchangeOBO           MCPExchangePattern = "obo"
+	ExchangeTokenExchange MCPExchangePattern = "token_exchange"
 )
 
 type MCPAuth struct {

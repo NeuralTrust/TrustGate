@@ -13,18 +13,8 @@ import (
 	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 )
 
-// sessionIdleTTL evicts cached upstream sessions that have not been used for
-// this long (upstreams reap idle sessions on their own schedule anyway).
 const sessionIdleTTL = 30 * time.Minute
 
-// NewCachedDialer wraps the SDK-backed MCP client with in-process session
-// reuse: targets carrying a PinKey share one initialized upstream session per
-// (pin key, credential fingerprint). Stale sessions - the upstream forgot the
-// id, or the connection died - are dropped and re-initialized transparently,
-// retrying the failed operation once.
-//
-// Sessions are process-local: each gateway replica holds its own upstream
-// sessions, which the Streamable HTTP spec explicitly allows.
 func NewCachedDialer(client *Client, logger *slog.Logger) appmcp.Dialer {
 	return &cachedDialer{
 		client:  client,
@@ -84,8 +74,6 @@ func (d *cachedDialer) connectAndStore(ctx context.Context, key string, target a
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	// A concurrent request may have connected first; keep its session and
-	// discard ours so only one stays alive per key.
 	if e, ok := d.entries[key]; ok {
 		sess.Close(ctx)
 		e.lastUsed = time.Now()
@@ -104,7 +92,6 @@ func (d *cachedDialer) drop(ctx context.Context, key string, sess *Session) {
 	}
 }
 
-// evictIdleLocked closes sessions unused for longer than sessionIdleTTL.
 func (d *cachedDialer) evictIdleLocked() {
 	cutoff := time.Now().Add(-sessionIdleTTL)
 	for key, e := range d.entries {
@@ -115,8 +102,6 @@ func (d *cachedDialer) evictIdleLocked() {
 	}
 }
 
-// credentialFingerprint scopes cached sessions to the exact credential set so
-// a refreshed or different downstream token never reuses another session.
 func credentialFingerprint(headers map[string]string) string {
 	if len(headers) == 0 {
 		return "-"
@@ -136,9 +121,6 @@ func credentialFingerprint(headers map[string]string) string {
 	return hex.EncodeToString(h.Sum(nil)[:12])
 }
 
-// cachedUpstream delegates to the shared session and retries an operation
-// once on transport-level failures (stale session, dead connection). JSON-RPC
-// errors mean the upstream processed the request and are never retried.
 type cachedUpstream struct {
 	dialer  *cachedDialer
 	key     string
@@ -206,11 +188,8 @@ func (u *cachedUpstream) SupportsResources() bool { return u.session.SupportsRes
 func (u *cachedUpstream) SupportsPrompts() bool   { return u.session.SupportsPrompts() }
 
 func (u *cachedUpstream) Close(context.Context) {
-	// Cached sessions stay alive for reuse; the idle TTL acts as the reaper.
 }
 
-// refresh replaces a failed shared session with a freshly initialized one and
-// reports whether the failed operation should be retried.
 func (u *cachedUpstream) refresh(ctx context.Context, err error) bool {
 	if err == nil || appmcp.IsRPCError(err) {
 		return false

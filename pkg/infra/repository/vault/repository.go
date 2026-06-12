@@ -1,6 +1,3 @@
-// Package vault is the Postgres repository for vaulted third-party
-// credentials. Tokens are encrypted with the at-rest cipher before they
-// touch the database and decrypted on read.
 package vault
 
 import (

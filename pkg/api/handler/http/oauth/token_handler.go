@@ -18,22 +18,6 @@ func NewTokenHandler(proxy appoauth.AuthProxy) *TokenHandler {
 	return &TokenHandler{proxy: proxy}
 }
 
-// Handle godoc
-// @Summary      OAuth 2.1 token endpoint (brokered)
-// @Description  Redeems a gateway-minted code (PKCE-verified) for the IdP token response, or proxies refresh_token grants to the IdP.
-// @Tags         oauth
-// @Accept       x-www-form-urlencoded
-// @Produce      json
-// @Param        grant_type     formData  string  true   "authorization_code or refresh_token"
-// @Param        code           formData  string  false  "gateway-minted code"
-// @Param        redirect_uri   formData  string  false  "must match the authorize request"
-// @Param        client_id      formData  string  false  "client id"
-// @Param        code_verifier  formData  string  false  "PKCE verifier"
-// @Param        refresh_token  formData  string  false  "refresh token"
-// @Param        resource       formData  string  false  "RFC 8707 resource indicator (the virtual MCP URL); selects the IdP on refresh_token grants"
-// @Success      200  {object}  map[string]any
-// @Failure      400  {object}  appoauth.OAuthError
-// @Router       /oauth/token [post]
 func (h *TokenHandler) Handle(c *fiber.Ctx) error {
 	req := appoauth.TokenRequest{
 		GrantType:    c.FormValue("grant_type"),

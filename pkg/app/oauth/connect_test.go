@@ -222,9 +222,6 @@ func TestConnectService_FullConsentFlow(t *testing.T) {
 	}
 }
 
-// fakeSpecUpstream is a spec-compliant MCP upstream: RFC 9728 protected-
-// resource metadata, RFC 8414 AS metadata, RFC 7591 DCR, and a token endpoint
-// that enforces PKCE for the public client.
 func fakeSpecUpstream(t *testing.T, registrations *int, tokenForm *url.Values) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -344,7 +341,6 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 		t.Fatalf("registrations = %d, want exactly 1 (Callback must reuse the cached client)", registrations)
 	}
 
-	// Second consent reuses the registered client.
 	if _, err := svc.Start(ctx, "https://gw.example.com", ticket, "linear"); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
@@ -352,7 +348,6 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 		t.Fatalf("registrations = %d after second Start, want 1", registrations)
 	}
 
-	// RefreshAuth resolves the same client without registering.
 	refreshCfg, err := svc.RefreshAuth(ctx, gw, reg)
 	if err != nil {
 		t.Fatalf("RefreshAuth: %v", err)
@@ -427,8 +422,6 @@ func TestConnectService_UnknownTicketAndProvider(t *testing.T) {
 	}
 }
 
-// ChainURL detours the inbound OAuth flow through the connect page only while
-// the principal has unlinked forwarded providers behind the resource.
 func TestConnectService_ChainURL(t *testing.T) {
 	t.Parallel()
 	svc, vault, gw := connectFixture(t, "https://unused")
@@ -451,7 +444,6 @@ func TestConnectService_ChainURL(t *testing.T) {
 		t.Fatalf("page resume = %q, want parked client redirect", page.ResumeURL)
 	}
 
-	// Linked principal: no detour.
 	cred, err := vaultdomain.NewCredential(gw, "alice", "github", "", "tok", "ref", nil, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("credential: %v", err)
@@ -463,8 +455,6 @@ func TestConnectService_ChainURL(t *testing.T) {
 		t.Fatalf("linked principal: loc=%q err=%v, want no detour", loc, err)
 	}
 
-	// Unknown resource or none at all: fall back to scanning the gateway's
-	// consumers for unlinked providers (clients don't always send resource).
 	for _, resource := range []string{"https://gw.example.com/v1/mcp/other", ""} {
 		loc, err := svc.ChainURL(ctx, "https://gw.example.com", gw, resource, "bob", resume)
 		if err != nil {
@@ -475,7 +465,6 @@ func TestConnectService_ChainURL(t *testing.T) {
 		}
 	}
 
-	// Fully linked principal with no resource: no detour anywhere.
 	if loc, err := svc.ChainURL(ctx, "https://gw.example.com", gw, "", "alice", resume); err != nil || loc != "" {
 		t.Fatalf("linked principal scan: loc=%q err=%v, want no detour", loc, err)
 	}

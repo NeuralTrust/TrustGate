@@ -1,8 +1,3 @@
-// Package mtls validates client certificates against an Auth entry's mTLS
-// config: chain verification anchored to the configured CA plus CN / SAN /
-// fingerprint allowlists. Certificates arrive either from the TLS connection
-// state (direct termination) or via the X-Forwarded-Client-Cert header (edge
-// termination by Envoy / Gateway API / LB).
 package mtls
 
 import (
@@ -21,8 +16,6 @@ import (
 
 var ErrInvalidCertificate = errors.New("mtls: invalid client certificate")
 
-// HeaderXFCC is the de-facto header edge proxies use to forward the client
-// certificate after terminating TLS.
 const HeaderXFCC = "X-Forwarded-Client-Cert"
 
 type Validator struct{}
@@ -31,7 +24,6 @@ func NewValidator() *Validator {
 	return &Validator{}
 }
 
-// Validate verifies cert against cfg and returns the authenticated Principal.
 func (v *Validator) Validate(cert *x509.Certificate, cfg *authdomain.MTLSConfig) (*identity.Principal, error) {
 	if cert == nil {
 		return nil, fmt.Errorf("%w: no certificate presented", ErrInvalidCertificate)
@@ -77,8 +69,6 @@ func (v *Validator) Validate(cert *x509.Certificate, cfg *authdomain.MTLSConfig)
 	}, nil
 }
 
-// XFCCExtractor implements the app ClientCertificateExtractor port over the
-// Envoy-style XFCC encoding.
 type XFCCExtractor struct{}
 
 func NewXFCCExtractor() *XFCCExtractor { return &XFCCExtractor{} }
@@ -87,9 +77,6 @@ func (XFCCExtractor) FromXFCC(header string) (*x509.Certificate, error) {
 	return CertFromXFCC(header)
 }
 
-// CertFromXFCC extracts the leaf certificate from an Envoy-style
-// X-Forwarded-Client-Cert header (the `Cert="<url-encoded PEM>"` element of
-// the first, i.e. closest, entry).
 func CertFromXFCC(header string) (*x509.Certificate, error) {
 	if header == "" {
 		return nil, fmt.Errorf("%w: empty %s header", ErrInvalidCertificate, HeaderXFCC)
@@ -117,8 +104,6 @@ func CertFromXFCC(header string) (*x509.Certificate, error) {
 	return nil, fmt.Errorf("%w: no Cert element in %s", ErrInvalidCertificate, HeaderXFCC)
 }
 
-// splitXFCC splits the first XFCC entry into key=value elements, honoring
-// quoted values (which may contain `;` and `,`).
 func splitXFCC(header string) []string {
 	var elements []string
 	var b strings.Builder
@@ -134,7 +119,7 @@ func splitXFCC(header string) []string {
 				b.Reset()
 			}
 			if r == ',' {
-				return elements // only the first (closest) cert entry
+				return elements
 			}
 		default:
 			b.WriteRune(r)

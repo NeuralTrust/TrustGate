@@ -1,7 +1,3 @@
-// Package vault holds durable, encrypted third-party credentials obtained
-// through one-time user consent (the "forwarded" downstream auth mode).
-// Unlike exchange tokens, these cannot be re-derived from the inbound token:
-// losing a refresh token forces the user back through consent.
 package vault
 
 import (
@@ -14,16 +10,11 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
-// Sentinels wrap the package-wide errors so the HTTP layer maps them to
-// 400/404 like every other aggregate.
 var (
 	ErrInvalidCredential = fmt.Errorf("vault: invalid credential: %w", commonerrors.ErrValidation)
 	ErrNotFound          = fmt.Errorf("vault: credential not found: %w", commonerrors.ErrNotFound)
 )
 
-// Credential is one linked third-party account, strictly isolated per
-// (gateway, principal, provider). AccessToken/RefreshToken are stored
-// encrypted at rest; a leak here is cross-user account takeover.
 type Credential struct {
 	ID           ids.VaultID
 	GatewayID    ids.GatewayID
@@ -76,7 +67,6 @@ func NewCredential(
 	}, nil
 }
 
-// Expired reports whether the access token is past (or within skew of) expiry.
 func (c *Credential) Expired(skew time.Duration) bool {
 	if c.ExpiresAt.IsZero() {
 		return false
@@ -86,12 +76,8 @@ func (c *Credential) Expired(skew time.Duration) bool {
 
 //go:generate mockery --name=Repository --dir=. --output=./mocks --filename=vault_repository_mock.go --case=underscore --with-expecter
 type Repository interface {
-	// Upsert stores or replaces the credential for (gateway, principal, provider).
 	Upsert(ctx context.Context, c *Credential) error
-	// Find returns the credential for (gateway, principal, provider), or ErrNotFound.
 	Find(ctx context.Context, gatewayID ids.GatewayID, principalSub, provider string) (*Credential, error)
-	// ListByPrincipal returns all linked accounts of a principal in a gateway.
 	ListByPrincipal(ctx context.Context, gatewayID ids.GatewayID, principalSub string) ([]*Credential, error)
-	// Delete revokes a linked account.
 	Delete(ctx context.Context, gatewayID ids.GatewayID, principalSub, provider string) error
 }

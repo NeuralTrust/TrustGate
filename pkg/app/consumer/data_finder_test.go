@@ -56,8 +56,6 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).
 		Return([]*domain.Consumer{withAuth, plain}, nil).Once()
 
-	// audit + ratelimit are gateway-global (explicit Global flag); ratelimitC1
-	// overrides ratelimit for withAuth by slug; multi is scoped to both consumers.
 	globalAudit := &policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "audit", Global: true}
 	globalRate := &policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "ratelimit", Global: true}
 	rateForC1 := &policydomain.Policy{
@@ -99,7 +97,6 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 	if c1.Consumer.ID != withAuth.ID {
 		t.Fatal("expected repository order to be preserved")
 	}
-	// withAuth: ratelimitC1 (override) + multi (scoped) + audit (global), ratelimit global dropped.
 	if len(c1.Policies) != 3 {
 		t.Fatalf("withAuth expected 3 policies, got %d", len(c1.Policies))
 	}
@@ -119,7 +116,6 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 	if c2.Consumer.ID != plain.ID {
 		t.Fatal("expected repository order to be preserved")
 	}
-	// plain: multi (scoped) + audit + ratelimit (both globals, none overridden).
 	if len(c2.Policies) != 3 {
 		t.Fatalf("plain expected 3 policies, got %d", len(c2.Policies))
 	}

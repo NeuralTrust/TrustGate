@@ -34,8 +34,6 @@ func (p *Principal) HasScopes(required []string) bool {
 	if len(required) == 0 {
 		return true
 	}
-	// PrincipalFromContext legitimately returns nil on unauthenticated
-	// requests; a nil principal holds no scopes.
 	if p == nil {
 		return false
 	}

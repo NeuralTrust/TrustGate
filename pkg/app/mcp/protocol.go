@@ -7,13 +7,6 @@ import (
 	"fmt"
 )
 
-// The gateway only manipulates a handful of protocol fields (names for
-// rename/collision handling, URIs for routing); everything else an upstream
-// returns is carried opaquely in payload and re-emitted verbatim, so new spec
-// fields survive the proxy without code changes and the app layer stays
-// independent of the MCP SDK.
-
-// Tool is one tool of a (virtual) MCP server's surface.
 type Tool struct {
 	Name string
 
@@ -34,7 +27,6 @@ func (t *Tool) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Prompt is one prompt of a (virtual) MCP server's surface.
 type Prompt struct {
 	Name string
 
@@ -55,7 +47,6 @@ func (p *Prompt) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Resource is one resource of a (virtual) MCP server's surface.
 type Resource struct {
 	Name string
 	URI  string
@@ -78,8 +69,6 @@ func (r *Resource) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ResourceTemplate is one RFC 6570 resource template of a (virtual) MCP
-// server's surface.
 type ResourceTemplate struct {
 	Name        string
 	URITemplate string
@@ -110,10 +99,6 @@ func unmarshalEnvelope(data []byte) (map[string]json.RawMessage, error) {
 	return payload, nil
 }
 
-// marshalEnvelope re-emits the opaque payload with the gateway-managed
-// fields (given as key/value pairs) overriding whatever the upstream sent.
-// The shared payload map is never mutated: envelopes are copied by value and
-// may share it.
 func marshalEnvelope(payload map[string]json.RawMessage, kv ...string) ([]byte, error) {
 	out := make(map[string]json.RawMessage, len(payload)+len(kv)/2)
 	for k, v := range payload {
@@ -141,19 +126,12 @@ func stringField(payload map[string]json.RawMessage, key string) string {
 	return s
 }
 
-// Target identifies one upstream MCP server endpoint.
 type Target struct {
-	URL string
-	// Headers are sent on every request (static auth, custom headers).
+	URL     string
 	Headers map[string]string
-	// PinKey, when set, lets session-caching dialers reuse one initialized
-	// upstream session across requests (scoped per principal for per-user
-	// downstream auth modes).
-	PinKey string
+	PinKey  string
 }
 
-// RPCError is an application-level JSON-RPC error returned by an upstream
-// MCP server; the gateway passes it through to its own client unchanged.
 type RPCError struct {
 	Code    int64           `json:"code"`
 	Message string          `json:"message"`
@@ -164,23 +142,15 @@ func (e *RPCError) Error() string {
 	return fmt.Sprintf("jsonrpc error %d: %s", e.Code, e.Message)
 }
 
-// IsRPCError reports whether err is an application-level JSON-RPC error from
-// the upstream (the request was processed), as opposed to a transport or
-// session failure (the request may not have reached the server).
 func IsRPCError(err error) bool {
 	var rpcErr *RPCError
 	return errors.As(err, &rpcErr)
 }
 
-// ErrUnreachable wraps transport-level failures so callers can distinguish
-// "upstream down" from protocol errors (drives consumer fail_mode).
 var ErrUnreachable = errors.New("mcp upstream unreachable")
 
-// ErrNotSupported means the upstream did not advertise the capability needed
-// by the requested method (e.g. resources/read on a tools-only server).
 var ErrNotSupported = errors.New("mcp upstream does not support this method")
 
-// Upstream is one initialized connection to an upstream MCP server.
 type Upstream interface {
 	ListTools(ctx context.Context) ([]Tool, error)
 	CallTool(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error)
@@ -194,12 +164,10 @@ type Upstream interface {
 	Close(ctx context.Context)
 }
 
-// Dialer opens connections to upstream MCP servers.
 type Dialer interface {
 	Connect(ctx context.Context, target Target) (Upstream, error)
 }
 
-// DialerFunc adapts a function to the Dialer interface.
 type DialerFunc func(ctx context.Context, target Target) (Upstream, error)
 
 func (f DialerFunc) Connect(ctx context.Context, target Target) (Upstream, error) {

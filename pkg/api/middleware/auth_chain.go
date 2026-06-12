@@ -15,20 +15,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// headerXFCC is the de-facto header edge proxies use to forward the client
-// certificate after terminating TLS.
 const headerXFCC = "X-Forwarded-Client-Cert"
 
-// chainIdentityResolver runs the credential chain in fixed precedence:
-// mTLS -> JWT -> introspection -> API key. Anti-downgrade: a credential that
-// is present but invalid fails the request immediately; there is no silent
-// fall-through to a weaker mechanism.
-//
-// Resolution is path-first: when the request path maps to one or more
-// consumers, only the Auth entries attached to those consumers are candidate
-// validators. This keeps tenants sharing an IdP (same issuer, even same
-// audience) isolated — a token can only authenticate against the gateway
-// whose consumer is being addressed.
 type chainIdentityResolver struct {
 	apiKeys     appauth.APIKeyFinder
 	credentials appauth.CredentialFinder
@@ -59,9 +47,6 @@ func NewChainIdentityResolver(
 	}
 }
 
-// authScope is the set of Auth IDs attached to the consumers matching the
-// request path. nil means unrestricted (no consumer claims the path, or no
-// path resolver is wired); an empty scope rejects every credential.
 type authScope map[ids.AuthID]struct{}
 
 func (s authScope) allows(id ids.AuthID) bool {
@@ -86,10 +71,6 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 	return Identity{}, ErrUnauthenticated
 }
 
-// pathScope resolves the request path to the attached Auth entries of the
-// matching consumers. Lookup failures fall back to unrestricted resolution
-// (availability over strictness); the per-consumer attachment check in the
-// handlers still applies.
 func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) authScope {
 	if r.paths == nil {
 		return nil
@@ -150,9 +131,6 @@ func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, ca
 		}
 		var principal *identity.Principal
 		var err error
-		// JWKS when available (configured or discoverable); otherwise the
-		// entry is introspection-only and the JWT is treated as a reference
-		// token at the IdP.
 		if cfg.JWKSURL != "" || cfg.IntrospectionURL == "" {
 			principal, err = r.jwt.Validate(ctx, token, cfg)
 		} else {
@@ -196,9 +174,6 @@ func (r *chainIdentityResolver) resolveAPIKey(ctx context.Context, rawKey string
 	return Identity{GatewayID: a.GatewayID, AuthID: a.ID, Principal: principal}, nil
 }
 
-// clientCertificate returns the client certificate from the TLS connection
-// state (direct termination) or the X-Forwarded-Client-Cert header (edge
-// termination). Returns nil when no certificate was presented.
 func (r *chainIdentityResolver) clientCertificate(c *fiber.Ctx) *x509.Certificate {
 	if state := c.Context().TLSConnectionState(); state != nil && len(state.PeerCertificates) > 0 {
 		return state.PeerCertificates[0]
@@ -232,8 +207,6 @@ func isJWT(token string) bool {
 	return strings.Count(token, ".") == 2
 }
 
-// unverifiedIssuer reads the iss claim without verifying the signature, only
-// to select candidate Auth entries; full validation happens afterwards.
 func unverifiedIssuer(token string) string {
 	claims := jwt.MapClaims{}
 	if _, _, err := jwt.NewParser().ParseUnverified(token, claims); err != nil {

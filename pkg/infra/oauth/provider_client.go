@@ -16,7 +16,6 @@ import (
 
 var _ appoauth.ProviderClient = (*providerClient)(nil)
 
-// providerClient implements the app ProviderClient port over plain HTTP.
 type providerClient struct {
 	client *http.Client
 }
@@ -89,7 +88,6 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	// GitHub returns form-encoded unless JSON is requested explicitly.
 	req.Header.Set("Accept", "application/json")
 	res, err := p.client.Do(req)
 	if err != nil {

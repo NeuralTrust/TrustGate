@@ -1,5 +1,3 @@
-// Package sts implements the app STS ports: RSA JWT signing/JWKS publication
-// and the IdP token-grant client (OIDC-discovered endpoints).
 package sts
 
 import (
@@ -21,16 +19,12 @@ import (
 
 var _ appsts.TokenSigner = (*Signer)(nil)
 
-// Signer mints TrustGate-issued JWTs and publishes the verification JWKS.
 type Signer struct {
 	issuer string
 	key    *rsa.PrivateKey
 	kid    string
 }
 
-// NewSigner loads the RSA signing key from PEM, or generates an ephemeral
-// key when none is configured (development only: minted tokens do not
-// survive restarts and replicas would not share a key).
 func NewSigner(issuer, keyPEM string, logger *slog.Logger) (*Signer, error) {
 	if issuer == "" {
 		issuer = "trustgate"
@@ -57,7 +51,6 @@ func NewSigner(issuer, keyPEM string, logger *slog.Logger) (*Signer, error) {
 
 func (s *Signer) Issuer() string { return s.issuer }
 
-// MintClaims signs the claims (RS256), stamping iss/iat/exp/jti.
 func (s *Signer) MintClaims(claims jwt.MapClaims, ttl time.Duration) (string, error) {
 	if ttl <= 0 {
 		ttl = appsts.DefaultTokenTTL
@@ -80,7 +73,6 @@ func (s *Signer) MintClaims(claims jwt.MapClaims, ttl time.Duration) (string, er
 	return signed, nil
 }
 
-// JWKS is the published verification document for downstreams.
 func (s *Signer) JWKS() map[string]any {
 	pub := &s.key.PublicKey
 	return map[string]any{
@@ -95,9 +87,6 @@ func (s *Signer) JWKS() map[string]any {
 	}
 }
 
-// parseRSAPrivateKey accepts the key as raw PEM, as PEM with literal \n
-// escapes, or base64-wrapped PEM - the latter two are how multi-line keys
-// survive .env files and docker-compose environment blocks.
 func parseRSAPrivateKey(keyPEM string) (*rsa.PrivateKey, error) {
 	keyPEM = strings.TrimSpace(keyPEM)
 	if !strings.Contains(keyPEM, "-----BEGIN") {

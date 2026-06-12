@@ -1,8 +1,3 @@
-// Package sts is TrustGate's Security Token Service (RFC 8693): it mints
-// short-lived downstream tokens (impersonation, delegation) signed by the
-// gateway and brokers external IdP exchanges (Entra OBO, RFC 8693 token
-// exchange). TrustGate-as-issuer is the trust and audit anchor: downstreams
-// trust `iss = TrustGate` via the published JWKS.
 package sts
 
 import (
@@ -22,28 +17,18 @@ import (
 )
 
 var (
-	// ErrInteractionRequired propagates an IdP claims challenge: the client
-	// must re-authenticate (401 + WWW-Authenticate, never a 500).
 	ErrInteractionRequired = errors.New("sts: interaction required")
-	// ErrNoUserIdentity means the exchange pattern needs an inbound user JWT
-	// (api_key / machine principals cannot be exchanged on behalf of).
-	ErrNoUserIdentity = errors.New("sts: exchange requires an inbound user token")
+	ErrNoUserIdentity      = errors.New("sts: exchange requires an inbound user token")
 )
 
-// DefaultTokenTTL bounds gateway-minted downstream tokens.
 const DefaultTokenTTL = 5 * time.Minute
 
-// Token is one minted/exchanged downstream credential.
 type Token struct {
 	AccessToken string
 	TokenType   string
 	ExpiresAt   time.Time
 }
 
-// Exchanger turns the inbound Principal into a downstream credential per the
-// target's exchange pattern. Results are cached per (principal, target) with
-// strict isolation; a cache leak here is cross-user escalation.
-//
 //go:generate mockery --name=Exchanger --dir=. --output=./mocks --filename=sts_exchanger_mock.go --case=underscore --with-expecter
 type Exchanger interface {
 	Exchange(ctx context.Context, principal *identity.Principal, cfg *registrydomain.MCPAuth, cacheKey string) (*Token, error)
@@ -111,9 +96,6 @@ func (e *exchanger) Exchange(ctx context.Context, principal *identity.Principal,
 
 const cacheSweepInterval = time.Minute
 
-// sweepLocked drops expired tokens at most once per cacheSweepInterval; the
-// cache is keyed per (principal x target), so without eviction it grows
-// unbounded with the tenant population. Callers must hold e.mu.
 func (e *exchanger) sweepLocked() {
 	now := time.Now()
 	if now.Sub(e.lastSweep) < cacheSweepInterval {
@@ -127,8 +109,6 @@ func (e *exchanger) sweepLocked() {
 	}
 }
 
-// mint issues a TrustGate-signed JWT: same subject, target audience, and for
-// delegation an RFC 8693 act claim naming the agent.
 func (e *exchanger) mint(principal *identity.Principal, cfg *registrydomain.MCPAuth, delegation bool) (*Token, error) {
 	claims := jwt.MapClaims{
 		"sub": principal.Subject,
@@ -150,9 +130,6 @@ func (e *exchanger) mint(principal *identity.Principal, cfg *registrydomain.MCPA
 	return &Token{AccessToken: signed, TokenType: "Bearer", ExpiresAt: time.Now().Add(DefaultTokenTTL)}, nil
 }
 
-// entraOBO performs the Microsoft Entra On-Behalf-Of exchange: the inbound
-// user token (aud = the gateway's Entra app) becomes a token for the target
-// resource. Authority derives from the principal's issuer.
 func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal, cfg *registrydomain.MCPAuth) (*Token, error) {
 	if principal.RawToken == "" || principal.Method != identity.MethodJWT {
 		return nil, ErrNoUserIdentity
@@ -171,7 +148,6 @@ func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal,
 	return e.idp.Call(ctx, principal.Issuer, form)
 }
 
-// tokenExchange is generic RFC 8693 (Okta and friends).
 func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Principal, cfg *registrydomain.MCPAuth) (*Token, error) {
 	if principal.RawToken == "" {
 		return nil, ErrNoUserIdentity
@@ -193,8 +169,6 @@ func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Princ
 	return e.idp.Call(ctx, principal.Issuer, form)
 }
 
-// idpFor finds the oauth2 Auth entry matching the principal's issuer, which
-// holds the gateway's IdP app credentials for the exchange.
 func (e *exchanger) idpFor(ctx context.Context, issuer string) (*authdomain.OAuth2Config, error) {
 	auths, err := e.credentials.OAuth2Auths(ctx)
 	if err != nil {

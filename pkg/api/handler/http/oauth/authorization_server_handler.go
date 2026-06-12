@@ -18,14 +18,6 @@ func NewAuthorizationServerHandler(metadata appoauth.MetadataService) *Authoriza
 	return &AuthorizationServerHandler{metadata: metadata}
 }
 
-// Handle godoc
-// @Summary      OAuth authorization server metadata (RFC 8414)
-// @Description  The gateway's own AS metadata: authorize/token/registration endpoints are served by the gateway and brokered to the configured corporate IdP. 404 until an oauth2 auth is configured.
-// @Tags         oauth
-// @Produce      json
-// @Success      200  {object}  map[string]any
-// @Failure      404  {object}  helpers.ErrorBody
-// @Router       /.well-known/oauth-authorization-server [get]
 func (h *AuthorizationServerHandler) Handle(c *fiber.Ctx) error {
 	doc, err := h.metadata.AuthorizationServer(c.UserContext(), c.BaseURL())
 	if err != nil {

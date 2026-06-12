@@ -73,7 +73,7 @@ func (f *fakeUpstream) SupportsPrompts() bool   { return len(f.prompts) > 0 }
 func (f *fakeUpstream) Close(context.Context) {}
 
 type fakeDialer struct {
-	upstreams map[string]*fakeUpstream // by URL
+	upstreams map[string]*fakeUpstream
 	dialErr   map[string]error
 }
 
@@ -104,7 +104,6 @@ func routable(consumer *consumerdomain.Consumer, registries ...*registrydomain.R
 	return &appconsumer.RoutableConsumer{Consumer: consumer, Registries: registries}
 }
 
-// mapCache is a no-TTL DiscoveryCache for tests.
 type mapCache struct{ m map[string]any }
 
 func newMapCache() *mapCache { return &mapCache{m: map[string]any{}} }

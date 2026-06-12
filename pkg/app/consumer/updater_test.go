@@ -43,7 +43,6 @@ func TestUpdater_Update_Success(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			// Associations are preserved from the loaded aggregate, never the input.
 			return c.ID == existing.ID && c.Name == "new" && c.Type == domain.TypeMCP &&
 				len(c.RegistryIDs) == 1 && c.RegistryIDs[0] == beID
 		})).

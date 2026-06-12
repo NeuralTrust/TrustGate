@@ -24,8 +24,6 @@ func newTestSigner(t *testing.T) *Signer {
 	return s
 }
 
-// publicKeyFromJWKS reconstructs the RSA key from the published JWKS, proving
-// downstreams can verify minted tokens with the discovery document alone.
 func publicKeyFromJWKS(t *testing.T, s *Signer) *rsa.PublicKey {
 	t.Helper()
 	keys := s.JWKS()["keys"].([]map[string]any)
@@ -88,8 +86,6 @@ func TestNewSigner_ParsesPKCS8PEM(t *testing.T) {
 	}
 }
 
-// Multi-line PEM cannot live in .env files; the signer accepts the two
-// env-safe encodings: base64-wrapped PEM and literal \n escapes.
 func TestNewSigner_AcceptsEnvSafeKeyEncodings(t *testing.T) {
 	t.Parallel()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)

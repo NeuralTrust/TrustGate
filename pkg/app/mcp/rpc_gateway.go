@@ -9,21 +9,14 @@ import (
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 )
 
-// ErrMethodNotFound means the JSON-RPC method is not part of the gateway's
-// MCP server surface.
 var ErrMethodNotFound = errors.New("mcp: method not found")
 
-// InvalidParamsError reports malformed or missing JSON-RPC params.
 type InvalidParamsError struct {
 	Reason string
 }
 
 func (e *InvalidParamsError) Error() string { return "mcp: invalid params: " + e.Reason }
 
-// RPCGateway dispatches the MCP data-plane methods (tools/*, resources/*,
-// prompts/*) of a consumer's virtual MCP server to the composer. Protocol
-// negotiation (initialize, ping, notifications) stays in the transport
-// handler; everything here is testable without HTTP.
 type RPCGateway struct {
 	composer Composer
 }
@@ -32,9 +25,6 @@ func NewRPCGateway(composer Composer) *RPCGateway {
 	return &RPCGateway{composer: composer}
 }
 
-// Dispatch routes one JSON-RPC method to the composer and returns the result
-// payload. Results that are json.RawMessage are upstream responses to be
-// forwarded verbatim.
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
 	switch method {
 	case "tools/list":

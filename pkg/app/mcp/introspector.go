@@ -8,8 +8,6 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
-// Introspector lists the discoverable tools of one MCP registry so operators
-// (and the admin UI) can build a consumer toolkit from a real pick-list.
 type Introspector interface {
 	ListRegistryTools(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) ([]Tool, error)
 }

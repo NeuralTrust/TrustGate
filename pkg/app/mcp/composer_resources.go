@@ -10,8 +10,6 @@ import (
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
-// ListResources merges the resources of every reachable upstream, filtered by
-// the consumer toolkit. Resources are URI-addressed, so no renaming applies.
 func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Resource, error) {
 	toolkit := rc.Consumer.Toolkit
 	return federate(c, ctx, rc, "resources",
@@ -32,10 +30,6 @@ func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableCo
 		})
 }
 
-// ListResourceTemplates merges the resource templates of every reachable
-// upstream. With a non-empty toolkit, a registry's templates are exposed only
-// when the registry has at least one resource entry; the URIs expanded from a
-// template are still enforced individually at read time.
 func (c *composer) ListResourceTemplates(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]ResourceTemplate, error) {
 	toolkit := rc.Consumer.Toolkit
 	return federate(c, ctx, rc, "resource-templates",
@@ -50,9 +44,6 @@ func (c *composer) ListResourceTemplates(ctx context.Context, rc *appconsumer.Ro
 		})
 }
 
-// ReadResource routes a URI to the upstream that serves it: the upstream
-// listing the exact URI wins; template-addressed URIs fall back to trying
-// each resource-capable upstream in attachment order.
 func (c *composer) ReadResource(ctx context.Context, rc *appconsumer.RoutableConsumer, uri string) (json.RawMessage, error) {
 	registries := mcpRegistries(rc)
 	if len(registries) == 0 {
@@ -67,7 +58,7 @@ func (c *composer) ReadResource(ctx context.Context, rc *appconsumer.RoutableCon
 			return up.ListResources(ctx)
 		})
 		if err != nil {
-			continue // unreachable upstreams are handled by the fallback pass
+			continue
 		}
 		for _, r := range resources {
 			if r.URI == uri {

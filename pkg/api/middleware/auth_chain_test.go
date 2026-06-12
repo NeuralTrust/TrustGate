@@ -156,8 +156,6 @@ func TestChain_AntiDowngrade_InvalidBearerDoesNotFallThroughToAPIKey(t *testing.
 		fakeAPIKeyFinder{auth: apiKeyAuth}, fakeCredentialFinder{oauth2: []*authdomain.Auth{a}}, nil, jwtVal, &fakeTokenValidator{}, &fakeMTLSValidator{}, nil,
 	)
 
-	// Both an invalid bearer and a valid API key are present: the bearer wins
-	// the precedence and its failure must not silently downgrade.
 	_, err = resolveChain(t, resolver, map[string]string{
 		"Authorization":         "Bearer " + unsignedJWT(t, "https://idp.example.com"),
 		middleware.HeaderAPIKey: apiKeyAuth.RawKey,
@@ -208,9 +206,6 @@ func pathMatchWith(auths ...*authdomain.Auth) appconsumer.PathMatch {
 	return m
 }
 
-// Two gateways share the same issuer (and audience): the consumer addressed
-// by the path decides which Auth entry the token is attributed to, even when
-// the token would validate against both.
 func TestChain_PathFirst_SameIssuerPicksAttachedAuth(t *testing.T) {
 	authA := oauth2Auth(t, "https://idp.example.com", true)
 	authB := oauth2Auth(t, "https://idp.example.com", true)
@@ -231,8 +226,6 @@ func TestChain_PathFirst_SameIssuerPicksAttachedAuth(t *testing.T) {
 	require.Equal(t, 1, jwtVal.calls, "only the attached candidate must be tried")
 }
 
-// A path claimed by consumers without the presented credential attached must
-// reject the request instead of attributing it to another tenant's auth.
 func TestChain_PathFirst_UnattachedCredentialRejected(t *testing.T) {
 	authA := oauth2Auth(t, "https://idp.example.com", true)
 	otherConsumerAuth := oauth2Auth(t, "https://idp.example.com", true)
@@ -251,7 +244,6 @@ func TestChain_PathFirst_UnattachedCredentialRejected(t *testing.T) {
 	require.Equal(t, 0, jwtVal.calls)
 }
 
-// Unmatched paths keep the legacy unrestricted behavior.
 func TestChain_PathFirst_NoConsumerMatchFallsBackUnrestricted(t *testing.T) {
 	a := oauth2Auth(t, "https://idp.example.com", true)
 	jwtVal := &fakeTokenValidator{principal: &identity.Principal{Subject: "u1", Method: identity.MethodJWT}}

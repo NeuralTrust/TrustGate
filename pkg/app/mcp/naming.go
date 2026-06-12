@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-// resolveNames auto-prefixes colliding tool names with the sanitized registry
-// name ({server}_{tool}); explicit expose_as aliases always win.
 func resolveNames(candidates []binding) []binding {
 	items := make([]exposedName, len(candidates))
 	for i, b := range candidates {
@@ -22,15 +20,11 @@ func resolveNames(candidates []binding) []binding {
 	return out
 }
 
-// exposedName is one candidate name plus its owning registry, for collision
-// resolution shared by tools and prompts.
 type exposedName struct {
 	name     string
 	registry string
 }
 
-// resolveExposedNames auto-prefixes colliding names with the sanitized
-// registry name ({server}_{name}); remaining duplicates get numeric suffixes.
 func resolveExposedNames(items []exposedName) []string {
 	counts := make(map[string]int, len(items))
 	for _, it := range items {

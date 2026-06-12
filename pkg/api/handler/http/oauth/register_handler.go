@@ -18,16 +18,6 @@ func NewRegisterHandler(metadata appoauth.MetadataService) *RegisterHandler {
 	return &RegisterHandler{metadata: metadata}
 }
 
-// Handle godoc
-// @Summary      Dynamic client registration (RFC 7591)
-// @Description  Registers an MCP client. Corporate IdPs rarely allow open DCR, so the admin-registered public client is returned and PKCE secures the authorization flow.
-// @Tags         oauth
-// @Accept       json
-// @Produce      json
-// @Param        request  body      appoauth.RegisterRequest  true  "Client registration request"
-// @Success      201      {object}  appoauth.RegisterResponse
-// @Failure      400      {object}  helpers.ErrorBody
-// @Router       /oauth/register [post]
 func (h *RegisterHandler) Handle(c *fiber.Ctx) error {
 	var req appoauth.RegisterRequest
 	if err := c.BodyParser(&req); err != nil {

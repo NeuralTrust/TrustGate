@@ -25,8 +25,6 @@ func (s *stubCredentials) OAuth2Auths(context.Context) ([]*authdomain.Auth, erro
 
 func (s *stubCredentials) MTLSAuths(context.Context) ([]*authdomain.Auth, error) { return nil, nil }
 
-// fakeSigner encodes claims as JSON with a per-call counter, so tests can
-// decode what was minted and assert cache isolation without real crypto.
 type fakeSigner struct {
 	mints int
 }
@@ -119,12 +117,10 @@ func TestExchanger_Impersonation_MintsAndCaches(t *testing.T) {
 	if _, hasAct := claims["act"]; hasAct {
 		t.Fatal("impersonation must not carry act claim")
 	}
-	// Cache hit: same key returns the same token.
 	again, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k1")
 	if err != nil || again.AccessToken != tok.AccessToken {
 		t.Fatal("expected cached token for same key")
 	}
-	// Different key (other principal/target): a distinct token.
 	other, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k2")
 	if err != nil || other.AccessToken == tok.AccessToken {
 		t.Fatal("cache must isolate per key")

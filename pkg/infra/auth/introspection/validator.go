@@ -1,6 +1,3 @@
-// Package introspection validates opaque/reference tokens against an IdP's
-// RFC 7662 introspection endpoint, caching results until token expiry so the
-// IdP is not hit on every request.
 package introspection
 
 import (
@@ -23,13 +20,8 @@ import (
 var ErrInvalidToken = errors.New("introspection: invalid token")
 
 const (
-	// fallbackTTL bounds cache entries when the IdP returns no exp claim.
-	fallbackTTL = time.Minute
-	// maxTTL bounds cache entries so revocation is observed within this window
-	// even for long-lived tokens.
-	maxTTL = 5 * time.Minute
-	// sweepInterval bounds how often expired entries are purged; without a
-	// sweep the cache grows for every distinct token ever seen.
+	fallbackTTL   = time.Minute
+	maxTTL        = 5 * time.Minute
 	sweepInterval = time.Minute
 )
 
@@ -48,7 +40,6 @@ type cacheEntry struct {
 	expiresAt time.Time
 }
 
-// Validator introspects bearer tokens per Auth entry config.
 type Validator struct {
 	client *http.Client
 
@@ -64,8 +55,6 @@ func NewValidator(client *http.Client) *Validator {
 	return &Validator{client: client, cache: map[string]cacheEntry{}}
 }
 
-// Validate introspects raw against cfg's introspection endpoint and returns
-// the authenticated Principal.
 func (v *Validator) Validate(ctx context.Context, raw string, cfg *authdomain.OAuth2Config) (*identity.Principal, error) {
 	if cfg == nil || cfg.IntrospectionURL == "" {
 		return nil, fmt.Errorf("%w: no introspection endpoint configured", ErrInvalidToken)
@@ -100,8 +89,6 @@ func (v *Validator) Validate(ctx context.Context, raw string, cfg *authdomain.OA
 }
 
 func (v *Validator) introspect(ctx context.Context, raw string, cfg *authdomain.OAuth2Config) (result, error) {
-	// Key by endpoint + token so the same token introspected against two IdPs
-	// cannot poison each other's cache.
 	sum := sha256.Sum256([]byte(cfg.IntrospectionURL + "\x00" + raw))
 	key := hex.EncodeToString(sum[:])
 
@@ -134,8 +121,6 @@ func (v *Validator) introspect(ctx context.Context, raw string, cfg *authdomain.
 		return result{}, fmt.Errorf("introspection: decode response: %w", err)
 	}
 
-	// Cache for the token's remaining lifetime, clamped to maxTTL so
-	// revocation is observed; fallbackTTL covers responses without exp.
 	ttl := fallbackTTL
 	if res.Exp > 0 {
 		ttl = time.Until(time.Unix(res.Exp, 0))
@@ -153,9 +138,6 @@ func (v *Validator) introspect(ctx context.Context, raw string, cfg *authdomain.
 	return res, nil
 }
 
-// sweepLocked drops expired entries at most once per sweepInterval; expired
-// entries were previously only skipped on read, never deleted, so the cache
-// leaked one entry per distinct token forever. Callers must hold v.mu.
 func (v *Validator) sweepLocked() {
 	now := time.Now()
 	if now.Sub(v.lastSweep) < sweepInterval {
