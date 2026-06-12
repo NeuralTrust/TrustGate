@@ -144,20 +144,22 @@ func TestWeightedRoundRobin_RespectsWeights(t *testing.T) {
 	}
 }
 
-func TestWeightedRoundRobin_AllZeroWeightsEventuallyReturnsNil(t *testing.T) {
+func TestWeightedRoundRobin_ZeroWeightsServeAsWeightOne(t *testing.T) {
 	t.Parallel()
 	wrr := NewWeightedRoundRobin([]*registry.Registry{
 		{ID: ids.New[ids.RegistryKind](), Name: "a"},
 		{ID: ids.New[ids.RegistryKind](), Name: "b"},
 	})
-	sawNil := false
-	for i := 0; i < 10 && !sawNil; i++ {
-		if wrr.Next(nil, nil) == nil {
-			sawNil = true
+	counts := map[string]int{}
+	for i := 0; i < 10; i++ {
+		b := wrr.Next(nil, nil)
+		if b == nil {
+			t.Fatal("WRR with zero weights must keep serving traffic (weight 0 acts as 1)")
 		}
+		counts[b.Name]++
 	}
-	if !sawNil {
-		t.Fatal("WRR with zero weights must eventually return nil")
+	if counts["a"] == 0 || counts["b"] == 0 {
+		t.Fatalf("both registries should receive traffic: %v", counts)
 	}
 }
 

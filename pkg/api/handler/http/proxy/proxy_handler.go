@@ -12,6 +12,7 @@ import (
 	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
 	appproxy "github.com/NeuralTrust/AgentGateway/pkg/app/proxy"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
@@ -170,6 +171,9 @@ func resolveConsumer(c *fiber.Ctx) (ids.GatewayID, *appconsumer.RoutableConsumer
 	}
 	rc, ok := data.MatchPath(c.Path())
 	if !ok {
+		return ids.GatewayID{}, nil, errPathNotFound
+	}
+	if rc.Consumer == nil || (rc.Consumer.Type != consumerdomain.TypeLLM && rc.Consumer.Type != "") {
 		return ids.GatewayID{}, nil, errPathNotFound
 	}
 	if !consumerHasAuth(rc, authID) {

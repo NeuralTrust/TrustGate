@@ -20,14 +20,23 @@ type WeightedRoundRobin struct {
 func NewWeightedRoundRobin(registries []*registry.Registry) *WeightedRoundRobin {
 	maxWeight := 0
 	for _, b := range registries {
-		if b.Weight > maxWeight {
-			maxWeight = b.Weight
+		if effectiveWeight(b) > maxWeight {
+			maxWeight = effectiveWeight(b)
 		}
 	}
 	return &WeightedRoundRobin{
 		registries: registries,
 		maxWeight:  maxWeight,
 	}
+}
+
+// effectiveWeight treats unset/zero weights as 1 so that registries created
+// without an explicit weight still receive traffic under WRR.
+func effectiveWeight(b *registry.Registry) int {
+	if b.Weight <= 0 {
+		return 1
+	}
+	return b.Weight
 }
 
 func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
@@ -50,7 +59,7 @@ func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext, exclude ma
 			}
 		}
 		b := wrr.registries[wrr.currentIndex]
-		if b.Weight >= wrr.currentWeight && !isExcluded(b.ID, exclude) {
+		if effectiveWeight(b) >= wrr.currentWeight && !isExcluded(b.ID, exclude) {
 			return b
 		}
 	}

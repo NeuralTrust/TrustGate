@@ -12,6 +12,7 @@ import (
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"golang.org/x/sync/singleflight"
 )
 
 type PathMatch struct {
@@ -32,6 +33,7 @@ type pathResolver struct {
 	auths     authdomain.Repository
 	gateways  gatewaydomain.Repository
 	cache     *cache.TTLMap
+	sf        singleflight.Group
 	logger    *slog.Logger
 }
 
@@ -58,11 +60,24 @@ func (r *pathResolver) Match(ctx context.Context, host, path string) ([]PathMatc
 	if cached, ok := r.cached(key); ok {
 		return cached, nil
 	}
-	matches, err := r.load(ctx, host, path)
+	v, err, _ := r.sf.Do(key, func() (any, error) {
+		if cached, ok := r.cached(key); ok {
+			return cached, nil
+		}
+		matches, err := r.load(ctx, host, path)
+		if err != nil {
+			return nil, err
+		}
+		r.cache.Set(key, matches)
+		return matches, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	r.cache.Set(key, matches)
+	matches, ok := v.([]PathMatch)
+	if !ok {
+		return nil, errors.New("consumer path resolver: unexpected singleflight result type")
+	}
 	return matches, nil
 }
 
@@ -106,15 +121,42 @@ func (r *pathResolver) filterByHost(ctx context.Context, host string, consumers 
 		return consumers, nil
 	}
 	gw, err := r.gateways.FindByDomain(ctx, host)
-	if err != nil {
-		if errors.Is(err, gatewaydomain.ErrNotFound) {
-			return consumers, nil
+	if err == nil {
+		out := make([]*domain.Consumer, 0, len(consumers))
+		for _, c := range consumers {
+			if c.GatewayID == gw.ID {
+				out = append(out, c)
+			}
 		}
+		return out, nil
+	}
+	if !errors.Is(err, gatewaydomain.ErrNotFound) {
 		return nil, err
 	}
+	return r.filterDomainlessGateways(ctx, consumers)
+}
+
+// filterDomainlessGateways keeps only consumers whose gateway has no domain
+// configured: a gateway with an explicit domain must never match a foreign
+// Host header just because that host is unknown.
+func (r *pathResolver) filterDomainlessGateways(ctx context.Context, consumers []*domain.Consumer) ([]*domain.Consumer, error) {
+	domainless := make(map[ids.GatewayID]bool, 2)
 	out := make([]*domain.Consumer, 0, len(consumers))
 	for _, c := range consumers {
-		if c.GatewayID == gw.ID {
+		keep, seen := domainless[c.GatewayID]
+		if !seen {
+			gw, err := r.gateways.FindByID(ctx, c.GatewayID)
+			if err != nil {
+				if errors.Is(err, gatewaydomain.ErrNotFound) {
+					domainless[c.GatewayID] = false
+					continue
+				}
+				return nil, err
+			}
+			keep = gw.Domain == ""
+			domainless[c.GatewayID] = keep
+		}
+		if keep {
 			out = append(out, c)
 		}
 	}

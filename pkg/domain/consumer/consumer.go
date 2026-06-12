@@ -181,6 +181,7 @@ func (c *Consumer) Validate() error {
 	if strings.TrimSpace(c.Path) == "" {
 		return fmt.Errorf("%w: path is required", ErrInvalidPath)
 	}
+	c.Path = canonicalPath(c.Path)
 	if err := c.RegistryIDs.Validate(); err != nil {
 		return err
 	}
@@ -215,6 +216,21 @@ func (c *Consumer) Validate() error {
 	default:
 		return fmt.Errorf("%w: %q", ErrInvalidType, c.Type)
 	}
+}
+
+func canonicalPath(path string) string {
+	path = strings.TrimSpace(path)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	if len(path) > 1 {
+		if trimmed := strings.TrimRight(path, "/"); trimmed != "" {
+			path = trimmed
+		} else {
+			path = "/"
+		}
+	}
+	return path
 }
 
 func (c *Consumer) knownRegistryIDs() map[ids.RegistryID]struct{} {

@@ -94,7 +94,7 @@ func TestPathResolver_HostFiltersToClaimingGateway(t *testing.T) {
 	require.Equal(t, gwB, matches[0].GatewayID)
 }
 
-func TestPathResolver_UnclaimedHostKeepsAllCandidates(t *testing.T) {
+func TestPathResolver_UnclaimedHostKeepsDomainlessGateways(t *testing.T) {
 	t.Parallel()
 	gwA := ids.New[ids.GatewayKind]()
 	consumerA := pathConsumer(t, gwA, "/v1/mcp/hub")
@@ -106,12 +106,36 @@ func TestPathResolver_UnclaimedHostKeepsAllCandidates(t *testing.T) {
 	gateways := gatewaymocks.NewRepository(t)
 	gateways.EXPECT().FindByDomain(mock.Anything, "localhost").
 		Return(nil, gatewaydomain.ErrNotFound).Once()
+	gateways.EXPECT().FindByID(mock.Anything, gwA).
+		Return(&gatewaydomain.Gateway{ID: gwA, Name: "a"}, nil).Once()
 
 	resolver := appconsumer.NewPathResolver(consumers, auths, gateways, cache.NewTTLMapManager(time.Hour), newTestLogger())
 
 	matches, err := resolver.Match(context.Background(), "localhost:8082", "/v1/mcp/hub")
 	require.NoError(t, err)
 	require.Len(t, matches, 1)
+}
+
+func TestPathResolver_UnclaimedHostDropsDomainClaimingGateways(t *testing.T) {
+	t.Parallel()
+	gwA := ids.New[ids.GatewayKind]()
+	consumerA := pathConsumer(t, gwA, "/v1/mcp/hub")
+
+	consumers := consumermocks.NewRepository(t)
+	consumers.EXPECT().FindActiveByPath(mock.Anything, "/v1/mcp/hub").
+		Return([]*domain.Consumer{consumerA}, nil).Once()
+	auths := authmocks.NewRepository(t)
+	gateways := gatewaymocks.NewRepository(t)
+	gateways.EXPECT().FindByDomain(mock.Anything, "evil.example.com").
+		Return(nil, gatewaydomain.ErrNotFound).Once()
+	gateways.EXPECT().FindByID(mock.Anything, gwA).
+		Return(&gatewaydomain.Gateway{ID: gwA, Name: "a", Domain: "tenant-a.example.com"}, nil).Once()
+
+	resolver := appconsumer.NewPathResolver(consumers, auths, gateways, cache.NewTTLMapManager(time.Hour), newTestLogger())
+
+	matches, err := resolver.Match(context.Background(), "evil.example.com", "/v1/mcp/hub")
+	require.NoError(t, err)
+	require.Empty(t, matches)
 }
 
 func TestPathResolver_NoMatch(t *testing.T) {

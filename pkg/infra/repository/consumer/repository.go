@@ -26,6 +26,8 @@ const (
 	consumerAuthFKConstraint     = "consumer_auth_auth_id_fkey"
 	consumerPolicyFKConstraint   = "consumer_policy_policy_id_fkey"
 	consumerPathUniqueIndex      = "consumers_gateway_path_unique"
+
+	defaultAlgorithm = "round-robin"
 )
 
 const consumerSelectColumns = `
@@ -77,7 +79,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		)`
 	if _, err := r.conn.Pool.Exec(ctx, insertConsumer,
-		c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm(), embeddingBytes, fallbackBytes, modelPoliciesBytes,
+		c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, algorithm(c), embeddingBytes, fallbackBytes, modelPoliciesBytes,
 		toolkitBytes, failMode(c), headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
 	); err != nil {
 		return mapPgError(err)
@@ -125,7 +127,7 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		       updated_at       = $13
 		 WHERE id = $1`
 	cmd, err := r.conn.Pool.Exec(ctx, updateConsumer,
-		c.ID, c.Name, string(c.Type), c.Path, c.Algorithm(), embeddingBytes, fallbackBytes, modelPoliciesBytes,
+		c.ID, c.Name, string(c.Type), c.Path, algorithm(c), embeddingBytes, fallbackBytes, modelPoliciesBytes,
 		toolkitBytes, failMode(c), headersBytes, c.Active, c.UpdatedAt,
 	)
 	if err != nil {
@@ -247,16 +249,9 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 	defer rows.Close()
 
-	items := make([]*domain.Consumer, 0, filter.Size)
-	for rows.Next() {
-		c, err := scanConsumer(rows)
-		if err != nil {
-			return nil, 0, fmt.Errorf("consumer repository: scan: %w", err)
-		}
-		items = append(items, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("consumer repository: iter: %w", err)
+	items, err := collectConsumers(rows)
+	if err != nil {
+		return nil, 0, err
 	}
 	return items, total, nil
 }
@@ -271,19 +266,7 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 		return nil, fmt.Errorf("consumer repository: list by gateway: %w", err)
 	}
 	defer rows.Close()
-
-	items := make([]*domain.Consumer, 0)
-	for rows.Next() {
-		c, err := scanConsumer(rows)
-		if err != nil {
-			return nil, fmt.Errorf("consumer repository: scan: %w", err)
-		}
-		items = append(items, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("consumer repository: iter: %w", err)
-	}
-	return items, nil
+	return collectConsumers(rows)
 }
 
 func (r *Repository) FindActiveByPath(ctx context.Context, path string) ([]*domain.Consumer, error) {
@@ -296,11 +279,27 @@ func (r *Repository) FindActiveByPath(ctx context.Context, path string) ([]*doma
 		return nil, fmt.Errorf("consumer repository: find active by path: %w", err)
 	}
 	defer rows.Close()
+	return collectConsumers(rows)
+}
 
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+var errCorruptConsumerRow = errors.New("consumer repository: corrupt row")
+
+// collectConsumers skips rows whose jsonb payload cannot be decoded so a
+// single corrupt row degrades one consumer instead of taking down every
+// listing (and with it the whole gateway data plane). The corrupt row still
+// surfaces through FindByID.
+func collectConsumers(rows pgx.Rows) ([]*domain.Consumer, error) {
 	items := make([]*domain.Consumer, 0)
 	for rows.Next() {
 		c, err := scanConsumer(rows)
 		if err != nil {
+			if errors.Is(err, errCorruptConsumerRow) {
+				continue
+			}
 			return nil, fmt.Errorf("consumer repository: scan: %w", err)
 		}
 		items = append(items, c)
@@ -309,10 +308,6 @@ func (r *Repository) FindActiveByPath(ctx context.Context, path string) ([]*doma
 		return nil, fmt.Errorf("consumer repository: iter: %w", err)
 	}
 	return items, nil
-}
-
-type rowScanner interface {
-	Scan(dest ...any) error
 }
 
 func scanConsumer(s rowScanner) (*domain.Consumer, error) {
@@ -342,7 +337,7 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 	}
 	if len(headersRaw) > 0 {
 		if err := json.Unmarshal(headersRaw, &c.Headers); err != nil {
-			return nil, fmt.Errorf("scan headers: %w", err)
+			return nil, fmt.Errorf("%w: headers: %v", errCorruptConsumerRow, err)
 		}
 	}
 	switch c.Type {
@@ -351,21 +346,21 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		if len(embeddingRaw) > 0 {
 			var ec registrydomain.EmbeddingConfig
 			if err := json.Unmarshal(embeddingRaw, &ec); err != nil {
-				return nil, fmt.Errorf("scan embedding_config: %w", err)
+				return nil, fmt.Errorf("%w: embedding_config: %v", errCorruptConsumerRow, err)
 			}
 			llm.EmbeddingConfig = &ec
 		}
 		if len(fallbackRaw) > 0 {
 			var fb domain.Fallback
 			if err := json.Unmarshal(fallbackRaw, &fb); err != nil {
-				return nil, fmt.Errorf("scan fallback: %w", err)
+				return nil, fmt.Errorf("%w: fallback: %v", errCorruptConsumerRow, err)
 			}
 			llm.Fallback = &fb
 		}
 		if len(modelPoliciesRaw) > 0 {
 			var mp domain.ModelPolicies
 			if err := json.Unmarshal(modelPoliciesRaw, &mp); err != nil {
-				return nil, fmt.Errorf("scan model_policies: %w", err)
+				return nil, fmt.Errorf("%w: model_policies: %v", errCorruptConsumerRow, err)
 			}
 			llm.ModelPolicies = mp
 		}
@@ -378,7 +373,7 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		if len(toolkitRaw) > 0 {
 			var tk domain.Toolkit
 			if err := json.Unmarshal(toolkitRaw, &tk); err != nil {
-				return nil, fmt.Errorf("scan toolkit: %w", err)
+				return nil, fmt.Errorf("%w: toolkit: %v", errCorruptConsumerRow, err)
 			}
 			mcp.Toolkit = tk
 		}
@@ -435,6 +430,13 @@ func failMode(c *domain.Consumer) string {
 		return string(domain.FailModeClosed)
 	}
 	return string(c.FailMode())
+}
+
+func algorithm(c *domain.Consumer) string {
+	if c.Algorithm() == "" {
+		return defaultAlgorithm
+	}
+	return c.Algorithm()
 }
 
 func nullableUUID(id uuid.UUID) any {
