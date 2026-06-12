@@ -147,7 +147,7 @@ func (r CreateConsumerRequest) Validate() error {
 }
 
 func (r CreateConsumerRequest) ToType() domain.Type {
-	return domain.Type(r.Type)
+	return domain.Type(strings.ToUpper(strings.TrimSpace(r.Type)))
 }
 
 func (r CreateConsumerRequest) ToPolicies() (*domain.LLMPolicy, *domain.MCPPolicy, error) {

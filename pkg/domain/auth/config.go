@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
 )
 
 type Config struct {
@@ -63,12 +64,30 @@ func (c Config) Validate(t Type) error {
 	}
 }
 
-func (c OAuth2Config) validate() error {
+func (c *OAuth2Config) validate() error {
 	if secret.IsMasked(c.ClientSecret) {
 		return fmt.Errorf("%w: oauth2.client_secret cannot be a masked value; omit it to keep the stored value", ErrInvalidConfig)
 	}
 	if strings.TrimSpace(c.Issuer) == "" {
 		return fmt.Errorf("%w: oauth2.issuer is required", ErrInvalidConfig)
+	}
+	for i, aud := range c.Audiences {
+		aud = strings.TrimSpace(aud)
+		if aud == "" {
+			return fmt.Errorf("%w: oauth2.audiences cannot contain empty entries", ErrInvalidConfig)
+		}
+		c.Audiences[i] = aud
+	}
+	for i, scope := range c.RequiredScopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			return fmt.Errorf("%w: oauth2.required_scopes cannot contain empty entries", ErrInvalidConfig)
+		}
+		if identity.IsProtocolScope(scope) {
+			return fmt.Errorf("%w: oauth2.required_scopes cannot contain the OIDC protocol scope %q (it is not carried by access tokens)",
+				ErrInvalidConfig, scope)
+		}
+		c.RequiredScopes[i] = scope
 	}
 	if strings.TrimSpace(c.JWKSURL) == "" && strings.TrimSpace(c.IntrospectionURL) == "" {
 		// Without an explicit endpoint the JWKS is resolved via OIDC

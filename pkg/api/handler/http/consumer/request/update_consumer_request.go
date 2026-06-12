@@ -42,7 +42,7 @@ func (r UpdateConsumerRequest) ToType() *domain.Type {
 	if r.Type == nil || strings.TrimSpace(*r.Type) == "" {
 		return nil
 	}
-	t := domain.Type(*r.Type)
+	t := domain.Type(strings.ToUpper(strings.TrimSpace(*r.Type)))
 	return &t
 }
 

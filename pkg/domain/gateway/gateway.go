@@ -126,5 +126,20 @@ func NormalizeDomain(domain string) (string, error) {
 	if strings.ContainsAny(d, "/:?# ") {
 		return "", fmt.Errorf("%w: %q must be a bare hostname (no scheme, port or path)", ErrInvalidDomain, domain)
 	}
+	// Host matching is exact: anything that cannot appear in a normalized Host
+	// header (wildcards, control characters, trailing dots) would silently
+	// never match and must be rejected instead of persisted.
+	if strings.Contains(d, "*") {
+		return "", fmt.Errorf("%w: %q wildcard domains are not supported", ErrInvalidDomain, domain)
+	}
+	if strings.HasSuffix(d, ".") || strings.HasPrefix(d, ".") {
+		return "", fmt.Errorf("%w: %q must not start or end with a dot", ErrInvalidDomain, domain)
+	}
+	for _, r := range d {
+		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.'
+		if !valid {
+			return "", fmt.Errorf("%w: %q contains invalid hostname characters", ErrInvalidDomain, domain)
+		}
+	}
 	return d, nil
 }

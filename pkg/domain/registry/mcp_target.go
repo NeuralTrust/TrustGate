@@ -114,7 +114,7 @@ func (a *MCPAuth) Validate() error {
 			return fmt.Errorf("%w: auth mode none does not accept header/value", ErrInvalidMCPTarget)
 		}
 	case MCPAuthModeStatic:
-		if strings.TrimSpace(a.Header) == "" || a.Value == "" {
+		if strings.TrimSpace(a.Header) == "" || strings.TrimSpace(a.Value) == "" {
 			return fmt.Errorf("%w: auth mode static requires header and value", ErrInvalidMCPTarget)
 		}
 		if secret.IsMasked(a.Value) {
