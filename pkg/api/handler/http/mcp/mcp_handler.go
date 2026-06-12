@@ -1,3 +1,11 @@
+// Package mcp exposes consumer-scoped virtual MCP servers over Streamable
+// HTTP (JSON-RPC 2.0). One POST endpoint serves initialize, ping, tools/*,
+// resources/*, and prompts/*; the surface is composed from the consumer's MCP
+// registries and toolkit.
+//
+// Elicitation and sampling are not relayed: the gateway answers each POST
+// with a single JSON-RPC response and does not advertise those capabilities
+// upstream, so spec-compliant servers degrade gracefully.
 package mcp
 
 import (
@@ -38,12 +46,21 @@ const (
 	codeInternalError  = -32603
 )
 
+// codeConsentRequired is an implementation-defined JSON-RPC error: the user
+// must link a third-party account at data.connect_url before the call can
+// succeed (forwarded downstream auth, Phase 4).
+const codeConsentRequired = -32003
+
+// codeResourceNotFound is the spec-defined error for resources/read on an
+// unknown URI.
+const codeResourceNotFound = -32002
+
 type Handler struct {
-	composer appmcp.Composer
+	gateway *appmcp.RPCGateway
 }
 
-func NewHandler(composer appmcp.Composer) *Handler {
-	return &Handler{composer: composer}
+func NewHandler(gateway *appmcp.RPCGateway) *Handler {
+	return &Handler{gateway: gateway}
 }
 
 type rpcRequest struct {
@@ -66,6 +83,10 @@ type rpcError struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
+// MethodNotAllowed answers the optional Streamable HTTP legs we do not
+// support: GET (server-initiated SSE stream) and DELETE (client-initiated
+// session termination). The spec mandates 405 here; anything else (401/404)
+// sends clients like Cursor into an endless re-authentication loop.
 func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 	c.Set(fiber.HeaderAllow, fiber.MethodPost)
 	return c.SendStatus(fiber.StatusMethodNotAllowed)
@@ -91,28 +112,22 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusAccepted)
 	}
 
+	// Protocol negotiation stays in the transport layer.
 	switch req.Method {
 	case "initialize":
 		return h.handleInitialize(c, req)
 	case "ping":
 		return writeRPCResult(c, req.ID, struct{}{})
-	case "tools/list":
-		return h.handleToolsList(c, req, rc)
-	case "tools/call":
-		return h.handleToolsCall(c, req, rc)
-	case "resources/list":
-		return h.handleResourcesList(c, req, rc)
-	case "resources/templates/list":
-		return h.handleResourceTemplatesList(c, req, rc)
-	case "resources/read":
-		return h.handleResourcesRead(c, req, rc)
-	case "prompts/list":
-		return h.handlePromptsList(c, req, rc)
-	case "prompts/get":
-		return h.handlePromptsGet(c, req, rc)
-	default:
-		return writeRPCError(c, req.ID, codeMethodNotFound, fmt.Sprintf("method not found: %s", req.Method))
 	}
+
+	result, err := h.gateway.Dispatch(c.UserContext(), rc, req.Method, req.Params)
+	if err != nil {
+		return writeAppError(c, req.ID, err)
+	}
+	if raw, ok := result.(json.RawMessage); ok {
+		return writeRawRPCResult(c, req.ID, raw)
+	}
+	return writeRPCResult(c, req.ID, result)
 }
 
 type initializeParams struct {
@@ -140,113 +155,12 @@ func (h *Handler) handleInitialize(c *fiber.Ctx, req rpcRequest) error {
 	})
 }
 
-func (h *Handler) handleToolsList(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
-	tools, err := h.composer.ListTools(c.UserContext(), rc)
-	if err != nil {
-		return writeComposerError(c, req.ID, err)
-	}
-	if tools == nil {
-		tools = []appmcp.Tool{}
-	}
-	return writeRPCResult(c, req.ID, fiber.Map{"tools": tools})
-}
-
-type callToolParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
-}
-
-func (h *Handler) handleToolsCall(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
-	var params callToolParams
-	if err := json.Unmarshal(req.Params, &params); err != nil || params.Name == "" {
-		return writeRPCError(c, req.ID, codeInvalidParams, "tools/call requires params.name")
-	}
-	result, err := h.composer.CallTool(c.UserContext(), rc, params.Name, params.Arguments)
-	if err != nil {
-		return writeComposerError(c, req.ID, err)
-	}
-	return writeRawRPCResult(c, req.ID, result)
-}
-
-func (h *Handler) handleResourcesList(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
-	resources, err := h.composer.ListResources(c.UserContext(), rc)
-	if err != nil {
-		return writeComposerError(c, req.ID, err)
-	}
-	if resources == nil {
-		resources = []appmcp.Resource{}
-	}
-	return writeRPCResult(c, req.ID, fiber.Map{"resources": resources})
-}
-
-func (h *Handler) handleResourceTemplatesList(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
-	templates, err := h.composer.ListResourceTemplates(c.UserContext(), rc)
-	if err != nil {
-		return writeComposerError(c, req.ID, err)
-	}
-	if templates == nil {
-		templates = []appmcp.ResourceTemplate{}
-	}
-	return writeRPCResult(c, req.ID, fiber.Map{"resourceTemplates": templates})
-}
-
-type readResourceParams struct {
-	URI string `json:"uri"`
-}
-
-func (h *Handler) handleResourcesRead(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
-	var params readResourceParams
-	if err := json.Unmarshal(req.Params, &params); err != nil || params.URI == "" {
-		return writeRPCError(c, req.ID, codeInvalidParams, "resources/read requires params.uri")
-	}
-	result, err := h.composer.ReadResource(c.UserContext(), rc, params.URI)
-	if err != nil {
-		return writeComposerError(c, req.ID, err)
-	}
-	return writeRawRPCResult(c, req.ID, result)
-}
-
-func (h *Handler) handlePromptsList(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
-	prompts, err := h.composer.ListPrompts(c.UserContext(), rc)
-	if err != nil {
-		return writeComposerError(c, req.ID, err)
-	}
-	if prompts == nil {
-		prompts = []appmcp.Prompt{}
-	}
-	return writeRPCResult(c, req.ID, fiber.Map{"prompts": prompts})
-}
-
-type getPromptParams struct {
-	Name      string            `json:"name"`
-	Arguments map[string]string `json:"arguments,omitempty"`
-}
-
-func (h *Handler) handlePromptsGet(c *fiber.Ctx, req rpcRequest, rc *appconsumer.RoutableConsumer) error {
-	var params getPromptParams
-	if err := json.Unmarshal(req.Params, &params); err != nil || params.Name == "" {
-		return writeRPCError(c, req.ID, codeInvalidParams, "prompts/get requires params.name")
-	}
-	result, err := h.composer.GetPrompt(c.UserContext(), rc, params.Name, params.Arguments)
-	if err != nil {
-		return writeComposerError(c, req.ID, err)
-	}
-	return writeRawRPCResult(c, req.ID, result)
-}
-
-// codeConsentRequired is an implementation-defined JSON-RPC error: the user
-// must link a third-party account at data.connect_url before the call can
-// succeed (forwarded downstream auth, Phase 4).
-const codeConsentRequired = -32003
-
-// codeResourceNotFound is the spec-defined error for resources/read on an
-// unknown URI.
-const codeResourceNotFound = -32002
-
-func writeComposerError(c *fiber.Ctx, id json.RawMessage, err error) error {
+// writeAppError maps app-layer errors onto the JSON-RPC error surface.
+func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	var (
-		rpcErr     *appmcp.RPCError
-		consentErr *appmcp.ConsentRequiredError
+		rpcErr        *appmcp.RPCError
+		consentErr    *appmcp.ConsentRequiredError
+		invalidParams *appmcp.InvalidParamsError
 	)
 	switch {
 	case errors.As(err, &rpcErr):
@@ -271,6 +185,10 @@ func writeComposerError(c *fiber.Ctx, id json.RawMessage, err error) error {
 				Data:    data,
 			},
 		})
+	case errors.As(err, &invalidParams):
+		return writeRPCError(c, id, codeInvalidParams, invalidParams.Reason)
+	case errors.Is(err, appmcp.ErrMethodNotFound):
+		return writeRPCError(c, id, codeMethodNotFound, err.Error())
 	case errors.Is(err, sts.ErrInteractionRequired):
 		// IdP claims challenge: surface as 401 so the OAuth challenge
 		// middleware adds WWW-Authenticate (never swallowed as a 500).
