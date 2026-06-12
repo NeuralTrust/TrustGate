@@ -101,16 +101,16 @@ type connectService struct {
 	store     ConnectStore
 	vault     vaultdomain.Repository
 	consumers appconsumer.DataFinder
-	provider  *ProviderClient
-	registrar *UpstreamRegistrar
+	provider  ProviderClient
+	registrar UpstreamRegistrar
 }
 
 func NewConnectService(
 	store ConnectStore,
 	vault vaultdomain.Repository,
 	consumers appconsumer.DataFinder,
-	provider *ProviderClient,
-	registrar *UpstreamRegistrar,
+	provider ProviderClient,
+	registrar UpstreamRegistrar,
 ) ConnectService {
 	return &connectService{store: store, vault: vault, consumers: consumers, provider: provider, registrar: registrar}
 }

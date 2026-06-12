@@ -50,14 +50,14 @@ type credentialResolver struct {
 	exchanger sts.Exchanger
 	vault     vaultdomain.Repository
 	connect   appoauth.ConnectService
-	provider  *appoauth.ProviderClient
+	provider  appoauth.ProviderClient
 }
 
 func NewCredentialResolver(
 	exchanger sts.Exchanger,
 	vault vaultdomain.Repository,
 	connect appoauth.ConnectService,
-	provider *appoauth.ProviderClient,
+	provider appoauth.ProviderClient,
 ) CredentialResolver {
 	return &credentialResolver{exchanger: exchanger, vault: vault, connect: connect, provider: provider}
 }

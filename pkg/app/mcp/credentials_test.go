@@ -18,6 +18,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
+	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
 )
 
 type stubExchanger struct {
@@ -176,7 +177,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 
 	t.Run("missing credential returns consent elicitation", func(t *testing.T) {
 		t.Parallel()
-		r := NewCredentialResolver(nil, &memVault{}, &stubConnect{ticket: "tckt"}, appoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, &memVault{}, &stubConnect{ticket: "tckt"}, infraoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
@@ -194,7 +195,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		vault := &memVault{}
 		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "gh-token", "", nil, time.Now().Add(time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
-		r := NewCredentialResolver(nil, vault, &stubConnect{}, appoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, vault, &stubConnect{}, infraoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		if err := r.Apply(ctx, mcpConsumer(gw), reg, &target); err != nil {
@@ -210,7 +211,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		vault := &memVault{}
 		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "alice-token", "", nil, time.Now().Add(time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
-		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t2"}, appoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t2"}, infraoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "bob"})
 		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
@@ -238,7 +239,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		connect := &stubConnect{refreshCfg: &registrydomain.MCPAuth{
 			Provider: "github", ClientID: "dcr-id", TokenURL: idp.URL,
 		}}
-		r := NewCredentialResolver(nil, vault, connect, appoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		if err := r.Apply(ctx, mcpConsumer(gw), reg, &target); err != nil {
@@ -258,7 +259,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
 		connect := &stubConnect{ticket: "t4", refreshErr: errors.New("client registration evicted")}
-		r := NewCredentialResolver(nil, vault, connect, appoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
@@ -273,7 +274,7 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		vault := &memVault{}
 		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
-		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t3"}, appoauth.NewProviderClient(nil))
+		r := NewCredentialResolver(nil, vault, &stubConnect{ticket: "t3"}, infraoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)

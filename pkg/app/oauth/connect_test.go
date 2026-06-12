@@ -1,4 +1,4 @@
-package oauth
+package oauth_test
 
 import (
 	"context"
@@ -12,32 +12,34 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
+	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
 )
 
 type memConnectStore struct {
-	tickets  map[string]ConnectTicket
-	connects map[string]ConnectState
-	clients  map[string]RegisteredClient
+	tickets  map[string]oauth.ConnectTicket
+	connects map[string]oauth.ConnectState
+	clients  map[string]oauth.RegisteredClient
 }
 
 func newMemConnectStore() *memConnectStore {
 	return &memConnectStore{
-		tickets:  map[string]ConnectTicket{},
-		connects: map[string]ConnectState{},
-		clients:  map[string]RegisteredClient{},
+		tickets:  map[string]oauth.ConnectTicket{},
+		connects: map[string]oauth.ConnectState{},
+		clients:  map[string]oauth.RegisteredClient{},
 	}
 }
 
-func (m *memConnectStore) SaveClient(_ context.Context, key string, c RegisteredClient) error {
+func (m *memConnectStore) SaveClient(_ context.Context, key string, c oauth.RegisteredClient) error {
 	m.clients[key] = c
 	return nil
 }
 
-func (m *memConnectStore) GetClient(_ context.Context, key string) (*RegisteredClient, error) {
+func (m *memConnectStore) GetClient(_ context.Context, key string) (*oauth.RegisteredClient, error) {
 	c, ok := m.clients[key]
 	if !ok {
 		return nil, nil
@@ -45,12 +47,12 @@ func (m *memConnectStore) GetClient(_ context.Context, key string) (*RegisteredC
 	return &c, nil
 }
 
-func (m *memConnectStore) SaveTicket(_ context.Context, id string, t ConnectTicket) error {
+func (m *memConnectStore) SaveTicket(_ context.Context, id string, t oauth.ConnectTicket) error {
 	m.tickets[id] = t
 	return nil
 }
 
-func (m *memConnectStore) GetTicket(_ context.Context, id string) (*ConnectTicket, error) {
+func (m *memConnectStore) GetTicket(_ context.Context, id string) (*oauth.ConnectTicket, error) {
 	t, ok := m.tickets[id]
 	if !ok {
 		return nil, nil
@@ -58,12 +60,12 @@ func (m *memConnectStore) GetTicket(_ context.Context, id string) (*ConnectTicke
 	return &t, nil
 }
 
-func (m *memConnectStore) SaveConnect(_ context.Context, state string, s ConnectState) error {
+func (m *memConnectStore) SaveConnect(_ context.Context, state string, s oauth.ConnectState) error {
 	m.connects[state] = s
 	return nil
 }
 
-func (m *memConnectStore) TakeConnect(_ context.Context, state string) (*ConnectState, error) {
+func (m *memConnectStore) TakeConnect(_ context.Context, state string) (*oauth.ConnectState, error) {
 	s, ok := m.connects[state]
 	if !ok {
 		return nil, nil
@@ -114,7 +116,7 @@ func (s *stubDataFinder) FindByGateway(context.Context, ids.GatewayID) (*appcons
 	return s.data, nil
 }
 
-func connectFixture(t *testing.T, providerTokenURL string) (ConnectService, *memVaultRepo, ids.GatewayID) {
+func connectFixture(t *testing.T, providerTokenURL string) (oauth.ConnectService, *memVaultRepo, ids.GatewayID) {
 	t.Helper()
 	gw := ids.New[ids.GatewayKind]()
 	reg, err := registrydomain.NewMCPRegistry(gw, "github-mcp", "", 0, &registrydomain.MCPTarget{
@@ -139,7 +141,7 @@ func connectFixture(t *testing.T, providerTokenURL string) (ConnectService, *mem
 	}})
 	vault := &memVaultRepo{}
 	store := newMemConnectStore()
-	svc := NewConnectService(store, vault, &stubDataFinder{data: data}, NewProviderClient(nil), NewUpstreamRegistrar(store, nil))
+	svc := oauth.NewConnectService(store, vault, &stubDataFinder{data: data}, infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil))
 	return svc, vault, gw
 }
 
@@ -291,9 +293,9 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 		Registries: []*registrydomain.Registry{reg},
 	}})
 	store := newMemConnectStore()
-	registrar := NewUpstreamRegistrar(store, nil)
+	registrar := infraoauth.NewUpstreamRegistrar(store, nil)
 	vault := &memVaultRepo{}
-	svc := NewConnectService(store, vault, &stubDataFinder{data: data}, NewProviderClient(nil), registrar)
+	svc := oauth.NewConnectService(store, vault, &stubDataFinder{data: data}, infraoauth.NewProviderClient(nil), registrar)
 	ctx := context.Background()
 
 	ticket, err := svc.CreateTicket(ctx, gw, "alice", "/v1/mcp/dev")
@@ -383,11 +385,11 @@ func TestConnectService_AutoRegistrationUpstreamNotDiscoverable(t *testing.T) {
 		Registries: []*registrydomain.Registry{reg},
 	}})
 	store := newMemConnectStore()
-	svc := NewConnectService(store, &memVaultRepo{}, &stubDataFinder{data: data}, NewProviderClient(nil), NewUpstreamRegistrar(store, nil))
+	svc := oauth.NewConnectService(store, &memVaultRepo{}, &stubDataFinder{data: data}, infraoauth.NewProviderClient(nil), infraoauth.NewUpstreamRegistrar(store, nil))
 	ctx := context.Background()
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/v1/mcp/dev")
-	if _, err := svc.Start(ctx, "https://gw", ticket, "legacy"); !errors.Is(err, ErrUpstreamNotDiscoverable) {
-		t.Fatalf("error = %v, want ErrUpstreamNotDiscoverable", err)
+	if _, err := svc.Start(ctx, "https://gw", ticket, "legacy"); !errors.Is(err, oauth.ErrUpstreamNotDiscoverable) {
+		t.Fatalf("error = %v, want oauth.ErrUpstreamNotDiscoverable", err)
 	}
 }
 
@@ -416,12 +418,12 @@ func TestConnectService_UnknownTicketAndProvider(t *testing.T) {
 	t.Parallel()
 	svc, _, gw := connectFixture(t, "https://unused")
 	ctx := context.Background()
-	if _, err := svc.Page(ctx, "missing"); !errors.Is(err, ErrTicketNotFound) {
-		t.Fatalf("error = %v, want ErrTicketNotFound", err)
+	if _, err := svc.Page(ctx, "missing"); !errors.Is(err, oauth.ErrTicketNotFound) {
+		t.Fatalf("error = %v, want oauth.ErrTicketNotFound", err)
 	}
 	ticket, _ := svc.CreateTicket(ctx, gw, "alice", "/v1/mcp/dev")
-	if _, err := svc.Start(ctx, "https://gw", ticket, "slack"); !errors.Is(err, ErrProviderNotFound) {
-		t.Fatalf("error = %v, want ErrProviderNotFound", err)
+	if _, err := svc.Start(ctx, "https://gw", ticket, "slack"); !errors.Is(err, oauth.ErrProviderNotFound) {
+		t.Fatalf("error = %v, want oauth.ErrProviderNotFound", err)
 	}
 }
 

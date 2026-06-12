@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 )
 
 // Auto client registration (forwarded mode, registration: auto): the gateway
@@ -21,40 +22,11 @@ import (
 // so onboarding a spec-compliant SaaS MCP (Linear, Notion, ...) needs no
 // pre-registered OAuth app and no client secret in config.
 
-// ErrUpstreamNotDiscoverable: the upstream does not publish MCP authorization
-// metadata; the admin must fall back to manual registration.
-var ErrUpstreamNotDiscoverable = errors.New(
-	"oauth dcr: upstream does not publish OAuth protected-resource metadata; configure registration: manual with a pre-registered OAuth app")
+var _ appoauth.UpstreamRegistrar = (*upstreamRegistrar)(nil)
 
-// UpstreamAuthServer is the discovered authorization-server surface of one
-// upstream MCP server.
-type UpstreamAuthServer struct {
-	Issuer                string   `json:"issuer"`
-	AuthorizationEndpoint string   `json:"authorization_endpoint"`
-	TokenEndpoint         string   `json:"token_endpoint"`
-	RegistrationEndpoint  string   `json:"registration_endpoint"`
-	ScopesSupported       []string `json:"scopes_supported"`
-	Resource              string   `json:"resource"`
-}
-
-// RegisteredClient is the gateway's DCR-issued client at one upstream.
-type RegisteredClient struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret,omitempty"`
-	RedirectURI  string `json:"redirect_uri"`
-}
-
-// ClientStore persists DCR registrations (no TTL: re-registering is cheap but
-// churns the upstream's client table).
-type ClientStore interface {
-	SaveClient(ctx context.Context, key string, c RegisteredClient) error
-	GetClient(ctx context.Context, key string) (*RegisteredClient, error)
-}
-
-// UpstreamRegistrar discovers upstream authorization servers and maintains
-// the gateway's dynamically registered clients.
-type UpstreamRegistrar struct {
-	clients ClientStore
+// upstreamRegistrar implements the app UpstreamRegistrar port.
+type upstreamRegistrar struct {
+	clients appoauth.ClientStore
 	http    *http.Client
 
 	mu        sync.Mutex
@@ -62,17 +34,17 @@ type UpstreamRegistrar struct {
 }
 
 type discoveryEntry struct {
-	meta    *UpstreamAuthServer
+	meta    *appoauth.UpstreamAuthServer
 	expires time.Time
 }
 
 const discoveryTTL = time.Hour
 
-func NewUpstreamRegistrar(clients ClientStore, client *http.Client) *UpstreamRegistrar {
+func NewUpstreamRegistrar(clients appoauth.ClientStore, client *http.Client) appoauth.UpstreamRegistrar {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &UpstreamRegistrar{
+	return &upstreamRegistrar{
 		clients:   clients,
 		http:      client,
 		discovery: map[string]discoveryEntry{},
@@ -82,7 +54,7 @@ func NewUpstreamRegistrar(clients ClientStore, client *http.Client) *UpstreamReg
 // Discover resolves the upstream MCP URL to its authorization-server
 // metadata: protected-resource metadata first (path-inserted, then root),
 // then the AS document (OAuth metadata, then OIDC discovery).
-func (r *UpstreamRegistrar) Discover(ctx context.Context, upstreamURL string) (*UpstreamAuthServer, error) {
+func (r *upstreamRegistrar) Discover(ctx context.Context, upstreamURL string) (*appoauth.UpstreamAuthServer, error) {
 	r.mu.Lock()
 	if e, ok := r.discovery[upstreamURL]; ok && time.Now().Before(e.expires) {
 		r.mu.Unlock()
@@ -100,7 +72,7 @@ func (r *UpstreamRegistrar) Discover(ctx context.Context, upstreamURL string) (*
 	return meta, nil
 }
 
-func (r *UpstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*UpstreamAuthServer, error) {
+func (r *upstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*appoauth.UpstreamAuthServer, error) {
 	u, err := url.Parse(upstreamURL)
 	if err != nil || u.Host == "" {
 		return nil, fmt.Errorf("oauth dcr: bad upstream url %q", upstreamURL)
@@ -126,11 +98,11 @@ func (r *UpstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("%w (%s)", ErrUpstreamNotDiscoverable, upstreamURL)
+		return nil, fmt.Errorf("%w (%s)", appoauth.ErrUpstreamNotDiscoverable, upstreamURL)
 	}
 
 	as := strings.TrimSuffix(prm.AuthorizationServers[0], "/")
-	var doc UpstreamAuthServer
+	var doc appoauth.UpstreamAuthServer
 	asu, err := url.Parse(as)
 	if err != nil || asu.Host == "" {
 		return nil, fmt.Errorf("oauth dcr: bad authorization server %q", as)
@@ -164,14 +136,13 @@ func (r *UpstreamRegistrar) discover(ctx context.Context, upstreamURL string) (*
 }
 
 // EnsureClient returns the gateway's registered client at the upstream,
-// registering via RFC 7591 on first use. Key scopes the registration per
-// (gateway, registry) so tenants never share a client identity.
-func (r *UpstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *UpstreamAuthServer, redirectURI string) (*RegisteredClient, error) {
+// registering via RFC 7591 on first use.
+func (r *upstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *appoauth.UpstreamAuthServer, redirectURI string) (*appoauth.RegisteredClient, error) {
 	if c, err := r.clients.GetClient(ctx, key); err == nil && c != nil && c.RedirectURI == redirectURI {
 		return c, nil
 	}
 	if meta.RegistrationEndpoint == "" {
-		return nil, fmt.Errorf("%w: authorization server has no registration_endpoint", ErrUpstreamNotDiscoverable)
+		return nil, fmt.Errorf("%w: authorization server has no registration_endpoint", appoauth.ErrUpstreamNotDiscoverable)
 	}
 	// Public client + PKCE, mirroring how MCP clients register (RFC 7591).
 	body, _ := json.Marshal(map[string]any{
@@ -205,7 +176,7 @@ func (r *UpstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 	if err := json.Unmarshal(raw, &doc); err != nil || doc.ClientID == "" {
 		return nil, fmt.Errorf("oauth dcr: registration response has no client_id")
 	}
-	client := &RegisteredClient{ClientID: doc.ClientID, ClientSecret: doc.ClientSecret, RedirectURI: redirectURI}
+	client := &appoauth.RegisteredClient{ClientID: doc.ClientID, ClientSecret: doc.ClientSecret, RedirectURI: redirectURI}
 	if err := r.clients.SaveClient(ctx, key, *client); err != nil {
 		return nil, err
 	}
@@ -214,11 +185,11 @@ func (r *UpstreamRegistrar) EnsureClient(ctx context.Context, key string, meta *
 
 // CachedClient returns the stored registration without registering (used by
 // the refresh path, which must not mint new registrations).
-func (r *UpstreamRegistrar) CachedClient(ctx context.Context, key string) (*RegisteredClient, error) {
+func (r *upstreamRegistrar) CachedClient(ctx context.Context, key string) (*appoauth.RegisteredClient, error) {
 	return r.clients.GetClient(ctx, key)
 }
 
-func (r *UpstreamRegistrar) getJSON(ctx context.Context, rawurl string, out any) error {
+func (r *upstreamRegistrar) getJSON(ctx context.Context, rawurl string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawurl, nil)
 	if err != nil {
 		return err

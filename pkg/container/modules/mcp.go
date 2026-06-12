@@ -58,8 +58,8 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func() *appoauth.ProviderClient {
-		return appoauth.NewProviderClient(nil)
+	if err := c.Provide(func() appoauth.ProviderClient {
+		return infraoauth.NewProviderClient(nil)
 	}); err != nil {
 		return err
 	}
@@ -74,8 +74,8 @@ func MCP(c *container.Container) error {
 	if err := c.Provide(func(s *infraoauth.ConnectStore) appoauth.ClientStore { return s }); err != nil {
 		return err
 	}
-	if err := c.Provide(func(clients appoauth.ClientStore) *appoauth.UpstreamRegistrar {
-		return appoauth.NewUpstreamRegistrar(clients, nil)
+	if err := c.Provide(func(clients appoauth.ClientStore) appoauth.UpstreamRegistrar {
+		return infraoauth.NewUpstreamRegistrar(clients, nil)
 	}); err != nil {
 		return err
 	}
@@ -83,8 +83,8 @@ func MCP(c *container.Container) error {
 		store appoauth.ConnectStore,
 		vault vaultdomain.Repository,
 		consumers appconsumer.DataFinder,
-		provider *appoauth.ProviderClient,
-		registrar *appoauth.UpstreamRegistrar,
+		provider appoauth.ProviderClient,
+		registrar appoauth.UpstreamRegistrar,
 	) appoauth.ConnectService {
 		return appoauth.NewConnectService(store, vault, consumers, provider, registrar)
 	}); err != nil {
@@ -94,7 +94,7 @@ func MCP(c *container.Container) error {
 		exchanger sts.Exchanger,
 		vault vaultdomain.Repository,
 		connect appoauth.ConnectService,
-		provider *appoauth.ProviderClient,
+		provider appoauth.ProviderClient,
 	) appmcp.CredentialResolver {
 		return appmcp.NewCredentialResolver(exchanger, vault, connect, provider)
 	}); err != nil {

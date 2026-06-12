@@ -10,34 +10,25 @@ import (
 	"strings"
 	"time"
 
+	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
-// ProviderToken is a third-party token response (GitHub, Slack, Linear...).
-type ProviderToken struct {
-	AccessToken  string
-	RefreshToken string
-	Scopes       []string
-	ExpiresAt    time.Time
-}
+var _ appoauth.ProviderClient = (*providerClient)(nil)
 
-// ProviderClient runs the OAuth authorization-code legs against a third-party
-// provider configured on a forwarded-mode MCP target. The gateway is the
-// OAuth client; the agent never sees these credentials.
-type ProviderClient struct {
+// providerClient implements the app ProviderClient port over plain HTTP.
+type providerClient struct {
 	client *http.Client
 }
 
-func NewProviderClient(client *http.Client) *ProviderClient {
+func NewProviderClient(client *http.Client) appoauth.ProviderClient {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &ProviderClient{client: client}
+	return &providerClient{client: client}
 }
 
-// AuthorizeURL builds the provider consent URL. challenge enables PKCE
-// (S256); cfg.Resource adds the RFC 8707 resource indicator.
-func (p *ProviderClient) AuthorizeURL(cfg *registrydomain.MCPAuth, redirectURI, state, challenge string) string {
+func (p *providerClient) AuthorizeURL(cfg *registrydomain.MCPAuth, redirectURI, state, challenge string) string {
 	q := url.Values{}
 	q.Set("response_type", "code")
 	q.Set("client_id", cfg.ClientID)
@@ -60,9 +51,7 @@ func (p *ProviderClient) AuthorizeURL(cfg *registrydomain.MCPAuth, redirectURI, 
 	return cfg.AuthorizeURL + sep + q.Encode()
 }
 
-// ExchangeCode redeems the authorization code at the provider token endpoint.
-// Public clients (DCR, no secret) authenticate with PKCE only.
-func (p *ProviderClient) ExchangeCode(ctx context.Context, cfg *registrydomain.MCPAuth, code, redirectURI, verifier string) (*ProviderToken, error) {
+func (p *providerClient) ExchangeCode(ctx context.Context, cfg *registrydomain.MCPAuth, code, redirectURI, verifier string) (*appoauth.ProviderToken, error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
@@ -80,8 +69,7 @@ func (p *ProviderClient) ExchangeCode(ctx context.Context, cfg *registrydomain.M
 	return p.tokenCall(ctx, cfg.TokenURL, form)
 }
 
-// Refresh trades the refresh token for a fresh access token.
-func (p *ProviderClient) Refresh(ctx context.Context, cfg *registrydomain.MCPAuth, refreshToken string) (*ProviderToken, error) {
+func (p *providerClient) Refresh(ctx context.Context, cfg *registrydomain.MCPAuth, refreshToken string) (*appoauth.ProviderToken, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
@@ -95,7 +83,7 @@ func (p *ProviderClient) Refresh(ctx context.Context, cfg *registrydomain.MCPAut
 	return p.tokenCall(ctx, cfg.TokenURL, form)
 }
 
-func (p *ProviderClient) tokenCall(ctx context.Context, endpoint string, form url.Values) (*ProviderToken, error) {
+func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form url.Values) (*appoauth.ProviderToken, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
@@ -126,7 +114,7 @@ func (p *ProviderClient) tokenCall(ctx context.Context, endpoint string, form ur
 	if res.StatusCode != http.StatusOK || doc.Error != "" || doc.AccessToken == "" {
 		return nil, fmt.Errorf("oauth provider: token exchange failed (%s): %s", doc.Error, doc.ErrorDesc)
 	}
-	out := &ProviderToken{AccessToken: doc.AccessToken, RefreshToken: doc.RefreshToken}
+	out := &appoauth.ProviderToken{AccessToken: doc.AccessToken, RefreshToken: doc.RefreshToken}
 	if doc.ExpiresIn > 0 {
 		out.ExpiresAt = time.Now().Add(time.Duration(doc.ExpiresIn) * time.Second)
 	}
