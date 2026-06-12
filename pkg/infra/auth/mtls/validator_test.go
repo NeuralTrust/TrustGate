@@ -21,6 +21,7 @@ import (
 
 type testPKI struct {
 	caPEM  string
+	caKey  *ecdsa.PrivateKey
 	leaf   *x509.Certificate
 	leafCA *x509.Certificate
 }
@@ -66,7 +67,7 @@ func newTestPKI(t *testing.T, cn string, dns []string) *testPKI {
 	leaf, _ := x509.ParseCertificate(leafDER)
 
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
-	return &testPKI{caPEM: string(caPEM), leaf: leaf, leafCA: caCert}
+	return &testPKI{caPEM: string(caPEM), caKey: caKey, leaf: leaf, leafCA: caCert}
 }
 
 func TestValidator_ValidChain(t *testing.T) {
@@ -138,5 +139,48 @@ func TestCertFromXFCC(t *testing.T) {
 func TestCertFromXFCC_NoCertElement(t *testing.T) {
 	if _, err := mtls.CertFromXFCC(`Hash=abc;Subject="CN=x"`); err == nil {
 		t.Fatal("expected missing Cert rejection")
+	}
+}
+
+func TestCertFromXFCC_MultiHopTakesClosestProxyEntry(t *testing.T) {
+	forged := newTestPKI(t, "attacker.injected", nil)
+	real := newTestPKI(t, "svc.internal", nil)
+	forgedPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: forged.leaf.Raw})
+	realPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: real.leaf.Raw})
+	header := `Hash=evil;Cert="` + url.QueryEscape(string(forgedPEM)) + `"` +
+		`,Hash=good;Cert="` + url.QueryEscape(string(realPEM)) + `";Subject="CN=svc.internal"`
+
+	cert, err := mtls.CertFromXFCC(header)
+	if err != nil {
+		t.Fatalf("parse xfcc: %v", err)
+	}
+	if cert.Subject.CommonName != "svc.internal" {
+		t.Fatalf("cn = %q, want the cert appended by the closest proxy", cert.Subject.CommonName)
+	}
+}
+
+func TestValidator_RejectsServerOnlyEKU(t *testing.T) {
+	pki := newTestPKI(t, "svc.internal", nil)
+	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("key: %v", err)
+	}
+	tpl := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: "server.only"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, pki.leafCA, &serverKey.PublicKey, pki.caKey)
+	if err != nil {
+		t.Fatalf("server cert: %v", err)
+	}
+	serverCert, _ := x509.ParseCertificate(der)
+
+	v := mtls.NewValidator()
+	if _, err := v.Validate(serverCert, &authdomain.MTLSConfig{CACert: pki.caPEM}); err == nil {
+		t.Fatal("a serverAuth-only certificate must not authenticate as a client")
 	}
 }

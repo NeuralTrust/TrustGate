@@ -61,6 +61,7 @@ func API(c *container.Container) error {
 		apiKeys appauth.APIKeyFinder,
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
+		cfg *config.Config,
 	) middleware.IdentityResolver {
 		return middleware.NewChainIdentityResolver(
 			apiKeys,
@@ -70,6 +71,7 @@ func API(c *container.Container) error {
 			introspection.NewValidator(nil),
 			mtls.NewValidator(),
 			mtls.NewXFCCExtractor(),
+			cfg.Server.TrustXFCCFrom,
 		)
 	}); err != nil {
 		return err

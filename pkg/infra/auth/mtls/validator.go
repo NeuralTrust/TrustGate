@@ -38,7 +38,7 @@ func (v *Validator) Validate(cert *x509.Certificate, cfg *authdomain.MTLSConfig)
 	}
 	if _, err := cert.Verify(x509.VerifyOptions{
 		Roots:     roots,
-		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageAny},
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}); err != nil {
 		return nil, fmt.Errorf("%w: chain verification failed: %w", ErrInvalidCertificate, err)
 	}
@@ -77,6 +77,9 @@ func (XFCCExtractor) FromXFCC(header string) (*x509.Certificate, error) {
 	return CertFromXFCC(header)
 }
 
+// CertFromXFCC parses the entry appended by the proxy closest to the gateway
+// (the last comma-separated entry, per Envoy's APPEND_FORWARD semantics);
+// earlier entries traveled through untrusted hops and may be attacker-supplied.
 func CertFromXFCC(header string) (*x509.Certificate, error) {
 	if header == "" {
 		return nil, fmt.Errorf("%w: empty %s header", ErrInvalidCertificate, HeaderXFCC)
@@ -119,7 +122,7 @@ func splitXFCC(header string) []string {
 				b.Reset()
 			}
 			if r == ',' {
-				return elements
+				elements = elements[:0]
 			}
 		default:
 			b.WriteRune(r)

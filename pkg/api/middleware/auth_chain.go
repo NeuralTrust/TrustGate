@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"log/slog"
+	"net"
 	"strings"
 
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
@@ -25,6 +26,7 @@ type chainIdentityResolver struct {
 	intro       appauth.IntrospectionValidator
 	mtls        appauth.MTLSValidator
 	certs       appauth.ClientCertificateExtractor
+	xfccPeers   []*net.IPNet
 }
 
 func NewChainIdentityResolver(
@@ -35,6 +37,7 @@ func NewChainIdentityResolver(
 	introValidator appauth.IntrospectionValidator,
 	mtlsValidator appauth.MTLSValidator,
 	certExtractor appauth.ClientCertificateExtractor,
+	trustXFCCFrom []string,
 ) IdentityResolver {
 	return &chainIdentityResolver{
 		apiKeys:     apiKeys,
@@ -44,7 +47,38 @@ func NewChainIdentityResolver(
 		intro:       introValidator,
 		mtls:        mtlsValidator,
 		certs:       certExtractor,
+		xfccPeers:   parseTrustedPeers(trustXFCCFrom),
 	}
+}
+
+// parseTrustedPeers accepts CIDRs ("10.0.0.0/8") and bare IPs ("10.1.2.3").
+// Malformed entries are dropped with a warning rather than silently widening
+// or narrowing the trust boundary at runtime.
+func parseTrustedPeers(entries []string) []*net.IPNet {
+	var out []*net.IPNet
+	for _, e := range entries {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if !strings.Contains(e, "/") {
+			if ip := net.ParseIP(e); ip != nil {
+				bits := 32
+				if ip.To4() == nil {
+					bits = 128
+				}
+				out = append(out, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+				continue
+			}
+		}
+		_, ipnet, err := net.ParseCIDR(e)
+		if err != nil {
+			slog.Warn("auth chain: ignoring malformed TRUST_XFCC_FROM entry", slog.String("entry", e))
+			continue
+		}
+		out = append(out, ipnet)
+	}
+	return out
 }
 
 type authScope map[ids.AuthID]struct{}
@@ -58,7 +92,10 @@ func (s authScope) allows(id ids.AuthID) bool {
 }
 
 func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
-	scope := r.pathScope(c)
+	scope, err := r.pathScope(c)
+	if err != nil {
+		return Identity{}, ErrUnauthenticated
+	}
 	if cert := r.clientCertificate(c); cert != nil {
 		return r.resolveMTLS(c.UserContext(), cert, scope)
 	}
@@ -71,18 +108,21 @@ func (r *chainIdentityResolver) Resolve(c *fiber.Ctx) (Identity, error) {
 	return Identity{}, ErrUnauthenticated
 }
 
-func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) authScope {
+// pathScope fails closed on lookup errors: degrading to "any configured auth
+// is acceptable" when the path store is down would collapse the per-path
+// tenant isolation that the scope exists to provide.
+func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) (authScope, error) {
 	if r.paths == nil {
-		return nil
+		return nil, nil
 	}
 	matches, err := r.paths.Match(c.UserContext(), c.Hostname(), c.Path())
 	if err != nil {
-		slog.Warn("auth chain: path-first lookup failed; resolving unrestricted",
+		slog.Warn("auth chain: path-first lookup failed; rejecting request",
 			slog.String("path", c.Path()), slog.String("error", err.Error()))
-		return nil
+		return nil, err
 	}
 	if len(matches) == 0 {
-		return nil
+		return nil, nil
 	}
 	scope := authScope{}
 	for _, m := range matches {
@@ -90,7 +130,7 @@ func (r *chainIdentityResolver) pathScope(c *fiber.Ctx) authScope {
 			scope[a.ID] = struct{}{}
 		}
 	}
-	return scope
+	return scope, nil
 }
 
 func (r *chainIdentityResolver) resolveMTLS(ctx context.Context, cert *x509.Certificate, scope authScope) (Identity, error) {
@@ -178,7 +218,7 @@ func (r *chainIdentityResolver) clientCertificate(c *fiber.Ctx) *x509.Certificat
 	if state := c.Context().TLSConnectionState(); state != nil && len(state.PeerCertificates) > 0 {
 		return state.PeerCertificates[0]
 	}
-	if r.certs == nil {
+	if r.certs == nil || !r.trustsXFCCPeer(c) {
 		return nil
 	}
 	if xfcc := c.Get(headerXFCC); xfcc != "" {
@@ -189,6 +229,29 @@ func (r *chainIdentityResolver) clientCertificate(c *fiber.Ctx) *x509.Certificat
 		return cert
 	}
 	return nil
+}
+
+// trustsXFCCPeer gates the X-Forwarded-Client-Cert header behind an explicit
+// peer allowlist (TRUST_XFCC_FROM): the header is client-supplied, so without
+// a trusted TLS-terminating proxy in front it is trivially spoofable.
+func (r *chainIdentityResolver) trustsXFCCPeer(c *fiber.Ctx) bool {
+	if len(r.xfccPeers) == 0 {
+		return false
+	}
+	host, _, err := net.SplitHostPort(c.Context().RemoteAddr().String())
+	if err != nil {
+		host = c.Context().RemoteAddr().String()
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, n := range r.xfccPeers {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func bearerToken(c *fiber.Ctx) string {

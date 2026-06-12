@@ -103,6 +103,7 @@ type ServerConfig struct {
 	SecretKey     string
 	STSIssuer     string
 	STSSigningKey string
+	TrustXFCCFrom []string
 }
 
 type DatabaseConfig struct {
@@ -227,6 +228,7 @@ func getServerConfig() ServerConfig {
 		SecretKey:     getEnv("SERVER_SECRET_KEY", ""),
 		STSIssuer:     getEnv("STS_ISSUER", "trustgate"),
 		STSSigningKey: getEnv("STS_SIGNING_KEY", ""),
+		TrustXFCCFrom: splitCSV(getEnv("TRUST_XFCC_FROM", "")),
 	}
 }
 
