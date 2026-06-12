@@ -29,18 +29,15 @@ func TestLoadBalancer_Close_IdempotentAndSafe(t *testing.T) {
 	// it observes done; performSuccessUpdate bails out on a nil client.
 	cacheClient.EXPECT().RedisClient().Return(nil).Maybe()
 
-	bk, err := registry.NewRegistry(
+	bk, err := registry.NewLLMRegistry(
 		ids.New[ids.GatewayKind](),
 		"backend-1",
-		"openai",
-		nil,
 		"",
 		1,
-		registry.NewAPIKeyAuth("sk-1"),
-		nil,
+		&registry.LLMTarget{Provider: "openai", Auth: registry.NewAPIKeyAuth("sk-1")},
 	)
 	if err != nil {
-		t.Fatalf("NewRegistry error: %v", err)
+		t.Fatalf("NewLLMRegistry error: %v", err)
 	}
 
 	lb, err := loadbalancer.NewLoadBalancer(loadbalancer.NewBaseFactory(nil, nil), loadbalancer.Pool{

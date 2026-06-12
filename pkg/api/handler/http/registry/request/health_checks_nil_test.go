@@ -2,12 +2,15 @@ package request
 
 import "testing"
 
-func TestCreateRegistryRequest_ToHealthChecks_NilField(t *testing.T) {
+func TestCreateRegistryRequest_ToLLMTarget_NilHealthChecks(t *testing.T) {
 	t.Parallel()
-	r := CreateRegistryRequest{}
-	got := r.ToHealthChecks()
-	if got != nil {
-		t.Fatalf("expected nil HealthChecks when field is omitted, got %+v", got)
+	r := CreateRegistryRequest{Provider: "openai"}
+	got := r.ToLLMTarget()
+	if got == nil {
+		t.Fatal("expected LLM target for LLM request")
+	}
+	if got.HealthChecks != nil {
+		t.Fatalf("expected nil HealthChecks when field is omitted, got %+v", got.HealthChecks)
 	}
 }
 

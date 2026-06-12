@@ -146,12 +146,16 @@ func (r CreateRegistryRequest) ToType() domain.Type {
 	return domain.Type(r.Type)
 }
 
-func (r CreateRegistryRequest) ToAuth() *domain.TargetAuth {
-	return r.Auth.ToDomain()
-}
-
-func (r CreateRegistryRequest) ToHealthChecks() *domain.HealthChecks {
-	return r.HealthChecks.ToDomain()
+func (r CreateRegistryRequest) ToLLMTarget() *domain.LLMTarget {
+	if r.ToType() != domain.TypeLLM {
+		return nil
+	}
+	return &domain.LLMTarget{
+		Provider:        r.Provider,
+		ProviderOptions: r.ProviderOptions,
+		Auth:            r.Auth.ToDomain(),
+		HealthChecks:    r.HealthChecks.ToDomain(),
+	}
 }
 
 func (r CreateRegistryRequest) ToMCPTarget() *domain.MCPTarget {

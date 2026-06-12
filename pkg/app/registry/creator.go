@@ -10,16 +10,13 @@ import (
 )
 
 type CreateInput struct {
-	GatewayID       ids.GatewayID
-	Name            string
-	Type            domain.Type
-	Provider        string
-	ProviderOptions map[string]any
-	Description     string
-	Weight          int
-	Auth            *domain.TargetAuth
-	HealthChecks    *domain.HealthChecks
-	MCPTarget       *domain.MCPTarget
+	GatewayID   ids.GatewayID
+	Name        string
+	Type        domain.Type
+	Description string
+	Weight      int
+	LLMTarget   *domain.LLMTarget
+	MCPTarget   *domain.MCPTarget
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=registry_creator_mock.go --case=underscore --with-expecter
@@ -55,15 +52,12 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 			in.MCPTarget,
 		)
 	} else {
-		b, err = domain.NewRegistry(
+		b, err = domain.NewLLMRegistry(
 			in.GatewayID,
 			in.Name,
-			in.Provider,
-			in.ProviderOptions,
 			in.Description,
 			in.Weight,
-			in.Auth,
-			in.HealthChecks,
+			in.LLMTarget,
 		)
 	}
 	if err != nil {

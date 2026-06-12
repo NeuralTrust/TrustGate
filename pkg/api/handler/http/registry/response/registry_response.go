@@ -112,13 +112,13 @@ type TargetOAuthConfigResponse struct {
 
 func FromRegistry(b *domain.Registry) RegistryResponse {
 	var health *HealthChecksResponse
-	if b.HealthChecks != nil {
+	if hc := b.HealthChecks(); hc != nil {
 		health = &HealthChecksResponse{
-			Passive:   b.HealthChecks.Passive,
-			Path:      b.HealthChecks.Path,
-			Headers:   b.HealthChecks.Headers,
-			Threshold: b.HealthChecks.Threshold,
-			Interval:  b.HealthChecks.Interval,
+			Passive:   hc.Passive,
+			Path:      hc.Path,
+			Headers:   hc.Headers,
+			Threshold: hc.Threshold,
+			Interval:  hc.Interval,
 		}
 	}
 	regType := b.Type
@@ -130,11 +130,11 @@ func FromRegistry(b *domain.Registry) RegistryResponse {
 		GatewayID:       b.GatewayID,
 		Name:            b.Name,
 		Type:            string(regType),
-		Provider:        b.Provider,
-		ProviderOptions: b.ProviderOptions,
+		Provider:        b.Provider(),
+		ProviderOptions: b.ProviderOptions(),
 		Description:     b.Description,
 		Weight:          b.Weight,
-		Auth:            FromAuth(b.Auth),
+		Auth:            FromAuth(b.Auth()),
 		HealthChecks:    health,
 		MCPTarget:       fromMCPTarget(b.MCPTarget),
 		CreatedAt:       b.CreatedAt,

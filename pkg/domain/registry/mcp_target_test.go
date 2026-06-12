@@ -120,26 +120,17 @@ func TestRegistry_Validate_TypeCrossChecks(t *testing.T) {
 
 	t.Run("LLM rejects mcp_target", func(t *testing.T) {
 		t.Parallel()
-		b, _ := NewRegistry(gwID, "openai-1", "openai", nil, "", 1, NewAPIKeyAuth("sk-1"), nil)
+		b, _ := NewLLMRegistry(gwID, "openai-1", "", 1, &LLMTarget{Provider: "openai", Auth: NewAPIKeyAuth("sk-1")})
 		b.MCPTarget = validMCPTarget()
 		if err := b.Validate(); !errors.Is(err, commonerrors.ErrValidation) {
 			t.Fatalf("error = %v, want validation error", err)
 		}
 	})
 
-	t.Run("MCP rejects provider", func(t *testing.T) {
+	t.Run("MCP rejects llm_target", func(t *testing.T) {
 		t.Parallel()
 		b, _ := NewMCPRegistry(gwID, "mcp-1", "", 0, validMCPTarget())
-		b.Provider = "openai"
-		if err := b.Validate(); !errors.Is(err, commonerrors.ErrValidation) {
-			t.Fatalf("error = %v, want validation error", err)
-		}
-	})
-
-	t.Run("MCP rejects target auth", func(t *testing.T) {
-		t.Parallel()
-		b, _ := NewMCPRegistry(gwID, "mcp-1", "", 0, validMCPTarget())
-		b.Auth = NewAPIKeyAuth("sk-1")
+		b.LLMTarget = &LLMTarget{Provider: "openai", Auth: NewAPIKeyAuth("sk-1")}
 		if err := b.Validate(); !errors.Is(err, commonerrors.ErrValidation) {
 			t.Fatalf("error = %v, want validation error", err)
 		}
@@ -147,7 +138,7 @@ func TestRegistry_Validate_TypeCrossChecks(t *testing.T) {
 
 	t.Run("empty type defaults to LLM", func(t *testing.T) {
 		t.Parallel()
-		b, _ := NewRegistry(gwID, "openai-1", "openai", nil, "", 1, NewAPIKeyAuth("sk-1"), nil)
+		b, _ := NewLLMRegistry(gwID, "openai-1", "", 1, &LLMTarget{Provider: "openai", Auth: NewAPIKeyAuth("sk-1")})
 		b.Type = ""
 		if err := b.Validate(); err != nil {
 			t.Fatalf("unexpected error: %v", err)

@@ -10,7 +10,7 @@ import (
 func makeBackends(names ...string) []*registry.Registry {
 	out := make([]*registry.Registry, len(names))
 	for i, name := range names {
-		out[i] = &registry.Registry{ID: ids.New[ids.RegistryKind](), Name: name, Weight: 1, Provider: "openai"}
+		out[i] = &registry.Registry{ID: ids.New[ids.RegistryKind](), Name: name, Weight: 1, LLMTarget: &registry.LLMTarget{Provider: "openai"}}
 	}
 	return out
 }
@@ -127,8 +127,8 @@ func TestRandom_Name(t *testing.T) {
 func TestWeightedRoundRobin_RespectsWeights(t *testing.T) {
 	t.Parallel()
 	registries := []*registry.Registry{
-		{ID: ids.New[ids.RegistryKind](), Name: "heavy", Weight: 3, Provider: "openai"},
-		{ID: ids.New[ids.RegistryKind](), Name: "light", Weight: 1, Provider: "openai"},
+		{ID: ids.New[ids.RegistryKind](), Name: "heavy", Weight: 3, LLMTarget: &registry.LLMTarget{Provider: "openai"}},
+		{ID: ids.New[ids.RegistryKind](), Name: "light", Weight: 1, LLMTarget: &registry.LLMTarget{Provider: "openai"}},
 	}
 	wrr := NewWeightedRoundRobin(registries)
 	counts := map[string]int{}

@@ -13,7 +13,8 @@ import (
 func TestBackend_New_HappyPath(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	b, err := NewRegistry(gwID, "openai-1", "openai", nil, "primary", 5, NewAPIKeyAuth("sk-test"), nil)
+	b, err := NewLLMRegistry(gwID, "openai-1", "primary", 5,
+		&LLMTarget{Provider: "openai", Auth: NewAPIKeyAuth("sk-test")})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -23,8 +24,8 @@ func TestBackend_New_HappyPath(t *testing.T) {
 	if b.GatewayID != gwID {
 		t.Fatalf("GatewayID = %s, want %s", b.GatewayID, gwID)
 	}
-	if b.Provider != "openai" {
-		t.Fatalf("Provider = %q, want openai", b.Provider)
+	if b.Provider() != "openai" {
+		t.Fatalf("Provider = %q, want openai", b.Provider())
 	}
 	if b.Weight != 5 {
 		t.Fatalf("Weight = %d, want 5", b.Weight)
@@ -58,17 +59,17 @@ func TestBackend_Validate_Rejects(t *testing.T) {
 		},
 		{
 			name:    "no provider",
-			mutate:  func(b *Registry) { b.Provider = "" },
+			mutate:  func(b *Registry) { b.LLMTarget.Provider = "" },
 			wantErr: ErrInvalidRegistry,
 		},
 		{
 			name:    "no auth",
-			mutate:  func(b *Registry) { b.Auth = nil },
+			mutate:  func(b *Registry) { b.LLMTarget.Auth = nil },
 			wantErr: ErrInvalidRegistry,
 		},
 		{
 			name:    "invalid auth",
-			mutate:  func(b *Registry) { b.Auth = &TargetAuth{Type: AuthTypeAPIKey} },
+			mutate:  func(b *Registry) { b.LLMTarget.Auth = &TargetAuth{Type: AuthTypeAPIKey} },
 			wantErr: ErrInvalidRegistry,
 		},
 	}
@@ -81,8 +82,7 @@ func TestBackend_Validate_Rejects(t *testing.T) {
 				ID:        ids.New[ids.RegistryKind](),
 				GatewayID: ids.New[ids.GatewayKind](),
 				Name:      "x",
-				Provider:  "openai",
-				Auth:      NewAPIKeyAuth("sk-test"),
+				LLMTarget: &LLMTarget{Provider: "openai", Auth: NewAPIKeyAuth("sk-test")},
 			}
 			tc.mutate(b)
 			err := b.Validate()
@@ -102,7 +102,8 @@ func TestBackend_Validate_OpenAICompatible(t *testing.T) {
 
 	t.Run("missing base_url is rejected", func(t *testing.T) {
 		t.Parallel()
-		_, err := NewRegistry(gwID, "compat-1", "openai_compatible", nil, "", 1, NewAPIKeyAuth("sk-test"), nil)
+		_, err := NewLLMRegistry(gwID, "compat-1", "", 1,
+			&LLMTarget{Provider: "openai_compatible", Auth: NewAPIKeyAuth("sk-test")})
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -113,13 +114,16 @@ func TestBackend_Validate_OpenAICompatible(t *testing.T) {
 
 	t.Run("with base_url is accepted", func(t *testing.T) {
 		t.Parallel()
-		b, err := NewRegistry(gwID, "compat-2", "openai_compatible",
-			map[string]any{"base_url": "https://api.together.xyz/v1"}, "", 1, NewAPIKeyAuth("sk-test"), nil)
+		b, err := NewLLMRegistry(gwID, "compat-2", "", 1, &LLMTarget{
+			Provider:        "openai_compatible",
+			ProviderOptions: map[string]any{"base_url": "https://api.together.xyz/v1"},
+			Auth:            NewAPIKeyAuth("sk-test"),
+		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if b.Provider != "openai_compatible" {
-			t.Fatalf("Provider = %q, want openai_compatible", b.Provider)
+		if b.Provider() != "openai_compatible" {
+			t.Fatalf("Provider = %q, want openai_compatible", b.Provider())
 		}
 	})
 }
@@ -130,16 +134,18 @@ func TestBackend_Rehydrate(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	b := Rehydrate(RehydrateParams{
-		ID:              id,
-		GatewayID:       gwID,
-		Name:            "x",
-		Provider:        "anthropic",
-		ProviderOptions: map[string]any{"k": "v"},
-		Description:     "desc",
-		Weight:          3,
-		Auth:            NewAPIKeyAuth("sk-1"),
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:          id,
+		GatewayID:   gwID,
+		Name:        "x",
+		Description: "desc",
+		Weight:      3,
+		LLMTarget: &LLMTarget{
+			Provider:        "anthropic",
+			ProviderOptions: map[string]any{"k": "v"},
+			Auth:            NewAPIKeyAuth("sk-1"),
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
 	})
 	if b.ID != id || b.GatewayID != gwID {
 		t.Fatal("identity mismatch after rehydrate")
@@ -147,8 +153,8 @@ func TestBackend_Rehydrate(t *testing.T) {
 	if b.Type != TypeLLM {
 		t.Fatalf("Type = %q, want %q (default for legacy rows)", b.Type, TypeLLM)
 	}
-	if b.Provider != "anthropic" {
-		t.Fatalf("Provider = %q", b.Provider)
+	if b.Provider() != "anthropic" {
+		t.Fatalf("Provider = %q", b.Provider())
 	}
 	if b.Weight != 3 {
 		t.Fatalf("Weight = %d, want 3", b.Weight)
@@ -352,18 +358,17 @@ func TestRegistry_Rehydrate_AllowsLegacyAzureWithoutEndpoint(t *testing.T) {
 		ID:        ids.New[ids.RegistryKind](),
 		GatewayID: ids.New[ids.GatewayKind](),
 		Name:      "legacy-azure",
-		Provider:  "azure",
 		Weight:    1,
-		Auth:      auth,
+		LLMTarget: &LLMTarget{Provider: "azure", Auth: auth},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	})
 
-	if got.Auth == nil || got.Auth.Azure == nil {
-		t.Fatalf("legacy Azure auth not rehydrated: %+v", got.Auth)
+	if got.Auth() == nil || got.Auth().Azure == nil {
+		t.Fatalf("legacy Azure auth not rehydrated: %+v", got.Auth())
 	}
-	if got.Auth.Azure.APIKey != "legacy-key" {
-		t.Fatalf("legacy Azure APIKey = %q, want legacy-key", got.Auth.Azure.APIKey)
+	if got.Auth().Azure.APIKey != "legacy-key" {
+		t.Fatalf("legacy Azure APIKey = %q, want legacy-key", got.Auth().Azure.APIKey)
 	}
 	if err := got.Validate(); err == nil {
 		t.Fatal("Validate() = nil, want writes to reject missing azure.endpoint")

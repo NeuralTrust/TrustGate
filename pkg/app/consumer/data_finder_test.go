@@ -175,9 +175,9 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 			return len(bids) == 3
 		})).
 		Return([]*registrydomain.Registry{
-			{ID: poolID, GatewayID: gwID, Provider: "openai"},
-			{ID: fb1, GatewayID: gwID, Provider: "anthropic"},
-			{ID: fb2, GatewayID: gwID, Provider: "mistral"},
+			{ID: poolID, GatewayID: gwID, LLMTarget: &registrydomain.LLMTarget{Provider: "openai"}},
+			{ID: fb1, GatewayID: gwID, LLMTarget: &registrydomain.LLMTarget{Provider: "anthropic"}},
+			{ID: fb2, GatewayID: gwID, LLMTarget: &registrydomain.LLMTarget{Provider: "mistral"}},
 		}, nil).Once()
 
 	policyRepo := policymocks.NewRepository(t)

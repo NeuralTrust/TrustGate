@@ -61,8 +61,10 @@ func TestConnectionTester_ByID_ResolvesAndProbes(t *testing.T) {
 		ID:        regID,
 		GatewayID: gwID,
 		Name:      "anthropic-backend",
-		Provider:  "anthropic",
-		Auth:      domain.NewAPIKeyAuth("sk-anthropic"),
+		LLMTarget: &domain.LLMTarget{
+			Provider: "anthropic",
+			Auth:     domain.NewAPIKeyAuth("sk-anthropic"),
+		},
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	})

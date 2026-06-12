@@ -33,15 +33,15 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 	if b == nil {
 		return errors.New("registry repository: nil registry")
 	}
-	providerOptionsBytes, err := marshalProviderOptions(b.ProviderOptions)
+	providerOptionsBytes, err := marshalProviderOptions(b.ProviderOptions())
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal provider_options: %w", err)
 	}
-	authBytes, err := marshalAuth(b.Auth)
+	authBytes, err := marshalAuth(b.Auth())
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal auth: %w", err)
 	}
-	healthChecksBytes, err := marshalHealthChecks(b.HealthChecks)
+	healthChecksBytes, err := marshalHealthChecks(b.HealthChecks())
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal health_checks: %w", err)
 	}
@@ -54,7 +54,7 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			b.ID, b.GatewayID, b.Name, registryType(b), b.Provider, providerOptionsBytes, authBytes, b.Weight, b.Description, healthChecksBytes, mcpTargetBytes, b.CreatedAt, b.UpdatedAt,
+			b.ID, b.GatewayID, b.Name, registryType(b), b.Provider(), providerOptionsBytes, authBytes, b.Weight, b.Description, healthChecksBytes, mcpTargetBytes, b.CreatedAt, b.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -66,15 +66,15 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 	if b == nil {
 		return errors.New("registry repository: nil registry")
 	}
-	providerOptionsBytes, err := marshalProviderOptions(b.ProviderOptions)
+	providerOptionsBytes, err := marshalProviderOptions(b.ProviderOptions())
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal provider_options: %w", err)
 	}
-	authBytes, err := marshalAuth(b.Auth)
+	authBytes, err := marshalAuth(b.Auth())
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal auth: %w", err)
 	}
-	healthChecksBytes, err := marshalHealthChecks(b.HealthChecks)
+	healthChecksBytes, err := marshalHealthChecks(b.HealthChecks())
 	if err != nil {
 		return fmt.Errorf("registry repository: marshal health_checks: %w", err)
 	}
@@ -97,7 +97,7 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			b.ID, b.Name, registryType(b), b.Provider, providerOptionsBytes, authBytes, b.Weight, b.Description, healthChecksBytes, mcpTargetBytes, b.UpdatedAt,
+			b.ID, b.Name, registryType(b), b.Provider(), providerOptionsBytes, authBytes, b.Weight, b.Description, healthChecksBytes, mcpTargetBytes, b.UpdatedAt,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -255,30 +255,35 @@ func scanRegistry(s rowScanner) (*domain.Registry, error) {
 		return nil, err
 	}
 	b.Type = domain.Type(typeRaw)
-	if providerRaw != nil {
-		b.Provider = *providerRaw
+	if b.Type == "" {
+		b.Type = domain.TypeLLM
 	}
 
-	if len(providerOptionsRaw) > 0 {
-		if err := json.Unmarshal(providerOptionsRaw, &b.ProviderOptions); err != nil {
-			return nil, fmt.Errorf("scan provider_options: %w", err)
+	if b.Type == domain.TypeLLM {
+		target := &domain.LLMTarget{}
+		if providerRaw != nil {
+			target.Provider = *providerRaw
 		}
-	}
-
-	if len(authRaw) > 0 {
-		var auth domain.TargetAuth
-		if err := json.Unmarshal(authRaw, &auth); err != nil {
-			return nil, fmt.Errorf("scan auth: %w", err)
+		if len(providerOptionsRaw) > 0 {
+			if err := json.Unmarshal(providerOptionsRaw, &target.ProviderOptions); err != nil {
+				return nil, fmt.Errorf("scan provider_options: %w", err)
+			}
 		}
-		b.Auth = &auth
-	}
-
-	if len(healthChecksRaw) > 0 {
-		var hc domain.HealthChecks
-		if err := json.Unmarshal(healthChecksRaw, &hc); err != nil {
-			return nil, fmt.Errorf("scan health_checks: %w", err)
+		if len(authRaw) > 0 {
+			var auth domain.TargetAuth
+			if err := json.Unmarshal(authRaw, &auth); err != nil {
+				return nil, fmt.Errorf("scan auth: %w", err)
+			}
+			target.Auth = &auth
 		}
-		b.HealthChecks = &hc
+		if len(healthChecksRaw) > 0 {
+			var hc domain.HealthChecks
+			if err := json.Unmarshal(healthChecksRaw, &hc); err != nil {
+				return nil, fmt.Errorf("scan health_checks: %w", err)
+			}
+			target.HealthChecks = &hc
+		}
+		b.LLMTarget = target
 	}
 
 	if len(mcpTargetRaw) > 0 {
