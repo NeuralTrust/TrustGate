@@ -208,6 +208,27 @@ func TestRoleScoper_RoleWithoutToolkitGrantsRegistryViaWildcards(t *testing.T) {
 	}
 }
 
+func TestRoleScoper_ExplicitEmptyToolkitDeniesAll(t *testing.T) {
+	t.Parallel()
+	gw := ids.New[ids.GatewayKind]()
+	mcpReg := roleMCPRegistry(t, gw, "srv")
+	role := roleWith(t, gw, "ops", "ops-group", &roledomain.MCPPolicies{
+		Toolkit: consumerdomain.Toolkit{},
+	}, mcpReg)
+	rc, data := roleBasedSetup(t, []*roledomain.Role{role}, mcpReg)
+
+	out, err := scoperUnderTest().Scope(rolePrincipalCtx("ops-group"), rc, data)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if len(out.Registries) != 1 || out.Registries[0].ID != mcpReg.ID {
+		t.Fatalf("registries = %v, want the bound MCP registry", out.Registries)
+	}
+	if tk := out.Consumer.Toolkit(); len(tk) != 0 {
+		t.Fatalf("toolkit = %v, want empty (explicit empty toolkit denies all)", tk)
+	}
+}
+
 func TestRoleScoper_ExplicitToolkitIsFilteredToRoleMCPRegistries(t *testing.T) {
 	t.Parallel()
 	gw := ids.New[ids.GatewayKind]()

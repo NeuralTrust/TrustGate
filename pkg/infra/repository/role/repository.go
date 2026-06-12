@@ -1,6 +1,7 @@
 package role
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -350,14 +351,26 @@ func lockRolePolicies(ctx context.Context, tx pgx.Tx, roleID ids.RoleID) (*domai
 		}
 		role.ModelPolicies = modelPolicies
 	}
-	if len(mcpPoliciesRaw) > 0 {
-		var mcpPolicies domain.MCPPolicies
-		if err := json.Unmarshal(mcpPoliciesRaw, &mcpPolicies); err != nil {
-			return nil, fmt.Errorf("scan mcp_policies: %w", err)
-		}
-		role.MCPPolicies = &mcpPolicies
+	mcpPolicies, err := decodeMCPPolicies(mcpPoliciesRaw)
+	if err != nil {
+		return nil, err
 	}
+	role.MCPPolicies = mcpPolicies
 	return role, nil
+}
+
+// decodeMCPPolicies parses the mcp_policies jsonb column. A NULL column, empty
+// bytes, or a literal JSON null all mean "no policy" and yield a nil pointer
+// (the role grants its bound MCP registries in full), never an empty struct.
+func decodeMCPPolicies(raw []byte) (*domain.MCPPolicies, error) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, nil
+	}
+	var policies domain.MCPPolicies
+	if err := json.Unmarshal(raw, &policies); err != nil {
+		return nil, fmt.Errorf("scan mcp_policies: %w", err)
+	}
+	return &policies, nil
 }
 
 func roleReferencesRegistry(role *domain.Role, registryID ids.RegistryID) bool {
@@ -419,13 +432,11 @@ func scanRole(s rowScanner) (*domain.Role, error) {
 		}
 		role.ModelPolicies = policies
 	}
-	if len(mcpPoliciesRaw) > 0 {
-		var mcpPolicies domain.MCPPolicies
-		if err := json.Unmarshal(mcpPoliciesRaw, &mcpPolicies); err != nil {
-			return nil, fmt.Errorf("scan mcp_policies: %w", err)
-		}
-		role.MCPPolicies = &mcpPolicies
+	mcpPolicies, err := decodeMCPPolicies(mcpPoliciesRaw)
+	if err != nil {
+		return nil, err
 	}
+	role.MCPPolicies = mcpPolicies
 	role.IDPMapping = idpMappingRaw
 	role.RegistryIDs = ids.FromUUIDs[ids.RegistryKind](registryIDs)
 	if role.RegistryIDs == nil {

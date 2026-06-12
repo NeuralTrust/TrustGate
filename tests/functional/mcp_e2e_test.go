@@ -503,6 +503,63 @@ func TestMCPServer_RoleBasedConsumerAppliesRoleMCPPolicies(t *testing.T) {
 	require.Equal(t, float64(-32602), rpcErrorCode(t, status, body))
 }
 
+func TestMCPServer_RoleBasedConsumerEmptyToolkitDeniesAll(t *testing.T) {
+	upstream := startMCPUpstream(t, func(s *sdk.Server) {
+		addTool(s, "echo")
+		addTool(s, "search")
+	})
+	stub := newMCPIDPStub(t)
+	audience := "mcp-" + strings.ToLower(uniqueName("aud"))
+
+	gatewayID := CreateGateway(t, map[string]any{"name": uniqueName("mcp-gw")})
+	registryID := CreateRegistry(t, gatewayID, mcpRegistryPayload(uniqueName("mcp-reg"), upstream.URL))
+
+	roleID := CreateRole(t, gatewayID, map[string]any{
+		"name": uniqueName("mcp-role"),
+		"idp_mapping": map[string]any{
+			"match": "any",
+			"claims": []map[string]any{
+				{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},
+			},
+		},
+	})
+	AttachRoleRegistry(t, gatewayID, roleID, registryID)
+	// An explicit empty toolkit must revoke every grant, not re-open full
+	// access through wildcard synthesis.
+	UpdateRole(t, gatewayID, roleID, map[string]any{
+		"mcp_policies": map[string]any{
+			"toolkit":   []map[string]any{},
+			"fail_mode": "closed",
+		},
+	})
+
+	oauthAuthID := CreateAuth(t, gatewayID, map[string]any{
+		"name":    uniqueName("mcp-oauth"),
+		"type":    "oauth2",
+		"enabled": true,
+		"config": map[string]any{
+			"oauth2": map[string]any{
+				"issuer":    stub.issuer,
+				"audiences": []string{audience},
+				"jwks_url":  stub.server.URL + "/jwks",
+			},
+		},
+	})
+
+	consumerID := CreateConsumer(t, gatewayID, map[string]any{
+		"name":         uniqueName("mcp-rb-consumer"),
+		"type":         "mcp",
+		"routing_mode": "role_based",
+		"roles":        []string{roleID},
+	})
+	AttachAuth(t, gatewayID, consumerID, oauthAuthID)
+
+	granted := stub.sign(t, audience, []string{"mcp-users"})
+	status, body := mcpRPC(t, gatewayID, consumerID, bearerHeaders(granted), "tools/list", nil)
+	names := listedNames(t, rpcResult(t, status, body), "tools")
+	require.Empty(t, names, "an explicit empty toolkit must deny every tool")
+}
+
 func TestMCPServer_RoleBasedConsumerRejectsIdentityWithoutMatchingRole(t *testing.T) {
 	upstream := startMCPUpstream(t, func(s *sdk.Server) { addTool(s, "echo") })
 	stub := newMCPIDPStub(t)

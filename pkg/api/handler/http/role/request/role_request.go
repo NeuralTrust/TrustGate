@@ -89,10 +89,11 @@ func (r UpdateRoleRequest) ToMCPPolicies() (*domain.MCPPolicies, bool, error) {
 	return policies, true, nil
 }
 
+// parseMCPPolicies builds the domain policy from a present mcp_policies object.
+// The object's presence is the caller's tri-state signal, so an empty toolkit
+// is preserved (it means deny-all, mirroring the inline MCP consumer) rather
+// than collapsed to nil (which would re-grant full access via role scoping).
 func parseMCPPolicies(raw MCPPoliciesRequest) (*domain.MCPPolicies, error) {
-	if len(raw.Toolkit) == 0 && strings.TrimSpace(raw.FailMode) == "" {
-		return nil, nil
-	}
 	toolkit := make(consumerdomain.Toolkit, 0, len(raw.Toolkit))
 	for i, e := range raw.Toolkit {
 		id, err := ids.Parse[ids.RegistryKind](e.RegistryID)

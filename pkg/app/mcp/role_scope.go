@@ -129,10 +129,12 @@ func roleMCPRegistries(role *roledomain.Role, data *appconsumer.Data) []*registr
 }
 
 // roleToolkitEntries returns the toolkit grants a role contributes for its MCP
-// registries. A role without an explicit toolkit grants its MCP registries in
-// full, expressed as wildcard entries so the merged toolkit stays explicit.
+// registries. A role with no mcp_policies at all grants its MCP registries in
+// full, expressed as wildcard entries so the merged toolkit stays explicit. A
+// role with an explicit (even empty) toolkit grants exactly those entries, so
+// an empty toolkit denies all — matching inline MCP consumer semantics.
 func roleToolkitEntries(role *roledomain.Role, mcpRegs []*registrydomain.Registry) []consumerdomain.ToolkitEntry {
-	if role.MCPPolicies == nil || len(role.MCPPolicies.Toolkit) == 0 {
+	if role.MCPPolicies == nil {
 		out := make([]consumerdomain.ToolkitEntry, 0, len(mcpRegs)*3)
 		for _, reg := range mcpRegs {
 			out = append(out,
