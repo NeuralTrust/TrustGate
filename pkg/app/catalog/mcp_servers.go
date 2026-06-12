@@ -17,7 +17,9 @@ func NewMCPServerCatalog() MCPServerCatalog {
 }
 
 func (c *mcpServerCatalog) ListMCPServers() []domain.MCPServer {
-	return curatedMCPServers
+	out := make([]domain.MCPServer, len(curatedMCPServers))
+	copy(out, curatedMCPServers)
+	return out
 }
 
 const curatedSource = "curated"

@@ -68,6 +68,9 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 			return up.ListPrompts(ctx)
 		})
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
 			}
@@ -83,7 +86,7 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 	}
 	items := make([]exposedName, len(candidates))
 	for i, b := range candidates {
-		items[i] = exposedName{name: b.exposed, registry: b.registry.Name}
+		items[i] = exposedName{name: b.exposed, registry: b.registry.Name, registryID: b.registry.ID.String()}
 	}
 	for i, name := range resolveExposedNames(items) {
 		candidates[i].exposed = name
@@ -111,13 +114,6 @@ func selectPrompts(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry,
 	seen := make(map[string]struct{}, len(prompts))
 	for _, e := range entries {
 		if e.Prompt == consumerdomain.ToolWildcard {
-			for _, p := range prompts {
-				if _, dup := seen[p.Name]; dup {
-					continue
-				}
-				seen[p.Name] = struct{}{}
-				out = append(out, promptBinding{registry: reg, prompt: p, exposed: p.Name})
-			}
 			continue
 		}
 		p, ok := byName[e.Prompt]
@@ -133,6 +129,18 @@ func selectPrompts(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry,
 			exposed = e.ExposeAs
 		}
 		out = append(out, promptBinding{registry: reg, prompt: p, exposed: exposed})
+	}
+	for _, e := range entries {
+		if e.Prompt != consumerdomain.ToolWildcard {
+			continue
+		}
+		for _, p := range prompts {
+			if _, dup := seen[p.Name]; dup {
+				continue
+			}
+			seen[p.Name] = struct{}{}
+			out = append(out, promptBinding{registry: reg, prompt: p, exposed: p.Name})
+		}
 	}
 	return out
 }

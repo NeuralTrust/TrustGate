@@ -328,6 +328,37 @@ func TestComposer_ListPrompts_MergesAndPrefixesCollisions(t *testing.T) {
 	}
 }
 
+func TestComposer_ListPrompts_WildcardDoesNotShadowExposeAs(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.example.com/mcp": {prompts: prompts("summarize", "triage")},
+	}}
+	c := newTestComposer(dialer)
+
+	consumer := &consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
+			{RegistryID: regA.ID, Prompt: consumerdomain.ToolWildcard},
+			{RegistryID: regA.ID, Prompt: "summarize", ExposeAs: "gh_summarize"},
+		}},
+	}
+	got, err := c.ListPrompts(context.Background(), routable(consumer, regA))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	names := make(map[string]struct{}, len(got))
+	for _, p := range got {
+		names[p.Name] = struct{}{}
+	}
+	if _, ok := names["gh_summarize"]; !ok {
+		t.Fatalf("prompts = %v, want the expose_as alias gh_summarize to win over the wildcard", names)
+	}
+	if _, ok := names["summarize"]; ok {
+		t.Fatalf("prompts = %v, raw summarize must not leak when an alias is configured", names)
+	}
+}
+
 func TestComposer_GetPrompt_RoutesToOwningUpstream(t *testing.T) {
 	t.Parallel()
 	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
