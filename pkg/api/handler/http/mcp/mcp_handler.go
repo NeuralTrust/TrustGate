@@ -39,10 +39,10 @@ const (
 )
 
 type Handler struct {
-	gateway *appmcp.RPCGateway
+	gateway *RPCGateway
 }
 
-func NewHandler(gateway *appmcp.RPCGateway) *Handler {
+func NewHandler(gateway *RPCGateway) *Handler {
 	return &Handler{gateway: gateway}
 }
 
@@ -135,7 +135,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 	var (
 		rpcErr        *appmcp.RPCError
 		consentErr    *appmcp.ConsentRequiredError
-		invalidParams *appmcp.InvalidParamsError
+		invalidParams *InvalidParamsError
 	)
 	switch {
 	case errors.As(err, &rpcErr):
@@ -161,7 +161,7 @@ func writeAppError(c *fiber.Ctx, id json.RawMessage, err error) error {
 		})
 	case errors.As(err, &invalidParams):
 		return writeRPCError(c, id, codeInvalidParams, invalidParams.Reason)
-	case errors.Is(err, appmcp.ErrMethodNotFound):
+	case errors.Is(err, ErrMethodNotFound):
 		return writeRPCError(c, id, codeMethodNotFound, err.Error())
 	case errors.Is(err, sts.ErrInteractionRequired):
 		return fiber.NewError(fiber.StatusUnauthorized, err.Error())

@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
+	mcphttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/mcp"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
-	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 	"github.com/NeuralTrust/AgentGateway/pkg/app/mcp/mocks"
 	"github.com/stretchr/testify/mock"
 )
@@ -17,7 +17,7 @@ func TestRPCGateway_ToolsList_DefaultsToEmptySlice(t *testing.T) {
 	composer := mocks.NewComposer(t)
 	composer.EXPECT().ListTools(mock.Anything, mock.Anything).Return(nil, nil).Once()
 
-	g := appmcp.NewRPCGateway(composer)
+	g := mcphttp.NewRPCGateway(composer)
 	res, err := g.Dispatch(context.Background(), &appconsumer.RoutableConsumer{}, "tools/list", nil)
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
@@ -30,11 +30,11 @@ func TestRPCGateway_ToolsList_DefaultsToEmptySlice(t *testing.T) {
 
 func TestRPCGateway_ToolsCall_RequiresName(t *testing.T) {
 	t.Parallel()
-	g := appmcp.NewRPCGateway(mocks.NewComposer(t))
+	g := mcphttp.NewRPCGateway(mocks.NewComposer(t))
 	_, err := g.Dispatch(context.Background(), &appconsumer.RoutableConsumer{}, "tools/call", json.RawMessage(`{}`))
-	var invalid *appmcp.InvalidParamsError
+	var invalid *mcphttp.InvalidParamsError
 	if !errors.As(err, &invalid) {
-		t.Fatalf("error = %v, want appmcp.InvalidParamsError", err)
+		t.Fatalf("error = %v, want mcphttp.InvalidParamsError", err)
 	}
 }
 
@@ -46,7 +46,7 @@ func TestRPCGateway_ToolsCall_ForwardsRawResult(t *testing.T) {
 		CallTool(mock.Anything, mock.Anything, "echo", mock.Anything).
 		Return(raw, nil).Once()
 
-	g := appmcp.NewRPCGateway(composer)
+	g := mcphttp.NewRPCGateway(composer)
 	res, err := g.Dispatch(context.Background(), &appconsumer.RoutableConsumer{}, "tools/call", json.RawMessage(`{"name":"echo"}`))
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
@@ -59,29 +59,29 @@ func TestRPCGateway_ToolsCall_ForwardsRawResult(t *testing.T) {
 
 func TestRPCGateway_ResourcesRead_RequiresURI(t *testing.T) {
 	t.Parallel()
-	g := appmcp.NewRPCGateway(mocks.NewComposer(t))
+	g := mcphttp.NewRPCGateway(mocks.NewComposer(t))
 	_, err := g.Dispatch(context.Background(), &appconsumer.RoutableConsumer{}, "resources/read", json.RawMessage(`{}`))
-	var invalid *appmcp.InvalidParamsError
+	var invalid *mcphttp.InvalidParamsError
 	if !errors.As(err, &invalid) {
-		t.Fatalf("error = %v, want appmcp.InvalidParamsError", err)
+		t.Fatalf("error = %v, want mcphttp.InvalidParamsError", err)
 	}
 }
 
 func TestRPCGateway_UnknownMethod(t *testing.T) {
 	t.Parallel()
-	g := appmcp.NewRPCGateway(mocks.NewComposer(t))
+	g := mcphttp.NewRPCGateway(mocks.NewComposer(t))
 	_, err := g.Dispatch(context.Background(), &appconsumer.RoutableConsumer{}, "tools/subscribe", nil)
-	if !errors.Is(err, appmcp.ErrMethodNotFound) {
-		t.Fatalf("error = %v, want appmcp.ErrMethodNotFound", err)
+	if !errors.Is(err, mcphttp.ErrMethodNotFound) {
+		t.Fatalf("error = %v, want mcphttp.ErrMethodNotFound", err)
 	}
 }
 
 func TestRPCGateway_PromptsGet_RequiresName(t *testing.T) {
 	t.Parallel()
-	g := appmcp.NewRPCGateway(mocks.NewComposer(t))
+	g := mcphttp.NewRPCGateway(mocks.NewComposer(t))
 	_, err := g.Dispatch(context.Background(), &appconsumer.RoutableConsumer{}, "prompts/get", json.RawMessage(`{"arguments":{}}`))
-	var invalid *appmcp.InvalidParamsError
+	var invalid *mcphttp.InvalidParamsError
 	if !errors.As(err, &invalid) {
-		t.Fatalf("error = %v, want appmcp.InvalidParamsError", err)
+		t.Fatalf("error = %v, want mcphttp.InvalidParamsError", err)
 	}
 }

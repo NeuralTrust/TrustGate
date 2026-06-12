@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 )
 
 var ErrMethodNotFound = errors.New("mcp: method not found")
@@ -18,10 +19,10 @@ type InvalidParamsError struct {
 func (e *InvalidParamsError) Error() string { return "mcp: invalid params: " + e.Reason }
 
 type RPCGateway struct {
-	composer Composer
+	composer appmcp.Composer
 }
 
-func NewRPCGateway(composer Composer) *RPCGateway {
+func NewRPCGateway(composer appmcp.Composer) *RPCGateway {
 	return &RPCGateway{composer: composer}
 }
 
@@ -33,7 +34,7 @@ func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 			return nil, err
 		}
 		if tools == nil {
-			tools = []Tool{}
+			tools = []appmcp.Tool{}
 		}
 		return map[string]any{"tools": tools}, nil
 	case "tools/call":
@@ -51,7 +52,7 @@ func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 			return nil, err
 		}
 		if resources == nil {
-			resources = []Resource{}
+			resources = []appmcp.Resource{}
 		}
 		return map[string]any{"resources": resources}, nil
 	case "resources/templates/list":
@@ -60,7 +61,7 @@ func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 			return nil, err
 		}
 		if templates == nil {
-			templates = []ResourceTemplate{}
+			templates = []appmcp.ResourceTemplate{}
 		}
 		return map[string]any{"resourceTemplates": templates}, nil
 	case "resources/read":
@@ -77,7 +78,7 @@ func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsu
 			return nil, err
 		}
 		if prompts == nil {
-			prompts = []Prompt{}
+			prompts = []appmcp.Prompt{}
 		}
 		return map[string]any{"prompts": prompts}, nil
 	case "prompts/get":
