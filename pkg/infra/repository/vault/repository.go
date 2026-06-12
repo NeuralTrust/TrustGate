@@ -12,7 +12,6 @@ import (
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/crypto"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	"github.com/jackc/pgx/v5"
 )
@@ -21,10 +20,10 @@ var _ domain.Repository = (*Repository)(nil)
 
 type Repository struct {
 	conn   *database.Connection
-	cipher *crypto.Cipher
+	cipher domain.Encrypter
 }
 
-func NewRepository(conn *database.Connection, cipher *crypto.Cipher) *Repository {
+func NewRepository(conn *database.Connection, cipher domain.Encrypter) *Repository {
 	return &Repository{conn: conn, cipher: cipher}
 }
 

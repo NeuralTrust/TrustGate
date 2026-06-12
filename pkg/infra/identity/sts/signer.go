@@ -1,8 +1,5 @@
-// Package sts is TrustGate's Security Token Service (RFC 8693): it mints
-// short-lived downstream tokens (impersonation, delegation) signed by the
-// gateway and brokers external IdP exchanges (Entra OBO, RFC 8693 token
-// exchange). TrustGate-as-issuer is the trust and audit anchor: downstreams
-// trust `iss = TrustGate` via the published JWKS.
+// Package sts implements the app STS ports: RSA JWT signing/JWKS publication
+// and the IdP token-grant client (OIDC-discovered endpoints).
 package sts
 
 import (
@@ -18,10 +15,11 @@ import (
 	"strings"
 	"time"
 
+	appsts "github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-const defaultTokenTTL = 5 * time.Minute
+var _ appsts.TokenSigner = (*Signer)(nil)
 
 // Signer mints TrustGate-issued JWTs and publishes the verification JWKS.
 type Signer struct {
@@ -62,13 +60,17 @@ func (s *Signer) Issuer() string { return s.issuer }
 // MintClaims signs the claims (RS256), stamping iss/iat/exp/jti.
 func (s *Signer) MintClaims(claims jwt.MapClaims, ttl time.Duration) (string, error) {
 	if ttl <= 0 {
-		ttl = defaultTokenTTL
+		ttl = appsts.DefaultTokenTTL
+	}
+	jti, err := randomJTI()
+	if err != nil {
+		return "", fmt.Errorf("sts: %w", err)
 	}
 	now := time.Now()
 	claims["iss"] = s.issuer
 	claims["iat"] = now.Unix()
 	claims["exp"] = now.Add(ttl).Unix()
-	claims["jti"] = randomJTI()
+	claims["jti"] = jti
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = s.kid
 	signed, err := token.SignedString(s.key)
@@ -129,8 +131,10 @@ func keyID(pub *rsa.PublicKey) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:8])
 }
 
-func randomJTI() string {
+func randomJTI() (string, error) {
 	buf := make([]byte, 16)
-	_, _ = rand.Read(buf)
-	return base64.RawURLEncoding.EncodeToString(buf)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("jti entropy unavailable: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

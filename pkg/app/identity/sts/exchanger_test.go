@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
+	"fmt"
+	"net/url"
 	"testing"
 	"time"
 
@@ -25,6 +25,63 @@ func (s *stubCredentials) OAuth2Auths(context.Context) ([]*authdomain.Auth, erro
 
 func (s *stubCredentials) MTLSAuths(context.Context) ([]*authdomain.Auth, error) { return nil, nil }
 
+// fakeSigner encodes claims as JSON with a per-call counter, so tests can
+// decode what was minted and assert cache isolation without real crypto.
+type fakeSigner struct {
+	mints int
+}
+
+func (f *fakeSigner) Issuer() string { return "https://gw.example.com" }
+
+func (f *fakeSigner) MintClaims(claims jwt.MapClaims, _ time.Duration) (string, error) {
+	f.mints++
+	b, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d|%s", f.mints, b), nil
+}
+
+func (f *fakeSigner) JWKS() map[string]any { return map[string]any{"keys": []map[string]any{}} }
+
+func decodeFakeClaims(t *testing.T, token string) map[string]any {
+	t.Helper()
+	_, payload, ok := cutToken(token)
+	if !ok {
+		t.Fatalf("not a fake token: %q", token)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal([]byte(payload), &claims); err != nil {
+		t.Fatalf("decode claims: %v", err)
+	}
+	return claims
+}
+
+func cutToken(token string) (string, string, bool) {
+	for i := range token {
+		if token[i] == '|' {
+			return token[:i], token[i+1:], true
+		}
+	}
+	return "", "", false
+}
+
+type fakeIdP struct {
+	gotIssuer string
+	gotForm   url.Values
+	token     *Token
+	err       error
+}
+
+func (f *fakeIdP) Call(_ context.Context, issuer string, form url.Values) (*Token, error) {
+	f.gotIssuer = issuer
+	f.gotForm = form
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.token, nil
+}
+
 func userPrincipal() *identity.Principal {
 	return &identity.Principal{
 		Subject:  "alice",
@@ -36,10 +93,17 @@ func userPrincipal() *identity.Principal {
 	}
 }
 
+func idpAuths(issuer string) []*authdomain.Auth {
+	return []*authdomain.Auth{{
+		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
+			Issuer: issuer, ClientID: "gw-app", ClientSecret: "gw-secret",
+		}},
+	}}
+}
+
 func TestExchanger_Impersonation_MintsAndCaches(t *testing.T) {
 	t.Parallel()
-	signer := newTestSigner(t)
-	ex := NewExchanger(signer, &stubCredentials{}, nil)
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{}, nil)
 	cfg := &registrydomain.MCPAuth{
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeImpersonation,
 		Audience: "https://up.example.com",
@@ -48,7 +112,7 @@ func TestExchanger_Impersonation_MintsAndCaches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
-	claims := decodeClaims(t, signer, tok.AccessToken)
+	claims := decodeFakeClaims(t, tok.AccessToken)
 	if claims["sub"] != "alice" || claims["aud"] != "https://up.example.com" {
 		t.Fatalf("claims = %v", claims)
 	}
@@ -69,8 +133,7 @@ func TestExchanger_Impersonation_MintsAndCaches(t *testing.T) {
 
 func TestExchanger_Delegation_AddsActClaim(t *testing.T) {
 	t.Parallel()
-	signer := newTestSigner(t)
-	ex := NewExchanger(signer, &stubCredentials{}, nil)
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{}, nil)
 	cfg := &registrydomain.MCPAuth{
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeDelegation,
 		Audience: "https://up.example.com", Actor: "agent-bot",
@@ -79,203 +142,99 @@ func TestExchanger_Delegation_AddsActClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
-	claims := decodeClaims(t, signer, tok.AccessToken)
+	claims := decodeFakeClaims(t, tok.AccessToken)
 	act, ok := claims["act"].(map[string]any)
 	if !ok || act["sub"] != "agent-bot" {
 		t.Fatalf("act = %v, want sub=agent-bot", claims["act"])
 	}
 }
 
-func TestExchanger_OBO_CallsIdPTokenEndpoint(t *testing.T) {
+func TestExchanger_OBO_BuildsOnBehalfOfGrant(t *testing.T) {
 	t.Parallel()
-	var gotForm map[string]string
-	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		gotForm = map[string]string{}
-		for k := range r.Form {
-			gotForm[k] = r.Form.Get(k)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"access_token": "obo-token", "token_type": "Bearer", "expires_in": 600,
-		})
-	}))
-	defer idp.Close()
-
-	signer := newTestSigner(t)
-	creds := &stubCredentials{auths: []*authdomain.Auth{{
-		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
-			Issuer: idp.URL, ClientID: "gw-app", ClientSecret: "gw-secret",
-		}},
-	}}}
-	ex := NewExchanger(signer, creds, nil)
+	idp := &fakeIdP{token: &Token{AccessToken: "obo-token", TokenType: "Bearer", ExpiresAt: time.Now().Add(10 * time.Minute)}}
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: idpAuths("https://idp.example.com")}, idp)
 	cfg := &registrydomain.MCPAuth{
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO,
 		Scope: "api://target/.default",
 	}
-	p := userPrincipal()
-	p.Issuer = idp.URL
-	tok, err := ex.Exchange(context.Background(), p, cfg, "k")
+	tok, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k")
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
 	if tok.AccessToken != "obo-token" {
 		t.Fatalf("AccessToken = %q", tok.AccessToken)
 	}
-	if gotForm["grant_type"] != "urn:ietf:params:oauth:grant-type:jwt-bearer" ||
-		gotForm["requested_token_use"] != "on_behalf_of" ||
-		gotForm["assertion"] != "inbound-token" ||
-		gotForm["scope"] != "api://target/.default" {
-		t.Fatalf("OBO form = %v", gotForm)
+	if idp.gotIssuer != "https://idp.example.com" {
+		t.Fatalf("issuer = %q", idp.gotIssuer)
+	}
+	if idp.gotForm.Get("grant_type") != "urn:ietf:params:oauth:grant-type:jwt-bearer" ||
+		idp.gotForm.Get("requested_token_use") != "on_behalf_of" ||
+		idp.gotForm.Get("assertion") != "inbound-token" ||
+		idp.gotForm.Get("scope") != "api://target/.default" ||
+		idp.gotForm.Get("client_id") != "gw-app" ||
+		idp.gotForm.Get("client_secret") != "gw-secret" {
+		t.Fatalf("OBO form = %v", idp.gotForm)
 	}
 }
 
 func TestExchanger_OBO_InteractionRequiredPropagates(t *testing.T) {
 	t.Parallel()
-	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": "interaction_required", "error_description": "MFA needed",
-		})
-	}))
-	defer idp.Close()
-
-	creds := &stubCredentials{auths: []*authdomain.Auth{{
-		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
-			Issuer: idp.URL, ClientID: "id", ClientSecret: "s",
-		}},
-	}}}
-	ex := NewExchanger(newTestSigner(t), creds, nil)
+	idp := &fakeIdP{err: fmt.Errorf("%w: MFA needed", ErrInteractionRequired)}
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: idpAuths("https://idp.example.com")}, idp)
 	cfg := &registrydomain.MCPAuth{
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "x/.default",
 	}
-	p := userPrincipal()
-	p.Issuer = idp.URL
-	_, err := ex.Exchange(context.Background(), p, cfg, "k")
-	if err == nil || !errorIs(err, ErrInteractionRequired) {
+	_, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k")
+	if err == nil || !errors.Is(err, ErrInteractionRequired) {
 		t.Fatalf("error = %v, want ErrInteractionRequired", err)
 	}
 }
 
 func TestExchanger_TokenExchange_RFC8693Form(t *testing.T) {
 	t.Parallel()
-	var gotForm map[string]string
-	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		gotForm = map[string]string{}
-		for k := range r.Form {
-			gotForm[k] = r.Form.Get(k)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "xt", "expires_in": 60})
-	}))
-	defer idp.Close()
-
-	creds := &stubCredentials{auths: []*authdomain.Auth{{
-		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
-			Issuer: idp.URL, ClientID: "id", ClientSecret: "s",
-		}},
-	}}}
-	ex := NewExchanger(newTestSigner(t), creds, nil)
+	idp := &fakeIdP{token: &Token{AccessToken: "xt", ExpiresAt: time.Now().Add(time.Minute)}}
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{auths: idpAuths("https://idp.example.com")}, idp)
 	cfg := &registrydomain.MCPAuth{
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange,
 		Audience: "https://up.example.com",
 	}
-	p := userPrincipal()
-	p.Issuer = idp.URL
-	if _, err := ex.Exchange(context.Background(), p, cfg, "k"); err != nil {
+	if _, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k"); err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
-	if gotForm["grant_type"] != "urn:ietf:params:oauth:grant-type:token-exchange" ||
-		gotForm["subject_token"] != "inbound-token" ||
-		gotForm["audience"] != "https://up.example.com" {
-		t.Fatalf("token-exchange form = %v", gotForm)
+	if idp.gotForm.Get("grant_type") != "urn:ietf:params:oauth:grant-type:token-exchange" ||
+		idp.gotForm.Get("subject_token") != "inbound-token" ||
+		idp.gotForm.Get("audience") != "https://up.example.com" {
+		t.Fatalf("token-exchange form = %v", idp.gotForm)
 	}
 }
 
 func TestExchanger_OBO_RequiresUserJWT(t *testing.T) {
 	t.Parallel()
-	ex := NewExchanger(newTestSigner(t), &stubCredentials{}, nil)
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{}, &fakeIdP{})
 	cfg := &registrydomain.MCPAuth{
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeOBO, Scope: "x/.default",
 	}
 	apiKeyPrincipal := &identity.Principal{Subject: "m2m", Method: identity.MethodAPIKey}
-	if _, err := ex.Exchange(context.Background(), apiKeyPrincipal, cfg, "k"); !errorIs(err, ErrNoUserIdentity) {
+	if _, err := ex.Exchange(context.Background(), apiKeyPrincipal, cfg, "k"); !errors.Is(err, ErrNoUserIdentity) {
 		t.Fatalf("error = %v, want ErrNoUserIdentity", err)
 	}
 }
 
-func TestFallbackTokenEndpoint(t *testing.T) {
+func TestExchanger_MissingIdPConfigFails(t *testing.T) {
 	t.Parallel()
-	entra := fallbackTokenEndpoint("https://login.microsoftonline.com/tid/v2.0")
-	if entra != "https://login.microsoftonline.com/tid/oauth2/v2.0/token" {
-		t.Fatalf("entra endpoint = %q", entra)
-	}
-	okta := fallbackTokenEndpoint("https://org.okta.com/oauth2/default")
-	if okta != "https://org.okta.com/oauth2/default/v1/token" {
-		t.Fatalf("okta endpoint = %q", okta)
-	}
-}
-
-// Regression for non-Entra/Okta IdPs (Keycloak, Auth0...): the token endpoint
-// must come from OIDC discovery, not from a URL convention guess.
-func TestExchanger_TokenEndpoint_ResolvedViaDiscovery(t *testing.T) {
-	t.Parallel()
-	var tokenPathHit string
-	var discoveryCalls int
-	mux := http.NewServeMux()
-	var idp *httptest.Server
-	mux.HandleFunc("/realms/acme/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
-		discoveryCalls++
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"token_endpoint": idp.URL + "/realms/acme/protocol/openid-connect/token",
-		})
-	})
-	mux.HandleFunc("/realms/acme/protocol/openid-connect/token", func(w http.ResponseWriter, r *http.Request) {
-		tokenPathHit = r.URL.Path
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "kc-token", "expires_in": 60})
-	})
-	idp = httptest.NewServer(mux)
-	defer idp.Close()
-
-	issuer := idp.URL + "/realms/acme"
-	creds := &stubCredentials{auths: []*authdomain.Auth{{
-		Config: authdomain.Config{OAuth2: &authdomain.OAuth2Config{
-			Issuer: issuer, ClientID: "id", ClientSecret: "s",
-		}},
-	}}}
-	ex := NewExchanger(newTestSigner(t), creds, nil)
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{}, &fakeIdP{})
 	cfg := &registrydomain.MCPAuth{
 		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange,
 		Audience: "https://up.example.com",
 	}
-	p := userPrincipal()
-	p.Issuer = issuer
-	tok, err := ex.Exchange(context.Background(), p, cfg, "k")
-	if err != nil {
-		t.Fatalf("Exchange: %v", err)
-	}
-	if tok.AccessToken != "kc-token" {
-		t.Fatalf("AccessToken = %q", tok.AccessToken)
-	}
-	if tokenPathHit != "/realms/acme/protocol/openid-connect/token" {
-		t.Fatalf("token endpoint hit = %q, want the discovered one", tokenPathHit)
-	}
-	// The discovered endpoint is cached per issuer.
-	cfg2 := &registrydomain.MCPAuth{
-		Mode: registrydomain.MCPAuthModeExchange, Pattern: registrydomain.ExchangeTokenExchange,
-		Audience: "https://other.example.com",
-	}
-	if _, err := ex.Exchange(context.Background(), p, cfg2, "k2"); err != nil {
-		t.Fatalf("second Exchange: %v", err)
-	}
-	if discoveryCalls != 1 {
-		t.Fatalf("discovery calls = %d, want 1 (cached)", discoveryCalls)
+	if _, err := ex.Exchange(context.Background(), userPrincipal(), cfg, "k"); err == nil {
+		t.Fatal("exchange without a configured IdP must fail")
 	}
 }
 
 func TestExchanger_CacheSweepsExpiredTokens(t *testing.T) {
 	t.Parallel()
-	signer := newTestSigner(t)
-	ex := NewExchanger(signer, &stubCredentials{}, nil).(*exchanger)
+	ex := NewExchanger(&fakeSigner{}, &stubCredentials{}, nil).(*exchanger)
 	now := time.Now()
 	ex.cache["stale"] = &Token{AccessToken: "old", ExpiresAt: now.Add(-time.Minute)}
 	ex.lastSweep = now.Add(-2 * cacheSweepInterval)
@@ -298,16 +257,3 @@ func TestExchanger_CacheSweepsExpiredTokens(t *testing.T) {
 		t.Fatal("fresh entry must be cached")
 	}
 }
-
-func decodeClaims(t *testing.T, s *Signer, token string) jwt.MapClaims {
-	t.Helper()
-	pub := publicKeyFromJWKS(t, s)
-	parsed, err := jwt.Parse(token, func(*jwt.Token) (any, error) { return pub, nil },
-		jwt.WithValidMethods([]string{"RS256"}))
-	if err != nil {
-		t.Fatalf("parse minted token: %v", err)
-	}
-	return parsed.Claims.(jwt.MapClaims)
-}
-
-func errorIs(err, target error) bool { return errors.Is(err, target) }

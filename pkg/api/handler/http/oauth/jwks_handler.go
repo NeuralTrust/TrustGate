@@ -5,15 +5,13 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// JWKSPath publishes the STS verification keys: upstreams configured to
-// trust TrustGate-as-issuer (impersonation/delegation) validate against it.
 const JWKSPath = "/.well-known/jwks.json"
 
 type JWKSHandler struct {
-	signer *sts.Signer
+	signer sts.TokenSigner
 }
 
-func NewJWKSHandler(signer *sts.Signer) *JWKSHandler {
+func NewJWKSHandler(signer sts.TokenSigner) *JWKSHandler {
 	return &JWKSHandler{signer: signer}
 }
 

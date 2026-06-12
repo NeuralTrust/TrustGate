@@ -1,12 +1,14 @@
+// Package sts is TrustGate's Security Token Service (RFC 8693): it mints
+// short-lived downstream tokens (impersonation, delegation) signed by the
+// gateway and brokers external IdP exchanges (Entra OBO, RFC 8693 token
+// exchange). TrustGate-as-issuer is the trust and audit anchor: downstreams
+// trust `iss = TrustGate` via the published JWKS.
 package sts
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -28,6 +30,9 @@ var (
 	ErrNoUserIdentity = errors.New("sts: exchange requires an inbound user token")
 )
 
+// DefaultTokenTTL bounds gateway-minted downstream tokens.
+const DefaultTokenTTL = 5 * time.Minute
+
 // Token is one minted/exchanged downstream credential.
 type Token struct {
 	AccessToken string
@@ -47,33 +52,21 @@ type Exchanger interface {
 var _ Exchanger = (*exchanger)(nil)
 
 type exchanger struct {
-	signer      *Signer
+	signer      TokenSigner
 	credentials appauth.CredentialFinder
-	client      *http.Client
+	idp         IdPTokenClient
 
 	mu        sync.Mutex
 	cache     map[string]*Token
 	lastSweep time.Time
-
-	epMu      sync.Mutex
-	endpoints map[string]endpointEntry
 }
 
-type endpointEntry struct {
-	tokenEndpoint string
-	fetchedAt     time.Time
-}
-
-func NewExchanger(signer *Signer, credentials appauth.CredentialFinder, client *http.Client) Exchanger {
-	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
-	}
+func NewExchanger(signer TokenSigner, credentials appauth.CredentialFinder, idp IdPTokenClient) Exchanger {
 	return &exchanger{
 		signer:      signer,
 		credentials: credentials,
-		client:      client,
+		idp:         idp,
 		cache:       map[string]*Token{},
-		endpoints:   map[string]endpointEntry{},
 	}
 }
 
@@ -150,11 +143,11 @@ func (e *exchanger) mint(principal *identity.Principal, cfg *registrydomain.MCPA
 	if delegation {
 		claims["act"] = map[string]any{"sub": cfg.Actor}
 	}
-	signed, err := e.signer.MintClaims(claims, defaultTokenTTL)
+	signed, err := e.signer.MintClaims(claims, DefaultTokenTTL)
 	if err != nil {
 		return nil, err
 	}
-	return &Token{AccessToken: signed, TokenType: "Bearer", ExpiresAt: time.Now().Add(defaultTokenTTL)}, nil
+	return &Token{AccessToken: signed, TokenType: "Bearer", ExpiresAt: time.Now().Add(DefaultTokenTTL)}, nil
 }
 
 // entraOBO performs the Microsoft Entra On-Behalf-Of exchange: the inbound
@@ -175,7 +168,7 @@ func (e *exchanger) entraOBO(ctx context.Context, principal *identity.Principal,
 	form.Set("scope", cfg.Scope)
 	form.Set("client_id", idp.ClientID)
 	form.Set("client_secret", idp.ClientSecret)
-	return e.idpTokenCall(ctx, e.tokenEndpointFor(ctx, principal.Issuer), form)
+	return e.idp.Call(ctx, principal.Issuer, form)
 }
 
 // tokenExchange is generic RFC 8693 (Okta and friends).
@@ -197,7 +190,7 @@ func (e *exchanger) tokenExchange(ctx context.Context, principal *identity.Princ
 	}
 	form.Set("client_id", idp.ClientID)
 	form.Set("client_secret", idp.ClientSecret)
-	return e.idpTokenCall(ctx, e.tokenEndpointFor(ctx, principal.Issuer), form)
+	return e.idp.Call(ctx, principal.Issuer, form)
 }
 
 // idpFor finds the oauth2 Auth entry matching the principal's issuer, which
@@ -216,109 +209,4 @@ func (e *exchanger) idpFor(ctx context.Context, issuer string) (*authdomain.OAut
 		}
 	}
 	return nil, fmt.Errorf("sts: no oauth2 auth configured for issuer %s", issuer)
-}
-
-const endpointTTL = time.Hour
-
-// tokenEndpointFor resolves the IdP token endpoint via OIDC discovery
-// (cached per issuer). Guessing by URL convention breaks any IdP that is
-// not Entra or Okta (Auth0 uses /oauth/token, Keycloak
-// /protocol/openid-connect/token), so the heuristic is only a fallback
-// when the well-known document cannot be fetched.
-func (e *exchanger) tokenEndpointFor(ctx context.Context, issuer string) string {
-	e.epMu.Lock()
-	if ent, ok := e.endpoints[issuer]; ok && time.Since(ent.fetchedAt) < endpointTTL {
-		e.epMu.Unlock()
-		return ent.tokenEndpoint
-	}
-	e.epMu.Unlock()
-
-	endpoint := e.discoverTokenEndpoint(ctx, issuer)
-	if endpoint == "" {
-		endpoint = fallbackTokenEndpoint(issuer)
-	}
-	e.epMu.Lock()
-	e.endpoints[issuer] = endpointEntry{tokenEndpoint: endpoint, fetchedAt: time.Now()}
-	e.epMu.Unlock()
-	return endpoint
-}
-
-func (e *exchanger) discoverTokenEndpoint(ctx context.Context, issuer string) string {
-	wellKnown := strings.TrimSuffix(issuer, "/") + "/.well-known/openid-configuration"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, wellKnown, nil)
-	if err != nil {
-		return ""
-	}
-	res, err := e.client.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != http.StatusOK {
-		return ""
-	}
-	var doc struct {
-		TokenEndpoint string `json:"token_endpoint"`
-	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&doc); err != nil {
-		return ""
-	}
-	return doc.TokenEndpoint
-}
-
-// fallbackTokenEndpoint derives the token endpoint from the issuer URL when
-// discovery is unavailable: Entra v2 issuers map to /oauth2/v2.0/token and
-// anything else gets the Okta org-server convention.
-func fallbackTokenEndpoint(issuer string) string {
-	base := strings.TrimSuffix(issuer, "/")
-	if strings.HasPrefix(base, "https://login.microsoftonline.com/") {
-		return strings.TrimSuffix(base, "/v2.0") + "/oauth2/v2.0/token"
-	}
-	return base + "/v1/token"
-}
-
-func (e *exchanger) idpTokenCall(ctx context.Context, endpoint string, form url.Values) (*Token, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	res, err := e.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sts: IdP exchange call: %w", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("sts: read IdP response: %w", err)
-	}
-	var doc struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-		ExpiresIn   int    `json:"expires_in"`
-		Error       string `json:"error"`
-		ErrorDesc   string `json:"error_description"`
-		Claims      string `json:"claims"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, fmt.Errorf("sts: IdP response is not JSON (status %d)", res.StatusCode)
-	}
-	if res.StatusCode != http.StatusOK {
-		if doc.Error == "interaction_required" || doc.Error == "invalid_grant" {
-			return nil, fmt.Errorf("%w: %s", ErrInteractionRequired, doc.ErrorDesc)
-		}
-		return nil, fmt.Errorf("sts: IdP exchange failed (%s): %s", doc.Error, doc.ErrorDesc)
-	}
-	if doc.AccessToken == "" {
-		return nil, fmt.Errorf("sts: IdP returned 200 with no access_token")
-	}
-	ttl := time.Duration(doc.ExpiresIn) * time.Second
-	if ttl <= 0 {
-		ttl = defaultTokenTTL
-	}
-	tokenType := doc.TokenType
-	if tokenType == "" {
-		tokenType = "Bearer"
-	}
-	return &Token{AccessToken: doc.AccessToken, TokenType: tokenType, ExpiresAt: time.Now().Add(ttl)}, nil
 }

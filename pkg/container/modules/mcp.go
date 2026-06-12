@@ -17,6 +17,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/crypto"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
+	infrasts "github.com/NeuralTrust/AgentGateway/pkg/infra/identity/sts"
 	mcpclient "github.com/NeuralTrust/AgentGateway/pkg/infra/mcp/client"
 	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
 	vaultrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/vault"
@@ -33,28 +34,33 @@ func MCP(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config) (*crypto.Cipher, error) {
+	if err := c.Provide(func(cfg *config.Config) (vaultdomain.Encrypter, error) {
 		return crypto.NewCipher(cfg.Server.SecretKey)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(conn *database.Connection, cipher *crypto.Cipher) vaultdomain.Repository {
+	if err := c.Provide(func(conn *database.Connection, cipher vaultdomain.Encrypter) vaultdomain.Repository {
 		return vaultrepo.NewRepository(conn, cipher)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(cfg *config.Config, logger *slog.Logger) (*sts.Signer, error) {
+	if err := c.Provide(func(cfg *config.Config, logger *slog.Logger) (sts.TokenSigner, error) {
 		// An ephemeral per-replica key in prod breaks JWKS verification across
 		// replicas (each one would publish a different key), so refuse to boot.
 		if cfg.Server.STSSigningKey == "" && cfg.AppEnv == "prod" {
 			return nil, fmt.Errorf("sts: STS_SIGNING_KEY is required when APP_ENV=prod (ephemeral keys are not shared across replicas)")
 		}
-		return sts.NewSigner(cfg.Server.STSIssuer, cfg.Server.STSSigningKey, logger)
+		return infrasts.NewSigner(cfg.Server.STSIssuer, cfg.Server.STSSigningKey, logger)
 	}); err != nil {
 		return err
 	}
-	if err := c.Provide(func(signer *sts.Signer, credentials appauth.CredentialFinder) sts.Exchanger {
-		return sts.NewExchanger(signer, credentials, nil)
+	if err := c.Provide(func() sts.IdPTokenClient {
+		return infrasts.NewTokenClient(nil)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(signer sts.TokenSigner, credentials appauth.CredentialFinder, idp sts.IdPTokenClient) sts.Exchanger {
+		return sts.NewExchanger(signer, credentials, idp)
 	}); err != nil {
 		return err
 	}
