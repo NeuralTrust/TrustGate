@@ -524,8 +524,6 @@ func TestMCPServer_RoleBasedConsumerEmptyToolkitDeniesAll(t *testing.T) {
 		},
 	})
 	AttachRoleRegistry(t, gatewayID, roleID, registryID)
-	// An explicit empty toolkit must revoke every grant, not re-open full
-	// access through wildcard synthesis.
 	UpdateRole(t, gatewayID, roleID, map[string]any{
 		"mcp_policies": map[string]any{
 			"toolkit":   []map[string]any{},

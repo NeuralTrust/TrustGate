@@ -359,9 +359,6 @@ func lockRolePolicies(ctx context.Context, tx pgx.Tx, roleID ids.RoleID) (*domai
 	return role, nil
 }
 
-// decodeMCPPolicies parses the mcp_policies jsonb column. A NULL column, empty
-// bytes, or a literal JSON null all mean "no policy" and yield a nil pointer
-// (the role grants its bound MCP registries in full), never an empty struct.
 func decodeMCPPolicies(raw []byte) (*domain.MCPPolicies, error) {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return nil, nil
