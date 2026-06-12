@@ -10,7 +10,7 @@ import (
 func makeBackends(names ...string) []*registry.Registry {
 	out := make([]*registry.Registry, len(names))
 	for i, name := range names {
-		out[i] = &registry.Registry{ID: ids.New[ids.RegistryKind](), Name: name, Weight: 1, Provider: "openai"}
+		out[i] = &registry.Registry{ID: ids.New[ids.RegistryKind](), Name: name, Weight: 1, LLMTarget: &registry.LLMTarget{Provider: "openai"}}
 	}
 	return out
 }
@@ -127,8 +127,8 @@ func TestRandom_Name(t *testing.T) {
 func TestWeightedRoundRobin_RespectsWeights(t *testing.T) {
 	t.Parallel()
 	registries := []*registry.Registry{
-		{ID: ids.New[ids.RegistryKind](), Name: "heavy", Weight: 3, Provider: "openai"},
-		{ID: ids.New[ids.RegistryKind](), Name: "light", Weight: 1, Provider: "openai"},
+		{ID: ids.New[ids.RegistryKind](), Name: "heavy", Weight: 3, LLMTarget: &registry.LLMTarget{Provider: "openai"}},
+		{ID: ids.New[ids.RegistryKind](), Name: "light", Weight: 1, LLMTarget: &registry.LLMTarget{Provider: "openai"}},
 	}
 	wrr := NewWeightedRoundRobin(registries)
 	counts := map[string]int{}
@@ -144,20 +144,22 @@ func TestWeightedRoundRobin_RespectsWeights(t *testing.T) {
 	}
 }
 
-func TestWeightedRoundRobin_AllZeroWeightsEventuallyReturnsNil(t *testing.T) {
+func TestWeightedRoundRobin_ZeroWeightsServeAsWeightOne(t *testing.T) {
 	t.Parallel()
 	wrr := NewWeightedRoundRobin([]*registry.Registry{
 		{ID: ids.New[ids.RegistryKind](), Name: "a"},
 		{ID: ids.New[ids.RegistryKind](), Name: "b"},
 	})
-	sawNil := false
-	for i := 0; i < 10 && !sawNil; i++ {
-		if wrr.Next(nil, nil) == nil {
-			sawNil = true
+	counts := map[string]int{}
+	for i := 0; i < 10; i++ {
+		b := wrr.Next(nil, nil)
+		if b == nil {
+			t.Fatal("WRR with zero weights must keep serving traffic (weight 0 acts as 1)")
 		}
+		counts[b.Name]++
 	}
-	if !sawNil {
-		t.Fatal("WRR with zero weights must eventually return nil")
+	if counts["a"] == 0 || counts["b"] == 0 {
+		t.Fatalf("both registries should receive traffic: %v", counts)
 	}
 }
 

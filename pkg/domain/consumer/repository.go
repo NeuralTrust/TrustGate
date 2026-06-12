@@ -23,6 +23,8 @@ type Repository interface {
 
 	ListByGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*Consumer, error)
 
+	FindActiveBySlug(ctx context.Context, slug string) (*Consumer, error)
+
 	AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error
 	DetachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error
 	DetachRegistryIfUnreferenced(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) (*Consumer, error)

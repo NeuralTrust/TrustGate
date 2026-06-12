@@ -11,22 +11,32 @@ import (
 )
 
 type ConsumerResponse struct {
-	ID            ids.ConsumerID        `json:"id"`
-	GatewayID     ids.GatewayID         `json:"gateway_id"`
-	Name          string                `json:"name"`
-	Type          string                `json:"type"`
-	Slug          string                `json:"slug"`
-	RoutingMode   string                `json:"routing_mode"`
-	LBConfig      *LBConfigResponse     `json:"lb_config,omitempty"`
-	Headers       map[string]string     `json:"headers,omitempty"`
-	Active        bool                  `json:"active"`
-	RegistryIDs   []ids.RegistryID      `json:"registry_ids"`
-	RoleIDs       []ids.RoleID          `json:"role_ids"`
-	AuthIDs       []ids.AuthID          `json:"auth_ids"`
-	Fallback      *FallbackResponse     `json:"fallback,omitempty"`
-	ModelPolicies []ModelPolicyResponse `json:"model_policies,omitempty"`
-	CreatedAt     time.Time             `json:"created_at"`
-	UpdatedAt     time.Time             `json:"updated_at"`
+	ID            ids.ConsumerID         `json:"id"`
+	GatewayID     ids.GatewayID          `json:"gateway_id"`
+	Name          string                 `json:"name"`
+	Type          string                 `json:"type"`
+	Slug          string                 `json:"slug"`
+	RoutingMode   string                 `json:"routing_mode"`
+	LBConfig      *LBConfigResponse      `json:"lb_config,omitempty"`
+	Headers       map[string]string      `json:"headers,omitempty"`
+	Active        bool                   `json:"active"`
+	RegistryIDs   []ids.RegistryID       `json:"registry_ids"`
+	RoleIDs       []ids.RoleID           `json:"role_ids"`
+	AuthIDs       []ids.AuthID           `json:"auth_ids"`
+	Fallback      *FallbackResponse      `json:"fallback,omitempty"`
+	ModelPolicies []ModelPolicyResponse  `json:"model_policies,omitempty"`
+	Toolkit       []ToolkitEntryResponse `json:"toolkit,omitempty"`
+	FailMode      string                 `json:"fail_mode,omitempty"`
+	CreatedAt     time.Time              `json:"created_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
+}
+
+type ToolkitEntryResponse struct {
+	RegistryID ids.RegistryID `json:"registry_id"`
+	Tool       string         `json:"tool,omitempty"`
+	Prompt     string         `json:"prompt,omitempty"`
+	Resource   string         `json:"resource,omitempty"`
+	ExposeAs   string         `json:"expose_as,omitempty"`
 }
 
 type ModelPolicyResponse struct {
@@ -106,6 +116,8 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		AuthIDs:       authIDs,
 		Fallback:      fromFallback(c.Fallback),
 		ModelPolicies: fromModelPolicies(c.ModelPolicies),
+		Toolkit:       fromToolkit(c.Toolkit()),
+		FailMode:      string(c.FailMode()),
 		CreatedAt:     c.CreatedAt,
 		UpdatedAt:     c.UpdatedAt,
 	}
@@ -137,6 +149,23 @@ func fromLBConfig(config *domain.LBConfig) *LBConfigResponse {
 		Members:         members,
 		EmbeddingConfig: embedding,
 	}
+}
+
+func fromToolkit(t domain.Toolkit) []ToolkitEntryResponse {
+	if len(t) == 0 {
+		return nil
+	}
+	out := make([]ToolkitEntryResponse, 0, len(t))
+	for _, e := range t {
+		out = append(out, ToolkitEntryResponse{
+			RegistryID: e.RegistryID,
+			Tool:       e.Tool,
+			Prompt:     e.Prompt,
+			Resource:   e.Resource,
+			ExposeAs:   e.ExposeAs,
+		})
+	}
+	return out
 }
 
 func fromEmbeddingAuth(a *registrydomain.APIKeyAuth) *EmbeddingAuthResponse {

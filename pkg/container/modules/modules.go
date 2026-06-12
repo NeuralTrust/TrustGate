@@ -21,7 +21,9 @@ func All() []container.Option {
 		container.WithModule(Catalog),
 		container.WithModule(Providers),
 		container.WithModule(Proxy),
+		container.WithModule(MCP),
 		container.WithModule(ServerAdmin),
 		container.WithModule(ServerProxy),
+		container.WithModule(ServerMCP),
 	}
 }

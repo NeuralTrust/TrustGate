@@ -12,7 +12,11 @@ import (
 
 func newTestRegistry(t *testing.T, provider string) *registrydomain.Registry {
 	t.Helper()
-	return &registrydomain.Registry{ID: ids.New[ids.RegistryKind](), Provider: provider}
+	return &registrydomain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		Type:      registrydomain.TypeLLM,
+		LLMTarget: &registrydomain.LLMTarget{Provider: provider},
+	}
 }
 
 func TestCandidateSet_AddMergesByRegistry(t *testing.T) {

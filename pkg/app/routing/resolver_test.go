@@ -14,7 +14,11 @@ import (
 )
 
 func newRegistry(provider string) *registrydomain.Registry {
-	return &registrydomain.Registry{ID: ids.New[ids.RegistryKind](), Provider: provider}
+	return &registrydomain.Registry{
+		ID:        ids.New[ids.RegistryKind](),
+		Type:      registrydomain.TypeLLM,
+		LLMTarget: &registrydomain.LLMTarget{Provider: provider},
+	}
 }
 
 func inlineConsumer(registries []*registrydomain.Registry, policies consumerdomain.ModelPolicies, lb *consumerdomain.LBConfig) *appconsumer.RoutableConsumer {

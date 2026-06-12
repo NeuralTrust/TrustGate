@@ -59,9 +59,12 @@ func backendFor(gatewayID ids.GatewayID, provider string) *registrydomain.Regist
 		ID:        ids.New[ids.RegistryKind](),
 		GatewayID: gatewayID,
 		Name:      "test-backend",
-		Provider:  provider,
+		Type:      registrydomain.TypeLLM,
 		Weight:    1,
-		Auth:      registrydomain.NewAPIKeyAuth("sk-1"),
+		LLMTarget: &registrydomain.LLMTarget{
+			Provider: provider,
+			Auth:     registrydomain.NewAPIKeyAuth("sk-1"),
+		},
 	}
 }
 

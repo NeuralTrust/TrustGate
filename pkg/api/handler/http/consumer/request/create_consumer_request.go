@@ -22,6 +22,8 @@ type CreateConsumerRequest struct {
 	Registries    []RegistryBindingRequest `json:"registries,omitempty"`
 	Roles         []string                 `json:"roles,omitempty"`
 	ModelPolicies []ModelPolicyRequest     `json:"model_policies,omitempty"`
+	Toolkit       []ToolkitEntryRequest    `json:"toolkit,omitempty"`
+	FailMode      string                   `json:"fail_mode,omitempty"`
 }
 
 type RegistryBindingRequest struct {
@@ -32,6 +34,35 @@ type RegistryBindingRequest struct {
 type RegistryModelPolicyRequest struct {
 	Allowed []string `json:"allowed,omitempty"`
 	Default string   `json:"default,omitempty"`
+}
+
+type ToolkitEntryRequest struct {
+	RegistryID string `json:"registry_id"`
+	Tool       string `json:"tool,omitempty"`
+	Prompt     string `json:"prompt,omitempty"`
+	Resource   string `json:"resource,omitempty"`
+	ExposeAs   string `json:"expose_as,omitempty"`
+}
+
+func parseToolkit(raw []ToolkitEntryRequest) (domain.Toolkit, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	out := make(domain.Toolkit, 0, len(raw))
+	for i, e := range raw {
+		id, err := ids.Parse[ids.RegistryKind](e.RegistryID)
+		if err != nil {
+			return nil, fmt.Errorf("toolkit[%d]: invalid registry_id %q: %w", i, e.RegistryID, commonerrors.ErrValidation)
+		}
+		out = append(out, domain.ToolkitEntry{
+			RegistryID: id,
+			Tool:       e.Tool,
+			Prompt:     e.Prompt,
+			Resource:   e.Resource,
+			ExposeAs:   e.ExposeAs,
+		})
+	}
+	return out, nil
 }
 
 type ModelPolicyRequest struct {
@@ -137,7 +168,7 @@ func (r CreateConsumerRequest) Validate() error {
 }
 
 func (r CreateConsumerRequest) ToType() domain.Type {
-	return domain.Type(r.Type)
+	return domain.Type(strings.ToUpper(strings.TrimSpace(r.Type)))
 }
 
 func (r CreateConsumerRequest) ToRoutingMode() domain.RoutingMode {
@@ -150,6 +181,20 @@ func (r CreateConsumerRequest) ToLBConfig() (*domain.LBConfig, error) {
 
 func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
 	return r.Fallback.ToFallback()
+}
+
+func (r CreateConsumerRequest) ToMCPPolicy() (*domain.MCPPolicy, error) {
+	toolkit, err := parseToolkit(r.Toolkit)
+	if err != nil {
+		return nil, err
+	}
+	if toolkit == nil && strings.TrimSpace(r.FailMode) == "" {
+		return nil, nil
+	}
+	return &domain.MCPPolicy{
+		Toolkit:  toolkit,
+		FailMode: domain.FailMode(strings.ToLower(strings.TrimSpace(r.FailMode))),
+	}, nil
 }
 
 func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, domain.ModelPolicies, error) {

@@ -128,7 +128,7 @@ func (p *providerInvoker) Invoke(
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
 		Headers: map[string][]string{
-			headerSelectedProvider: {bk.Provider},
+			headerSelectedProvider: {bk.Provider()},
 			headerContentType:      {contentTypeJSON},
 		},
 		Body:         respBody,
@@ -183,7 +183,7 @@ func (p *providerInvoker) InvokeStream(
 
 	return &ProviderResponse{
 		StatusCode: http.StatusOK,
-		Headers:    streamHeaders(bk.Provider),
+		Headers:    streamHeaders(bk.Provider()),
 		Stream:     stream,
 	}, nil
 }
@@ -194,15 +194,15 @@ func (p *providerInvoker) prepare(
 	bk *registry.Registry,
 	req *infracontext.RequestContext,
 ) (*preparedInvocation, error) {
-	client, err := p.locator.Get(bk.Provider)
+	client, err := p.locator.Get(bk.Provider())
 	if err != nil {
 		return nil, fmt.Errorf("resolve provider client: %w", err)
 	}
 
 	sourceFormat := sourceFormatFromRequest(req)
-	targetFormat := adapter.ResolveTargetFormat(bk.Provider, bk.ProviderOptions)
+	targetFormat := adapter.ResolveTargetFormat(bk.Provider(), bk.ProviderOptions())
 
-	req.Provider = bk.Provider
+	req.Provider = bk.Provider()
 	req.SourceFormat = string(sourceFormat)
 	req.TargetFormat = string(targetFormat)
 
@@ -219,7 +219,7 @@ func (p *providerInvoker) prepare(
 		}
 	}
 
-	body = adapter.NormalizeRequestForProvider(bk.Provider, targetFormat, body)
+	body = adapter.NormalizeRequestForProvider(bk.Provider(), targetFormat, body)
 
 	normalized, _, verr := adapter.EnforceModel(body, req.AllowedModels, req.DefaultModel)
 	if verr != nil {
@@ -240,8 +240,8 @@ func (p *providerInvoker) prepare(
 	return &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
-			Options:     bk.ProviderOptions,
-			Credentials: bk.Auth.ProviderCredentials(),
+			Options:     bk.ProviderOptions(),
+			Credentials: bk.Auth().ProviderCredentials(),
 		},
 		body:         body,
 		sourceFormat: sourceFormat,

@@ -2,16 +2,23 @@ package modules
 
 import (
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
+	oauthhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/oauth"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
+	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
+	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	idpauth "github.com/NeuralTrust/AgentGateway/pkg/infra/auth/idp"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/introspection"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/mtls"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oauthclient"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/fingerprint"
+	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
 )
 
 func API(c *container.Container) error {
@@ -53,6 +60,29 @@ func API(c *container.Container) error {
 	if err := c.Provide(middleware.NewSessionMiddleware); err != nil {
 		return err
 	}
+	if err := c.Provide(func(
+		apiKeys appauth.APIKeyFinder,
+		credentials appauth.CredentialFinder,
+		paths appconsumer.PathResolver,
+		verifier appauth.IDPVerifier,
+		cfg *config.Config,
+	) middleware.IdentityResolver {
+		return middleware.NewChainIdentityResolver(
+			apiKeys,
+			credentials,
+			paths,
+			idpauth.NewOAuth2TokenValidator(verifier, nil),
+			introspection.NewValidator(nil),
+			mtls.NewValidator(),
+			mtls.NewXFCCExtractor(),
+			cfg.Server.TrustXFCCFrom,
+		)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewMCPAuthMiddleware); err != nil {
+		return err
+	}
 	if err := c.Provide(idpauth.NewVerifier); err != nil {
 		return err
 	}
@@ -82,6 +112,53 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(middleware.NewAuthMiddleware); err != nil {
+		return err
+	}
+	if err := c.Provide(middleware.NewOAuthChallengeMiddleware); err != nil {
+		return err
+	}
+	if err := c.Provide(func(credentials appauth.CredentialFinder, paths appconsumer.PathResolver, store appoauth.FlowStore) appoauth.MetadataService {
+		return appoauth.NewMetadataService(credentials, paths, nil, store)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(cc cache.Client) appoauth.FlowStore {
+		return infraoauth.NewStore(cc.RedisClient())
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(func(
+		credentials appauth.CredentialFinder,
+		paths appconsumer.PathResolver,
+		store appoauth.FlowStore,
+		connect appoauth.ConnectService,
+	) appoauth.AuthProxy {
+		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect)
+	}); err != nil {
+		return err
+	}
+	if err := c.Provide(oauthhttp.NewProtectedResourceHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(oauthhttp.NewAuthorizationServerHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(oauthhttp.NewRegisterHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(oauthhttp.NewAuthorizeHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(oauthhttp.NewCallbackHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(oauthhttp.NewTokenHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(oauthhttp.NewConnectHandler); err != nil {
+		return err
+	}
+	if err := c.Provide(oauthhttp.NewJWKSHandler); err != nil {
 		return err
 	}
 	return nil

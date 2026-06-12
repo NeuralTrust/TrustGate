@@ -31,6 +31,9 @@ func Consumer(c *container.Container) error {
 	if err := c.Provide(appconsumer.NewDataFinder); err != nil {
 		return err
 	}
+	if err := c.Provide(appconsumer.NewPathResolver); err != nil {
+		return err
+	}
 	if err := c.Provide(appconsumer.NewAssociator); err != nil {
 		return err
 	}

@@ -12,3 +12,10 @@ metadata:
   name: agentgateway-proxy
 spec:
   replicas: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-mcp
+spec:
+  replicas: 2

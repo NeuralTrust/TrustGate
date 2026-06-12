@@ -23,6 +23,8 @@ type UpdateInput struct {
 	Active        *bool
 	Fallback      *domain.Fallback
 	ModelPolicies *domain.ModelPolicies
+	Toolkit       *domain.Toolkit
+	FailMode      *domain.FailMode
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=consumer_updater_mock.go --case=underscore --with-expecter
@@ -64,8 +66,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}
-	if in.Type != nil {
+	if in.Type != nil && *in.Type != existing.Type {
 		existing.Type = *in.Type
+		existing.MCP = nil
 	}
 	previousMode := existing.RoutingMode
 	if in.RoutingMode != nil {
@@ -87,6 +90,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if in.ModelPolicies != nil {
 		existing.ModelPolicies = *in.ModelPolicies
 	}
+	applyMCPPolicyUpdate(existing, in)
 	if previousMode != existing.RoutingMode {
 		cleanIncompatibleModeConfig(existing)
 	}
@@ -103,6 +107,22 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	u.memoryCache.Set(existing.ID.String(), existing)
 	publishGatewayDataInvalidation(ctx, u.publisher, u.logger, existing.GatewayID)
 	return existing, nil
+}
+
+func applyMCPPolicyUpdate(existing *domain.Consumer, in UpdateInput) {
+	if in.Toolkit == nil && in.FailMode == nil {
+		return
+	}
+	if existing.MCP == nil {
+		existing.MCP = &domain.MCPPolicy{}
+	}
+	policy := existing.MCP
+	if in.Toolkit != nil {
+		policy.Toolkit = *in.Toolkit
+	}
+	if in.FailMode != nil {
+		policy.FailMode = *in.FailMode
+	}
 }
 
 func validateRegistryRefsAssociated(c *domain.Consumer) error {
@@ -135,6 +155,12 @@ func validateRegistryRefsAssociated(c *domain.Consumer) error {
 			}
 		}
 	}
+	for _, e := range c.Toolkit() {
+		if _, ok := associated[e.RegistryID]; !ok {
+			return fmt.Errorf("%w: toolkit registry %s is not associated with the consumer",
+				registrydomain.ErrInvalidRegistryID, e.RegistryID)
+		}
+	}
 	return nil
 }
 
@@ -145,6 +171,7 @@ func cleanIncompatibleModeConfig(c *domain.Consumer) {
 		c.Fallback = nil
 		c.LBConfig = nil
 		c.ModelPolicies = nil
+		c.MCP = nil
 	case domain.RoutingModeInline:
 		c.RoleIDs = nil
 	}

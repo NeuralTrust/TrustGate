@@ -32,6 +32,8 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	consumerMap := cache.NewTTLMap(cache.ConsumerCacheTTL)
 	consumerDataMap := cache.NewTTLMap(cache.ConsumerDataCacheTTL)
 	loadBalancerMap := cache.NewTTLMap(cache.LoadBalancerCacheTTL)
+	authMap := cache.NewTTLMap(cache.AuthCacheTTL)
+	consumerPathMap := cache.NewTTLMap(cache.ConsumerDataCacheTTL)
 	roleMap := cache.NewTTLMap(cache.RoleCacheTTL)
 	gatewayMap.Set("id:"+gatewayID, gw)
 	gatewayMap.Set("slug:acme", gw)
@@ -41,6 +43,8 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	consumerDataMap.Set(otherID, "keep")
 	loadBalancerMap.Set(gatewayID+":consumer-1", "lb")
 	loadBalancerMap.Set(otherID+":consumer-9", "keep")
+	authMap.Set("enabled:oauth2", "candidate-list")
+	consumerPathMap.Set("|/v1/mcp/linear", "path-match")
 	roleID := ids.New[ids.RoleKind]().String()
 	roleMap.Set(roleID, "role")
 
@@ -49,6 +53,8 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	client.EXPECT().GetTTLMap(cache.ConsumerTTLName).Return(consumerMap).Once()
 	client.EXPECT().GetTTLMap(cache.ConsumerDataTTLName).Return(consumerDataMap).Once()
 	client.EXPECT().GetTTLMap(cache.LoadBalancerTTLName).Return(loadBalancerMap).Once()
+	client.EXPECT().GetTTLMap(cache.AuthTTLName).Return(authMap).Once()
+	client.EXPECT().GetTTLMap(cache.ConsumerPathTTLName).Return(consumerPathMap).Once()
 	client.EXPECT().GetTTLMap(cache.RoleTTLName).Return(roleMap).Once()
 	client.EXPECT().DeleteAllByGatewayID(mock.Anything, gatewayID).Return(nil).Once()
 
@@ -83,5 +89,11 @@ func TestInvalidateGatewayDataEventSubscriber_OnEvent_EvictsGatewayScopedEntries
 	}
 	if _, ok := loadBalancerMap.Get(otherID + ":consumer-9"); !ok {
 		t.Fatal("unrelated load balancer entry must be preserved")
+	}
+	if _, ok := authMap.Get("enabled:oauth2"); ok {
+		t.Fatal("auth credential candidate list was not evicted")
+	}
+	if _, ok := consumerPathMap.Get("|/v1/mcp/linear"); ok {
+		t.Fatal("consumer-path entry was not evicted")
 	}
 }

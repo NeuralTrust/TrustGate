@@ -5,31 +5,26 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers"
 )
 
 type Registry struct {
-	ID              ids.RegistryID `json:"id"`
-	GatewayID       ids.GatewayID  `json:"gateway_id"`
-	Name            string         `json:"name"`
-	Provider        string         `json:"provider"`
-	ProviderOptions map[string]any `json:"provider_options,omitempty"`
-	Description     string         `json:"description,omitempty"`
-	Weight          int            `json:"weight,omitempty"`
-	Auth            *TargetAuth    `json:"auth,omitempty"`
-	HealthChecks    *HealthChecks  `json:"health_checks,omitempty"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	ID          ids.RegistryID `json:"id"`
+	GatewayID   ids.GatewayID  `json:"gateway_id"`
+	Name        string         `json:"name"`
+	Type        Type           `json:"type"`
+	Description string         `json:"description,omitempty"`
+	Weight      int            `json:"weight,omitempty"`
+	LLMTarget   *LLMTarget     `json:"llm_target,omitempty"`
+	MCPTarget   *MCPTarget     `json:"mcp_target,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
 }
 
-func NewRegistry(
+func NewLLMRegistry(
 	gatewayID ids.GatewayID,
-	name, provider string,
-	providerOptions map[string]any,
-	description string,
+	name, description string,
 	weight int,
-	auth *TargetAuth,
-	healthChecks *HealthChecks,
+	target *LLMTarget,
 ) (*Registry, error) {
 	id, err := ids.NewV7[ids.RegistryKind]()
 	if err != nil {
@@ -37,17 +32,15 @@ func NewRegistry(
 	}
 	now := time.Now().UTC()
 	b := &Registry{
-		ID:              id,
-		GatewayID:       gatewayID,
-		Name:            name,
-		Provider:        provider,
-		ProviderOptions: providerOptions,
-		Description:     description,
-		Weight:          weight,
-		Auth:            auth,
-		HealthChecks:    healthChecks,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:          id,
+		GatewayID:   gatewayID,
+		Name:        name,
+		Type:        TypeLLM,
+		Description: description,
+		Weight:      weight,
+		LLMTarget:   target,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if err := b.Validate(); err != nil {
 		return nil, err
@@ -55,29 +48,95 @@ func NewRegistry(
 	return b, nil
 }
 
-func Rehydrate(
-	id ids.RegistryID,
+func NewMCPRegistry(
 	gatewayID ids.GatewayID,
-	name, provider string,
-	providerOptions map[string]any,
-	description string,
+	name, description string,
 	weight int,
-	auth *TargetAuth,
-	healthChecks *HealthChecks,
-	createdAt, updatedAt time.Time,
-) *Registry {
+	target *MCPTarget,
+) (*Registry, error) {
+	id, err := ids.NewV7[ids.RegistryKind]()
+	if err != nil {
+		return nil, fmt.Errorf("registry: generate uuid: %w", err)
+	}
+	now := time.Now().UTC()
+	b := &Registry{
+		ID:          id,
+		GatewayID:   gatewayID,
+		Name:        name,
+		Type:        TypeMCP,
+		Description: description,
+		Weight:      weight,
+		MCPTarget:   target,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := b.Validate(); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func (b *Registry) IsMCP() bool {
+	return b.Type == TypeMCP
+}
+
+func (b *Registry) Provider() string {
+	if b.LLMTarget == nil {
+		return ""
+	}
+	return b.LLMTarget.Provider
+}
+
+func (b *Registry) ProviderOptions() map[string]any {
+	if b.LLMTarget == nil {
+		return nil
+	}
+	return b.LLMTarget.ProviderOptions
+}
+
+func (b *Registry) Auth() *TargetAuth {
+	if b.LLMTarget == nil {
+		return nil
+	}
+	return b.LLMTarget.Auth
+}
+
+func (b *Registry) HealthChecks() *HealthChecks {
+	if b.LLMTarget == nil {
+		return nil
+	}
+	return b.LLMTarget.HealthChecks
+}
+
+type RehydrateParams struct {
+	ID          ids.RegistryID
+	GatewayID   ids.GatewayID
+	Name        string
+	Type        Type
+	Description string
+	Weight      int
+	LLMTarget   *LLMTarget
+	MCPTarget   *MCPTarget
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func Rehydrate(params RehydrateParams) *Registry {
+	regType := params.Type
+	if regType == "" {
+		regType = TypeLLM
+	}
 	return &Registry{
-		ID:              id,
-		GatewayID:       gatewayID,
-		Name:            name,
-		Provider:        provider,
-		ProviderOptions: providerOptions,
-		Description:     description,
-		Weight:          weight,
-		Auth:            auth,
-		HealthChecks:    healthChecks,
-		CreatedAt:       createdAt,
-		UpdatedAt:       updatedAt,
+		ID:          params.ID,
+		GatewayID:   params.GatewayID,
+		Name:        params.Name,
+		Type:        regType,
+		Description: params.Description,
+		Weight:      params.Weight,
+		LLMTarget:   params.LLMTarget,
+		MCPTarget:   params.MCPTarget,
+		CreatedAt:   params.CreatedAt,
+		UpdatedAt:   params.UpdatedAt,
 	}
 }
 
@@ -91,25 +150,33 @@ func (b *Registry) Validate() error {
 	if b.Weight < 0 {
 		return fmt.Errorf("%w: weight cannot be negative", ErrInvalidRegistry)
 	}
-	if b.Provider == "" {
-		return fmt.Errorf("%w: provider is required", ErrInvalidRegistry)
+	if b.Type == "" {
+		b.Type = TypeLLM
 	}
-	if !providers.IsValidProvider(b.Provider) {
-		return fmt.Errorf("%w: unsupported provider %q", ErrInvalidRegistry, b.Provider)
+	switch b.Type {
+	case TypeLLM:
+		return b.validateLLM()
+	case TypeMCP:
+		return b.validateMCP()
+	default:
+		return fmt.Errorf("%w: unsupported type %q", ErrInvalidRegistry, b.Type)
 	}
-	if err := providers.ValidateProviderOptions(b.Provider, b.ProviderOptions); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidRegistry, err)
+}
+
+func (b *Registry) validateLLM() error {
+	if b.MCPTarget != nil {
+		return fmt.Errorf("%w: mcp_target is only valid for MCP registries", ErrInvalidRegistry)
 	}
-	if b.Auth == nil {
-		return fmt.Errorf("%w: auth is required", ErrInvalidRegistry)
+	return b.LLMTarget.Validate()
+}
+
+func (b *Registry) validateMCP() error {
+	if b.LLMTarget != nil {
+		return fmt.Errorf("%w: llm_target is only valid for LLM registries", ErrInvalidRegistry)
 	}
-	if err := b.Auth.Validate(); err != nil {
-		return err
+	if b.MCPTarget == nil {
+		return fmt.Errorf("%w: mcp_target is required for MCP registries", ErrInvalidMCPTarget)
 	}
-	if b.HealthChecks != nil {
-		if err := b.HealthChecks.Validate(); err != nil {
-			return err
-		}
-	}
-	return nil
+	b.MCPTarget.Normalize()
+	return b.MCPTarget.Validate()
 }

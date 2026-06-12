@@ -9,6 +9,7 @@ import (
 
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -236,17 +237,10 @@ func validateAlgorithm(alg string, allowed []string) error {
 	return ErrUnsupportedAlg
 }
 
+// hasAudience delegates to identity.AudienceMatches so Entra-style
+// `api://<id>` resource URIs and bare client ids are treated as equivalent.
 func hasAudience(actual []string, allowed []string) bool {
-	allowedSet := make(map[string]struct{}, len(allowed))
-	for _, audience := range allowed {
-		allowedSet[audience] = struct{}{}
-	}
-	for _, audience := range actual {
-		if _, ok := allowedSet[audience]; ok {
-			return true
-		}
-	}
-	return false
+	return identity.AudienceMatches(actual, allowed)
 }
 
 func subjectFromClaims(claims map[string]any, subjectClaim string) (string, error) {

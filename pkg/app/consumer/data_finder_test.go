@@ -21,15 +21,19 @@ import (
 
 func routableConsumer(gwID ids.GatewayID, authIDs []ids.AuthID) *domain.Consumer {
 	now := time.Now().UTC()
-	return domain.Rehydrate(
-		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
-		"X84Yhsy8", domain.RoutingModeInline, nil,
-		nil, true,
-		[]ids.RegistryID{ids.New[ids.RegistryKind]()}, nil, authIDs,
-		nil,
-		nil,
-		now, now,
-	)
+	return domain.Rehydrate(domain.RehydrateParams{
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gwID,
+		Name:        "c",
+		Type:        domain.TypeLLM,
+		Slug:        "X84Yhsy8",
+		RoutingMode: domain.RoutingModeInline,
+		Active:      true,
+		RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
+		AuthIDs:     authIDs,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
 }
 
 func hasPolicySlug(policies []*policydomain.Policy, slug string) bool {
@@ -52,8 +56,6 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).
 		Return([]*domain.Consumer{withAuth, plain}, nil).Once()
 
-	// audit + ratelimit are gateway-global (explicit Global flag); ratelimitC1
-	// overrides ratelimit for withAuth by slug; multi is scoped to both consumers.
 	globalAudit := &policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "audit", Global: true}
 	globalRate := &policydomain.Policy{ID: ids.New[ids.PolicyKind](), GatewayID: gwID, Slug: "ratelimit", Global: true}
 	rateForC1 := &policydomain.Policy{
@@ -95,7 +97,6 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 	if c1.Consumer.ID != withAuth.ID {
 		t.Fatal("expected repository order to be preserved")
 	}
-	// withAuth: ratelimitC1 (override) + multi (scoped) + audit (global), ratelimit global dropped.
 	if len(c1.Policies) != 3 {
 		t.Fatalf("withAuth expected 3 policies, got %d", len(c1.Policies))
 	}
@@ -115,7 +116,6 @@ func TestDataFinder_FindByGateway_ComposesGlobalAndConsumerPolicies(t *testing.T
 	if c2.Consumer.ID != plain.ID {
 		t.Fatal("expected repository order to be preserved")
 	}
-	// plain: multi (scoped) + audit + ratelimit (both globals, none overridden).
 	if len(c2.Policies) != 3 {
 		t.Fatalf("plain expected 3 policies, got %d", len(c2.Policies))
 	}
@@ -146,21 +146,24 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	poolID := ids.New[ids.RegistryKind]()
 	fb1, fb2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
-	cons := domain.Rehydrate(
-		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
-		"X84Yhsy8", domain.RoutingModeInline, nil,
-		nil, true,
-		[]ids.RegistryID{poolID}, nil, nil,
-		&domain.Fallback{
+	cons := domain.Rehydrate(domain.RehydrateParams{
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gwID,
+		Name:        "c",
+		Type:        domain.TypeLLM,
+		Slug:        "X84Yhsy8",
+		RoutingMode: domain.RoutingModeInline,
+		Fallback: &domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
 			Budget:   domain.FallbackBudget{MaxAttempts: 9},
-
-			Chain: []ids.RegistryID{fb2, fb1},
+			Chain:    []ids.RegistryID{fb2, fb1},
 		},
-		nil,
-		now, now,
-	)
+		Active:      true,
+		RegistryIDs: []ids.RegistryID{poolID},
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Consumer{cons}, nil).Once()
@@ -171,9 +174,9 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 			return len(bids) == 3
 		})).
 		Return([]*registrydomain.Registry{
-			{ID: poolID, GatewayID: gwID, Provider: "openai"},
-			{ID: fb1, GatewayID: gwID, Provider: "anthropic"},
-			{ID: fb2, GatewayID: gwID, Provider: "mistral"},
+			{ID: poolID, GatewayID: gwID, LLMTarget: &registrydomain.LLMTarget{Provider: "openai"}},
+			{ID: fb1, GatewayID: gwID, LLMTarget: &registrydomain.LLMTarget{Provider: "anthropic"}},
+			{ID: fb2, GatewayID: gwID, LLMTarget: &registrydomain.LLMTarget{Provider: "mistral"}},
 		}, nil).Once()
 
 	policyRepo := policymocks.NewRepository(t)

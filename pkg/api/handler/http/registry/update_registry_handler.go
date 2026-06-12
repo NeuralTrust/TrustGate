@@ -60,6 +60,7 @@ func (h *UpdateRegistryHandler) Handle(c *fiber.Ctx) error {
 		Weight:          req.Weight,
 		Auth:            req.ToAuth(),
 		HealthChecks:    req.ToHealthChecks(),
+		MCPTarget:       req.ToMCPTarget(),
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

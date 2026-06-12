@@ -72,6 +72,18 @@ func (d *Data) MatchSlug(slug string) (*RoutableConsumer, bool) {
 	return rc, ok
 }
 
+func (d *Data) MatchPath(path string) (*RoutableConsumer, bool) {
+	slug := SlugFromMCPPath(path)
+	if slug == "" {
+		return nil, false
+	}
+	return d.MatchSlug(slug)
+}
+
+func MCPPath(slug string) string {
+	return "/" + slug + "/mcp"
+}
+
 func (d *Data) indexBySlug() {
 	d.bySlug = make(map[string]*RoutableConsumer, len(d.Consumers))
 	for i := range d.Consumers {

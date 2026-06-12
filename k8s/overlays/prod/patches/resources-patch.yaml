@@ -32,3 +32,20 @@ spec:
           requests:
             cpu: "2"
             memory: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentgateway-mcp
+spec:
+  template:
+    spec:
+      containers:
+      - name: mcp
+        resources:
+          limits:
+            cpu: "2"
+            memory: 2Gi
+          requests:
+            cpu: "1"
+            memory: 1Gi

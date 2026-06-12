@@ -11,10 +11,6 @@ import (
 
 var _ cache.EventSubscriber[event.InvalidateGatewayDataEvent] = (*InvalidateGatewayDataEventSubscriber)(nil)
 
-// InvalidateGatewayDataEventSubscriber drops every in-process cache entry keyed
-// by a gateway: the gateway entity, the aggregated consumer-data view, and any
-// Redis key scoped to that gateway. It runs on each process so a mutation on the
-// admin plane propagates to every proxy instance.
 type InvalidateGatewayDataEventSubscriber struct {
 	logger            *slog.Logger
 	cache             cache.Client
@@ -22,6 +18,8 @@ type InvalidateGatewayDataEventSubscriber struct {
 	consumerCache     *cache.TTLMap
 	consumerDataCache *cache.TTLMap
 	loadBalancerCache *cache.TTLMap
+	authCache         *cache.TTLMap
+	consumerPathCache *cache.TTLMap
 	roleCache         *cache.TTLMap
 }
 
@@ -36,6 +34,8 @@ func NewInvalidateGatewayDataEventSubscriber(
 		consumerCache:     c.GetTTLMap(cache.ConsumerTTLName),
 		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
 		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
+		authCache:         c.GetTTLMap(cache.AuthTTLName),
+		consumerPathCache: c.GetTTLMap(cache.ConsumerPathTTLName),
 		roleCache:         c.GetTTLMap(cache.RoleTTLName),
 	}
 }
@@ -53,10 +53,13 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 		s.consumerDataCache.Delete(evt.GatewayID)
 	}
 	if s.loadBalancerCache != nil {
-		// Load balancers are keyed by "<gatewayID>:<consumerID>"; drop every
-		// balancer of this gateway so the next request rebuilds it from the
-		// refreshed consumer/backend configuration.
 		s.loadBalancerCache.DeleteByPrefix(evt.GatewayID + ":")
+	}
+	if s.authCache != nil {
+		s.authCache.Clear()
+	}
+	if s.consumerPathCache != nil {
+		s.consumerPathCache.Clear()
 	}
 	if s.roleCache != nil {
 		s.roleCache.Clear()

@@ -58,8 +58,23 @@ type Consumer struct {
 	AuthIDs       []ids.AuthID      `json:"auth_ids"`
 	Fallback      *Fallback         `json:"fallback,omitempty"`
 	ModelPolicies ModelPolicies     `json:"model_policies,omitempty"`
+	MCP           *MCPPolicy        `json:"mcp,omitempty"`
 	CreatedAt     time.Time         `json:"created_at"`
 	UpdatedAt     time.Time         `json:"updated_at"`
+}
+
+func (c *Consumer) Toolkit() Toolkit {
+	if c.MCP == nil {
+		return nil
+	}
+	return c.MCP.Toolkit
+}
+
+func (c *Consumer) FailMode() FailMode {
+	if c.MCP == nil {
+		return ""
+	}
+	return c.MCP.FailMode
 }
 
 type CreateParams struct {
@@ -75,6 +90,7 @@ type CreateParams struct {
 	AuthIDs       []ids.AuthID
 	Fallback      *Fallback
 	ModelPolicies ModelPolicies
+	MCP           *MCPPolicy
 }
 
 func New(params CreateParams) (*Consumer, error) {
@@ -106,6 +122,7 @@ func New(params CreateParams) (*Consumer, error) {
 		AuthIDs:       params.AuthIDs,
 		Fallback:      params.Fallback,
 		ModelPolicies: params.ModelPolicies,
+		MCP:           params.MCP,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
@@ -115,40 +132,45 @@ func New(params CreateParams) (*Consumer, error) {
 	return c, nil
 }
 
-func Rehydrate(
-	id ids.ConsumerID,
-	gatewayID ids.GatewayID,
-	name string,
-	consumerType Type,
-	slug string,
-	routingMode RoutingMode,
-	lbConfig *LBConfig,
-	headers map[string]string,
-	active bool,
-	registryIDs []ids.RegistryID,
-	roleIDs []ids.RoleID,
-	authIDs []ids.AuthID,
-	fallback *Fallback,
-	modelPolicies ModelPolicies,
-	createdAt, updatedAt time.Time,
-) *Consumer {
+type RehydrateParams struct {
+	ID            ids.ConsumerID
+	GatewayID     ids.GatewayID
+	Name          string
+	Type          Type
+	Slug          string
+	RoutingMode   RoutingMode
+	LBConfig      *LBConfig
+	Headers       map[string]string
+	Active        bool
+	RegistryIDs   []ids.RegistryID
+	RoleIDs       []ids.RoleID
+	AuthIDs       []ids.AuthID
+	Fallback      *Fallback
+	ModelPolicies ModelPolicies
+	MCP           *MCPPolicy
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+func Rehydrate(params RehydrateParams) *Consumer {
 	return &Consumer{
-		ID:            id,
-		GatewayID:     gatewayID,
-		Name:          name,
-		Type:          consumerType,
-		Slug:          slug,
-		RoutingMode:   routingMode,
-		LBConfig:      lbConfig,
-		Headers:       headers,
-		Active:        active,
-		RegistryIDs:   registryIDs,
-		RoleIDs:       roleIDs,
-		AuthIDs:       authIDs,
-		Fallback:      fallback,
-		ModelPolicies: modelPolicies,
-		CreatedAt:     createdAt,
-		UpdatedAt:     updatedAt,
+		ID:            params.ID,
+		GatewayID:     params.GatewayID,
+		Name:          params.Name,
+		Type:          params.Type,
+		Slug:          params.Slug,
+		RoutingMode:   params.RoutingMode,
+		LBConfig:      params.LBConfig,
+		Headers:       params.Headers,
+		Active:        params.Active,
+		RegistryIDs:   params.RegistryIDs,
+		RoleIDs:       params.RoleIDs,
+		AuthIDs:       params.AuthIDs,
+		Fallback:      params.Fallback,
+		ModelPolicies: params.ModelPolicies,
+		MCP:           params.MCP,
+		CreatedAt:     params.CreatedAt,
+		UpdatedAt:     params.UpdatedAt,
 	}
 }
 
@@ -177,6 +199,9 @@ func (c *Consumer) Validate() error {
 	if err := validateUniqueIDs(c.AuthIDs, ErrInvalidAuthID, "auth"); err != nil {
 		return err
 	}
+	if c.Type != TypeMCP && c.MCP != nil {
+		return fmt.Errorf("%w: mcp policy is only valid for MCP consumers", ErrInvalidType)
+	}
 	if c.RoutingMode == RoutingModeRoleBased {
 		return c.validateRoleBased()
 	}
@@ -195,6 +220,12 @@ func (c *Consumer) Validate() error {
 	if len(c.RoleIDs) > 0 {
 		return fmt.Errorf("%w: roles are only valid in role_based mode", ErrInvalidRoutingMode)
 	}
+	if c.Type == TypeMCP {
+		if c.MCP == nil {
+			c.MCP = &MCPPolicy{}
+		}
+		return c.MCP.Validate(c.knownRegistryIDs())
+	}
 	return nil
 }
 
@@ -210,6 +241,9 @@ func (c *Consumer) validateRoleBased() error {
 	}
 	if len(c.ModelPolicies) > 0 {
 		return fmt.Errorf("%w: model_policies are only valid in inline mode", ErrInvalidRoutingMode)
+	}
+	if c.MCP != nil {
+		return fmt.Errorf("%w: mcp policy is only valid in inline mode", ErrInvalidRoutingMode)
 	}
 	if err := validateUniqueIDs(c.RoleIDs, ErrInvalidRoutingMode, "role"); err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
 )
 
 type Config struct {
@@ -104,18 +105,41 @@ func (c Config) populatedCount() int {
 	return count
 }
 
-func (c OAuth2Config) validate() error {
+func (c *OAuth2Config) validate() error {
 	if secret.IsMasked(c.ClientSecret) {
 		return fmt.Errorf("%w: oauth2.client_secret cannot be a masked value; omit it to keep the stored value", ErrInvalidConfig)
 	}
 	if strings.TrimSpace(c.Issuer) == "" {
 		return fmt.Errorf("%w: oauth2.issuer is required", ErrInvalidConfig)
 	}
-	if strings.TrimSpace(c.JWKSURL) == "" {
-		return fmt.Errorf("%w: oauth2.jwks_url is required; introspection_url is not supported for proxy auth", ErrInvalidConfig)
-	}
 	if len(trimmedNonEmpty(c.Audiences)) == 0 {
 		return fmt.Errorf("%w: oauth2.audiences is required", ErrInvalidConfig)
+	}
+	for i, aud := range c.Audiences {
+		aud = strings.TrimSpace(aud)
+		if aud == "" {
+			return fmt.Errorf("%w: oauth2.audiences cannot contain empty entries", ErrInvalidConfig)
+		}
+		c.Audiences[i] = aud
+	}
+	for i, scope := range c.RequiredScopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			return fmt.Errorf("%w: oauth2.required_scopes cannot contain empty entries", ErrInvalidConfig)
+		}
+		if identity.IsProtocolScope(scope) {
+			return fmt.Errorf("%w: oauth2.required_scopes cannot contain the OIDC protocol scope %q (it is not carried by access tokens)",
+				ErrInvalidConfig, scope)
+		}
+		c.RequiredScopes[i] = scope
+	}
+	if strings.TrimSpace(c.JWKSURL) == "" && strings.TrimSpace(c.IntrospectionURL) == "" {
+		// Without an explicit endpoint the JWKS is resolved via OIDC
+		// discovery, which needs the issuer to be a resolvable http(s) URL.
+		u, err := url.Parse(strings.TrimSpace(c.Issuer))
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%w: oauth2 requires jwks_url or introspection_url, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
+		}
 	}
 	return nil
 }
@@ -157,6 +181,38 @@ func (c IDPConfig) validate() error {
 		}
 	}
 	return nil
+}
+
+// ConflictsWith reports whether two oauth2 configs cover the same inbound
+// tokens: same issuer and at least one audience in common. An entry without
+// audiences accepts any audience of its issuer, so it conflicts with every
+// other entry on that issuer. Used as an admin-time guardrail; the request
+// path disambiguates at runtime, but duplicate (issuer, audience) pairs make
+// token attribution ambiguous everywhere else.
+func (c *OAuth2Config) ConflictsWith(other *OAuth2Config) bool {
+	if c == nil || other == nil {
+		return false
+	}
+	if strings.TrimSpace(c.Issuer) != strings.TrimSpace(other.Issuer) {
+		return false
+	}
+	if len(c.Audiences) == 0 || len(other.Audiences) == 0 {
+		return true
+	}
+	for _, a := range c.Audiences {
+		for _, b := range other.Audiences {
+			if normalizeAudience(a) == normalizeAudience(b) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// normalizeAudience treats an "api://" resource URI and its bare identifier
+// as the same audience (Entra v1 vs v2 aud claim forms).
+func normalizeAudience(aud string) string {
+	return strings.TrimPrefix(strings.TrimSpace(aud), "api://")
 }
 
 func (c MTLSConfig) validate() error {

@@ -515,6 +515,65 @@ func (_c *Repository_DetachRole_Call) RunAndReturn(run func(context.Context, ids
 	return _c
 }
 
+// FindActiveBySlug provides a mock function with given fields: ctx, slug
+func (_m *Repository) FindActiveBySlug(ctx context.Context, slug string) (*consumer.Consumer, error) {
+	ret := _m.Called(ctx, slug)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindActiveBySlug")
+	}
+
+	var r0 *consumer.Consumer
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (*consumer.Consumer, error)); ok {
+		return rf(ctx, slug)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) *consumer.Consumer); ok {
+		r0 = rf(ctx, slug)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*consumer.Consumer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, slug)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_FindActiveBySlug_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindActiveBySlug'
+type Repository_FindActiveBySlug_Call struct {
+	*mock.Call
+}
+
+// FindActiveBySlug is a helper method to define mock.On call
+//   - ctx context.Context
+//   - slug string
+func (_e *Repository_Expecter) FindActiveBySlug(ctx interface{}, slug interface{}) *Repository_FindActiveBySlug_Call {
+	return &Repository_FindActiveBySlug_Call{Call: _e.mock.On("FindActiveBySlug", ctx, slug)}
+}
+
+func (_c *Repository_FindActiveBySlug_Call) Run(run func(ctx context.Context, slug string)) *Repository_FindActiveBySlug_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_FindActiveBySlug_Call) Return(_a0 *consumer.Consumer, _a1 error) *Repository_FindActiveBySlug_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_FindActiveBySlug_Call) RunAndReturn(run func(context.Context, string) (*consumer.Consumer, error)) *Repository_FindActiveBySlug_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // FindByID provides a mock function with given fields: ctx, id
 func (_m *Repository) FindByID(ctx context.Context, id ids.ID[ids.ConsumerKind]) (*consumer.Consumer, error) {
 	ret := _m.Called(ctx, id)

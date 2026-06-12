@@ -12,3 +12,10 @@ metadata:
   name: agentgateway-proxy
 spec:
   minAvailable: 1
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agentgateway-mcp
+spec:
+  minAvailable: 1

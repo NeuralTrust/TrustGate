@@ -169,11 +169,11 @@ func TestNewAuth_Validation(t *testing.T) {
 			wantErr:   ErrInvalidConfig,
 		},
 		{
-			name:      "oauth2 missing jwks",
+			name:      "oauth2 missing jwks and introspection with non-URL issuer",
 			gatewayID: gwID,
 			authName:  "k",
 			authType:  TypeOAuth2,
-			config:    Config{OAuth2: &OAuth2Config{Issuer: "https://issuer", Audiences: []string{"gateway"}}},
+			config:    Config{OAuth2: &OAuth2Config{Issuer: "not-a-url", Audiences: []string{"gateway"}}},
 			wantErr:   ErrInvalidConfig,
 		},
 		{
@@ -182,14 +182,6 @@ func TestNewAuth_Validation(t *testing.T) {
 			authName:  "k",
 			authType:  TypeOAuth2,
 			config:    Config{OAuth2: &OAuth2Config{Issuer: "https://issuer", JWKSURL: "https://x/jwks"}},
-			wantErr:   ErrInvalidConfig,
-		},
-		{
-			name:      "oauth2 introspection-only unsupported",
-			gatewayID: gwID,
-			authName:  "k",
-			authType:  TypeOAuth2,
-			config:    Config{OAuth2: &OAuth2Config{Issuer: "https://issuer", Audiences: []string{"gateway"}, IntrospectionURL: "https://issuer/introspect"}},
 			wantErr:   ErrInvalidConfig,
 		},
 		{
@@ -307,6 +299,10 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 			ClientSecret: "client-secret",
 			Scopes:       []string{"chat"},
 			Audience:     "https://api.example.com",
+		}}},
+		"oauth2 issuer-only (JWKS via OIDC discovery)": {TypeOAuth2, Config{OAuth2: &OAuth2Config{
+			Issuer:    "https://login.microsoftonline.com/tenant-id/v2.0",
+			Audiences: []string{"agentgateway"},
 		}}},
 		"mtls": {TypeMTLS, Config{MTLS: &MTLSConfig{CACert: "-----BEGIN CERTIFICATE-----"}}},
 		"idp": {TypeIDP, Config{IDP: &IDPConfig{

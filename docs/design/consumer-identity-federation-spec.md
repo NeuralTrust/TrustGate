@@ -15,7 +15,7 @@ v3 introduced Roles + decoupled auth. v4 folds in the routing/auth detail worked
 
 - **Cross-provider load balancing via Model Pools (§4, §5).** The `provider/model` addressing of v3 only balanced *within* one provider. v4 adds a logical **Model Pool** (alias → multiple provider/model targets + weights) so `model: "chat-fast"` balances across providers. Both addressing modes are supported: concrete `provider/model` and logical pool name.
 - **Authentication reference (Appendix A).** Who issues which token, how TrustGate validates a JWT (JWKS, no secret needed), Okta vs Entra specifics, and how claims are read. This is the decoupled/Phase-2 layer, captured for completeness.
-- **Downstream credential modes (§7).** v1 downstream stays none/static. The enterprise end-state — **OBO** (Entra exchange) and **forwarded/vaulted OAuth** (GitHub/Slack) — is documented with the new **Vault** entity, OAuth broker endpoints, and a Connections page. This is epic Phase 5 and remains out of the v1 build.
+- **Downstream credential modes (§7).** v1 downstream stays none/static. The enterprise end-state — **OBO** (Entra exchange) and **forwarded/vaulted OAuth** (GitHub/Slack) — is documented with the new **Vault** entity, OAuth broker endpoints, and a Connections page. This is epic Phase 4 and remains out of the v1 build.
 
 ---
 
@@ -32,7 +32,7 @@ type Role struct {
     GatewayID ids.GatewayID
     Name      string
     LLM  []LLMGrant   // grants for LLM providers/models or Model Pools
-    MCP  []MCPGrant   // grants for MCP servers/tools (MCP half rides epic Phase 3)
+    MCP  []MCPGrant   // grants for MCP servers/tools (MCP half rides epic Phase 2)
     Active bool
 }
 
@@ -43,7 +43,7 @@ type LLMGrant struct {
 }
 
 type MCPGrant struct {
-    ServerID ids.RegistryID // an MCP backend (epic Phase 3 backend.Type=MCP)
+    ServerID ids.RegistryID // an MCP backend (epic Phase 2 backend.Type=MCP)
     Tools    []string       // explicit tool names, or ["*"] for the whole server
 }
 ```
@@ -68,7 +68,7 @@ type MCPGrant struct {
 | Canonical inbound + `provider/model` routing | the existing provider **adapters** (`pkg/infra/providers/adapter/`) and `X-Provider` hinting — the model string replaces the header as the routing key |
 | LB among candidates | the existing forwarder **LB / weights / fallback** (`pkg/app/proxy/forwarder.go`) — unchanged engine, new candidate set |
 
-Net new: the `Role` aggregate, the `ModelPool` aggregate, the grant-resolution step, and the model-string router. The MCP half additionally depends on the epic's MCP backend entity + tool introspection (Phase 3).
+Net new: the `Role` aggregate, the `ModelPool` aggregate, the grant-resolution step, and the model-string router. The MCP half additionally depends on the epic's MCP backend entity + tool introspection (Phase 2).
 
 ---
 
@@ -76,7 +76,7 @@ Net new: the `Role` aggregate, the `ModelPool` aggregate, the grant-resolution s
 
 Authentication is a separate, existing concern, **not** changed by this spec (detail in Appendix A):
 
-- A Consumer lists accepted auth methods via `auth_ids` (`api_key` / `oauth2` / `mtls`). SSO is an `oauth2` method (real OIDC/JWKS validation is epic Phase 2).
+- A Consumer lists accepted auth methods via `auth_ids` (`api_key` / `oauth2` / `mtls`). SSO is an `oauth2` method (real OIDC/JWKS validation is epic Phase 1).
 - Auth answers **"may this caller reach this Consumer."** Roles answer **"what can requests through this Consumer access."**
 - **All authenticated callers through a Consumer share the same effective grants.** No per-caller differentiation in this iteration (deferred, §11). Practically: to give two teams different access, use two Consumers.
 
@@ -107,7 +107,7 @@ flowchart TD
 
 The LB engine in `forwarder.go` is unchanged; only the **candidate set computation** changes — from "all registries in the consumer pool" to "registries matching the resolved model target."
 
-### MCP (rides epic Phase 3)
+### MCP (rides epic Phase 2)
 
 - `tools/list` returns the **union of granted tools** across the Consumer's effective MCP grants.
 - `tools/call` resolves the called tool to its **owning server** and routes only there.
@@ -162,7 +162,7 @@ The existing Routing/Model-policies tabs fold into this Access area.
 Canonical `model` is `provider/model` (concrete) or `pool-name` (logical). Playground (`playground-view.tsx`) and docs show both.
 
 ### Connections (future — §7)
-A page listing each user's linked third-party accounts (GitHub/Slack) with connect/revoke. Only needed when the forwarded downstream mode lands (Phase 5).
+A page listing each user's linked third-party accounts (GitHub/Slack) with connect/revoke. Only needed when the forwarded downstream mode lands (Phase 4).
 
 ---
 
@@ -174,7 +174,7 @@ How TrustGate authenticates to the **upstream** when serving a request. The inbo
 - **none** — public upstream, no `Authorization`.
 - **static** — the gateway's own shared credential (Registry `TargetAuth`), e.g. the upstream OpenAI key. No end-user identity reaches upstream.
 
-### Future (epic Phase 5 — out of v1 build)
+### Future (epic Phase 4 — out of v1 build)
 
 Per-user identity to the upstream, on a spectrum of fidelity:
 
@@ -186,7 +186,7 @@ Per-user identity to the upstream, on a spectrum of fidelity:
 
 ### OBO flow (Entra → Graph), summary
 
-Inbound token `T1` (`aud = gateway`) → gateway calls Entra `grant_type=jwt-bearer`, `requested_token_use=on_behalf_of`, `assertion=T1`, `scope=graph/.default` → `T2` (`aud = Graph`, same `oid`, `azp = gateway`) → call upstream with `T2`. Requires `T1.aud = gateway` (guaranteed by the Phase 4 OAuth challenge). Cache `T2` keyed by `(oid, resource, tenant)`.
+Inbound token `T1` (`aud = gateway`) → gateway calls Entra `grant_type=jwt-bearer`, `requested_token_use=on_behalf_of`, `assertion=T1`, `scope=graph/.default` → `T2` (`aud = Graph`, same `oid`, `azp = gateway`) → call upstream with `T2`. Requires `T1.aud = gateway` (guaranteed by the Phase 3 OAuth challenge). Cache `T2` keyed by `(oid, resource, gateway)`.
 
 ### Forwarded/vaulted flow (GitHub/Slack), summary
 
@@ -211,13 +211,13 @@ sequenceDiagram
 
 **Who authenticates:** the **user** authenticates with the third party (their own account). TrustGate is only the OAuth **client** (admin-registered `client_id`/`secret`); it cannot log in as the user. First use is interactive (consent); afterwards TrustGate uses the vaulted token silently (auto-refresh) until refresh fails / consent revoked / scopes change.
 
-### Vault entity (Phase 5)
+### Vault entity (Phase 4)
 
 ```go
-// pkg/domain/vault/ (new) — durable, encrypted, per (principal, provider)
+// pkg/domain/vault/ (new) — durable, encrypted, per (gateway, principal, provider)
 type VaultedCredential struct {
     ID           ids.VaultID
-    TenantID     ids.OrgID
+    GatewayID    ids.GatewayID  // the tenant boundary (Gateway = tenant)
     PrincipalSub string         // user's oid/sub
     Provider     string         // "github" | "slack" | ...
     AccountRef   string         // linked account, for display
@@ -230,7 +230,7 @@ type VaultedCredential struct {
 ```
 
 - **Durable, not a cache:** unlike OBO tokens (re-mintable from `T1`), forwarded refresh tokens come from one-time user consent and cannot be re-derived — losing them forces re-consent. Hence a persistent encrypted store, distinct from admin-managed `Auth`/`TargetAuth`.
-- **Security:** encrypted at rest via KMS/secret manager; strict `(tenant, principal)` isolation (a leak is cross-user account takeover); revoke = delete row (+ provider revoke).
+- **Security:** encrypted at rest via KMS/secret manager; strict `(gateway, principal)` isolation (a leak is cross-user account takeover); revoke = delete row (+ provider revoke).
 - **Supporting surface:** OAuth broker endpoints `/oauth/connect/{provider}` (302 to the third party) and `/oauth/callback/{provider}` (exchange + store + confirmation page), plus the Connections page (§6). The login/consent UI is always the third party's — TrustGate builds no login forms.
 
 ---
@@ -238,11 +238,11 @@ type VaultedCredential struct {
 ## 8. Dependencies & sequencing
 
 - **LLM half ships on today's stack.** Roles (LLM grants), Model Pools, inline binds, canonical payload, `provider/model` + pool routing, and adapter translation build on existing registry/forwarder/adapter code. No MCP plane required.
-- **Authentication (SSO/JWT validation)** = epic **Phase 2** (Appendix A). Today only API keys are validated at runtime.
-- **MCP half** = epic **Phase 3** (MCP backend entity + tool introspection + data plane).
-- **Downstream per-user credentials (OBO/vault)** = epic **Phases 4-5**; out of the v1 build.
+- **Authentication (SSO/JWT validation)** = epic **Phase 1** (Appendix A). Today only API keys are validated at runtime.
+- **MCP half** = epic **Phase 2** (MCP backend entity + tool introspection + data plane).
+- **Downstream per-user credentials (OBO/vault)** = epic **Phases 3-4**; out of the v1 build.
 
-Suggested slices: (1) `Role` + `consumer_role` + bind UI + grant resolution (LLM); (2) `ModelPool` + the model-string router + canonical-payload contract; (3) inline-bind sugar; (4) MCP grants on Phase 3; (5) downstream OBO + Vault on Phases 4-5.
+Suggested slices: (1) `Role` + `consumer_role` + bind UI + grant resolution (LLM); (2) `ModelPool` + the model-string router + canonical-payload contract; (3) inline-bind sugar; (4) MCP grants on Phase 2; (5) downstream OBO + Vault on Phases 3-4.
 
 ---
 
@@ -261,7 +261,7 @@ Suggested slices: (1) `Role` + `consumer_role` + bind UI + grant resolution (LLM
 
 - **Per-user / claim-based authorization** (old Identity Mappings) — deferred (§11).
 - **Consumer kind, Groups gate, per-user sessions, Simulate access** — removed.
-- **Downstream per-user credentials** (passthrough/OBO/impersonation/forwarded-vault), the **Vault**, OAuth broker, Connections page — documented (§7) but **out of the v1 build** (epic Phases 4-5).
+- **Downstream per-user credentials** (passthrough/OBO/impersonation/forwarded-vault), the **Vault**, OAuth broker, Connections page — documented (§7) but **out of the v1 build** (epic Phases 3-4).
 - **MCP grant aliasing (`expose_as`)** — collisions auto-prefixed; explicit aliasing deferred.
 
 ---
@@ -273,7 +273,7 @@ Suggested slices: (1) `Role` + `consumer_role` + bind UI + grant resolution (LLM
 
 ---
 
-## Appendix A — Authentication reference (decoupled; epic Phase 2)
+## Appendix A — Authentication reference (decoupled; epic Phase 1)
 
 ### Who creates which token
 

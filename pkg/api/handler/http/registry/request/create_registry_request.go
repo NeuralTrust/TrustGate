@@ -10,12 +10,43 @@ import (
 
 type CreateRegistryRequest struct {
 	Name            string               `json:"name"`
-	Provider        string               `json:"provider"`
+	Type            string               `json:"type,omitempty"`
+	Provider        string               `json:"provider,omitempty"`
 	ProviderOptions map[string]any       `json:"provider_options,omitempty"`
 	Description     string               `json:"description,omitempty"`
 	Weight          int                  `json:"weight,omitempty"`
 	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
+	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
+}
+
+type MCPTargetRequest struct {
+	URL       string            `json:"url"`
+	Transport string            `json:"transport,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Auth      *MCPAuthRequest   `json:"auth,omitempty"`
+}
+
+type MCPAuthRequest struct {
+	Mode   string `json:"mode"`
+	Header string `json:"header,omitempty"`
+	Value  string `json:"value,omitempty"` // #nosec G117
+
+	ExpectedAudience string `json:"expected_audience,omitempty"`
+
+	Pattern  string `json:"pattern,omitempty"`
+	Audience string `json:"audience,omitempty"`
+	Scope    string `json:"scope,omitempty"`
+	Actor    string `json:"actor,omitempty"`
+
+	Provider     string   `json:"provider,omitempty"`
+	Registration string   `json:"registration,omitempty"`
+	ClientID     string   `json:"client_id,omitempty"`
+	ClientSecret string   `json:"client_secret,omitempty"` // #nosec G117
+	AuthorizeURL string   `json:"authorize_url,omitempty"`
+	TokenURL     string   `json:"token_url,omitempty"`
+	Scopes       []string `json:"scopes,omitempty"`
+	Resource     string   `json:"resource,omitempty"`
 }
 
 type HealthChecksRequest struct {
@@ -87,11 +118,17 @@ func (r CreateRegistryRequest) Validate() error {
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
 	}
-	if strings.TrimSpace(r.Provider) == "" {
-		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
-	}
 	if r.Weight < 0 {
 		return fmt.Errorf("weight cannot be negative: %w", commonerrors.ErrValidation)
+	}
+	if r.ToType() == domain.TypeMCP {
+		if r.MCPTarget == nil {
+			return fmt.Errorf("mcp_target is required for MCP registries: %w", commonerrors.ErrValidation)
+		}
+		return nil
+	}
+	if strings.TrimSpace(r.Provider) == "" {
+		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
 	}
 	if r.Auth == nil {
 		return fmt.Errorf("auth is required: %w", commonerrors.ErrValidation)
@@ -102,12 +139,59 @@ func (r CreateRegistryRequest) Validate() error {
 	return nil
 }
 
-func (r CreateRegistryRequest) ToAuth() *domain.TargetAuth {
-	return r.Auth.ToDomain()
+func (r CreateRegistryRequest) ToType() domain.Type {
+	if r.Type == "" {
+		return domain.TypeLLM
+	}
+	return domain.Type(strings.ToUpper(strings.TrimSpace(r.Type)))
 }
 
-func (r CreateRegistryRequest) ToHealthChecks() *domain.HealthChecks {
-	return r.HealthChecks.ToDomain()
+func (r CreateRegistryRequest) ToLLMTarget() *domain.LLMTarget {
+	if r.ToType() != domain.TypeLLM && r.Provider == "" && len(r.ProviderOptions) == 0 && r.Auth == nil && r.HealthChecks == nil {
+		return nil
+	}
+	return &domain.LLMTarget{
+		Provider:        r.Provider,
+		ProviderOptions: r.ProviderOptions,
+		Auth:            r.Auth.ToDomain(),
+		HealthChecks:    r.HealthChecks.ToDomain(),
+	}
+}
+
+func (r CreateRegistryRequest) ToMCPTarget() *domain.MCPTarget {
+	return r.MCPTarget.ToDomain()
+}
+
+func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
+	if t == nil {
+		return nil
+	}
+	out := &domain.MCPTarget{
+		URL:       t.URL,
+		Transport: domain.MCPTransport(t.Transport),
+		Headers:   t.Headers,
+	}
+	if t.Auth != nil {
+		out.Auth = &domain.MCPAuth{
+			Mode:             domain.MCPAuthMode(t.Auth.Mode),
+			Header:           t.Auth.Header,
+			Value:            t.Auth.Value,
+			ExpectedAudience: t.Auth.ExpectedAudience,
+			Pattern:          domain.MCPExchangePattern(t.Auth.Pattern),
+			Audience:         t.Auth.Audience,
+			Scope:            t.Auth.Scope,
+			Actor:            t.Auth.Actor,
+			Provider:         t.Auth.Provider,
+			Registration:     domain.MCPClientRegistration(t.Auth.Registration),
+			ClientID:         t.Auth.ClientID,
+			ClientSecret:     t.Auth.ClientSecret,
+			AuthorizeURL:     t.Auth.AuthorizeURL,
+			TokenURL:         t.Auth.TokenURL,
+			Scopes:           t.Auth.Scopes,
+			Resource:         t.Auth.Resource,
+		}
+	}
+	return out
 }
 
 func (h *HealthChecksRequest) ToDomain() *domain.HealthChecks {

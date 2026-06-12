@@ -29,10 +29,12 @@ const (
 
 func apiKeyTarget(provider string) *registrydomain.Registry {
 	return &registrydomain.Registry{
-		ID:       ids.New[ids.RegistryKind](),
-		Name:     "t1",
-		Provider: provider,
-		Auth:     registrydomain.NewAPIKeyAuth("secret"),
+		ID:   ids.New[ids.RegistryKind](),
+		Name: "t1",
+		LLMTarget: &registrydomain.LLMTarget{
+			Provider: provider,
+			Auth:     registrydomain.NewAPIKeyAuth("secret"),
+		},
 	}
 }
 

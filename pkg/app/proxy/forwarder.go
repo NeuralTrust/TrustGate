@@ -322,11 +322,11 @@ func (f *forwarder) recordSpan(
 	}
 	span := &trace.Span{
 		Type:      trace.SpanLLM,
-		Name:      bk.Provider,
+		Name:      bk.Provider(),
 		StartedAt: time.Now().Add(-elapsed),
 		LLM: &trace.LLMAttrs{
 			RegistryID:     bk.ID.String(),
-			Provider:       bk.Provider,
+			Provider:       bk.Provider(),
 			RequestedModel: dto.request.RequestedModel,
 			Attempt:        attempt,
 			Fallback:       fromFallback,
@@ -415,7 +415,7 @@ func (f *forwarder) recordSessionOnStreamEnd(
 func (f *forwarder) logRetry(bk *domain.Registry, reason error, budget *failoverBudget) {
 	f.logger.Warn("backend invocation failed; failing over",
 		slog.String("registry_id", bk.ID.String()),
-		slog.String("provider", bk.Provider),
+		slog.String("provider", bk.Provider()),
 		slog.Int("attempt", budget.attempts),
 		slog.String("reason", reason.Error()),
 	)
@@ -443,7 +443,7 @@ func (f *forwarder) retarget(dto *forwardRequestDTO, bk *domain.Registry) {
 
 func stampTarget(req *infracontext.RequestContext, bk *domain.Registry) {
 	req.RegistryID = bk.ID.String()
-	req.Provider = bk.Provider
+	req.Provider = bk.Provider()
 }
 
 func failureReason(resp *ProviderResponse, err error) error {
@@ -511,7 +511,7 @@ func (f *forwarder) finalizeBody(
 	mergeProviderResponse(pluginResp, providerResp, false)
 	f.runPreResponse(ctx, dto.policies, dto.plan, dto.request, pluginResp)
 	f.firePostResponse(dto.policies, dto.plan, dto.request, pluginResp)
-	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider, providerResp.Model, providerResp.StatusCode)
+	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider(), providerResp.Model, providerResp.StatusCode)
 	return &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,
@@ -531,7 +531,7 @@ func (f *forwarder) finalizeBodyGated(
 		return pluginErrorResult(pe), pe
 	}
 	f.firePostResponse(dto.policies, dto.plan, dto.request, pluginResp)
-	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider, providerResp.Model, providerResp.StatusCode)
+	f.recordSession(ctx, dto.request, providerResp.ResponseID, dto.backend.Provider(), providerResp.Model, providerResp.StatusCode)
 	return &ForwardResult{
 		StatusCode: pluginResp.StatusCode,
 		Headers:    pluginResp.Headers,

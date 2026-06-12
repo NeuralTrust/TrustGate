@@ -36,7 +36,7 @@ const (
 )
 
 const consumerSelectColumns = `
-		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.routing_mode, c.lb_config, c.fallback, c.model_policies, c.headers, c.active,
+		SELECT c.id, c.gateway_id, c.name, c.type, c.slug, c.routing_mode, c.lb_config, c.fallback, c.model_policies, c.toolkit, c.fail_mode, c.headers, c.active,
 		       c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
@@ -75,11 +75,15 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal model_policies: %w", err)
 	}
+	toolkitBytes, err := marshalToolkit(c.Toolkit())
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal toolkit: %w", err)
+	}
 	const insertConsumer = `
 		INSERT INTO consumers (
-			id, gateway_id, name, type, slug, routing_mode, lb_config, fallback, model_policies, headers, active, created_at, updated_at
+			id, gateway_id, name, type, slug, routing_mode, lb_config, fallback, model_policies, toolkit, fail_mode, headers, active, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		)`
 	const insertConsumerRegistry = `
 		INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
@@ -88,7 +92,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, insertConsumer,
 			c.ID, c.GatewayID, c.Name, string(c.Type), c.Slug, string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-			headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
+			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -126,6 +130,10 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal model_policies: %w", err)
 	}
+	toolkitBytes, err := marshalToolkit(c.Toolkit())
+	if err != nil {
+		return fmt.Errorf("consumer repository: marshal toolkit: %w", err)
+	}
 	const updateConsumer = `
 		UPDATE consumers
 		   SET name             = $2,
@@ -134,9 +142,11 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		       lb_config        = $5,
 		       fallback         = $6,
 		       model_policies   = $7,
-		       headers          = $8,
-		       active           = $9,
-		       updated_at       = $10
+		       toolkit          = $8,
+		       fail_mode        = $9,
+		       headers          = $10,
+		       active           = $11,
+		       updated_at       = $12
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if err := lockConsumerRow(ctx, tx, c.ID); err != nil {
@@ -150,7 +160,7 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		}
 		cmd, err := tx.Exec(ctx, updateConsumer,
 			c.ID, c.Name, string(c.Type), string(c.RoutingMode), lbConfigBytes, fallbackBytes, modelPoliciesBytes,
-			headersBytes, c.Active, c.UpdatedAt,
+			toolkitBytes, nullableFailMode(c.FailMode()), headersBytes, c.Active, c.UpdatedAt,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -409,6 +419,22 @@ func (r *Repository) FindByID(ctx context.Context, id ids.ConsumerID) (*domain.C
 	return c, nil
 }
 
+func (r *Repository) FindActiveBySlug(ctx context.Context, slug string) (*domain.Consumer, error) {
+	query := consumerSelectColumns + `
+		  FROM consumers c
+		 WHERE c.slug = $1
+		   AND c.active = TRUE`
+	row := r.conn.Pool.QueryRow(ctx, query, strings.ToLower(strings.TrimSpace(slug)))
+	c, err := scanConsumer(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("consumer repository: find active by slug: %w", err)
+	}
+	return c, nil
+}
+
 func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*domain.Consumer, int, error) {
 	if filter.Page < 1 {
 		filter.Page = 1
@@ -586,6 +612,8 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		lbConfigRaw      []byte
 		fallbackRaw      []byte
 		modelPoliciesRaw []byte
+		toolkitRaw       []byte
+		failModeRaw      *string
 		consumerType     string
 		routingMode      string
 		registryIDs      []uuid.UUID
@@ -593,7 +621,7 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		authIDs          []uuid.UUID
 	)
 	if err := s.Scan(
-		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Slug, &routingMode, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &headersRaw, &c.Active,
+		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Slug, &routingMode, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
 		&registryIDs, &roleIDs, &authIDs,
 	); err != nil {
@@ -626,6 +654,21 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 			return nil, fmt.Errorf("scan model_policies: %w", err)
 		}
 		c.ModelPolicies = mp
+	}
+	failMode := ""
+	if failModeRaw != nil {
+		failMode = *failModeRaw
+	}
+	if len(toolkitRaw) > 0 || failMode != "" {
+		mcp := &domain.MCPPolicy{FailMode: domain.FailMode(failMode)}
+		if len(toolkitRaw) > 0 {
+			if err := json.Unmarshal(toolkitRaw, &mcp.Toolkit); err != nil {
+				return nil, fmt.Errorf("scan toolkit: %w", err)
+			}
+		}
+		if len(mcp.Toolkit) > 0 || mcp.FailMode != "" {
+			c.MCP = mcp
+		}
 	}
 	c.RegistryIDs = ids.FromUUIDs[ids.RegistryKind](registryIDs)
 	c.RoleIDs = ids.FromUUIDs[ids.RoleKind](roleIDs)
@@ -668,6 +711,20 @@ func marshalModelPolicies(m domain.ModelPolicies) ([]byte, error) {
 		return nil, nil
 	}
 	return json.Marshal(m)
+}
+
+func marshalToolkit(t domain.Toolkit) ([]byte, error) {
+	if len(t) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(t)
+}
+
+func nullableFailMode(fm domain.FailMode) any {
+	if fm == "" {
+		return nil
+	}
+	return string(fm)
 }
 
 func nullableUUID(id uuid.UUID) any {

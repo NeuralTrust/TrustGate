@@ -51,6 +51,10 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	mcp, err := req.ToMCPPolicy()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 	lbConfig, err := req.ToLBConfig()
 	if err != nil {
 		return helpers.WriteError(c, err)
@@ -76,6 +80,7 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 		RegistryIDs:   registryIDs,
 		RoleIDs:       roleIDs,
 		ModelPolicies: modelPolicies,
+		MCP:           mcp,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

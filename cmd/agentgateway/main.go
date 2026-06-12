@@ -1,4 +1,4 @@
-// Command agentgateway starts the admin or proxy HTTP server (argv[1], default proxy).
+// Command agentgateway starts the admin, proxy, or mcp HTTP server (argv[1], default proxy).
 //
 // @title                       AgentGateway Admin API
 // @version                     1.0
@@ -35,6 +35,7 @@ import (
 const (
 	serverAdmin = "admin"
 	serverProxy = "proxy"
+	serverMCP   = "mcp"
 )
 
 func main() {
@@ -62,6 +63,13 @@ func main() {
 			log.Fatalf("failed to start catalog sync: %v", err)
 		}
 		if err := c.Invoke(runAdmin); err != nil {
+			log.Fatalf("failed to start application: %v", err)
+		}
+		return
+	}
+
+	if serverType() == serverMCP {
+		if err := c.Invoke(runMCP); err != nil {
 			log.Fatalf("failed to start application: %v", err)
 		}
 		return
@@ -105,8 +113,17 @@ type proxyParam struct {
 	Worker appmetrics.Worker
 }
 
+type mcpParam struct {
+	dig.In
+	Srv server.Server `name:"mcp"`
+}
+
 func runAdmin(p adminParam, logger *slog.Logger) {
 	runServer(p.Srv, serverAdmin, logger)
+}
+
+func runMCP(p mcpParam, logger *slog.Logger) {
+	runServer(p.Srv, serverMCP, logger)
 }
 
 func runProxy(p proxyParam, logger *slog.Logger) {

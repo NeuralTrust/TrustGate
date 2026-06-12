@@ -16,6 +16,7 @@ type UpdateRegistryRequest struct {
 	Weight          *int                 `json:"weight,omitempty"`
 	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
+	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
 }
 
 func (r UpdateRegistryRequest) Validate() error {
@@ -42,4 +43,8 @@ func (r UpdateRegistryRequest) ToAuth() *domain.TargetAuth {
 
 func (r UpdateRegistryRequest) ToHealthChecks() *domain.HealthChecks {
 	return r.HealthChecks.ToDomain()
+}
+
+func (r UpdateRegistryRequest) ToMCPTarget() *domain.MCPTarget {
+	return r.MCPTarget.ToDomain()
 }

@@ -29,8 +29,10 @@ func validCreateInput(gwID ids.GatewayID, name string) appregistry.CreateInput {
 	return appregistry.CreateInput{
 		GatewayID: gwID,
 		Name:      name,
-		Provider:  "openai",
-		Auth:      domain.NewAPIKeyAuth("sk-1"),
+		LLMTarget: &domain.LLMTarget{
+			Provider: "openai",
+			Auth:     domain.NewAPIKeyAuth("sk-1"),
+		},
 	}
 }
 
@@ -40,7 +42,7 @@ func TestCreator_Create_Success(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
-			return b.GatewayID == gwID && b.Name == "backend-1" && b.Provider == "openai"
+			return b.GatewayID == gwID && b.Name == "backend-1" && b.Provider() == "openai"
 		})).
 		Return(nil).
 		Once()
@@ -123,9 +125,9 @@ func TestCreator_Create_AzureModes(t *testing.T) {
 			gwID := ids.New[ids.GatewayKind]()
 			repo.EXPECT().
 				Save(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
-					creds := b.Auth.ProviderCredentials()
+					creds := b.Auth().ProviderCredentials()
 					return b.GatewayID == gwID &&
-						b.Provider == "azure" &&
+						b.Provider() == "azure" &&
 						creds.ApiKey == tt.key &&
 						creds.Azure != nil &&
 						*creds.Azure == tt.want
@@ -137,15 +139,14 @@ func TestCreator_Create_AzureModes(t *testing.T) {
 			got, err := creator.Create(context.Background(), appregistry.CreateInput{
 				GatewayID: gwID,
 				Name:      "azure-" + tt.name,
-				Provider:  "azure",
-				Auth:      tt.auth,
+				LLMTarget: &domain.LLMTarget{Provider: "azure", Auth: tt.auth},
 			})
 
 			if err != nil {
 				t.Fatalf("Create error: %v", err)
 			}
-			if got.Provider != "azure" {
-				t.Fatalf("Provider = %q, want azure", got.Provider)
+			if got.Provider() != "azure" {
+				t.Fatalf("Provider = %q, want azure", got.Provider())
 			}
 		})
 	}
@@ -157,7 +158,7 @@ func TestCreator_Create_RejectsInvalid(t *testing.T) {
 	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger())
 
 	in := validCreateInput(ids.New[ids.GatewayKind](), "x")
-	in.Provider = ""
+	in.LLMTarget.Provider = ""
 	_, err := creator.Create(context.Background(), in)
 	if !errors.Is(err, domain.ErrInvalidRegistry) {
 		t.Fatalf("err = %v, want ErrInvalidRegistry", err)

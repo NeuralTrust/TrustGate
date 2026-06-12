@@ -17,6 +17,7 @@ const (
 
 	defaultServerAdminPort    = 8080
 	defaultServerProxyPort    = 8081
+	defaultServerMCPPort      = 8082
 	defaultServerReadTimeout  = 60 * time.Second
 	defaultServerWriteTimeout = 60 * time.Second
 	defaultServerIdleTimeout  = 120 * time.Second
@@ -99,6 +100,7 @@ type Config struct {
 type ServerConfig struct {
 	AdminPort    int
 	ProxyPort    int
+	MCPPort      int
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
@@ -107,6 +109,9 @@ type ServerConfig struct {
 	SecretKey            string
 	GatewayBaseDomain    string
 	GatewayDiscoveryMode string
+	STSIssuer            string
+	STSSigningKey        string
+	TrustXFCCFrom        []string
 }
 
 type DatabaseConfig struct {
@@ -224,6 +229,7 @@ func getServerConfig() ServerConfig {
 	return ServerConfig{
 		AdminPort:    getEnvInt("SERVER_ADMIN_PORT", defaultServerAdminPort),
 		ProxyPort:    getEnvInt("SERVER_PROXY_PORT", defaultServerProxyPort),
+		MCPPort:      getEnvInt("SERVER_MCP_PORT", defaultServerMCPPort),
 		ReadTimeout:  getEnvDuration("SERVER_READ_TIMEOUT", defaultServerReadTimeout),
 		WriteTimeout: getEnvDuration("SERVER_WRITE_TIMEOUT", defaultServerWriteTimeout),
 		IdleTimeout:  getEnvDuration("SERVER_IDLE_TIMEOUT", defaultServerIdleTimeout),
@@ -236,6 +242,9 @@ func getServerConfig() ServerConfig {
 			"GATEWAY_DISCOVERY_MODE",
 			GatewayDiscoveryModeHeader,
 		))),
+		STSIssuer:     getEnv("STS_ISSUER", "trustgate"),
+		STSSigningKey: getEnv("STS_SIGNING_KEY", ""),
+		TrustXFCCFrom: splitCSV(getEnv("TRUST_XFCC_FROM", "")),
 	}
 }
 

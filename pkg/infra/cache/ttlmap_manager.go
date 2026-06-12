@@ -19,6 +19,8 @@ const (
 	// proxy plane's cost computation, so pricing avoids a DB round-trip on the
 	// hot path after the first lookup.
 	CatalogModelTTLName = "catalog_model"
+	ConsumerPathTTLName = "consumer_path"
+	MCPToolsTTLName     = "mcp_tools"
 )
 
 const (
@@ -32,6 +34,7 @@ const (
 	AuthKeyCacheTTL      = 5 * time.Minute
 	LoadBalancerCacheTTL = 5 * time.Minute
 	CatalogModelCacheTTL = 24 * time.Hour
+	MCPToolsCacheTTL     = 5 * time.Minute
 )
 
 type TTLMapManager struct {

@@ -120,6 +120,21 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 			wantErr: ErrInvalidRoutingMode,
 		},
 		{
+			name:    "mcp policy on llm consumer",
+			mutate:  func(c *Consumer) { c.MCP = &MCPPolicy{} },
+			wantErr: ErrInvalidType,
+		},
+		{
+			name: "role based rejects mcp policy",
+			mutate: func(c *Consumer) {
+				c.Type = TypeMCP
+				c.RoutingMode = RoutingModeRoleBased
+				c.RegistryIDs = nil
+				c.MCP = &MCPPolicy{}
+			},
+			wantErr: ErrInvalidRoutingMode,
+		},
+		{
 			name: "duplicate backend",
 			mutate: func(c *Consumer) {
 				id := ids.New[ids.RegistryKind]()
@@ -206,8 +221,6 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 
 func TestConsumer_New_AllowsZeroRegistries(t *testing.T) {
 	t.Parallel()
-	// Registries are attached after creation via the association endpoints, so a
-	// freshly-created consumer is allowed to have none.
 	p := validParams()
 	p.RegistryIDs = nil
 	c, err := New(p)
@@ -225,16 +238,21 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	beID := ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
-	c := Rehydrate(
-		id, gwID, "x", TypeMCP,
-		"X84Yhsy8", RoutingModeInline, nil,
-		map[string]string{"X-K": "v"},
-		true,
-		[]ids.RegistryID{beID}, nil, nil,
-		nil,
-		nil,
-		now, now,
-	)
+	toolkit := Toolkit{{RegistryID: beID, Tool: "search", ExposeAs: "gh_search"}}
+	c := Rehydrate(RehydrateParams{
+		ID:          id,
+		GatewayID:   gwID,
+		Name:        "x",
+		Type:        TypeMCP,
+		Slug:        "X84Yhsy8",
+		RoutingMode: RoutingModeInline,
+		Headers:     map[string]string{"X-K": "v"},
+		Active:      true,
+		RegistryIDs: []ids.RegistryID{beID},
+		MCP:         &MCPPolicy{Toolkit: toolkit, FailMode: FailModeOpen},
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
 	if c.ID != id || c.GatewayID != gwID {
 		t.Fatal("identity mismatch after rehydrate")
 	}
@@ -246,6 +264,12 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	}
 	if !c.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")
+	}
+	if tk := c.Toolkit(); len(tk) != 1 || tk[0].Tool != "search" || tk[0].ExposeAs != "gh_search" {
+		t.Fatalf("Toolkit lost on rehydrate: %+v", c.Toolkit())
+	}
+	if c.FailMode() != FailModeOpen {
+		t.Fatalf("FailMode = %q, want %q", c.FailMode(), FailModeOpen)
 	}
 }
 

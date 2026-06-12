@@ -12,14 +12,45 @@ type RegistryResponse struct {
 	ID              ids.RegistryID        `json:"id"`
 	GatewayID       ids.GatewayID         `json:"gateway_id"`
 	Name            string                `json:"name"`
-	Provider        string                `json:"provider"`
+	Type            string                `json:"type"`
+	Provider        string                `json:"provider,omitempty"`
 	ProviderOptions map[string]any        `json:"provider_options,omitempty"`
 	Description     string                `json:"description,omitempty"`
 	Weight          int                   `json:"weight,omitempty"`
 	Auth            *TargetAuthResponse   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksResponse `json:"health_checks,omitempty"`
+	MCPTarget       *MCPTargetResponse    `json:"mcp_target,omitempty"`
 	CreatedAt       time.Time             `json:"created_at"`
 	UpdatedAt       time.Time             `json:"updated_at"`
+}
+
+type MCPTargetResponse struct {
+	URL       string            `json:"url"`
+	Transport string            `json:"transport,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Auth      *MCPAuthResponse  `json:"auth,omitempty"`
+}
+
+type MCPAuthResponse struct {
+	Mode   string `json:"mode"`
+	Header string `json:"header,omitempty"`
+	Value  string `json:"value,omitempty"` // #nosec G117 -- masked before serialization
+
+	ExpectedAudience string `json:"expected_audience,omitempty"`
+
+	Pattern  string `json:"pattern,omitempty"`
+	Audience string `json:"audience,omitempty"`
+	Scope    string `json:"scope,omitempty"`
+	Actor    string `json:"actor,omitempty"`
+
+	Provider     string   `json:"provider,omitempty"`
+	Registration string   `json:"registration,omitempty"`
+	ClientID     string   `json:"client_id,omitempty"`
+	ClientSecret string   `json:"client_secret,omitempty"` // #nosec G117 -- masked before serialization
+	AuthorizeURL string   `json:"authorize_url,omitempty"`
+	TokenURL     string   `json:"token_url,omitempty"`
+	Scopes       []string `json:"scopes,omitempty"`
+	Resource     string   `json:"resource,omitempty"`
 }
 
 type HealthChecksResponse struct {
@@ -81,28 +112,66 @@ type TargetOAuthConfigResponse struct {
 
 func FromRegistry(b *domain.Registry) RegistryResponse {
 	var health *HealthChecksResponse
-	if b.HealthChecks != nil {
+	if hc := b.HealthChecks(); hc != nil {
 		health = &HealthChecksResponse{
-			Passive:   b.HealthChecks.Passive,
-			Path:      b.HealthChecks.Path,
-			Headers:   b.HealthChecks.Headers,
-			Threshold: b.HealthChecks.Threshold,
-			Interval:  b.HealthChecks.Interval,
+			Passive:   hc.Passive,
+			Path:      hc.Path,
+			Headers:   hc.Headers,
+			Threshold: hc.Threshold,
+			Interval:  hc.Interval,
 		}
+	}
+	regType := b.Type
+	if regType == "" {
+		regType = domain.TypeLLM
 	}
 	return RegistryResponse{
 		ID:              b.ID,
 		GatewayID:       b.GatewayID,
 		Name:            b.Name,
-		Provider:        b.Provider,
-		ProviderOptions: b.ProviderOptions,
+		Type:            string(regType),
+		Provider:        b.Provider(),
+		ProviderOptions: b.ProviderOptions(),
 		Description:     b.Description,
 		Weight:          b.Weight,
-		Auth:            FromAuth(b.Auth),
+		Auth:            FromAuth(b.Auth()),
 		HealthChecks:    health,
+		MCPTarget:       fromMCPTarget(b.MCPTarget),
 		CreatedAt:       b.CreatedAt,
 		UpdatedAt:       b.UpdatedAt,
 	}
+}
+
+func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
+	if t == nil {
+		return nil
+	}
+	out := &MCPTargetResponse{
+		URL:       t.URL,
+		Transport: string(t.Transport),
+		Headers:   t.Headers,
+	}
+	if t.Auth != nil {
+		out.Auth = &MCPAuthResponse{
+			Mode:             string(t.Auth.Mode),
+			Header:           t.Auth.Header,
+			Value:            secret.Mask(t.Auth.Value),
+			ExpectedAudience: t.Auth.ExpectedAudience,
+			Pattern:          string(t.Auth.Pattern),
+			Audience:         t.Auth.Audience,
+			Scope:            t.Auth.Scope,
+			Actor:            t.Auth.Actor,
+			Provider:         t.Auth.Provider,
+			Registration:     string(t.Auth.Registration),
+			ClientID:         t.Auth.ClientID,
+			ClientSecret:     secret.Mask(t.Auth.ClientSecret),
+			AuthorizeURL:     t.Auth.AuthorizeURL,
+			TokenURL:         t.Auth.TokenURL,
+			Scopes:           t.Auth.Scopes,
+			Resource:         t.Auth.Resource,
+		}
+	}
+	return out
 }
 
 func FromAuth(a *domain.TargetAuth) *TargetAuthResponse {

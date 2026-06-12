@@ -15,4 +15,5 @@ var (
 	ErrInvalidEmbeddingConfig = fmt.Errorf("registry: invalid embedding config: %w", commonerrors.ErrValidation)
 	ErrInvalidRegistry        = fmt.Errorf("registry: invalid backend: %w", commonerrors.ErrValidation)
 	ErrInvalidHealthChecks    = fmt.Errorf("registry: invalid health checks: %w", commonerrors.ErrValidation)
+	ErrInvalidMCPTarget       = fmt.Errorf("registry: invalid mcp target: %w", commonerrors.ErrValidation)
 )

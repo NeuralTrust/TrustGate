@@ -214,6 +214,9 @@ func resolveConsumer(
 			return ids.GatewayID{}, nil, nil, errPathNotFound
 		}
 	}
+	if rc.Consumer == nil || (rc.Consumer.Type != domainconsumer.TypeLLM && rc.Consumer.Type != "") {
+		return ids.GatewayID{}, nil, nil, errPathNotFound
+	}
 	if !isAuthorizedForConsumer(rc, authCtx) {
 		return ids.GatewayID{}, nil, nil, errForbidden
 	}

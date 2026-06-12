@@ -138,7 +138,7 @@ func (s *CandidateSet) resolveQualified(provider, model string) (*CandidateSet, 
 	providerSeen := false
 	out := NewCandidateSet()
 	for _, c := range s.candidates {
-		if !strings.EqualFold(c.Registry.Provider, provider) {
+		if !strings.EqualFold(c.Registry.Provider(), provider) {
 			continue
 		}
 		providerSeen = true
@@ -164,7 +164,7 @@ func (s *CandidateSet) resolveShortModel(model string) (*CandidateSet, error) {
 		if !c.AllowsModel(model) {
 			continue
 		}
-		providers[strings.ToLower(c.Registry.Provider)] = struct{}{}
+		providers[strings.ToLower(c.Registry.Provider())] = struct{}{}
 		matches = append(matches, c)
 	}
 	switch len(providers) {

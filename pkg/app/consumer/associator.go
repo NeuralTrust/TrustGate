@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
@@ -71,8 +72,13 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 	if cons.RoutingMode == domain.RoutingModeRoleBased {
 		return commonerrors.ErrConflict
 	}
-	if err := a.registryInGateway(ctx, gatewayID, registryID); err != nil {
+	reg, err := a.registryInGateway(ctx, gatewayID, registryID)
+	if err != nil {
 		return err
+	}
+	if string(reg.Type) != string(cons.Type) {
+		return fmt.Errorf("%w: registry of type %s cannot be attached to a consumer of type %s",
+			registrydomain.ErrInvalidRegistryID, reg.Type, cons.Type)
 	}
 	if err := a.repo.AttachRegistry(ctx, consumerID, registryID); err != nil {
 		return err
@@ -187,15 +193,15 @@ func (a *associator) consumerInGateway(ctx context.Context, gatewayID ids.Gatewa
 	return cons, nil
 }
 
-func (a *associator) registryInGateway(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) error {
+func (a *associator) registryInGateway(ctx context.Context, gatewayID ids.GatewayID, registryID ids.RegistryID) (*registrydomain.Registry, error) {
 	reg, err := a.registryRepo.FindByID(ctx, registryID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if reg.GatewayID != gatewayID {
-		return registrydomain.ErrNotFound
+		return nil, registrydomain.ErrNotFound
 	}
-	return nil
+	return reg, nil
 }
 
 func (a *associator) roleInGateway(ctx context.Context, gatewayID ids.GatewayID, roleID ids.RoleID) error {

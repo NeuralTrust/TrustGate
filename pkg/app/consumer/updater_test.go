@@ -19,15 +19,18 @@ func ptr[T any](v T) *T { return &v }
 
 func existingConsumer(gwID ids.GatewayID, beID ids.RegistryID) *domain.Consumer {
 	now := time.Now().UTC()
-	return domain.Rehydrate(
-		ids.New[ids.ConsumerKind](), gwID, "old", domain.TypeLLM,
-		"X84Yhsy8", domain.RoutingModeInline, nil,
-		nil, true,
-		[]ids.RegistryID{beID}, nil, nil,
-		nil,
-		nil,
-		now, now,
-	)
+	return domain.Rehydrate(domain.RehydrateParams{
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gwID,
+		Name:        "old",
+		Type:        domain.TypeLLM,
+		Slug:        "X84Yhsy8",
+		RoutingMode: domain.RoutingModeInline,
+		Active:      true,
+		RegistryIDs: []ids.RegistryID{beID},
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
 }
 
 func TestUpdater_Update_Success(t *testing.T) {
@@ -40,7 +43,6 @@ func TestUpdater_Update_Success(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			// Associations are preserved from the loaded aggregate, never the input.
 			return c.ID == existing.ID && c.Name == "new" && c.Type == domain.TypeMCP &&
 				len(c.RegistryIDs) == 1 && c.RegistryIDs[0] == beID
 		})).
@@ -266,15 +268,18 @@ func TestUpdater_Update_SwitchToInlineClearsRoles(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
-	existing := domain.Rehydrate(
-		ids.New[ids.ConsumerKind](), gwID, "old", domain.TypeLLM,
-		"X84Yhsy8", domain.RoutingModeRoleBased, nil,
-		nil, true,
-		nil, []ids.RoleID{ids.New[ids.RoleKind]()}, nil,
-		nil,
-		nil,
-		now, now,
-	)
+	existing := domain.Rehydrate(domain.RehydrateParams{
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gwID,
+		Name:        "old",
+		Type:        domain.TypeLLM,
+		Slug:        "X84Yhsy8",
+		RoutingMode: domain.RoutingModeRoleBased,
+		Active:      true,
+		RoleIDs:     []ids.RoleID{ids.New[ids.RoleKind]()},
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
 	mode := domain.RoutingModeInline
 
 	repo := repomocks.NewRepository(t)

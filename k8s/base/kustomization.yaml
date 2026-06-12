@@ -14,9 +14,11 @@ resources:
   # poddisruptionbudget resources
   - poddisruptionbudget/agentgateway-admin.yaml
   - poddisruptionbudget/agentgateway-proxy.yaml
+  - poddisruptionbudget/agentgateway-mcp.yaml
   # horizontalpodautoscaler resources
   # - horizontalpodautoscaler/agentgateway-admin.yaml
   # - horizontalpodautoscaler/agentgateway-proxy.yaml
+  # - horizontalpodautoscaler/agentgateway-mcp.yaml
   # httproute resources
   - httproute/agentgateway-routes.yaml
   # healthcheckpolicy resources
@@ -24,6 +26,8 @@ resources:
   # deployment resources
   - deployment/agentgateway-admin.yaml
   - deployment/agentgateway-proxy.yaml
+  - deployment/agentgateway-mcp.yaml
   # service resources
   - service/agentgateway-admin.yaml
   - service/agentgateway-proxy.yaml
+  - service/agentgateway-mcp.yaml

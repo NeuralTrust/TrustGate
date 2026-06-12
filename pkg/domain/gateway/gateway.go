@@ -18,6 +18,7 @@ type Gateway struct {
 	Name            string               `json:"name"`
 	Slug            string               `json:"slug"`
 	Status          string               `json:"status"`
+	Domain          string               `json:"domain,omitempty"`
 	Telemetry       *telemetry.Telemetry `json:"telemetry,omitempty"`
 	ClientTLSConfig ClientTLSConfig      `json:"client_tls,omitempty"`
 	SessionConfig   *SessionConfig       `json:"session_config,omitempty"`
@@ -65,7 +66,7 @@ func New(name string, slug ...string) (*Gateway, error) {
 
 func Rehydrate(
 	id ids.GatewayID,
-	name, status string,
+	name, status, domain string,
 	tel *telemetry.Telemetry,
 	clientTLS ClientTLSConfig,
 	session *SessionConfig,
@@ -76,6 +77,7 @@ func Rehydrate(
 		Name:            name,
 		Slug:            SlugFromName(name),
 		Status:          status,
+		Domain:          domain,
 		Telemetry:       tel,
 		ClientTLSConfig: clientTLS,
 		SessionConfig:   session,
@@ -92,7 +94,7 @@ func RehydrateWithSlug(
 	session *SessionConfig,
 	createdAt, updatedAt time.Time,
 ) *Gateway {
-	g := Rehydrate(id, name, status, tel, clientTLS, session, createdAt, updatedAt)
+	g := Rehydrate(id, name, status, "", tel, clientTLS, session, createdAt, updatedAt)
 	g.Slug = slug
 	return g
 }
@@ -136,7 +138,36 @@ func (g *Gateway) Validate() error {
 		g.Status = "active"
 	}
 
+	domain, err := NormalizeDomain(g.Domain)
+	if err != nil {
+		return err
+	}
+	g.Domain = domain
+
 	return nil
+}
+
+func NormalizeDomain(domain string) (string, error) {
+	d := strings.ToLower(strings.TrimSpace(domain))
+	if d == "" {
+		return "", nil
+	}
+	if strings.ContainsAny(d, "/:?# ") {
+		return "", fmt.Errorf("%w: %q must be a bare hostname (no scheme, port or path)", ErrInvalidDomain, domain)
+	}
+	if strings.Contains(d, "*") {
+		return "", fmt.Errorf("%w: %q wildcard domains are not supported", ErrInvalidDomain, domain)
+	}
+	if strings.HasSuffix(d, ".") || strings.HasPrefix(d, ".") {
+		return "", fmt.Errorf("%w: %q must not start or end with a dot", ErrInvalidDomain, domain)
+	}
+	for _, r := range d {
+		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.'
+		if !valid {
+			return "", fmt.Errorf("%w: %q contains invalid hostname characters", ErrInvalidDomain, domain)
+		}
+	}
+	return d, nil
 }
 
 func NormalizeSlug(slug string) string {

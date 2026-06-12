@@ -7,7 +7,7 @@ import (
 )
 
 type Kind interface {
-	GatewayKind | RegistryKind | ConsumerKind | PolicyKind | AuthKind | ProviderKind | ModelKind | RoleKind
+	GatewayKind | RegistryKind | ConsumerKind | PolicyKind | AuthKind | ProviderKind | ModelKind | VaultKind | RoleKind
 }
 
 type (
@@ -18,6 +18,7 @@ type (
 	AuthKind     struct{}
 	ProviderKind struct{}
 	ModelKind    struct{}
+	VaultKind    struct{}
 	RoleKind     struct{}
 )
 
@@ -31,6 +32,7 @@ type (
 	AuthID     = ID[AuthKind]
 	ProviderID = ID[ProviderKind]
 	ModelID    = ID[ModelKind]
+	VaultID    = ID[VaultKind]
 	RoleID     = ID[RoleKind]
 )
 

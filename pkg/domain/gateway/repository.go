@@ -18,6 +18,7 @@ type Repository interface {
 	Update(ctx context.Context, g *Gateway) error
 	Delete(ctx context.Context, id ids.GatewayID) error
 	FindByID(ctx context.Context, id ids.GatewayID) (*Gateway, error)
+	FindByDomain(ctx context.Context, domain string) (*Gateway, error)
 	FindBySlug(ctx context.Context, slug string) (*Gateway, error)
 	List(ctx context.Context, filter ListFilter) (items []*Gateway, total int, err error)
 }

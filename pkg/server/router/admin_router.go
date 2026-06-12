@@ -15,14 +15,15 @@ import (
 )
 
 const (
-	HealthPath          = "/healthz"
-	ReadyPath           = "/readyz"
-	VersionPath         = "/__/version"
-	DocsPath            = "/docs/*"
-	GatewaysPath        = "/v1/gateways"
-	ProvidersCatalog    = "/v1/providers-catalog"
-	ModelsCatalogPath   = "/v1/models-catalog"
-	PoliciesCatalogPath = "/v1/policies-catalog"
+	HealthPath            = "/healthz"
+	ReadyPath             = "/readyz"
+	VersionPath           = "/__/version"
+	DocsPath              = "/docs/*"
+	GatewaysPath          = "/v1/gateways"
+	ProvidersCatalog      = "/v1/providers-catalog"
+	ModelsCatalogPath     = "/v1/models-catalog"
+	PoliciesCatalogPath   = "/v1/policies-catalog"
+	MCPServersCatalogPath = "/v1/mcp-servers-catalog"
 )
 
 // AdminRouterDeps groups every handler mounted by the admin plane.
@@ -46,6 +47,7 @@ type AdminRouterDeps struct {
 	UpdateRegistry         *registryhttp.UpdateRegistryHandler
 	DeleteRegistry         *registryhttp.DeleteRegistryHandler
 	TestRegistryConnection *registryhttp.TestConnectionHandler
+	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
 	GetPolicy       *policyhttp.GetPolicyHandler
@@ -75,9 +77,10 @@ type AdminRouterDeps struct {
 	UpdateAuth *authhttp.UpdateAuthHandler
 	DeleteAuth *authhttp.DeleteAuthHandler
 
-	ListProvidersCatalog *cataloghttp.ListProvidersHandler
-	ListModelsCatalog    *cataloghttp.ListModelsHandler
-	ListPoliciesCatalog  *cataloghttp.ListPolicyCatalogHandler
+	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
+	ListModelsCatalog     *cataloghttp.ListModelsHandler
+	ListPoliciesCatalog   *cataloghttp.ListPolicyCatalogHandler
+	ListMCPServersCatalog *cataloghttp.ListMCPServersHandler
 }
 
 type adminRouter struct {
@@ -112,6 +115,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	registries.Post("/test-connection", r.deps.TestRegistryConnection.Handle)
 	registries.Get("", r.deps.ListRegistry.Handle)
 	registries.Get("/:id", r.deps.GetRegistry.Handle)
+	registries.Get("/:id/tools", r.deps.ListRegistryTools.Handle)
 	registries.Put("/:id", r.deps.UpdateRegistry.Handle)
 	registries.Delete("/:id", r.deps.DeleteRegistry.Handle)
 
@@ -159,6 +163,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(ProvidersCatalog, r.deps.AdminAuth.Middleware(), r.deps.ListProvidersCatalog.Handle)
 	app.Get(ModelsCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListModelsCatalog.Handle)
 	app.Get(PoliciesCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListPoliciesCatalog.Handle)
+	app.Get(MCPServersCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListMCPServersCatalog.Handle)
 
 	return nil
 }

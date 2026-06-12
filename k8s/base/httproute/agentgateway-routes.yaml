@@ -43,3 +43,26 @@ spec:
     backendRefs:
     - name: agentgateway-proxy
       port: 8081
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentgateway-mcp-route
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: agentgateway
+    component: mcp
+spec:
+  parentRefs:
+  - name: internal-gateway
+    namespace: gateway-internal
+  hostnames:
+  - "agentgateway-mcp.internal.neuraltrust.ai"  # Base domain, overridden in overlays
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: agentgateway-mcp
+      port: 8082
