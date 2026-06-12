@@ -146,8 +146,10 @@ func (t Toolkit) entriesFor(registryID ids.RegistryID, selector func(ToolkitEntr
 	return out
 }
 
+// AllowsResource: a nil toolkit allows everything; an empty (but present)
+// toolkit denies everything.
 func (t Toolkit) AllowsResource(registryID ids.RegistryID, uri string) bool {
-	if len(t) == 0 {
+	if t == nil {
 		return true
 	}
 	for _, e := range t.ResourceEntriesFor(registryID) {

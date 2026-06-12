@@ -31,8 +31,10 @@ type ToolkitEntryRequest struct {
 	ExposeAs   string `json:"expose_as,omitempty"`
 }
 
+// parseToolkit preserves the nil/empty distinction: nil (omitted) means
+// allow-all, [] (present but empty) means deny-all.
 func parseToolkit(raw []ToolkitEntryRequest) (domain.Toolkit, error) {
-	if len(raw) == 0 {
+	if raw == nil {
 		return nil, nil
 	}
 	out := make(domain.Toolkit, 0, len(raw))

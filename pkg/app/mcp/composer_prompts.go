@@ -92,7 +92,7 @@ func (c *composer) composePrompts(ctx context.Context, rc *appconsumer.RoutableC
 }
 
 func selectPrompts(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, prompts []Prompt) []promptBinding {
-	if len(toolkit) == 0 {
+	if toolkit == nil {
 		out := make([]promptBinding, 0, len(prompts))
 		for _, p := range prompts {
 			out = append(out, promptBinding{registry: reg, prompt: p, exposed: p.Name})

@@ -38,28 +38,35 @@ func NewTokenClient(client *http.Client) *TokenClient {
 }
 
 func (c *TokenClient) Call(ctx context.Context, issuer string, form url.Values) (*appsts.Token, error) {
-	return c.tokenCall(ctx, c.tokenEndpointFor(ctx, issuer), form)
+	endpoint, err := c.tokenEndpointFor(ctx, issuer)
+	if err != nil {
+		return nil, err
+	}
+	return c.tokenCall(ctx, endpoint, form)
 }
 
-func (c *TokenClient) tokenEndpointFor(ctx context.Context, issuer string) string {
+func (c *TokenClient) tokenEndpointFor(ctx context.Context, issuer string) (string, error) {
 	c.mu.Lock()
 	if ent, ok := c.endpoints[issuer]; ok && time.Since(ent.fetchedAt) < endpointTTL {
 		c.mu.Unlock()
-		return ent.tokenEndpoint
+		return ent.tokenEndpoint, nil
 	}
 	c.mu.Unlock()
 
 	endpoint := c.discoverTokenEndpoint(ctx, issuer)
 	if endpoint == "" {
-		// A transient discovery failure must not pin a guessed endpoint for
-		// an hour; use the heuristic for this call only and retry discovery
-		// on the next one.
-		return fallbackTokenEndpoint(issuer)
+		// The form carries client credentials, so they must never be POSTed
+		// to a guessed URL. Entra is the one IdP with a fixed, documented
+		// convention and no discovery quirks worth failing over.
+		if fb, ok := entraTokenEndpoint(issuer); ok {
+			return fb, nil
+		}
+		return "", fmt.Errorf("sts: OIDC discovery failed for issuer %s and no known token endpoint convention applies", issuer)
 	}
 	c.mu.Lock()
 	c.endpoints[issuer] = endpointEntry{tokenEndpoint: endpoint, fetchedAt: time.Now()}
 	c.mu.Unlock()
-	return endpoint
+	return endpoint, nil
 }
 
 func (c *TokenClient) discoverTokenEndpoint(ctx context.Context, issuer string) string {
@@ -85,12 +92,12 @@ func (c *TokenClient) discoverTokenEndpoint(ctx context.Context, issuer string) 
 	return doc.TokenEndpoint
 }
 
-func fallbackTokenEndpoint(issuer string) string {
+func entraTokenEndpoint(issuer string) (string, bool) {
 	base := strings.TrimSuffix(issuer, "/")
 	if strings.HasPrefix(base, "https://login.microsoftonline.com/") {
-		return strings.TrimSuffix(base, "/v2.0") + "/oauth2/v2.0/token"
+		return strings.TrimSuffix(base, "/v2.0") + "/oauth2/v2.0/token", true
 	}
-	return base + "/v1/token"
+	return "", false
 }
 
 func (c *TokenClient) tokenCall(ctx context.Context, endpoint string, form url.Values) (*appsts.Token, error) {

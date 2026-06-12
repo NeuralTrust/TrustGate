@@ -5,9 +5,11 @@ import (
 	"testing"
 )
 
+const testSecret = "0123456789abcdef0123456789abcdef"
+
 func TestCipher_RoundTrip(t *testing.T) {
 	t.Parallel()
-	c, err := NewCipher("test-secret")
+	c, err := NewCipher(testSecret)
 	if err != nil {
 		t.Fatalf("NewCipher: %v", err)
 	}
@@ -30,7 +32,7 @@ func TestCipher_RoundTrip(t *testing.T) {
 
 func TestCipher_EmptyValuesPassThrough(t *testing.T) {
 	t.Parallel()
-	c, _ := NewCipher("k")
+	c, _ := NewCipher(testSecret)
 	if sealed, err := c.Encrypt(""); err != nil || sealed != "" {
 		t.Fatalf("Encrypt(\"\") = %q, %v", sealed, err)
 	}
@@ -41,7 +43,7 @@ func TestCipher_EmptyValuesPassThrough(t *testing.T) {
 
 func TestCipher_TamperedCiphertextFails(t *testing.T) {
 	t.Parallel()
-	c, _ := NewCipher("k")
+	c, _ := NewCipher(testSecret)
 	sealed, _ := c.Encrypt("secret")
 	if _, err := c.Decrypt(sealed[:len(sealed)-4] + "AAAA"); err == nil {
 		t.Fatal("Decrypt of tampered ciphertext succeeded, want error")
@@ -50,8 +52,8 @@ func TestCipher_TamperedCiphertextFails(t *testing.T) {
 
 func TestCipher_WrongKeyFails(t *testing.T) {
 	t.Parallel()
-	c1, _ := NewCipher("key-one")
-	c2, _ := NewCipher("key-two")
+	c1, _ := NewCipher(testSecret)
+	c2, _ := NewCipher("fedcba9876543210fedcba9876543210")
 	sealed, _ := c1.Encrypt("secret")
 	if _, err := c2.Decrypt(sealed); err == nil {
 		t.Fatal("Decrypt with wrong key succeeded, want error")
@@ -62,5 +64,12 @@ func TestNewCipher_RequiresSecret(t *testing.T) {
 	t.Parallel()
 	if _, err := NewCipher(""); err == nil {
 		t.Fatal("NewCipher(\"\") = nil error, want failure")
+	}
+}
+
+func TestNewCipher_RejectsShortSecret(t *testing.T) {
+	t.Parallel()
+	if _, err := NewCipher("too-short"); err == nil {
+		t.Fatal("NewCipher with a short secret must fail: the key derivation has no KDF cost factor")
 	}
 }

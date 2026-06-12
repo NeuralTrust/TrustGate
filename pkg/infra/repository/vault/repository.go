@@ -121,12 +121,17 @@ func (r *Repository) scan(row pgx.Row) (*domain.Credential, error) {
 		&access, &refresh, &scopesJSON, &expiresAt, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		return nil, err
 	}
+	// An undecryptable credential (rotated SERVER_SECRET_KEY, corrupt
+	// ciphertext) is permanently unusable: surfacing it as ErrNotFound lets
+	// callers route the user back through consent instead of a hard error.
 	var err error
 	if c.AccessToken, err = r.cipher.Decrypt(access); err != nil {
-		return nil, fmt.Errorf("vault repository: decrypt access token: %w", err)
+		return nil, fmt.Errorf("%w: undecryptable access token for %s/%s: %v",
+			domain.ErrNotFound, c.PrincipalSub, c.Provider, err)
 	}
 	if c.RefreshToken, err = r.cipher.Decrypt(refresh); err != nil {
-		return nil, fmt.Errorf("vault repository: decrypt refresh token: %w", err)
+		return nil, fmt.Errorf("%w: undecryptable refresh token for %s/%s: %v",
+			domain.ErrNotFound, c.PrincipalSub, c.Provider, err)
 	}
 	if len(scopesJSON) > 0 {
 		if err := json.Unmarshal(scopesJSON, &c.Scopes); err != nil {

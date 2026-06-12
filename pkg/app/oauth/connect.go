@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
@@ -61,10 +62,16 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 			continue
 		}
 		status := ProviderStatus{Provider: cfg.Provider, Registry: reg.Name}
-		if cred, err := s.vault.Find(ctx, gatewayID, ticket.PrincipalSub, cfg.Provider); err == nil {
+		cred, err := s.vault.Find(ctx, gatewayID, ticket.PrincipalSub, cfg.Provider)
+		switch {
+		case err == nil:
 			status.Linked = true
 			status.AccountRef = cred.AccountRef
 			status.ExpiresAt = cred.ExpiresAt
+		case !errors.Is(err, vaultdomain.ErrNotFound):
+			// A transient vault failure must not render the provider as
+			// unlinked and push the user through a redundant consent flow.
+			return nil, fmt.Errorf("oauth connect: check linked credential: %w", err)
 		}
 		page.Providers = append(page.Providers, status)
 	}

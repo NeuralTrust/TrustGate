@@ -14,9 +14,17 @@ type Cipher struct {
 	aead cipher.AEAD
 }
 
+// minSecretLen guards against low-entropy secrets: the AES key is derived
+// with a single unsalted SHA-256, so a short or guessable secret would make
+// the vault ciphertexts brute-forceable offline.
+const minSecretLen = 32
+
 func NewCipher(secret string) (*Cipher, error) {
 	if secret == "" {
 		return nil, errors.New("crypto: encryption secret is required (set SERVER_SECRET_KEY)")
+	}
+	if len(secret) < minSecretLen {
+		return nil, fmt.Errorf("crypto: encryption secret must be at least %d bytes of random data (got %d)", minSecretLen, len(secret))
 	}
 	key := sha256.Sum256([]byte("agentgateway-vault:" + secret))
 	block, err := aes.NewCipher(key[:])

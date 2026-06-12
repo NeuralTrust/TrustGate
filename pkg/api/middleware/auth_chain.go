@@ -184,7 +184,14 @@ func (r *chainIdentityResolver) resolveJWT(ctx context.Context, token string, ca
 	return Identity{}, ErrUnauthenticated
 }
 
+// resolveOpaque refuses to resolve opaque tokens on paths without an auth
+// binding: unlike JWTs (routed by their issuer claim), an opaque token can
+// only be identified by introspecting it, and broadcasting it to every
+// configured IdP would leak the token across tenants.
 func (r *chainIdentityResolver) resolveOpaque(ctx context.Context, token string, candidates []*authdomain.Auth, scope authScope) (Identity, error) {
+	if scope == nil && r.paths != nil {
+		return Identity{}, ErrUnauthenticated
+	}
 	for _, a := range candidates {
 		cfg := a.Config.OAuth2
 		if cfg == nil || cfg.IntrospectionURL == "" || !scope.allows(a.ID) {

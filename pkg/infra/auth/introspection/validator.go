@@ -15,6 +15,7 @@ import (
 
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
+	"golang.org/x/sync/singleflight"
 )
 
 var ErrInvalidToken = errors.New("introspection: invalid token")
@@ -43,6 +44,7 @@ type cacheEntry struct {
 type Validator struct {
 	client *http.Client
 
+	sf        singleflight.Group
 	mu        sync.Mutex
 	cache     map[string]cacheEntry
 	lastSweep time.Time
@@ -99,6 +101,28 @@ func (v *Validator) introspect(ctx context.Context, raw string, cfg *authdomain.
 	}
 	v.mu.Unlock()
 
+	// Coalesce concurrent introspections of the same token so a burst of
+	// requests produces a single call to the IdP.
+	out, err, _ := v.sf.Do(key, func() (any, error) {
+		v.mu.Lock()
+		if e, ok := v.cache[key]; ok && time.Now().Before(e.expiresAt) {
+			v.mu.Unlock()
+			return e.res, nil
+		}
+		v.mu.Unlock()
+		return v.introspectRemote(ctx, raw, key, cfg)
+	})
+	if err != nil {
+		return result{}, err
+	}
+	res, ok := out.(result)
+	if !ok {
+		return result{}, errors.New("introspection: unexpected singleflight result type")
+	}
+	return res, nil
+}
+
+func (v *Validator) introspectRemote(ctx context.Context, raw, key string, cfg *authdomain.OAuth2Config) (result, error) {
 	form := url.Values{"token": {raw}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.IntrospectionURL, strings.NewReader(form.Encode()))
 	if err != nil {

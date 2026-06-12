@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 var ErrKeyNotFound = errors.New("oidc: signing key not found")
@@ -27,6 +29,7 @@ const (
 type JWKSCache struct {
 	client *http.Client
 
+	sf   singleflight.Group
 	mu   sync.Mutex
 	sets map[string]*keySet
 }
@@ -58,14 +61,25 @@ func (c *JWKSCache) Key(ctx context.Context, url, kid string) (crypto.PublicKey,
 	}
 	c.mu.Unlock()
 
-	fresh, err := c.fetch(ctx, url)
+	// Coalesce concurrent refreshes of the same JWKS URL so a burst of
+	// requests with an unknown kid produces a single upstream fetch.
+	v, err, _ := c.sf.Do(url, func() (any, error) {
+		fresh, err := c.fetch(ctx, url)
+		if err != nil {
+			return nil, err
+		}
+		c.mu.Lock()
+		c.sets[url] = fresh
+		c.mu.Unlock()
+		return fresh, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
-	c.sets[url] = fresh
-	c.mu.Unlock()
-
+	fresh, ok := v.(*keySet)
+	if !ok {
+		return nil, errors.New("oidc: unexpected singleflight result type")
+	}
 	if key, ok := fresh.keys[kid]; ok {
 		return key, nil
 	}

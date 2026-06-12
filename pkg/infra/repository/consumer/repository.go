@@ -418,8 +418,10 @@ func marshalModelPolicies(m domain.ModelPolicies) ([]byte, error) {
 	return json.Marshal(m)
 }
 
+// marshalToolkit persists the nil/empty distinction: NULL means allow-all,
+// [] means deny-all.
 func marshalToolkit(t domain.Toolkit) ([]byte, error) {
-	if len(t) == 0 {
+	if t == nil {
 		return nil, nil
 	}
 	return json.Marshal(t)

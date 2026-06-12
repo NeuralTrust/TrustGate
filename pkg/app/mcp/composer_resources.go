@@ -17,7 +17,7 @@ func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableCo
 			return up.ListResources(ctx)
 		},
 		func(reg *registrydomain.Registry, resources []Resource) []Resource {
-			if len(toolkit) == 0 {
+			if toolkit == nil {
 				return resources
 			}
 			out := make([]Resource, 0, len(resources))
@@ -37,7 +37,7 @@ func (c *composer) ListResourceTemplates(ctx context.Context, rc *appconsumer.Ro
 			return up.ListResourceTemplates(ctx)
 		},
 		func(reg *registrydomain.Registry, templates []ResourceTemplate) []ResourceTemplate {
-			if len(toolkit) == 0 || len(toolkit.ResourceEntriesFor(reg.ID)) > 0 {
+			if toolkit == nil || len(toolkit.ResourceEntriesFor(reg.ID)) > 0 {
 				return templates
 			}
 			return nil

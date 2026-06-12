@@ -17,8 +17,7 @@ func mapRPCError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var je *jsonrpc.Error
-	if errors.As(err, &je) {
+	if je, ok := errors.AsType[*jsonrpc.Error](err); ok {
 		return &appmcp.RPCError{Code: je.Code, Message: je.Message, Data: je.Data}
 	}
 	return err

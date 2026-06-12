@@ -115,8 +115,9 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	return resolveNames(candidates), nil
 }
 
+// selectTools treats a nil toolkit as allow-all and an empty one as deny-all.
 func selectTools(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, tools []Tool) []binding {
-	if len(toolkit) == 0 {
+	if toolkit == nil {
 		out := make([]binding, 0, len(tools))
 		for _, t := range tools {
 			out = append(out, binding{registry: reg, tool: t, exposed: t.Name})

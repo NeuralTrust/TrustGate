@@ -12,15 +12,31 @@ import (
 	appsts "github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
 )
 
-func TestFallbackTokenEndpoint(t *testing.T) {
+func TestEntraTokenEndpoint(t *testing.T) {
 	t.Parallel()
-	entra := fallbackTokenEndpoint("https://login.microsoftonline.com/tid/v2.0")
-	if entra != "https://login.microsoftonline.com/tid/oauth2/v2.0/token" {
-		t.Fatalf("entra endpoint = %q", entra)
+	entra, ok := entraTokenEndpoint("https://login.microsoftonline.com/tid/v2.0")
+	if !ok || entra != "https://login.microsoftonline.com/tid/oauth2/v2.0/token" {
+		t.Fatalf("entra endpoint = %q, ok = %v", entra, ok)
 	}
-	okta := fallbackTokenEndpoint("https://org.okta.com/oauth2/default")
-	if okta != "https://org.okta.com/oauth2/default/v1/token" {
-		t.Fatalf("okta endpoint = %q", okta)
+	if _, ok := entraTokenEndpoint("https://org.okta.com/oauth2/default"); ok {
+		t.Fatal("non-Entra issuers must not get a guessed endpoint")
+	}
+}
+
+func TestTokenClient_DiscoveryFailurePropagatesInsteadOfGuessing(t *testing.T) {
+	t.Parallel()
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		t.Errorf("client credentials must not be POSTed to a guessed endpoint, got %s", r.URL.Path)
+	}))
+	defer idp.Close()
+
+	client := NewTokenClient(idp.Client())
+	if _, err := client.Call(context.Background(), idp.URL, url.Values{"client_secret": {"s3cret"}}); err == nil {
+		t.Fatal("expected discovery failure to propagate")
 	}
 }
 

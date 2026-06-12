@@ -153,6 +153,27 @@ func TestComposer_ListTools_EmptyToolkitExposesAll(t *testing.T) {
 	}
 }
 
+func TestComposer_ListTools_PresentButEmptyToolkitDeniesAll(t *testing.T) {
+	t.Parallel()
+	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")
+	dialer := &fakeDialer{upstreams: map[string]*fakeUpstream{
+		"https://a.example.com/mcp": {tools: tools("create_issue", "list_repos")},
+	}}
+	c := newTestComposer(dialer)
+
+	consumer := &consumerdomain.Consumer{
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{}},
+	}
+	got, err := c.ListTools(context.Background(), routable(consumer, regA))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("tools = %v, want none: toolkit [] must mean deny-all, not allow-all", toolNames(got))
+	}
+}
+
 func TestComposer_ListTools_ToolkitSelectAndRename(t *testing.T) {
 	t.Parallel()
 	regA := mcpRegistry(t, "github", "https://a.example.com/mcp")

@@ -94,10 +94,17 @@ func TestToolkit_AllowsResource(t *testing.T) {
 		})
 	}
 
-	t.Run("empty toolkit allows everything", func(t *testing.T) {
+	t.Run("nil toolkit allows everything", func(t *testing.T) {
 		t.Parallel()
-		if !(Toolkit{}).AllowsResource(regA, "anything://x") {
-			t.Fatal("empty toolkit must allow every resource")
+		if !(Toolkit(nil)).AllowsResource(regA, "anything://x") {
+			t.Fatal("nil toolkit must allow every resource")
+		}
+	})
+
+	t.Run("empty toolkit denies everything", func(t *testing.T) {
+		t.Parallel()
+		if (Toolkit{}).AllowsResource(regA, "anything://x") {
+			t.Fatal("a present-but-empty toolkit must deny every resource")
 		}
 	})
 }
