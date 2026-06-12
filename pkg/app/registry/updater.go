@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
@@ -69,11 +70,7 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 		existing.Weight = *in.Weight
 	}
 	applyLLMTargetUpdate(existing, in)
-	if in.MCPTarget != nil {
-		in.MCPTarget.Normalize()
-		in.MCPTarget.ResolveSecretsFrom(existing.MCPTarget)
-		existing.MCPTarget = in.MCPTarget
-	}
+	applyMCPTargetUpdate(existing, in)
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {
 		return nil, err
@@ -84,6 +81,34 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	u.memoryCache.Set(existing.ID.String(), existing)
 	publishBackendCacheInvalidation(ctx, u.publisher, u.logger, existing.GatewayID, existing.ID)
 	return existing, nil
+}
+
+// applyMCPTargetUpdate merges the incoming mcp_target over the stored one so
+// a partial payload (e.g. only url) does not silently wipe transport, headers
+// or the auth block with its credentials. Auth is cleared explicitly with
+// {"mode": "none"}; headers with an empty object.
+func applyMCPTargetUpdate(existing *domain.Registry, in UpdateInput) {
+	if in.MCPTarget == nil {
+		return
+	}
+	incoming := in.MCPTarget
+	if prev := existing.MCPTarget; prev != nil {
+		if strings.TrimSpace(incoming.URL) == "" {
+			incoming.URL = prev.URL
+		}
+		if incoming.Transport == "" {
+			incoming.Transport = prev.Transport
+		}
+		if incoming.Headers == nil {
+			incoming.Headers = prev.Headers
+		}
+		if incoming.Auth == nil {
+			incoming.Auth = prev.Auth
+		}
+	}
+	incoming.Normalize()
+	incoming.ResolveSecretsFrom(existing.MCPTarget)
+	existing.MCPTarget = incoming
 }
 
 func applyLLMTargetUpdate(existing *domain.Registry, in UpdateInput) {

@@ -72,6 +72,72 @@ func TestUpdater_Update_Partial_PreservesProviderOptionsAndHealthChecks(t *testi
 	}
 }
 
+func TestUpdater_Update_PartialMCPTargetPreservesAuthAndHeaders(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "mcp", "", 1, &domain.MCPTarget{
+		URL:     "https://old.example.com/mcp",
+		Headers: map[string]string{"X-Tenant": "acme"},
+		Auth: &domain.MCPAuth{
+			Mode:         domain.MCPAuthModeForwarded,
+			Provider:     "github",
+			Registration: domain.RegistrationAuto,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry error: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:        existing.ID,
+		MCPTarget: &domain.MCPTarget{URL: "https://new.example.com/mcp"},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.MCPTarget.URL != "https://new.example.com/mcp" {
+		t.Fatalf("URL = %q", got.MCPTarget.URL)
+	}
+	if got.MCPTarget.Auth == nil || got.MCPTarget.Auth.Mode != domain.MCPAuthModeForwarded || got.MCPTarget.Auth.Provider != "github" {
+		t.Fatalf("forwarded auth lost on partial update: %+v", got.MCPTarget.Auth)
+	}
+	if got.MCPTarget.Headers["X-Tenant"] != "acme" {
+		t.Fatalf("headers lost on partial update: %+v", got.MCPTarget.Headers)
+	}
+}
+
+func TestUpdater_Update_MCPTargetAuthClearedExplicitly(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "mcp", "", 1, &domain.MCPTarget{
+		URL:  "https://old.example.com/mcp",
+		Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer t"},
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry error: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:        existing.ID,
+		MCPTarget: &domain.MCPTarget{Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeNone}},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.MCPTarget.URL != "https://old.example.com/mcp" {
+		t.Fatalf("URL should be preserved: %q", got.MCPTarget.URL)
+	}
+	if got.MCPTarget.Auth.Mode != domain.MCPAuthModeNone {
+		t.Fatalf("auth should be cleared: %+v", got.MCPTarget.Auth)
+	}
+}
+
 func TestUpdater_Update_PreservesRedactedSecret(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
