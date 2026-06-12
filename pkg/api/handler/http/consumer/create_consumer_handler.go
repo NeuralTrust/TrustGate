@@ -47,22 +47,20 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err := req.Validate(); err != nil {
 		return helpers.WriteError(c, err)
 	}
-	fallback, err := req.ToFallback()
+	llm, mcp, err := req.ToPolicies()
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
-		GatewayID:       gatewayID,
-		Name:            req.Name,
-		Type:            req.ToType(),
-		Path:            req.Path,
-		Algorithm:       req.Algorithm,
-		EmbeddingConfig: req.ToEmbeddingConfig(),
-		Headers:         req.Headers,
-		Active:          req.Active,
-		Fallback:        fallback,
-		FailMode:        req.ToFailMode(),
+		GatewayID: gatewayID,
+		Name:      req.Name,
+		Type:      req.ToType(),
+		Path:      req.Path,
+		Headers:   req.Headers,
+		Active:    req.Active,
+		LLM:       llm,
+		MCP:       mcp,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

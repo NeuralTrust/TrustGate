@@ -11,7 +11,7 @@ import (
 )
 
 func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Resource, error) {
-	toolkit := rc.Consumer.Toolkit
+	toolkit := rc.Consumer.Toolkit()
 	return federate(c, ctx, rc, "resources",
 		func(ctx context.Context, up Upstream) ([]Resource, error) {
 			return up.ListResources(ctx)
@@ -31,7 +31,7 @@ func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableCo
 }
 
 func (c *composer) ListResourceTemplates(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]ResourceTemplate, error) {
-	toolkit := rc.Consumer.Toolkit
+	toolkit := rc.Consumer.Toolkit()
 	return federate(c, ctx, rc, "resource-templates",
 		func(ctx context.Context, up Upstream) ([]ResourceTemplate, error) {
 			return up.ListResourceTemplates(ctx)
@@ -49,7 +49,7 @@ func (c *composer) ReadResource(ctx context.Context, rc *appconsumer.RoutableCon
 	if len(registries) == 0 {
 		return nil, ErrNoMCPRegistries
 	}
-	toolkit := rc.Consumer.Toolkit
+	toolkit := rc.Consumer.Toolkit()
 	for _, reg := range registries {
 		if !toolkit.AllowsResource(reg.ID, uri) {
 			continue

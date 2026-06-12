@@ -27,7 +27,7 @@ func routableConsumer(gwID ids.GatewayID, authIDs []ids.AuthID) *domain.Consumer
 		Name:        "c",
 		Type:        domain.TypeLLM,
 		Path:        "/v1/chat",
-		Algorithm:   "round-robin",
+		LLM:         &domain.LLMPolicy{Algorithm: "round-robin"},
 		Active:      true,
 		RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
 		AuthIDs:     authIDs,
@@ -147,23 +147,24 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	fb1, fb2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
 	cons := domain.Rehydrate(domain.RehydrateParams{
-		ID:          ids.New[ids.ConsumerKind](),
-		GatewayID:   gwID,
-		Name:        "c",
-		Type:        domain.TypeLLM,
-		Path:        "/v1/chat",
-		Algorithm:   "round-robin",
+		ID:        ids.New[ids.ConsumerKind](),
+		GatewayID: gwID,
+		Name:      "c",
+		Type:      domain.TypeLLM,
+		Path:      "/v1/chat",
+		LLM: &domain.LLMPolicy{
+			Algorithm: "round-robin",
+			Fallback: &domain.Fallback{
+				Enabled:  true,
+				Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+				Budget:   domain.FallbackBudget{MaxAttempts: 9},
+				Chain:    []ids.RegistryID{fb2, fb1},
+			},
+		},
 		Active:      true,
 		RegistryIDs: []ids.RegistryID{poolID},
-		Fallback: &domain.Fallback{
-			Enabled:  true,
-			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
-			Budget:   domain.FallbackBudget{MaxAttempts: 9},
-
-			Chain: []ids.RegistryID{fb2, fb1},
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	})
 
 	repo := repomocks.NewRepository(t)

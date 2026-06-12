@@ -85,11 +85,11 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		authIDs = []ids.AuthID{}
 	}
 	var embedding *EmbeddingConfigResponse
-	if c.EmbeddingConfig != nil {
+	if ec := c.EmbeddingConfig(); ec != nil {
 		embedding = &EmbeddingConfigResponse{
-			Provider: c.EmbeddingConfig.Provider,
-			Model:    c.EmbeddingConfig.Model,
-			Auth:     fromEmbeddingAuth(c.EmbeddingConfig.Auth),
+			Provider: ec.Provider,
+			Model:    ec.Model,
+			Auth:     fromEmbeddingAuth(ec.Auth),
 		}
 	}
 	return ConsumerResponse{
@@ -98,16 +98,16 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		Name:            c.Name,
 		Type:            string(c.Type),
 		Path:            c.Path,
-		Algorithm:       c.Algorithm,
+		Algorithm:       c.Algorithm(),
 		EmbeddingConfig: embedding,
 		Headers:         c.Headers,
 		Active:          c.Active,
 		RegistryIDs:     registryIDs,
 		AuthIDs:         authIDs,
-		Fallback:        fromFallback(c.Fallback),
-		ModelPolicies:   fromModelPolicies(c.ModelPolicies),
-		Toolkit:         fromToolkit(c.Toolkit),
-		FailMode:        string(c.FailMode),
+		Fallback:        fromFallback(c.Fallback()),
+		ModelPolicies:   fromModelPolicies(c.ModelPolicies()),
+		Toolkit:         fromToolkit(c.Toolkit()),
+		FailMode:        string(c.FailMode()),
 		CreatedAt:       c.CreatedAt,
 		UpdatedAt:       c.UpdatedAt,
 	}

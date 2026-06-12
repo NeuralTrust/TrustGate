@@ -25,7 +25,7 @@ func existingConsumer(gwID ids.GatewayID, beID ids.RegistryID) *domain.Consumer 
 		Name:        "old",
 		Type:        domain.TypeLLM,
 		Path:        "/v1/chat",
-		Algorithm:   "round-robin",
+		LLM:         &domain.LLMPolicy{Algorithm: "round-robin"},
 		Active:      true,
 		RegistryIDs: []ids.RegistryID{beID},
 		CreatedAt:   now,
@@ -56,7 +56,6 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Name:      ptr("new"),
 		Type:      ptr(domain.TypeMCP),
 		Path:      ptr("/v1/messages"),
-		Algorithm: ptr("round-robin"),
 	})
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
@@ -77,7 +76,7 @@ func TestUpdater_Update_Partial_PreservesFieldsAndAssociations(t *testing.T) {
 	repo.EXPECT().
 		Update(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
 			return c.Name == "renamed" && c.Path == "/v1/chat" &&
-				c.Algorithm == "round-robin" && c.Type == domain.TypeLLM &&
+				c.Algorithm() == "round-robin" && c.Type == domain.TypeLLM &&
 				len(c.RegistryIDs) == 1 && c.RegistryIDs[0] == beID
 		})).
 		Return(nil).
@@ -92,7 +91,7 @@ func TestUpdater_Update_Partial_PreservesFieldsAndAssociations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.Path != "/v1/chat" || got.Algorithm != "round-robin" {
+	if got.Path != "/v1/chat" || got.Algorithm() != "round-robin" {
 		t.Fatalf("fields not preserved: %+v", got)
 	}
 	if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != beID {

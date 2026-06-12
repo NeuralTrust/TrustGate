@@ -12,26 +12,15 @@ func mcpParams() CreateParams {
 	return p
 }
 
-func TestConsumer_MCP_RejectsLLMOnlyFields(t *testing.T) {
+func TestConsumer_MCP_RejectsLLMPolicy(t *testing.T) {
 	t.Parallel()
-
-	t.Run("model policies", func(t *testing.T) {
-		t.Parallel()
-		p := mcpParams()
-		p.ModelPolicies = ModelPolicies{p.RegistryIDs[0]: ModelPolicy{Allowed: []string{"gpt-4o"}}}
-		if _, err := New(p); !errors.Is(err, ErrInvalidModelPolicy) {
-			t.Fatalf("error = %v, want ErrInvalidModelPolicy", err)
-		}
-	})
-
-	t.Run("fallback", func(t *testing.T) {
-		t.Parallel()
-		p := mcpParams()
-		p.Fallback = &Fallback{}
-		if _, err := New(p); !errors.Is(err, ErrInvalidFallback) {
-			t.Fatalf("error = %v, want ErrInvalidFallback", err)
-		}
-	})
+	p := mcpParams()
+	p.LLM = &LLMPolicy{
+		ModelPolicies: ModelPolicies{p.RegistryIDs[0]: ModelPolicy{Allowed: []string{"gpt-4o"}}},
+	}
+	if _, err := New(p); !errors.Is(err, ErrInvalidType) {
+		t.Fatalf("error = %v, want ErrInvalidType", err)
+	}
 }
 
 func TestConsumer_MCP_DefaultsFailModeClosed(t *testing.T) {
@@ -40,29 +29,51 @@ func TestConsumer_MCP_DefaultsFailModeClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if c.FailMode != FailModeClosed {
-		t.Fatalf("FailMode = %q, want %q", c.FailMode, FailModeClosed)
+	if c.FailMode() != FailModeClosed {
+		t.Fatalf("FailMode = %q, want %q", c.FailMode(), FailModeClosed)
 	}
 }
 
-func TestConsumer_NonMCP_RejectsMCPOnlyFields(t *testing.T) {
+func TestConsumer_LLM_RejectsMCPPolicy(t *testing.T) {
+	t.Parallel()
+	p := validParams()
+	p.MCP = &MCPPolicy{FailMode: FailModeOpen}
+	if _, err := New(p); !errors.Is(err, ErrInvalidType) {
+		t.Fatalf("error = %v, want ErrInvalidType", err)
+	}
+}
+
+func TestConsumer_LLM_DefaultsAlgorithm(t *testing.T) {
+	t.Parallel()
+	c, err := New(validParams())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if c.Algorithm() == "" {
+		t.Fatal("Algorithm should default for LLM consumers")
+	}
+}
+
+func TestConsumer_A2A_RejectsPolicies(t *testing.T) {
 	t.Parallel()
 
-	t.Run("fail mode", func(t *testing.T) {
+	t.Run("llm policy", func(t *testing.T) {
 		t.Parallel()
 		p := validParams()
-		p.FailMode = FailModeOpen
-		if _, err := New(p); !errors.Is(err, ErrInvalidFailMode) {
-			t.Fatalf("error = %v, want ErrInvalidFailMode", err)
+		p.Type = TypeA2A
+		p.LLM = &LLMPolicy{Algorithm: "round-robin"}
+		if _, err := New(p); !errors.Is(err, ErrInvalidType) {
+			t.Fatalf("error = %v, want ErrInvalidType", err)
 		}
 	})
 
-	t.Run("toolkit", func(t *testing.T) {
+	t.Run("mcp policy", func(t *testing.T) {
 		t.Parallel()
 		p := validParams()
-		p.Toolkit = Toolkit{{RegistryID: p.RegistryIDs[0], Tool: "x"}}
-		if _, err := New(p); !errors.Is(err, ErrInvalidToolkit) {
-			t.Fatalf("error = %v, want ErrInvalidToolkit", err)
+		p.Type = TypeA2A
+		p.MCP = &MCPPolicy{}
+		if _, err := New(p); !errors.Is(err, ErrInvalidType) {
+			t.Fatalf("error = %v, want ErrInvalidType", err)
 		}
 	})
 }

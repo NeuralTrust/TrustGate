@@ -150,16 +150,24 @@ func (r CreateConsumerRequest) ToType() domain.Type {
 	return domain.Type(r.Type)
 }
 
-func (r CreateConsumerRequest) ToEmbeddingConfig() *registrydomain.EmbeddingConfig {
-	return r.EmbeddingConfig.ToDomain()
-}
-
-func (r CreateConsumerRequest) ToFallback() (*domain.Fallback, error) {
-	return r.Fallback.ToFallback()
-}
-
-func (r CreateConsumerRequest) ToFailMode() domain.FailMode {
-	return domain.FailMode(r.FailMode)
+func (r CreateConsumerRequest) ToPolicies() (*domain.LLMPolicy, *domain.MCPPolicy, error) {
+	fallback, err := r.Fallback.ToFallback()
+	if err != nil {
+		return nil, nil, err
+	}
+	var llm *domain.LLMPolicy
+	if r.Algorithm != "" || r.EmbeddingConfig != nil || fallback != nil {
+		llm = &domain.LLMPolicy{
+			Algorithm:       r.Algorithm,
+			EmbeddingConfig: r.EmbeddingConfig.ToDomain(),
+			Fallback:        fallback,
+		}
+	}
+	var mcp *domain.MCPPolicy
+	if r.FailMode != "" {
+		mcp = &domain.MCPPolicy{FailMode: domain.FailMode(r.FailMode)}
+	}
+	return llm, mcp, nil
 }
 
 func parseModelPolicies(raw []ModelPolicyRequest) (domain.ModelPolicies, error) {

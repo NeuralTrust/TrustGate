@@ -115,10 +115,10 @@ func TestConsumer_Validate_ToolkitAndFailMode(t *testing.T) {
 			Type:        TypeLLM,
 			Path:        "/llm",
 			RegistryIDs: []ids.RegistryID{regID},
-			Toolkit:     Toolkit{{RegistryID: regID, Tool: ToolWildcard}},
+			MCP:         &MCPPolicy{Toolkit: Toolkit{{RegistryID: regID, Tool: ToolWildcard}}},
 		})
-		if !errors.Is(err, ErrInvalidToolkit) {
-			t.Fatalf("error = %v, want ErrInvalidToolkit", err)
+		if !errors.Is(err, ErrInvalidType) {
+			t.Fatalf("error = %v, want ErrInvalidType", err)
 		}
 	})
 
@@ -130,13 +130,13 @@ func TestConsumer_Validate_ToolkitAndFailMode(t *testing.T) {
 			Type:        TypeMCP,
 			Path:        "/mcp/dev",
 			RegistryIDs: []ids.RegistryID{regID},
-			Toolkit:     Toolkit{{RegistryID: regID, Tool: ToolWildcard}},
+			MCP:         &MCPPolicy{Toolkit: Toolkit{{RegistryID: regID, Tool: ToolWildcard}}},
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if c.FailMode != FailModeClosed {
-			t.Fatalf("FailMode = %q, want default closed", c.FailMode)
+		if c.FailMode() != FailModeClosed {
+			t.Fatalf("FailMode = %q, want default closed", c.FailMode())
 		}
 	})
 
@@ -147,7 +147,7 @@ func TestConsumer_Validate_ToolkitAndFailMode(t *testing.T) {
 			Name:      "mcp-consumer",
 			Type:      TypeMCP,
 			Path:      "/mcp/dev",
-			FailMode:  "explode",
+			MCP:       &MCPPolicy{FailMode: "explode"},
 		})
 		if !errors.Is(err, ErrInvalidFailMode) {
 			t.Fatalf("error = %v, want ErrInvalidFailMode", err)

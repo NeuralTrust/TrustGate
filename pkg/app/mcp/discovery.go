@@ -26,7 +26,7 @@ func federate[T any](
 	if len(registries) == 0 {
 		return nil, ErrNoMCPRegistries
 	}
-	failOpen := rc.Consumer.FailMode == consumerdomain.FailModeOpen
+	failOpen := rc.Consumer.FailMode() == consumerdomain.FailModeOpen
 
 	var out []T
 	reachable := 0

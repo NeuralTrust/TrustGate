@@ -67,18 +67,13 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}
-	if in.Type != nil {
+	if in.Type != nil && *in.Type != existing.Type {
 		existing.Type = *in.Type
+		existing.LLM = nil
+		existing.MCP = nil
 	}
 	if in.Path != nil {
 		existing.Path = *in.Path
-	}
-	if in.Algorithm != nil {
-		existing.Algorithm = *in.Algorithm
-	}
-	if in.EmbeddingConfig != nil {
-		in.EmbeddingConfig.ResolveSecretsFrom(existing.EmbeddingConfig)
-		existing.EmbeddingConfig = in.EmbeddingConfig
 	}
 	if in.Headers != nil {
 		existing.Headers = *in.Headers
@@ -86,18 +81,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	if in.Active != nil {
 		existing.Active = *in.Active
 	}
-	if in.Fallback != nil {
-		existing.Fallback = in.Fallback
-	}
-	if in.ModelPolicies != nil {
-		existing.ModelPolicies = *in.ModelPolicies
-	}
-	if in.Toolkit != nil {
-		existing.Toolkit = *in.Toolkit
-	}
-	if in.FailMode != nil {
-		existing.FailMode = *in.FailMode
-	}
+	applyLLMPolicyUpdate(existing, in)
+	applyMCPPolicyUpdate(existing, in)
 	existing.UpdatedAt = time.Now().UTC()
 	if err := validateRegistryRefsAssociated(existing); err != nil {
 		return nil, err
@@ -113,26 +98,65 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Consumer,
 	return existing, nil
 }
 
+func applyLLMPolicyUpdate(existing *domain.Consumer, in UpdateInput) {
+	if in.Algorithm == nil && in.EmbeddingConfig == nil && in.Fallback == nil && in.ModelPolicies == nil {
+		return
+	}
+	if existing.LLM == nil {
+		existing.LLM = &domain.LLMPolicy{}
+	}
+	policy := existing.LLM
+	if in.Algorithm != nil {
+		policy.Algorithm = *in.Algorithm
+	}
+	if in.EmbeddingConfig != nil {
+		in.EmbeddingConfig.ResolveSecretsFrom(policy.EmbeddingConfig)
+		policy.EmbeddingConfig = in.EmbeddingConfig
+	}
+	if in.Fallback != nil {
+		policy.Fallback = in.Fallback
+	}
+	if in.ModelPolicies != nil {
+		policy.ModelPolicies = *in.ModelPolicies
+	}
+}
+
+func applyMCPPolicyUpdate(existing *domain.Consumer, in UpdateInput) {
+	if in.Toolkit == nil && in.FailMode == nil {
+		return
+	}
+	if existing.MCP == nil {
+		existing.MCP = &domain.MCPPolicy{}
+	}
+	policy := existing.MCP
+	if in.Toolkit != nil {
+		policy.Toolkit = *in.Toolkit
+	}
+	if in.FailMode != nil {
+		policy.FailMode = *in.FailMode
+	}
+}
+
 func validateRegistryRefsAssociated(c *domain.Consumer) error {
 	associated := make(map[ids.RegistryID]struct{}, len(c.RegistryIDs))
 	for _, id := range c.RegistryIDs {
 		associated[id] = struct{}{}
 	}
-	if c.Fallback != nil {
-		for _, id := range c.Fallback.Chain {
+	if fb := c.Fallback(); fb != nil {
+		for _, id := range fb.Chain {
 			if _, ok := associated[id]; !ok {
 				return fmt.Errorf("%w: fallback chain registry %s is not associated with the consumer",
 					registrydomain.ErrInvalidRegistryID, id)
 			}
 		}
 	}
-	for id := range c.ModelPolicies {
+	for id := range c.ModelPolicies() {
 		if _, ok := associated[id]; !ok {
 			return fmt.Errorf("%w: model_policies registry %s is not associated with the consumer",
 				registrydomain.ErrInvalidRegistryID, id)
 		}
 	}
-	for _, e := range c.Toolkit {
+	for _, e := range c.Toolkit() {
 		if _, ok := associated[e.RegistryID]; !ok {
 			return fmt.Errorf("%w: toolkit registry %s is not associated with the consumer",
 				registrydomain.ErrInvalidRegistryID, e.RegistryID)

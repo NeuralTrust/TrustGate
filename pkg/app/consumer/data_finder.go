@@ -226,10 +226,14 @@ func (f *dataFinder) warnUnresolvedFallbackChain(c *domain.Consumer, resolved []
 }
 
 func fallbackChainOf(c *domain.Consumer) []ids.RegistryID {
-	if c == nil || c.Fallback == nil || !c.Fallback.Enabled {
+	if c == nil {
 		return nil
 	}
-	return []ids.RegistryID(c.Fallback.Chain)
+	fb := c.Fallback()
+	if fb == nil || !fb.Enabled {
+		return nil
+	}
+	return []ids.RegistryID(fb.Chain)
 }
 
 func poolRegistryIDs(all []ids.RegistryID, chain []ids.RegistryID) []ids.RegistryID {

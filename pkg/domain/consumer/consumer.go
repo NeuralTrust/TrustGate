@@ -7,7 +7,6 @@ import (
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
 )
 
 type Type string
@@ -31,40 +30,74 @@ func IsValidType(t Type) bool {
 }
 
 type Consumer struct {
-	ID              ids.ConsumerID            `json:"id"`
-	GatewayID       ids.GatewayID             `json:"gateway_id"`
-	Name            string                    `json:"name"`
-	Type            Type                      `json:"type"`
-	Path            string                    `json:"path"`
-	Algorithm       string                    `json:"algorithm"`
-	EmbeddingConfig *registry.EmbeddingConfig `json:"embedding_config,omitempty"`
-	Headers         map[string]string         `json:"headers,omitempty"`
-	Active          bool                      `json:"active"`
-	RegistryIDs     registry.Registries       `json:"registry_ids"`
-	AuthIDs         []ids.AuthID              `json:"auth_ids"`
-	Fallback        *Fallback                 `json:"fallback,omitempty"`
-	ModelPolicies   ModelPolicies             `json:"model_policies,omitempty"`
-	Toolkit         Toolkit                   `json:"toolkit,omitempty"`
-	FailMode        FailMode                  `json:"fail_mode,omitempty"`
-	CreatedAt       time.Time                 `json:"created_at"`
-	UpdatedAt       time.Time                 `json:"updated_at"`
+	ID          ids.ConsumerID      `json:"id"`
+	GatewayID   ids.GatewayID       `json:"gateway_id"`
+	Name        string              `json:"name"`
+	Type        Type                `json:"type"`
+	Path        string              `json:"path"`
+	Headers     map[string]string   `json:"headers,omitempty"`
+	Active      bool                `json:"active"`
+	RegistryIDs registry.Registries `json:"registry_ids"`
+	AuthIDs     []ids.AuthID        `json:"auth_ids"`
+	LLM         *LLMPolicy          `json:"llm,omitempty"`
+	MCP         *MCPPolicy          `json:"mcp,omitempty"`
+	CreatedAt   time.Time           `json:"created_at"`
+	UpdatedAt   time.Time           `json:"updated_at"`
+}
+
+func (c *Consumer) Algorithm() string {
+	if c.LLM == nil {
+		return ""
+	}
+	return c.LLM.Algorithm
+}
+
+func (c *Consumer) EmbeddingConfig() *registry.EmbeddingConfig {
+	if c.LLM == nil {
+		return nil
+	}
+	return c.LLM.EmbeddingConfig
+}
+
+func (c *Consumer) ModelPolicies() ModelPolicies {
+	if c.LLM == nil {
+		return nil
+	}
+	return c.LLM.ModelPolicies
+}
+
+func (c *Consumer) Fallback() *Fallback {
+	if c.LLM == nil {
+		return nil
+	}
+	return c.LLM.Fallback
+}
+
+func (c *Consumer) Toolkit() Toolkit {
+	if c.MCP == nil {
+		return nil
+	}
+	return c.MCP.Toolkit
+}
+
+func (c *Consumer) FailMode() FailMode {
+	if c.MCP == nil {
+		return ""
+	}
+	return c.MCP.FailMode
 }
 
 type CreateParams struct {
-	GatewayID       ids.GatewayID
-	Name            string
-	Type            Type
-	Path            string
-	Algorithm       string
-	EmbeddingConfig *registry.EmbeddingConfig
-	Headers         map[string]string
-	Active          *bool
-	RegistryIDs     []ids.RegistryID
-	AuthIDs         []ids.AuthID
-	Fallback        *Fallback
-	ModelPolicies   ModelPolicies
-	Toolkit         Toolkit
-	FailMode        FailMode
+	GatewayID   ids.GatewayID
+	Name        string
+	Type        Type
+	Path        string
+	Headers     map[string]string
+	Active      *bool
+	RegistryIDs []ids.RegistryID
+	AuthIDs     []ids.AuthID
+	LLM         *LLMPolicy
+	MCP         *MCPPolicy
 }
 
 func New(params CreateParams) (*Consumer, error) {
@@ -78,23 +111,19 @@ func New(params CreateParams) (*Consumer, error) {
 		active = *params.Active
 	}
 	c := &Consumer{
-		ID:              id,
-		GatewayID:       params.GatewayID,
-		Name:            params.Name,
-		Type:            params.Type,
-		Path:            params.Path,
-		Algorithm:       params.Algorithm,
-		EmbeddingConfig: params.EmbeddingConfig,
-		Headers:         params.Headers,
-		Active:          active,
-		RegistryIDs:     params.RegistryIDs,
-		AuthIDs:         params.AuthIDs,
-		Fallback:        params.Fallback,
-		ModelPolicies:   params.ModelPolicies,
-		Toolkit:         params.Toolkit,
-		FailMode:        params.FailMode,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:          id,
+		GatewayID:   params.GatewayID,
+		Name:        params.Name,
+		Type:        params.Type,
+		Path:        params.Path,
+		Headers:     params.Headers,
+		Active:      active,
+		RegistryIDs: params.RegistryIDs,
+		AuthIDs:     params.AuthIDs,
+		LLM:         params.LLM,
+		MCP:         params.MCP,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -103,44 +132,36 @@ func New(params CreateParams) (*Consumer, error) {
 }
 
 type RehydrateParams struct {
-	ID              ids.ConsumerID
-	GatewayID       ids.GatewayID
-	Name            string
-	Type            Type
-	Path            string
-	Algorithm       string
-	EmbeddingConfig *registry.EmbeddingConfig
-	Headers         map[string]string
-	Active          bool
-	RegistryIDs     []ids.RegistryID
-	AuthIDs         []ids.AuthID
-	Fallback        *Fallback
-	ModelPolicies   ModelPolicies
-	Toolkit         Toolkit
-	FailMode        FailMode
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID          ids.ConsumerID
+	GatewayID   ids.GatewayID
+	Name        string
+	Type        Type
+	Path        string
+	Headers     map[string]string
+	Active      bool
+	RegistryIDs []ids.RegistryID
+	AuthIDs     []ids.AuthID
+	LLM         *LLMPolicy
+	MCP         *MCPPolicy
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 func Rehydrate(params RehydrateParams) *Consumer {
 	return &Consumer{
-		ID:              params.ID,
-		GatewayID:       params.GatewayID,
-		Name:            params.Name,
-		Type:            params.Type,
-		Path:            params.Path,
-		Algorithm:       params.Algorithm,
-		EmbeddingConfig: params.EmbeddingConfig,
-		Headers:         params.Headers,
-		Active:          params.Active,
-		RegistryIDs:     params.RegistryIDs,
-		AuthIDs:         params.AuthIDs,
-		Fallback:        params.Fallback,
-		ModelPolicies:   params.ModelPolicies,
-		Toolkit:         params.Toolkit,
-		FailMode:        params.FailMode,
-		CreatedAt:       params.CreatedAt,
-		UpdatedAt:       params.UpdatedAt,
+		ID:          params.ID,
+		GatewayID:   params.GatewayID,
+		Name:        params.Name,
+		Type:        params.Type,
+		Path:        params.Path,
+		Headers:     params.Headers,
+		Active:      params.Active,
+		RegistryIDs: params.RegistryIDs,
+		AuthIDs:     params.AuthIDs,
+		LLM:         params.LLM,
+		MCP:         params.MCP,
+		CreatedAt:   params.CreatedAt,
+		UpdatedAt:   params.UpdatedAt,
 	}
 }
 
@@ -160,70 +181,40 @@ func (c *Consumer) Validate() error {
 	if strings.TrimSpace(c.Path) == "" {
 		return fmt.Errorf("%w: path is required", ErrInvalidPath)
 	}
-	if c.Algorithm == "" {
-		c.Algorithm = algorithm.RoundRobin
-	}
-	if !algorithm.IsValid(c.Algorithm) {
-		return fmt.Errorf("%w: %q", ErrInvalidAlgorithm, c.Algorithm)
-	}
-	if c.Algorithm == algorithm.Semantic {
-		if c.EmbeddingConfig == nil {
-			return fmt.Errorf("%w: embedding_config required for semantic algorithm", ErrInvalidEmbeddingConfig)
-		}
-		if err := c.EmbeddingConfig.Validate(); err != nil {
-			return err
-		}
-	} else if c.EmbeddingConfig != nil {
-		return fmt.Errorf("%w: embedding_config is only valid for the semantic algorithm", ErrInvalidEmbeddingConfig)
-	}
 	if err := c.RegistryIDs.Validate(); err != nil {
 		return err
 	}
 	if err := validateUniqueIDs(c.AuthIDs, ErrInvalidAuthID, "auth"); err != nil {
 		return err
 	}
-	if err := c.Fallback.Validate(); err != nil {
-		return err
+	switch c.Type {
+	case TypeLLM:
+		if c.MCP != nil {
+			return fmt.Errorf("%w: mcp policy is only valid for MCP consumers", ErrInvalidType)
+		}
+		if c.LLM == nil {
+			c.LLM = &LLMPolicy{}
+		}
+		return c.LLM.Validate(c.knownRegistryIDs())
+	case TypeMCP:
+		if c.LLM != nil {
+			return fmt.Errorf("%w: llm policy is only valid for LLM consumers", ErrInvalidType)
+		}
+		if c.MCP == nil {
+			c.MCP = &MCPPolicy{}
+		}
+		return c.MCP.Validate(c.knownRegistryIDs())
+	case TypeA2A:
+		if c.LLM != nil {
+			return fmt.Errorf("%w: llm policy is only valid for LLM consumers", ErrInvalidType)
+		}
+		if c.MCP != nil {
+			return fmt.Errorf("%w: mcp policy is only valid for MCP consumers", ErrInvalidType)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: %q", ErrInvalidType, c.Type)
 	}
-	if err := c.ModelPolicies.Validate(c.knownRegistryIDs()); err != nil {
-		return err
-	}
-	if c.Type == TypeMCP {
-		return c.validateMCP()
-	}
-	return c.validateNonMCP()
-}
-
-func (c *Consumer) validateMCP() error {
-	if len(c.ModelPolicies) > 0 {
-		return fmt.Errorf("%w: model_policies are only valid for LLM consumers", ErrInvalidModelPolicy)
-	}
-	if c.Fallback != nil {
-		return fmt.Errorf("%w: fallback is only valid for LLM consumers", ErrInvalidFallback)
-	}
-	if c.EmbeddingConfig != nil {
-		return fmt.Errorf("%w: embedding_config is only valid for LLM consumers", ErrInvalidEmbeddingConfig)
-	}
-	if c.FailMode == "" {
-		c.FailMode = FailModeClosed
-	}
-	if err := c.FailMode.Validate(); err != nil {
-		return err
-	}
-	if err := c.Toolkit.Validate(c.knownRegistryIDs()); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (c *Consumer) validateNonMCP() error {
-	if c.FailMode != "" {
-		return fmt.Errorf("%w: fail_mode is only valid for MCP consumers", ErrInvalidFailMode)
-	}
-	if len(c.Toolkit) > 0 {
-		return fmt.Errorf("%w: toolkit is only valid for MCP consumers", ErrInvalidToolkit)
-	}
-	return nil
 }
 
 func (c *Consumer) knownRegistryIDs() map[ids.RegistryID]struct{} {
@@ -231,8 +222,8 @@ func (c *Consumer) knownRegistryIDs() map[ids.RegistryID]struct{} {
 	for _, id := range c.RegistryIDs {
 		known[id] = struct{}{}
 	}
-	if c.Fallback != nil {
-		for _, id := range c.Fallback.Chain {
+	if fb := c.Fallback(); fb != nil {
+		for _, id := range fb.Chain {
 			known[id] = struct{}{}
 		}
 	}

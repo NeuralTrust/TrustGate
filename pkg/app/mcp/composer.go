@@ -88,8 +88,8 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	if len(registries) == 0 {
 		return nil, ErrNoMCPRegistries
 	}
-	failOpen := rc.Consumer.FailMode == consumerdomain.FailModeOpen
-	toolkit := rc.Consumer.Toolkit
+	failOpen := rc.Consumer.FailMode() == consumerdomain.FailModeOpen
+	toolkit := rc.Consumer.Toolkit()
 
 	var candidates []binding
 	reachable := 0

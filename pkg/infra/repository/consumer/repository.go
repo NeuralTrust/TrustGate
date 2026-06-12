@@ -54,19 +54,19 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal headers: %w", err)
 	}
-	embeddingBytes, err := marshalEmbedding(c.EmbeddingConfig)
+	embeddingBytes, err := marshalEmbedding(c.EmbeddingConfig())
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal embedding_config: %w", err)
 	}
-	fallbackBytes, err := marshalFallback(c.Fallback)
+	fallbackBytes, err := marshalFallback(c.Fallback())
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal fallback: %w", err)
 	}
-	modelPoliciesBytes, err := marshalModelPolicies(c.ModelPolicies)
+	modelPoliciesBytes, err := marshalModelPolicies(c.ModelPolicies())
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal model_policies: %w", err)
 	}
-	toolkitBytes, err := marshalToolkit(c.Toolkit)
+	toolkitBytes, err := marshalToolkit(c.Toolkit())
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal toolkit: %w", err)
 	}
@@ -77,7 +77,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		)`
 	if _, err := r.conn.Pool.Exec(ctx, insertConsumer,
-		c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
+		c.ID, c.GatewayID, c.Name, string(c.Type), c.Path, c.Algorithm(), embeddingBytes, fallbackBytes, modelPoliciesBytes,
 		toolkitBytes, failMode(c), headersBytes, c.Active, c.CreatedAt, c.UpdatedAt,
 	); err != nil {
 		return mapPgError(err)
@@ -93,19 +93,19 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal headers: %w", err)
 	}
-	embeddingBytes, err := marshalEmbedding(c.EmbeddingConfig)
+	embeddingBytes, err := marshalEmbedding(c.EmbeddingConfig())
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal embedding_config: %w", err)
 	}
-	fallbackBytes, err := marshalFallback(c.Fallback)
+	fallbackBytes, err := marshalFallback(c.Fallback())
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal fallback: %w", err)
 	}
-	modelPoliciesBytes, err := marshalModelPolicies(c.ModelPolicies)
+	modelPoliciesBytes, err := marshalModelPolicies(c.ModelPolicies())
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal model_policies: %w", err)
 	}
-	toolkitBytes, err := marshalToolkit(c.Toolkit)
+	toolkitBytes, err := marshalToolkit(c.Toolkit())
 	if err != nil {
 		return fmt.Errorf("consumer repository: marshal toolkit: %w", err)
 	}
@@ -125,7 +125,7 @@ func (r *Repository) Update(ctx context.Context, c *domain.Consumer) error {
 		       updated_at       = $13
 		 WHERE id = $1`
 	cmd, err := r.conn.Pool.Exec(ctx, updateConsumer,
-		c.ID, c.Name, string(c.Type), c.Path, c.Algorithm, embeddingBytes, fallbackBytes, modelPoliciesBytes,
+		c.ID, c.Name, string(c.Type), c.Path, c.Algorithm(), embeddingBytes, fallbackBytes, modelPoliciesBytes,
 		toolkitBytes, failMode(c), headersBytes, c.Active, c.UpdatedAt,
 	)
 	if err != nil {
@@ -323,52 +323,66 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		fallbackRaw      []byte
 		modelPoliciesRaw []byte
 		toolkitRaw       []byte
+		algorithmRaw     string
 		failModeRaw      string
 		consumerType     string
 		registryIDs      []uuid.UUID
 		authIDs          []uuid.UUID
 	)
 	if err := s.Scan(
-		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &c.Algorithm, &embeddingRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
+		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Path, &algorithmRaw, &embeddingRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
 		&registryIDs, &authIDs,
 	); err != nil {
 		return nil, err
 	}
 	c.Type = domain.Type(consumerType)
-	c.FailMode = domain.FailMode(failModeRaw)
+	if c.Type == "" {
+		c.Type = domain.TypeLLM
+	}
 	if len(headersRaw) > 0 {
 		if err := json.Unmarshal(headersRaw, &c.Headers); err != nil {
 			return nil, fmt.Errorf("scan headers: %w", err)
 		}
 	}
-	if len(embeddingRaw) > 0 {
-		var ec registrydomain.EmbeddingConfig
-		if err := json.Unmarshal(embeddingRaw, &ec); err != nil {
-			return nil, fmt.Errorf("scan embedding_config: %w", err)
+	switch c.Type {
+	case domain.TypeLLM:
+		llm := &domain.LLMPolicy{Algorithm: algorithmRaw}
+		if len(embeddingRaw) > 0 {
+			var ec registrydomain.EmbeddingConfig
+			if err := json.Unmarshal(embeddingRaw, &ec); err != nil {
+				return nil, fmt.Errorf("scan embedding_config: %w", err)
+			}
+			llm.EmbeddingConfig = &ec
 		}
-		c.EmbeddingConfig = &ec
-	}
-	if len(fallbackRaw) > 0 {
-		var fb domain.Fallback
-		if err := json.Unmarshal(fallbackRaw, &fb); err != nil {
-			return nil, fmt.Errorf("scan fallback: %w", err)
+		if len(fallbackRaw) > 0 {
+			var fb domain.Fallback
+			if err := json.Unmarshal(fallbackRaw, &fb); err != nil {
+				return nil, fmt.Errorf("scan fallback: %w", err)
+			}
+			llm.Fallback = &fb
 		}
-		c.Fallback = &fb
-	}
-	if len(modelPoliciesRaw) > 0 {
-		var mp domain.ModelPolicies
-		if err := json.Unmarshal(modelPoliciesRaw, &mp); err != nil {
-			return nil, fmt.Errorf("scan model_policies: %w", err)
+		if len(modelPoliciesRaw) > 0 {
+			var mp domain.ModelPolicies
+			if err := json.Unmarshal(modelPoliciesRaw, &mp); err != nil {
+				return nil, fmt.Errorf("scan model_policies: %w", err)
+			}
+			llm.ModelPolicies = mp
 		}
-		c.ModelPolicies = mp
-	}
-	if len(toolkitRaw) > 0 {
-		var tk domain.Toolkit
-		if err := json.Unmarshal(toolkitRaw, &tk); err != nil {
-			return nil, fmt.Errorf("scan toolkit: %w", err)
+		c.LLM = llm
+	case domain.TypeMCP:
+		mcp := &domain.MCPPolicy{FailMode: domain.FailMode(failModeRaw)}
+		if mcp.FailMode == "" {
+			mcp.FailMode = domain.FailModeClosed
 		}
-		c.Toolkit = tk
+		if len(toolkitRaw) > 0 {
+			var tk domain.Toolkit
+			if err := json.Unmarshal(toolkitRaw, &tk); err != nil {
+				return nil, fmt.Errorf("scan toolkit: %w", err)
+			}
+			mcp.Toolkit = tk
+		}
+		c.MCP = mcp
 	}
 	c.RegistryIDs = registrydomain.Registries(ids.FromUUIDs[ids.RegistryKind](registryIDs))
 	c.AuthIDs = ids.FromUUIDs[ids.AuthKind](authIDs)
@@ -417,10 +431,10 @@ func marshalToolkit(t domain.Toolkit) ([]byte, error) {
 }
 
 func failMode(c *domain.Consumer) string {
-	if c.FailMode == "" {
+	if c.FailMode() == "" {
 		return string(domain.FailModeClosed)
 	}
-	return string(c.FailMode)
+	return string(c.FailMode())
 }
 
 func nullableUUID(id uuid.UUID) any {

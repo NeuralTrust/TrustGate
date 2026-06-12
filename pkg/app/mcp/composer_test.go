@@ -163,10 +163,10 @@ func TestComposer_ListTools_ToolkitSelectAndRename(t *testing.T) {
 
 	consumer := &consumerdomain.Consumer{
 		Type: consumerdomain.TypeMCP,
-		Toolkit: consumerdomain.Toolkit{
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
 			{RegistryID: regA.ID, Tool: "create_issue", ExposeAs: "gh_create_issue"},
 			{RegistryID: regA.ID, Tool: "list_repos"},
-		},
+		}},
 	}
 	got, err := c.ListTools(context.Background(), routable(consumer, regA))
 	if err != nil {
@@ -214,7 +214,7 @@ func TestComposer_FailMode(t *testing.T) {
 
 	t.Run("closed rejects", func(t *testing.T) {
 		t.Parallel()
-		consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, FailMode: consumerdomain.FailModeClosed}
+		consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, MCP: &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeClosed}}
 		_, err := c.ListTools(context.Background(), routable(consumer, regA, regB))
 		if !errors.Is(err, ErrUpstreamUnavailable) {
 			t.Fatalf("error = %v, want ErrUpstreamUnavailable", err)
@@ -223,7 +223,7 @@ func TestComposer_FailMode(t *testing.T) {
 
 	t.Run("open serves reachable", func(t *testing.T) {
 		t.Parallel()
-		consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, FailMode: consumerdomain.FailModeOpen}
+		consumer := &consumerdomain.Consumer{Type: consumerdomain.TypeMCP, MCP: &consumerdomain.MCPPolicy{FailMode: consumerdomain.FailModeOpen}}
 		got, err := c.ListTools(context.Background(), routable(consumer, regA, regB))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -370,11 +370,11 @@ func TestComposer_Toolkit_GovernsAllSurfaces(t *testing.T) {
 
 	consumer := &consumerdomain.Consumer{
 		Type: consumerdomain.TypeMCP,
-		Toolkit: consumerdomain.Toolkit{
+		MCP: &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{
 			{RegistryID: regA.ID, Tool: "create_issue"},
 			{RegistryID: regA.ID, Prompt: "summarize", ExposeAs: "gh_summarize"},
 			{RegistryID: regA.ID, Resource: "repo://github/*"},
-		},
+		}},
 	}
 	rc := routable(consumer, regA)
 
@@ -440,8 +440,8 @@ func TestComposer_Toolkit_ToolOnlyEntriesHidePromptsAndResources(t *testing.T) {
 	c := newTestComposer(dialer)
 
 	consumer := &consumerdomain.Consumer{
-		Type:    consumerdomain.TypeMCP,
-		Toolkit: consumerdomain.Toolkit{{RegistryID: regA.ID, Tool: consumerdomain.ToolWildcard}},
+		Type: consumerdomain.TypeMCP,
+		MCP:  &consumerdomain.MCPPolicy{Toolkit: consumerdomain.Toolkit{{RegistryID: regA.ID, Tool: consumerdomain.ToolWildcard}}},
 	}
 	rc := routable(consumer, regA)
 

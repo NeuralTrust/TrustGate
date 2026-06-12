@@ -6,21 +6,18 @@ import (
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
 
 type CreateInput struct {
-	GatewayID       ids.GatewayID
-	Name            string
-	Type            domain.Type
-	Path            string
-	Algorithm       string
-	EmbeddingConfig *registrydomain.EmbeddingConfig
-	Headers         map[string]string
-	Active          *bool
-	Fallback        *domain.Fallback
-	FailMode        domain.FailMode
+	GatewayID ids.GatewayID
+	Name      string
+	Type      domain.Type
+	Path      string
+	Headers   map[string]string
+	Active    *bool
+	LLM       *domain.LLMPolicy
+	MCP       *domain.MCPPolicy
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -53,16 +50,14 @@ func NewCreator(
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer, error) {
 	cons, err := domain.New(domain.CreateParams{
-		GatewayID:       in.GatewayID,
-		Name:            in.Name,
-		Type:            in.Type,
-		Path:            in.Path,
-		Algorithm:       in.Algorithm,
-		EmbeddingConfig: in.EmbeddingConfig,
-		Headers:         in.Headers,
-		Active:          in.Active,
-		Fallback:        in.Fallback,
-		FailMode:        in.FailMode,
+		GatewayID: in.GatewayID,
+		Name:      in.Name,
+		Type:      in.Type,
+		Path:      in.Path,
+		Headers:   in.Headers,
+		Active:    in.Active,
+		LLM:       in.LLM,
+		MCP:       in.MCP,
 	})
 	if err != nil {
 		return nil, err

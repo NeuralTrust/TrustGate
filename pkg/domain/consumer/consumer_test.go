@@ -100,12 +100,12 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 		},
 		{
 			name:    "invalid algorithm",
-			mutate:  func(c *Consumer) { c.Algorithm = "bogus" },
+			mutate:  func(c *Consumer) { c.LLM = &LLMPolicy{Algorithm: "bogus"} },
 			wantErr: ErrInvalidAlgorithm,
 		},
 		{
 			name:    "semantic without embedding",
-			mutate:  func(c *Consumer) { c.Algorithm = "semantic" },
+			mutate:  func(c *Consumer) { c.LLM = &LLMPolicy{Algorithm: "semantic"} },
 			wantErr: ErrInvalidEmbeddingConfig,
 		},
 		{
@@ -175,12 +175,10 @@ func TestConsumer_Rehydrate(t *testing.T) {
 		Name:        "x",
 		Type:        TypeMCP,
 		Path:        "/v1/messages",
-		Algorithm:   "round-robin",
 		Headers:     map[string]string{"X-K": "v"},
 		Active:      true,
 		RegistryIDs: []ids.RegistryID{beID},
-		Toolkit:     toolkit,
-		FailMode:    FailModeOpen,
+		MCP:         &MCPPolicy{Toolkit: toolkit, FailMode: FailModeOpen},
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	})
@@ -196,11 +194,11 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	if !c.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")
 	}
-	if len(c.Toolkit) != 1 || c.Toolkit[0].Tool != "search" || c.Toolkit[0].ExposeAs != "gh_search" {
-		t.Fatalf("Toolkit lost on rehydrate: %+v", c.Toolkit)
+	if tk := c.Toolkit(); len(tk) != 1 || tk[0].Tool != "search" || tk[0].ExposeAs != "gh_search" {
+		t.Fatalf("Toolkit lost on rehydrate: %+v", c.Toolkit())
 	}
-	if c.FailMode != FailModeOpen {
-		t.Fatalf("FailMode = %q, want %q", c.FailMode, FailModeOpen)
+	if c.FailMode() != FailModeOpen {
+		t.Fatalf("FailMode = %q, want %q", c.FailMode(), FailModeOpen)
 	}
 }
 

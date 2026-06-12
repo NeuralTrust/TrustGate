@@ -145,7 +145,7 @@ func (f *forwarder) invokeWithFailover(
 	dto *forwardRequestDTO,
 	stream bool,
 ) (*ForwardResult, error) {
-	fb := rc.Consumer.Fallback
+	fb := rc.Consumer.Fallback()
 	triggers := triggersFrom(fb)
 	attemptsPerBackend := f.attemptsPerBackend()
 	budget := newFailoverBudget(fb)
@@ -249,7 +249,7 @@ func (f *forwarder) nextCandidate(
 			return bk, false
 		}
 	}
-	if fb := rc.Consumer.Fallback; fb != nil && fb.Enabled {
+	if fb := rc.Consumer.Fallback(); fb != nil && fb.Enabled {
 		for _, bk := range rc.FallbackBackends {
 			if _, seen := excluded[bk.ID]; !seen {
 				return bk, true
@@ -396,7 +396,7 @@ func stampTarget(req *infracontext.RequestContext, bk *domain.Registry) {
 }
 
 func (f *forwarder) stampModelPolicy(dto *forwardRequestDTO, rc *appconsumer.RoutableConsumer, bk *domain.Registry) {
-	policy, ok := rc.Consumer.ModelPolicies.For(bk.ID)
+	policy, ok := rc.Consumer.ModelPolicies().For(bk.ID)
 	if !ok {
 		dto.request.AllowedModels = nil
 		dto.request.DefaultModel = ""
@@ -527,8 +527,8 @@ func (f *forwarder) loadBalancerFor(rc *appconsumer.RoutableConsumer) (*loadbala
 		pool := loadbalancer.Pool{
 			ID:              key,
 			Registries:      rc.Registries,
-			Algorithm:       rc.Consumer.Algorithm,
-			EmbeddingConfig: rc.Consumer.EmbeddingConfig,
+			Algorithm:       rc.Consumer.Algorithm(),
+			EmbeddingConfig: rc.Consumer.EmbeddingConfig(),
 		}
 		lb, err := loadbalancer.NewLoadBalancer(f.factory, pool, f.logger, f.cache)
 		if err != nil {

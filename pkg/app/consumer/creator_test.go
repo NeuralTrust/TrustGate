@@ -77,11 +77,12 @@ func TestCreator_Create_WithFallback(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().
 		Save(mock.Anything, mock.MatchedBy(func(c *domain.Consumer) bool {
-			return c.Fallback != nil &&
-				c.Fallback.Enabled &&
-				c.Fallback.Budget.MaxAttempts == 3 &&
-				len(c.Fallback.Chain) == 1 &&
-				c.Fallback.Chain[0] == fallbackID
+			fb := c.Fallback()
+			return fb != nil &&
+				fb.Enabled &&
+				fb.Budget.MaxAttempts == 3 &&
+				len(fb.Chain) == 1 &&
+				fb.Chain[0] == fallbackID
 		})).
 		Return(nil).
 		Once()
@@ -93,13 +94,13 @@ func TestCreator_Create_WithFallback(t *testing.T) {
 		Name:      "chat",
 		Type:      domain.TypeLLM,
 		Path:      "/v1/chat/completions",
-		Fallback:  fallback,
+		LLM:       &domain.LLMPolicy{Fallback: fallback},
 	})
 	if err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
-	if created.Fallback == nil || created.Fallback.Chain[0] != fallbackID {
-		t.Fatalf("Fallback = %#v, want chain with %s", created.Fallback, fallbackID)
+	if created.Fallback() == nil || created.Fallback().Chain[0] != fallbackID {
+		t.Fatalf("Fallback = %#v, want chain with %s", created.Fallback(), fallbackID)
 	}
 }
 

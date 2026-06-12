@@ -46,7 +46,7 @@ func routableConsumerWith(gatewayID ids.GatewayID, registries ...*registrydomain
 			GatewayID: gatewayID,
 			Name:      "test-consumer",
 			Path:      "/v1/chat/completions",
-			Algorithm: loadbalancer.AlgorithmRoundRobin,
+			LLM:       &domainconsumer.LLMPolicy{Algorithm: loadbalancer.AlgorithmRoundRobin},
 		},
 		Registries: registries,
 	}
@@ -138,7 +138,7 @@ func TestForward_FallbackChainAfterPoolExhausted(t *testing.T) {
 	pool := backendFor(gatewayID, "openai")
 	fallbackBk := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, pool)
-	rc.Consumer.Fallback = enabledFallback(fallbackBk.ID)
+	rc.Consumer.LLM.Fallback = enabledFallback(fallbackBk.ID)
 	rc.FallbackBackends = []*registrydomain.Registry{fallbackBk}
 
 	invoker := proxymocks.NewProviderInvoker(t)
@@ -170,7 +170,7 @@ func TestForward_AllCandidatesFailRelaysLast5xx(t *testing.T) {
 	pool := backendFor(gatewayID, "openai")
 	fallbackBk := backendFor(gatewayID, "anthropic")
 	rc := routableConsumerWith(gatewayID, pool)
-	rc.Consumer.Fallback = enabledFallback(fallbackBk.ID)
+	rc.Consumer.LLM.Fallback = enabledFallback(fallbackBk.ID)
 	rc.FallbackBackends = []*registrydomain.Registry{fallbackBk}
 
 	invoker := proxymocks.NewProviderInvoker(t)
