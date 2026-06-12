@@ -102,37 +102,48 @@ func New(params CreateParams) (*Consumer, error) {
 	return c, nil
 }
 
-func Rehydrate(
-	id ids.ConsumerID,
-	gatewayID ids.GatewayID,
-	name string,
-	consumerType Type,
-	path, algo string,
-	embeddingConfig *registry.EmbeddingConfig,
-	headers map[string]string,
-	active bool,
-	registryIDs []ids.RegistryID,
-	authIDs []ids.AuthID,
-	fallback *Fallback,
-	modelPolicies ModelPolicies,
-	createdAt, updatedAt time.Time,
-) *Consumer {
+type RehydrateParams struct {
+	ID              ids.ConsumerID
+	GatewayID       ids.GatewayID
+	Name            string
+	Type            Type
+	Path            string
+	Algorithm       string
+	EmbeddingConfig *registry.EmbeddingConfig
+	Headers         map[string]string
+	Active          bool
+	RegistryIDs     []ids.RegistryID
+	AuthIDs         []ids.AuthID
+	Fallback        *Fallback
+	ModelPolicies   ModelPolicies
+	Toolkit         Toolkit
+	FailMode        FailMode
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// Rehydrate reconstitutes a persisted consumer without regenerating identity
+// or timestamps. It must carry every persisted field: dropping Toolkit here
+// would silently widen an MCP consumer's allowlist (empty toolkit = expose all).
+func Rehydrate(params RehydrateParams) *Consumer {
 	return &Consumer{
-		ID:              id,
-		GatewayID:       gatewayID,
-		Name:            name,
-		Type:            consumerType,
-		Path:            path,
-		Algorithm:       algo,
-		EmbeddingConfig: embeddingConfig,
-		Headers:         headers,
-		Active:          active,
-		RegistryIDs:     registryIDs,
-		AuthIDs:         authIDs,
-		Fallback:        fallback,
-		ModelPolicies:   modelPolicies,
-		CreatedAt:       createdAt,
-		UpdatedAt:       updatedAt,
+		ID:              params.ID,
+		GatewayID:       params.GatewayID,
+		Name:            params.Name,
+		Type:            params.Type,
+		Path:            params.Path,
+		Algorithm:       params.Algorithm,
+		EmbeddingConfig: params.EmbeddingConfig,
+		Headers:         params.Headers,
+		Active:          params.Active,
+		RegistryIDs:     params.RegistryIDs,
+		AuthIDs:         params.AuthIDs,
+		Fallback:        params.Fallback,
+		ModelPolicies:   params.ModelPolicies,
+		Toolkit:         params.Toolkit,
+		FailMode:        params.FailMode,
+		CreatedAt:       params.CreatedAt,
+		UpdatedAt:       params.UpdatedAt,
 	}
 }
 

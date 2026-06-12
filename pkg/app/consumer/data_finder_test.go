@@ -21,15 +21,19 @@ import (
 
 func routableConsumer(gwID ids.GatewayID, authIDs []ids.AuthID) *domain.Consumer {
 	now := time.Now().UTC()
-	return domain.Rehydrate(
-		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
-		"/v1/chat", "round-robin", nil,
-		nil, true,
-		[]ids.RegistryID{ids.New[ids.RegistryKind]()}, authIDs,
-		nil,
-		nil,
-		now, now,
-	)
+	return domain.Rehydrate(domain.RehydrateParams{
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gwID,
+		Name:        "c",
+		Type:        domain.TypeLLM,
+		Path:        "/v1/chat",
+		Algorithm:   "round-robin",
+		Active:      true,
+		RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
+		AuthIDs:     authIDs,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
 }
 
 func hasPolicySlug(policies []*policydomain.Policy, slug string) bool {
@@ -146,21 +150,25 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	poolID := ids.New[ids.RegistryKind]()
 	fb1, fb2 := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
-	cons := domain.Rehydrate(
-		ids.New[ids.ConsumerKind](), gwID, "c", domain.TypeLLM,
-		"/v1/chat", "round-robin", nil,
-		nil, true,
-		[]ids.RegistryID{poolID}, nil,
-		&domain.Fallback{
+	cons := domain.Rehydrate(domain.RehydrateParams{
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gwID,
+		Name:        "c",
+		Type:        domain.TypeLLM,
+		Path:        "/v1/chat",
+		Algorithm:   "round-robin",
+		Active:      true,
+		RegistryIDs: []ids.RegistryID{poolID},
+		Fallback: &domain.Fallback{
 			Enabled:  true,
 			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
 			Budget:   domain.FallbackBudget{MaxAttempts: 9},
 
 			Chain: []ids.RegistryID{fb2, fb1},
 		},
-		nil,
-		now, now,
-	)
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
 
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Consumer{cons}, nil).Once()

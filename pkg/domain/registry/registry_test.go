@@ -129,9 +129,23 @@ func TestBackend_Rehydrate(t *testing.T) {
 	id := ids.New[ids.RegistryKind]()
 	gwID := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
-	b := Rehydrate(id, gwID, "x", "anthropic", map[string]any{"k": "v"}, "desc", 3, NewAPIKeyAuth("sk-1"), nil, now, now)
+	b := Rehydrate(RehydrateParams{
+		ID:              id,
+		GatewayID:       gwID,
+		Name:            "x",
+		Provider:        "anthropic",
+		ProviderOptions: map[string]any{"k": "v"},
+		Description:     "desc",
+		Weight:          3,
+		Auth:            NewAPIKeyAuth("sk-1"),
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
 	if b.ID != id || b.GatewayID != gwID {
 		t.Fatal("identity mismatch after rehydrate")
+	}
+	if b.Type != TypeLLM {
+		t.Fatalf("Type = %q, want %q (default for legacy rows)", b.Type, TypeLLM)
 	}
 	if b.Provider != "anthropic" {
 		t.Fatalf("Provider = %q", b.Provider)
@@ -141,6 +155,37 @@ func TestBackend_Rehydrate(t *testing.T) {
 	}
 	if !b.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")
+	}
+}
+
+func TestBackend_Rehydrate_MCP(t *testing.T) {
+	t.Parallel()
+	id := ids.New[ids.RegistryKind]()
+	gwID := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	target := &MCPTarget{
+		URL:  "https://mcp.example.com/mcp",
+		Auth: &MCPAuth{Mode: MCPAuthModeNone},
+	}
+	b := Rehydrate(RehydrateParams{
+		ID:        id,
+		GatewayID: gwID,
+		Name:      "github",
+		Type:      TypeMCP,
+		MCPTarget: target,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	// Regression: Type and MCPTarget must round-trip through Rehydrate;
+	// dropping them coerced MCP registries into corrupt LLM ones.
+	if b.Type != TypeMCP {
+		t.Fatalf("Type = %q, want %q", b.Type, TypeMCP)
+	}
+	if b.MCPTarget == nil || b.MCPTarget.URL != "https://mcp.example.com/mcp" {
+		t.Fatalf("MCPTarget lost on rehydrate: %+v", b.MCPTarget)
+	}
+	if err := b.Validate(); err != nil {
+		t.Fatalf("rehydrated MCP registry should validate: %v", err)
 	}
 }
 
@@ -305,19 +350,16 @@ func TestRegistry_Rehydrate_AllowsLegacyAzureWithoutEndpoint(t *testing.T) {
 		Type:  AuthTypeAzure,
 		Azure: &AzureAuth{APIKey: "legacy-key"},
 	}
-	got := Rehydrate(
-		ids.New[ids.RegistryKind](),
-		ids.New[ids.GatewayKind](),
-		"legacy-azure",
-		"azure",
-		nil,
-		"",
-		1,
-		auth,
-		nil,
-		time.Now().UTC(),
-		time.Now().UTC(),
-	)
+	got := Rehydrate(RehydrateParams{
+		ID:        ids.New[ids.RegistryKind](),
+		GatewayID: ids.New[ids.GatewayKind](),
+		Name:      "legacy-azure",
+		Provider:  "azure",
+		Weight:    1,
+		Auth:      auth,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
 
 	if got.Auth == nil || got.Auth.Azure == nil {
 		t.Fatalf("legacy Azure auth not rehydrated: %+v", got.Auth)

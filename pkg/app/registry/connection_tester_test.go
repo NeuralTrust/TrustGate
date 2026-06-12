@@ -57,11 +57,15 @@ func TestConnectionTester_ByID_ResolvesAndProbes(t *testing.T) {
 
 	gwID := ids.New[ids.GatewayKind]()
 	regID := ids.New[ids.RegistryKind]()
-	reg := domain.Rehydrate(
-		regID, gwID, "anthropic-backend", "anthropic",
-		nil, "", 0, domain.NewAPIKeyAuth("sk-anthropic"), nil,
-		time.Now(), time.Now(),
-	)
+	reg := domain.Rehydrate(domain.RehydrateParams{
+		ID:        regID,
+		GatewayID: gwID,
+		Name:      "anthropic-backend",
+		Provider:  "anthropic",
+		Auth:      domain.NewAPIKeyAuth("sk-anthropic"),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	})
 
 	finder.EXPECT().FindByID(mock.Anything, gwID, regID).Return(reg, nil).Once()
 	locator.EXPECT().Get("anthropic").Return(nil, nil).Once()

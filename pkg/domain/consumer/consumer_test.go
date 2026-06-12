@@ -170,16 +170,22 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	beID := ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
-	c := Rehydrate(
-		id, gwID, "x", TypeMCP,
-		"/v1/messages", "round-robin", nil,
-		map[string]string{"X-K": "v"},
-		true,
-		[]ids.RegistryID{beID}, nil,
-		nil,
-		nil,
-		now, now,
-	)
+	toolkit := Toolkit{{RegistryID: beID, Tool: "search", ExposeAs: "gh_search"}}
+	c := Rehydrate(RehydrateParams{
+		ID:          id,
+		GatewayID:   gwID,
+		Name:        "x",
+		Type:        TypeMCP,
+		Path:        "/v1/messages",
+		Algorithm:   "round-robin",
+		Headers:     map[string]string{"X-K": "v"},
+		Active:      true,
+		RegistryIDs: []ids.RegistryID{beID},
+		Toolkit:     toolkit,
+		FailMode:    FailModeOpen,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
 	if c.ID != id || c.GatewayID != gwID {
 		t.Fatal("identity mismatch after rehydrate")
 	}
@@ -191,6 +197,14 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	}
 	if !c.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")
+	}
+	// Regression: a rehydrated MCP consumer must keep its toolkit allowlist
+	// (empty toolkit means "expose everything") and its fail mode.
+	if len(c.Toolkit) != 1 || c.Toolkit[0].Tool != "search" || c.Toolkit[0].ExposeAs != "gh_search" {
+		t.Fatalf("Toolkit lost on rehydrate: %+v", c.Toolkit)
+	}
+	if c.FailMode != FailModeOpen {
+		t.Fatalf("FailMode = %q, want %q", c.FailMode, FailModeOpen)
 	}
 }
 

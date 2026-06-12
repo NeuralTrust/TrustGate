@@ -19,15 +19,18 @@ func ptr[T any](v T) *T { return &v }
 
 func existingConsumer(gwID ids.GatewayID, beID ids.RegistryID) *domain.Consumer {
 	now := time.Now().UTC()
-	return domain.Rehydrate(
-		ids.New[ids.ConsumerKind](), gwID, "old", domain.TypeLLM,
-		"/v1/chat", "round-robin", nil,
-		nil, true,
-		[]ids.RegistryID{beID}, nil,
-		nil,
-		nil,
-		now, now,
-	)
+	return domain.Rehydrate(domain.RehydrateParams{
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gwID,
+		Name:        "old",
+		Type:        domain.TypeLLM,
+		Path:        "/v1/chat",
+		Algorithm:   "round-robin",
+		Active:      true,
+		RegistryIDs: []ids.RegistryID{beID},
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
 }
 
 func TestUpdater_Update_Success(t *testing.T) {

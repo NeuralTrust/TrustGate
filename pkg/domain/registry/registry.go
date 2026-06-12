@@ -92,29 +92,44 @@ func (b *Registry) IsMCP() bool {
 	return b.Type == TypeMCP
 }
 
-func Rehydrate(
-	id ids.RegistryID,
-	gatewayID ids.GatewayID,
-	name, provider string,
-	providerOptions map[string]any,
-	description string,
-	weight int,
-	auth *TargetAuth,
-	healthChecks *HealthChecks,
-	createdAt, updatedAt time.Time,
-) *Registry {
+type RehydrateParams struct {
+	ID              ids.RegistryID
+	GatewayID       ids.GatewayID
+	Name            string
+	Type            Type
+	Provider        string
+	ProviderOptions map[string]any
+	Description     string
+	Weight          int
+	Auth            *TargetAuth
+	HealthChecks    *HealthChecks
+	MCPTarget       *MCPTarget
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// Rehydrate reconstitutes a persisted registry without regenerating identity
+// or timestamps. Type and MCPTarget must round-trip: dropping them would
+// coerce a rehydrated MCP registry into a corrupt LLM one.
+func Rehydrate(params RehydrateParams) *Registry {
+	regType := params.Type
+	if regType == "" {
+		regType = TypeLLM
+	}
 	return &Registry{
-		ID:              id,
-		GatewayID:       gatewayID,
-		Name:            name,
-		Provider:        provider,
-		ProviderOptions: providerOptions,
-		Description:     description,
-		Weight:          weight,
-		Auth:            auth,
-		HealthChecks:    healthChecks,
-		CreatedAt:       createdAt,
-		UpdatedAt:       updatedAt,
+		ID:              params.ID,
+		GatewayID:       params.GatewayID,
+		Name:            params.Name,
+		Type:            regType,
+		Provider:        params.Provider,
+		ProviderOptions: params.ProviderOptions,
+		Description:     params.Description,
+		Weight:          params.Weight,
+		Auth:            params.Auth,
+		HealthChecks:    params.HealthChecks,
+		MCPTarget:       params.MCPTarget,
+		CreatedAt:       params.CreatedAt,
+		UpdatedAt:       params.UpdatedAt,
 	}
 }
 
