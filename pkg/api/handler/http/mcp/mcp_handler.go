@@ -223,9 +223,6 @@ func (h *Handler) scopeByRoles(c *fiber.Ctx, rc *appconsumer.RoutableConsumer) (
 	if rc.Consumer.RoutingMode != consumerdomain.RoutingModeRoleBased {
 		return rc, nil
 	}
-	if h.roleScoper == nil {
-		return nil, fiber.NewError(fiber.StatusInternalServerError, "role scoping is not configured")
-	}
 	data, ok := appconsumer.DataFromContext(c.UserContext())
 	if !ok || data == nil {
 		return nil, fiber.NewError(fiber.StatusUnauthorized, "not authenticated")

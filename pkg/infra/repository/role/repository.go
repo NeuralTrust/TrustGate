@@ -306,7 +306,7 @@ func (r *Repository) detachRegistryIfUnreferenced(
 ) (*domain.Role, error) {
 	var current *domain.Role
 	err := database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		role, err := lockRoleModelPolicies(ctx, tx, roleID)
+		role, err := lockRolePolicies(ctx, tx, roleID)
 		if err != nil {
 			return err
 		}
@@ -314,7 +314,7 @@ func (r *Repository) detachRegistryIfUnreferenced(
 			return domain.ErrNotFound
 		}
 		if roleReferencesRegistry(role, registryID) {
-			return fmt.Errorf("role registry %s has dependent model_policies references: %w", registryID, commonerrors.ErrConflict)
+			return fmt.Errorf("role registry %s has dependent policy references: %w", registryID, commonerrors.ErrConflict)
 		}
 		const query = `DELETE FROM role_registry WHERE role_id = $1 AND registry_id = $2`
 		if _, err := tx.Exec(ctx, query, roleID, registryID); err != nil {
@@ -329,19 +329,19 @@ func (r *Repository) detachRegistryIfUnreferenced(
 	return current, nil
 }
 
-func lockRoleModelPolicies(ctx context.Context, tx pgx.Tx, roleID ids.RoleID) (*domain.Role, error) {
+func lockRolePolicies(ctx context.Context, tx pgx.Tx, roleID ids.RoleID) (*domain.Role, error) {
 	const query = `
-		SELECT id, gateway_id, model_policies
+		SELECT id, gateway_id, model_policies, mcp_policies
 		  FROM roles
 		 WHERE id = $1
 		 FOR UPDATE`
 	role := &domain.Role{}
-	var modelPoliciesRaw []byte
-	if err := tx.QueryRow(ctx, query, roleID).Scan(&role.ID, &role.GatewayID, &modelPoliciesRaw); err != nil {
+	var modelPoliciesRaw, mcpPoliciesRaw []byte
+	if err := tx.QueryRow(ctx, query, roleID).Scan(&role.ID, &role.GatewayID, &modelPoliciesRaw, &mcpPoliciesRaw); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
-		return nil, fmt.Errorf("role repository: lock model_policies: %w", err)
+		return nil, fmt.Errorf("role repository: lock policies: %w", err)
 	}
 	if len(modelPoliciesRaw) > 0 {
 		var modelPolicies domain.ModelPolicies
@@ -349,6 +349,13 @@ func lockRoleModelPolicies(ctx context.Context, tx pgx.Tx, roleID ids.RoleID) (*
 			return nil, fmt.Errorf("scan model_policies: %w", err)
 		}
 		role.ModelPolicies = modelPolicies
+	}
+	if len(mcpPoliciesRaw) > 0 {
+		var mcpPolicies domain.MCPPolicies
+		if err := json.Unmarshal(mcpPoliciesRaw, &mcpPolicies); err != nil {
+			return nil, fmt.Errorf("scan mcp_policies: %w", err)
+		}
+		role.MCPPolicies = &mcpPolicies
 	}
 	return role, nil
 }

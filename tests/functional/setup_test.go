@@ -131,7 +131,6 @@ func setupTestEnvironment() {
 	proxyCmd = startServer("PROXY", "proxy", cmdEnv)
 	waitForServerReady(fmt.Sprintf("%s/healthz", ProxyURL), "proxy server", cfg.Server.ProxyPort)
 
-	// The MCP plane serves the virtual MCP server E2E tests.
 	mcpCmd = startServer("MCP", "mcp", cmdEnv)
 	waitForServerReady(fmt.Sprintf("%s/healthz", MCPURL), "mcp server", cfg.Server.MCPPort)
 
