@@ -9,7 +9,7 @@ import (
 func resolveNames(candidates []binding) []binding {
 	items := make([]exposedName, len(candidates))
 	for i, b := range candidates {
-		items[i] = exposedName{name: b.exposed, registry: b.registry.Name}
+		items[i] = exposedName{name: b.exposed, registry: b.registry.Name, registryID: b.registry.ID.String()}
 	}
 	out := make([]binding, 0, len(candidates))
 	for i, name := range resolveExposedNames(items) {
@@ -21,10 +21,15 @@ func resolveNames(candidates []binding) []binding {
 }
 
 type exposedName struct {
-	name     string
-	registry string
+	name       string
+	registry   string
+	registryID string
 }
 
+// resolveExposedNames disambiguates collisions with the registry name and,
+// when two registries share both name and tool name, with a registry-ID
+// fragment. Every step derives from stable identifiers so the exposed name
+// never depends on registry iteration order.
 func resolveExposedNames(items []exposedName) []string {
 	counts := make(map[string]int, len(items))
 	for _, it := range items {
@@ -35,7 +40,10 @@ func resolveExposedNames(items []exposedName) []string {
 	for i, it := range items {
 		name := it.name
 		if counts[name] > 1 {
-			name = sanitizeName(it.registry) + "_" + it.name
+			name = registryPrefix(it) + "_" + it.name
+		}
+		if _, dup := taken[name]; dup {
+			name = registryPrefix(it) + "_" + shortID(it.registryID) + "_" + it.name
 		}
 		base := name
 		for n := 2; ; n++ {
@@ -55,4 +63,19 @@ var invalidNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 func sanitizeName(s string) string {
 	s = invalidNameChars.ReplaceAllString(strings.TrimSpace(s), "_")
 	return strings.Trim(s, "_")
+}
+
+func registryPrefix(it exposedName) string {
+	if p := sanitizeName(it.registry); p != "" {
+		return p
+	}
+	return "reg_" + shortID(it.registryID)
+}
+
+func shortID(id string) string {
+	id = strings.ReplaceAll(id, "-", "")
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }

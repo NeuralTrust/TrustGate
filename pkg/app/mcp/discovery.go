@@ -2,10 +2,13 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
@@ -33,6 +36,9 @@ func federate[T any](
 	for _, reg := range registries {
 		items, err := discoverCached(c, ctx, rc, reg, kind, list)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
 			}
@@ -73,10 +79,12 @@ func discoverCached[T any](
 	kind string,
 	list func(context.Context, Upstream) ([]T, error),
 ) ([]T, error) {
-	key := kind + ":" + reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000")
-	if cached, ok := c.discovery.Get(key); ok {
-		if items, ok := cached.([]T); ok {
-			return items, nil
+	key, cacheable := discoveryKey(ctx, reg, kind)
+	if cacheable {
+		if cached, ok := c.discovery.Get(key); ok {
+			if items, ok := cached.([]T); ok {
+				return items, nil
+			}
 		}
 	}
 	target, err := c.target(ctx, rc, reg)
@@ -92,6 +100,25 @@ func discoverCached[T any](
 	if err != nil {
 		return nil, err
 	}
-	c.discovery.Set(key, items)
+	if cacheable {
+		c.discovery.Set(key, items)
+	}
 	return items, nil
+}
+
+// discoveryKey scopes cached listings per principal whenever the upstream
+// sees a user-specific credential (passthrough/exchange/forwarded): those
+// servers may expose different tools per user, so sharing one cache entry
+// across principals would leak metadata between users.
+func discoveryKey(ctx context.Context, reg *registrydomain.Registry, kind string) (string, bool) {
+	key := kind + ":" + reg.ID.String() + ":" + reg.UpdatedAt.UTC().Format("20060102150405.000")
+	if !perPrincipalAuth(reg) {
+		return key, true
+	}
+	p := identity.PrincipalFromContext(ctx)
+	if p == nil {
+		return "", false
+	}
+	sum := sha256.Sum256([]byte(p.Issuer + "|" + p.Subject))
+	return key + ":" + hex.EncodeToString(sum[:8]), true
 }

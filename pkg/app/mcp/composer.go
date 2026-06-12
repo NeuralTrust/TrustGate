@@ -96,6 +96,9 @@ func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer
 	for _, reg := range registries {
 		tools, err := c.discover(ctx, rc, reg)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			if !failOpen {
 				return nil, fmt.Errorf("%w: registry %q: %w", ErrUpstreamUnavailable, reg.Name, err)
 			}
@@ -130,15 +133,10 @@ func selectTools(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, t
 	}
 	var out []binding
 	seen := make(map[string]struct{}, len(tools))
+	// Specific entries bind first so their expose_as aliases win regardless
+	// of where a wildcard entry sits in the toolkit.
 	for _, e := range entries {
 		if e.Tool == consumerdomain.ToolWildcard {
-			for _, t := range tools {
-				if _, dup := seen[t.Name]; dup {
-					continue
-				}
-				seen[t.Name] = struct{}{}
-				out = append(out, binding{registry: reg, tool: t, exposed: t.Name})
-			}
 			continue
 		}
 		t, ok := byName[e.Tool]
@@ -154,6 +152,18 @@ func selectTools(toolkit consumerdomain.Toolkit, reg *registrydomain.Registry, t
 			exposed = e.ExposeAs
 		}
 		out = append(out, binding{registry: reg, tool: t, exposed: exposed})
+	}
+	for _, e := range entries {
+		if e.Tool != consumerdomain.ToolWildcard {
+			continue
+		}
+		for _, t := range tools {
+			if _, dup := seen[t.Name]; dup {
+				continue
+			}
+			seen[t.Name] = struct{}{}
+			out = append(out, binding{registry: reg, tool: t, exposed: t.Name})
+		}
 	}
 	return out
 }

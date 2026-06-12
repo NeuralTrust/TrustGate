@@ -58,6 +58,9 @@ func (c *composer) ReadResource(ctx context.Context, rc *appconsumer.RoutableCon
 			return up.ListResources(ctx)
 		})
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			continue
 		}
 		for _, r := range resources {
@@ -66,7 +69,7 @@ func (c *composer) ReadResource(ctx context.Context, rc *appconsumer.RoutableCon
 			}
 		}
 	}
-	var lastErr error
+	var firstErr error
 	for _, reg := range registries {
 		if !toolkit.AllowsResource(reg.ID, uri) {
 			continue
@@ -75,13 +78,18 @@ func (c *composer) ReadResource(ctx context.Context, rc *appconsumer.RoutableCon
 		if err == nil {
 			return raw, nil
 		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if errors.Is(err, ErrNotSupported) {
 			continue
 		}
-		lastErr = err
+		if firstErr == nil {
+			firstErr = err
+		}
 	}
-	if lastErr != nil {
-		return nil, lastErr
+	if firstErr != nil {
+		return nil, firstErr
 	}
 	return nil, fmt.Errorf("%w: %s", ErrResourceNotFound, uri)
 }

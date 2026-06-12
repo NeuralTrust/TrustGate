@@ -10,8 +10,10 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	vaultdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/vault"
+	"golang.org/x/sync/singleflight"
 )
 
 var ErrNoPrincipal = errors.New("mcp: downstream auth mode requires an authenticated user identity")
@@ -40,6 +42,7 @@ type credentialResolver struct {
 	vault     vaultdomain.Repository
 	connect   appoauth.ConnectService
 	provider  appoauth.ProviderClient
+	refresh   singleflight.Group
 }
 
 func NewCredentialResolver(
@@ -113,16 +116,45 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		return err
 	}
 	if cred.Expired(vaultRefreshSkew) {
+		cred, err = r.refreshCredential(ctx, rc, reg, gatewayID, principal.Subject, cfg.Provider)
+		if err != nil {
+			return err
+		}
+	}
+	setAuthorization(target, "Bearer "+cred.AccessToken)
+	return nil
+}
+
+// refreshCredential funnels concurrent refreshes of the same grant through
+// singleflight: providers that rotate refresh tokens treat them as
+// single-use, so parallel refreshes would invalidate the grant and force the
+// user back through consent.
+func (r *credentialResolver) refreshCredential(
+	ctx context.Context,
+	rc *appconsumer.RoutableConsumer,
+	reg *registrydomain.Registry,
+	gatewayID ids.GatewayID,
+	subject, provider string,
+) (*vaultdomain.Credential, error) {
+	key := gatewayID.String() + "|" + subject + "|" + provider
+	v, err, _ := r.refresh.Do(key, func() (any, error) {
+		cred, err := r.vault.Find(ctx, gatewayID, subject, provider)
+		if err != nil {
+			return nil, err
+		}
+		if !cred.Expired(vaultRefreshSkew) {
+			return cred, nil
+		}
 		if cred.RefreshToken == "" {
-			return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject)
+			return nil, errGrantExhausted
 		}
 		refreshCfg, err := r.connect.RefreshAuth(ctx, gatewayID, reg)
 		if err != nil {
-			return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject)
+			return nil, err
 		}
 		fresh, err := r.provider.Refresh(ctx, refreshCfg, cred.RefreshToken)
 		if err != nil {
-			return r.consentRequired(ctx, rc, cfg.Provider, principal.Subject)
+			return nil, err
 		}
 		cred.AccessToken = fresh.AccessToken
 		if fresh.RefreshToken != "" {
@@ -130,12 +162,24 @@ func (r *credentialResolver) forwarded(ctx context.Context, rc *appconsumer.Rout
 		}
 		cred.ExpiresAt = fresh.ExpiresAt
 		if err := r.vault.Upsert(ctx, cred); err != nil {
-			return err
+			return nil, err
 		}
+		return cred, nil
+	})
+	if err != nil {
+		if errors.Is(err, errGrantExhausted) || errors.Is(err, appoauth.ErrInvalidGrant) || errors.Is(err, vaultdomain.ErrNotFound) {
+			return nil, r.consentRequired(ctx, rc, provider, subject)
+		}
+		return nil, err
 	}
-	setAuthorization(target, "Bearer "+cred.AccessToken)
-	return nil
+	cred, ok := v.(*vaultdomain.Credential)
+	if !ok {
+		return nil, errors.New("mcp credentials: unexpected singleflight result type")
+	}
+	return cred, nil
 }
+
+var errGrantExhausted = errors.New("mcp credentials: stored grant cannot be refreshed")
 
 func (r *credentialResolver) consentRequired(ctx context.Context, rc *appconsumer.RoutableConsumer, provider, principalSub string) error {
 	ticket, err := r.connect.CreateTicket(ctx, rc.Consumer.GatewayID, principalSub, rc.Consumer.Path)

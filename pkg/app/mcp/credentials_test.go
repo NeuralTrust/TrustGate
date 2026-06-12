@@ -253,19 +253,46 @@ func TestCredentialResolver_Forwarded(t *testing.T) {
 		}
 	})
 
-	t.Run("RefreshAuth failure falls back to consent", func(t *testing.T) {
+	t.Run("transient RefreshAuth failure propagates without consent", func(t *testing.T) {
 		t.Parallel()
 		vault := &memVault{}
 		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
 		_ = vault.Upsert(context.Background(), cred)
-		connect := &stubConnect{ticket: "t4", refreshErr: errors.New("client registration evicted")}
+		transient := errors.New("client registration store unavailable")
+		connect := &stubConnect{ticket: "t4", refreshErr: transient}
+		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil))
+		ctx := principalCtx(&identity.Principal{Subject: "alice"})
+		target := Target{}
+		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
+		if !errors.Is(err, transient) {
+			t.Fatalf("error = %v, want transient error propagated", err)
+		}
+		var consent *ConsentRequiredError
+		if errors.As(err, &consent) {
+			t.Fatal("transient failures must not force the user back through consent")
+		}
+	})
+
+	t.Run("invalid_grant on refresh falls back to consent", func(t *testing.T) {
+		t.Parallel()
+		idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant", "error_description": "revoked"})
+		}))
+		defer idp.Close()
+		vault := &memVault{}
+		cred, _ := vaultdomain.NewCredential(gw, "alice", "github", "", "old", "refresh-me", nil, time.Now().Add(-time.Hour))
+		_ = vault.Upsert(context.Background(), cred)
+		connect := &stubConnect{ticket: "t5", refreshCfg: &registrydomain.MCPAuth{
+			Provider: "github", ClientID: "dcr-id", TokenURL: idp.URL,
+		}}
 		r := NewCredentialResolver(nil, vault, connect, infraoauth.NewProviderClient(nil))
 		ctx := principalCtx(&identity.Principal{Subject: "alice"})
 		target := Target{}
 		err := r.Apply(ctx, mcpConsumer(gw), reg, &target)
 		var consent *ConsentRequiredError
-		if !errors.As(err, &consent) || consent.Ticket != "t4" {
-			t.Fatalf("error = %v, want consent fallback", err)
+		if !errors.As(err, &consent) || consent.Ticket != "t5" {
+			t.Fatalf("error = %v, want consent fallback on invalid_grant", err)
 		}
 	})
 

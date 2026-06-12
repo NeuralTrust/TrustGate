@@ -25,6 +25,11 @@ type ProviderClient interface {
 var ErrUpstreamNotDiscoverable = errors.New(
 	"oauth dcr: upstream does not publish OAuth protected-resource metadata; configure registration: manual with a pre-registered OAuth app")
 
+// ErrInvalidGrant marks a definitive token rejection by the provider
+// (revoked/expired grant). Callers should re-run consent; any other refresh
+// failure is transient and must not invalidate the stored grant.
+var ErrInvalidGrant = errors.New("oauth provider: grant is no longer valid")
+
 type UpstreamAuthServer struct {
 	Issuer                string   `json:"issuer"`
 	AuthorizationEndpoint string   `json:"authorization_endpoint"`

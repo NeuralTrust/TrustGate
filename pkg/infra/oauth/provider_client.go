@@ -16,6 +16,8 @@ import (
 
 var _ appoauth.ProviderClient = (*providerClient)(nil)
 
+const defaultProviderTokenTTL = time.Hour
+
 type providerClient struct {
 	client *http.Client
 }
@@ -110,11 +112,21 @@ func (p *providerClient) tokenCall(ctx context.Context, endpoint string, form ur
 		return nil, fmt.Errorf("oauth provider: non-JSON token response (status %d)", res.StatusCode)
 	}
 	if res.StatusCode != http.StatusOK || doc.Error != "" || doc.AccessToken == "" {
+		if doc.Error == "invalid_grant" {
+			return nil, fmt.Errorf("%w: %s", appoauth.ErrInvalidGrant, doc.ErrorDesc)
+		}
 		return nil, fmt.Errorf("oauth provider: token exchange failed (%s): %s", doc.Error, doc.ErrorDesc)
 	}
 	out := &appoauth.ProviderToken{AccessToken: doc.AccessToken, RefreshToken: doc.RefreshToken}
-	if doc.ExpiresIn > 0 {
+	switch {
+	case doc.ExpiresIn > 0:
 		out.ExpiresAt = time.Now().Add(time.Duration(doc.ExpiresIn) * time.Second)
+	case doc.RefreshToken != "":
+		// A refresh token implies the access token expires even if the
+		// provider omitted expires_in; assume a conservative TTL instead of
+		// treating it as non-expiring. Tokens without refresh_token and
+		// without expires_in (e.g. GitHub OAuth apps) really don't expire.
+		out.ExpiresAt = time.Now().Add(defaultProviderTokenTTL)
 	}
 	if doc.Scope != "" {
 		out.Scopes = strings.FieldsFunc(doc.Scope, func(r rune) bool { return r == ' ' || r == ',' })
