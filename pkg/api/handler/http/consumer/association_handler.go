@@ -3,6 +3,7 @@ package consumer
 import (
 	"fmt"
 
+	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer/request"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
@@ -10,10 +11,6 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
-
-type attachRegistryRequest struct {
-	Weight *int `json:"weight,omitempty"`
-}
 
 type AssociationHandler struct {
 	associator appconsumer.Associator
@@ -25,13 +22,15 @@ func NewAssociationHandler(associator appconsumer.Associator) *AssociationHandle
 
 // AttachRegistry godoc
 // @Summary      Attach a registry to a consumer
-// @Description  Associates a registry with a consumer (idempotent).
+// @Description  Associates a registry with a consumer (idempotent). The optional body sets the registry weight for weighted load balancing.
 // @Tags         consumers
+// @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        gateway_id   path  string  true  "Gateway id"   format(uuid)
-// @Param        id           path  string  true  "Consumer id"  format(uuid)
-// @Param        registry_id  path  string  true  "Registry id"  format(uuid)
+// @Param        gateway_id   path  string                          true   "Gateway id"   format(uuid)
+// @Param        id           path  string                          true   "Consumer id"  format(uuid)
+// @Param        registry_id  path  string                          true   "Registry id"  format(uuid)
+// @Param        body         body  request.AttachRegistryRequest   false  "Optional registry weight"
 // @Success      204          "No Content"
 // @Failure      400          {object}  helpers.ErrorBody
 // @Failure      401          {object}  helpers.ErrorBody
@@ -56,7 +55,7 @@ func parseAttachRegistryWeight(c *fiber.Ctx) (*int, error) {
 	if len(c.Body()) == 0 {
 		return nil, nil
 	}
-	var req attachRegistryRequest
+	var req request.AttachRegistryRequest
 	if err := c.BodyParser(&req); err != nil {
 		return nil, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation)
 	}

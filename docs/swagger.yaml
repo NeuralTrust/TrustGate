@@ -277,6 +277,12 @@ definitions:
       param_value:
         type: string
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest:
+    properties:
+      weight:
+        example: 1
+        type: integer
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.CreateConsumerRequest:
     properties:
       active:
@@ -2607,7 +2613,10 @@ paths:
       tags:
       - consumers
     post:
-      description: Associates a registry with a consumer (idempotent).
+      consumes:
+      - application/json
+      description: Associates a registry with a consumer (idempotent). The optional
+        body sets the registry weight for weighted load balancing.
       parameters:
       - description: Gateway id
         format: uuid
@@ -2627,6 +2636,11 @@ paths:
         name: registry_id
         required: true
         type: string
+      - description: Optional registry weight
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest'
       produces:
       - application/json
       responses:
