@@ -604,8 +604,13 @@ func TestMCPServer_RoleBasedConsumerRejectsIdentityWithoutMatchingRole(t *testin
 
 	apiKeyAuthID, key := CreateAPIKeyAuth(t, gatewayID, uniqueName("mcp-key"))
 	AttachAuth(t, gatewayID, consumerID, apiKeyAuthID)
-	status, body = mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
-	require.Equal(t, http.StatusForbidden, status, "claimless credentials cannot satisfy role_based consumers: %v", body)
+	// The freshly attached API key only reaches the MCP process after the admin
+	// plane's cache-invalidation event propagates across processes via Redis, so
+	// poll until the role_based consumer rejects the claimless credential.
+	require.Eventually(t, func() bool {
+		s, _ := mcpRPC(t, gatewayID, consumerID, apiKeyHeaders(key), "tools/list", nil)
+		return s == http.StatusForbidden
+	}, 5*time.Second, 100*time.Millisecond, "claimless credentials cannot satisfy role_based consumers")
 }
 
 func TestMCPServer_RoleBasedConsumerMergesMultipleRoles(t *testing.T) {
