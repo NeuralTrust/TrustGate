@@ -110,6 +110,7 @@ function buildCatalogTarget(
   }
 
   return {
+    code: server.code,
     url: substituteUrl(server, urlValues),
     transport: server.transport || DEFAULT_TRANSPORT,
     ...(Object.keys(headers).length > 0 ? { headers } : {}),
@@ -124,6 +125,19 @@ export function McpRegistriesView({ registries }: { registries: Registry[] }) {
   const mcpRegistries = useMemo(
     () => registries.filter((r) => r.type === "MCP"),
     [registries],
+  );
+
+  // Catalog servers already connected, keyed by their catalog code. The UI uses
+  // this to offer "Connect" for new servers and mark connected ones, mirroring
+  // how the LLM provider table derives state from the provider code.
+  const connectedCodes = useMemo(
+    () =>
+      new Set(
+        mcpRegistries
+          .map((r) => r.mcp_target?.code)
+          .filter((code): code is string => Boolean(code)),
+      ),
+    [mcpRegistries],
   );
 
   return (
@@ -189,7 +203,13 @@ export function McpRegistriesView({ registries }: { registries: Registry[] }) {
         </Table>
       )}
 
-      {form.open && <AddMcpDialog open={form.open} onOpenChange={form.setOpen} />}
+      {form.open && (
+        <AddMcpDialog
+          open={form.open}
+          onOpenChange={form.setOpen}
+          connectedCodes={connectedCodes}
+        />
+      )}
       <DeleteMcpDialog registry={toDelete} onClose={() => setToDelete(null)} />
     </div>
   );
@@ -237,9 +257,11 @@ function DeleteMcpDialog({
 function AddMcpDialog({
   open,
   onOpenChange,
+  connectedCodes,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  connectedCodes: Set<string>;
 }) {
   const gatewayId = useActiveGatewayId();
   const invalidate = useInvalidate();
@@ -443,12 +465,16 @@ function AddMcpDialog({
               disabled={catalogLoading}
             >
               <option value={CUSTOM}>Custom server (manual URL)</option>
-              {(catalog ?? []).map((s) => (
-                <option key={s.code} value={s.code}>
-                  {s.display_name}
-                  {s.vendor ? ` — ${s.vendor}` : ""}
-                </option>
-              ))}
+              {(catalog ?? []).map((s) => {
+                const connected = connectedCodes.has(s.code);
+                return (
+                  <option key={s.code} value={s.code} disabled={connected}>
+                    {s.display_name}
+                    {s.vendor ? ` — ${s.vendor}` : ""}
+                    {connected ? " (connected)" : ""}
+                  </option>
+                );
+              })}
             </Select>
           </Field>
 

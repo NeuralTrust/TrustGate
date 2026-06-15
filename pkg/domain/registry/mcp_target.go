@@ -67,6 +67,12 @@ type MCPAuth struct {
 }
 
 type MCPTarget struct {
+	// Code is the catalog entry this connection was created from (the MCP
+	// catalog's stable server code, e.g. "com.asana/mcp"). It is the canonical
+	// join key the UI uses to tell whether a catalog server is already
+	// connected, mirroring how an LLM registry stores its provider code. Empty
+	// for custom servers added by raw URL.
+	Code      string            `json:"code,omitempty"`
 	URL       string            `json:"url"`
 	Transport MCPTransport      `json:"transport,omitempty"`
 	Headers   map[string]string `json:"headers,omitempty"`

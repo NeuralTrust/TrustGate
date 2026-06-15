@@ -107,6 +107,8 @@ export interface MCPAuth {
 }
 
 export interface MCPTarget {
+  /** Catalog server code this connection was created from (empty for custom servers). */
+  code?: string;
   url: string;
   transport?: string;
   headers?: Record<string, string>;

@@ -1390,7 +1390,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Associates a registry with a consumer (idempotent).",
+                "description": "Associates a registry with a consumer (idempotent). The optional body sets the registry weight for weighted load balancing.",
                 "tags": [
                     "consumers"
                 ],
@@ -1427,6 +1427,16 @@
                         }
                     }
                 ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest"
+                            }
+                        }
+                    },
+                    "description": "Optional registry weight"
+                },
                 "responses": {
                     "204": {
                         "description": "No Content"
@@ -4427,6 +4437,15 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest": {
+                "type": "object",
+                "properties": {
+                    "weight": {
+                        "type": "integer",
+                        "example": 1
+                    }
+                }
+            },
             "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.CreateConsumerRequest": {
                 "type": "object",
                 "properties": {
@@ -5395,6 +5414,9 @@
                     "auth": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPAuthRequest"
                     },
+                    "code": {
+                        "type": "string"
+                    },
                     "headers": {
                         "type": "object",
                         "additionalProperties": {
@@ -5716,6 +5738,9 @@
                 "properties": {
                     "auth": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPAuthResponse"
+                    },
+                    "code": {
+                        "type": "string"
                     },
                     "headers": {
                         "type": "object",

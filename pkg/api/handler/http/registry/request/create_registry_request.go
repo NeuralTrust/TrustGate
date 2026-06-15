@@ -20,6 +20,7 @@ type CreateRegistryRequest struct {
 }
 
 type MCPTargetRequest struct {
+	Code      string            `json:"code,omitempty"`
 	URL       string            `json:"url"`
 	Transport string            `json:"transport,omitempty"`
 	Headers   map[string]string `json:"headers,omitempty"`
@@ -163,6 +164,7 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 		return nil
 	}
 	out := &domain.MCPTarget{
+		Code:      t.Code,
 		URL:       t.URL,
 		Transport: domain.MCPTransport(t.Transport),
 		Headers:   t.Headers,
