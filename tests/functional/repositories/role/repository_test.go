@@ -84,7 +84,7 @@ func seedGateway(t *testing.T, gateway *gatewayrepo.Repository, name string) ids
 
 func seedRegistry(t *testing.T, registry *registryrepo.Repository, gatewayID ids.GatewayID, name string) ids.RegistryID {
 	t.Helper()
-	r, err := registrydomain.NewLLMRegistry(gatewayID, name, "", 1, &registrydomain.LLMTarget{
+	r, err := registrydomain.NewLLMRegistry(gatewayID, name, "", &registrydomain.LLMTarget{
 		Provider: "openai",
 		Auth:     registrydomain.NewAPIKeyAuth("sk-test"),
 	})

@@ -33,7 +33,7 @@ func (f *BaseFactory) CreateStrategy(input StrategyInput) (Strategy, error) {
 	case algorithm.Random:
 		return strategies.NewRandom(input.Registries), nil
 	case algorithm.WeightedRoundRobin:
-		return strategies.NewWeightedRoundRobin(input.Registries), nil
+		return strategies.NewWeightedRoundRobin(input.Registries, input.Weights), nil
 	case algorithm.LeastConnections:
 		return strategies.NewLeastConnections(input.Registries), nil
 	case algorithm.Semantic:

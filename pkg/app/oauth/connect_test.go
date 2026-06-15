@@ -119,7 +119,7 @@ func (s *stubDataFinder) FindByGateway(context.Context, ids.GatewayID) (*appcons
 func connectFixture(t *testing.T, providerTokenURL string) (oauth.ConnectService, *memVaultRepo, ids.GatewayID) {
 	t.Helper()
 	gw := ids.New[ids.GatewayKind]()
-	reg, err := registrydomain.NewMCPRegistry(gw, "github-mcp", "", 0, &registrydomain.MCPTarget{
+	reg, err := registrydomain.NewMCPRegistry(gw, "github-mcp", "", &registrydomain.MCPTarget{
 		URL: "https://up.example.com/mcp",
 		Auth: &registrydomain.MCPAuth{
 			Mode: registrydomain.MCPAuthModeForwarded, Provider: "github",
@@ -271,7 +271,7 @@ func TestConnectService_AutoRegistrationFlow(t *testing.T) {
 	upstream := fakeSpecUpstream(t, &registrations, &tokenForm)
 
 	gw := ids.New[ids.GatewayKind]()
-	reg, err := registrydomain.NewMCPRegistry(gw, "linear-mcp", "", 0, &registrydomain.MCPTarget{
+	reg, err := registrydomain.NewMCPRegistry(gw, "linear-mcp", "", &registrydomain.MCPTarget{
 		URL: upstream.URL + "/mcp",
 		Auth: &registrydomain.MCPAuth{
 			Mode:         registrydomain.MCPAuthModeForwarded,
@@ -365,7 +365,7 @@ func TestConnectService_AutoRegistrationUpstreamNotDiscoverable(t *testing.T) {
 	defer dead.Close()
 
 	gw := ids.New[ids.GatewayKind]()
-	reg, _ := registrydomain.NewMCPRegistry(gw, "legacy-mcp", "", 0, &registrydomain.MCPTarget{
+	reg, _ := registrydomain.NewMCPRegistry(gw, "legacy-mcp", "", &registrydomain.MCPTarget{
 		URL: dead.URL + "/mcp",
 		Auth: &registrydomain.MCPAuth{
 			Mode: registrydomain.MCPAuthModeForwarded, Provider: "legacy",

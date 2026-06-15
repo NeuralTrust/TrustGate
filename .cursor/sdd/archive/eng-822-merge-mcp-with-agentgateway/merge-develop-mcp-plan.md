@@ -33,6 +33,37 @@ tests + race + lint verdes).
 
 Pendiente: Fase 4 (smoke manual + descripción de la PR).
 
+### Fase 5 — MCP role_based + e2e del server MCP
+
+Cierra el follow-up de D3: los roles pasan a llevar `mcp_policies` tipadas y el plano
+MCP soporta consumers `role_based`.
+
+Diseño:
+
+- **`role.MCPPolicies`**: el campo `mcp_policies` del rol deja de ser `json.RawMessage`
+  y pasa a ser el mismo objeto que usa el consumer inline (`consumer.MCPPolicy`:
+  `{toolkit: [...], fail_mode}`), de forma que el wire format es idéntico en ambos
+  modos. Se valida contra los registries vinculados al rol (mismo patrón que
+  `model_policies`: vincular registries primero, configurar políticas después).
+- **Roles mixtos**: un rol puede vincular registries LLM y MCP a la vez;
+  `model_policies` aplica a los LLM (flujo proxy) y `mcp_policies.toolkit` a los MCP
+  (flujo MCP). El consumer es de un único tipo y consume solo la parte del rol que
+  le corresponde.
+- **Resolución en el plano MCP** (`app/mcp/role_scope.go`): para un consumer MCP
+  `role_based`, en cada request se resuelven los roles del `Principal` (claims →
+  `idp_mapping`, igual que el proxy) ∩ `consumer.RoleIDs`; con esos roles se
+  construye una vista efectiva del consumer: registries = unión de los registries
+  MCP de los roles, toolkit = unión de los toolkits, fail_mode = `open` solo si
+  todos los roles aplicables lo declaran (closed domina). Sin principal con claims
+  o sin roles que matcheen → 403.
+- **e2e del server MCP** (`tests/functional/mcp_e2e_test.go`): el harness arranca
+  también el server MCP y un upstream MCP fake (go-sdk streamable HTTP) en el
+  proceso de test. Casos cubiertos: initialize/ping, 401 sin credencial, 403 con
+  credencial de otro consumer, tools/list filtrado por toolkit (wildcard, selector,
+  expose_as), tools/call permitido/denegado, prompts y resources (read con
+  patrones), fail_mode open vs closed con upstream caído, y consumer role_based
+  con JWT firmado contra un JWKS local + idp_mapping.
+
 ## Contexto
 
 Las dos ramas divergen en `520000a` (merge PR #41):

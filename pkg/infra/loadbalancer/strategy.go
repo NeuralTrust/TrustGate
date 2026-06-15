@@ -24,6 +24,7 @@ type Strategy interface {
 type StrategyInput struct {
 	Algorithm       string
 	Registries      []*registry.Registry
+	Weights         map[ids.RegistryID]int
 	EmbeddingConfig *embedding.Config
 }
 

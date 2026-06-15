@@ -14,7 +14,6 @@ type CreateInput struct {
 	Name        string
 	Type        domain.Type
 	Description string
-	Weight      int
 	LLMTarget   *domain.LLMTarget
 	MCPTarget   *domain.MCPTarget
 }
@@ -48,7 +47,6 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 			in.GatewayID,
 			in.Name,
 			in.Description,
-			in.Weight,
 			in.MCPTarget,
 		)
 	} else {
@@ -56,7 +54,6 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 			in.GatewayID,
 			in.Name,
 			in.Description,
-			in.Weight,
 			in.LLMTarget,
 		)
 	}

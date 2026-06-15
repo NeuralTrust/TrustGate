@@ -33,7 +33,6 @@ func TestLoadBalancer_Close_IdempotentAndSafe(t *testing.T) {
 		ids.New[ids.GatewayKind](),
 		"backend-1",
 		"",
-		1,
 		&registry.LLMTarget{Provider: "openai", Auth: registry.NewAPIKeyAuth("sk-1")},
 	)
 	if err != nil {

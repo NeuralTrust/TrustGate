@@ -19,6 +19,7 @@ import (
 type Pool struct {
 	ID              string
 	Registries      []*registry.Registry
+	Weights         map[ids.RegistryID]int
 	Algorithm       string
 	EmbeddingConfig *registry.EmbeddingConfig
 }
@@ -53,6 +54,7 @@ func NewLoadBalancer(
 	strategy, err := factory.CreateStrategy(StrategyInput{
 		Algorithm:       pool.Algorithm,
 		Registries:      pool.Registries,
+		Weights:         pool.Weights,
 		EmbeddingConfig: embeddingCfg,
 	})
 	if err != nil {

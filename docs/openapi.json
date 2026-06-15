@@ -4645,6 +4645,9 @@
                     },
                     "model_policies": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest"
+                    },
+                    "weight": {
+                        "type": "integer"
                     }
                 }
             },
@@ -4775,6 +4778,12 @@
                         "type": "array",
                         "items": {
                             "type": "string"
+                        }
+                    },
+                    "registry_weights": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryWeightResponse"
                         }
                     },
                     "role_ids": {
@@ -4946,6 +4955,17 @@
                     },
                     "registry_id": {
                         "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryWeightResponse": {
+                "type": "object",
+                "properties": {
+                    "registry_id": {
+                        "type": "string"
+                    },
+                    "weight": {
+                        "type": "integer"
                     }
                 }
             },
@@ -5337,9 +5357,6 @@
                     },
                     "type": {
                         "type": "string"
-                    },
-                    "weight": {
-                        "type": "integer"
                     }
                 }
             },
@@ -5565,9 +5582,6 @@
                     "provider_options": {
                         "type": "object",
                         "additionalProperties": {}
-                    },
-                    "weight": {
-                        "type": "integer"
                     }
                 }
             },
@@ -5808,9 +5822,6 @@
                     },
                     "updated_at": {
                         "type": "string"
-                    },
-                    "weight": {
-                        "type": "integer"
                     }
                 }
             },

@@ -546,6 +546,7 @@ func (f *forwarder) loadBalancerFor(rc *appconsumer.RoutableConsumer) (*loadbala
 		return loadbalancer.Pool{
 			ID:              key,
 			Registries:      rc.Registries,
+			Weights:         rc.Consumer.RegistryWeights,
 			Algorithm:       lbAlgorithm,
 			EmbeddingConfig: embeddingConfig,
 		}
@@ -563,6 +564,7 @@ func (f *forwarder) poolLoadBalancerFor(
 		return loadbalancer.Pool{
 			ID:              key,
 			Registries:      candidates.Registries(),
+			Weights:         rc.Consumer.RegistryWeights,
 			Algorithm:       lbAlgorithm,
 			EmbeddingConfig: embeddingConfig,
 		}

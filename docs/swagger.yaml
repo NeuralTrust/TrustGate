@@ -420,6 +420,8 @@ definitions:
         type: string
       model_policies:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest'
+      weight:
+        type: integer
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest:
     properties:
@@ -505,6 +507,10 @@ definitions:
       registry_ids:
         items:
           type: string
+        type: array
+      registry_weights:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryWeightResponse'
         type: array
       role_ids:
         items:
@@ -617,6 +623,13 @@ definitions:
         type: string
       registry_id:
         type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryWeightResponse:
+    properties:
+      registry_id:
+        type: string
+      weight:
+        type: integer
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ToolkitEntryResponse:
     properties:
@@ -876,8 +889,6 @@ definitions:
         type: object
       type:
         type: string
-      weight:
-        type: integer
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest:
     properties:
@@ -1028,8 +1039,6 @@ definitions:
       provider_options:
         additionalProperties: {}
         type: object
-      weight:
-        type: integer
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.APIKeyAuthResponse:
     properties:
@@ -1190,8 +1199,6 @@ definitions:
         type: string
       updated_at:
         type: string
-      weight:
-        type: integer
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TargetAuthResponse:
     properties:

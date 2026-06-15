@@ -14,7 +14,6 @@ type CreateRegistryRequest struct {
 	Provider        string               `json:"provider,omitempty"`
 	ProviderOptions map[string]any       `json:"provider_options,omitempty"`
 	Description     string               `json:"description,omitempty"`
-	Weight          int                  `json:"weight,omitempty"`
 	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
 	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
@@ -117,9 +116,6 @@ func (r CreateRegistryRequest) Validate() error {
 	}
 	if len(r.Name) > 255 {
 		return fmt.Errorf("name too long (max 255): %w", commonerrors.ErrValidation)
-	}
-	if r.Weight < 0 {
-		return fmt.Errorf("weight cannot be negative: %w", commonerrors.ErrValidation)
 	}
 	if r.ToType() == domain.TypeMCP {
 		if r.MCPTarget == nil {

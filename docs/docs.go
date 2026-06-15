@@ -3838,6 +3838,9 @@ const docTemplate = `{
                 },
                 "model_policies": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest"
+                },
+                "weight": {
+                    "type": "integer"
                 }
             }
         },
@@ -3968,6 +3971,12 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "type": "string"
+                    }
+                },
+                "registry_weights": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryWeightResponse"
                     }
                 },
                 "role_ids": {
@@ -4139,6 +4148,17 @@ const docTemplate = `{
                 },
                 "registry_id": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryWeightResponse": {
+            "type": "object",
+            "properties": {
+                "registry_id": {
+                    "type": "string"
+                },
+                "weight": {
+                    "type": "integer"
                 }
             }
         },
@@ -4530,9 +4550,6 @@ const docTemplate = `{
                 },
                 "type": {
                     "type": "string"
-                },
-                "weight": {
-                    "type": "integer"
                 }
             }
         },
@@ -4758,9 +4775,6 @@ const docTemplate = `{
                 "provider_options": {
                     "type": "object",
                     "additionalProperties": {}
-                },
-                "weight": {
-                    "type": "integer"
                 }
             }
         },
@@ -5001,9 +5015,6 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
-                },
-                "weight": {
-                    "type": "integer"
                 }
             }
         },

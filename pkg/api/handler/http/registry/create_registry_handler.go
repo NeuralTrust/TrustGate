@@ -53,7 +53,6 @@ func (h *CreateRegistryHandler) Handle(c *fiber.Ctx) error {
 		Name:        req.Name,
 		Type:        req.ToType(),
 		Description: req.Description,
-		Weight:      req.Weight,
 		LLMTarget:   req.ToLLMTarget(),
 		MCPTarget:   req.ToMCPTarget(),
 	})

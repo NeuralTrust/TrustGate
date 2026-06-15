@@ -17,7 +17,7 @@ import (
 
 //go:generate mockery --name=Associator --dir=. --output=./mocks --filename=consumer_associator_mock.go --case=underscore --with-expecter
 type Associator interface {
-	AttachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error
+	AttachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID, weight *int) error
 	DetachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error
 	AttachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error
 	DetachRole(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, roleID ids.RoleID) error
@@ -64,7 +64,7 @@ func NewAssociator(
 	}
 }
 
-func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
+func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID, weight *int) error {
 	cons, err := a.consumerInGateway(ctx, gatewayID, consumerID)
 	if err != nil {
 		return err
@@ -80,7 +80,7 @@ func (a *associator) AttachRegistry(ctx context.Context, gatewayID ids.GatewayID
 		return fmt.Errorf("%w: registry of type %s cannot be attached to a consumer of type %s",
 			registrydomain.ErrInvalidRegistryID, reg.Type, cons.Type)
 	}
-	if err := a.repo.AttachRegistry(ctx, consumerID, registryID); err != nil {
+	if err := a.repo.AttachRegistry(ctx, consumerID, registryID, weight); err != nil {
 		return err
 	}
 	a.invalidate(ctx, cons)

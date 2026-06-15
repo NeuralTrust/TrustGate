@@ -50,11 +50,11 @@ func (r *Repository) Save(ctx context.Context, b *domain.Registry) error {
 		return fmt.Errorf("registry repository: marshal mcp_target: %w", err)
 	}
 	const query = `
-		INSERT INTO registries (id, gateway_id, name, type, provider, provider_options, auth, weight, description, health_checks, mcp_target, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+		INSERT INTO registries (id, gateway_id, name, type, provider, provider_options, auth, description, health_checks, mcp_target, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			b.ID, b.GatewayID, b.Name, registryType(b), b.Provider(), providerOptionsBytes, authBytes, b.Weight, b.Description, healthChecksBytes, mcpTargetBytes, b.CreatedAt, b.UpdatedAt,
+			b.ID, b.GatewayID, b.Name, registryType(b), b.Provider(), providerOptionsBytes, authBytes, b.Description, healthChecksBytes, mcpTargetBytes, b.CreatedAt, b.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -89,15 +89,14 @@ func (r *Repository) Update(ctx context.Context, b *domain.Registry) error {
 		       provider         = $4,
 		       provider_options = $5,
 		       auth             = $6,
-		       weight           = $7,
-		       description      = $8,
-		       health_checks    = $9,
-		       mcp_target       = $10,
-		       updated_at       = $11
+		       description      = $7,
+		       health_checks    = $8,
+		       mcp_target       = $9,
+		       updated_at       = $10
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			b.ID, b.Name, registryType(b), b.Provider(), providerOptionsBytes, authBytes, b.Weight, b.Description, healthChecksBytes, mcpTargetBytes, b.UpdatedAt,
+			b.ID, b.Name, registryType(b), b.Provider(), providerOptionsBytes, authBytes, b.Description, healthChecksBytes, mcpTargetBytes, b.UpdatedAt,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -146,7 +145,7 @@ func ensureNotInFallbackChain(ctx context.Context, tx pgx.Tx, id ids.RegistryID)
 
 func (r *Repository) FindByID(ctx context.Context, id ids.RegistryID) (*domain.Registry, error) {
 	const query = `
-		SELECT id, gateway_id, name, type, provider, provider_options, auth, weight, description, health_checks, mcp_target, created_at, updated_at
+		SELECT id, gateway_id, name, type, provider, provider_options, auth, description, health_checks, mcp_target, created_at, updated_at
 		  FROM registries
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -165,7 +164,7 @@ func (r *Repository) FindByIDs(ctx context.Context, gatewayID ids.GatewayID, reg
 		return nil, nil
 	}
 	const query = `
-		SELECT id, gateway_id, name, type, provider, provider_options, auth, weight, description, health_checks, mcp_target, created_at, updated_at
+		SELECT id, gateway_id, name, type, provider, provider_options, auth, description, health_checks, mcp_target, created_at, updated_at
 		  FROM registries
 		 WHERE gateway_id = $1
 		   AND id = ANY($2::uuid[])`
@@ -212,7 +211,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, gateway_id, name, type, provider, provider_options, auth, weight, description, health_checks, mcp_target, created_at, updated_at
+		SELECT id, gateway_id, name, type, provider, provider_options, auth, description, health_checks, mcp_target, created_at, updated_at
 		  FROM registries
 		 WHERE ($1::uuid IS NULL OR gateway_id = $1)
 		   AND ($2 = '' OR lower(name) LIKE '%' || lower($2) || '%')
@@ -249,7 +248,7 @@ func scanRegistry(s rowScanner) (*domain.Registry, error) {
 	var typeRaw string
 	if err := s.Scan(
 		&b.ID, &b.GatewayID, &b.Name, &typeRaw, &providerRaw,
-		&providerOptionsRaw, &authRaw, &b.Weight, &b.Description, &healthChecksRaw, &mcpTargetRaw,
+		&providerOptionsRaw, &authRaw, &b.Description, &healthChecksRaw, &mcpTargetRaw,
 		&b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
 		return nil, err

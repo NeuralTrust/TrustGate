@@ -120,17 +120,17 @@ func (_c *Associator_AttachPolicy_Call) RunAndReturn(run func(context.Context, i
 	return _c
 }
 
-// AttachRegistry provides a mock function with given fields: ctx, gatewayID, consumerID, registryID
-func (_m *Associator) AttachRegistry(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind]) error {
-	ret := _m.Called(ctx, gatewayID, consumerID, registryID)
+// AttachRegistry provides a mock function with given fields: ctx, gatewayID, consumerID, registryID, weight
+func (_m *Associator) AttachRegistry(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind], weight *int) error {
+	ret := _m.Called(ctx, gatewayID, consumerID, registryID, weight)
 
 	if len(ret) == 0 {
 		panic("no return value specified for AttachRegistry")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error); ok {
-		r0 = rf(ctx, gatewayID, consumerID, registryID)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind], *int) error); ok {
+		r0 = rf(ctx, gatewayID, consumerID, registryID, weight)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -148,13 +148,14 @@ type Associator_AttachRegistry_Call struct {
 //   - gatewayID ids.ID[ids.GatewayKind]
 //   - consumerID ids.ID[ids.ConsumerKind]
 //   - registryID ids.ID[ids.RegistryKind]
-func (_e *Associator_Expecter) AttachRegistry(ctx interface{}, gatewayID interface{}, consumerID interface{}, registryID interface{}) *Associator_AttachRegistry_Call {
-	return &Associator_AttachRegistry_Call{Call: _e.mock.On("AttachRegistry", ctx, gatewayID, consumerID, registryID)}
+//   - weight *int
+func (_e *Associator_Expecter) AttachRegistry(ctx interface{}, gatewayID interface{}, consumerID interface{}, registryID interface{}, weight interface{}) *Associator_AttachRegistry_Call {
+	return &Associator_AttachRegistry_Call{Call: _e.mock.On("AttachRegistry", ctx, gatewayID, consumerID, registryID, weight)}
 }
 
-func (_c *Associator_AttachRegistry_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind])) *Associator_AttachRegistry_Call {
+func (_c *Associator_AttachRegistry_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind], weight *int)) *Associator_AttachRegistry_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.ConsumerKind]), args[3].(ids.ID[ids.RegistryKind]))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.ConsumerKind]), args[3].(ids.ID[ids.RegistryKind]), args[4].(*int))
 	})
 	return _c
 }
@@ -164,7 +165,7 @@ func (_c *Associator_AttachRegistry_Call) Return(_a0 error) *Associator_AttachRe
 	return _c
 }
 
-func (_c *Associator_AttachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error) *Associator_AttachRegistry_Call {
+func (_c *Associator_AttachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind], *int) error) *Associator_AttachRegistry_Call {
 	_c.Call.Return(run)
 	return _c
 }

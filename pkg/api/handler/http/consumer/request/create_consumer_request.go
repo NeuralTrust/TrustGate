@@ -28,6 +28,7 @@ type CreateConsumerRequest struct {
 
 type RegistryBindingRequest struct {
 	ID            string                      `json:"id"`
+	Weight        *int                        `json:"weight,omitempty"`
 	ModelPolicies *RegistryModelPolicyRequest `json:"model_policies,omitempty"`
 }
 
@@ -197,26 +198,32 @@ func (r CreateConsumerRequest) ToMCPPolicy() (*domain.MCPPolicy, error) {
 	}, nil
 }
 
-func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, domain.ModelPolicies, error) {
+func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, map[ids.RegistryID]int, domain.ModelPolicies, error) {
 	policies, err := parseModelPolicies(r.ModelPolicies)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if len(r.Registries) == 0 {
-		return nil, policies, nil
+		return nil, nil, policies, nil
 	}
 	registryIDs := make([]ids.RegistryID, 0, len(r.Registries))
+	weights := make(map[ids.RegistryID]int, len(r.Registries))
 	seen := make(map[ids.RegistryID]struct{}, len(r.Registries))
 	for i, binding := range r.Registries {
 		id, err := ids.Parse[ids.RegistryKind](binding.ID)
 		if err != nil {
-			return nil, nil, fmt.Errorf("registries[%d]: invalid id %q: %w", i, binding.ID, commonerrors.ErrValidation)
+			return nil, nil, nil, fmt.Errorf("registries[%d]: invalid id %q: %w", i, binding.ID, commonerrors.ErrValidation)
 		}
 		if _, dup := seen[id]; dup {
-			return nil, nil, fmt.Errorf("registries[%d]: duplicate id %q: %w", i, binding.ID, commonerrors.ErrValidation)
+			return nil, nil, nil, fmt.Errorf("registries[%d]: duplicate id %q: %w", i, binding.ID, commonerrors.ErrValidation)
 		}
 		seen[id] = struct{}{}
 		registryIDs = append(registryIDs, id)
+		weight, err := normalizeBindingWeight(binding.Weight)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("registries[%d]: %w", i, err)
+		}
+		weights[id] = weight
 		if binding.ModelPolicies == nil {
 			continue
 		}
@@ -224,7 +231,7 @@ func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, domain.Mo
 			policies = make(domain.ModelPolicies, len(r.Registries))
 		}
 		if _, dup := policies[id]; dup {
-			return nil, nil, fmt.Errorf(
+			return nil, nil, nil, fmt.Errorf(
 				"registries[%d]: model policy for %q already declared in model_policies: %w",
 				i, binding.ID, commonerrors.ErrValidation,
 			)
@@ -234,7 +241,20 @@ func (r CreateConsumerRequest) ToRegistryBindings() ([]ids.RegistryID, domain.Mo
 			Default: binding.ModelPolicies.Default,
 		}
 	}
-	return registryIDs, policies, nil
+	return registryIDs, weights, policies, nil
+}
+
+func normalizeBindingWeight(weight *int) (int, error) {
+	if weight == nil {
+		return domain.DefaultRegistryWeight, nil
+	}
+	if *weight < domain.DefaultRegistryWeight || *weight > domain.MaxRegistryWeight {
+		return 0, fmt.Errorf(
+			"weight must be between %d and %d: %w",
+			domain.DefaultRegistryWeight, domain.MaxRegistryWeight, commonerrors.ErrValidation,
+		)
+	}
+	return *weight, nil
 }
 
 func (r CreateConsumerRequest) ToRoleIDs() ([]ids.RoleID, error) {

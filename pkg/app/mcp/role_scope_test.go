@@ -47,7 +47,7 @@ func groupMapping(t *testing.T, group string) json.RawMessage {
 
 func roleMCPRegistry(t *testing.T, gw ids.GatewayID, name string) *registrydomain.Registry {
 	t.Helper()
-	reg, err := registrydomain.NewMCPRegistry(gw, name, "", 100, &registrydomain.MCPTarget{URL: "http://upstream.local/mcp"})
+	reg, err := registrydomain.NewMCPRegistry(gw, name, "", &registrydomain.MCPTarget{URL: "http://upstream.local/mcp"})
 	if err != nil {
 		t.Fatalf("new mcp registry: %v", err)
 	}
@@ -56,7 +56,7 @@ func roleMCPRegistry(t *testing.T, gw ids.GatewayID, name string) *registrydomai
 
 func llmRegistry(t *testing.T, gw ids.GatewayID, name string) *registrydomain.Registry {
 	t.Helper()
-	reg, err := registrydomain.NewLLMRegistry(gw, name, "", 100, &registrydomain.LLMTarget{
+	reg, err := registrydomain.NewLLMRegistry(gw, name, "", &registrydomain.LLMTarget{
 		Provider: "openai",
 		Auth:     registrydomain.NewAPIKeyAuth("sk-test"),
 	})

@@ -40,6 +40,8 @@ const consumerSelectColumns = `
 		       c.created_at, c.updated_at,
 		       COALESCE((SELECT array_agg(cb.registry_id ORDER BY cb.registry_id)
 		                   FROM consumer_registry cb WHERE cb.consumer_id = c.id), '{}')::uuid[] AS registry_ids,
+		       COALESCE((SELECT json_object_agg(cw.registry_id, cw.weight)
+		                   FROM consumer_registry cw WHERE cw.consumer_id = c.id), '{}')::jsonb AS registry_weights,
 		       COALESCE((SELECT array_agg(cr.role_id ORDER BY cr.role_id)
 		                   FROM consumer_role cr WHERE cr.consumer_id = c.id), '{}')::uuid[] AS role_ids,
 		       COALESCE((SELECT array_agg(ca.auth_id ORDER BY ca.auth_id)
@@ -86,7 +88,8 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		)`
 	const insertConsumerRegistry = `
-		INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
+		ON CONFLICT (consumer_id, registry_id) DO UPDATE SET weight = EXCLUDED.weight`
 	const insertConsumerRole = `
 		INSERT INTO consumer_role (consumer_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
@@ -97,7 +100,7 @@ func (r *Repository) Save(ctx context.Context, c *domain.Consumer) error {
 			return mapPgError(err)
 		}
 		for _, registryID := range c.RegistryIDs {
-			if _, err := tx.Exec(ctx, insertConsumerRegistry, c.ID, registryID); err != nil {
+			if _, err := tx.Exec(ctx, insertConsumerRegistry, c.ID, registryID, clampRegistryWeight(c.WeightFor(registryID))); err != nil {
 				return mapPgError(err)
 			}
 		}
@@ -238,12 +241,36 @@ func ensureRegistryRefsAssociated(ctx context.Context, tx pgx.Tx, c *domain.Cons
 	return nil
 }
 
-func (r *Repository) AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
-	const query = `INSERT INTO consumer_registry (consumer_id, registry_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
-	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, registryID); err != nil {
+func (r *Repository) AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID, weight *int) error {
+	// A nil weight means "attach without changing the weight": a brand-new
+	// association defaults to DefaultRegistryWeight, and an existing one keeps the
+	// weight it already had so a plain re-attach stays idempotent.
+	if weight == nil {
+		const query = `
+			INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
+			ON CONFLICT (consumer_id, registry_id) DO NOTHING`
+		if _, err := r.conn.Pool.Exec(ctx, query, consumerID, registryID, domain.DefaultRegistryWeight); err != nil {
+			return mapPgError(err)
+		}
+		return nil
+	}
+	const query = `
+		INSERT INTO consumer_registry (consumer_id, registry_id, weight) VALUES ($1, $2, $3)
+		ON CONFLICT (consumer_id, registry_id) DO UPDATE SET weight = EXCLUDED.weight`
+	if _, err := r.conn.Pool.Exec(ctx, query, consumerID, registryID, clampRegistryWeight(*weight)); err != nil {
 		return mapPgError(err)
 	}
 	return nil
+}
+
+func clampRegistryWeight(weight int) int {
+	if weight < domain.DefaultRegistryWeight {
+		return domain.DefaultRegistryWeight
+	}
+	if weight > domain.MaxRegistryWeight {
+		return domain.MaxRegistryWeight
+	}
+	return weight
 }
 
 func (r *Repository) DetachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error {
@@ -617,13 +644,14 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		consumerType     string
 		routingMode      string
 		registryIDs      []uuid.UUID
+		registryWeights  []byte
 		roleIDs          []uuid.UUID
 		authIDs          []uuid.UUID
 	)
 	if err := s.Scan(
 		&c.ID, &c.GatewayID, &c.Name, &consumerType, &c.Slug, &routingMode, &lbConfigRaw, &fallbackRaw, &modelPoliciesRaw, &toolkitRaw, &failModeRaw, &headersRaw, &c.Active,
 		&c.CreatedAt, &c.UpdatedAt,
-		&registryIDs, &roleIDs, &authIDs,
+		&registryIDs, &registryWeights, &roleIDs, &authIDs,
 	); err != nil {
 		return nil, err
 	}
@@ -673,6 +701,11 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 	c.RegistryIDs = ids.FromUUIDs[ids.RegistryKind](registryIDs)
 	c.RoleIDs = ids.FromUUIDs[ids.RoleKind](roleIDs)
 	c.AuthIDs = ids.FromUUIDs[ids.AuthKind](authIDs)
+	weights, err := parseRegistryWeights(registryWeights)
+	if err != nil {
+		return nil, err
+	}
+	c.RegistryWeights = weights
 	if c.RegistryIDs == nil {
 		c.RegistryIDs = []ids.RegistryID{}
 	}
@@ -683,6 +716,28 @@ func scanConsumer(s rowScanner) (*domain.Consumer, error) {
 		c.AuthIDs = []ids.AuthID{}
 	}
 	return c, nil
+}
+
+func parseRegistryWeights(raw []byte) (map[ids.RegistryID]int, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	stringKeyed := make(map[string]int)
+	if err := json.Unmarshal(raw, &stringKeyed); err != nil {
+		return nil, fmt.Errorf("scan registry_weights: %w", err)
+	}
+	if len(stringKeyed) == 0 {
+		return nil, nil
+	}
+	out := make(map[ids.RegistryID]int, len(stringKeyed))
+	for k, v := range stringKeyed {
+		id, err := ids.Parse[ids.RegistryKind](k)
+		if err != nil {
+			return nil, fmt.Errorf("scan registry_weights: invalid registry id %q: %w", k, err)
+		}
+		out[id] = v
+	}
+	return out, nil
 }
 
 func marshalHeaders(v map[string]string) ([]byte, error) {

@@ -92,7 +92,7 @@ func (f *fakeDialer) Connect(_ context.Context, target Target) (Upstream, error)
 func mcpRegistry(t *testing.T, name, url string) *registrydomain.Registry {
 	t.Helper()
 	reg, err := registrydomain.NewMCPRegistry(
-		ids.New[ids.GatewayKind](), name, "", 0,
+		ids.New[ids.GatewayKind](), name, "",
 		&registrydomain.MCPTarget{URL: url},
 	)
 	if err != nil {

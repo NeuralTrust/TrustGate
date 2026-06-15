@@ -1,11 +1,19 @@
 package consumer
 
 import (
+	"fmt"
+
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
+
+type attachRegistryRequest struct {
+	Weight *int `json:"weight,omitempty"`
+}
 
 type AssociationHandler struct {
 	associator appconsumer.Associator
@@ -34,10 +42,34 @@ func (h *AssociationHandler) AttachRegistry(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
-	if err := h.associator.AttachRegistry(c.UserContext(), gatewayID, consumerID, registryID); err != nil {
+	weight, err := parseAttachRegistryWeight(c)
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	if err := h.associator.AttachRegistry(c.UserContext(), gatewayID, consumerID, registryID, weight); err != nil {
 		return helpers.WriteError(c, err)
 	}
 	return helpers.WriteNoContent(c)
+}
+
+func parseAttachRegistryWeight(c *fiber.Ctx) (*int, error) {
+	if len(c.Body()) == 0 {
+		return nil, nil
+	}
+	var req attachRegistryRequest
+	if err := c.BodyParser(&req); err != nil {
+		return nil, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation)
+	}
+	if req.Weight == nil {
+		return nil, nil
+	}
+	if *req.Weight < consumerdomain.DefaultRegistryWeight || *req.Weight > consumerdomain.MaxRegistryWeight {
+		return nil, fmt.Errorf(
+			"weight must be between %d and %d: %w",
+			consumerdomain.DefaultRegistryWeight, consumerdomain.MaxRegistryWeight, commonerrors.ErrValidation,
+		)
+	}
+	return req.Weight, nil
 }
 
 // DetachRegistry godoc

@@ -13,7 +13,7 @@ import (
 func TestBackend_New_HappyPath(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	b, err := NewLLMRegistry(gwID, "openai-1", "primary", 5,
+	b, err := NewLLMRegistry(gwID, "openai-1", "primary",
 		&LLMTarget{Provider: "openai", Auth: NewAPIKeyAuth("sk-test")})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -26,9 +26,6 @@ func TestBackend_New_HappyPath(t *testing.T) {
 	}
 	if b.Provider() != "openai" {
 		t.Fatalf("Provider = %q, want openai", b.Provider())
-	}
-	if b.Weight != 5 {
-		t.Fatalf("Weight = %d, want 5", b.Weight)
 	}
 	if b.CreatedAt.IsZero() || b.UpdatedAt.IsZero() {
 		t.Fatal("timestamps are zero")
@@ -51,11 +48,6 @@ func TestBackend_Validate_Rejects(t *testing.T) {
 			name:    "nil gateway id",
 			mutate:  func(b *Registry) { b.GatewayID = ids.GatewayID{} },
 			wantErr: ErrInvalidGatewayID,
-		},
-		{
-			name:    "negative weight",
-			mutate:  func(b *Registry) { b.Weight = -1 },
-			wantErr: ErrInvalidRegistry,
 		},
 		{
 			name:    "no provider",
@@ -102,7 +94,7 @@ func TestBackend_Validate_OpenAICompatible(t *testing.T) {
 
 	t.Run("missing base_url is rejected", func(t *testing.T) {
 		t.Parallel()
-		_, err := NewLLMRegistry(gwID, "compat-1", "", 1,
+		_, err := NewLLMRegistry(gwID, "compat-1", "",
 			&LLMTarget{Provider: "openai_compatible", Auth: NewAPIKeyAuth("sk-test")})
 		if err == nil {
 			t.Fatal("expected error, got nil")
@@ -114,7 +106,7 @@ func TestBackend_Validate_OpenAICompatible(t *testing.T) {
 
 	t.Run("with base_url is accepted", func(t *testing.T) {
 		t.Parallel()
-		b, err := NewLLMRegistry(gwID, "compat-2", "", 1, &LLMTarget{
+		b, err := NewLLMRegistry(gwID, "compat-2", "", &LLMTarget{
 			Provider:        "openai_compatible",
 			ProviderOptions: map[string]any{"base_url": "https://api.together.xyz/v1"},
 			Auth:            NewAPIKeyAuth("sk-test"),
@@ -138,7 +130,6 @@ func TestBackend_Rehydrate(t *testing.T) {
 		GatewayID:   gwID,
 		Name:        "x",
 		Description: "desc",
-		Weight:      3,
 		LLMTarget: &LLMTarget{
 			Provider:        "anthropic",
 			ProviderOptions: map[string]any{"k": "v"},
@@ -155,9 +146,6 @@ func TestBackend_Rehydrate(t *testing.T) {
 	}
 	if b.Provider() != "anthropic" {
 		t.Fatalf("Provider = %q", b.Provider())
-	}
-	if b.Weight != 3 {
-		t.Fatalf("Weight = %d, want 3", b.Weight)
 	}
 	if !b.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")
@@ -358,7 +346,6 @@ func TestRegistry_Rehydrate_AllowsLegacyAzureWithoutEndpoint(t *testing.T) {
 		ID:        ids.New[ids.RegistryKind](),
 		GatewayID: ids.New[ids.GatewayKind](),
 		Name:      "legacy-azure",
-		Weight:    1,
 		LLMTarget: &LLMTarget{Provider: "azure", Auth: auth},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),

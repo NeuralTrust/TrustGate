@@ -59,7 +59,7 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
-	registryIDs, modelPolicies, err := req.ToRegistryBindings()
+	registryIDs, registryWeights, modelPolicies, err := req.ToRegistryBindings()
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
@@ -69,18 +69,19 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
-		GatewayID:     gatewayID,
-		Name:          req.Name,
-		Type:          req.ToType(),
-		RoutingMode:   req.ToRoutingMode(),
-		LBConfig:      lbConfig,
-		Headers:       req.Headers,
-		Active:        req.Active,
-		Fallback:      fallback,
-		RegistryIDs:   registryIDs,
-		RoleIDs:       roleIDs,
-		ModelPolicies: modelPolicies,
-		MCP:           mcp,
+		GatewayID:       gatewayID,
+		Name:            req.Name,
+		Type:            req.ToType(),
+		RoutingMode:     req.ToRoutingMode(),
+		LBConfig:        lbConfig,
+		Headers:         req.Headers,
+		Active:          req.Active,
+		Fallback:        fallback,
+		RegistryIDs:     registryIDs,
+		RegistryWeights: registryWeights,
+		RoleIDs:         roleIDs,
+		ModelPolicies:   modelPolicies,
+		MCP:             mcp,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

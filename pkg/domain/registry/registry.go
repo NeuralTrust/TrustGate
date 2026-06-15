@@ -13,7 +13,6 @@ type Registry struct {
 	Name        string         `json:"name"`
 	Type        Type           `json:"type"`
 	Description string         `json:"description,omitempty"`
-	Weight      int            `json:"weight,omitempty"`
 	LLMTarget   *LLMTarget     `json:"llm_target,omitempty"`
 	MCPTarget   *MCPTarget     `json:"mcp_target,omitempty"`
 	CreatedAt   time.Time      `json:"created_at"`
@@ -23,7 +22,6 @@ type Registry struct {
 func NewLLMRegistry(
 	gatewayID ids.GatewayID,
 	name, description string,
-	weight int,
 	target *LLMTarget,
 ) (*Registry, error) {
 	id, err := ids.NewV7[ids.RegistryKind]()
@@ -37,7 +35,6 @@ func NewLLMRegistry(
 		Name:        name,
 		Type:        TypeLLM,
 		Description: description,
-		Weight:      weight,
 		LLMTarget:   target,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -51,7 +48,6 @@ func NewLLMRegistry(
 func NewMCPRegistry(
 	gatewayID ids.GatewayID,
 	name, description string,
-	weight int,
 	target *MCPTarget,
 ) (*Registry, error) {
 	id, err := ids.NewV7[ids.RegistryKind]()
@@ -65,7 +61,6 @@ func NewMCPRegistry(
 		Name:        name,
 		Type:        TypeMCP,
 		Description: description,
-		Weight:      weight,
 		MCPTarget:   target,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -114,7 +109,6 @@ type RehydrateParams struct {
 	Name        string
 	Type        Type
 	Description string
-	Weight      int
 	LLMTarget   *LLMTarget
 	MCPTarget   *MCPTarget
 	CreatedAt   time.Time
@@ -132,7 +126,6 @@ func Rehydrate(params RehydrateParams) *Registry {
 		Name:        params.Name,
 		Type:        regType,
 		Description: params.Description,
-		Weight:      params.Weight,
 		LLMTarget:   params.LLMTarget,
 		MCPTarget:   params.MCPTarget,
 		CreatedAt:   params.CreatedAt,
@@ -146,9 +139,6 @@ func (b *Registry) Validate() error {
 	}
 	if b.GatewayID.IsNil() {
 		return ErrInvalidGatewayID
-	}
-	if b.Weight < 0 {
-		return fmt.Errorf("%w: weight cannot be negative", ErrInvalidRegistry)
 	}
 	if b.Type == "" {
 		b.Type = TypeLLM
