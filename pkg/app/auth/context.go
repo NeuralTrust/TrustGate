@@ -9,11 +9,10 @@ import (
 type Method string
 
 const (
-	MethodAPIKey       Method = "api_key"
-	MethodOAuth2       Method = "oauth2"
-	MethodOAuth2Client Method = "oauth2_client"
-	MethodIDP          Method = "idp"
-	MethodPlayground   Method = "playground"
+	MethodAPIKey     Method = "api_key"
+	MethodOAuth2     Method = "oauth2"
+	MethodIDP        Method = "idp"
+	MethodPlayground Method = "playground"
 )
 
 type AuthContext struct {

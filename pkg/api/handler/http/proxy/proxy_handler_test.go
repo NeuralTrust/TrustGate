@@ -53,10 +53,6 @@ func authStubOAuth(gatewayID ids.GatewayID, slug string) fiber.Handler {
 	return authStubWithMethod(gatewayID, slug, appauth.MethodOAuth2)
 }
 
-func authStubOAuth2Client(gatewayID ids.GatewayID, slug string) fiber.Handler {
-	return authStubWithMethod(gatewayID, slug, appauth.MethodOAuth2Client)
-}
-
 func authStubWithMethod(gatewayID ids.GatewayID, slug string, method appauth.Method) fiber.Handler {
 	authID := ids.New[ids.AuthKind]()
 	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
@@ -324,28 +320,6 @@ func TestHandle_OAuthInlineSucceeds(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()
 	app.Use(authStubOAuth(ids.New[ids.GatewayKind](), consumerSlug))
-	handler := proxyhttp.NewForwardedHandler(fwd)
-	app.All("/*", handler.Handle)
-	fwd.EXPECT().
-		Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
-			return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
-		})).
-		Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
-		Once()
-
-	resp, err := app.Test(newProxyRequest())
-	if err != nil {
-		t.Fatalf("app.Test: %v", err)
-	}
-	if resp.StatusCode != fiber.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-}
-
-func TestHandle_OAuth2ClientInlineSucceeds(t *testing.T) {
-	fwd := proxymocks.NewForwarder(t)
-	app := fiber.New()
-	app.Use(authStubOAuth2Client(ids.New[ids.GatewayKind](), consumerSlug))
 	handler := proxyhttp.NewForwardedHandler(fwd)
 	app.All("/*", handler.Handle)
 	fwd.EXPECT().

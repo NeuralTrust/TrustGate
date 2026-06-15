@@ -8,8 +8,6 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest'
       oauth2:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest'
-      oauth2_client:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ClientConfigRequest'
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.CreateAuthRequest:
     properties:
@@ -62,21 +60,6 @@ definitions:
           type: string
         type: array
       ca_cert:
-        type: string
-    type: object
-  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ClientConfigRequest:
-    properties:
-      audience:
-        type: string
-      client_id:
-        type: string
-      client_secret:
-        type: string
-      scopes:
-        items:
-          type: string
-        type: array
-      token_url:
         type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest:
@@ -145,8 +128,6 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse'
       oauth2:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse'
-      oauth2_client:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ClientConfigResponse'
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse:
     properties:
@@ -201,21 +182,6 @@ definitions:
           type: string
         type: array
       ca_cert:
-        type: string
-    type: object
-  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ClientConfigResponse:
-    properties:
-      audience:
-        type: string
-      client_id:
-        type: string
-      client_secret:
-        type: string
-      scopes:
-        items:
-          type: string
-        type: array
-      token_url:
         type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse:

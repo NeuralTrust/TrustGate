@@ -84,15 +84,6 @@ func (v fakeOAuth2Verifier) Verify(_ context.Context, _ string, _ authdomain.OAu
 	return v.claims, v.err
 }
 
-type fakeTokenSource struct {
-	token string
-	err   error
-}
-
-func (s fakeTokenSource) Token(_ context.Context, _ authdomain.OAuth2ClientConfig) (string, error) {
-	return s.token, s.err
-}
-
 type fakeIDPVerifier struct {
 	hints  appauth.TokenHints
 	claims *appauth.VerifiedClaims
@@ -227,60 +218,6 @@ func TestAuthMiddleware_OAuthInlineSuccess(t *testing.T) {
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
-func TestAuthMiddleware_OAuth2ClientInlineSuccess(t *testing.T) {
-	t.Parallel()
-	gw, rc := inlineConsumerWithOAuth2Client(t)
-	failingRoles := fakeRoleResolver{err: fmt.Errorf("roles must not be resolved for oauth2_client")}
-	app := newAuthTestAppWithTokens(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeTokenSource{token: "acquired-token"}, fakeIDPVerifier{}, failingRoles)
-
-	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
-	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(fiber.HeaderAuthorization, "Bearer acquired-token")
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, fiber.StatusOK, resp.StatusCode)
-}
-
-func TestAuthMiddleware_OAuth2ClientWrongTokenUnauthorized(t *testing.T) {
-	t.Parallel()
-	gw, rc := inlineConsumerWithOAuth2Client(t)
-	app := newAuthTestAppWithTokens(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeTokenSource{token: "acquired-token"}, fakeIDPVerifier{}, nil)
-
-	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
-	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(fiber.HeaderAuthorization, "Bearer some-other-token")
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-}
-
-func TestAuthMiddleware_OAuth2ClientAcquisitionFailureServiceUnavailable(t *testing.T) {
-	t.Parallel()
-	gw, rc := inlineConsumerWithOAuth2Client(t)
-	tokenSource := fakeTokenSource{err: fmt.Errorf("token endpoint status 503")}
-	app := newAuthTestAppWithTokens(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, tokenSource, fakeIDPVerifier{}, nil)
-
-	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
-	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(fiber.HeaderAuthorization, "Bearer acquired-token")
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, fiber.StatusServiceUnavailable, resp.StatusCode)
-}
-
-func TestAuthMiddleware_OAuth2ClientCannotAuthorizeRoleBasedConsumer(t *testing.T) {
-	t.Parallel()
-	gw, rc := roleBasedConsumerWithOAuth2Client(t)
-	app := newAuthTestAppWithTokens(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeTokenSource{token: "acquired-token"}, fakeIDPVerifier{}, nil)
-
-	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
-	req.Host = "acme.gw.neuraltrust.ai"
-	req.Header.Set(fiber.HeaderAuthorization, "Bearer acquired-token")
-	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
-}
-
 func TestAuthMiddleware_IDPRoleBasedSuccess(t *testing.T) {
 	t.Parallel()
 	gw, rc, roleID := roleBasedConsumerWithIDP(t)
@@ -378,7 +315,6 @@ func TestAuthMiddleware_ErrorMatrix(t *testing.T) {
 				fakeGatewayResolver{gateway: gw, err: tt.gatewayErr},
 				tt.data,
 				fakeOAuth2Verifier{},
-				fakeTokenSource{},
 				fakeIDPVerifier{},
 				nil,
 			)
@@ -402,7 +338,6 @@ func TestAuthMiddleware_RejectsHeaderOnlyGatewayIdentity(t *testing.T) {
 		fakeGatewayResolver{err: fmt.Errorf("%w: host is required", appauth.ErrInvalidAuthRequest)},
 		nil,
 		fakeOAuth2Verifier{},
-		fakeTokenSource{},
 		fakeIDPVerifier{},
 		nil,
 	)
@@ -425,20 +360,7 @@ func newAuthTestApp(
 	roleResolver middlewareRoleResolver,
 ) *fiber.App {
 	t.Helper()
-	return newAuthTestAppWithTokens(t, gw, data, oauthVerifier, fakeTokenSource{}, idpVerifier, roleResolver)
-}
-
-func newAuthTestAppWithTokens(
-	t *testing.T,
-	gw *gatewaydomain.Gateway,
-	data *appconsumer.Data,
-	oauthVerifier fakeOAuth2Verifier,
-	tokenSource fakeTokenSource,
-	idpVerifier fakeIDPVerifier,
-	roleResolver middlewareRoleResolver,
-) *fiber.App {
-	t.Helper()
-	return newAuthTestAppWithResolver(t, fakeGatewayResolver{gateway: gw}, data, oauthVerifier, tokenSource, idpVerifier, roleResolver)
+	return newAuthTestAppWithResolver(t, fakeGatewayResolver{gateway: gw}, data, oauthVerifier, idpVerifier, roleResolver)
 }
 
 type middlewareRoleResolver interface {
@@ -450,7 +372,6 @@ func newAuthTestAppWithResolver(
 	gatewayResolver resolver.GatewayResolver,
 	data *appconsumer.Data,
 	oauthVerifier fakeOAuth2Verifier,
-	tokenSource fakeTokenSource,
 	idpVerifier fakeIDPVerifier,
 	roleResolver middlewareRoleResolver,
 ) *fiber.App {
@@ -463,10 +384,9 @@ func newAuthTestAppWithResolver(
 	)
 	apiKey := resolver.NewAPIKeyIdentityResolver()
 	oauth2 := resolver.NewOAuth2IdentityResolver(oauthVerifier)
-	oauth2Client := resolver.NewOAuth2ClientIdentityResolver(tokenSource)
 	idp := resolver.NewIDPIdentityResolver(appauth.NewIDPFinder(idpVerifier), idpVerifier)
 	authMiddleware := middleware.NewAuthMiddleware(
-		resolver.NewIdentityResolver(playground, apiKey, oauth2, oauth2Client, idp),
+		resolver.NewIdentityResolver(playground, apiKey, oauth2, idp),
 		fakeDataFinder{data: data},
 		gatewayResolver,
 		roleResolver,
@@ -533,42 +453,6 @@ func inlineConsumerWithOAuth(t *testing.T) (*gatewaydomain.Gateway, appconsumer.
 			}},
 		}},
 	}
-	return gw, rc
-}
-
-func inlineConsumerWithOAuth2Client(t *testing.T) (*gatewaydomain.Gateway, appconsumer.RoutableConsumer) {
-	t.Helper()
-	gw := &gatewaydomain.Gateway{ID: ids.New[ids.GatewayKind](), Slug: "acme"}
-	authID := ids.New[ids.AuthKind]()
-	rc := appconsumer.RoutableConsumer{
-		Consumer: &consumerdomain.Consumer{
-			ID:          ids.New[ids.ConsumerKind](),
-			GatewayID:   gw.ID,
-			Slug:        "cons1234",
-			RoutingMode: consumerdomain.RoutingModeInline,
-			Active:      true,
-			AuthIDs:     []ids.AuthID{authID},
-		},
-		Auths: []*authdomain.Auth{{
-			ID:        authID,
-			GatewayID: gw.ID,
-			Type:      authdomain.TypeOAuth2Client,
-			Enabled:   true,
-			Config: authdomain.Config{OAuth2Client: &authdomain.OAuth2ClientConfig{
-				TokenURL:     "https://as.example.com/oauth/token",
-				ClientID:     "client-id",
-				ClientSecret: "client-secret",
-			}},
-		}},
-	}
-	return gw, rc
-}
-
-func roleBasedConsumerWithOAuth2Client(t *testing.T) (*gatewaydomain.Gateway, appconsumer.RoutableConsumer) {
-	t.Helper()
-	gw, rc := inlineConsumerWithOAuth2Client(t)
-	rc.Consumer.RoutingMode = consumerdomain.RoutingModeRoleBased
-	rc.Consumer.RoleIDs = []ids.RoleID{ids.New[ids.RoleKind]()}
 	return gw, rc
 }
 

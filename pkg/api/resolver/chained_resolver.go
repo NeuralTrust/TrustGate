@@ -12,26 +12,23 @@ import (
 )
 
 type ChainedIdentityResolver struct {
-	playground   IdentityResolver
-	apiKey       IdentityResolver
-	oauth2       IdentityResolver
-	oauth2Client IdentityResolver
-	idp          IdentityResolver
+	playground IdentityResolver
+	apiKey     IdentityResolver
+	oauth2     IdentityResolver
+	idp        IdentityResolver
 }
 
 func NewIdentityResolver(
 	playground *PlaygroundIdentityResolver,
 	apiKey *APIKeyIdentityResolver,
 	oauth2 *OAuth2IdentityResolver,
-	oauth2Client *OAuth2ClientIdentityResolver,
 	idp *IDPIdentityResolver,
 ) IdentityResolver {
 	return ChainedIdentityResolver{
-		playground:   playground,
-		apiKey:       apiKey,
-		oauth2:       oauth2,
-		oauth2Client: oauth2Client,
-		idp:          idp,
+		playground: playground,
+		apiKey:     apiKey,
+		oauth2:     oauth2,
+		idp:        idp,
 	}
 }
 
@@ -50,13 +47,9 @@ func (r ChainedIdentityResolver) Resolve(
 		return nil, ErrUnauthenticated
 	}
 	if rc != nil && rc.Consumer != nil && rc.Consumer.RoutingMode == consumerdomain.RoutingModeInline {
-		if hasAttachedAuthType(rc, authdomain.TypeOAuth2Client) {
-			return r.oauth2Client.Resolve(c, gw, rc)
-		}
 		return r.oauth2.Resolve(c, gw, rc)
 	}
-	if (hasAttachedAuthType(rc, authdomain.TypeOAuth2) || hasAttachedAuthType(rc, authdomain.TypeOAuth2Client)) &&
-		!hasAttachedAuthType(rc, authdomain.TypeIDP) {
+	if hasAttachedAuthType(rc, authdomain.TypeOAuth2) && !hasAttachedAuthType(rc, authdomain.TypeIDP) {
 		return nil, ErrForbidden
 	}
 	return r.idp.Resolve(c, gw, rc)

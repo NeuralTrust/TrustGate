@@ -69,16 +69,17 @@ func TestUpdateAuth_Partial_OAuth2PreservesConfig(t *testing.T) {
 	assert.Equal(t, "https://issuer.example.com", oauth2["issuer"])
 }
 
-func TestUpdateAuth_OAuth2ClientMaskedSecretKeepsStoredValue(t *testing.T) {
+func TestUpdateAuth_OAuth2MaskedSecretKeepsStoredValue(t *testing.T) {
 	defer Track(t, "UpdateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd-oauth-client")})
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-upd-oauth-secret")})
 	id := CreateAuth(t, gwID, map[string]any{
-		"name": uniqueName("oauth-client-cred"),
-		"type": "oauth2_client",
+		"name": uniqueName("oauth-cred"),
+		"type": "oauth2",
 		"config": map[string]any{
-			"oauth2_client": map[string]any{
-				"token_url":     "https://as.example.com/oauth/token",
-				"client_id":     "client-123",
+			"oauth2": map[string]any{
+				"issuer":        "https://issuer.example.com",
+				"audiences":     []string{"gateway"},
+				"jwks_url":      "https://issuer.example.com/.well-known/jwks.json",
 				"client_secret": "topsecretclientvalue",
 			},
 		},
@@ -87,19 +88,19 @@ func TestUpdateAuth_OAuth2ClientMaskedSecretKeepsStoredValue(t *testing.T) {
 	url := fmt.Sprintf("%s/v1/gateways/%s/auths/%s", AdminURL, gwID, id)
 	status, body := sendRequest(t, http.MethodPut, url, nil, map[string]any{
 		"config": map[string]any{
-			"oauth2_client": map[string]any{
-				"token_url":     "https://as.example.com/oauth/token",
-				"client_id":     "client-456",
+			"oauth2": map[string]any{
+				"issuer":        "https://issuer.example.com",
+				"audiences":     []string{"gateway"},
+				"jwks_url":      "https://issuer.example.com/.well-known/jwks.json",
 				"client_secret": "***alue",
 			},
 		},
 	})
 	require.Equal(t, http.StatusOK, status, "body=%v", body)
 	cfg, _ := body["config"].(map[string]any)
-	oauthClient, ok := cfg["oauth2_client"].(map[string]any)
-	require.True(t, ok, "oauth2_client config missing: %v", cfg)
-	assert.Equal(t, "client-456", oauthClient["client_id"])
-	assert.Equal(t, "***alue", oauthClient["client_secret"], "stored secret must be kept and masked")
+	oauth2, ok := cfg["oauth2"].(map[string]any)
+	require.True(t, ok, "oauth2 config missing: %v", cfg)
+	assert.Equal(t, "***alue", oauth2["client_secret"], "stored secret must be kept and masked")
 }
 
 func TestUpdateAuth_Validation(t *testing.T) {
