@@ -10,7 +10,7 @@ import (
 func makeBackends(names ...string) []*registry.Registry {
 	out := make([]*registry.Registry, len(names))
 	for i, name := range names {
-		out[i] = &registry.Registry{ID: ids.New[ids.RegistryKind](), Name: name, Weight: 1, LLMTarget: &registry.LLMTarget{Provider: "openai"}}
+		out[i] = &registry.Registry{ID: ids.New[ids.RegistryKind](), Name: name, LLMTarget: &registry.LLMTarget{Provider: "openai"}}
 	}
 	return out
 }
@@ -56,7 +56,7 @@ func TestRoundRobin_AllExcludedReturnsNil(t *testing.T) {
 func TestWeightedRoundRobin_AllExcludedReturnsNil(t *testing.T) {
 	t.Parallel()
 	registries := makeBackends("a", "b")
-	wrr := NewWeightedRoundRobin(registries)
+	wrr := NewWeightedRoundRobin(registries, nil)
 	exclude := map[ids.RegistryID]struct{}{registries[0].ID: {}, registries[1].ID: {}}
 	if wrr.Next(nil, exclude) != nil {
 		t.Fatal("expected nil when every weighted backend is excluded")
@@ -127,10 +127,14 @@ func TestRandom_Name(t *testing.T) {
 func TestWeightedRoundRobin_RespectsWeights(t *testing.T) {
 	t.Parallel()
 	registries := []*registry.Registry{
-		{ID: ids.New[ids.RegistryKind](), Name: "heavy", Weight: 3, LLMTarget: &registry.LLMTarget{Provider: "openai"}},
-		{ID: ids.New[ids.RegistryKind](), Name: "light", Weight: 1, LLMTarget: &registry.LLMTarget{Provider: "openai"}},
+		{ID: ids.New[ids.RegistryKind](), Name: "heavy", LLMTarget: &registry.LLMTarget{Provider: "openai"}},
+		{ID: ids.New[ids.RegistryKind](), Name: "light", LLMTarget: &registry.LLMTarget{Provider: "openai"}},
 	}
-	wrr := NewWeightedRoundRobin(registries)
+	weights := map[ids.RegistryID]int{
+		registries[0].ID: 3,
+		registries[1].ID: 1,
+	}
+	wrr := NewWeightedRoundRobin(registries, weights)
 	counts := map[string]int{}
 	for i := 0; i < 40; i++ {
 		b := wrr.Next(nil, nil)
@@ -149,7 +153,7 @@ func TestWeightedRoundRobin_ZeroWeightsServeAsWeightOne(t *testing.T) {
 	wrr := NewWeightedRoundRobin([]*registry.Registry{
 		{ID: ids.New[ids.RegistryKind](), Name: "a"},
 		{ID: ids.New[ids.RegistryKind](), Name: "b"},
-	})
+	}, nil)
 	counts := map[string]int{}
 	for i := 0; i < 10; i++ {
 		b := wrr.Next(nil, nil)

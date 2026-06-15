@@ -72,7 +72,7 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.Gate
 
 func validRegistry(t *testing.T, gwID ids.GatewayID, name string) *domain.Registry {
 	t.Helper()
-	b, err := domain.NewLLMRegistry(gwID, name, "", 1, &domain.LLMTarget{
+	b, err := domain.NewLLMRegistry(gwID, name, "", &domain.LLMTarget{
 		Provider: "openai",
 		Auth:     domain.NewAPIKeyAuth("sk-test"),
 	})
@@ -89,7 +89,6 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 
 	b := validRegistry(t, gwID, "openai-pool")
 	b.Description = "primary"
-	b.Weight = 7
 	b.LLMTarget.ProviderOptions = map[string]any{"base_url": "https://api.openai.com"}
 
 	if err := r.Save(ctx, b); err != nil {
@@ -105,9 +104,6 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	}
 	if got.Provider() != "openai" {
 		t.Fatalf("Provider = %q, want openai", got.Provider())
-	}
-	if got.Weight != 7 {
-		t.Fatalf("Weight = %d, want 7", got.Weight)
 	}
 	if got.Description != "primary" {
 		t.Fatalf("Description = %q, want primary", got.Description)

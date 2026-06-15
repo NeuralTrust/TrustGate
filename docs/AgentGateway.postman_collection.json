@@ -505,7 +505,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"Primary OpenAI target\",\n  \"weight\": 1,\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  },\n  \"health_checks\": {\n    \"passive\": true,\n    \"threshold\": 3,\n    \"interval\": 30\n  }\n}"
+              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"Primary OpenAI target\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  },\n  \"health_checks\": {\n    \"passive\": true,\n    \"threshold\": 3,\n    \"interval\": 30\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -534,7 +534,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"azure-primary-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI registry using OAuth service principal auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"tenant_id\": \"{{azure_tenant_id}}\",\n      \"client_id\": \"{{azure_client_id}}\",\n      \"client_secret\": \"{{azure_client_secret}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"azure-primary-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI registry using OAuth service principal auth\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"tenant_id\": \"{{azure_tenant_id}}\",\n      \"client_id\": \"{{azure_client_id}}\",\n      \"client_secret\": \"{{azure_client_secret}}\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -577,7 +577,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"azure-api-key-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using api-key auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"api_key\": \"{{azure_openai_api_key}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"azure-api-key-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using api-key auth\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"api_key\": \"{{azure_openai_api_key}}\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -620,7 +620,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"azure-default-credential-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using Azure SDK DefaultAzureCredential\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"use_managed_identity\": true\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"azure-default-credential-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI using Azure SDK DefaultAzureCredential\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"use_managed_identity\": true\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -716,7 +716,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"openai-primary\",\n  \"provider\": \"openai\",\n  \"description\": \"Updated description\",\n  \"weight\": 2,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
+              "raw": "{\n  \"name\": \"openai-primary\",\n  \"provider\": \"openai\",\n  \"description\": \"Updated description\",\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}",
@@ -1125,7 +1125,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o\"\n        ],\n        \"default\": \"gpt-4o\"\n      }\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"round-robin\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\"\n      }\n    ]\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"team-a-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o\"\n        ],\n        \"default\": \"gpt-4o\"\n      }\n    }\n  ],\n  \"lb_config\": {\n    \"enabled\": true,\n    \"algorithm\": \"round-robin\",\n    \"pool_alias\": \"fast-chat\",\n    \"members\": [\n      {\n        \"registry_id\": \"{{registry_id}}\"\n      }\n    ]\n  },\n  \"fallback\": {\n    \"enabled\": true,\n    \"triggers\": [\n      \"http_5xx\"\n    ],\n    \"chain\": [\n      \"{{registry_id}}\"\n    ],\n    \"budget\": {\n      \"max_attempts\": 2,\n      \"max_total_latency_ms\": 5000\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
@@ -1298,7 +1298,22 @@
           "name": "Attach Registry",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"weight\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Attaches a registry to a consumer (idempotent). The body is optional: omit it (or omit `weight`) to keep the current weight; send `weight` (1-1000) to set the per-association weight used by the weighted round-robin load balancer.",
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}",
               "host": [
@@ -2097,7 +2112,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"weight\": 1,\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
+              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -2125,7 +2140,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"google-primary-{$guid}\",\n  \"provider\": \"google\",\n  \"description\": \"Google Gemini registry\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{google_api_key}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"google-primary-{$guid}\",\n  \"provider\": \"google\",\n  \"description\": \"Google Gemini registry\",\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{google_api_key}}\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -2168,7 +2183,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"vertex-primary-{{$guid}}\",\n  \"provider\": \"vertex\",\n  \"description\": \"Google Vertex AI registry\",\n  \"weight\": 1,\n  \"provider_options\": {\n    \"project\": \"{{vertex_project}}\",\n    \"location\": \"{{vertex_location}}\"\n  },\n  \"auth\": {\n    \"type\": \"gcp_service_account\",\n    \"gcp_service_account\": \"{{gcp_service_account}}\"\n  }\n}"
+              "raw": "{\n  \"name\": \"vertex-primary-{{$guid}}\",\n  \"provider\": \"vertex\",\n  \"description\": \"Google Vertex AI registry\",\n  \"provider_options\": {\n    \"project\": \"{{vertex_project}}\",\n    \"location\": \"{{vertex_location}}\"\n  },\n  \"auth\": {\n    \"type\": \"gcp_service_account\",\n    \"gcp_service_account\": \"{{gcp_service_account}}\"\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -2211,7 +2226,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"anthropic-primary-{$guid}\",\n  \"provider\": \"anthropic\",\n  \"description\": \"Anthropic registry\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{anthropic_api_key}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"anthropic-primary-{$guid}\",\n  \"provider\": \"anthropic\",\n  \"description\": \"Anthropic registry\",\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{anthropic_api_key}}\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -2254,7 +2269,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"bedrock-primary-{{$guid}}\",\n  \"provider\": \"bedrock\",\n  \"description\": \"AWS Bedrock registry\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"aws\",\n    \"aws\": {\n      \"region\": \"{{aws_region}}\",\n      \"access_key_id\": \"{{aws_access_key_id}}\",\n      \"secret_access_key\": \"{{aws_secret_access_key}}\",\n      \"session_token\": \"{{aws_session_token}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"bedrock-primary-{{$guid}}\",\n  \"provider\": \"bedrock\",\n  \"description\": \"AWS Bedrock registry\",\n  \"auth\": {\n    \"type\": \"aws\",\n    \"aws\": {\n      \"region\": \"{{aws_region}}\",\n      \"access_key_id\": \"{{aws_access_key_id}}\",\n      \"secret_access_key\": \"{{aws_secret_access_key}}\",\n      \"session_token\": \"{{aws_session_token}}\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -2311,7 +2326,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"azure-oauth-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI registry using OAuth service principal auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"tenant_id\": \"{{azure_tenant_id}}\",\n      \"client_id\": \"{{azure_client_id}}\",\n      \"client_secret\": \"{{azure_client_secret}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"azure-oauth-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI registry using OAuth service principal auth\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"tenant_id\": \"{{azure_tenant_id}}\",\n      \"client_id\": \"{{azure_client_id}}\",\n      \"client_secret\": \"{{azure_client_secret}}\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -2354,7 +2369,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"azure-api-key-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI registry using API key auth\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"api_key\": \"{{azure_openai_api_key}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"azure-api-key-{{$guid}}\",\n  \"provider\": \"azure\",\n  \"description\": \"Azure OpenAI registry using API key auth\",\n  \"auth\": {\n    \"type\": \"azure\",\n    \"azure\": {\n      \"endpoint\": \"{{azure_openai_endpoint}}\",\n      \"version\": \"2024-10-21\",\n      \"api_key\": \"{{azure_openai_api_key}}\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -2383,7 +2398,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"mistral-primary-{$guid}\",\n  \"provider\": \"mistral\",\n  \"description\": \"Mistral registry\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{mistral_api_key}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"mistral-primary-{$guid}\",\n  \"provider\": \"mistral\",\n  \"description\": \"Mistral registry\",\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{mistral_api_key}}\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -2426,7 +2441,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"groq-primary-{$guid}\",\n  \"provider\": \"groq\",\n  \"description\": \"Groq registry\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{groq_api_key}}\"\n    }\n  }\n}"
+              "raw": "{\n  \"name\": \"groq-primary-{$guid}\",\n  \"provider\": \"groq\",\n  \"description\": \"Groq registry\",\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{groq_api_key}}\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -2576,7 +2591,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
+              "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
@@ -2818,7 +2833,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"weight\": 1,\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
+              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
@@ -2948,7 +2963,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"e2e-oauth-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
+              "raw": "{\n  \"name\": \"e2e-oauth-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
@@ -3155,7 +3170,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"weight\": 1,\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
+              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",

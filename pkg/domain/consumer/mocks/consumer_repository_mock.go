@@ -119,17 +119,17 @@ func (_c *Repository_AttachPolicy_Call) RunAndReturn(run func(context.Context, i
 	return _c
 }
 
-// AttachRegistry provides a mock function with given fields: ctx, consumerID, registryID
-func (_m *Repository) AttachRegistry(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind]) error {
-	ret := _m.Called(ctx, consumerID, registryID)
+// AttachRegistry provides a mock function with given fields: ctx, consumerID, registryID, weight
+func (_m *Repository) AttachRegistry(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind], weight *int) error {
+	ret := _m.Called(ctx, consumerID, registryID, weight)
 
 	if len(ret) == 0 {
 		panic("no return value specified for AttachRegistry")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error); ok {
-		r0 = rf(ctx, consumerID, registryID)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind], *int) error); ok {
+		r0 = rf(ctx, consumerID, registryID, weight)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -146,13 +146,14 @@ type Repository_AttachRegistry_Call struct {
 //   - ctx context.Context
 //   - consumerID ids.ID[ids.ConsumerKind]
 //   - registryID ids.ID[ids.RegistryKind]
-func (_e *Repository_Expecter) AttachRegistry(ctx interface{}, consumerID interface{}, registryID interface{}) *Repository_AttachRegistry_Call {
-	return &Repository_AttachRegistry_Call{Call: _e.mock.On("AttachRegistry", ctx, consumerID, registryID)}
+//   - weight *int
+func (_e *Repository_Expecter) AttachRegistry(ctx interface{}, consumerID interface{}, registryID interface{}, weight interface{}) *Repository_AttachRegistry_Call {
+	return &Repository_AttachRegistry_Call{Call: _e.mock.On("AttachRegistry", ctx, consumerID, registryID, weight)}
 }
 
-func (_c *Repository_AttachRegistry_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind])) *Repository_AttachRegistry_Call {
+func (_c *Repository_AttachRegistry_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind], weight *int)) *Repository_AttachRegistry_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.RegistryKind]))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.RegistryKind]), args[3].(*int))
 	})
 	return _c
 }
@@ -162,7 +163,7 @@ func (_c *Repository_AttachRegistry_Call) Return(_a0 error) *Repository_AttachRe
 	return _c
 }
 
-func (_c *Repository_AttachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error) *Repository_AttachRegistry_Call {
+func (_c *Repository_AttachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind], *int) error) *Repository_AttachRegistry_Call {
 	_c.Call.Return(run)
 	return _c
 }

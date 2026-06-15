@@ -43,24 +43,45 @@ func (m RoutingMode) IsValid() bool {
 	return false
 }
 
+const (
+	// DefaultRegistryWeight is applied when a binding does not specify a weight.
+	DefaultRegistryWeight = 1
+	// MaxRegistryWeight caps per-association weights: the weighted round-robin
+	// scheduler iterates up to len(registries)*(maxWeight+1) times per pick, so an
+	// unbounded weight would let a single request monopolize the lock. It is also
+	// kept well within PostgreSQL's int4 range.
+	MaxRegistryWeight = 1000
+)
+
 type Consumer struct {
-	ID            ids.ConsumerID    `json:"id"`
-	GatewayID     ids.GatewayID     `json:"gateway_id"`
-	Name          string            `json:"name"`
-	Type          Type              `json:"type"`
-	Slug          string            `json:"slug"`
-	RoutingMode   RoutingMode       `json:"routing_mode"`
-	LBConfig      *LBConfig         `json:"lb_config,omitempty"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	Active        bool              `json:"active"`
-	RegistryIDs   []ids.RegistryID  `json:"registry_ids"`
-	RoleIDs       []ids.RoleID      `json:"role_ids"`
-	AuthIDs       []ids.AuthID      `json:"auth_ids"`
-	Fallback      *Fallback         `json:"fallback,omitempty"`
-	ModelPolicies ModelPolicies     `json:"model_policies,omitempty"`
-	MCP           *MCPPolicy        `json:"mcp,omitempty"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	ID              ids.ConsumerID         `json:"id"`
+	GatewayID       ids.GatewayID          `json:"gateway_id"`
+	Name            string                 `json:"name"`
+	Type            Type                   `json:"type"`
+	Slug            string                 `json:"slug"`
+	RoutingMode     RoutingMode            `json:"routing_mode"`
+	LBConfig        *LBConfig              `json:"lb_config,omitempty"`
+	Headers         map[string]string      `json:"headers,omitempty"`
+	Active          bool                   `json:"active"`
+	RegistryIDs     []ids.RegistryID       `json:"registry_ids"`
+	RegistryWeights map[ids.RegistryID]int `json:"registry_weights,omitempty"`
+	RoleIDs         []ids.RoleID           `json:"role_ids"`
+	AuthIDs         []ids.AuthID           `json:"auth_ids"`
+	Fallback        *Fallback              `json:"fallback,omitempty"`
+	ModelPolicies   ModelPolicies          `json:"model_policies,omitempty"`
+	MCP             *MCPPolicy             `json:"mcp,omitempty"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
+}
+
+func (c *Consumer) WeightFor(registryID ids.RegistryID) int {
+	if c.RegistryWeights == nil {
+		return 1
+	}
+	if w, ok := c.RegistryWeights[registryID]; ok && w > 0 {
+		return w
+	}
+	return 1
 }
 
 func (c *Consumer) Toolkit() Toolkit {
@@ -78,19 +99,20 @@ func (c *Consumer) FailMode() FailMode {
 }
 
 type CreateParams struct {
-	GatewayID     ids.GatewayID
-	Name          string
-	Type          Type
-	RoutingMode   RoutingMode
-	LBConfig      *LBConfig
-	Headers       map[string]string
-	Active        *bool
-	RegistryIDs   []ids.RegistryID
-	RoleIDs       []ids.RoleID
-	AuthIDs       []ids.AuthID
-	Fallback      *Fallback
-	ModelPolicies ModelPolicies
-	MCP           *MCPPolicy
+	GatewayID       ids.GatewayID
+	Name            string
+	Type            Type
+	RoutingMode     RoutingMode
+	LBConfig        *LBConfig
+	Headers         map[string]string
+	Active          *bool
+	RegistryIDs     []ids.RegistryID
+	RegistryWeights map[ids.RegistryID]int
+	RoleIDs         []ids.RoleID
+	AuthIDs         []ids.AuthID
+	Fallback        *Fallback
+	ModelPolicies   ModelPolicies
+	MCP             *MCPPolicy
 }
 
 func New(params CreateParams) (*Consumer, error) {
@@ -108,23 +130,24 @@ func New(params CreateParams) (*Consumer, error) {
 		active = *params.Active
 	}
 	c := &Consumer{
-		ID:            id,
-		GatewayID:     params.GatewayID,
-		Name:          params.Name,
-		Type:          params.Type,
-		Slug:          slug,
-		RoutingMode:   params.RoutingMode,
-		LBConfig:      params.LBConfig,
-		Headers:       params.Headers,
-		Active:        active,
-		RegistryIDs:   params.RegistryIDs,
-		RoleIDs:       params.RoleIDs,
-		AuthIDs:       params.AuthIDs,
-		Fallback:      params.Fallback,
-		ModelPolicies: params.ModelPolicies,
-		MCP:           params.MCP,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:              id,
+		GatewayID:       params.GatewayID,
+		Name:            params.Name,
+		Type:            params.Type,
+		Slug:            slug,
+		RoutingMode:     params.RoutingMode,
+		LBConfig:        params.LBConfig,
+		Headers:         params.Headers,
+		Active:          active,
+		RegistryIDs:     params.RegistryIDs,
+		RegistryWeights: params.RegistryWeights,
+		RoleIDs:         params.RoleIDs,
+		AuthIDs:         params.AuthIDs,
+		Fallback:        params.Fallback,
+		ModelPolicies:   params.ModelPolicies,
+		MCP:             params.MCP,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -133,44 +156,46 @@ func New(params CreateParams) (*Consumer, error) {
 }
 
 type RehydrateParams struct {
-	ID            ids.ConsumerID
-	GatewayID     ids.GatewayID
-	Name          string
-	Type          Type
-	Slug          string
-	RoutingMode   RoutingMode
-	LBConfig      *LBConfig
-	Headers       map[string]string
-	Active        bool
-	RegistryIDs   []ids.RegistryID
-	RoleIDs       []ids.RoleID
-	AuthIDs       []ids.AuthID
-	Fallback      *Fallback
-	ModelPolicies ModelPolicies
-	MCP           *MCPPolicy
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID              ids.ConsumerID
+	GatewayID       ids.GatewayID
+	Name            string
+	Type            Type
+	Slug            string
+	RoutingMode     RoutingMode
+	LBConfig        *LBConfig
+	Headers         map[string]string
+	Active          bool
+	RegistryIDs     []ids.RegistryID
+	RegistryWeights map[ids.RegistryID]int
+	RoleIDs         []ids.RoleID
+	AuthIDs         []ids.AuthID
+	Fallback        *Fallback
+	ModelPolicies   ModelPolicies
+	MCP             *MCPPolicy
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 func Rehydrate(params RehydrateParams) *Consumer {
 	return &Consumer{
-		ID:            params.ID,
-		GatewayID:     params.GatewayID,
-		Name:          params.Name,
-		Type:          params.Type,
-		Slug:          params.Slug,
-		RoutingMode:   params.RoutingMode,
-		LBConfig:      params.LBConfig,
-		Headers:       params.Headers,
-		Active:        params.Active,
-		RegistryIDs:   params.RegistryIDs,
-		RoleIDs:       params.RoleIDs,
-		AuthIDs:       params.AuthIDs,
-		Fallback:      params.Fallback,
-		ModelPolicies: params.ModelPolicies,
-		MCP:           params.MCP,
-		CreatedAt:     params.CreatedAt,
-		UpdatedAt:     params.UpdatedAt,
+		ID:              params.ID,
+		GatewayID:       params.GatewayID,
+		Name:            params.Name,
+		Type:            params.Type,
+		Slug:            params.Slug,
+		RoutingMode:     params.RoutingMode,
+		LBConfig:        params.LBConfig,
+		Headers:         params.Headers,
+		Active:          params.Active,
+		RegistryIDs:     params.RegistryIDs,
+		RegistryWeights: params.RegistryWeights,
+		RoleIDs:         params.RoleIDs,
+		AuthIDs:         params.AuthIDs,
+		Fallback:        params.Fallback,
+		ModelPolicies:   params.ModelPolicies,
+		MCP:             params.MCP,
+		CreatedAt:       params.CreatedAt,
+		UpdatedAt:       params.UpdatedAt,
 	}
 }
 

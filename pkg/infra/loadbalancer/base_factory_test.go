@@ -12,7 +12,7 @@ import (
 func TestBaseFactory_CreateStrategy_KnownAlgorithms(t *testing.T) {
 	t.Parallel()
 	factory := loadbalancer.NewBaseFactory(nil, nil)
-	registries := []*registry.Registry{{ID: ids.New[ids.RegistryKind](), Name: "a", Weight: 1, LLMTarget: &registry.LLMTarget{Provider: "openai"}}}
+	registries := []*registry.Registry{{ID: ids.New[ids.RegistryKind](), Name: "a", LLMTarget: &registry.LLMTarget{Provider: "openai"}}}
 
 	cases := []struct {
 		name     string

@@ -25,7 +25,7 @@ type Repository interface {
 
 	FindActiveBySlug(ctx context.Context, slug string) (*Consumer, error)
 
-	AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error
+	AttachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID, weight *int) error
 	DetachRegistry(ctx context.Context, consumerID ids.ConsumerID, registryID ids.RegistryID) error
 	DetachRegistryIfUnreferenced(ctx context.Context, gatewayID ids.GatewayID, consumerID ids.ConsumerID, registryID ids.RegistryID) (*Consumer, error)
 	AttachRole(ctx context.Context, consumerID ids.ConsumerID, roleID ids.RoleID) error

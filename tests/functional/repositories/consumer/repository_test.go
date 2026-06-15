@@ -89,7 +89,7 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.Gate
 
 func seedRegistry(t *testing.T, be *registryrepo.Repository, gwID ids.GatewayID, name string) ids.RegistryID {
 	t.Helper()
-	b, err := registrydomain.NewLLMRegistry(gwID, name, "", 1, &registrydomain.LLMTarget{
+	b, err := registrydomain.NewLLMRegistry(gwID, name, "", &registrydomain.LLMTarget{
 		Provider: "openai",
 		Auth:     registrydomain.NewAPIKeyAuth("sk-test"),
 	})
@@ -138,11 +138,14 @@ func saveWithRegistries(t *testing.T, f fixture, c *domain.Consumer) {
 		t.Fatalf("Save: %v", err)
 	}
 	for _, rid := range c.RegistryIDs {
-		if err := f.repo.AttachRegistry(ctx, c.ID, rid); err != nil {
+		weight := c.WeightFor(rid)
+		if err := f.repo.AttachRegistry(ctx, c.ID, rid, &weight); err != nil {
 			t.Fatalf("AttachRegistry: %v", err)
 		}
 	}
 }
+
+func weightPtr(i int) *int { return &i }
 
 func TestRepository_SaveAndFindByID(t *testing.T) {
 	f := setupRepo(t)
@@ -355,7 +358,7 @@ func TestRepository_AttachRegistry_InvalidRegistryID(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	ghostBE := ids.New[ids.RegistryKind]()
-	err := f.repo.AttachRegistry(ctx, c.ID, ghostBE)
+	err := f.repo.AttachRegistry(ctx, c.ID, ghostBE, weightPtr(1))
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
 		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
@@ -375,7 +378,7 @@ func TestRepository_RebindsBackendsViaAttachDetach(t *testing.T) {
 	if err := f.repo.DetachRegistry(ctx, c.ID, be1); err != nil {
 		t.Fatalf("DetachRegistry: %v", err)
 	}
-	if err := f.repo.AttachRegistry(ctx, c.ID, be3); err != nil {
+	if err := f.repo.AttachRegistry(ctx, c.ID, be3, weightPtr(1)); err != nil {
 		t.Fatalf("AttachRegistry: %v", err)
 	}
 
@@ -389,6 +392,81 @@ func TestRepository_RebindsBackendsViaAttachDetach(t *testing.T) {
 	have := map[ids.RegistryID]bool{got.RegistryIDs[0]: true, got.RegistryIDs[1]: true}
 	if !have[be2] || !have[be3] {
 		t.Fatalf("RegistryIDs = %v, want [%s,%s]", got.RegistryIDs, be2, be3)
+	}
+}
+
+func TestRepository_RegistryWeights_PerAssociation(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "weights")
+	shared := seedRegistry(t, f.be, gwID, "shared-be")
+
+	c1 := validConsumer(t, gwID, "c1", shared)
+	c1.RegistryWeights = map[ids.RegistryID]int{shared: 5}
+	saveWithRegistries(t, f, c1)
+
+	c2 := validConsumer(t, gwID, "c2", shared)
+	c2.RegistryWeights = map[ids.RegistryID]int{shared: 2}
+	saveWithRegistries(t, f, c2)
+
+	got1, err := f.repo.FindByID(ctx, c1.ID)
+	if err != nil {
+		t.Fatalf("FindByID c1: %v", err)
+	}
+	if got1.RegistryWeights[shared] != 5 {
+		t.Fatalf("c1 weight = %d, want 5", got1.RegistryWeights[shared])
+	}
+
+	got2, err := f.repo.FindByID(ctx, c2.ID)
+	if err != nil {
+		t.Fatalf("FindByID c2: %v", err)
+	}
+	if got2.RegistryWeights[shared] != 2 {
+		t.Fatalf("c2 weight = %d, want 2", got2.RegistryWeights[shared])
+	}
+}
+
+func TestRepository_AttachRegistry_PersistsWeight(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "attach-weight")
+	beID := seedRegistry(t, f.be, gwID, "attach-weight-be")
+	c := validConsumer(t, gwID, "attach-weight-consumer")
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := f.repo.AttachRegistry(ctx, c.ID, beID, weightPtr(7)); err != nil {
+		t.Fatalf("AttachRegistry: %v", err)
+	}
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.RegistryWeights[beID] != 7 {
+		t.Fatalf("weight = %d, want 7", got.RegistryWeights[beID])
+	}
+
+	if err := f.repo.AttachRegistry(ctx, c.ID, beID, weightPtr(3)); err != nil {
+		t.Fatalf("AttachRegistry re-attach: %v", err)
+	}
+	got, err = f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID after re-attach: %v", err)
+	}
+	if got.RegistryWeights[beID] != 3 {
+		t.Fatalf("weight after re-attach = %d, want 3 (ON CONFLICT update)", got.RegistryWeights[beID])
+	}
+
+	if err := f.repo.AttachRegistry(ctx, c.ID, beID, nil); err != nil {
+		t.Fatalf("AttachRegistry re-attach without weight: %v", err)
+	}
+	got, err = f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID after weightless re-attach: %v", err)
+	}
+	if got.RegistryWeights[beID] != 3 {
+		t.Fatalf("weight after weightless re-attach = %d, want 3 (preserved, idempotent)", got.RegistryWeights[beID])
 	}
 }
 

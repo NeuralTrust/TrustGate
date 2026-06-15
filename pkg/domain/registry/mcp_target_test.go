@@ -22,7 +22,7 @@ func validMCPTarget() *MCPTarget {
 func TestNewMCPRegistry_HappyPath(t *testing.T) {
 	t.Parallel()
 	gwID := ids.New[ids.GatewayKind]()
-	b, err := NewMCPRegistry(gwID, "github-mcp", "GitHub MCP server", 0, validMCPTarget())
+	b, err := NewMCPRegistry(gwID, "github-mcp", "GitHub MCP server", validMCPTarget())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestNewMCPRegistry_Rejects(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := NewMCPRegistry(gwID, "x", "", 0, tc.mutate(validMCPTarget()))
+			_, err := NewMCPRegistry(gwID, "x", "", tc.mutate(validMCPTarget()))
 			if !errors.Is(err, commonerrors.ErrValidation) {
 				t.Fatalf("error = %v, want validation error", err)
 			}
@@ -109,7 +109,7 @@ func TestMCPAuth_ForwardedAutoNeedsNoClient(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	target := validMCPTarget()
 	target.Auth = &MCPAuth{Mode: MCPAuthModeForwarded, Provider: "linear", Registration: RegistrationAuto}
-	if _, err := NewMCPRegistry(gwID, "linear-mcp", "", 0, target); err != nil {
+	if _, err := NewMCPRegistry(gwID, "linear-mcp", "", target); err != nil {
 		t.Fatalf("auto registration without client_id should be valid, got %v", err)
 	}
 }
@@ -120,7 +120,7 @@ func TestRegistry_Validate_TypeCrossChecks(t *testing.T) {
 
 	t.Run("LLM rejects mcp_target", func(t *testing.T) {
 		t.Parallel()
-		b, _ := NewLLMRegistry(gwID, "openai-1", "", 1, &LLMTarget{Provider: "openai", Auth: NewAPIKeyAuth("sk-1")})
+		b, _ := NewLLMRegistry(gwID, "openai-1", "", &LLMTarget{Provider: "openai", Auth: NewAPIKeyAuth("sk-1")})
 		b.MCPTarget = validMCPTarget()
 		if err := b.Validate(); !errors.Is(err, commonerrors.ErrValidation) {
 			t.Fatalf("error = %v, want validation error", err)
@@ -129,7 +129,7 @@ func TestRegistry_Validate_TypeCrossChecks(t *testing.T) {
 
 	t.Run("MCP rejects llm_target", func(t *testing.T) {
 		t.Parallel()
-		b, _ := NewMCPRegistry(gwID, "mcp-1", "", 0, validMCPTarget())
+		b, _ := NewMCPRegistry(gwID, "mcp-1", "", validMCPTarget())
 		b.LLMTarget = &LLMTarget{Provider: "openai", Auth: NewAPIKeyAuth("sk-1")}
 		if err := b.Validate(); !errors.Is(err, commonerrors.ErrValidation) {
 			t.Fatalf("error = %v, want validation error", err)
@@ -138,7 +138,7 @@ func TestRegistry_Validate_TypeCrossChecks(t *testing.T) {
 
 	t.Run("empty type defaults to LLM", func(t *testing.T) {
 		t.Parallel()
-		b, _ := NewLLMRegistry(gwID, "openai-1", "", 1, &LLMTarget{Provider: "openai", Auth: NewAPIKeyAuth("sk-1")})
+		b, _ := NewLLMRegistry(gwID, "openai-1", "", &LLMTarget{Provider: "openai", Auth: NewAPIKeyAuth("sk-1")})
 		b.Type = ""
 		if err := b.Validate(); err != nil {
 			t.Fatalf("unexpected error: %v", err)

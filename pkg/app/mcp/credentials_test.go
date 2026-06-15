@@ -92,7 +92,7 @@ func mcpConsumer(gw ids.GatewayID) *appconsumer.RoutableConsumer {
 }
 
 func regWithAuth(gw ids.GatewayID, auth *registrydomain.MCPAuth) *registrydomain.Registry {
-	reg, err := registrydomain.NewMCPRegistry(gw, "up", "", 0, &registrydomain.MCPTarget{
+	reg, err := registrydomain.NewMCPRegistry(gw, "up", "", &registrydomain.MCPTarget{
 		URL: "https://up.example.com/mcp", Auth: auth,
 	})
 	if err != nil {

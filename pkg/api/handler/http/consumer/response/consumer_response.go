@@ -11,24 +11,30 @@ import (
 )
 
 type ConsumerResponse struct {
-	ID            ids.ConsumerID         `json:"id"`
-	GatewayID     ids.GatewayID          `json:"gateway_id"`
-	Name          string                 `json:"name"`
-	Type          string                 `json:"type"`
-	Slug          string                 `json:"slug"`
-	RoutingMode   string                 `json:"routing_mode"`
-	LBConfig      *LBConfigResponse      `json:"lb_config,omitempty"`
-	Headers       map[string]string      `json:"headers,omitempty"`
-	Active        bool                   `json:"active"`
-	RegistryIDs   []ids.RegistryID       `json:"registry_ids"`
-	RoleIDs       []ids.RoleID           `json:"role_ids"`
-	AuthIDs       []ids.AuthID           `json:"auth_ids"`
-	Fallback      *FallbackResponse      `json:"fallback,omitempty"`
-	ModelPolicies []ModelPolicyResponse  `json:"model_policies,omitempty"`
-	Toolkit       []ToolkitEntryResponse `json:"toolkit,omitempty"`
-	FailMode      string                 `json:"fail_mode,omitempty"`
-	CreatedAt     time.Time              `json:"created_at"`
-	UpdatedAt     time.Time              `json:"updated_at"`
+	ID              ids.ConsumerID           `json:"id"`
+	GatewayID       ids.GatewayID            `json:"gateway_id"`
+	Name            string                   `json:"name"`
+	Type            string                   `json:"type"`
+	Slug            string                   `json:"slug"`
+	RoutingMode     string                   `json:"routing_mode"`
+	LBConfig        *LBConfigResponse        `json:"lb_config,omitempty"`
+	Headers         map[string]string        `json:"headers,omitempty"`
+	Active          bool                     `json:"active"`
+	RegistryIDs     []ids.RegistryID         `json:"registry_ids"`
+	RegistryWeights []RegistryWeightResponse `json:"registry_weights,omitempty"`
+	RoleIDs         []ids.RoleID             `json:"role_ids"`
+	AuthIDs         []ids.AuthID             `json:"auth_ids"`
+	Fallback        *FallbackResponse        `json:"fallback,omitempty"`
+	ModelPolicies   []ModelPolicyResponse    `json:"model_policies,omitempty"`
+	Toolkit         []ToolkitEntryResponse   `json:"toolkit,omitempty"`
+	FailMode        string                   `json:"fail_mode,omitempty"`
+	CreatedAt       time.Time                `json:"created_at"`
+	UpdatedAt       time.Time                `json:"updated_at"`
+}
+
+type RegistryWeightResponse struct {
+	RegistryID ids.RegistryID `json:"registry_id"`
+	Weight     int            `json:"weight"`
 }
 
 type ToolkitEntryResponse struct {
@@ -102,25 +108,40 @@ func FromConsumer(c *domain.Consumer) ConsumerResponse {
 		roleIDs = []ids.RoleID{}
 	}
 	return ConsumerResponse{
-		ID:            c.ID,
-		GatewayID:     c.GatewayID,
-		Name:          c.Name,
-		Type:          string(c.Type),
-		Slug:          c.Slug,
-		RoutingMode:   string(c.RoutingMode),
-		LBConfig:      fromLBConfig(c.LBConfig),
-		Headers:       c.Headers,
-		Active:        c.Active,
-		RegistryIDs:   registryIDs,
-		RoleIDs:       roleIDs,
-		AuthIDs:       authIDs,
-		Fallback:      fromFallback(c.Fallback),
-		ModelPolicies: fromModelPolicies(c.ModelPolicies),
-		Toolkit:       fromToolkit(c.Toolkit()),
-		FailMode:      string(c.FailMode()),
-		CreatedAt:     c.CreatedAt,
-		UpdatedAt:     c.UpdatedAt,
+		ID:              c.ID,
+		GatewayID:       c.GatewayID,
+		Name:            c.Name,
+		Type:            string(c.Type),
+		Slug:            c.Slug,
+		RoutingMode:     string(c.RoutingMode),
+		LBConfig:        fromLBConfig(c.LBConfig),
+		Headers:         c.Headers,
+		Active:          c.Active,
+		RegistryIDs:     registryIDs,
+		RegistryWeights: fromRegistryWeights(c.RegistryWeights),
+		RoleIDs:         roleIDs,
+		AuthIDs:         authIDs,
+		Fallback:        fromFallback(c.Fallback),
+		ModelPolicies:   fromModelPolicies(c.ModelPolicies),
+		Toolkit:         fromToolkit(c.Toolkit()),
+		FailMode:        string(c.FailMode()),
+		CreatedAt:       c.CreatedAt,
+		UpdatedAt:       c.UpdatedAt,
 	}
+}
+
+func fromRegistryWeights(weights map[ids.RegistryID]int) []RegistryWeightResponse {
+	if len(weights) == 0 {
+		return nil
+	}
+	out := make([]RegistryWeightResponse, 0, len(weights))
+	for registryID, weight := range weights {
+		out = append(out, RegistryWeightResponse{RegistryID: registryID, Weight: weight})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].RegistryID.String() < out[j].RegistryID.String()
+	})
+	return out
 }
 
 func fromLBConfig(config *domain.LBConfig) *LBConfigResponse {

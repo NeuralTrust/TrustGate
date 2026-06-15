@@ -14,18 +14,19 @@ import (
 )
 
 type CreateInput struct {
-	GatewayID     ids.GatewayID
-	Name          string
-	Type          domain.Type
-	RoutingMode   domain.RoutingMode
-	LBConfig      *domain.LBConfig
-	Headers       map[string]string
-	Active        *bool
-	Fallback      *domain.Fallback
-	RegistryIDs   []ids.RegistryID
-	RoleIDs       []ids.RoleID
-	ModelPolicies domain.ModelPolicies
-	MCP           *domain.MCPPolicy
+	GatewayID       ids.GatewayID
+	Name            string
+	Type            domain.Type
+	RoutingMode     domain.RoutingMode
+	LBConfig        *domain.LBConfig
+	Headers         map[string]string
+	Active          *bool
+	Fallback        *domain.Fallback
+	RegistryIDs     []ids.RegistryID
+	RegistryWeights map[ids.RegistryID]int
+	RoleIDs         []ids.RoleID
+	ModelPolicies   domain.ModelPolicies
+	MCP             *domain.MCPPolicy
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -66,18 +67,19 @@ const maxSlugCollisionRetries = 3
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer, error) {
 	cons, err := domain.New(domain.CreateParams{
-		GatewayID:     in.GatewayID,
-		Name:          in.Name,
-		Type:          in.Type,
-		RoutingMode:   in.RoutingMode,
-		LBConfig:      in.LBConfig,
-		Headers:       in.Headers,
-		Active:        in.Active,
-		Fallback:      in.Fallback,
-		RegistryIDs:   in.RegistryIDs,
-		RoleIDs:       in.RoleIDs,
-		ModelPolicies: in.ModelPolicies,
-		MCP:           in.MCP,
+		GatewayID:       in.GatewayID,
+		Name:            in.Name,
+		Type:            in.Type,
+		RoutingMode:     in.RoutingMode,
+		LBConfig:        in.LBConfig,
+		Headers:         in.Headers,
+		Active:          in.Active,
+		Fallback:        in.Fallback,
+		RegistryIDs:     in.RegistryIDs,
+		RegistryWeights: in.RegistryWeights,
+		RoleIDs:         in.RoleIDs,
+		ModelPolicies:   in.ModelPolicies,
+		MCP:             in.MCP,
 	})
 	if err != nil {
 		return nil, err

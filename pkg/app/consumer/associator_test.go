@@ -84,17 +84,19 @@ func TestAssociator_AttachRegistry_Success(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	repo.EXPECT().FindByID(mock.Anything, consumerID).
 		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID}, nil).Once()
-	repo.EXPECT().AttachRegistry(mock.Anything, consumerID, registryID).Return(nil).Once()
+	repo.EXPECT().AttachRegistry(mock.Anything, consumerID, registryID, intPtr(1)).Return(nil).Once()
 
 	registryRepo := backendmocks.NewRepository(t)
 	registryRepo.EXPECT().FindByID(mock.Anything, registryID).
 		Return(&registrydomain.Registry{ID: registryID, GatewayID: gwID}, nil).Once()
 
 	a := newAssociator(repo, registryRepo, authmocks.NewRepository(t), policymocks.NewRepository(t))
-	if err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID); err != nil {
+	if err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID, intPtr(1)); err != nil {
 		t.Fatalf("AttachRegistry error: %v", err)
 	}
 }
+
+func intPtr(i int) *int { return &i }
 
 func TestAssociator_AttachRegistry_RejectsForeignConsumer(t *testing.T) {
 	t.Parallel()
@@ -107,7 +109,7 @@ func TestAssociator_AttachRegistry_RejectsForeignConsumer(t *testing.T) {
 		Return(&domain.Consumer{ID: consumerID, GatewayID: ids.New[ids.GatewayKind]()}, nil).Once()
 
 	a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policymocks.NewRepository(t))
-	err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID)
+	err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID, intPtr(1))
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err = %v, want consumer ErrNotFound", err)
 	}
@@ -128,7 +130,7 @@ func TestAssociator_AttachRegistry_RejectsForeignRegistry(t *testing.T) {
 		Return(&registrydomain.Registry{ID: registryID, GatewayID: ids.New[ids.GatewayKind]()}, nil).Once()
 
 	a := newAssociator(repo, registryRepo, authmocks.NewRepository(t), policymocks.NewRepository(t))
-	err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID)
+	err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID, intPtr(1))
 	if !errors.Is(err, registrydomain.ErrNotFound) {
 		t.Fatalf("err = %v, want registry ErrNotFound", err)
 	}
@@ -145,7 +147,7 @@ func TestAssociator_AttachRegistry_RejectsRoleBasedConsumer(t *testing.T) {
 		Return(&domain.Consumer{ID: consumerID, GatewayID: gwID, RoutingMode: domain.RoutingModeRoleBased}, nil).Once()
 
 	a := newAssociator(repo, backendmocks.NewRepository(t), authmocks.NewRepository(t), policymocks.NewRepository(t))
-	err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID)
+	err := a.AttachRegistry(context.Background(), gwID, consumerID, registryID, intPtr(1))
 	if !errors.Is(err, commonerrors.ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict", err)
 	}

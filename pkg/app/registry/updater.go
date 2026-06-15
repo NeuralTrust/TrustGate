@@ -18,7 +18,6 @@ type UpdateInput struct {
 	Provider        *string
 	ProviderOptions *map[string]any
 	Description     *string
-	Weight          *int
 	Auth            *domain.TargetAuth
 	HealthChecks    *domain.HealthChecks
 	MCPTarget       *domain.MCPTarget
@@ -65,9 +64,6 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	}
 	if in.Description != nil {
 		existing.Description = *in.Description
-	}
-	if in.Weight != nil {
-		existing.Weight = *in.Weight
 	}
 	applyLLMTargetUpdate(existing, in)
 	applyMCPTargetUpdate(existing, in)

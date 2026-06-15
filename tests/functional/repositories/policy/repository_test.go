@@ -65,7 +65,7 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 func seedConsumer(t *testing.T, conn *database.Connection, gwID ids.GatewayID, name string) ids.ConsumerID {
 	t.Helper()
 	ctx := context.Background()
-	reg, err := registrydomain.NewLLMRegistry(gwID, name+"-reg", "", 1, &registrydomain.LLMTarget{
+	reg, err := registrydomain.NewLLMRegistry(gwID, name+"-reg", "", &registrydomain.LLMTarget{
 		Provider: "openai",
 		Auth:     registrydomain.NewAPIKeyAuth("sk-test"),
 	})
