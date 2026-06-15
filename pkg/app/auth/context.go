@@ -13,6 +13,7 @@ const (
 	MethodOAuth2       Method = "oauth2"
 	MethodOAuth2Client Method = "oauth2_client"
 	MethodIDP          Method = "idp"
+	MethodPlayground   Method = "playground"
 )
 
 type AuthContext struct {

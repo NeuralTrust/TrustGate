@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
@@ -16,14 +17,36 @@ import (
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
 	"github.com/gofiber/fiber/v2"
+	golangjwt "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 )
+
+// playgroundMiddlewareSecret signs playground tokens in middleware-level tests.
+const playgroundMiddlewareSecret = "playground-middleware-secret"
+
+func mintPlaygroundToken(t *testing.T, consumerSlug string) string {
+	t.Helper()
+	claims := &jwt.Claims{
+		UserID:       "admin-user",
+		Purpose:      jwt.PurposePlayground,
+		ConsumerSlug: consumerSlug,
+		RegisteredClaims: golangjwt.RegisteredClaims{
+			ExpiresAt: golangjwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+		},
+	}
+	token, err := golangjwt.NewWithClaims(golangjwt.SigningMethodHS256, claims).
+		SignedString([]byte(playgroundMiddlewareSecret))
+	require.NoError(t, err)
+	return token
+}
 
 type fakeGatewayResolver struct {
 	gateway *gatewaydomain.Gateway
@@ -144,6 +167,46 @@ func TestAuthMiddleware_APIKeyUnknownUnauthorized(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestAuthMiddleware_PlaygroundTokenInlineSuccess(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeIDPVerifier{}, nil)
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(resolver.HeaderPlaygroundToken, mintPlaygroundToken(t, rc.Consumer.Slug))
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func TestAuthMiddleware_PlaygroundTokenRoleBasedSuccess(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := roleBasedConsumerWithIDP(t)
+	failingRoles := fakeRoleResolver{err: fmt.Errorf("idp roles must not be resolved for playground tokens")}
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeIDPVerifier{}, failingRoles)
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(resolver.HeaderPlaygroundToken, mintPlaygroundToken(t, rc.Consumer.Slug))
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func TestAuthMiddleware_PlaygroundTokenWrongConsumerForbidden(t *testing.T) {
+	t.Parallel()
+	gw, rc, _ := inlineConsumerWithAPIKey(t)
+	app := newAuthTestApp(t, gw, appconsumer.NewData(gw.ID, []appconsumer.RoutableConsumer{rc}), fakeOAuth2Verifier{}, fakeIDPVerifier{}, nil)
+
+	req := httptest.NewRequest(fiber.MethodPost, "/cons1234/v1/chat/completions", nil)
+	req.Host = "acme.gw.neuraltrust.ai"
+	req.Header.Set(resolver.HeaderPlaygroundToken, mintPlaygroundToken(t, "other-consumer"))
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
 func TestAuthMiddleware_OAuthInlineSuccess(t *testing.T) {
@@ -395,12 +458,15 @@ func newAuthTestAppWithResolver(
 	if roleResolver == nil {
 		roleResolver = fakeRoleResolver{}
 	}
+	playground := resolver.NewPlaygroundIdentityResolver(
+		jwt.NewJwtManager(&config.ServerConfig{SecretKey: playgroundMiddlewareSecret}),
+	)
 	apiKey := resolver.NewAPIKeyIdentityResolver()
 	oauth2 := resolver.NewOAuth2IdentityResolver(oauthVerifier)
 	oauth2Client := resolver.NewOAuth2ClientIdentityResolver(tokenSource)
 	idp := resolver.NewIDPIdentityResolver(appauth.NewIDPFinder(idpVerifier), idpVerifier)
 	authMiddleware := middleware.NewAuthMiddleware(
-		resolver.NewIdentityResolver(apiKey, oauth2, oauth2Client, idp),
+		resolver.NewIdentityResolver(playground, apiKey, oauth2, oauth2Client, idp),
 		fakeDataFinder{data: data},
 		gatewayResolver,
 		roleResolver,

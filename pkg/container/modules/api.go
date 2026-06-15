@@ -99,6 +99,9 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewAPIKeyIdentityResolver); err != nil {
 		return err
 	}
+	if err := c.Provide(resolver.NewPlaygroundIdentityResolver); err != nil {
+		return err
+	}
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
 		return err
 	}
