@@ -12,10 +12,9 @@ import (
 )
 
 type Config struct {
-	OAuth2       *OAuth2Config       `json:"oauth2,omitempty"`
-	OAuth2Client *OAuth2ClientConfig `json:"oauth2_client,omitempty"`
-	IDP          *IDPConfig          `json:"idp,omitempty"`
-	MTLS         *MTLSConfig         `json:"mtls,omitempty"`
+	OAuth2 *OAuth2Config `json:"oauth2,omitempty"`
+	IDP    *IDPConfig    `json:"idp,omitempty"`
+	MTLS   *MTLSConfig   `json:"mtls,omitempty"`
 }
 
 type OAuth2Config struct {
@@ -27,14 +26,6 @@ type OAuth2Config struct {
 	ClientSecret     string   `json:"client_secret,omitempty"`
 	RequiredScopes   []string `json:"required_scopes,omitempty"`
 	Algorithms       []string `json:"allowed_algorithms,omitempty"`
-}
-
-type OAuth2ClientConfig struct {
-	TokenURL     string   `json:"token_url"`
-	ClientID     string   `json:"client_id"`
-	ClientSecret string   `json:"client_secret"`
-	Scopes       []string `json:"scopes,omitempty"`
-	Audience     string   `json:"audience,omitempty"`
 }
 
 type IDPConfig struct {
@@ -58,9 +49,6 @@ func (c *Config) ResolveSecretsFrom(prev Config) {
 	if c.OAuth2 != nil && prev.OAuth2 != nil {
 		c.OAuth2.ClientSecret = secret.Resolve(c.OAuth2.ClientSecret, prev.OAuth2.ClientSecret)
 	}
-	if c.OAuth2Client != nil && prev.OAuth2Client != nil {
-		c.OAuth2Client.ClientSecret = secret.Resolve(c.OAuth2Client.ClientSecret, prev.OAuth2Client.ClientSecret)
-	}
 }
 
 func (c Config) Validate(t Type) error {
@@ -75,11 +63,6 @@ func (c Config) Validate(t Type) error {
 			return fmt.Errorf("%w: exactly the oauth2 config payload must be set for type %q", ErrInvalidConfig, t)
 		}
 		return c.OAuth2.validate()
-	case TypeOAuth2Client:
-		if c.OAuth2Client == nil || c.populatedCount() != 1 {
-			return fmt.Errorf("%w: exactly the oauth2_client config payload must be set for type %q", ErrInvalidConfig, t)
-		}
-		return c.OAuth2Client.validate()
 	case TypeIDP:
 		if c.IDP == nil || c.populatedCount() != 1 {
 			return fmt.Errorf("%w: exactly the idp config payload must be set for type %q", ErrInvalidConfig, t)
@@ -97,7 +80,7 @@ func (c Config) Validate(t Type) error {
 
 func (c Config) populatedCount() int {
 	count := 0
-	for _, set := range []bool{c.OAuth2 != nil, c.OAuth2Client != nil, c.IDP != nil, c.MTLS != nil} {
+	for _, set := range []bool{c.OAuth2 != nil, c.IDP != nil, c.MTLS != nil} {
 		if set {
 			count++
 		}
@@ -140,27 +123,6 @@ func (c *OAuth2Config) validate() error {
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return fmt.Errorf("%w: oauth2 requires jwks_url or introspection_url, or an http(s) issuer for OIDC discovery", ErrInvalidConfig)
 		}
-	}
-	return nil
-}
-
-func (c OAuth2ClientConfig) validate() error {
-	if secret.IsMasked(c.ClientSecret) {
-		return fmt.Errorf("%w: oauth2_client.client_secret cannot be a masked value; omit it to keep the stored value", ErrInvalidConfig)
-	}
-	tokenURL := strings.TrimSpace(c.TokenURL)
-	if tokenURL == "" {
-		return fmt.Errorf("%w: oauth2_client.token_url is required", ErrInvalidConfig)
-	}
-	parsed, err := url.Parse(tokenURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return fmt.Errorf("%w: oauth2_client.token_url must be a valid https URL", ErrInvalidConfig)
-	}
-	if strings.TrimSpace(c.ClientID) == "" {
-		return fmt.Errorf("%w: oauth2_client.client_id is required", ErrInvalidConfig)
-	}
-	if strings.TrimSpace(c.ClientSecret) == "" {
-		return fmt.Errorf("%w: oauth2_client.client_secret is required", ErrInvalidConfig)
 	}
 	return nil
 }

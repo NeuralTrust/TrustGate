@@ -3210,9 +3210,6 @@ const docTemplate = `{
                 },
                 "oauth2": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest"
-                },
-                "oauth2_client": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ClientConfigRequest"
                 }
             }
         },
@@ -3293,29 +3290,6 @@ const docTemplate = `{
                     }
                 },
                 "ca_cert": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ClientConfigRequest": {
-            "type": "object",
-            "properties": {
-                "audience": {
-                    "type": "string"
-                },
-                "client_id": {
-                    "type": "string"
-                },
-                "client_secret": {
-                    "type": "string"
-                },
-                "scopes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "token_url": {
                     "type": "string"
                 }
             }
@@ -3419,9 +3393,6 @@ const docTemplate = `{
                 },
                 "oauth2": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse"
-                },
-                "oauth2_client": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ClientConfigResponse"
                 }
             }
         },
@@ -3505,29 +3476,6 @@ const docTemplate = `{
                     }
                 },
                 "ca_cert": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ClientConfigResponse": {
-            "type": "object",
-            "properties": {
-                "audience": {
-                    "type": "string"
-                },
-                "client_id": {
-                    "type": "string"
-                },
-                "client_secret": {
-                    "type": "string"
-                },
-                "scopes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "token_url": {
                     "type": "string"
                 }
             }

@@ -15,7 +15,6 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/introspection"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/mtls"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oauthclient"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/fingerprint"
 	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
@@ -86,11 +85,6 @@ func API(c *container.Container) error {
 	if err := c.Provide(idpauth.NewVerifier); err != nil {
 		return err
 	}
-	if err := c.Provide(func() appauth.OAuth2ClientTokenSource {
-		return oauthclient.NewTokenSource(nil)
-	}); err != nil {
-		return err
-	}
 	if err := c.Provide(func(cfg *config.Config, finder appgateway.Finder) resolver.GatewayResolver {
 		return resolver.NewGatewayResolver(finder, cfg.Server.GatewayDiscoveryMode, cfg.Server.GatewayBaseDomain)
 	}); err != nil {
@@ -103,9 +97,6 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
-		return err
-	}
-	if err := c.Provide(resolver.NewOAuth2ClientIdentityResolver); err != nil {
 		return err
 	}
 	if err := c.Provide(resolver.NewIDPIdentityResolver); err != nil {

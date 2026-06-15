@@ -1763,48 +1763,6 @@
           }
         },
         {
-          "name": "Create Auth (OAuth2 Client Credentials)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 201) {",
-                  "  pm.environment.set('auth_id', pm.response.json().id);",
-                  "}"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "description": "The gateway issues tokens via the client_credentials grant. Used by role_based consumers.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"oauth2-client-{{$guid}}\",\n  \"type\": \"oauth2_client\",\n  \"enabled\": true,\n  \"config\": {\n    \"oauth2_client\": {\n      \"token_url\": \"https://auth.example.com/oauth/token\",\n      \"client_id\": \"{{oauth_client_id}}\",\n      \"client_secret\": \"{{oauth_client_secret}}\",\n      \"scopes\": [\n        \"llm:invoke\"\n      ],\n      \"audience\": \"agentgateway\"\n    }\n  }\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "v1",
-                "gateways",
-                "{{gateway_id}}",
-                "auths"
-              ]
-            }
-          }
-        },
-        {
           "name": "Create Auth (IDP)",
           "event": [
             {
@@ -1993,7 +1951,7 @@
           }
         }
       ],
-      "description": "Gateway auth credentials. `api_key` and `oauth2` apply to inline consumers; `idp` and `oauth2_client` apply to role_based consumers. `oauth2` is classic OAuth (Bearer JWT validation); `oauth2_client` lets the gateway obtain tokens via client_credentials."
+      "description": "Gateway auth credentials. `api_key` and `oauth2` apply to inline consumers; `idp` applies to role_based consumers. `oauth2` is classic OAuth (Bearer JWT validation via JWKS/introspection); `mtls` authenticates via client certificate."
     },
     {
       "name": "Catalog",
@@ -2764,7 +2722,7 @@
     },
     {
       "name": "E2E Flow (OAuth2 JWT)",
-      "description": "End-to-end inline consumer authenticated with classic OAuth2 (Bearer JWT validated via JWKS/introspection). Set `openai_api_key`, `oauth2_issuer`, `oauth2_jwks_url` and `oauth2_bearer_token` before running. oauth2 and oauth2_client are mutually exclusive on the same consumer.",
+      "description": "End-to-end inline consumer authenticated with classic OAuth2 (Bearer JWT validated via JWKS/introspection). Set `openai_api_key`, `oauth2_issuer`, `oauth2_jwks_url` and `oauth2_bearer_token` before running.",
       "item": [
         {
           "name": "1. Create Gateway",
@@ -3371,7 +3329,7 @@
                 "value": "application/json"
               }
             ],
-            "description": "Role-based consumers authorize through roles and authenticate via IDP (or oauth2_client). They cannot hold registries, lb_config or fallback.",
+            "description": "Role-based consumers authorize through roles and authenticate via IDP. They cannot hold registries, lb_config or fallback.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"e2e-role-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"role_based\",\n  \"active\": true\n}"
