@@ -1132,7 +1132,10 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Associates a registry with a consumer (idempotent).",
+                "description": "Associates a registry with a consumer (idempotent). The optional body sets the registry weight for weighted load balancing.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -1164,6 +1167,14 @@ const docTemplate = `{
                         "name": "registry_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Optional registry weight",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -3617,6 +3628,15 @@ const docTemplate = `{
                 },
                 "param_value": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest": {
+            "type": "object",
+            "properties": {
+                "weight": {
+                    "type": "integer",
+                    "example": 1
                 }
             }
         },
