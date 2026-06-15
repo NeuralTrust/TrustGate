@@ -238,6 +238,12 @@ func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.
 	if rc == nil || rc.Consumer == nil || authCtx == nil {
 		return false
 	}
+	// Playground tokens are validated upstream (signature, purpose, and
+	// consumer-slug binding in the playground identity resolver), so they are
+	// authorized for the matched consumer regardless of routing mode.
+	if authCtx.Method == appauth.MethodPlayground {
+		return true
+	}
 	switch rc.Consumer.RoutingMode {
 	case "", domainconsumer.RoutingModeInline:
 		return isInlineAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)

@@ -262,6 +262,64 @@ func TestHandle_RoleBasedIDPIntersectionSucceeds(t *testing.T) {
 	}
 }
 
+// authStubPlayground mimics the auth middleware after the playground identity
+// resolver validated a server-minted playground token: MethodPlayground, no
+// AuthID, and the consumer's own roles as effective roles.
+func authStubPlayground(gatewayID ids.GatewayID, slug string, routingMode domainconsumer.RoutingMode) fiber.Handler {
+	roleIDs := []ids.RoleID{ids.New[ids.RoleKind]()}
+	data := appconsumer.NewData(gatewayID, []appconsumer.RoutableConsumer{
+		{Consumer: &domainconsumer.Consumer{
+			ID:          ids.New[ids.ConsumerKind](),
+			GatewayID:   gatewayID,
+			Slug:        slug,
+			Active:      true,
+			RoutingMode: routingMode,
+			RoleIDs:     roleIDs,
+		}},
+	})
+	return func(c *fiber.Ctx) error {
+		authCtx := &appauth.AuthContext{Method: appauth.MethodPlayground, GatewayID: gatewayID, Subject: "admin-user", RoleIDs: roleIDs}
+		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
+		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
+		ctx = appconsumer.WithData(ctx, data)
+		c.SetUserContext(ctx)
+		return c.Next()
+	}
+}
+
+func TestHandle_PlaygroundSucceeds(t *testing.T) {
+	tests := []struct {
+		name        string
+		routingMode domainconsumer.RoutingMode
+	}{
+		{name: "inline consumer", routingMode: domainconsumer.RoutingModeInline},
+		{name: "role-based consumer", routingMode: domainconsumer.RoutingModeRoleBased},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fwd := proxymocks.NewForwarder(t)
+			app := fiber.New()
+			app.Use(authStubPlayground(ids.New[ids.GatewayKind](), consumerSlug, tt.routingMode))
+			handler := proxyhttp.NewForwardedHandler(fwd)
+			app.All("/*", handler.Handle)
+			fwd.EXPECT().
+				Forward(mock.Anything, mock.MatchedBy(func(in appproxy.ForwardInput) bool {
+					return in.Consumer != nil && in.Consumer.Consumer != nil && in.Request != nil
+				})).
+				Return(&appproxy.ForwardResult{StatusCode: 200, Body: []byte(`{"ok":true}`)}, nil).
+				Once()
+
+			resp, err := app.Test(newProxyRequest())
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			if resp.StatusCode != fiber.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+		})
+	}
+}
+
 func TestHandle_OAuthInlineSucceeds(t *testing.T) {
 	fwd := proxymocks.NewForwarder(t)
 	app := fiber.New()

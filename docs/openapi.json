@@ -6340,14 +6340,88 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPAuthHeader": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "required": {
+                        "type": "boolean"
+                    },
+                    "scheme": {
+                        "description": "Scheme is the credential prefix the gateway prepends to the supplied\nsecret when building the header value: Bearer | Token | Basic | ApiKey |\nApp | raw (raw = send the value verbatim, no prefix).",
+                        "type": "string"
+                    },
+                    "secret": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPOAuth": {
+                "type": "object",
+                "properties": {
+                    "authorize_url": {
+                        "description": "AuthorizeURL / TokenURL are required for manual registration\n(Registration == \"manual\"), where the operator supplies a pre-registered\nclient_id/secret; they also serve as a discovery fallback otherwise.",
+                        "type": "string"
+                    },
+                    "dcr": {
+                        "description": "DCR reports whether the server supports OAuth Dynamic Client Registration\n(RFC 7591). A nil pointer means it could not be determined (e.g. a\ntenant-templated host that must be probed per-instance).",
+                        "type": "boolean"
+                    },
+                    "pkce": {
+                        "description": "PKCE reports whether the authorization server supports PKCE (S256). A nil\npointer means it could not be determined.",
+                        "type": "boolean"
+                    },
+                    "registration": {
+                        "description": "Registration is the recommended gateway registration mode derived from\nDCR support: \"auto\" when the server supports Dynamic Client Registration\n(the gateway self-registers and the user just logs in at runtime),\n\"manual\" when an operator must pre-register a client. Empty means the\nserver is tenant-hosted and discovery happens per-instance at connect time.",
+                        "type": "string"
+                    },
+                    "required": {
+                        "type": "boolean"
+                    },
+                    "resource": {
+                        "description": "Resource is the RFC 8707 resource indicator / expected token audience.",
+                        "type": "string"
+                    },
+                    "resource_metadata": {
+                        "type": "boolean"
+                    },
+                    "scopes": {
+                        "description": "Scopes are the default/required OAuth scopes for the server.",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "token_url": {
+                        "type": "string"
+                    }
+                }
+            },
             "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPServer": {
                 "type": "object",
                 "properties": {
+                    "auth_headers": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPAuthHeader"
+                        }
+                    },
                     "auth_hint": {
                         "description": "none | static | oauth",
                         "type": "string"
                     },
+                    "category": {
+                        "type": "string"
+                    },
                     "code": {
+                        "type": "string"
+                    },
+                    "description": {
                         "type": "string"
                     },
                     "display_name": {
@@ -6356,6 +6430,20 @@
                     "metadata": {
                         "type": "object",
                         "additionalProperties": {}
+                    },
+                    "oauth": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPOAuth"
+                    },
+                    "relevance": {
+                        "description": "Relevance ranks how broadly relevant a server is for enterprises\n(higher = more relevant). Used to sort the catalog; 0 means unranked.",
+                        "type": "integer"
+                    },
+                    "requires_auth": {
+                        "type": "boolean"
+                    },
+                    "requires_config": {
+                        "description": "RequiresConfig reports whether the operator must supply input before the\nserver can be connected (a required URL variable, a static secret, or a\nmanual/tenant OAuth client). When false the UI can connect it by default\nwithout a configuration step: public servers, and OAuth servers whose\nclient self-registers (registration \"auto\") where the user simply logs in\nat runtime.",
+                        "type": "boolean"
                     },
                     "scopes": {
                         "type": "array",
@@ -6371,6 +6459,37 @@
                     },
                     "url": {
                         "type": "string"
+                    },
+                    "url_variables": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable"
+                        }
+                    },
+                    "vendor": {
+                        "type": "string"
+                    }
+                }
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string"
+                    },
+                    "in": {
+                        "description": "In is where the variable is substituted: \"path\" (default) or \"query\".",
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "required": {
+                        "type": "boolean"
+                    },
+                    "secret": {
+                        "description": "Secret marks a variable that carries a credential (e.g. a token passed in\nthe query string) so the UI/secret store treats it as sensitive.",
+                        "type": "boolean"
                     }
                 }
             },

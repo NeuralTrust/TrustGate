@@ -12,6 +12,7 @@ import (
 )
 
 type ChainedIdentityResolver struct {
+	playground   IdentityResolver
 	apiKey       IdentityResolver
 	oauth2       IdentityResolver
 	oauth2Client IdentityResolver
@@ -19,12 +20,19 @@ type ChainedIdentityResolver struct {
 }
 
 func NewIdentityResolver(
+	playground *PlaygroundIdentityResolver,
 	apiKey *APIKeyIdentityResolver,
 	oauth2 *OAuth2IdentityResolver,
 	oauth2Client *OAuth2ClientIdentityResolver,
 	idp *IDPIdentityResolver,
 ) IdentityResolver {
-	return ChainedIdentityResolver{apiKey: apiKey, oauth2: oauth2, oauth2Client: oauth2Client, idp: idp}
+	return ChainedIdentityResolver{
+		playground:   playground,
+		apiKey:       apiKey,
+		oauth2:       oauth2,
+		oauth2Client: oauth2Client,
+		idp:          idp,
+	}
 }
 
 func (r ChainedIdentityResolver) Resolve(
@@ -32,6 +40,9 @@ func (r ChainedIdentityResolver) Resolve(
 	gw *gatewaydomain.Gateway,
 	rc *appconsumer.RoutableConsumer,
 ) (*appauth.AuthContext, error) {
+	if c.Get(HeaderPlaygroundToken) != "" {
+		return r.playground.Resolve(c, gw, rc)
+	}
 	if c.Get(HeaderAPIKey) != "" {
 		return r.apiKey.Resolve(c, gw, rc)
 	}
