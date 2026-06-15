@@ -5,7 +5,7 @@ import { api, gatewayScope } from "@/lib/admin-client";
 import { useActiveGatewayId } from "@/components/layout/gateway-context";
 import { useToast } from "@/components/ui/toast";
 import { AdminApiError } from "@/lib/admin-client";
-import type { ListResponse } from "@/lib/types";
+import type { ListResponse, MCPServer, MCPServersResponse } from "@/lib/types";
 
 export function useList<T>(resource: string) {
   const gatewayId = useActiveGatewayId();
@@ -23,6 +23,15 @@ export function useCatalogQuery<T>(key: string, path: string, enabled = true) {
     queryFn: () => api.get<ListResponse<T>>(path),
     select: (data) => data.items ?? [],
     enabled,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useMcpCatalog() {
+  return useQuery({
+    queryKey: ["mcp-servers-catalog"],
+    queryFn: () => api.get<MCPServersResponse>("/v1/mcp-servers-catalog"),
+    select: (data): MCPServer[] => data.mcp_servers ?? [],
     staleTime: 5 * 60 * 1000,
   });
 }

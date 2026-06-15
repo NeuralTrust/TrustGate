@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Table, THead, TBody, TH, TR, TD } from "@/components/ui/table";
 import { Tabs, TabsList, TabTrigger, TabContent } from "@/components/ui/tabs";
 import { Badge, EmptyState, PageLoader } from "@/components/ui/misc";
+import { McpRegistriesView } from "./mcp-registries-view";
 import {
   Dialog,
   DialogContent,
@@ -90,11 +91,7 @@ export function RegistriesView() {
             />
           </TabContent>
           <TabContent value="mcp" className="pt-4">
-            <EmptyState
-              icon={<Server className="h-5 w-5" />}
-              title="No MCP connections"
-              description="MCP backends will appear here once they are available in the catalog."
-            />
+            <McpRegistriesView registries={registries ?? []} />
           </TabContent>
           <TabContent value="a2a" className="pt-4">
             <EmptyState
