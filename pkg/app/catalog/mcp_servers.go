@@ -108,8 +108,7 @@ func loadCuratedMCPServers() ([]domain.MCPServer, error) {
 }
 
 // authHint classifies the upstream's auth model so the UI can prefill the
-// registry auth mode: OAuth when an OAuth block is present, static when a
-// credential must be supplied (headers or a token in a URL variable), else none.
+// registry auth mode.
 func authHint(s rawServer) string {
 	switch {
 	case s.OAuth != nil && s.OAuth.Required:
@@ -125,10 +124,7 @@ func authHint(s rawServer) string {
 
 // requiresConfig reports whether the operator must supply input before the
 // server can be connected, so the UI can connect zero-config servers by default
-// and only surface a setup step for the rest. Config is required when a URL
-// variable must be filled (e.g. a tenant host), when a static secret is needed,
-// or when OAuth needs a manual/tenant client. OAuth servers that self-register
-// (registration "auto") need nothing at creation — the user logs in at runtime.
+// and only surface a setup step for the rest.
 func requiresConfig(s rawServer) bool {
 	for _, v := range s.URLVariables {
 		if v.Required {

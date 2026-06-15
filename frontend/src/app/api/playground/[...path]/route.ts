@@ -12,11 +12,9 @@ interface RouteContext {
   params: Promise<{ path: string[] }>;
 }
 
-// Forwards a playground request to the gateway proxy plane, authenticating with
-// a server-minted playground token bound to the consumer slug (the first path
-// segment of every proxy route), and streams the upstream response straight
-// back so SSE chat completions render token by token. The token never reaches
-// the browser.
+// Authenticates with a server-minted token bound to the consumer slug (first
+// path segment) so the token never reaches the browser, and streams the
+// upstream response back unbuffered for SSE chat completions.
 async function handler(req: NextRequest, ctx: RouteContext): Promise<NextResponse> {
   const { path } = await ctx.params;
   const consumerSlug = path[0];
