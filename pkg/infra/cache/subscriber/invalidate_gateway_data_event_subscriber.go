@@ -4,22 +4,23 @@ import (
 	"context"
 	"log/slog"
 
+	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/event"
 )
 
 var _ cache.EventSubscriber[event.InvalidateGatewayDataEvent] = (*InvalidateGatewayDataEventSubscriber)(nil)
 
-// InvalidateGatewayDataEventSubscriber drops every in-process cache entry keyed
-// by a gateway: the gateway entity, the aggregated consumer-data view, and any
-// Redis key scoped to that gateway. It runs on each process so a mutation on the
-// admin plane propagates to every proxy instance.
 type InvalidateGatewayDataEventSubscriber struct {
 	logger            *slog.Logger
 	cache             cache.Client
 	gatewayCache      *cache.TTLMap
+	consumerCache     *cache.TTLMap
 	consumerDataCache *cache.TTLMap
 	loadBalancerCache *cache.TTLMap
+	authCache         *cache.TTLMap
+	consumerPathCache *cache.TTLMap
+	roleCache         *cache.TTLMap
 }
 
 func NewInvalidateGatewayDataEventSubscriber(
@@ -30,8 +31,12 @@ func NewInvalidateGatewayDataEventSubscriber(
 		logger:            logger,
 		cache:             c,
 		gatewayCache:      c.GetTTLMap(cache.GatewayTTLName),
+		consumerCache:     c.GetTTLMap(cache.ConsumerTTLName),
 		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
 		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
+		authCache:         c.GetTTLMap(cache.AuthTTLName),
+		consumerPathCache: c.GetTTLMap(cache.ConsumerPathTTLName),
+		roleCache:         c.GetTTLMap(cache.RoleTTLName),
 	}
 }
 
@@ -39,16 +44,25 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 	s.logger.Info("invalidating gateway data cache", slog.String("gateway_id", evt.GatewayID))
 
 	if s.gatewayCache != nil {
-		s.gatewayCache.Delete(evt.GatewayID)
+		deleteGatewayAliases(s.gatewayCache, evt.GatewayID)
+	}
+	if s.consumerCache != nil {
+		s.consumerCache.Clear()
 	}
 	if s.consumerDataCache != nil {
 		s.consumerDataCache.Delete(evt.GatewayID)
 	}
 	if s.loadBalancerCache != nil {
-		// Load balancers are keyed by "<gatewayID>:<consumerID>"; drop every
-		// balancer of this gateway so the next request rebuilds it from the
-		// refreshed consumer/backend configuration.
 		s.loadBalancerCache.DeleteByPrefix(evt.GatewayID + ":")
+	}
+	if s.authCache != nil {
+		s.authCache.Clear()
+	}
+	if s.consumerPathCache != nil {
+		s.consumerPathCache.Clear()
+	}
+	if s.roleCache != nil {
+		s.roleCache.Clear()
 	}
 
 	if err := s.cache.DeleteAllByGatewayID(ctx, evt.GatewayID); err != nil {
@@ -59,4 +73,24 @@ func (s *InvalidateGatewayDataEventSubscriber) OnEvent(ctx context.Context, evt 
 	}
 
 	return nil
+}
+
+func deleteGatewayAliases(gatewayCache *cache.TTLMap, gatewayID string) {
+	slug := cachedGatewaySlug(gatewayCache, gatewayID)
+	gatewayCache.Delete("id:" + gatewayID)
+	if slug != "" {
+		gatewayCache.Delete("slug:" + slug)
+	}
+}
+
+func cachedGatewaySlug(gatewayCache *cache.TTLMap, gatewayID string) string {
+	cached, ok := gatewayCache.Get("id:" + gatewayID)
+	if !ok {
+		return ""
+	}
+	gw, ok := cached.(*gatewaydomain.Gateway)
+	if !ok || gw.Slug == "" {
+		return ""
+	}
+	return gatewaydomain.NormalizeSlug(gw.Slug)
 }

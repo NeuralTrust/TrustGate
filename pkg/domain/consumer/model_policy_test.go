@@ -25,9 +25,14 @@ func TestModelPolicies_Validate(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:     "empty allowed is passthrough",
+			name:     "nil allowed is passthrough",
 			policies: ModelPolicies{be1: {}},
 			wantErr:  false,
+		},
+		{
+			name:     "explicit empty allowed is rejected",
+			policies: ModelPolicies{be1: {Allowed: []string{}}},
+			wantErr:  true,
 		},
 		{
 			name:     "default in allowed is valid",

@@ -16,11 +16,14 @@ func All() []container.Option {
 		container.WithModule(LoadBalancer),
 		container.WithModule(Gateway),
 		container.WithModule(Registry),
+		container.WithModule(Role),
 		container.WithModule(Consumer),
 		container.WithModule(Catalog),
 		container.WithModule(Providers),
 		container.WithModule(Proxy),
+		container.WithModule(MCP),
 		container.WithModule(ServerAdmin),
 		container.WithModule(ServerProxy),
+		container.WithModule(ServerMCP),
 	}
 }

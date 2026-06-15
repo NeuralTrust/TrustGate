@@ -192,3 +192,33 @@ func TestBuilder_FailoverAttemptsAndFlaggedPlugin(t *testing.T) {
 	assert.Equal(t, "anthropic", evt.Request.Provider)
 	assert.Equal(t, "claude", evt.Request.Model)
 }
+
+func TestBuilder_PinnedAttemptIsVisible(t *testing.T) {
+	rt := trace.New("trace-4", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(llmSpan("anthropic",
+		&trace.LLMAttrs{Provider: "anthropic", RegistryID: "reg-1", Attempt: 1, Pinned: true, Outcome: "success"},
+		200, 50*time.Millisecond, ""))
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Body: []byte(openAIRequestBody), SourceFormat: string(adapter.FormatOpenAI)}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"ok":true}`)}
+
+	start := time.UnixMilli(4_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(60*time.Millisecond))
+
+	require.Len(t, evt.Attempts, 1)
+	assert.True(t, evt.Attempts[0].Pinned)
+}
+
+func TestBuilder_StatusReasonFromTrace(t *testing.T) {
+	rt := trace.New("trace-5", trace.Metadata{GatewayID: "gw-1"})
+	rt.SetStatusReason("model_not_allowed")
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Body: []byte(openAIRequestBody), SourceFormat: string(adapter.FormatOpenAI)}
+	resp := &infracontext.ResponseContext{StatusCode: 403}
+
+	start := time.UnixMilli(5_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(5*time.Millisecond))
+
+	assert.Equal(t, 403, evt.Status.Code)
+	assert.Equal(t, "model_not_allowed", evt.Status.Reason)
+}

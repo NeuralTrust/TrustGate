@@ -120,17 +120,17 @@ func (_c *Associator_AttachPolicy_Call) RunAndReturn(run func(context.Context, i
 	return _c
 }
 
-// AttachRegistry provides a mock function with given fields: ctx, gatewayID, consumerID, registryID
-func (_m *Associator) AttachRegistry(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind]) error {
-	ret := _m.Called(ctx, gatewayID, consumerID, registryID)
+// AttachRegistry provides a mock function with given fields: ctx, gatewayID, consumerID, registryID, weight
+func (_m *Associator) AttachRegistry(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind], weight *int) error {
+	ret := _m.Called(ctx, gatewayID, consumerID, registryID, weight)
 
 	if len(ret) == 0 {
 		panic("no return value specified for AttachRegistry")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error); ok {
-		r0 = rf(ctx, gatewayID, consumerID, registryID)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind], *int) error); ok {
+		r0 = rf(ctx, gatewayID, consumerID, registryID, weight)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -148,13 +148,14 @@ type Associator_AttachRegistry_Call struct {
 //   - gatewayID ids.ID[ids.GatewayKind]
 //   - consumerID ids.ID[ids.ConsumerKind]
 //   - registryID ids.ID[ids.RegistryKind]
-func (_e *Associator_Expecter) AttachRegistry(ctx interface{}, gatewayID interface{}, consumerID interface{}, registryID interface{}) *Associator_AttachRegistry_Call {
-	return &Associator_AttachRegistry_Call{Call: _e.mock.On("AttachRegistry", ctx, gatewayID, consumerID, registryID)}
+//   - weight *int
+func (_e *Associator_Expecter) AttachRegistry(ctx interface{}, gatewayID interface{}, consumerID interface{}, registryID interface{}, weight interface{}) *Associator_AttachRegistry_Call {
+	return &Associator_AttachRegistry_Call{Call: _e.mock.On("AttachRegistry", ctx, gatewayID, consumerID, registryID, weight)}
 }
 
-func (_c *Associator_AttachRegistry_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind])) *Associator_AttachRegistry_Call {
+func (_c *Associator_AttachRegistry_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind], weight *int)) *Associator_AttachRegistry_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.ConsumerKind]), args[3].(ids.ID[ids.RegistryKind]))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.ConsumerKind]), args[3].(ids.ID[ids.RegistryKind]), args[4].(*int))
 	})
 	return _c
 }
@@ -164,7 +165,56 @@ func (_c *Associator_AttachRegistry_Call) Return(_a0 error) *Associator_AttachRe
 	return _c
 }
 
-func (_c *Associator_AttachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error) *Associator_AttachRegistry_Call {
+func (_c *Associator_AttachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind], *int) error) *Associator_AttachRegistry_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// AttachRole provides a mock function with given fields: ctx, gatewayID, consumerID, roleID
+func (_m *Associator) AttachRole(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind]) error {
+	ret := _m.Called(ctx, gatewayID, consumerID, roleID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for AttachRole")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error); ok {
+		r0 = rf(ctx, gatewayID, consumerID, roleID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Associator_AttachRole_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AttachRole'
+type Associator_AttachRole_Call struct {
+	*mock.Call
+}
+
+// AttachRole is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - consumerID ids.ID[ids.ConsumerKind]
+//   - roleID ids.ID[ids.RoleKind]
+func (_e *Associator_Expecter) AttachRole(ctx interface{}, gatewayID interface{}, consumerID interface{}, roleID interface{}) *Associator_AttachRole_Call {
+	return &Associator_AttachRole_Call{Call: _e.mock.On("AttachRole", ctx, gatewayID, consumerID, roleID)}
+}
+
+func (_c *Associator_AttachRole_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind])) *Associator_AttachRole_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.ConsumerKind]), args[3].(ids.ID[ids.RoleKind]))
+	})
+	return _c
+}
+
+func (_c *Associator_AttachRole_Call) Return(_a0 error) *Associator_AttachRole_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Associator_AttachRole_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error) *Associator_AttachRole_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -312,6 +362,55 @@ func (_c *Associator_DetachRegistry_Call) Return(_a0 error) *Associator_DetachRe
 }
 
 func (_c *Associator_DetachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error) *Associator_DetachRegistry_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DetachRole provides a mock function with given fields: ctx, gatewayID, consumerID, roleID
+func (_m *Associator) DetachRole(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind]) error {
+	ret := _m.Called(ctx, gatewayID, consumerID, roleID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DetachRole")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error); ok {
+		r0 = rf(ctx, gatewayID, consumerID, roleID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Associator_DetachRole_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DetachRole'
+type Associator_DetachRole_Call struct {
+	*mock.Call
+}
+
+// DetachRole is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - consumerID ids.ID[ids.ConsumerKind]
+//   - roleID ids.ID[ids.RoleKind]
+func (_e *Associator_Expecter) DetachRole(ctx interface{}, gatewayID interface{}, consumerID interface{}, roleID interface{}) *Associator_DetachRole_Call {
+	return &Associator_DetachRole_Call{Call: _e.mock.On("DetachRole", ctx, gatewayID, consumerID, roleID)}
+}
+
+func (_c *Associator_DetachRole_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind])) *Associator_DetachRole_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.ConsumerKind]), args[3].(ids.ID[ids.RoleKind]))
+	})
+	return _c
+}
+
+func (_c *Associator_DetachRole_Call) Return(_a0 error) *Associator_DetachRole_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Associator_DetachRole_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error) *Associator_DetachRole_Call {
 	_c.Call.Return(run)
 	return _c
 }

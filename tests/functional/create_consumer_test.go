@@ -30,7 +30,6 @@ func TestCreateConsumer_Success(t *testing.T) {
 	assert.Equal(t, "LLM", body["type"])
 	assert.Equal(t, true, body["active"])
 
-	// A freshly created consumer carries no associations until they are linked.
 	beIDs, ok := body["registry_ids"].([]any)
 	require.True(t, ok, "registry_ids missing: %v", body)
 	assert.Empty(t, beIDs)
@@ -102,19 +101,108 @@ func TestCreateConsumer_ValidationEmptyName(t *testing.T) {
 	assert.Equal(t, "validation_failed", body["error"])
 }
 
-func TestCreateConsumer_ValidationEmptyPath(t *testing.T) {
+func TestCreateConsumer_GeneratesSlug(t *testing.T) {
 	defer Track(t, "CreateConsumer")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-emptypath-gw")})
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-slug-gw")})
 
 	status, body := sendRequest(t, http.MethodPost,
 		fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
-		nil, map[string]any{
-			"name": uniqueName("co-empty-path"),
-			"path": "",
-		},
+		nil, map[string]any{"name": uniqueName("co-slug")},
 	)
-	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
-	assert.Equal(t, "validation_failed", body["error"])
+	require.Equal(t, http.StatusCreated, status, "body=%v", body)
+	slug, ok := body["slug"].(string)
+	require.True(t, ok, "response must expose the generated slug: %v", body)
+	assert.Len(t, slug, 8, "slug must be 8 chars")
+	for _, c := range slug {
+		assert.True(t, (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'),
+			"slug must be alphanumeric, got %q", slug)
+	}
+}
+
+func TestCreateConsumer_RoleBasedWithRoles(t *testing.T) {
+	defer Track(t, "CreateConsumer")()
+
+	t.Run("existing role is bound atomically", func(t *testing.T) {
+		gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw")})
+		roleID := CreateRole(t, gwID, map[string]any{"name": uniqueName("co-role")})
+
+		status, body := sendRequest(t, http.MethodPost,
+			fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
+			nil, map[string]any{
+				"name":         uniqueName("co-roles"),
+				"routing_mode": "role_based",
+				"roles":        []string{roleID},
+			},
+		)
+		require.Equal(t, http.StatusCreated, status, "body=%v", body)
+
+		roleIDs, ok := body["role_ids"].([]any)
+		require.True(t, ok, "role_ids missing: %v", body)
+		require.Len(t, roleIDs, 1)
+		assert.Equal(t, roleID, roleIDs[0])
+	})
+
+	t.Run("role from another gateway is rejected", func(t *testing.T) {
+		gwA := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw-a")})
+		gwB := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw-b")})
+		foreignRole := CreateRole(t, gwA, map[string]any{"name": uniqueName("co-role-foreign")})
+
+		status, body := sendRequest(t, http.MethodPost,
+			fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwB),
+			nil, map[string]any{
+				"name":         uniqueName("co-roles-foreign"),
+				"routing_mode": "role_based",
+				"roles":        []string{foreignRole},
+			},
+		)
+		require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+		assert.Equal(t, "validation_failed", body["error"])
+	})
+
+	t.Run("nonexistent role is rejected", func(t *testing.T) {
+		gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw-404")})
+
+		status, body := sendRequest(t, http.MethodPost,
+			fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
+			nil, map[string]any{
+				"name":         uniqueName("co-roles-404"),
+				"routing_mode": "role_based",
+				"roles":        []string{uuid.NewString()},
+			},
+		)
+		require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+		assert.Equal(t, "validation_failed", body["error"])
+	})
+
+	t.Run("malformed role id is rejected", func(t *testing.T) {
+		gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw-bad")})
+
+		status, body := sendRequest(t, http.MethodPost,
+			fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
+			nil, map[string]any{
+				"name":         uniqueName("co-roles-bad"),
+				"routing_mode": "role_based",
+				"roles":        []string{"not-a-uuid"},
+			},
+		)
+		require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+		assert.Equal(t, "validation_failed", body["error"])
+	})
+
+	t.Run("roles with inline routing are rejected", func(t *testing.T) {
+		gwID := CreateGateway(t, map[string]any{"name": uniqueName("co-roles-gw-inline")})
+		roleID := CreateRole(t, gwID, map[string]any{"name": uniqueName("co-role-inline")})
+
+		status, body := sendRequest(t, http.MethodPost,
+			fmt.Sprintf("%s/v1/gateways/%s/consumers", AdminURL, gwID),
+			nil, map[string]any{
+				"name":  uniqueName("co-roles-inline"),
+				"roles": []string{roleID},
+			},
+		)
+		require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+		assert.Equal(t, "validation_failed", body["error"])
+	})
 }
 
 func TestCreateConsumer_InvalidBody(t *testing.T) {

@@ -72,9 +72,12 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.Gate
 
 func validRegistry(t *testing.T, gwID ids.GatewayID, name string) *domain.Registry {
 	t.Helper()
-	b, err := domain.NewRegistry(gwID, name, "openai", nil, "", 1, domain.NewAPIKeyAuth("sk-test"), nil)
+	b, err := domain.NewLLMRegistry(gwID, name, "", &domain.LLMTarget{
+		Provider: "openai",
+		Auth:     domain.NewAPIKeyAuth("sk-test"),
+	})
 	if err != nil {
-		t.Fatalf("backend domain.NewRegistry: %v", err)
+		t.Fatalf("backend domain.NewLLMRegistry: %v", err)
 	}
 	return b
 }
@@ -86,8 +89,7 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 
 	b := validRegistry(t, gwID, "openai-pool")
 	b.Description = "primary"
-	b.Weight = 7
-	b.ProviderOptions = map[string]any{"base_url": "https://api.openai.com"}
+	b.LLMTarget.ProviderOptions = map[string]any{"base_url": "https://api.openai.com"}
 
 	if err := r.Save(ctx, b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -100,20 +102,17 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.ID != b.ID || got.GatewayID != gwID || got.Name != "openai-pool" {
 		t.Fatalf("FindByID returned %+v", got)
 	}
-	if got.Provider != "openai" {
-		t.Fatalf("Provider = %q, want openai", got.Provider)
-	}
-	if got.Weight != 7 {
-		t.Fatalf("Weight = %d, want 7", got.Weight)
+	if got.Provider() != "openai" {
+		t.Fatalf("Provider = %q, want openai", got.Provider())
 	}
 	if got.Description != "primary" {
 		t.Fatalf("Description = %q, want primary", got.Description)
 	}
-	if got.ProviderOptions["base_url"] != "https://api.openai.com" {
-		t.Fatalf("ProviderOptions round-trip lost data: %+v", got.ProviderOptions)
+	if got.ProviderOptions()["base_url"] != "https://api.openai.com" {
+		t.Fatalf("ProviderOptions round-trip lost data: %+v", got.ProviderOptions())
 	}
-	if got.Auth == nil || got.Auth.APIKey == nil {
-		t.Fatalf("Auth round-trip lost data: %+v", got.Auth)
+	if got.Auth() == nil || got.Auth().APIKey == nil {
+		t.Fatalf("Auth round-trip lost data: %+v", got.Auth())
 	}
 }
 
@@ -130,8 +129,8 @@ func TestRepository_SaveAndFindByID_NullableProviderOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
-	if len(got.ProviderOptions) != 0 {
-		t.Fatalf("ProviderOptions should be empty, got %+v", got.ProviderOptions)
+	if len(got.ProviderOptions()) != 0 {
+		t.Fatalf("ProviderOptions should be empty, got %+v", got.ProviderOptions())
 	}
 }
 
@@ -184,7 +183,7 @@ func TestRepository_Update(t *testing.T) {
 	}
 
 	b.Name = "alpha-renamed"
-	b.Provider = "anthropic"
+	b.LLMTarget.Provider = "anthropic"
 	b.UpdatedAt = time.Now().UTC()
 	if err := r.Update(ctx, b); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -194,7 +193,7 @@ func TestRepository_Update(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID after update: %v", err)
 	}
-	if got.Name != "alpha-renamed" || got.Provider != "anthropic" {
+	if got.Name != "alpha-renamed" || got.Provider() != "anthropic" {
 		t.Fatalf("Update did not persist: %+v", got)
 	}
 }

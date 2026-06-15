@@ -65,9 +65,12 @@ func setupRepo(t *testing.T) (*repo.Repository, *gatewayrepo.Repository, *databa
 func seedConsumer(t *testing.T, conn *database.Connection, gwID ids.GatewayID, name string) ids.ConsumerID {
 	t.Helper()
 	ctx := context.Background()
-	reg, err := registrydomain.NewRegistry(gwID, name+"-reg", "openai", nil, "", 1, registrydomain.NewAPIKeyAuth("sk-test"), nil)
+	reg, err := registrydomain.NewLLMRegistry(gwID, name+"-reg", "", &registrydomain.LLMTarget{
+		Provider: "openai",
+		Auth:     registrydomain.NewAPIKeyAuth("sk-test"),
+	})
 	if err != nil {
-		t.Fatalf("registry domain.NewRegistry: %v", err)
+		t.Fatalf("registry domain.NewLLMRegistry: %v", err)
 	}
 	if err := registryrepo.NewRepository(conn).Save(ctx, reg); err != nil {
 		t.Fatalf("registry Save: %v", err)
@@ -76,7 +79,6 @@ func seedConsumer(t *testing.T, conn *database.Connection, gwID ids.GatewayID, n
 		GatewayID:   gwID,
 		Name:        name,
 		Type:        consumerdomain.TypeLLM,
-		Path:        "/v1/" + name,
 		RegistryIDs: []ids.RegistryID{reg.ID},
 	})
 	if err != nil {

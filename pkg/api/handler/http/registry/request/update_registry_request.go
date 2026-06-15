@@ -13,9 +13,9 @@ type UpdateRegistryRequest struct {
 	Provider        *string              `json:"provider,omitempty"`
 	ProviderOptions *map[string]any      `json:"provider_options,omitempty"`
 	Description     *string              `json:"description,omitempty"`
-	Weight          *int                 `json:"weight,omitempty"`
 	Auth            *TargetAuthRequest   `json:"auth,omitempty"`
 	HealthChecks    *HealthChecksRequest `json:"health_checks,omitempty"`
+	MCPTarget       *MCPTargetRequest    `json:"mcp_target,omitempty"`
 }
 
 func (r UpdateRegistryRequest) Validate() error {
@@ -30,9 +30,6 @@ func (r UpdateRegistryRequest) Validate() error {
 	if r.Provider != nil && strings.TrimSpace(*r.Provider) == "" {
 		return fmt.Errorf("provider is required: %w", commonerrors.ErrValidation)
 	}
-	if r.Weight != nil && *r.Weight < 0 {
-		return fmt.Errorf("weight cannot be negative: %w", commonerrors.ErrValidation)
-	}
 	return nil
 }
 
@@ -42,4 +39,8 @@ func (r UpdateRegistryRequest) ToAuth() *domain.TargetAuth {
 
 func (r UpdateRegistryRequest) ToHealthChecks() *domain.HealthChecks {
 	return r.HealthChecks.ToDomain()
+}
+
+func (r UpdateRegistryRequest) ToMCPTarget() *domain.MCPTarget {
+	return r.MCPTarget.ToDomain()
 }

@@ -41,21 +41,23 @@ type Status struct {
 	Code      int    `json:"code"`
 	IsTimeout bool   `json:"is_timeout"`
 	Outcome   string `json:"outcome,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 type Request struct {
-	Method       string              `json:"method,omitempty"`
-	Path         string              `json:"path,omitempty"`
-	Provider     string              `json:"provider,omitempty"`
-	RegistryID   string              `json:"registry_id,omitempty"`
-	Model        string              `json:"model,omitempty"`
-	ModelLabel   string              `json:"model_label,omitempty"`
-	Temperature  *float64            `json:"temperature,omitempty"`
-	MaxTokens    int                 `json:"max_tokens,omitempty"`
-	Stream       bool                `json:"stream"`
-	PromptTokens int                 `json:"prompt_tokens,omitempty"`
-	Body         string              `json:"body,omitempty"`
-	Headers      map[string][]string `json:"headers,omitempty"`
+	Method         string              `json:"method,omitempty"`
+	Path           string              `json:"path,omitempty"`
+	Provider       string              `json:"provider,omitempty"`
+	RegistryID     string              `json:"registry_id,omitempty"`
+	Model          string              `json:"model,omitempty"`
+	RequestedModel string              `json:"requested_model,omitempty"`
+	ModelLabel     string              `json:"model_label,omitempty"`
+	Temperature    *float64            `json:"temperature,omitempty"`
+	MaxTokens      int                 `json:"max_tokens,omitempty"`
+	Stream         bool                `json:"stream"`
+	PromptTokens   int                 `json:"prompt_tokens,omitempty"`
+	Body           string              `json:"body,omitempty"`
+	Headers        map[string][]string `json:"headers,omitempty"`
 }
 
 type Response struct {
@@ -96,6 +98,8 @@ type Attempt struct {
 	Provider   string `json:"provider,omitempty"`
 	Attempt    int    `json:"attempt"`
 	Fallback   bool   `json:"fallback"`
+	Pinned     bool   `json:"pinned"`
+	Route      string `json:"route,omitempty"`
 	Outcome    string `json:"outcome,omitempty"`
 	StatusCode int    `json:"status_code"`
 	LatencyMs  int64  `json:"latency_ms"`

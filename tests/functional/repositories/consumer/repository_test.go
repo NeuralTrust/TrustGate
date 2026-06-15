@@ -9,23 +9,26 @@ import (
 	"testing"
 	"time"
 
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
 	_ "github.com/NeuralTrust/AgentGateway/pkg/infra/database/migrations"
 	repo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/consumer"
 	gatewayrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/gateway"
 	registryrepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/registry"
-	"github.com/google/uuid"
+	rolerepo "github.com/NeuralTrust/AgentGateway/pkg/infra/repository/role"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type fixture struct {
-	repo *repo.Repository
-	gw   *gatewayrepo.Repository
-	be   *registryrepo.Repository
+	repo  *repo.Repository
+	gw    *gatewayrepo.Repository
+	be    *registryrepo.Repository
+	roles *rolerepo.Repository
 }
 
 func setupRepo(t *testing.T) fixture {
@@ -60,14 +63,15 @@ func setupRepo(t *testing.T) fixture {
 
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(),
-			"TRUNCATE TABLE consumer_registry, consumers, registries, gateways CASCADE")
+			"TRUNCATE TABLE consumer_role, consumer_registry, consumers, roles, registries, gateways CASCADE")
 		pool.Close()
 	})
 
 	return fixture{
-		repo: repo.NewRepository(conn),
-		gw:   gatewayrepo.NewRepository(conn),
-		be:   registryrepo.NewRepository(conn),
+		repo:  repo.NewRepository(conn),
+		gw:    gatewayrepo.NewRepository(conn),
+		be:    registryrepo.NewRepository(conn),
+		roles: rolerepo.NewRepository(conn),
 	}
 }
 
@@ -85,14 +89,32 @@ func seedGateway(t *testing.T, gw *gatewayrepo.Repository, name string) ids.Gate
 
 func seedRegistry(t *testing.T, be *registryrepo.Repository, gwID ids.GatewayID, name string) ids.RegistryID {
 	t.Helper()
-	b, err := registrydomain.NewRegistry(gwID, name, "openai", nil, "", 1, registrydomain.NewAPIKeyAuth("sk-test"), nil)
+	b, err := registrydomain.NewLLMRegistry(gwID, name, "", &registrydomain.LLMTarget{
+		Provider: "openai",
+		Auth:     registrydomain.NewAPIKeyAuth("sk-test"),
+	})
 	if err != nil {
-		t.Fatalf("backend domain.NewRegistry: %v", err)
+		t.Fatalf("backend domain.NewLLMRegistry: %v", err)
 	}
 	if err := be.Save(context.Background(), b); err != nil {
 		t.Fatalf("backend Save: %v", err)
 	}
 	return b.ID
+}
+
+func seedRole(t *testing.T, roles *rolerepo.Repository, gwID ids.GatewayID, name string) ids.RoleID {
+	t.Helper()
+	role, err := roledomain.New(roledomain.CreateParams{
+		GatewayID: gwID,
+		Name:      name,
+	})
+	if err != nil {
+		t.Fatalf("role domain.New: %v", err)
+	}
+	if err := roles.Save(context.Background(), role); err != nil {
+		t.Fatalf("role Save: %v", err)
+	}
+	return role.ID
 }
 
 func validConsumer(t *testing.T, gwID ids.GatewayID, name string, beIDs ...ids.RegistryID) *domain.Consumer {
@@ -101,7 +123,6 @@ func validConsumer(t *testing.T, gwID ids.GatewayID, name string, beIDs ...ids.R
 		GatewayID:   gwID,
 		Name:        name,
 		Type:        domain.TypeLLM,
-		Path:        "/v1/" + uuid.NewString(),
 		RegistryIDs: beIDs,
 	})
 	if err != nil {
@@ -117,11 +138,14 @@ func saveWithRegistries(t *testing.T, f fixture, c *domain.Consumer) {
 		t.Fatalf("Save: %v", err)
 	}
 	for _, rid := range c.RegistryIDs {
-		if err := f.repo.AttachRegistry(ctx, c.ID, rid); err != nil {
+		weight := c.WeightFor(rid)
+		if err := f.repo.AttachRegistry(ctx, c.ID, rid, &weight); err != nil {
 			t.Fatalf("AttachRegistry: %v", err)
 		}
 	}
 }
+
+func weightPtr(i int) *int { return &i }
 
 func TestRepository_SaveAndFindByID(t *testing.T) {
 	f := setupRepo(t)
@@ -150,11 +174,11 @@ func TestRepository_SaveAndFindByID(t *testing.T) {
 	if got.Headers["X-Tenant"] != "acme" {
 		t.Fatalf("Headers lost data: %+v", got.Headers)
 	}
-	if got.Path != c.Path {
-		t.Fatalf("Path = %q, want %q", got.Path, c.Path)
+	if got.Slug != c.Slug {
+		t.Fatalf("Slug = %q, want %q", got.Slug, c.Slug)
 	}
-	if got.Algorithm == "" {
-		t.Fatalf("Algorithm should default, got empty")
+	if got.RoutingMode != domain.RoutingModeInline {
+		t.Fatalf("RoutingMode = %q, want %q", got.RoutingMode, domain.RoutingModeInline)
 	}
 }
 
@@ -169,7 +193,7 @@ func TestRepository_SaveAndFindByID_RoundTripsFallback(t *testing.T) {
 	c.Fallback = &domain.Fallback{
 		Enabled:  true,
 		Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx, domain.TriggerHTTP429},
-		Budget:   domain.FallbackBudget{MaxAttempts: 6, MaxTotalLatency: 5 * time.Second, MaxCostUSD: 1.5},
+		Budget:   domain.FallbackBudget{MaxAttempts: 6, MaxTotalLatency: 5 * time.Second},
 		Chain:    registrydomain.Registries{fbBE},
 	}
 
@@ -261,26 +285,25 @@ func TestRepository_Save_DuplicateNameForSameGateway(t *testing.T) {
 	}
 }
 
-func TestRepository_Save_DuplicatePathForSameGateway(t *testing.T) {
+func TestRepository_Save_DuplicateSlug(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
-	gwID := seedGateway(t, f.gw, "pool-path")
-	beID := seedRegistry(t, f.be, gwID, "be-path")
+	gwID := seedGateway(t, f.gw, "pool-slug")
+	beID := seedRegistry(t, f.be, gwID, "be-slug")
 
 	c1 := validConsumer(t, gwID, "first", beID)
-	c1.Path = "/v1/shared/path"
 	if err := f.repo.Save(ctx, c1); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
 	c2 := validConsumer(t, gwID, "second", beID)
-	c2.Path = "/v1/shared/path"
+	c2.Slug = c1.Slug
 	err := f.repo.Save(ctx, c2)
-	if !errors.Is(err, domain.ErrPathAlreadyExists) {
-		t.Fatalf("err = %v, want ErrPathAlreadyExists", err)
+	if !errors.Is(err, domain.ErrSlugAlreadyExists) {
+		t.Fatalf("err = %v, want ErrSlugAlreadyExists", err)
 	}
 }
 
-func TestRepository_Save_SamePathDifferentGatewaysAllowed(t *testing.T) {
+func TestRepository_Save_DuplicateSlugAcrossGatewaysRejected(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gw1 := seedGateway(t, f.gw, "g-p1")
@@ -289,14 +312,13 @@ func TestRepository_Save_SamePathDifferentGatewaysAllowed(t *testing.T) {
 	be2 := seedRegistry(t, f.be, gw2, "be-p2")
 
 	c1 := validConsumer(t, gw1, "c1", be1)
-	c1.Path = "/v1/chat/completions"
 	if err := f.repo.Save(ctx, c1); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
 	c2 := validConsumer(t, gw2, "c2", be2)
-	c2.Path = "/v1/chat/completions"
-	if err := f.repo.Save(ctx, c2); err != nil {
-		t.Fatalf("second Save: %v", err)
+	c2.Slug = c1.Slug
+	if err := f.repo.Save(ctx, c2); !errors.Is(err, domain.ErrSlugAlreadyExists) {
+		t.Fatalf("err = %v, want ErrSlugAlreadyExists (slug uniqueness is global)", err)
 	}
 }
 
@@ -336,7 +358,7 @@ func TestRepository_AttachRegistry_InvalidRegistryID(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	ghostBE := ids.New[ids.RegistryKind]()
-	err := f.repo.AttachRegistry(ctx, c.ID, ghostBE)
+	err := f.repo.AttachRegistry(ctx, c.ID, ghostBE, weightPtr(1))
 	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
 		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
@@ -356,7 +378,7 @@ func TestRepository_RebindsBackendsViaAttachDetach(t *testing.T) {
 	if err := f.repo.DetachRegistry(ctx, c.ID, be1); err != nil {
 		t.Fatalf("DetachRegistry: %v", err)
 	}
-	if err := f.repo.AttachRegistry(ctx, c.ID, be3); err != nil {
+	if err := f.repo.AttachRegistry(ctx, c.ID, be3, weightPtr(1)); err != nil {
 		t.Fatalf("AttachRegistry: %v", err)
 	}
 
@@ -370,6 +392,179 @@ func TestRepository_RebindsBackendsViaAttachDetach(t *testing.T) {
 	have := map[ids.RegistryID]bool{got.RegistryIDs[0]: true, got.RegistryIDs[1]: true}
 	if !have[be2] || !have[be3] {
 		t.Fatalf("RegistryIDs = %v, want [%s,%s]", got.RegistryIDs, be2, be3)
+	}
+}
+
+func TestRepository_RegistryWeights_PerAssociation(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "weights")
+	shared := seedRegistry(t, f.be, gwID, "shared-be")
+
+	c1 := validConsumer(t, gwID, "c1", shared)
+	c1.RegistryWeights = map[ids.RegistryID]int{shared: 5}
+	saveWithRegistries(t, f, c1)
+
+	c2 := validConsumer(t, gwID, "c2", shared)
+	c2.RegistryWeights = map[ids.RegistryID]int{shared: 2}
+	saveWithRegistries(t, f, c2)
+
+	got1, err := f.repo.FindByID(ctx, c1.ID)
+	if err != nil {
+		t.Fatalf("FindByID c1: %v", err)
+	}
+	if got1.RegistryWeights[shared] != 5 {
+		t.Fatalf("c1 weight = %d, want 5", got1.RegistryWeights[shared])
+	}
+
+	got2, err := f.repo.FindByID(ctx, c2.ID)
+	if err != nil {
+		t.Fatalf("FindByID c2: %v", err)
+	}
+	if got2.RegistryWeights[shared] != 2 {
+		t.Fatalf("c2 weight = %d, want 2", got2.RegistryWeights[shared])
+	}
+}
+
+func TestRepository_AttachRegistry_PersistsWeight(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "attach-weight")
+	beID := seedRegistry(t, f.be, gwID, "attach-weight-be")
+	c := validConsumer(t, gwID, "attach-weight-consumer")
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := f.repo.AttachRegistry(ctx, c.ID, beID, weightPtr(7)); err != nil {
+		t.Fatalf("AttachRegistry: %v", err)
+	}
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.RegistryWeights[beID] != 7 {
+		t.Fatalf("weight = %d, want 7", got.RegistryWeights[beID])
+	}
+
+	if err := f.repo.AttachRegistry(ctx, c.ID, beID, weightPtr(3)); err != nil {
+		t.Fatalf("AttachRegistry re-attach: %v", err)
+	}
+	got, err = f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID after re-attach: %v", err)
+	}
+	if got.RegistryWeights[beID] != 3 {
+		t.Fatalf("weight after re-attach = %d, want 3 (ON CONFLICT update)", got.RegistryWeights[beID])
+	}
+
+	if err := f.repo.AttachRegistry(ctx, c.ID, beID, nil); err != nil {
+		t.Fatalf("AttachRegistry re-attach without weight: %v", err)
+	}
+	got, err = f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID after weightless re-attach: %v", err)
+	}
+	if got.RegistryWeights[beID] != 3 {
+		t.Fatalf("weight after weightless re-attach = %d, want 3 (preserved, idempotent)", got.RegistryWeights[beID])
+	}
+}
+
+func TestRepository_DetachRegistryIfUnreferenced_SucceedsWithoutRoutingReferences(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "guard-detach-ok")
+	beID := seedRegistry(t, f.be, gwID, "guard-detach-ok-be")
+	c := validConsumer(t, gwID, "guard-detach-ok", beID)
+	saveWithRegistries(t, f, c)
+
+	detached, err := f.repo.DetachRegistryIfUnreferenced(ctx, gwID, c.ID, beID)
+	if err != nil {
+		t.Fatalf("DetachRegistryIfUnreferenced: %v", err)
+	}
+	if detached.ID != c.ID || detached.GatewayID != gwID {
+		t.Fatalf("detached consumer = %+v, want id %s gateway %s", detached, c.ID, gwID)
+	}
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.RegistryIDs) != 0 {
+		t.Fatalf("RegistryIDs = %v, want empty", got.RegistryIDs)
+	}
+}
+
+func TestRepository_DetachRegistryIfUnreferenced_RejectsRoutingReferences(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "guard-detach-conflict")
+
+	cases := []struct {
+		name      string
+		configure func(*domain.Consumer, ids.RegistryID)
+	}{
+		{
+			name: "fallback chain",
+			configure: func(c *domain.Consumer, registryID ids.RegistryID) {
+				c.Fallback = &domain.Fallback{Enabled: true, Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx}, Chain: []ids.RegistryID{registryID}}
+			},
+		},
+		{
+			name: "model policies",
+			configure: func(c *domain.Consumer, registryID ids.RegistryID) {
+				c.ModelPolicies = domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}}
+			},
+		},
+		{
+			name: "lb config members",
+			configure: func(c *domain.Consumer, registryID ids.RegistryID) {
+				c.ModelPolicies = domain.ModelPolicies{registryID: {Allowed: []string{"gpt-4o"}}}
+				c.LBConfig = &domain.LBConfig{
+					Enabled: true,
+					Members: []domain.LBPoolMember{{RegistryID: registryID, Models: []string{"gpt-4o"}}},
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			beID := seedRegistry(t, f.be, gwID, "guard-"+tc.name)
+			c := validConsumer(t, gwID, "guard-"+tc.name, beID)
+			tc.configure(c, beID)
+			saveWithRegistries(t, f, c)
+
+			_, err := f.repo.DetachRegistryIfUnreferenced(ctx, gwID, c.ID, beID)
+			if !errors.Is(err, commonerrors.ErrConflict) {
+				t.Fatalf("err = %v, want ErrConflict", err)
+			}
+			got, err := f.repo.FindByID(ctx, c.ID)
+			if err != nil {
+				t.Fatalf("FindByID: %v", err)
+			}
+			if len(got.RegistryIDs) != 1 || got.RegistryIDs[0] != beID {
+				t.Fatalf("RegistryIDs = %v, want [%s]", got.RegistryIDs, beID)
+			}
+		})
+	}
+}
+
+func TestRepository_Update_RejectsRegistryReferenceAfterDetach(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "guard-update-stale")
+	beID := seedRegistry(t, f.be, gwID, "guard-update-stale-be")
+	c := validConsumer(t, gwID, "guard-update-stale", beID)
+	saveWithRegistries(t, f, c)
+	if _, err := f.repo.DetachRegistryIfUnreferenced(ctx, gwID, c.ID, beID); err != nil {
+		t.Fatalf("DetachRegistryIfUnreferenced: %v", err)
+	}
+
+	c.ModelPolicies = domain.ModelPolicies{beID: {Allowed: []string{"gpt-4o"}}}
+	c.UpdatedAt = time.Now().UTC()
+	err := f.repo.Update(ctx, c)
+	if !errors.Is(err, registrydomain.ErrInvalidRegistryID) {
+		t.Fatalf("err = %v, want ErrInvalidRegistryID", err)
 	}
 }
 
@@ -443,16 +638,54 @@ func TestRepository_List_FilterByGatewayAndName(t *testing.T) {
 	}
 }
 
-func TestRepository_DeleteBackend_FailsWhenReferencedByConsumer(t *testing.T) {
+func TestRepository_Save_PersistsRoleBindings(t *testing.T) {
+	f := setupRepo(t)
+	ctx := context.Background()
+	gwID := seedGateway(t, f.gw, "pool-roles")
+	roleID := seedRole(t, f.roles, gwID, "role-bind")
+
+	c, err := domain.New(domain.CreateParams{
+		GatewayID:   gwID,
+		Name:        "role-based-consumer",
+		Type:        domain.TypeLLM,
+		RoutingMode: domain.RoutingModeRoleBased,
+		RoleIDs:     []ids.RoleID{roleID},
+	})
+	if err != nil {
+		t.Fatalf("consumer domain.New: %v", err)
+	}
+	if err := f.repo.Save(ctx, c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.RoleIDs) != 1 || got.RoleIDs[0] != roleID {
+		t.Fatalf("RoleIDs = %v, want [%s]", got.RoleIDs, roleID)
+	}
+}
+
+func TestRepository_DeleteBackend_CascadesConsumerBinding(t *testing.T) {
 	f := setupRepo(t)
 	ctx := context.Background()
 	gwID := seedGateway(t, f.gw, "pool-bd")
 	beID := seedRegistry(t, f.be, gwID, "be-bd")
 
-	saveWithRegistries(t, f, validConsumer(t, gwID, "uses-be", beID))
-	err := f.be.Delete(ctx, beID)
-	if !errors.Is(err, registrydomain.ErrHasDependents) {
-		t.Fatalf("err = %v, want registrydomain.ErrHasDependents", err)
+	c := validConsumer(t, gwID, "uses-be", beID)
+	saveWithRegistries(t, f, c)
+
+	if err := f.be.Delete(ctx, beID); err != nil {
+		t.Fatalf("Delete: %v, want cascade to consumer_registry", err)
+	}
+
+	got, err := f.repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.RegistryIDs) != 0 {
+		t.Fatalf("RegistryIDs = %v, want the binding removed by cascade", got.RegistryIDs)
 	}
 }
 

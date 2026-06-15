@@ -70,65 +70,6 @@ func (_c *Repository_Delete_Call) RunAndReturn(run func(context.Context, ids.ID[
 	return _c
 }
 
-// FindByID provides a mock function with given fields: ctx, id
-func (_m *Repository) FindByID(ctx context.Context, id ids.ID[ids.AuthKind]) (*auth.Auth, error) {
-	ret := _m.Called(ctx, id)
-
-	if len(ret) == 0 {
-		panic("no return value specified for FindByID")
-	}
-
-	var r0 *auth.Auth
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.AuthKind]) (*auth.Auth, error)); ok {
-		return rf(ctx, id)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.AuthKind]) *auth.Auth); ok {
-		r0 = rf(ctx, id)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*auth.Auth)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.AuthKind]) error); ok {
-		r1 = rf(ctx, id)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// Repository_FindByID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindByID'
-type Repository_FindByID_Call struct {
-	*mock.Call
-}
-
-// FindByID is a helper method to define mock.On call
-//   - ctx context.Context
-//   - id ids.ID[ids.AuthKind]
-func (_e *Repository_Expecter) FindByID(ctx interface{}, id interface{}) *Repository_FindByID_Call {
-	return &Repository_FindByID_Call{Call: _e.mock.On("FindByID", ctx, id)}
-}
-
-func (_c *Repository_FindByID_Call) Run(run func(ctx context.Context, id ids.ID[ids.AuthKind])) *Repository_FindByID_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.AuthKind]))
-	})
-	return _c
-}
-
-func (_c *Repository_FindByID_Call) Return(_a0 *auth.Auth, _a1 error) *Repository_FindByID_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *Repository_FindByID_Call) RunAndReturn(run func(context.Context, ids.ID[ids.AuthKind]) (*auth.Auth, error)) *Repository_FindByID_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // FindByAPIKeyHash provides a mock function with given fields: ctx, keyHash
 func (_m *Repository) FindByAPIKeyHash(ctx context.Context, keyHash string) (*auth.Auth, error) {
 	ret := _m.Called(ctx, keyHash)
@@ -184,6 +125,65 @@ func (_c *Repository_FindByAPIKeyHash_Call) Return(_a0 *auth.Auth, _a1 error) *R
 }
 
 func (_c *Repository_FindByAPIKeyHash_Call) RunAndReturn(run func(context.Context, string) (*auth.Auth, error)) *Repository_FindByAPIKeyHash_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// FindByID provides a mock function with given fields: ctx, id
+func (_m *Repository) FindByID(ctx context.Context, id ids.ID[ids.AuthKind]) (*auth.Auth, error) {
+	ret := _m.Called(ctx, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindByID")
+	}
+
+	var r0 *auth.Auth
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.AuthKind]) (*auth.Auth, error)); ok {
+		return rf(ctx, id)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.AuthKind]) *auth.Auth); ok {
+		r0 = rf(ctx, id)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*auth.Auth)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.AuthKind]) error); ok {
+		r1 = rf(ctx, id)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_FindByID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindByID'
+type Repository_FindByID_Call struct {
+	*mock.Call
+}
+
+// FindByID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - id ids.ID[ids.AuthKind]
+func (_e *Repository_Expecter) FindByID(ctx interface{}, id interface{}) *Repository_FindByID_Call {
+	return &Repository_FindByID_Call{Call: _e.mock.On("FindByID", ctx, id)}
+}
+
+func (_c *Repository_FindByID_Call) Run(run func(ctx context.Context, id ids.ID[ids.AuthKind])) *Repository_FindByID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.AuthKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_FindByID_Call) Return(_a0 *auth.Auth, _a1 error) *Repository_FindByID_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_FindByID_Call) RunAndReturn(run func(context.Context, ids.ID[ids.AuthKind]) (*auth.Auth, error)) *Repository_FindByID_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -244,6 +244,65 @@ func (_c *Repository_FindByIDs_Call) Return(_a0 []*auth.Auth, _a1 error) *Reposi
 }
 
 func (_c *Repository_FindByIDs_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], []ids.ID[ids.AuthKind]) ([]*auth.Auth, error)) *Repository_FindByIDs_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// FindEnabledByTypes provides a mock function with given fields: ctx, types
+func (_m *Repository) FindEnabledByTypes(ctx context.Context, types []auth.Type) ([]*auth.Auth, error) {
+	ret := _m.Called(ctx, types)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindEnabledByTypes")
+	}
+
+	var r0 []*auth.Auth
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, []auth.Type) ([]*auth.Auth, error)); ok {
+		return rf(ctx, types)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, []auth.Type) []*auth.Auth); ok {
+		r0 = rf(ctx, types)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*auth.Auth)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, []auth.Type) error); ok {
+		r1 = rf(ctx, types)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_FindEnabledByTypes_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindEnabledByTypes'
+type Repository_FindEnabledByTypes_Call struct {
+	*mock.Call
+}
+
+// FindEnabledByTypes is a helper method to define mock.On call
+//   - ctx context.Context
+//   - types []auth.Type
+func (_e *Repository_Expecter) FindEnabledByTypes(ctx interface{}, types interface{}) *Repository_FindEnabledByTypes_Call {
+	return &Repository_FindEnabledByTypes_Call{Call: _e.mock.On("FindEnabledByTypes", ctx, types)}
+}
+
+func (_c *Repository_FindEnabledByTypes_Call) Run(run func(ctx context.Context, types []auth.Type)) *Repository_FindEnabledByTypes_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].([]auth.Type))
+	})
+	return _c
+}
+
+func (_c *Repository_FindEnabledByTypes_Call) Return(_a0 []*auth.Auth, _a1 error) *Repository_FindEnabledByTypes_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_FindEnabledByTypes_Call) RunAndReturn(run func(context.Context, []auth.Type) ([]*auth.Auth, error)) *Repository_FindEnabledByTypes_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -310,6 +369,66 @@ func (_c *Repository_List_Call) Return(items []*auth.Auth, total int, err error)
 }
 
 func (_c *Repository_List_Call) RunAndReturn(run func(context.Context, auth.ListFilter) ([]*auth.Auth, int, error)) *Repository_List_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ListEnabledByGatewayAndType provides a mock function with given fields: ctx, gatewayID, authType
+func (_m *Repository) ListEnabledByGatewayAndType(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], authType auth.Type) ([]*auth.Auth, error) {
+	ret := _m.Called(ctx, gatewayID, authType)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListEnabledByGatewayAndType")
+	}
+
+	var r0 []*auth.Auth
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], auth.Type) ([]*auth.Auth, error)); ok {
+		return rf(ctx, gatewayID, authType)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], auth.Type) []*auth.Auth); ok {
+		r0 = rf(ctx, gatewayID, authType)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*auth.Auth)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], auth.Type) error); ok {
+		r1 = rf(ctx, gatewayID, authType)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_ListEnabledByGatewayAndType_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListEnabledByGatewayAndType'
+type Repository_ListEnabledByGatewayAndType_Call struct {
+	*mock.Call
+}
+
+// ListEnabledByGatewayAndType is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - authType auth.Type
+func (_e *Repository_Expecter) ListEnabledByGatewayAndType(ctx interface{}, gatewayID interface{}, authType interface{}) *Repository_ListEnabledByGatewayAndType_Call {
+	return &Repository_ListEnabledByGatewayAndType_Call{Call: _e.mock.On("ListEnabledByGatewayAndType", ctx, gatewayID, authType)}
+}
+
+func (_c *Repository_ListEnabledByGatewayAndType_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], authType auth.Type)) *Repository_ListEnabledByGatewayAndType_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(auth.Type))
+	})
+	return _c
+}
+
+func (_c *Repository_ListEnabledByGatewayAndType_Call) Return(_a0 []*auth.Auth, _a1 error) *Repository_ListEnabledByGatewayAndType_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_ListEnabledByGatewayAndType_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], auth.Type) ([]*auth.Auth, error)) *Repository_ListEnabledByGatewayAndType_Call {
 	_c.Call.Return(run)
 	return _c
 }

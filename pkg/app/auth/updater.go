@@ -74,6 +74,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	if err := existing.Validate(); err != nil {
 		return nil, err
 	}
+	if err := ensureNoOAuth2Conflict(ctx, u.repo, existing); err != nil {
+		return nil, err
+	}
 	if err := u.repo.Update(ctx, existing); err != nil {
 		return nil, err
 	}

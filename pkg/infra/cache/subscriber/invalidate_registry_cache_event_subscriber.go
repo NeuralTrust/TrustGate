@@ -17,6 +17,7 @@ var _ cache.EventSubscriber[event.InvalidateRegistryCacheEvent] = (*InvalidateRe
 type InvalidateRegistryCacheEventSubscriber struct {
 	logger            *slog.Logger
 	backendCache      *cache.TTLMap
+	consumerCache     *cache.TTLMap
 	consumerDataCache *cache.TTLMap
 	loadBalancerCache *cache.TTLMap
 }
@@ -28,6 +29,7 @@ func NewInvalidateRegistryCacheEventSubscriber(
 	return &InvalidateRegistryCacheEventSubscriber{
 		logger:            logger,
 		backendCache:      c.GetTTLMap(cache.RegistryTTLName),
+		consumerCache:     c.GetTTLMap(cache.ConsumerTTLName),
 		consumerDataCache: c.GetTTLMap(cache.ConsumerDataTTLName),
 		loadBalancerCache: c.GetTTLMap(cache.LoadBalancerTTLName),
 	}
@@ -41,6 +43,9 @@ func (s *InvalidateRegistryCacheEventSubscriber) OnEvent(_ context.Context, evt 
 
 	if s.backendCache != nil {
 		s.backendCache.Delete(evt.RegistryID)
+	}
+	if s.consumerCache != nil {
+		s.consumerCache.Clear()
 	}
 	if s.consumerDataCache != nil {
 		s.consumerDataCache.Delete(evt.GatewayID)

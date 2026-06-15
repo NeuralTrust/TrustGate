@@ -1,11 +1,19 @@
 package consumer
 
 import (
+	"fmt"
+
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
+	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
+
+type attachRegistryRequest struct {
+	Weight *int `json:"weight,omitempty"`
+}
 
 type AssociationHandler struct {
 	associator appconsumer.Associator
@@ -34,10 +42,34 @@ func (h *AssociationHandler) AttachRegistry(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
-	if err := h.associator.AttachRegistry(c.UserContext(), gatewayID, consumerID, registryID); err != nil {
+	weight, err := parseAttachRegistryWeight(c)
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	if err := h.associator.AttachRegistry(c.UserContext(), gatewayID, consumerID, registryID, weight); err != nil {
 		return helpers.WriteError(c, err)
 	}
 	return helpers.WriteNoContent(c)
+}
+
+func parseAttachRegistryWeight(c *fiber.Ctx) (*int, error) {
+	if len(c.Body()) == 0 {
+		return nil, nil
+	}
+	var req attachRegistryRequest
+	if err := c.BodyParser(&req); err != nil {
+		return nil, fmt.Errorf("invalid request body: %w", commonerrors.ErrValidation)
+	}
+	if req.Weight == nil {
+		return nil, nil
+	}
+	if *req.Weight < consumerdomain.DefaultRegistryWeight || *req.Weight > consumerdomain.MaxRegistryWeight {
+		return nil, fmt.Errorf(
+			"weight must be between %d and %d: %w",
+			consumerdomain.DefaultRegistryWeight, consumerdomain.MaxRegistryWeight, commonerrors.ErrValidation,
+		)
+	}
+	return req.Weight, nil
 }
 
 // DetachRegistry godoc
@@ -60,6 +92,57 @@ func (h *AssociationHandler) DetachRegistry(c *fiber.Ctx) error {
 		return helpers.WriteError(c, err)
 	}
 	if err := h.associator.DetachRegistry(c.UserContext(), gatewayID, consumerID, registryID); err != nil {
+		return helpers.WriteError(c, err)
+	}
+	return helpers.WriteNoContent(c)
+}
+
+// AttachRole godoc
+// @Summary      Attach a role to a consumer
+// @Description  Associates a role with a role_based consumer (idempotent). Returns 409 for inline consumers.
+// @Tags         consumers
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path  string  true  "Gateway id"   format(uuid)
+// @Param        id          path  string  true  "Consumer id"  format(uuid)
+// @Param        role_id     path  string  true  "Role id"      format(uuid)
+// @Success      204         "No Content"
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Failure      409         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id} [post]
+func (h *AssociationHandler) AttachRole(c *fiber.Ctx) error {
+	gatewayID, consumerID, roleID, err := helpers.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	if err := h.associator.AttachRole(c.UserContext(), gatewayID, consumerID, roleID); err != nil {
+		return helpers.WriteError(c, err)
+	}
+	return helpers.WriteNoContent(c)
+}
+
+// DetachRole godoc
+// @Summary      Detach a role from a consumer
+// @Description  Removes the association between a role and a consumer (idempotent).
+// @Tags         consumers
+// @Produce      json
+// @Security     BearerAuth
+// @Param        gateway_id  path  string  true  "Gateway id"   format(uuid)
+// @Param        id          path  string  true  "Consumer id"  format(uuid)
+// @Param        role_id     path  string  true  "Role id"      format(uuid)
+// @Success      204         "No Content"
+// @Failure      400         {object}  helpers.ErrorBody
+// @Failure      401         {object}  helpers.ErrorBody
+// @Failure      404         {object}  helpers.ErrorBody
+// @Router       /v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id} [delete]
+func (h *AssociationHandler) DetachRole(c *fiber.Ctx) error {
+	gatewayID, consumerID, roleID, err := helpers.ParseConsumerAssociationID[ids.RoleKind](c, "role_id")
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	if err := h.associator.DetachRole(c.UserContext(), gatewayID, consumerID, roleID); err != nil {
 		return helpers.WriteError(c, err)
 	}
 	return helpers.WriteNoContent(c)

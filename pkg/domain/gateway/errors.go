@@ -13,4 +13,5 @@ var (
 	ErrNotFound      = fmt.Errorf("gateway: %w", commonerrors.ErrNotFound)
 	ErrAlreadyExists = fmt.Errorf("gateway: %w", commonerrors.ErrAlreadyExists)
 	ErrHasDependents = fmt.Errorf("gateway: %w", commonerrors.ErrHasDependents)
+	ErrInvalidDomain = fmt.Errorf("gateway: invalid domain: %w", commonerrors.ErrValidation)
 )

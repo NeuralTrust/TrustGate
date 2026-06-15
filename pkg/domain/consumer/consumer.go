@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/loadbalancer/algorithm"
 )
 
 type Type string
@@ -30,43 +28,101 @@ func IsValidType(t Type) bool {
 	return false
 }
 
+type RoutingMode string
+
+const (
+	RoutingModeInline    RoutingMode = "inline"
+	RoutingModeRoleBased RoutingMode = "role_based"
+)
+
+func (m RoutingMode) IsValid() bool {
+	switch m {
+	case RoutingModeInline, RoutingModeRoleBased:
+		return true
+	}
+	return false
+}
+
+const (
+	// DefaultRegistryWeight is applied when a binding does not specify a weight.
+	DefaultRegistryWeight = 1
+	// MaxRegistryWeight caps per-association weights: the weighted round-robin
+	// scheduler iterates up to len(registries)*(maxWeight+1) times per pick, so an
+	// unbounded weight would let a single request monopolize the lock. It is also
+	// kept well within PostgreSQL's int4 range.
+	MaxRegistryWeight = 1000
+)
+
 type Consumer struct {
-	ID              ids.ConsumerID            `json:"id"`
-	GatewayID       ids.GatewayID             `json:"gateway_id"`
-	Name            string                    `json:"name"`
-	Type            Type                      `json:"type"`
-	Path            string                    `json:"path"`
-	Algorithm       string                    `json:"algorithm"`
-	EmbeddingConfig *registry.EmbeddingConfig `json:"embedding_config,omitempty"`
-	Headers         map[string]string         `json:"headers,omitempty"`
-	Active          bool                      `json:"active"`
-	RegistryIDs     registry.Registries       `json:"registry_ids"`
-	AuthIDs         []ids.AuthID              `json:"auth_ids"`
-	Fallback        *Fallback                 `json:"fallback,omitempty"`
-	ModelPolicies   ModelPolicies             `json:"model_policies,omitempty"`
-	CreatedAt       time.Time                 `json:"created_at"`
-	UpdatedAt       time.Time                 `json:"updated_at"`
+	ID              ids.ConsumerID         `json:"id"`
+	GatewayID       ids.GatewayID          `json:"gateway_id"`
+	Name            string                 `json:"name"`
+	Type            Type                   `json:"type"`
+	Slug            string                 `json:"slug"`
+	RoutingMode     RoutingMode            `json:"routing_mode"`
+	LBConfig        *LBConfig              `json:"lb_config,omitempty"`
+	Headers         map[string]string      `json:"headers,omitempty"`
+	Active          bool                   `json:"active"`
+	RegistryIDs     []ids.RegistryID       `json:"registry_ids"`
+	RegistryWeights map[ids.RegistryID]int `json:"registry_weights,omitempty"`
+	RoleIDs         []ids.RoleID           `json:"role_ids"`
+	AuthIDs         []ids.AuthID           `json:"auth_ids"`
+	Fallback        *Fallback              `json:"fallback,omitempty"`
+	ModelPolicies   ModelPolicies          `json:"model_policies,omitempty"`
+	MCP             *MCPPolicy             `json:"mcp,omitempty"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
+}
+
+func (c *Consumer) WeightFor(registryID ids.RegistryID) int {
+	if c.RegistryWeights == nil {
+		return 1
+	}
+	if w, ok := c.RegistryWeights[registryID]; ok && w > 0 {
+		return w
+	}
+	return 1
+}
+
+func (c *Consumer) Toolkit() Toolkit {
+	if c.MCP == nil {
+		return nil
+	}
+	return c.MCP.Toolkit
+}
+
+func (c *Consumer) FailMode() FailMode {
+	if c.MCP == nil {
+		return ""
+	}
+	return c.MCP.FailMode
 }
 
 type CreateParams struct {
 	GatewayID       ids.GatewayID
 	Name            string
 	Type            Type
-	Path            string
-	Algorithm       string
-	EmbeddingConfig *registry.EmbeddingConfig
+	RoutingMode     RoutingMode
+	LBConfig        *LBConfig
 	Headers         map[string]string
 	Active          *bool
 	RegistryIDs     []ids.RegistryID
+	RegistryWeights map[ids.RegistryID]int
+	RoleIDs         []ids.RoleID
 	AuthIDs         []ids.AuthID
 	Fallback        *Fallback
 	ModelPolicies   ModelPolicies
+	MCP             *MCPPolicy
 }
 
 func New(params CreateParams) (*Consumer, error) {
 	id, err := ids.NewV7[ids.ConsumerKind]()
 	if err != nil {
 		return nil, fmt.Errorf("consumer: generate uuid: %w", err)
+	}
+	slug, err := NewSlug()
+	if err != nil {
+		return nil, err
 	}
 	now := time.Now().UTC()
 	active := true
@@ -78,15 +134,18 @@ func New(params CreateParams) (*Consumer, error) {
 		GatewayID:       params.GatewayID,
 		Name:            params.Name,
 		Type:            params.Type,
-		Path:            params.Path,
-		Algorithm:       params.Algorithm,
-		EmbeddingConfig: params.EmbeddingConfig,
+		Slug:            slug,
+		RoutingMode:     params.RoutingMode,
+		LBConfig:        params.LBConfig,
 		Headers:         params.Headers,
 		Active:          active,
 		RegistryIDs:     params.RegistryIDs,
+		RegistryWeights: params.RegistryWeights,
+		RoleIDs:         params.RoleIDs,
 		AuthIDs:         params.AuthIDs,
 		Fallback:        params.Fallback,
 		ModelPolicies:   params.ModelPolicies,
+		MCP:             params.MCP,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -96,37 +155,47 @@ func New(params CreateParams) (*Consumer, error) {
 	return c, nil
 }
 
-func Rehydrate(
-	id ids.ConsumerID,
-	gatewayID ids.GatewayID,
-	name string,
-	consumerType Type,
-	path, algo string,
-	embeddingConfig *registry.EmbeddingConfig,
-	headers map[string]string,
-	active bool,
-	registryIDs []ids.RegistryID,
-	authIDs []ids.AuthID,
-	fallback *Fallback,
-	modelPolicies ModelPolicies,
-	createdAt, updatedAt time.Time,
-) *Consumer {
+type RehydrateParams struct {
+	ID              ids.ConsumerID
+	GatewayID       ids.GatewayID
+	Name            string
+	Type            Type
+	Slug            string
+	RoutingMode     RoutingMode
+	LBConfig        *LBConfig
+	Headers         map[string]string
+	Active          bool
+	RegistryIDs     []ids.RegistryID
+	RegistryWeights map[ids.RegistryID]int
+	RoleIDs         []ids.RoleID
+	AuthIDs         []ids.AuthID
+	Fallback        *Fallback
+	ModelPolicies   ModelPolicies
+	MCP             *MCPPolicy
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+func Rehydrate(params RehydrateParams) *Consumer {
 	return &Consumer{
-		ID:              id,
-		GatewayID:       gatewayID,
-		Name:            name,
-		Type:            consumerType,
-		Path:            path,
-		Algorithm:       algo,
-		EmbeddingConfig: embeddingConfig,
-		Headers:         headers,
-		Active:          active,
-		RegistryIDs:     registryIDs,
-		AuthIDs:         authIDs,
-		Fallback:        fallback,
-		ModelPolicies:   modelPolicies,
-		CreatedAt:       createdAt,
-		UpdatedAt:       updatedAt,
+		ID:              params.ID,
+		GatewayID:       params.GatewayID,
+		Name:            params.Name,
+		Type:            params.Type,
+		Slug:            params.Slug,
+		RoutingMode:     params.RoutingMode,
+		LBConfig:        params.LBConfig,
+		Headers:         params.Headers,
+		Active:          params.Active,
+		RegistryIDs:     params.RegistryIDs,
+		RegistryWeights: params.RegistryWeights,
+		RoleIDs:         params.RoleIDs,
+		AuthIDs:         params.AuthIDs,
+		Fallback:        params.Fallback,
+		ModelPolicies:   params.ModelPolicies,
+		MCP:             params.MCP,
+		CreatedAt:       params.CreatedAt,
+		UpdatedAt:       params.UpdatedAt,
 	}
 }
 
@@ -143,35 +212,65 @@ func (c *Consumer) Validate() error {
 	if !IsValidType(c.Type) {
 		return fmt.Errorf("%w: %q", ErrInvalidType, c.Type)
 	}
-	if strings.TrimSpace(c.Path) == "" {
-		return fmt.Errorf("%w: path is required", ErrInvalidPath)
+	if !IsValidSlug(c.Slug) {
+		return fmt.Errorf("%w: %q", ErrInvalidSlug, c.Slug)
 	}
-	if c.Algorithm == "" {
-		c.Algorithm = algorithm.RoundRobin
+	if c.RoutingMode == "" {
+		c.RoutingMode = RoutingModeInline
 	}
-	if !algorithm.IsValid(c.Algorithm) {
-		return fmt.Errorf("%w: %q", ErrInvalidAlgorithm, c.Algorithm)
-	}
-	if c.Algorithm == algorithm.Semantic {
-		if c.EmbeddingConfig == nil {
-			return fmt.Errorf("%w: embedding_config required for semantic algorithm", ErrInvalidEmbeddingConfig)
-		}
-		if err := c.EmbeddingConfig.Validate(); err != nil {
-			return err
-		}
-	} else if c.EmbeddingConfig != nil {
-		return fmt.Errorf("%w: embedding_config is only valid for the semantic algorithm", ErrInvalidEmbeddingConfig)
-	}
-	if err := c.RegistryIDs.Validate(); err != nil {
-		return err
+	if !c.RoutingMode.IsValid() {
+		return fmt.Errorf("%w: %q", ErrInvalidRoutingMode, c.RoutingMode)
 	}
 	if err := validateUniqueIDs(c.AuthIDs, ErrInvalidAuthID, "auth"); err != nil {
+		return err
+	}
+	if c.Type != TypeMCP && c.MCP != nil {
+		return fmt.Errorf("%w: mcp policy is only valid for MCP consumers", ErrInvalidType)
+	}
+	if c.RoutingMode == RoutingModeRoleBased {
+		return c.validateRoleBased()
+	}
+	if err := validateUniqueIDs(c.RegistryIDs, ErrInvalidModelPolicy, "registry"); err != nil {
 		return err
 	}
 	if err := c.Fallback.Validate(); err != nil {
 		return err
 	}
 	if err := c.ModelPolicies.Validate(c.knownRegistryIDs()); err != nil {
+		return err
+	}
+	if err := c.LBConfig.Validate(c.ModelPolicies); err != nil {
+		return err
+	}
+	if len(c.RoleIDs) > 0 {
+		return fmt.Errorf("%w: roles are only valid in role_based mode", ErrInvalidRoutingMode)
+	}
+	if c.Type == TypeMCP {
+		if c.MCP == nil {
+			c.MCP = &MCPPolicy{}
+		}
+		return c.MCP.Validate(c.knownRegistryIDs())
+	}
+	return nil
+}
+
+func (c *Consumer) validateRoleBased() error {
+	if len(c.RegistryIDs) > 0 {
+		return fmt.Errorf("%w: registry_ids are only valid in inline mode", ErrInvalidRoutingMode)
+	}
+	if c.LBConfig != nil {
+		return fmt.Errorf("%w: lb_config is only valid in inline mode", ErrInvalidRoutingMode)
+	}
+	if c.Fallback != nil && c.Fallback.Enabled {
+		return fmt.Errorf("%w: fallback is only valid in inline mode", ErrInvalidRoutingMode)
+	}
+	if len(c.ModelPolicies) > 0 {
+		return fmt.Errorf("%w: model_policies are only valid in inline mode", ErrInvalidRoutingMode)
+	}
+	if c.MCP != nil {
+		return fmt.Errorf("%w: mcp policy is only valid in inline mode", ErrInvalidRoutingMode)
+	}
+	if err := validateUniqueIDs(c.RoleIDs, ErrInvalidRoutingMode, "role"); err != nil {
 		return err
 	}
 	return nil

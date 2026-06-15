@@ -8,20 +8,22 @@ import (
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
 	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
+	rolehttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/gofiber/fiber/v2"
 	fiberSwagger "github.com/gofiber/swagger"
 )
 
 const (
-	HealthPath          = "/healthz"
-	ReadyPath           = "/readyz"
-	VersionPath         = "/__/version"
-	DocsPath            = "/docs/*"
-	GatewaysPath        = "/v1/gateways"
-	ProvidersCatalog    = "/v1/providers-catalog"
-	ModelsCatalogPath   = "/v1/models-catalog"
-	PoliciesCatalogPath = "/v1/policies-catalog"
+	HealthPath            = "/healthz"
+	ReadyPath             = "/readyz"
+	VersionPath           = "/__/version"
+	DocsPath              = "/docs/*"
+	GatewaysPath          = "/v1/gateways"
+	ProvidersCatalog      = "/v1/providers-catalog"
+	ModelsCatalogPath     = "/v1/models-catalog"
+	PoliciesCatalogPath   = "/v1/policies-catalog"
+	MCPServersCatalogPath = "/v1/mcp-servers-catalog"
 )
 
 // AdminRouterDeps groups every handler mounted by the admin plane.
@@ -45,6 +47,7 @@ type AdminRouterDeps struct {
 	UpdateRegistry         *registryhttp.UpdateRegistryHandler
 	DeleteRegistry         *registryhttp.DeleteRegistryHandler
 	TestRegistryConnection *registryhttp.TestConnectionHandler
+	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
 	GetPolicy       *policyhttp.GetPolicyHandler
@@ -61,15 +64,23 @@ type AdminRouterDeps struct {
 	DeleteConsumer      *consumerhttp.DeleteConsumerHandler
 	ConsumerAssociation *consumerhttp.AssociationHandler
 
+	CreateRole      *rolehttp.CreateRoleHandler
+	GetRole         *rolehttp.GetRoleHandler
+	ListRole        *rolehttp.ListRoleHandler
+	UpdateRole      *rolehttp.UpdateRoleHandler
+	DeleteRole      *rolehttp.DeleteRoleHandler
+	RoleAssociation *rolehttp.AssociationHandler
+
 	CreateAuth *authhttp.CreateAuthHandler
 	GetAuth    *authhttp.GetAuthHandler
 	ListAuth   *authhttp.ListAuthHandler
 	UpdateAuth *authhttp.UpdateAuthHandler
 	DeleteAuth *authhttp.DeleteAuthHandler
 
-	ListProvidersCatalog *cataloghttp.ListProvidersHandler
-	ListModelsCatalog    *cataloghttp.ListModelsHandler
-	ListPoliciesCatalog  *cataloghttp.ListPolicyCatalogHandler
+	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
+	ListModelsCatalog     *cataloghttp.ListModelsHandler
+	ListPoliciesCatalog   *cataloghttp.ListPolicyCatalogHandler
+	ListMCPServersCatalog *cataloghttp.ListMCPServersHandler
 }
 
 type adminRouter struct {
@@ -104,6 +115,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	registries.Post("/test-connection", r.deps.TestRegistryConnection.Handle)
 	registries.Get("", r.deps.ListRegistry.Handle)
 	registries.Get("/:id", r.deps.GetRegistry.Handle)
+	registries.Get("/:id/tools", r.deps.ListRegistryTools.Handle)
 	registries.Put("/:id", r.deps.UpdateRegistry.Handle)
 	registries.Delete("/:id", r.deps.DeleteRegistry.Handle)
 
@@ -125,10 +137,21 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	consumers.Delete("/:id", r.deps.DeleteConsumer.Handle)
 	consumers.Post("/:id/registries/:registry_id", r.deps.ConsumerAssociation.AttachRegistry)
 	consumers.Delete("/:id/registries/:registry_id", r.deps.ConsumerAssociation.DetachRegistry)
+	consumers.Post("/:id/roles/:role_id", r.deps.ConsumerAssociation.AttachRole)
+	consumers.Delete("/:id/roles/:role_id", r.deps.ConsumerAssociation.DetachRole)
 	consumers.Post("/:id/auths/:auth_id", r.deps.ConsumerAssociation.AttachAuth)
 	consumers.Delete("/:id/auths/:auth_id", r.deps.ConsumerAssociation.DetachAuth)
 	consumers.Post("/:id/policies/:policy_id", r.deps.ConsumerAssociation.AttachPolicy)
 	consumers.Delete("/:id/policies/:policy_id", r.deps.ConsumerAssociation.DetachPolicy)
+
+	roles := gw.Group("/:gateway_id/roles")
+	roles.Post("", r.deps.CreateRole.Handle)
+	roles.Get("", r.deps.ListRole.Handle)
+	roles.Get("/:id", r.deps.GetRole.Handle)
+	roles.Put("/:id", r.deps.UpdateRole.Handle)
+	roles.Delete("/:id", r.deps.DeleteRole.Handle)
+	roles.Post("/:role_id/registries/:registry_id", r.deps.RoleAssociation.AttachRegistry)
+	roles.Delete("/:role_id/registries/:registry_id", r.deps.RoleAssociation.DetachRegistry)
 
 	auths := gw.Group("/:gateway_id/auths")
 	auths.Post("", r.deps.CreateAuth.Handle)
@@ -140,6 +163,7 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(ProvidersCatalog, r.deps.AdminAuth.Middleware(), r.deps.ListProvidersCatalog.Handle)
 	app.Get(ModelsCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListModelsCatalog.Handle)
 	app.Get(PoliciesCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListPoliciesCatalog.Handle)
+	app.Get(MCPServersCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListMCPServersCatalog.Handle)
 
 	return nil
 }

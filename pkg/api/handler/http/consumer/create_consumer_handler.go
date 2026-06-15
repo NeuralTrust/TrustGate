@@ -51,17 +51,37 @@ func (h *CreateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	mcp, err := req.ToMCPPolicy()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	lbConfig, err := req.ToLBConfig()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	registryIDs, registryWeights, modelPolicies, err := req.ToRegistryBindings()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	roleIDs, err := req.ToRoleIDs()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 
 	cons, err := h.creator.Create(c.UserContext(), appconsumer.CreateInput{
 		GatewayID:       gatewayID,
 		Name:            req.Name,
 		Type:            req.ToType(),
-		Path:            req.Path,
-		Algorithm:       req.Algorithm,
-		EmbeddingConfig: req.ToEmbeddingConfig(),
+		RoutingMode:     req.ToRoutingMode(),
+		LBConfig:        lbConfig,
 		Headers:         req.Headers,
 		Active:          req.Active,
 		Fallback:        fallback,
+		RegistryIDs:     registryIDs,
+		RegistryWeights: registryWeights,
+		RoleIDs:         roleIDs,
+		ModelPolicies:   modelPolicies,
+		MCP:             mcp,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

@@ -37,10 +37,20 @@ func NewJwtManager(config *config.ServerConfig) Manager {
 	return &manager{config: config}
 }
 
+// PurposePlayground marks tokens minted exclusively for the dashboard
+// playground. Purpose-tagged tokens are rejected by the admin API and only
+// honored by the proxy-plane playground identity resolver.
+const PurposePlayground = "playground"
+
 type Claims struct {
 	TeamID    string `json:"team_id,omitempty"`
 	UserID    string `json:"user_id,omitempty"`
 	UserEmail string `json:"user_email,omitempty"`
+	// Purpose restricts where a token is accepted. Empty means a regular
+	// admin token; "playground" tokens are only valid on the proxy plane.
+	Purpose string `json:"purpose,omitempty"`
+	// ConsumerSlug binds a playground token to a single consumer route.
+	ConsumerSlug string `json:"consumer_slug,omitempty"`
 	jwt.RegisteredClaims
 }
 

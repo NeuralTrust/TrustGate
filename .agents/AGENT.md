@@ -1,5 +1,7 @@
 # AgentGateway — Agent guide
 
+DO NOT PUT CODE COMMENTS!
+
 This document is the canonical orientation for any AI agent (or new
 contributor) opening this repository. Read it before changing code.
 

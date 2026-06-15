@@ -48,7 +48,6 @@ func policyPlugin(slug string, settings map[string]any) map[string]any {
 }
 
 // proxyAPIKeyHeader is the fixed ingress header the proxy plane reads the client
-// api key from. It mirrors middleware.HeaderAPIKey.
 const proxyAPIKeyHeader = "X-AG-API-Key"
 
 // setupPolicyRoute wires a full proxy route guarded by one or more policies: a
@@ -70,17 +69,13 @@ func setupPolicyRoute(t *testing.T, up *fakeUpstream, pluginEntries ...map[strin
 		policyIDs = append(policyIDs, CreatePolicy(t, gatewayID, payload))
 	}
 
-	// The consumer's routing path is derived from its name by
-	// validConsumerPayload, so the returned path must match that exact name or
-	// MatchPath would 404 on the proxy plane.
 	name := uniqueName("cons")
-	path := "/v1/" + name
 	coID := CreateConsumerWithRegistries(t, gatewayID, name, backendID)
 	for _, policyID := range policyIDs {
 		AttachPolicy(t, gatewayID, coID, policyID)
 	}
 	apiKey := createAndAttachAPIKey(t, gatewayID, coID)
-	return apiKey, path
+	return apiKey, chatCompletionsPath(t, coID)
 }
 
 // proxyRequest forwards an arbitrary-method request through the proxy plane
@@ -101,6 +96,9 @@ func proxyRequest(
 	}
 	req, err := http.NewRequest(method, ProxyURL+path, reader)
 	require.NoError(t, err)
+	host, ok := proxyHosts.Load(apiKey)
+	require.True(t, ok, "proxy host missing for api key")
+	req.Host = host.(string)
 	req.Header.Set(proxyAPIKeyHeader, apiKey)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

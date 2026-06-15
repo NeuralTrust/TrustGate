@@ -2,6 +2,8 @@ basePath: /
 definitions:
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest:
     properties:
+      idp:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest'
       mtls:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest'
       oauth2:
@@ -16,6 +18,31 @@ definitions:
       name:
         type: string
       type:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest:
+    properties:
+      allowed_algorithms:
+        items:
+          type: string
+        type: array
+      audiences:
+        items:
+          type: string
+        type: array
+      issuer:
+        type: string
+      jwks_url:
+        type: string
+      public_keys:
+        items:
+          type: string
+        type: array
+      required_scopes:
+        items:
+          type: string
+        type: array
+      subject_claim:
         type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest:
@@ -95,10 +122,37 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse:
     properties:
+      idp:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse'
       mtls:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse'
       oauth2:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse'
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse:
+    properties:
+      allowed_algorithms:
+        items:
+          type: string
+        type: array
+      audiences:
+        items:
+          type: string
+        type: array
+      issuer:
+        type: string
+      jwks_url:
+        type: string
+      public_keys:
+        items:
+          type: string
+        type: array
+      required_scopes:
+        items:
+          type: string
+        type: array
+      subject_claim:
+        type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ListAuthResponse:
     properties:
@@ -185,6 +239,10 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_catalog_response.ProviderResponse:
     properties:
+      auth_types:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthTypeOption'
+        type: array
       code:
         type: string
       display_name:
@@ -194,6 +252,10 @@ definitions:
       metadata:
         additionalProperties: {}
         type: object
+      provider_options_schema:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.ProviderOptionField'
+        type: array
       source:
         type: string
       wire_format:
@@ -219,20 +281,36 @@ definitions:
     properties:
       active:
         type: boolean
-      algorithm:
+      fail_mode:
         type: string
-      embedding_config:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest'
       fallback:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest'
       headers:
         additionalProperties:
           type: string
         type: object
+      lb_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBConfigRequest'
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
+        type: array
       name:
         type: string
-      path:
+      registries:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest'
+        type: array
+      roles:
+        items:
+          type: string
+        type: array
+      routing_mode:
         type: string
+      toolkit:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ToolkitEntryRequest'
+        type: array
       type:
         type: string
     type: object
@@ -249,8 +327,6 @@ definitions:
     properties:
       max_attempts:
         type: integer
-      max_cost_usd:
-        type: number
       max_total_latency_ms:
         type: integer
     type: object
@@ -269,6 +345,30 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBConfigRequest:
+    properties:
+      algorithm:
+        type: string
+      embedding_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest'
+      enabled:
+        type: boolean
+      members:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBPoolMemberRequest'
+        type: array
+      pool_alias:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBPoolMemberRequest:
+    properties:
+      models:
+        items:
+          type: string
+        type: array
+      registry_id:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest:
     properties:
       allowed:
@@ -280,28 +380,63 @@ definitions:
       registry_id:
         type: string
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryBindingRequest:
+    properties:
+      id:
+        type: string
+      model_policies:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest'
+      weight:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest:
+    properties:
+      allowed:
+        items:
+          type: string
+        type: array
+      default:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ToolkitEntryRequest:
+    properties:
+      expose_as:
+        type: string
+      prompt:
+        type: string
+      registry_id:
+        type: string
+      resource:
+        type: string
+      tool:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.UpdateConsumerRequest:
     properties:
       active:
         type: boolean
-      algorithm:
+      fail_mode:
         type: string
-      embedding_config:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.EmbeddingConfigRequest'
       fallback:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest'
       headers:
         additionalProperties:
           type: string
         type: object
+      lb_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.LBConfigRequest'
       model_policies:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ModelPolicyRequest'
         type: array
       name:
         type: string
-      path:
+      routing_mode:
         type: string
+      toolkit:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ToolkitEntryRequest'
+        type: array
       type:
         type: string
     type: object
@@ -309,16 +444,14 @@ definitions:
     properties:
       active:
         type: boolean
-      algorithm:
-        type: string
       auth_ids:
         items:
           type: string
         type: array
       created_at:
         type: string
-      embedding_config:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse'
+      fail_mode:
+        type: string
       fallback:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.FallbackResponse'
       gateway_id:
@@ -329,17 +462,33 @@ definitions:
         type: object
       id:
         type: string
+      lb_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBConfigResponse'
       model_policies:
         items:
           $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ModelPolicyResponse'
         type: array
       name:
         type: string
-      path:
-        type: string
       registry_ids:
         items:
           type: string
+        type: array
+      registry_weights:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryWeightResponse'
+        type: array
+      role_ids:
+        items:
+          type: string
+        type: array
+      routing_mode:
+        type: string
+      slug:
+        type: string
+      toolkit:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ToolkitEntryResponse'
         type: array
       type:
         type: string
@@ -375,8 +524,6 @@ definitions:
     properties:
       max_attempts:
         type: integer
-      max_cost_usd:
-        type: number
       max_total_latency_ms:
         type: integer
     type: object
@@ -394,6 +541,30 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBConfigResponse:
+    properties:
+      algorithm:
+        type: string
+      embedding_config:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.EmbeddingConfigResponse'
+      enabled:
+        type: boolean
+      members:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBPoolMemberResponse'
+        type: array
+      pool_alias:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.LBPoolMemberResponse:
+    properties:
+      models:
+        items:
+          type: string
+        type: array
+      registry_id:
+        type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ListConsumerResponse:
     properties:
@@ -419,14 +590,38 @@ definitions:
       registry_id:
         type: string
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.RegistryWeightResponse:
+    properties:
+      registry_id:
+        type: string
+      weight:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ToolkitEntryResponse:
+    properties:
+      expose_as:
+        type: string
+      prompt:
+        type: string
+      registry_id:
+        type: string
+      resource:
+        type: string
+      tool:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.CreateGatewayRequest:
     properties:
       client_tls:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig'
+      domain:
+        type: string
       name:
         type: string
       session_config:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig'
+      slug:
+        type: string
       telemetry:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry'
     type: object
@@ -434,10 +629,14 @@ definitions:
     properties:
       client_tls:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig'
+      domain:
+        type: string
       name:
         type: string
       session_config:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig'
+      slug:
+        type: string
       status:
         type: string
       telemetry:
@@ -449,12 +648,16 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig'
       created_at:
         type: string
+      domain:
+        type: string
       id:
         type: string
       name:
         type: string
       session_config:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.SessionConfig'
+      slug:
+        type: string
       status:
         type: string
       telemetry:
@@ -641,6 +844,8 @@ definitions:
         type: string
       health_checks:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest'
+      mcp_target:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPTargetRequest'
       name:
         type: string
       provider:
@@ -648,8 +853,8 @@ definitions:
       provider_options:
         additionalProperties: {}
         type: object
-      weight:
-        type: integer
+      type:
+        type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest:
     properties:
@@ -665,6 +870,58 @@ definitions:
         type: string
       threshold:
         type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPAuthRequest:
+    properties:
+      actor:
+        type: string
+      audience:
+        type: string
+      authorize_url:
+        type: string
+      client_id:
+        type: string
+      client_secret:
+        description: '#nosec G117'
+        type: string
+      expected_audience:
+        type: string
+      header:
+        type: string
+      mode:
+        type: string
+      pattern:
+        type: string
+      provider:
+        type: string
+      registration:
+        type: string
+      resource:
+        type: string
+      scope:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token_url:
+        type: string
+      value:
+        description: '#nosec G117'
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPTargetRequest:
+    properties:
+      auth:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPAuthRequest'
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      transport:
+        type: string
+      url:
+        type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetAuthRequest:
     properties:
@@ -739,6 +996,8 @@ definitions:
         type: string
       health_checks:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest'
+      mcp_target:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPTargetRequest'
       name:
         type: string
       provider:
@@ -746,8 +1005,6 @@ definitions:
       provider_options:
         additionalProperties: {}
         type: object
-      weight:
-        type: integer
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.APIKeyAuthResponse:
     properties:
@@ -829,6 +1086,58 @@ definitions:
       total:
         type: integer
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPAuthResponse:
+    properties:
+      actor:
+        type: string
+      audience:
+        type: string
+      authorize_url:
+        type: string
+      client_id:
+        type: string
+      client_secret:
+        description: '#nosec G117 -- masked before serialization'
+        type: string
+      expected_audience:
+        type: string
+      header:
+        type: string
+      mode:
+        type: string
+      pattern:
+        type: string
+      provider:
+        type: string
+      registration:
+        type: string
+      resource:
+        type: string
+      scope:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token_url:
+        type: string
+      value:
+        description: '#nosec G117 -- masked before serialization'
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPTargetResponse:
+    properties:
+      auth:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPAuthResponse'
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      transport:
+        type: string
+      url:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.RegistryResponse:
     properties:
       auth:
@@ -843,6 +1152,8 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.HealthChecksResponse'
       id:
         type: string
+      mcp_target:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPTargetResponse'
       name:
         type: string
       provider:
@@ -850,10 +1161,10 @@ definitions:
       provider_options:
         additionalProperties: {}
         type: object
+      type:
+        type: string
       updated_at:
         type: string
-      weight:
-        type: integer
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.TargetAuthResponse:
     properties:
@@ -911,6 +1222,187 @@ definitions:
         type: string
       status_code:
         type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.CreateRoleRequest:
+    properties:
+      idp_mapping:
+        items:
+          type: integer
+        type: array
+      mcp_policies:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest'
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ModelPolicyRequest'
+        type: array
+      name:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest:
+    properties:
+      fail_mode:
+        type: string
+      toolkit:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ToolkitEntryRequest'
+        type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ModelPolicyRequest:
+    properties:
+      allowed:
+        items:
+          type: string
+        type: array
+      default:
+        type: string
+      registry_id:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ToolkitEntryRequest:
+    properties:
+      expose_as:
+        type: string
+      prompt:
+        type: string
+      registry_id:
+        type: string
+      resource:
+        type: string
+      tool:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.UpdateRoleRequest:
+    properties:
+      idp_mapping:
+        items:
+          type: integer
+        type: array
+      mcp_policies:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest'
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ModelPolicyRequest'
+        type: array
+      name:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ListRoleResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse'
+        type: array
+      page:
+        type: integer
+      size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ModelPolicyResponse:
+    properties:
+      allowed:
+        items:
+          type: string
+        type: array
+      default:
+        type: string
+      registry_id:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse:
+    properties:
+      created_at:
+        type: string
+      gateway_id:
+        type: string
+      id:
+        type: string
+      idp_mapping:
+        items:
+          type: integer
+        type: array
+      mcp_policies:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_role.MCPPolicies'
+      model_policies:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ModelPolicyResponse'
+        type: array
+      name:
+        type: string
+      registry_ids:
+        items:
+          type: string
+        type: array
+      updated_at:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthField:
+    properties:
+      default: {}
+      description:
+        type: string
+      key:
+        type: string
+      label:
+        type: string
+      required:
+        type: boolean
+      secret:
+        type: boolean
+      type:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthFieldType'
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthFieldType:
+    enum:
+    - string
+    - boolean
+    type: string
+    x-enum-varnames:
+    - AuthFieldTypeString
+    - AuthFieldTypeBoolean
+  github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthTypeOption:
+    properties:
+      description:
+        type: string
+      fields:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.AuthField'
+        type: array
+      label:
+        type: string
+      type:
+        type: string
+      variant:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_app_catalog.OptionFieldType:
+    enum:
+    - string
+    - enum
+    - map
+    type: string
+    x-enum-varnames:
+    - OptionFieldTypeString
+    - OptionFieldTypeEnum
+    - OptionFieldTypeMap
+  github_com_NeuralTrust_AgentGateway_pkg_app_catalog.ProviderOptionField:
+    properties:
+      default: {}
+      description:
+        type: string
+      enum:
+        items:
+          type: string
+        type: array
+      key:
+        type: string
+      label:
+        type: string
+      required:
+        type: boolean
+      type:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_catalog.OptionFieldType'
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Catalog:
     properties:
@@ -1019,6 +1511,160 @@ definitions:
           $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_app_plugins.Field'
         type: array
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPAuthHeader:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      required:
+        type: boolean
+      scheme:
+        description: |-
+          Scheme is the credential prefix the gateway prepends to the supplied
+          secret when building the header value: Bearer | Token | Basic | ApiKey |
+          App | raw (raw = send the value verbatim, no prefix).
+        type: string
+      secret:
+        type: boolean
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPOAuth:
+    properties:
+      authorize_url:
+        description: |-
+          AuthorizeURL / TokenURL are required for manual registration
+          (Registration == "manual"), where the operator supplies a pre-registered
+          client_id/secret; they also serve as a discovery fallback otherwise.
+        type: string
+      dcr:
+        description: |-
+          DCR reports whether the server supports OAuth Dynamic Client Registration
+          (RFC 7591). A nil pointer means it could not be determined (e.g. a
+          tenant-templated host that must be probed per-instance).
+        type: boolean
+      pkce:
+        description: |-
+          PKCE reports whether the authorization server supports PKCE (S256). A nil
+          pointer means it could not be determined.
+        type: boolean
+      registration:
+        description: |-
+          Registration is the recommended gateway registration mode derived from
+          DCR support: "auto" when the server supports Dynamic Client Registration
+          (the gateway self-registers and the user just logs in at runtime),
+          "manual" when an operator must pre-register a client. Empty means the
+          server is tenant-hosted and discovery happens per-instance at connect time.
+        type: string
+      required:
+        type: boolean
+      resource:
+        description: Resource is the RFC 8707 resource indicator / expected token
+          audience.
+        type: string
+      resource_metadata:
+        type: boolean
+      scopes:
+        description: Scopes are the default/required OAuth scopes for the server.
+        items:
+          type: string
+        type: array
+      token_url:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPServer:
+    properties:
+      auth_headers:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPAuthHeader'
+        type: array
+      auth_hint:
+        description: none | static | oauth
+        type: string
+      category:
+        type: string
+      code:
+        type: string
+      description:
+        type: string
+      display_name:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      oauth:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPOAuth'
+      relevance:
+        description: |-
+          Relevance ranks how broadly relevant a server is for enterprises
+          (higher = more relevant). Used to sort the catalog; 0 means unranked.
+        type: integer
+      requires_auth:
+        type: boolean
+      requires_config:
+        description: |-
+          RequiresConfig reports whether the operator must supply input before the
+          server can be connected (a required URL variable, a static secret, or a
+          manual/tenant OAuth client). When false the UI can connect it by default
+          without a configuration step: public servers, and OAuth servers whose
+          client self-registers (registration "auto") where the user simply logs in
+          at runtime.
+        type: boolean
+      scopes:
+        items:
+          type: string
+        type: array
+      source:
+        type: string
+      transport:
+        type: string
+      url:
+        type: string
+      url_variables:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable'
+        type: array
+      vendor:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable:
+    properties:
+      description:
+        type: string
+      in:
+        description: 'In is where the variable is substituted: "path" (default) or
+          "query".'
+        type: string
+      name:
+        type: string
+      required:
+        type: boolean
+      secret:
+        description: |-
+          Secret marks a variable that carries a credential (e.g. a token passed in
+          the query string) so the UI/secret store treats it as sensitive.
+        type: boolean
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.FailMode:
+    enum:
+    - closed
+    - open
+    type: string
+    x-enum-varnames:
+    - FailModeClosed
+    - FailModeOpen
+  github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.ToolkitEntry:
+    properties:
+      expose_as:
+        type: string
+      prompt:
+        type: string
+      registry_id:
+        type: string
+      resource:
+        type: string
+      tool:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig:
     additionalProperties:
       items:
@@ -1058,6 +1704,15 @@ definitions:
     - StagePostRequest
     - StagePreResponse
     - StagePostResponse
+  github_com_NeuralTrust_AgentGateway_pkg_domain_role.MCPPolicies:
+    properties:
+      fail_mode:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.FailMode'
+      toolkit:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.ToolkitEntry'
+        type: array
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.ExporterConfig:
     properties:
       name:
@@ -1100,13 +1755,20 @@ definitions:
       version:
         type: string
     type: object
+  pkg_api_handler_http_catalog.ListMCPServersResponse:
+    properties:
+      mcp_servers:
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPServer'
+        type: array
+    type: object
 info:
   contact:
     email: support@neuraltrust.ai
     name: NeuralTrust
     url: https://neuraltrust.ai/contact
   description: Administrative API for managing gateways and their registries, policies,
-    consumers and auth credentials.
+    consumers, roles and auth credentials.
   title: AgentGateway Admin API
   version: "1.0"
 paths:
@@ -1123,6 +1785,68 @@ paths:
       summary: Build version
       tags:
       - system
+  /{consumer_slug}/v1/chat/completions:
+    post:
+      consumes:
+      - application/json
+      description: 'Forwards an OpenAI Chat Completions request to the selected provider.
+        Proxy plane route: /{consumer_slug}/v1/chat/completions. Other fixed routes
+        include /v1/messages (Anthropic) and /v1/responses (OpenAI Responses).'
+      parameters:
+      - description: Consumer slug
+        in: path
+        name: consumer_slug
+        required: true
+        type: string
+      - description: API key for inline consumers
+        in: header
+        name: X-AG-API-Key
+        type: string
+      - description: Bearer token for OAuth2 or IDP consumers
+        in: header
+        name: Authorization
+        type: string
+      - description: Gateway slug when using header-based gateway discovery
+        in: header
+        name: X-AG-Gateway-Slug
+        type: string
+      - description: OpenAI Chat Completions request body
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      summary: Proxy chat completion
+      tags:
+      - proxy
   /healthz:
     get:
       description: Reports whether the process is alive.
@@ -1925,6 +2649,98 @@ paths:
       summary: Attach a registry to a consumer
       tags:
       - consumers
+  /v1/gateways/{gateway_id}/consumers/{id}/roles/{role_id}:
+    delete:
+      description: Removes the association between a role and a consumer (idempotent).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: role_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Detach a role from a consumer
+      tags:
+      - consumers
+    post:
+      description: Associates a role with a role_based consumer (idempotent). Returns
+        409 for inline consumers.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Consumer id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: role_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Attach a role to a consumer
+      tags:
+      - consumers
   /v1/gateways/{gateway_id}/policies:
     get:
       description: Returns a paginated list of policies in a gateway.
@@ -2539,6 +3355,318 @@ paths:
       summary: Test a backend connection
       tags:
       - registries
+  /v1/gateways/{gateway_id}/roles:
+    get:
+      description: Returns a paginated list of roles in a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Filter by name (substring match)
+        in: query
+        name: name
+        type: string
+      - description: Page number (1-based)
+        in: query
+        name: page
+        type: integer
+      - description: Page size
+        in: query
+        name: size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ListRoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List roles
+      tags:
+      - roles
+    post:
+      consumes:
+      - application/json
+      description: Creates a new role in a gateway. model_policies cannot be set on
+        create; bind registries first, then update the role.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role to create
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.CreateRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create a role
+      tags:
+      - roles
+  /v1/gateways/{gateway_id}/roles/{id}:
+    delete:
+      description: Deletes a role from a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Delete a role
+      tags:
+      - roles
+    get:
+      description: Returns a role by id within a gateway.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get a role
+      tags:
+      - roles
+    put:
+      consumes:
+      - application/json
+      description: Updates a role. model_policies may only reference registries already
+        attached to the role.
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Role fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.UpdateRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.RoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update a role
+      tags:
+      - roles
+  /v1/gateways/{gateway_id}/roles/{role_id}/registries/{registry_id}:
+    delete:
+      description: Removes the association between a registry and a role (idempotent).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: role_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: registry_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Detach a registry from a role
+      tags:
+      - roles
+    post:
+      description: Associates a registry with a role (idempotent).
+      parameters:
+      - description: Gateway id
+        format: uuid
+        in: path
+        name: gateway_id
+        required: true
+        type: string
+      - description: Role id
+        format: uuid
+        in: path
+        name: role_id
+        required: true
+        type: string
+      - description: Registry id
+        format: uuid
+        in: path
+        name: registry_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Attach a registry to a role
+      tags:
+      - roles
   /v1/gateways/{id}:
     delete:
       description: Deletes a gateway. Fails if it still has dependent resources.
@@ -2653,6 +3781,26 @@ paths:
       summary: Update a gateway
       tags:
       - gateways
+  /v1/mcp-servers-catalog:
+    get:
+      description: Returns the curated catalog of well-known remote MCP servers, used
+        to prefill MCP registry creation.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/pkg_api_handler_http_catalog.ListMCPServersResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List the MCP servers catalog
+      tags:
+      - catalog
   /v1/models-catalog:
     get:
       description: Returns the catalog of supported models, optionally filtered by

@@ -31,7 +31,7 @@ func (s *DeleteGatewayCacheEventSubscriber) OnEvent(ctx context.Context, evt eve
 	s.logger.Info("invalidating gateway cache", slog.String("gateway_id", evt.GatewayID))
 
 	if s.memoryCache != nil {
-		s.memoryCache.Delete(evt.GatewayID)
+		deleteGatewayAliases(s.memoryCache, evt.GatewayID)
 	}
 
 	if err := s.cache.DeleteAllByGatewayID(ctx, evt.GatewayID); err != nil {

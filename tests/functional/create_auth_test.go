@@ -52,6 +52,7 @@ func TestCreateAuth_OAuth2(t *testing.T) {
 			"config": map[string]any{
 				"oauth2": map[string]any{
 					"issuer":        "https://issuer.example.com",
+					"audiences":     []string{"gateway"},
 					"jwks_url":      "https://issuer.example.com/.well-known/jwks.json",
 					"client_secret": "topsecretclientvalue",
 				},
@@ -64,6 +65,27 @@ func TestCreateAuth_OAuth2(t *testing.T) {
 	require.True(t, ok, "oauth2 config missing: %v", cfg)
 	assert.Equal(t, "https://issuer.example.com", oauth["issuer"])
 	assert.Equal(t, "***alue", oauth["client_secret"], "client_secret must be masked with a short tail")
+}
+
+func TestCreateAuth_OAuth2RequiresAudiences(t *testing.T) {
+	defer Track(t, "CreateAuth")()
+	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-oauth-aud")})
+
+	status, body := sendRequest(t, http.MethodPost,
+		fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gwID), nil,
+		map[string]any{
+			"name": uniqueName("oauth"),
+			"type": "oauth2",
+			"config": map[string]any{
+				"oauth2": map[string]any{
+					"issuer":   "https://issuer.example.com",
+					"jwks_url": "https://issuer.example.com/.well-known/jwks.json",
+				},
+			},
+		},
+	)
+	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
+	assert.Equal(t, "validation_failed", body["error"])
 }
 
 func TestCreateAuth_Conflict(t *testing.T) {

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"log/slog"
 	"time"
 
@@ -32,15 +33,27 @@ func (m *AccessLogMiddleware) Middleware() fiber.Handler {
 			bytesOut = len(c.Response().Body())
 		}
 
-		m.logger.Info("http access",
+		// When a handler returns an error, the app error handler writes the
+		// real status only after this middleware unwinds; the response still
+		// reads 200 here. Derive the status from the error instead.
+		status := c.Response().StatusCode()
+		attrs := []any{
 			slog.String("method", c.Method()),
 			slog.String("path", c.Path()),
-			slog.Int("status", c.Response().StatusCode()),
 			slog.Duration("duration", time.Since(start)),
 			slog.String("request_id", requestID),
 			slog.String("ip", c.IP()),
 			slog.Int("bytes_out", bytesOut),
-		)
+		}
+		if err != nil {
+			status = fiber.StatusInternalServerError
+			var fe *fiber.Error
+			if errors.As(err, &fe) {
+				status = fe.Code
+			}
+			attrs = append(attrs, slog.String("error", err.Error()))
+		}
+		m.logger.Info("http access", append([]any{slog.Int("status", status)}, attrs...)...)
 		return err
 	}
 }

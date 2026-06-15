@@ -2,11 +2,14 @@ package consumer
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
 
@@ -14,12 +17,16 @@ type CreateInput struct {
 	GatewayID       ids.GatewayID
 	Name            string
 	Type            domain.Type
-	Path            string
-	Algorithm       string
-	EmbeddingConfig *registrydomain.EmbeddingConfig
+	RoutingMode     domain.RoutingMode
+	LBConfig        *domain.LBConfig
 	Headers         map[string]string
 	Active          *bool
 	Fallback        *domain.Fallback
+	RegistryIDs     []ids.RegistryID
+	RegistryWeights map[ids.RegistryID]int
+	RoleIDs         []ids.RoleID
+	ModelPolicies   domain.ModelPolicies
+	MCP             *domain.MCPPolicy
 }
 
 //go:generate mockery --name=Creator --dir=. --output=./mocks --filename=consumer_creator_mock.go --case=underscore --with-expecter
@@ -30,45 +37,108 @@ type Creator interface {
 var _ Creator = (*creator)(nil)
 
 type creator struct {
-	repo        domain.Repository
-	memoryCache *cache.TTLMap
-	publisher   cache.EventPublisher
-	logger      *slog.Logger
+	repo         domain.Repository
+	registryRepo registrydomain.Repository
+	roleRepo     roledomain.Repository
+	memoryCache  *cache.TTLMap
+	publisher    cache.EventPublisher
+	logger       *slog.Logger
 }
 
 func NewCreator(
 	repo domain.Repository,
+	registryRepo registrydomain.Repository,
+	roleRepo roledomain.Repository,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 ) Creator {
 	return &creator{
-		repo:        repo,
-		memoryCache: manager.GetTTLMap(cache.ConsumerTTLName),
-		publisher:   publisher,
-		logger:      logger,
+		repo:         repo,
+		registryRepo: registryRepo,
+		roleRepo:     roleRepo,
+		memoryCache:  manager.GetTTLMap(cache.ConsumerTTLName),
+		publisher:    publisher,
+		logger:       logger,
 	}
 }
+
+const maxSlugCollisionRetries = 3
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Consumer, error) {
 	cons, err := domain.New(domain.CreateParams{
 		GatewayID:       in.GatewayID,
 		Name:            in.Name,
 		Type:            in.Type,
-		Path:            in.Path,
-		Algorithm:       in.Algorithm,
-		EmbeddingConfig: in.EmbeddingConfig,
+		RoutingMode:     in.RoutingMode,
+		LBConfig:        in.LBConfig,
 		Headers:         in.Headers,
 		Active:          in.Active,
 		Fallback:        in.Fallback,
+		RegistryIDs:     in.RegistryIDs,
+		RegistryWeights: in.RegistryWeights,
+		RoleIDs:         in.RoleIDs,
+		ModelPolicies:   in.ModelPolicies,
+		MCP:             in.MCP,
 	})
 	if err != nil {
 		return nil, err
 	}
-	if err := c.repo.Save(ctx, cons); err != nil {
+	if err := validateRegistryRefsAssociated(cons); err != nil {
+		return nil, err
+	}
+	if err := c.ensureRegistriesInGateway(ctx, in.GatewayID, in.RegistryIDs); err != nil {
+		return nil, err
+	}
+	if err := c.ensureRolesInGateway(ctx, in.GatewayID, in.RoleIDs); err != nil {
+		return nil, err
+	}
+	if err := c.saveWithSlugRetry(ctx, cons); err != nil {
 		return nil, err
 	}
 	c.memoryCache.Set(cons.ID.String(), cons)
 	publishGatewayDataInvalidation(ctx, c.publisher, c.logger, cons.GatewayID)
 	return cons, nil
+}
+
+func (c *creator) saveWithSlugRetry(ctx context.Context, cons *domain.Consumer) error {
+	for attempt := 0; ; attempt++ {
+		err := c.repo.Save(ctx, cons)
+		if !errors.Is(err, domain.ErrSlugAlreadyExists) || attempt == maxSlugCollisionRetries-1 {
+			return err
+		}
+		slug, slugErr := domain.NewSlug()
+		if slugErr != nil {
+			return slugErr
+		}
+		cons.Slug = slug
+	}
+}
+
+func (c *creator) ensureRegistriesInGateway(ctx context.Context, gatewayID ids.GatewayID, registryIDs []ids.RegistryID) error {
+	if len(registryIDs) == 0 {
+		return nil
+	}
+	found, err := c.registryRepo.FindByIDs(ctx, gatewayID, registryIDs)
+	if err != nil {
+		return err
+	}
+	if len(found) != len(registryIDs) {
+		return fmt.Errorf("%w: one or more registries do not belong to the gateway", registrydomain.ErrInvalidRegistryID)
+	}
+	return nil
+}
+
+func (c *creator) ensureRolesInGateway(ctx context.Context, gatewayID ids.GatewayID, roleIDs []ids.RoleID) error {
+	if len(roleIDs) == 0 {
+		return nil
+	}
+	found, err := c.roleRepo.FindByIDs(ctx, gatewayID, roleIDs)
+	if err != nil {
+		return err
+	}
+	if len(found) != len(roleIDs) {
+		return fmt.Errorf("%w: one or more roles do not belong to the gateway", roledomain.ErrInvalidRoleID)
+	}
+	return nil
 }

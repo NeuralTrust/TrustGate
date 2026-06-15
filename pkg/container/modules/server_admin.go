@@ -11,6 +11,7 @@ import (
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
 	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
+	rolehttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
@@ -57,6 +58,7 @@ type adminRouterParams struct {
 	UpdateRegistry         *registryhttp.UpdateRegistryHandler
 	DeleteRegistry         *registryhttp.DeleteRegistryHandler
 	TestRegistryConnection *registryhttp.TestConnectionHandler
+	ListRegistryTools      *registryhttp.ListRegistryToolsHandler
 
 	CreatePolicy    *policyhttp.CreatePolicyHandler
 	GetPolicy       *policyhttp.GetPolicyHandler
@@ -73,15 +75,23 @@ type adminRouterParams struct {
 	DeleteConsumer      *consumerhttp.DeleteConsumerHandler
 	ConsumerAssociation *consumerhttp.AssociationHandler
 
+	CreateRole      *rolehttp.CreateRoleHandler
+	GetRole         *rolehttp.GetRoleHandler
+	ListRole        *rolehttp.ListRoleHandler
+	UpdateRole      *rolehttp.UpdateRoleHandler
+	DeleteRole      *rolehttp.DeleteRoleHandler
+	RoleAssociation *rolehttp.AssociationHandler
+
 	CreateAuth *authhttp.CreateAuthHandler
 	GetAuth    *authhttp.GetAuthHandler
 	ListAuth   *authhttp.ListAuthHandler
 	UpdateAuth *authhttp.UpdateAuthHandler
 	DeleteAuth *authhttp.DeleteAuthHandler
 
-	ListProvidersCatalog *cataloghttp.ListProvidersHandler
-	ListModelsCatalog    *cataloghttp.ListModelsHandler
-	ListPoliciesCatalog  *cataloghttp.ListPolicyCatalogHandler
+	ListProvidersCatalog  *cataloghttp.ListProvidersHandler
+	ListModelsCatalog     *cataloghttp.ListModelsHandler
+	ListPoliciesCatalog   *cataloghttp.ListPolicyCatalogHandler
+	ListMCPServersCatalog *cataloghttp.ListMCPServersHandler
 }
 
 type adminServerParams struct {
@@ -113,6 +123,7 @@ func ServerAdmin(c *container.Container) error {
 				UpdateRegistry:         p.UpdateRegistry,
 				DeleteRegistry:         p.DeleteRegistry,
 				TestRegistryConnection: p.TestRegistryConnection,
+				ListRegistryTools:      p.ListRegistryTools,
 				CreatePolicy:           p.CreatePolicy,
 				GetPolicy:              p.GetPolicy,
 				ListPolicy:             p.ListPolicy,
@@ -126,15 +137,22 @@ func ServerAdmin(c *container.Container) error {
 				UpdateConsumer:         p.UpdateConsumer,
 				DeleteConsumer:         p.DeleteConsumer,
 				ConsumerAssociation:    p.ConsumerAssociation,
+				CreateRole:             p.CreateRole,
+				GetRole:                p.GetRole,
+				ListRole:               p.ListRole,
+				UpdateRole:             p.UpdateRole,
+				DeleteRole:             p.DeleteRole,
+				RoleAssociation:        p.RoleAssociation,
 				CreateAuth:             p.CreateAuth,
 				GetAuth:                p.GetAuth,
 				ListAuth:               p.ListAuth,
 				UpdateAuth:             p.UpdateAuth,
 				DeleteAuth:             p.DeleteAuth,
 
-				ListProvidersCatalog: p.ListProvidersCatalog,
-				ListModelsCatalog:    p.ListModelsCatalog,
-				ListPoliciesCatalog:  p.ListPoliciesCatalog,
+				ListProvidersCatalog:  p.ListProvidersCatalog,
+				ListModelsCatalog:     p.ListModelsCatalog,
+				ListPoliciesCatalog:   p.ListPoliciesCatalog,
+				ListMCPServersCatalog: p.ListMCPServersCatalog,
 			})
 		},
 		dig.Name("admin"),

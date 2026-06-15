@@ -80,7 +80,6 @@ type TargetOAuthConfig struct {
 	Extra        map[string]string `json:"extra,omitempty"`
 }
 
-// NewAPIKeyAuth builds a TargetAuth for the common bearer-key case.
 func NewAPIKeyAuth(apiKey string) *TargetAuth {
 	return &TargetAuth{
 		Type:   AuthTypeAPIKey,
@@ -102,9 +101,6 @@ func NewGCPServiceAccountAuth(encryptedSA string) *TargetAuth {
 	}
 }
 
-// ResolveSecretsFrom keeps previously stored secret values when the incoming
-// update omits them (empty or the redaction placeholder). It only merges when the
-// auth type is unchanged; switching types requires supplying the new secrets.
 func (a *TargetAuth) ResolveSecretsFrom(prev *TargetAuth) {
 	if a == nil || prev == nil || a.Type != prev.Type {
 		return
@@ -224,8 +220,6 @@ func blankSecretPtr(s *string) bool {
 	return s == nil || *s == "" || secret.IsMasked(*s)
 }
 
-// secretValues returns every secret field that the API masks in responses, so
-// Validate can reject the redaction placeholder before it is persisted.
 func (a *TargetAuth) secretValues() []string {
 	var v []string
 	if a.APIKey != nil {
@@ -282,7 +276,6 @@ func (a *TargetAuth) ProviderCredentials() providers.Credentials {
 			}
 		}
 	case AuthTypeOAuth2, AuthTypeGCPServiceAccount:
-		// Deferred to B.7.
 	}
 	return creds
 }

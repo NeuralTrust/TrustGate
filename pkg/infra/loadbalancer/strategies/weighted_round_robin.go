@@ -12,22 +12,30 @@ import (
 type WeightedRoundRobin struct {
 	mu            sync.Mutex
 	registries    []*registry.Registry
+	weights       map[ids.RegistryID]int
 	currentIndex  int
 	currentWeight int
 	maxWeight     int
 }
 
-func NewWeightedRoundRobin(registries []*registry.Registry) *WeightedRoundRobin {
-	maxWeight := 0
+func NewWeightedRoundRobin(registries []*registry.Registry, weights map[ids.RegistryID]int) *WeightedRoundRobin {
+	wrr := &WeightedRoundRobin{
+		registries: registries,
+		weights:    weights,
+	}
 	for _, b := range registries {
-		if b.Weight > maxWeight {
-			maxWeight = b.Weight
+		if wrr.effectiveWeight(b) > wrr.maxWeight {
+			wrr.maxWeight = wrr.effectiveWeight(b)
 		}
 	}
-	return &WeightedRoundRobin{
-		registries: registries,
-		maxWeight:  maxWeight,
+	return wrr
+}
+
+func (wrr *WeightedRoundRobin) effectiveWeight(b *registry.Registry) int {
+	if w, ok := wrr.weights[b.ID]; ok && w > 0 {
+		return w
 	}
+	return 1
 }
 
 func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
@@ -50,7 +58,7 @@ func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext, exclude ma
 			}
 		}
 		b := wrr.registries[wrr.currentIndex]
-		if b.Weight >= wrr.currentWeight && !isExcluded(b.ID, exclude) {
+		if wrr.effectiveWeight(b) >= wrr.currentWeight && !isExcluded(b.ID, exclude) {
 			return b
 		}
 	}

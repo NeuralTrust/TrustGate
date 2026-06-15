@@ -6,16 +6,13 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
-// contextKey is a private type for context keys defined in this package, to
-// avoid collisions with keys defined elsewhere (same pattern as metrics.CollectorKey).
 type contextKey string
 
 const (
-	// GatewayIDKey carries the resolved gateway id (uuid.UUID) for the request.
-	GatewayIDKey contextKey = "auth.gateway_id"
-	// ConsumerDataKey carries the per-gateway *Data read model for the request.
+	GatewayIDKey    contextKey = "auth.gateway_id"
 	ConsumerDataKey contextKey = "auth.consumer_data"
 	AuthIDKey       contextKey = "auth.auth_id"
+	ConsumerKey     contextKey = "auth.consumer"
 )
 
 func WithGatewayID(ctx context.Context, id ids.GatewayID) context.Context {
@@ -43,4 +40,13 @@ func WithData(ctx context.Context, data *Data) context.Context {
 func DataFromContext(ctx context.Context) (*Data, bool) {
 	data, ok := ctx.Value(ConsumerDataKey).(*Data)
 	return data, ok
+}
+
+func WithConsumer(ctx context.Context, consumer *RoutableConsumer) context.Context {
+	return context.WithValue(ctx, ConsumerKey, consumer)
+}
+
+func ConsumerFromContext(ctx context.Context) (*RoutableConsumer, bool) {
+	consumer, ok := ctx.Value(ConsumerKey).(*RoutableConsumer)
+	return consumer, ok && consumer != nil
 }

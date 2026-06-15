@@ -22,6 +22,7 @@ type AuthResponse struct {
 
 type ConfigResponse struct {
 	OAuth2 *OAuth2ConfigResponse `json:"oauth2,omitempty"`
+	IDP    *IDPConfigResponse    `json:"idp,omitempty"`
 	MTLS   *MTLSConfigResponse   `json:"mtls,omitempty"`
 }
 
@@ -34,6 +35,16 @@ type OAuth2ConfigResponse struct {
 	ClientSecret     string   `json:"client_secret,omitempty"`
 	RequiredScopes   []string `json:"required_scopes,omitempty"`
 	Algorithms       []string `json:"allowed_algorithms,omitempty"`
+}
+
+type IDPConfigResponse struct {
+	Issuer            string   `json:"issuer"`
+	Audiences         []string `json:"audiences"`
+	JWKSURL           string   `json:"jwks_url,omitempty"`
+	PublicKeys        []string `json:"public_keys,omitempty"`
+	RequiredScopes    []string `json:"required_scopes,omitempty"`
+	AllowedAlgorithms []string `json:"allowed_algorithms,omitempty"`
+	SubjectClaim      string   `json:"subject_claim,omitempty"`
 }
 
 type MTLSConfigResponse struct {
@@ -74,6 +85,17 @@ func fromConfig(c domain.Config) ConfigResponse {
 			ClientSecret:     secret.Mask(c.OAuth2.ClientSecret),
 			RequiredScopes:   c.OAuth2.RequiredScopes,
 			Algorithms:       c.OAuth2.Algorithms,
+		}
+	}
+	if c.IDP != nil {
+		out.IDP = &IDPConfigResponse{
+			Issuer:            c.IDP.Issuer,
+			Audiences:         c.IDP.Audiences,
+			JWKSURL:           c.IDP.JWKSURL,
+			PublicKeys:        c.IDP.PublicKeys,
+			RequiredScopes:    c.IDP.RequiredScopes,
+			AllowedAlgorithms: c.IDP.AllowedAlgorithms,
+			SubjectClaim:      c.IDP.SubjectClaim,
 		}
 	}
 	if c.MTLS != nil {

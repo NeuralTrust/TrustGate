@@ -10,6 +10,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	policydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	roledomain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"golang.org/x/sync/singleflight"
 )
@@ -26,6 +27,7 @@ type dataFinder struct {
 	registryRepo   registrydomain.Repository
 	policyRepo     policydomain.Repository
 	authRepo       authdomain.Repository
+	roleRepo       roledomain.Repository
 	pluginRegistry appplugins.Registry
 	memoryCache    *cache.TTLMap
 	logger         *slog.Logger
@@ -37,6 +39,7 @@ func NewDataFinder(
 	registryRepo registrydomain.Repository,
 	policyRepo policydomain.Repository,
 	authRepo authdomain.Repository,
+	roleRepo roledomain.Repository,
 	pluginRegistry appplugins.Registry,
 	manager *cache.TTLMapManager,
 	logger *slog.Logger,
@@ -46,6 +49,7 @@ func NewDataFinder(
 		registryRepo:   registryRepo,
 		policyRepo:     policyRepo,
 		authRepo:       authRepo,
+		roleRepo:       roleRepo,
 		pluginRegistry: pluginRegistry,
 		memoryCache:    manager.GetTTLMap(cache.ConsumerDataTTLName),
 		logger:         logger,
@@ -90,7 +94,11 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		return nil, err
 	}
 
-	backendByID, err := f.loadBackends(ctx, gatewayID, consumers)
+	roles, err := f.loadRoles(ctx, gatewayID)
+	if err != nil {
+		return nil, err
+	}
+	backendByID, err := f.loadBackends(ctx, gatewayID, consumers, roles)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +127,8 @@ func (f *dataFinder) load(ctx context.Context, gatewayID ids.GatewayID, key stri
 		})
 	}
 
-	data := NewData(gatewayID, routable)
+	data := NewData(gatewayID, routable, roles)
+	data.SetRegistryIndex(backendByID)
 	f.memoryCache.Set(key, data)
 	return data, nil
 }
@@ -135,10 +144,12 @@ func (f *dataFinder) loadBackends(
 	ctx context.Context,
 	gatewayID ids.GatewayID,
 	consumers []*domain.Consumer,
+	roles []*roledomain.Role,
 ) (map[ids.RegistryID]*registrydomain.Registry, error) {
 	idList := uniqueIDs(consumers, func(c *domain.Consumer) []ids.RegistryID {
 		return append(append([]ids.RegistryID{}, c.RegistryIDs...), fallbackChainOf(c)...)
 	})
+	idList = appendRoleRegistryIDs(idList, roles)
 	if len(idList) == 0 {
 		return map[ids.RegistryID]*registrydomain.Registry{}, nil
 	}
@@ -198,6 +209,33 @@ func (f *dataFinder) loadAuths(
 	return byID, nil
 }
 
+func (f *dataFinder) loadRoles(ctx context.Context, gatewayID ids.GatewayID) ([]*roledomain.Role, error) {
+	if f.roleRepo == nil {
+		return nil, nil
+	}
+	return f.roleRepo.ListByGateway(ctx, gatewayID)
+}
+
+func appendRoleRegistryIDs(idList []ids.RegistryID, roles []*roledomain.Role) []ids.RegistryID {
+	seen := make(map[ids.RegistryID]struct{}, len(idList))
+	for _, id := range idList {
+		seen[id] = struct{}{}
+	}
+	for _, r := range roles {
+		if r == nil {
+			continue
+		}
+		for _, id := range r.RegistryIDs {
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			idList = append(idList, id)
+		}
+	}
+	return idList
+}
+
 func uniqueIDs[T comparable](consumers []*domain.Consumer, pick func(*domain.Consumer) []T) []T {
 	seen := make(map[T]struct{})
 	out := make([]T, 0)
@@ -226,10 +264,14 @@ func (f *dataFinder) warnUnresolvedFallbackChain(c *domain.Consumer, resolved []
 }
 
 func fallbackChainOf(c *domain.Consumer) []ids.RegistryID {
-	if c == nil || c.Fallback == nil || !c.Fallback.Enabled {
+	if c == nil {
 		return nil
 	}
-	return []ids.RegistryID(c.Fallback.Chain)
+	fb := c.Fallback
+	if fb == nil || !fb.Enabled {
+		return nil
+	}
+	return []ids.RegistryID(fb.Chain)
 }
 
 func poolRegistryIDs(all []ids.RegistryID, chain []ids.RegistryID) []ids.RegistryID {
@@ -246,6 +288,9 @@ func poolRegistryIDs(all []ids.RegistryID, chain []ids.RegistryID) []ids.Registr
 			continue
 		}
 		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return all
 	}
 	return out
 }

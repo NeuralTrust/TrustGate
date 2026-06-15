@@ -7,7 +7,6 @@ import (
 
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
-	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
 
 func validParams() CreateParams {
@@ -15,7 +14,6 @@ func validParams() CreateParams {
 		GatewayID:   ids.New[ids.GatewayKind](),
 		Name:        "openai-chat",
 		Type:        TypeLLM,
-		Path:        "/v1/chat/completions",
 		RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
 	}
 }
@@ -36,11 +34,17 @@ func TestConsumer_New_HappyPath(t *testing.T) {
 	if c.Type != TypeLLM {
 		t.Fatalf("Type = %q, want %q", c.Type, TypeLLM)
 	}
+	if c.RoutingMode != RoutingModeInline {
+		t.Fatalf("RoutingMode = %q, want %q", c.RoutingMode, RoutingModeInline)
+	}
 	if !c.Active {
 		t.Fatal("Active should default to true")
 	}
 	if c.CreatedAt.IsZero() || c.UpdatedAt.IsZero() {
 		t.Fatal("timestamps are zero")
+	}
+	if !IsValidSlug(c.Slug) {
+		t.Fatalf("Slug = %q, want a valid generated slug", c.Slug)
 	}
 }
 
@@ -94,19 +98,41 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 			wantErr: ErrInvalidType,
 		},
 		{
-			name:    "empty path",
-			mutate:  func(c *Consumer) { c.Path = "" },
-			wantErr: ErrInvalidPath,
+			name:    "empty slug",
+			mutate:  func(c *Consumer) { c.Slug = "" },
+			wantErr: ErrInvalidSlug,
 		},
 		{
-			name:    "invalid algorithm",
-			mutate:  func(c *Consumer) { c.Algorithm = "bogus" },
-			wantErr: ErrInvalidAlgorithm,
+			name:    "malformed slug",
+			mutate:  func(c *Consumer) { c.Slug = "bad/slug" },
+			wantErr: ErrInvalidSlug,
 		},
 		{
-			name:    "semantic without embedding",
-			mutate:  func(c *Consumer) { c.Algorithm = "semantic" },
-			wantErr: ErrInvalidEmbeddingConfig,
+			name:    "invalid routing mode",
+			mutate:  func(c *Consumer) { c.RoutingMode = "mixed" },
+			wantErr: ErrInvalidRoutingMode,
+		},
+		{
+			name: "role based rejects inline registries",
+			mutate: func(c *Consumer) {
+				c.RoutingMode = RoutingModeRoleBased
+			},
+			wantErr: ErrInvalidRoutingMode,
+		},
+		{
+			name:    "mcp policy on llm consumer",
+			mutate:  func(c *Consumer) { c.MCP = &MCPPolicy{} },
+			wantErr: ErrInvalidType,
+		},
+		{
+			name: "role based rejects mcp policy",
+			mutate: func(c *Consumer) {
+				c.Type = TypeMCP
+				c.RoutingMode = RoutingModeRoleBased
+				c.RegistryIDs = nil
+				c.MCP = &MCPPolicy{}
+			},
+			wantErr: ErrInvalidRoutingMode,
 		},
 		{
 			name: "duplicate backend",
@@ -114,12 +140,56 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 				id := ids.New[ids.RegistryKind]()
 				c.RegistryIDs = []ids.RegistryID{id, id}
 			},
-			wantErr: registrydomain.ErrInvalidRegistryID,
+			wantErr: ErrInvalidModelPolicy,
 		},
 		{
 			name:    "nil backend uuid",
 			mutate:  func(c *Consumer) { c.RegistryIDs = []ids.RegistryID{{}} },
-			wantErr: registrydomain.ErrInvalidRegistryID,
+			wantErr: ErrInvalidModelPolicy,
+		},
+		{
+			name: "role based rejects lb config",
+			mutate: func(c *Consumer) {
+				c.RoutingMode = RoutingModeRoleBased
+				c.RegistryIDs = nil
+				c.LBConfig = &LBConfig{}
+			},
+			wantErr: ErrInvalidRoutingMode,
+		},
+		{
+			name: "role based rejects enabled fallback",
+			mutate: func(c *Consumer) {
+				c.RoutingMode = RoutingModeRoleBased
+				c.RegistryIDs = nil
+				c.Fallback = &Fallback{Enabled: true}
+			},
+			wantErr: ErrInvalidRoutingMode,
+		},
+		{
+			name: "role based rejects model policies",
+			mutate: func(c *Consumer) {
+				c.RoutingMode = RoutingModeRoleBased
+				c.RegistryIDs = nil
+				c.ModelPolicies = ModelPolicies{ids.New[ids.RegistryKind](): {}}
+			},
+			wantErr: ErrInvalidRoutingMode,
+		},
+		{
+			name: "inline rejects roles",
+			mutate: func(c *Consumer) {
+				c.RoleIDs = []ids.RoleID{ids.New[ids.RoleKind]()}
+			},
+			wantErr: ErrInvalidRoutingMode,
+		},
+		{
+			name: "role based rejects duplicate roles",
+			mutate: func(c *Consumer) {
+				c.RoutingMode = RoutingModeRoleBased
+				c.RegistryIDs = nil
+				id := ids.New[ids.RoleKind]()
+				c.RoleIDs = []ids.RoleID{id, id}
+			},
+			wantErr: ErrInvalidRoutingMode,
 		},
 	}
 	for _, tc := range tests {
@@ -131,7 +201,7 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 				GatewayID:   ids.New[ids.GatewayKind](),
 				Name:        "x",
 				Type:        TypeLLM,
-				Path:        "/v1/chat",
+				Slug:        "X84Yhsy8",
 				RegistryIDs: []ids.RegistryID{ids.New[ids.RegistryKind]()},
 			}
 			tc.mutate(c)
@@ -151,8 +221,6 @@ func TestConsumer_Validate_Rejects(t *testing.T) {
 
 func TestConsumer_New_AllowsZeroRegistries(t *testing.T) {
 	t.Parallel()
-	// Registries are attached after creation via the association endpoints, so a
-	// freshly-created consumer is allowed to have none.
 	p := validParams()
 	p.RegistryIDs = nil
 	c, err := New(p)
@@ -170,27 +238,38 @@ func TestConsumer_Rehydrate(t *testing.T) {
 	gwID := ids.New[ids.GatewayKind]()
 	beID := ids.New[ids.RegistryKind]()
 	now := time.Now().UTC()
-	c := Rehydrate(
-		id, gwID, "x", TypeMCP,
-		"/v1/messages", "round-robin", nil,
-		map[string]string{"X-K": "v"},
-		true,
-		[]ids.RegistryID{beID}, nil,
-		nil,
-		nil,
-		now, now,
-	)
+	toolkit := Toolkit{{RegistryID: beID, Tool: "search", ExposeAs: "gh_search"}}
+	c := Rehydrate(RehydrateParams{
+		ID:          id,
+		GatewayID:   gwID,
+		Name:        "x",
+		Type:        TypeMCP,
+		Slug:        "X84Yhsy8",
+		RoutingMode: RoutingModeInline,
+		Headers:     map[string]string{"X-K": "v"},
+		Active:      true,
+		RegistryIDs: []ids.RegistryID{beID},
+		MCP:         &MCPPolicy{Toolkit: toolkit, FailMode: FailModeOpen},
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
 	if c.ID != id || c.GatewayID != gwID {
 		t.Fatal("identity mismatch after rehydrate")
 	}
 	if c.Type != TypeMCP {
 		t.Fatalf("Type = %q", c.Type)
 	}
-	if c.Path != "/v1/messages" {
-		t.Fatalf("Path = %q", c.Path)
+	if c.Slug != "X84Yhsy8" {
+		t.Fatalf("Slug = %q", c.Slug)
 	}
 	if !c.CreatedAt.Equal(now) {
 		t.Fatal("CreatedAt mismatch")
+	}
+	if tk := c.Toolkit(); len(tk) != 1 || tk[0].Tool != "search" || tk[0].ExposeAs != "gh_search" {
+		t.Fatalf("Toolkit lost on rehydrate: %+v", c.Toolkit())
+	}
+	if c.FailMode() != FailModeOpen {
+		t.Fatalf("FailMode = %q, want %q", c.FailMode(), FailModeOpen)
 	}
 }
 

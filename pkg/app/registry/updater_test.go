@@ -18,7 +18,7 @@ func ptr[T any](v T) *T { return &v }
 func TestUpdater_Update_Success(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "old", "openai", nil, "", 1, domain.NewAPIKeyAuth("sk-1"), nil)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "openai", Auth: domain.NewAPIKeyAuth("sk-1")})
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
 		return b.ID == existing.ID && b.Name == "new"
@@ -44,13 +44,13 @@ func TestUpdater_Update_Partial_PreservesProviderOptionsAndHealthChecks(t *testi
 	repo := repomocks.NewRepository(t)
 	opts := map[string]any{"base_url": "https://example.com"}
 	hc := &domain.HealthChecks{Threshold: 3, Interval: 10}
-	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "old", "openai", opts, "", 1, domain.NewAPIKeyAuth("sk-real"), hc)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "openai", ProviderOptions: opts, Auth: domain.NewAPIKeyAuth("sk-real"), HealthChecks: hc})
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
 		return b.Name == "renamed" &&
-			b.ProviderOptions["base_url"] == "https://example.com" &&
-			b.HealthChecks != nil && b.HealthChecks.Threshold == 3 &&
-			b.Auth != nil && b.Auth.APIKey != nil && b.Auth.APIKey.APIKey == "sk-real"
+			b.ProviderOptions()["base_url"] == "https://example.com" &&
+			b.HealthChecks() != nil && b.HealthChecks().Threshold == 3 &&
+			b.Auth() != nil && b.Auth().APIKey != nil && b.Auth().APIKey.APIKey == "sk-real"
 	})).Return(nil).Once()
 
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
@@ -61,24 +61,90 @@ func TestUpdater_Update_Partial_PreservesProviderOptionsAndHealthChecks(t *testi
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.ProviderOptions["base_url"] != "https://example.com" {
-		t.Fatalf("provider_options not preserved: %+v", got.ProviderOptions)
+	if got.ProviderOptions()["base_url"] != "https://example.com" {
+		t.Fatalf("provider_options not preserved: %+v", got.ProviderOptions())
 	}
-	if got.HealthChecks == nil || got.HealthChecks.Threshold != 3 {
-		t.Fatalf("health_checks not preserved: %+v", got.HealthChecks)
+	if got.HealthChecks() == nil || got.HealthChecks().Threshold != 3 {
+		t.Fatalf("health_checks not preserved: %+v", got.HealthChecks())
 	}
-	if got.Auth == nil || got.Auth.APIKey.APIKey != "sk-real" {
-		t.Fatalf("auth not preserved: %+v", got.Auth)
+	if got.Auth() == nil || got.Auth().APIKey.APIKey != "sk-real" {
+		t.Fatalf("auth not preserved: %+v", got.Auth())
+	}
+}
+
+func TestUpdater_Update_PartialMCPTargetPreservesAuthAndHeaders(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "mcp", "", &domain.MCPTarget{
+		URL:     "https://old.example.com/mcp",
+		Headers: map[string]string{"X-Tenant": "acme"},
+		Auth: &domain.MCPAuth{
+			Mode:         domain.MCPAuthModeForwarded,
+			Provider:     "github",
+			Registration: domain.RegistrationAuto,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry error: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:        existing.ID,
+		MCPTarget: &domain.MCPTarget{URL: "https://new.example.com/mcp"},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.MCPTarget.URL != "https://new.example.com/mcp" {
+		t.Fatalf("URL = %q", got.MCPTarget.URL)
+	}
+	if got.MCPTarget.Auth == nil || got.MCPTarget.Auth.Mode != domain.MCPAuthModeForwarded || got.MCPTarget.Auth.Provider != "github" {
+		t.Fatalf("forwarded auth lost on partial update: %+v", got.MCPTarget.Auth)
+	}
+	if got.MCPTarget.Headers["X-Tenant"] != "acme" {
+		t.Fatalf("headers lost on partial update: %+v", got.MCPTarget.Headers)
+	}
+}
+
+func TestUpdater_Update_MCPTargetAuthClearedExplicitly(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, err := domain.NewMCPRegistry(ids.New[ids.GatewayKind](), "mcp", "", &domain.MCPTarget{
+		URL:  "https://old.example.com/mcp",
+		Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeStatic, Header: "Authorization", Value: "Bearer t"},
+	})
+	if err != nil {
+		t.Fatalf("NewMCPRegistry error: %v", err)
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:        existing.ID,
+		MCPTarget: &domain.MCPTarget{Auth: &domain.MCPAuth{Mode: domain.MCPAuthModeNone}},
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.MCPTarget.URL != "https://old.example.com/mcp" {
+		t.Fatalf("URL should be preserved: %q", got.MCPTarget.URL)
+	}
+	if got.MCPTarget.Auth.Mode != domain.MCPAuthModeNone {
+		t.Fatalf("auth should be cleared: %+v", got.MCPTarget.Auth)
 	}
 }
 
 func TestUpdater_Update_PreservesRedactedSecret(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "old", "openai", nil, "", 1, domain.NewAPIKeyAuth("sk-real"), nil)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "openai", Auth: domain.NewAPIKeyAuth("sk-real")})
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
-		return b.Auth != nil && b.Auth.APIKey != nil && b.Auth.APIKey.APIKey == "sk-real"
+		return b.Auth() != nil && b.Auth().APIKey != nil && b.Auth().APIKey.APIKey == "sk-real"
 	})).Return(nil).Once()
 
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
@@ -91,18 +157,18 @@ func TestUpdater_Update_PreservesRedactedSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.Auth.APIKey.APIKey != "sk-real" {
-		t.Fatalf("api key = %q, want preserved sk-real", got.Auth.APIKey.APIKey)
+	if got.Auth().APIKey.APIKey != "sk-real" {
+		t.Fatalf("api key = %q, want preserved sk-real", got.Auth().APIKey.APIKey)
 	}
 }
 
 func TestUpdater_Update_PreservesSecretWhenAuthOmitted(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "old", "openai", nil, "", 1, domain.NewAPIKeyAuth("sk-real"), nil)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "openai", Auth: domain.NewAPIKeyAuth("sk-real")})
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
-		return b.Name == "renamed" && b.Auth != nil && b.Auth.APIKey.APIKey == "sk-real"
+		return b.Name == "renamed" && b.Auth() != nil && b.Auth().APIKey.APIKey == "sk-real"
 	})).Return(nil).Once()
 
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
@@ -114,8 +180,8 @@ func TestUpdater_Update_PreservesSecretWhenAuthOmitted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.Auth == nil || got.Auth.APIKey.APIKey != "sk-real" {
-		t.Fatalf("auth not preserved when omitted: %+v", got.Auth)
+	if got.Auth() == nil || got.Auth().APIKey.APIKey != "sk-real" {
+		t.Fatalf("auth not preserved when omitted: %+v", got.Auth())
 	}
 }
 
@@ -130,14 +196,14 @@ func TestUpdater_Update_AzurePreservesAPIKeyForSameMode(t *testing.T) {
 			APIKey:   "azure-real-key",
 		},
 	}
-	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "old", "azure", nil, "", 1, auth, nil)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "azure", Auth: auth})
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
-		return b.Auth != nil &&
-			b.Auth.Azure != nil &&
-			b.Auth.Azure.Endpoint == "https://new.openai.azure.com" &&
-			b.Auth.Azure.APIKey == "azure-real-key" &&
-			b.Auth.Azure.ClientSecret == ""
+		return b.Auth() != nil &&
+			b.Auth().Azure != nil &&
+			b.Auth().Azure.Endpoint == "https://new.openai.azure.com" &&
+			b.Auth().Azure.APIKey == "azure-real-key" &&
+			b.Auth().Azure.ClientSecret == ""
 	})).Return(nil).Once()
 
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
@@ -155,8 +221,8 @@ func TestUpdater_Update_AzurePreservesAPIKeyForSameMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.Auth.Azure.APIKey != "azure-real-key" {
-		t.Fatalf("azure api key = %q, want preserved azure-real-key", got.Auth.Azure.APIKey)
+	if got.Auth().Azure.APIKey != "azure-real-key" {
+		t.Fatalf("azure api key = %q, want preserved azure-real-key", got.Auth().Azure.APIKey)
 	}
 }
 
@@ -173,15 +239,15 @@ func TestUpdater_Update_AzurePreservesClientSecretForSameServicePrincipal(t *tes
 			TenantID:     "tenant-1",
 		},
 	}
-	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "old", "azure", nil, "", 1, auth, nil)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "azure", Auth: auth})
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
-		return b.Auth != nil &&
-			b.Auth.Azure != nil &&
-			b.Auth.Azure.Endpoint == "https://new.openai.azure.com" &&
-			b.Auth.Azure.ClientID == "client-1" &&
-			b.Auth.Azure.ClientSecret == "azure-real-secret" &&
-			b.Auth.Azure.TenantID == "tenant-1"
+		return b.Auth() != nil &&
+			b.Auth().Azure != nil &&
+			b.Auth().Azure.Endpoint == "https://new.openai.azure.com" &&
+			b.Auth().Azure.ClientID == "client-1" &&
+			b.Auth().Azure.ClientSecret == "azure-real-secret" &&
+			b.Auth().Azure.TenantID == "tenant-1"
 	})).Return(nil).Once()
 
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
@@ -201,8 +267,8 @@ func TestUpdater_Update_AzurePreservesClientSecretForSameServicePrincipal(t *tes
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.Auth.Azure.ClientSecret != "azure-real-secret" {
-		t.Fatalf("azure client secret = %q, want preserved azure-real-secret", got.Auth.Azure.ClientSecret)
+	if got.Auth().Azure.ClientSecret != "azure-real-secret" {
+		t.Fatalf("azure client secret = %q, want preserved azure-real-secret", got.Auth().Azure.ClientSecret)
 	}
 }
 
@@ -219,15 +285,15 @@ func TestUpdater_Update_AzureClearsIncompatibleSecretsOnModeChange(t *testing.T)
 			TenantID:     "tenant-1",
 		},
 	}
-	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "old", "azure", nil, "", 1, auth, nil)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "azure", Auth: auth})
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
-		return b.Auth != nil &&
-			b.Auth.Azure != nil &&
-			b.Auth.Azure.APIKey == "new-api-key" &&
-			b.Auth.Azure.ClientID == "" &&
-			b.Auth.Azure.ClientSecret == "" &&
-			b.Auth.Azure.TenantID == ""
+		return b.Auth() != nil &&
+			b.Auth().Azure != nil &&
+			b.Auth().Azure.APIKey == "new-api-key" &&
+			b.Auth().Azure.ClientID == "" &&
+			b.Auth().Azure.ClientSecret == "" &&
+			b.Auth().Azure.TenantID == ""
 	})).Return(nil).Once()
 
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
@@ -245,8 +311,8 @@ func TestUpdater_Update_AzureClearsIncompatibleSecretsOnModeChange(t *testing.T)
 	if err != nil {
 		t.Fatalf("Update error: %v", err)
 	}
-	if got.Auth.Azure.ClientSecret != "" {
-		t.Fatalf("azure client secret = %q, want cleared on mode change", got.Auth.Azure.ClientSecret)
+	if got.Auth().Azure.ClientSecret != "" {
+		t.Fatalf("azure client secret = %q, want cleared on mode change", got.Auth().Azure.ClientSecret)
 	}
 }
 
@@ -263,7 +329,7 @@ func TestUpdater_Update_AzureRejectsServicePrincipalSecretForDifferentPrincipal(
 			TenantID:     "tenant-1",
 		},
 	}
-	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "old", "azure", nil, "", 1, auth, nil)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "azure", Auth: auth})
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
@@ -287,7 +353,7 @@ func TestUpdater_Update_AzureRejectsServicePrincipalSecretForDifferentPrincipal(
 func TestUpdater_Update_RejectsGatewayIDChange(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
-	existing, _ := domain.NewRegistry(ids.New[ids.GatewayKind](), "x", "openai", nil, "", 1, domain.NewAPIKeyAuth("sk-1"), nil)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "x", "", &domain.LLMTarget{Provider: "openai", Auth: domain.NewAPIKeyAuth("sk-1")})
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 
 	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())

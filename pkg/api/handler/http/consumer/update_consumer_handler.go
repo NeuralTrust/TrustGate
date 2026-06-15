@@ -54,23 +54,32 @@ func (h *UpdateConsumerHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
+	lbConfig, err := req.ToLBConfig()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
 	modelPolicies, err := req.ToModelPolicies()
+	if err != nil {
+		return helpers.WriteError(c, err)
+	}
+	toolkit, err := req.ToToolkit()
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
 
 	cons, err := h.updater.Update(c.UserContext(), appconsumer.UpdateInput{
-		ID:              id,
-		GatewayID:       gatewayID,
-		Name:            req.Name,
-		Type:            req.ToType(),
-		Path:            req.Path,
-		Algorithm:       req.ToAlgorithm(),
-		EmbeddingConfig: req.ToEmbeddingConfig(),
-		Headers:         req.Headers,
-		Active:          req.Active,
-		Fallback:        fallback,
-		ModelPolicies:   modelPolicies,
+		ID:            id,
+		GatewayID:     gatewayID,
+		Name:          req.Name,
+		Type:          req.ToType(),
+		RoutingMode:   req.ToRoutingMode(),
+		LBConfig:      lbConfig,
+		Headers:       req.Headers,
+		Active:        req.Active,
+		Fallback:      fallback,
+		ModelPolicies: modelPolicies,
+		Toolkit:       toolkit,
+		FailMode:      req.ToFailMode(),
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

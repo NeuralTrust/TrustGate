@@ -49,14 +49,12 @@ func (h *CreateRegistryHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	b, err := h.creator.Create(c.UserContext(), appregistry.CreateInput{
-		GatewayID:       gatewayID,
-		Name:            req.Name,
-		Provider:        req.Provider,
-		ProviderOptions: req.ProviderOptions,
-		Description:     req.Description,
-		Weight:          req.Weight,
-		Auth:            req.ToAuth(),
-		HealthChecks:    req.ToHealthChecks(),
+		GatewayID:   gatewayID,
+		Name:        req.Name,
+		Type:        req.ToType(),
+		Description: req.Description,
+		LLMTarget:   req.ToLLMTarget(),
+		MCPTarget:   req.ToMCPTarget(),
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

@@ -19,6 +19,7 @@ import (
 type Pool struct {
 	ID              string
 	Registries      []*registry.Registry
+	Weights         map[ids.RegistryID]int
 	Algorithm       string
 	EmbeddingConfig *registry.EmbeddingConfig
 }
@@ -53,6 +54,7 @@ func NewLoadBalancer(
 	strategy, err := factory.CreateStrategy(StrategyInput{
 		Algorithm:       pool.Algorithm,
 		Registries:      pool.Registries,
+		Weights:         pool.Weights,
 		EmbeddingConfig: embeddingCfg,
 	})
 	if err != nil {
@@ -166,7 +168,7 @@ func (lb *LoadBalancer) NextBackend(
 	if last != nil {
 		lb.logger.Info("all registries unhealthy; using last candidate as fallback",
 			slog.String("registry_id", last.ID.String()),
-			slog.String("provider", last.Provider),
+			slog.String("provider", last.Provider()),
 		)
 		return last, nil
 	}
@@ -198,7 +200,8 @@ func (lb *LoadBalancer) ReportFailure(b *registry.Registry, err error) {
 }
 
 func (lb *LoadBalancer) UpdateBackendHealth(b *registry.Registry, healthy bool, err error) {
-	if b.HealthChecks == nil || !b.HealthChecks.Passive {
+	hc := b.HealthChecks()
+	if hc == nil || !hc.Passive {
 		return
 	}
 	ctx := context.Background()
@@ -211,10 +214,10 @@ func (lb *LoadBalancer) UpdateBackendHealth(b *registry.Registry, healthy bool, 
 
 	if !healthy {
 		failures, _ := redisClient.Incr(ctx, failuresKey).Result()
-		if b.HealthChecks.Interval > 0 {
-			redisClient.Expire(ctx, failuresKey, time.Duration(b.HealthChecks.Interval)*time.Second)
+		if hc.Interval > 0 {
+			redisClient.Expire(ctx, failuresKey, time.Duration(hc.Interval)*time.Second)
 		}
-		if failures >= int64(b.HealthChecks.Threshold) {
+		if failures >= int64(hc.Threshold) {
 			status := HealthStatus{
 				Healthy:   false,
 				LastCheck: time.Now(),

@@ -45,6 +45,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Auth, err
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureNoOAuth2Conflict(ctx, c.repo, a); err != nil {
+		return nil, err
+	}
 	if err := c.repo.Save(ctx, a); err != nil {
 		return nil, err
 	}

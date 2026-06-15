@@ -23,8 +23,8 @@ func TestFinder_FindByID_CacheHit(t *testing.T) {
 	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
 	mgr := newCacheManager()
-	cached := domain.Rehydrate(id, "Prod", "active", nil, nil, nil, now, now)
-	mgr.GetTTLMap(cache.GatewayTTLName).Set(id.String(), cached)
+	cached := domain.Rehydrate(id, "Prod", "active", "", nil, nil, nil, now, now)
+	mgr.GetTTLMap(cache.GatewayTTLName).Set("id:"+id.String(), cached)
 
 	finder := appgateway.NewFinder(repo, mgr, newTestLogger())
 	got, err := finder.FindByID(context.Background(), id)
@@ -41,7 +41,7 @@ func TestFinder_FindByID_CacheMiss_PopulatesCache(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
-	fromDB := domain.Rehydrate(id, "Prod", "active", nil, nil, nil, now, now)
+	fromDB := domain.Rehydrate(id, "Prod", "active", "", nil, nil, nil, now, now)
 
 	repo.EXPECT().FindByID(mock.Anything, id).Return(fromDB, nil).Once()
 
@@ -56,12 +56,41 @@ func TestFinder_FindByID_CacheMiss_PopulatesCache(t *testing.T) {
 		t.Fatal("FindByID did not return the entity loaded from the repository")
 	}
 
-	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get(id.String())
+	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("id:" + id.String())
 	if !ok {
 		t.Fatal("cache was not populated after DB load")
 	}
 	if cached.(*domain.Gateway) != fromDB {
 		t.Fatal("cached pointer does not match the entity returned by the repository")
+	}
+	slugCached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("slug:" + fromDB.Slug)
+	if !ok || slugCached.(*domain.Gateway) != fromDB {
+		t.Fatal("slug cache was not populated after DB load")
+	}
+}
+
+func TestFinder_FindBySlug_CacheMiss_PopulatesCache(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	id := ids.New[ids.GatewayKind]()
+	now := time.Now().UTC()
+	fromDB := domain.RehydrateWithSlug(id, "Prod", "prod", "active", nil, nil, nil, now, now)
+
+	repo.EXPECT().FindBySlug(mock.Anything, "prod").Return(fromDB, nil).Once()
+
+	mgr := newCacheManager()
+	finder := appgateway.NewFinder(repo, mgr, newTestLogger())
+
+	got, err := finder.FindBySlug(context.Background(), "PROD")
+	if err != nil {
+		t.Fatalf("FindBySlug error: %v", err)
+	}
+	if got != fromDB {
+		t.Fatal("FindBySlug did not return the entity loaded from the repository")
+	}
+	cached, ok := mgr.GetTTLMap(cache.GatewayTTLName).Get("slug:prod")
+	if !ok || cached.(*domain.Gateway) != fromDB {
+		t.Fatal("slug cache was not populated after DB load")
 	}
 }
 
@@ -83,13 +112,13 @@ func TestFinder_FindByID_PoisonedCache_FallsBackToDB(t *testing.T) {
 	repo := repomocks.NewRepository(t)
 	id := ids.New[ids.GatewayKind]()
 	now := time.Now().UTC()
-	fromDB := domain.Rehydrate(id, "Prod", "active", nil, nil, nil, now, now)
+	fromDB := domain.Rehydrate(id, "Prod", "active", "", nil, nil, nil, now, now)
 	repo.EXPECT().FindByID(mock.Anything, id).Return(fromDB, nil).Once()
 
 	mgr := newCacheManager()
 	// Wrong type stored under the key — finder must drop it and load
 	// from the DB rather than serving garbage.
-	mgr.GetTTLMap(cache.GatewayTTLName).Set(id.String(), "not a gateway")
+	mgr.GetTTLMap(cache.GatewayTTLName).Set("id:"+id.String(), "not a gateway")
 
 	finder := appgateway.NewFinder(repo, mgr, newTestLogger())
 	got, err := finder.FindByID(context.Background(), id)
@@ -99,7 +128,7 @@ func TestFinder_FindByID_PoisonedCache_FallsBackToDB(t *testing.T) {
 	if got != fromDB {
 		t.Fatal("finder did not fall back to the database on poisoned cache")
 	}
-	cached, _ := mgr.GetTTLMap(cache.GatewayTTLName).Get(id.String())
+	cached, _ := mgr.GetTTLMap(cache.GatewayTTLName).Get("id:" + id.String())
 	if _, ok := cached.(*domain.Gateway); !ok {
 		t.Fatal("cache was not refreshed with a proper entity after poison fallback")
 	}
@@ -111,8 +140,8 @@ func TestFinder_List_Passthrough(t *testing.T) {
 	filter := domain.ListFilter{NameContains: "prod", Page: 1, Size: 20}
 	now := time.Now().UTC()
 	items := []*domain.Gateway{
-		domain.Rehydrate(ids.New[ids.GatewayKind](), "Prod-eu", "active", nil, nil, nil, now, now),
-		domain.Rehydrate(ids.New[ids.GatewayKind](), "Prod-us", "active", nil, nil, nil, now, now),
+		domain.Rehydrate(ids.New[ids.GatewayKind](), "Prod-eu", "active", "", nil, nil, nil, now, now),
+		domain.Rehydrate(ids.New[ids.GatewayKind](), "Prod-us", "active", "", nil, nil, nil, now, now),
 	}
 	repo.EXPECT().List(mock.Anything, filter).Return(items, 2, nil).Once()
 

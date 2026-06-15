@@ -1,0 +1,23 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agentgateway-mcp
+  labels:
+    app.kubernetes.io/instance: agentgateway
+    component: mcp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agentgateway-mcp
+  minReplicas: 1
+  maxReplicas: 20
+  metrics:
+  # MCP load is connection-bound; replace with a concurrent-session custom
+  # metric once exposed. CPU is the bootstrap signal.
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75

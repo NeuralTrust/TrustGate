@@ -119,17 +119,17 @@ func (_c *Repository_AttachPolicy_Call) RunAndReturn(run func(context.Context, i
 	return _c
 }
 
-// AttachRegistry provides a mock function with given fields: ctx, consumerID, registryID
-func (_m *Repository) AttachRegistry(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind]) error {
-	ret := _m.Called(ctx, consumerID, registryID)
+// AttachRegistry provides a mock function with given fields: ctx, consumerID, registryID, weight
+func (_m *Repository) AttachRegistry(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind], weight *int) error {
+	ret := _m.Called(ctx, consumerID, registryID, weight)
 
 	if len(ret) == 0 {
 		panic("no return value specified for AttachRegistry")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error); ok {
-		r0 = rf(ctx, consumerID, registryID)
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind], *int) error); ok {
+		r0 = rf(ctx, consumerID, registryID, weight)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -146,13 +146,14 @@ type Repository_AttachRegistry_Call struct {
 //   - ctx context.Context
 //   - consumerID ids.ID[ids.ConsumerKind]
 //   - registryID ids.ID[ids.RegistryKind]
-func (_e *Repository_Expecter) AttachRegistry(ctx interface{}, consumerID interface{}, registryID interface{}) *Repository_AttachRegistry_Call {
-	return &Repository_AttachRegistry_Call{Call: _e.mock.On("AttachRegistry", ctx, consumerID, registryID)}
+//   - weight *int
+func (_e *Repository_Expecter) AttachRegistry(ctx interface{}, consumerID interface{}, registryID interface{}, weight interface{}) *Repository_AttachRegistry_Call {
+	return &Repository_AttachRegistry_Call{Call: _e.mock.On("AttachRegistry", ctx, consumerID, registryID, weight)}
 }
 
-func (_c *Repository_AttachRegistry_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind])) *Repository_AttachRegistry_Call {
+func (_c *Repository_AttachRegistry_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind], weight *int)) *Repository_AttachRegistry_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.RegistryKind]))
+		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.RegistryKind]), args[3].(*int))
 	})
 	return _c
 }
@@ -162,7 +163,55 @@ func (_c *Repository_AttachRegistry_Call) Return(_a0 error) *Repository_AttachRe
 	return _c
 }
 
-func (_c *Repository_AttachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error) *Repository_AttachRegistry_Call {
+func (_c *Repository_AttachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind], *int) error) *Repository_AttachRegistry_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// AttachRole provides a mock function with given fields: ctx, consumerID, roleID
+func (_m *Repository) AttachRole(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind]) error {
+	ret := _m.Called(ctx, consumerID, roleID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for AttachRole")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error); ok {
+		r0 = rf(ctx, consumerID, roleID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_AttachRole_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AttachRole'
+type Repository_AttachRole_Call struct {
+	*mock.Call
+}
+
+// AttachRole is a helper method to define mock.On call
+//   - ctx context.Context
+//   - consumerID ids.ID[ids.ConsumerKind]
+//   - roleID ids.ID[ids.RoleKind]
+func (_e *Repository_Expecter) AttachRole(ctx interface{}, consumerID interface{}, roleID interface{}) *Repository_AttachRole_Call {
+	return &Repository_AttachRole_Call{Call: _e.mock.On("AttachRole", ctx, consumerID, roleID)}
+}
+
+func (_c *Repository_AttachRole_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind])) *Repository_AttachRole_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.RoleKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_AttachRole_Call) Return(_a0 error) *Repository_AttachRole_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_AttachRole_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error) *Repository_AttachRole_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -354,6 +403,174 @@ func (_c *Repository_DetachRegistry_Call) Return(_a0 error) *Repository_DetachRe
 }
 
 func (_c *Repository_DetachRegistry_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error) *Repository_DetachRegistry_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DetachRegistryIfUnreferenced provides a mock function with given fields: ctx, gatewayID, consumerID, registryID
+func (_m *Repository) DetachRegistryIfUnreferenced(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind]) (*consumer.Consumer, error) {
+	ret := _m.Called(ctx, gatewayID, consumerID, registryID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DetachRegistryIfUnreferenced")
+	}
+
+	var r0 *consumer.Consumer
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) (*consumer.Consumer, error)); ok {
+		return rf(ctx, gatewayID, consumerID, registryID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) *consumer.Consumer); ok {
+		r0 = rf(ctx, gatewayID, consumerID, registryID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*consumer.Consumer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) error); ok {
+		r1 = rf(ctx, gatewayID, consumerID, registryID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_DetachRegistryIfUnreferenced_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DetachRegistryIfUnreferenced'
+type Repository_DetachRegistryIfUnreferenced_Call struct {
+	*mock.Call
+}
+
+// DetachRegistryIfUnreferenced is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.ID[ids.GatewayKind]
+//   - consumerID ids.ID[ids.ConsumerKind]
+//   - registryID ids.ID[ids.RegistryKind]
+func (_e *Repository_Expecter) DetachRegistryIfUnreferenced(ctx interface{}, gatewayID interface{}, consumerID interface{}, registryID interface{}) *Repository_DetachRegistryIfUnreferenced_Call {
+	return &Repository_DetachRegistryIfUnreferenced_Call{Call: _e.mock.On("DetachRegistryIfUnreferenced", ctx, gatewayID, consumerID, registryID)}
+}
+
+func (_c *Repository_DetachRegistryIfUnreferenced_Call) Run(run func(ctx context.Context, gatewayID ids.ID[ids.GatewayKind], consumerID ids.ID[ids.ConsumerKind], registryID ids.ID[ids.RegistryKind])) *Repository_DetachRegistryIfUnreferenced_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.GatewayKind]), args[2].(ids.ID[ids.ConsumerKind]), args[3].(ids.ID[ids.RegistryKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_DetachRegistryIfUnreferenced_Call) Return(_a0 *consumer.Consumer, _a1 error) *Repository_DetachRegistryIfUnreferenced_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_DetachRegistryIfUnreferenced_Call) RunAndReturn(run func(context.Context, ids.ID[ids.GatewayKind], ids.ID[ids.ConsumerKind], ids.ID[ids.RegistryKind]) (*consumer.Consumer, error)) *Repository_DetachRegistryIfUnreferenced_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DetachRole provides a mock function with given fields: ctx, consumerID, roleID
+func (_m *Repository) DetachRole(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind]) error {
+	ret := _m.Called(ctx, consumerID, roleID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DetachRole")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error); ok {
+		r0 = rf(ctx, consumerID, roleID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// Repository_DetachRole_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DetachRole'
+type Repository_DetachRole_Call struct {
+	*mock.Call
+}
+
+// DetachRole is a helper method to define mock.On call
+//   - ctx context.Context
+//   - consumerID ids.ID[ids.ConsumerKind]
+//   - roleID ids.ID[ids.RoleKind]
+func (_e *Repository_Expecter) DetachRole(ctx interface{}, consumerID interface{}, roleID interface{}) *Repository_DetachRole_Call {
+	return &Repository_DetachRole_Call{Call: _e.mock.On("DetachRole", ctx, consumerID, roleID)}
+}
+
+func (_c *Repository_DetachRole_Call) Run(run func(ctx context.Context, consumerID ids.ID[ids.ConsumerKind], roleID ids.ID[ids.RoleKind])) *Repository_DetachRole_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.ConsumerKind]), args[2].(ids.ID[ids.RoleKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_DetachRole_Call) Return(_a0 error) *Repository_DetachRole_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Repository_DetachRole_Call) RunAndReturn(run func(context.Context, ids.ID[ids.ConsumerKind], ids.ID[ids.RoleKind]) error) *Repository_DetachRole_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// FindActiveBySlug provides a mock function with given fields: ctx, slug
+func (_m *Repository) FindActiveBySlug(ctx context.Context, slug string) (*consumer.Consumer, error) {
+	ret := _m.Called(ctx, slug)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FindActiveBySlug")
+	}
+
+	var r0 *consumer.Consumer
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (*consumer.Consumer, error)); ok {
+		return rf(ctx, slug)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) *consumer.Consumer); ok {
+		r0 = rf(ctx, slug)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*consumer.Consumer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, slug)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_FindActiveBySlug_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FindActiveBySlug'
+type Repository_FindActiveBySlug_Call struct {
+	*mock.Call
+}
+
+// FindActiveBySlug is a helper method to define mock.On call
+//   - ctx context.Context
+//   - slug string
+func (_e *Repository_Expecter) FindActiveBySlug(ctx interface{}, slug interface{}) *Repository_FindActiveBySlug_Call {
+	return &Repository_FindActiveBySlug_Call{Call: _e.mock.On("FindActiveBySlug", ctx, slug)}
+}
+
+func (_c *Repository_FindActiveBySlug_Call) Run(run func(ctx context.Context, slug string)) *Repository_FindActiveBySlug_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *Repository_FindActiveBySlug_Call) Return(_a0 *consumer.Consumer, _a1 error) *Repository_FindActiveBySlug_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_FindActiveBySlug_Call) RunAndReturn(run func(context.Context, string) (*consumer.Consumer, error)) *Repository_FindActiveBySlug_Call {
 	_c.Call.Return(run)
 	return _c
 }

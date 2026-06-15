@@ -7,36 +7,34 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
-func routable(path string, active bool) RoutableConsumer {
+func routable(slug string, active bool) RoutableConsumer {
 	return RoutableConsumer{
 		Consumer: &domain.Consumer{
 			ID:        ids.New[ids.ConsumerKind](),
 			GatewayID: ids.New[ids.GatewayKind](),
-			Path:      path,
+			Slug:      slug,
 			Active:    active,
 		},
 	}
 }
 
-func TestData_MatchPath_IgnoresTrailingSlash(t *testing.T) {
+func TestData_MatchSlug(t *testing.T) {
 	t.Parallel()
-	d := NewData(ids.New[ids.GatewayKind](), []RoutableConsumer{routable("/v1/chat", true)})
+	d := NewData(ids.New[ids.GatewayKind](), []RoutableConsumer{routable("X84Yhsy8", true)})
 
-	for _, in := range []string{"/v1/chat", "/v1/chat/"} {
-		if _, ok := d.MatchPath(in); !ok {
-			t.Fatalf("MatchPath(%q) = false, want true", in)
-		}
+	if _, ok := d.MatchSlug("X84Yhsy8"); !ok {
+		t.Fatal("MatchSlug on known slug returned ok=false")
 	}
-	if _, ok := d.MatchPath("/v1/other"); ok {
-		t.Fatal("MatchPath on unknown path returned ok=true")
+	if _, ok := d.MatchSlug("unknown1"); ok {
+		t.Fatal("MatchSlug on unknown slug returned ok=true")
 	}
 }
 
-func TestData_MatchPath_SkipsInactiveConsumers(t *testing.T) {
+func TestData_MatchSlug_SkipsInactiveConsumers(t *testing.T) {
 	t.Parallel()
-	d := NewData(ids.New[ids.GatewayKind](), []RoutableConsumer{routable("/v1/chat", false)})
+	d := NewData(ids.New[ids.GatewayKind](), []RoutableConsumer{routable("X84Yhsy8", false)})
 
-	if _, ok := d.MatchPath("/v1/chat"); ok {
+	if _, ok := d.MatchSlug("X84Yhsy8"); ok {
 		t.Fatal("inactive consumer must not be routable")
 	}
 }

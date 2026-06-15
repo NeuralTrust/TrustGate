@@ -14,7 +14,9 @@ import (
 type UpdateInput struct {
 	ID              ids.GatewayID
 	Name            *string
+	Slug            *string
 	Status          *string
+	Domain          *string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig *domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
@@ -53,11 +55,18 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if err != nil {
 		return nil, err
 	}
+	old := *g
 	if in.Name != nil {
 		g.Name = *in.Name
 	}
+	if in.Slug != nil {
+		g.Slug = *in.Slug
+	}
 	if in.Status != nil {
 		g.Status = *in.Status
+	}
+	if in.Domain != nil {
+		g.Domain = *in.Domain
 	}
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry
@@ -75,7 +84,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	if err := u.repo.Update(ctx, g); err != nil {
 		return nil, err
 	}
-	u.memoryCache.Set(g.ID.String(), g)
+	deleteGatewayCache(u.memoryCache, &old)
+	setGatewayCache(u.memoryCache, g)
 	publishGatewayDataInvalidation(ctx, u.publisher, u.logger, g.ID)
 	return g, nil
 }
