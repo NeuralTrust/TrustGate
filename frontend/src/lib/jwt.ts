@@ -2,6 +2,7 @@ import "server-only";
 import { SignJWT } from "jose";
 
 const TOKEN_TTL_SECONDS = 60 * 60;
+const PLAYGROUND_TOKEN_TTL_SECONDS = 5 * 60;
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
@@ -34,4 +35,24 @@ export async function mintAdminToken(): Promise<string> {
 
   cachedToken = { value, expiresAt };
   return value;
+}
+
+// Mints a short-lived token that lets the playground exercise a consumer route
+// without that consumer's credentials. The backend playground identity resolver
+// requires purpose "playground" and a matching consumer slug; the admin API
+// rejects purpose-tagged tokens, so this token grants nothing else.
+export async function mintPlaygroundToken(consumerSlug: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+
+  const claims: Record<string, string> = {
+    purpose: "playground",
+    consumer_slug: consumerSlug,
+  };
+  if (process.env.ADMIN_USER_ID) claims.user_id = process.env.ADMIN_USER_ID;
+
+  return new SignJWT(claims)
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setIssuedAt(now)
+    .setExpirationTime(now + PLAYGROUND_TOKEN_TTL_SECONDS)
+    .sign(secretKey());
 }

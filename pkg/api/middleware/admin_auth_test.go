@@ -9,12 +9,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
 	"github.com/gofiber/fiber/v2"
+	golangjwt "github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 )
 
@@ -99,6 +101,30 @@ func TestAdminAuth_ValidToken(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func TestAdminAuth_PlaygroundPurposeTokenRejected(t *testing.T) {
+	app, _ := newAdminAuthApp(t, "secret")
+	claims := &jwt.Claims{
+		UserID:       "user-1",
+		Purpose:      jwt.PurposePlayground,
+		ConsumerSlug: "cons1234",
+		RegisteredClaims: golangjwt.RegisteredClaims{
+			ExpiresAt: golangjwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+		},
+	}
+	token, err := golangjwt.NewWithClaims(golangjwt.SigningMethodHS256, claims).SignedString([]byte("secret"))
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(fiber.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+	require.Equal(t, helpers.ErrorBody{
+		Error:   "unauthorized",
+		Message: "Token not valid for admin API",
+	}, decodeErrorBody(t, resp))
 }
 
 func TestAdminAuth_WrongSecretRejected(t *testing.T) {
