@@ -3526,7 +3526,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3556,8 +3556,8 @@
                   "script": {
                     "exec": [
                       "const res = pm.response.json();",
-                      "pm.collectionVariables.set('auth_id', res.id);",
-                      "pm.collectionVariables.set('api_key', res.api_key);"
+                      "pm.environment.set('auth_id', res.id);",
+                      "pm.environment.set('api_key', res.api_key);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3586,7 +3586,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3614,7 +3614,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3657,7 +3657,7 @@
                   "script": {
                     "exec": [
                       "const sid = pm.response.headers.get('Mcp-Session-Id');",
-                      "if (sid) pm.collectionVariables.set('mcp_session_id', sid);"
+                      "if (sid) pm.environment.set('mcp_session_id', sid);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3932,7 +3932,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3961,8 +3961,8 @@
                   "script": {
                     "exec": [
                       "const res = pm.response.json();",
-                      "pm.collectionVariables.set('auth_id', res.id);",
-                      "pm.collectionVariables.set('api_key', res.api_key);"
+                      "pm.environment.set('auth_id', res.id);",
+                      "pm.environment.set('api_key', res.api_key);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3990,7 +3990,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4018,7 +4018,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_hf_id', pm.response.json().id);"
+                      "pm.environment.set('registry_hf_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4047,7 +4047,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4271,7 +4271,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4299,7 +4299,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('oauth2_auth_id', pm.response.json().id);"
+                      "pm.environment.set('oauth2_auth_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4329,8 +4329,8 @@
                   "script": {
                     "exec": [
                       "const res = pm.response.json();",
-                      "pm.collectionVariables.set('auth_id', res.id);",
-                      "pm.collectionVariables.set('api_key', res.api_key);"
+                      "pm.environment.set('auth_id', res.id);",
+                      "pm.environment.set('api_key', res.api_key);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4359,7 +4359,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4387,7 +4387,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4439,7 +4439,7 @@
                     "exec": [
                       "const res = pm.response.json();",
                       "pm.test('access token issued', () => pm.expect(res.access_token).to.be.a('string'));",
-                      "pm.collectionVariables.set('entra_token', res.access_token);",
+                      "pm.environment.set('entra_token', res.access_token);",
                       "let b64 = res.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
                       "while (b64.length % 4) b64 += '=';",
                       "const claims = JSON.parse(atob(b64));",
@@ -4629,7 +4629,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4657,7 +4657,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('oauth2_auth_id', pm.response.json().id);"
+                      "pm.environment.set('oauth2_auth_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4686,7 +4686,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4714,7 +4714,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4947,7 +4947,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4975,7 +4975,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5096,7 +5096,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5124,7 +5124,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('oauth2_auth_id', pm.response.json().id);"
+                      "pm.environment.set('oauth2_auth_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5153,7 +5153,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5182,7 +5182,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5244,7 +5244,7 @@
                     "exec": [
                       "const res = pm.response.json();",
                       "pm.test('access token issued', () => pm.expect(res.access_token).to.be.a('string'));",
-                      "pm.collectionVariables.set('entra_token', res.access_token);",
+                      "pm.environment.set('entra_token', res.access_token);",
                       "let b64 = res.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
                       "while (b64.length % 4) b64 += '=';",
                       "const claims = JSON.parse(atob(b64));",
@@ -5295,7 +5295,7 @@
                   "script": {
                     "exec": [
                       "const sid = pm.response.headers.get('Mcp-Session-Id');",
-                      "if (sid) pm.collectionVariables.set('mcp_session_id', sid);"
+                      "if (sid) pm.environment.set('mcp_session_id', sid);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5335,7 +5335,7 @@
                       "if (body.error && body.error.code === -32003) {",
                       "  const url = body.error.data.connect_url;",
                       "  const ticket = (url.split('ticket=')[1] || '').split('&')[0];",
-                      "  pm.collectionVariables.set('connect_ticket', ticket);",
+                      "  pm.environment.set('connect_ticket', ticket);",
                       "  console.log('Open in a browser to link Linear:', url);",
                       "} else if (body.result) {",
                       "  console.log('Linked: ' + body.result.tools.length + ' Linear tools exposed');",
@@ -5470,7 +5470,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5500,8 +5500,8 @@
                   "script": {
                     "exec": [
                       "const res = pm.response.json();",
-                      "pm.collectionVariables.set('auth_id', res.id);",
-                      "pm.collectionVariables.set('api_key', res.api_key);"
+                      "pm.environment.set('auth_id', res.id);",
+                      "pm.environment.set('api_key', res.api_key);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5530,7 +5530,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5558,7 +5558,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
