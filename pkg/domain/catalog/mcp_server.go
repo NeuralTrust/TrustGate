@@ -26,8 +26,21 @@ type MCPServer struct {
 	URLVariables []MCPURLVariable `json:"url_variables,omitempty"`
 	AuthHeaders  []MCPAuthHeader  `json:"auth_headers,omitempty"`
 	OAuth        *MCPOAuth        `json:"oauth,omitempty"`
-	Metadata     map[string]any   `json:"metadata,omitempty"`
-	Source       string           `json:"source"`
+	// Tools is a snapshot of the server's advertised tools, captured by an
+	// unauthenticated tools/list where the server allows it. It is a preview for
+	// the catalog UI; the authoritative per-connection tool set is discovered at
+	// runtime by the gateway's introspector (and may be tenant/user-specific).
+	// Empty when the server requires auth to list tools.
+	Tools    []MCPTool      `json:"tools,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+	Source   string         `json:"source"`
+}
+
+// MCPTool is a single tool advertised by an MCP server (name + description),
+// used as a catalog preview of the server's capabilities.
+type MCPTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 // MCPURLVariable describes a templated segment of an MCP server URL (e.g. a

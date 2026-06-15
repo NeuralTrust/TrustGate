@@ -66,6 +66,7 @@ type rawServer struct {
 	RequiresAuth bool                    `json:"requires_auth"`
 	AuthHeaders  []domain.MCPAuthHeader  `json:"auth_headers"`
 	OAuth        *domain.MCPOAuth        `json:"oauth"`
+	Tools        []domain.MCPTool        `json:"tools"`
 	Relevance    int                     `json:"relevance"`
 }
 
@@ -91,6 +92,7 @@ func loadCuratedMCPServers() ([]domain.MCPServer, error) {
 			URLVariables:   s.URLVariables,
 			AuthHeaders:    s.AuthHeaders,
 			OAuth:          s.OAuth,
+			Tools:          s.Tools,
 			Source:         curatedSource,
 		})
 	}
