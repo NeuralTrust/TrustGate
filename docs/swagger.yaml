@@ -1630,6 +1630,16 @@ definitions:
         type: array
       source:
         type: string
+      tools:
+        description: |-
+          Tools is a snapshot of the server's advertised tools, captured by an
+          unauthenticated tools/list where the server allows it. It is a preview for
+          the catalog UI; the authoritative per-connection tool set is discovered at
+          runtime by the gateway's introspector (and may be tenant/user-specific).
+          Empty when the server requires auth to list tools.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPTool'
+        type: array
       transport:
         type: string
       url:
@@ -1639,6 +1649,13 @@ definitions:
           $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable'
         type: array
       vendor:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPTool:
+    properties:
+      description:
+        type: string
+      name:
         type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable:

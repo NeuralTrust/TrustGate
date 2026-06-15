@@ -5622,6 +5622,13 @@ const docTemplate = `{
                 "source": {
                     "type": "string"
                 },
+                "tools": {
+                    "description": "Tools is a snapshot of the server's advertised tools, captured by an\nunauthenticated tools/list where the server allows it. It is a preview for\nthe catalog UI; the authoritative per-connection tool set is discovered at\nruntime by the gateway's introspector (and may be tenant/user-specific).\nEmpty when the server requires auth to list tools.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPTool"
+                    }
+                },
                 "transport": {
                     "type": "string"
                 },
@@ -5635,6 +5642,17 @@ const docTemplate = `{
                     }
                 },
                 "vendor": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPTool": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 }
             }
