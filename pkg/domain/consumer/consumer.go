@@ -46,11 +46,11 @@ func (m RoutingMode) IsValid() bool {
 const (
 	// DefaultRegistryWeight is applied when a binding does not specify a weight.
 	DefaultRegistryWeight = 1
-	// MaxRegistryWeight caps per-association weights: the weighted round-robin
-	// scheduler iterates up to len(registries)*(maxWeight+1) times per pick, so an
-	// unbounded weight would let a single request monopolize the lock. It is also
-	// kept well within PostgreSQL's int4 range.
-	MaxRegistryWeight = 1000
+	// MaxRegistryWeight caps per-association weights on a 1..100 relative scale
+	// (read it like a percentage share within a pool). The weighted round-robin
+	// scheduler iterates up to len(registries)*(maxWeight+1) times per pick, so a
+	// bounded weight keeps a single request from monopolizing the lock.
+	MaxRegistryWeight = 100
 )
 
 type Consumer struct {

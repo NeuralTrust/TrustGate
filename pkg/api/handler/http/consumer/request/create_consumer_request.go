@@ -27,8 +27,9 @@ type CreateConsumerRequest struct {
 }
 
 type RegistryBindingRequest struct {
-	ID            string                      `json:"id"`
-	Weight        *int                        `json:"weight,omitempty"`
+	ID string `json:"id"`
+	// Weight is the relative weighted-round-robin share on a 1..100 scale.
+	Weight        *int                        `json:"weight,omitempty" example:"1" minimum:"1" maximum:"100"`
 	ModelPolicies *RegistryModelPolicyRequest `json:"model_policies,omitempty"`
 }
 
