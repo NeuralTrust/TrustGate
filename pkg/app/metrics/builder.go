@@ -38,16 +38,16 @@ func (b *Builder) Build(
 	}
 
 	evt := &events.Event{
-		SchemaVersion:  events.SchemaVersion,
-		TraceID:        traceID,
-		GatewayID:      meta.GatewayID,
-		Timestamp:      startTime.UTC().Format(time.RFC3339),
-		StartTimestamp: startTime.UnixMilli(),
-		EndTimestamp:   endTime.UnixMilli(),
-		Consumer:       events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
-		SessionID:      meta.SessionID,
-		FingerprintID:  meta.FingerprintID,
-		IP:             meta.IP,
+		SchemaVersion: events.SchemaVersion,
+		TraceID:       traceID,
+		GatewayID:     meta.GatewayID,
+		Timestamp:     startTime.UTC().Format(time.RFC3339),
+		OccurredOn:    startTime.UnixMilli(),
+		EndTimestamp:  endTime.UnixMilli(),
+		Consumer:      events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
+		SessionID:     meta.SessionID,
+		FingerprintID: meta.FingerprintID,
+		IP:            meta.IP,
 	}
 
 	served, attempts := b.foldLLMSpans(requestTrace)
