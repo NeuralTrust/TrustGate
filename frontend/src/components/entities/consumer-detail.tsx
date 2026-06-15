@@ -312,7 +312,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
     return weights[r.id] ?? String(r.weight ?? 1);
   }
   function weightOf(r: Registry): number {
-    return Math.max(0, Math.round(Number(displayWeight(r)) || 0));
+    return Math.min(100, Math.max(0, Math.round(Number(displayWeight(r)) || 0)));
   }
   const totalWeight = attached.reduce((sum, r) => sum + weightOf(r), 0);
 
@@ -445,6 +445,7 @@ function RoutingTab({ consumer, onClose }: { consumer: Consumer; onClose: () => 
                     <Input
                       type="number"
                       min={0}
+                      max={100}
                       value={displayWeight(r)}
                       onChange={(e) => setWeights((prev) => ({ ...prev, [r.id]: e.target.value }))}
                       className="w-20"

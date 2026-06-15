@@ -3635,7 +3635,10 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "weight": {
+                    "description": "Weight is the relative weighted-round-robin share on a 1..100 scale.",
                     "type": "integer",
+                    "maximum": 100,
+                    "minimum": 1,
                     "example": 1
                 }
             }
@@ -3808,7 +3811,11 @@ const docTemplate = `{
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest"
                 },
                 "weight": {
-                    "type": "integer"
+                    "description": "Weight is the relative weighted-round-robin share on a 1..100 scale.",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "example": 1
                 }
             }
         },

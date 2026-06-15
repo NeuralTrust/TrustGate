@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -390,6 +391,7 @@ func newAuthTestAppWithResolver(
 		fakeDataFinder{data: data},
 		gatewayResolver,
 		roleResolver,
+		slog.Default(),
 	)
 	app := fiber.New()
 	app.Post("/*", authMiddleware.Middleware(), func(c *fiber.Ctx) error {

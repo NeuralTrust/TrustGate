@@ -1390,7 +1390,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Associates a registry with a consumer (idempotent).",
+                "description": "Associates a registry with a consumer (idempotent). The optional body sets the registry weight for weighted load balancing.",
                 "tags": [
                     "consumers"
                 ],
@@ -1427,6 +1427,16 @@
                         }
                     }
                 ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest"
+                            }
+                        }
+                    },
+                    "description": "Optional registry weight"
+                },
                 "responses": {
                     "204": {
                         "description": "No Content"
@@ -4427,6 +4437,18 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest": {
+                "type": "object",
+                "properties": {
+                    "weight": {
+                        "description": "Weight is the relative weighted-round-robin share on a 1..100 scale.",
+                        "type": "integer",
+                        "maximum": 100,
+                        "minimum": 1,
+                        "example": 1
+                    }
+                }
+            },
             "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.CreateConsumerRequest": {
                 "type": "object",
                 "properties": {
@@ -4595,7 +4617,11 @@
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest"
                     },
                     "weight": {
-                        "type": "integer"
+                        "description": "Weight is the relative weighted-round-robin share on a 1..100 scale.",
+                        "type": "integer",
+                        "maximum": 100,
+                        "minimum": 1,
+                        "example": 1
                     }
                 }
             },
