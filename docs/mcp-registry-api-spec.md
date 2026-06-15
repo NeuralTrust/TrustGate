@@ -100,10 +100,10 @@ Performs an STS token exchange. Requires `pattern`, plus pattern-specific fields
 ```
 
 ### `forwarded`
-OAuth flow against the upstream provider. Requires `provider` and a `registration` mode:
+OAuth flow against the upstream provider. The registry only declares the connection; **the end user authenticates at runtime** (browser login + consent) and the gateway holds per-user tokens — no user credentials are stored on the registry. Requires `provider` and a `registration` mode:
 
-- `registration: "auto"` — dynamic client registration; must **not** include `client_id`/`client_secret`.
-- `registration: "manual"` (or omitted) — requires `client_id`, `authorize_url`, `token_url`. `client_secret`, `scopes`, `resource` are optional.
+- `registration: "auto"` — dynamic client registration; the gateway self-registers and the user logs in at runtime. Must **not** include `client_id`/`client_secret`.
+- `registration: "manual"` (or omitted) — the provider has no DCR, so an operator pre-registers an app once and supplies `client_id`, `authorize_url`, `token_url`. `client_secret`, `scopes`, `resource` are optional. The end user still logs in at runtime.
 
 ```json
 {
@@ -115,6 +115,119 @@ OAuth flow against the upstream provider. Requires `provider` and a `registratio
   "authorize_url": "https://github.com/login/oauth/authorize",
   "token_url": "https://github.com/login/oauth/access_token",
   "scopes": ["repo"]
+}
+```
+
+## Configuring from the catalog (frontend flow)
+
+The registry form is prefilled from the curated MCP catalog. The frontend lists the catalog, lets the user pick a server, collects only the values the catalog says are missing, then builds the `mcp_target` request from the catalog entry plus those inputs.
+
+### Catalog endpoint
+
+```
+GET /v1/mcp-servers-catalog
+Authorization: Bearer <admin JWT>
+```
+
+Returns `{ "mcp_servers": [ ... ] }`, sorted by `relevance` (desc). Each entry:
+
+| Field | Type | Meaning for the form |
+|---|---|---|
+| `code` | string | Stable server id (e.g. `com.asana/mcp`). Use as the `provider` key for `forwarded` auth. |
+| `display_name` / `vendor` / `category` / `description` | string | Display only. |
+| `url` | string | Server URL; may contain `{placeholders}` (see `url_variables`). |
+| `transport` | string | Always `streamable-http`. |
+| `auth_hint` | string | `none` \| `static` \| `oauth` — selects the `auth.mode` (see mapping). |
+| `requires_auth` | bool | Whether any credential is needed. |
+| `requires_config` | bool | Whether the operator must supply input before connecting. `false` → **connect by default, no button/form**. `true` → show a configure/Connect step. (Derived; see below.) |
+| `url_variables` | array | Templated URL segments the user must supply. Each has `name`, `description`, `required`, `secret`, `in` (`path` \| `query`). |
+| `auth_headers` | array | Static credentials the upstream expects. Each has `name`, `description`, `required`, `secret`, `scheme` (`Bearer` \| `Token` \| `Basic` \| `ApiKey` \| `App` \| `raw`). |
+| `oauth` | object | OAuth capability (when `auth_hint` is `oauth`). See below. |
+
+> **OAuth is a runtime concern, not a registry secret.** A `forwarded` registry only *declares the connection* — it never stores user OAuth tokens or per-user credentials. Each end user authenticates at runtime: on first use the gateway runs the OAuth authorization-code flow against the upstream, the user logs in and consents in the browser, and the gateway holds that user's token. So for the common case the registry form collects **nothing** for OAuth.
+
+`oauth` object:
+
+| Field | Type | Meaning for the form |
+|---|---|---|
+| `registration` | string | `auto` → gateway self-registers via DCR; **create the registry with no credentials, the user logs in at runtime**. This is the default path (94 of 133 servers). `manual` → the provider has no DCR, so an operator pre-registers an OAuth app **once** and supplies `client_id` (+ optional `client_secret`) at registry creation; the end user still logs in at runtime. Absent → tenant-hosted, discovered per-instance: attempt `auto`, fall back to `manual`. |
+| `dcr` | bool | Whether DCR is supported. Mirrors `registration`. May be absent (unknown). |
+| `pkce` | bool | Informational; PKCE is always applied by the gateway when supported. |
+| `authorize_url` / `token_url` | string | Pass straight through for `manual` registration; ignore for `auto`. |
+| `scopes` | string[] | Default scopes; pass through (editable). |
+| `resource` | string | RFC 8707 audience; pass through. |
+
+### Connect by default vs. configure (`requires_config`)
+
+The UI should **not** show a config/Connect button for servers that need no operator input — those can be connected by default. Only servers that need input get a setup step. Branch on the precomputed `requires_config`:
+
+- **`requires_config: false` — connect by default** (~107 servers): public servers (`auth_hint: none`, no required URL variables) and OAuth servers whose client self-registers (`oauth.registration: "auto"`, no required URL variables). Nothing to fill — the registry can be created directly; for OAuth the user simply logs in at runtime.
+- **`requires_config: true` — show the configure step** (~83 servers): any server with a required URL variable (e.g. a tenant host/subdomain), a `static` secret (API key/token), or OAuth that needs a `manual`/tenant client.
+
+The flag is derived server-side so the frontend doesn't re-implement the rule: `requires_config = (any url_variable.required) OR (auth_hint == "static") OR (auth_hint == "oauth" AND oauth.registration != "auto")`.
+
+### Catalog → `mcp_target` mapping
+
+1. **URL** — start from `url`. For each `url_variables` entry, substitute the user value: `in: "path"` replaces the `{name}` placeholder in the path; `in: "query"` appends `name=<value>` to the query string. A `secret: true` variable is a credential (e.g. a token in the query) and must be collected as a password field.
+2. **`auth.mode`** — derive from `auth_hint`:
+
+| `auth_hint` | `auth.mode` | What the user provides |
+|---|---|---|
+| `none` | `none` | nothing |
+| `static` | `static` (credential header) — or none, if the only secret is a query `url_variable` | the secret(s) named in `auth_headers` / secret `url_variables` |
+| `oauth` | `forwarded` | nothing for `auto`; `client_id`/`client_secret` for `manual` |
+
+3. **`static` credential** — for the primary secret `auth_headers` entry, build `auth: { mode: "static", header: <name>, value: "<scheme> <secret>" }`, prefixing the user's secret with `scheme` (omit the prefix when `scheme` is `raw`). Any additional **non-secret** required headers go in `mcp_target.headers`.
+4. **`forwarded` (OAuth)** — set `provider` to the catalog `code`. The registry never carries user credentials; the user authenticates at runtime. If `registration` is `auto`, send `{ mode: "forwarded", provider, registration: "auto" }` and nothing else. If `manual`, the operator additionally supplies a one-time pre-registered app `client_id` (+ optional `client_secret`); pass the catalog's `authorize_url`, `token_url`, `scopes`, `resource` through. Either way, end-user login happens at runtime — not at registry creation.
+
+### Worked examples
+
+**No auth** (`auth_hint: none`):
+
+```json
+{ "url": "https://mcp.assemblyai.com/docs", "auth": { "mode": "none" } }
+```
+
+**Static header** (`auth_hint: static`, header `Authorization`, `scheme: Bearer`, `secret: true`):
+
+```json
+{
+  "url": "https://api.example.com/mcp",
+  "auth": { "mode": "static", "header": "Authorization", "value": "Bearer <user-secret>" }
+}
+```
+
+**Secret in query var** (`url_variables: [{ name: "token", in: "query", secret: true }]`):
+
+```json
+{ "url": "https://api.tinybird.co/mcp?token=<user-secret>", "auth": { "mode": "none" } }
+```
+
+**OAuth, `registration: auto`** (e.g. Atlassian, Notion, Linear — no credentials at creation; user logs in at runtime):
+
+```json
+{
+  "url": "https://mcp.atlassian.com/v1/mcp/authv2",
+  "auth": { "mode": "forwarded", "provider": "com.atlassian/mcp", "registration": "auto" }
+}
+```
+
+**OAuth, `registration: manual`** (e.g. Asana, GitHub — provider has no DCR, so an operator supplies a one-time pre-registered app; the end user still logs in at runtime):
+
+```json
+{
+  "url": "https://mcp.asana.com/v2/mcp",
+  "auth": {
+    "mode": "forwarded",
+    "provider": "com.asana/mcp",
+    "registration": "manual",
+    "client_id": "<operator app client id>",
+    "client_secret": "<operator app client secret>",
+    "authorize_url": "https://app.asana.com/-/oauth_authorize",
+    "token_url": "https://app.asana.com/-/oauth_token",
+    "scopes": ["default"],
+    "resource": "https://mcp.asana.com/v2/mcp"
+  }
 }
 ```
 
@@ -157,6 +270,8 @@ JSON `{ "error": "<code>", "message": "<detail>" }`.
 
 | Concern | File |
 |---|---|
+| Catalog endpoint + entry schema | `pkg/api/handler/http/catalog/list_mcp_servers_handler.go`, `pkg/domain/catalog/mcp_server.go` |
+| Catalog data | `seed/mcp-catalog/enterprise-servers.json` |
 | Request DTO | `pkg/api/handler/http/registry/request/create_registry_request.go` |
 | Handler / route | `pkg/api/handler/http/registry/create_registry_handler.go`, `pkg/server/router/admin_router.go` |
 | Domain model + validation | `pkg/domain/registry/mcp_target.go` |

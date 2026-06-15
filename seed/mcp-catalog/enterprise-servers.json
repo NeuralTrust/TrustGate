@@ -17,7 +17,15 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://{domain}.aha.io/oauth/authorize",
+        "token_url": "https://{domain}.aha.io/oauth/token",
+        "scopes": [
+          "full"
+        ]
       }
     },
     {
@@ -30,7 +38,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://app.ahrefs.com/web/oauth/authorize",
+        "token_url": "https://ahrefs.com/oauth/token",
+        "scopes": [
+          "apiv3-mcp"
+        ],
+        "resource": "https://api.ahrefs.com/"
       },
       "relevance": 55
     },
@@ -44,7 +61,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.airbyte.ai/authorize",
+        "token_url": "https://mcp.airbyte.ai/token",
+        "resource": "https://mcp.airbyte.ai/mcp"
       }
     },
     {
@@ -57,7 +80,22 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://airtable.com/oauth2/v1/authorize",
+        "token_url": "https://airtable.com/oauth2/v1/token",
+        "scopes": [
+          "data.records:read",
+          "data.records:write",
+          "schema.bases:read",
+          "schema.bases:write",
+          "data.recordComments:read",
+          "data.recordComments:write",
+          "workspacesAndBases:read"
+        ],
+        "resource": "https://mcp.airtable.com"
       },
       "relevance": 65
     },
@@ -86,7 +124,8 @@
           "name": "Authorization",
           "description": "Bearer <APP_ID:SEARCH_API_KEY> (Agent Studio search key).",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ]
     },
@@ -100,7 +139,18 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.amplitude.com/authorize",
+        "token_url": "https://mcp.amplitude.com/token",
+        "scopes": [
+          "mcp:read",
+          "mcp:write",
+          "offline_access"
+        ],
+        "resource": "https://mcp.amplitude.com"
       },
       "relevance": 70
     },
@@ -114,7 +164,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://console.apify.com/authorize/oauth",
+        "token_url": "https://console-backend.apify.com/oauth/apps/token",
+        "scopes": [
+          "full_api_access"
+        ],
+        "resource": "https://mcp.apify.com"
       },
       "relevance": 55
     },
@@ -128,7 +187,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.apollo.io/mcp/oauth_metadata/redirect_to_authorize",
+        "token_url": "https://mcp.apollo.io/api/v1/oauth/token",
+        "scopes": [
+          "people_match",
+          "contacts_search",
+          "contact_read",
+          "contact_write",
+          "organizations_enrich",
+          "opportunities_list",
+          "tasks_list",
+          "read_user_profile"
+        ],
+        "resource": "https://mcp.apollo.io/mcp"
       },
       "relevance": 55
     },
@@ -152,13 +227,15 @@
           "name": "Authorization",
           "description": "Bearer <Arcade API key>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         },
         {
           "name": "Arcade-User-ID",
           "description": "End-user ID for tool authorization.",
           "required": true,
-          "secret": false
+          "secret": false,
+          "scheme": "raw"
         }
       ],
       "relevance": 55
@@ -173,7 +250,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://app.asana.com/-/oauth_authorize",
+        "token_url": "https://app.asana.com/-/oauth_token",
+        "scopes": [
+          "default"
+        ],
+        "resource": "https://mcp.asana.com/v2/mcp"
       },
       "relevance": 80
     },
@@ -197,7 +283,18 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.atlan.com/oauth/authorize",
+        "token_url": "https://mcp.atlan.com/oauth/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "resource": "https://mcp.atlan.com"
       }
     },
     {
@@ -210,7 +307,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://auth.atlassian.com/authorize",
+        "token_url": "https://auth.atlassian.com/oauth/token",
+        "scopes": [
+          "read:me",
+          "read:jira-work",
+          "write:jira-work",
+          "search:confluence",
+          "read:page:confluence",
+          "write:page:confluence",
+          "read:confluence-user",
+          "offline_access"
+        ],
+        "resource": "https://mcp.atlassian.com/v1/mcp/authv2"
       },
       "relevance": 100
     },
@@ -224,7 +337,18 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://app.attio.com/oidc/authorize",
+        "token_url": "https://app.attio.com/oidc/token",
+        "scopes": [
+          "mcp",
+          "offline_access",
+          "openid"
+        ],
+        "resource": "https://mcp.attio.com/mcp"
       }
     },
     {
@@ -237,7 +361,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.axiom.co/authorize",
+        "token_url": "https://mcp.axiom.co/token",
+        "resource": "https://mcp.axiom.co/mcp"
       }
     },
     {
@@ -250,7 +380,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://betterstack.com/oauth/authorize",
+        "token_url": "https://betterstack.com/oauth/token",
+        "scopes": [
+          "read",
+          "write"
+        ],
+        "resource": "https://mcp.betterstack.com"
       },
       "relevance": 50
     },
@@ -264,7 +404,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://account.box.com/api/oauth2/authorize",
+        "token_url": "https://api.box.com/oauth2/token",
+        "resource": "https://mcp.box.com/"
       },
       "relevance": 75
     },
@@ -281,7 +427,8 @@
           "name": "Authorization",
           "description": "Bearer <Braintrust API key>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ]
     },
@@ -295,7 +442,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://accounts-api.brex.com/oauth2/default/v1/authorize",
+        "token_url": "https://accounts-api.brex.com/oauth2/default/v1/token",
+        "scopes": [
+          "openid",
+          "offline_access",
+          "email",
+          "users.readonly",
+          "cards.readonly",
+          "expenses.card",
+          "budgets.readonly",
+          "accounts.cash.readonly"
+        ],
+        "resource": "https://api.brex.com"
       },
       "relevance": 60
     },
@@ -310,7 +473,9 @@
         {
           "name": "token",
           "description": "Bright Data API token.",
-          "required": true
+          "required": true,
+          "secret": true,
+          "in": "query"
         }
       ],
       "requires_auth": true,
@@ -327,7 +492,9 @@
         {
           "name": "browserbaseApiKey",
           "description": "Browserbase API key, passed as the browserbaseApiKey query parameter.",
-          "required": true
+          "required": true,
+          "secret": true,
+          "in": "query"
         }
       ],
       "requires_auth": true,
@@ -346,7 +513,8 @@
           "name": "Authorization",
           "description": "Bearer <Builder Private API key>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ]
     },
@@ -360,7 +528,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.buildkite.com/oauth/authorize",
+        "token_url": "https://mcp.buildkite.com/oauth/token",
+        "scopes": [
+          "read",
+          "write"
+        ],
+        "resource": "https://mcp.buildkite.com/mcp"
       }
     },
     {
@@ -373,7 +551,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.cal.com/oauth/authorize",
+        "token_url": "https://mcp.cal.com/oauth/token",
+        "resource": "https://mcp.cal.com"
       },
       "relevance": 55
     },
@@ -387,7 +571,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://calendly.com/oauth/authorize",
+        "token_url": "https://calendly.com/oauth/token",
+        "scopes": [
+          "mcp:scheduling:read",
+          "mcp:scheduling:write"
+        ],
+        "resource": "https://mcp.calendly.com/"
       },
       "relevance": 60
     },
@@ -401,7 +595,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.canva.com/authorize",
+        "token_url": "https://mcp.canva.com/token",
+        "scopes": [
+          "profile:read",
+          "design:meta:read",
+          "design:content:read",
+          "design:content:write",
+          "asset:read",
+          "asset:write",
+          "folder:read",
+          "comment:read"
+        ],
+        "resource": "https://mcp.canva.com/mcp"
       },
       "relevance": 70
     },
@@ -441,7 +651,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.checkr.com/authorize",
+        "token_url": "https://mcp.checkr.com/token",
+        "scopes": [
+          "openid"
+        ],
+        "resource": "https://mcp.checkr.com/"
       }
     },
     {
@@ -454,7 +673,20 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.clickhouse.cloud/authorize",
+        "token_url": "https://mcp.clickhouse.cloud/token",
+        "scopes": [
+          "mcp:access",
+          "clickstack:access",
+          "openid",
+          "profile",
+          "email"
+        ],
+        "resource": "https://mcp.clickhouse.cloud/mcp"
       },
       "relevance": 70
     },
@@ -468,7 +700,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.clickup.com/oauth/authorize",
+        "token_url": "https://mcp.clickup.com/oauth/token",
+        "scopes": [
+          "read",
+          "write"
+        ],
+        "resource": "https://mcp.clickup.com/mcp"
       },
       "relevance": 70
     },
@@ -482,7 +724,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://app.close.com/oauth2/authorize/",
+        "token_url": "https://api.close.com/oauth2/token/",
+        "scopes": [
+          "mcp.read",
+          "mcp.write_safe",
+          "mcp.write_destructive",
+          "offline_access"
+        ],
+        "resource": "https://mcp.close.com/"
       }
     },
     {
@@ -495,7 +749,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://ai-gateway.mcp.cloudflare.com/oauth/authorize",
+        "token_url": "https://ai-gateway.mcp.cloudflare.com/token",
+        "resource": "https://ai-gateway.mcp.cloudflare.com/mcp"
       },
       "relevance": 90
     },
@@ -509,7 +769,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.cloudflare.com/authorize",
+        "token_url": "https://mcp.cloudflare.com/token",
+        "resource": "https://mcp.cloudflare.com/mcp"
       },
       "relevance": 90
     },
@@ -523,7 +789,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://bindings.mcp.cloudflare.com/oauth/authorize",
+        "token_url": "https://bindings.mcp.cloudflare.com/token",
+        "resource": "https://bindings.mcp.cloudflare.com/mcp"
       },
       "relevance": 90
     },
@@ -547,7 +819,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://observability.mcp.cloudflare.com/oauth/authorize",
+        "token_url": "https://observability.mcp.cloudflare.com/token",
+        "resource": "https://observability.mcp.cloudflare.com/mcp"
       },
       "relevance": 90
     },
@@ -561,7 +839,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://radar.mcp.cloudflare.com/oauth/authorize",
+        "token_url": "https://radar.mcp.cloudflare.com/token",
+        "resource": "https://radar.mcp.cloudflare.com/mcp"
       },
       "relevance": 90
     },
@@ -578,7 +862,8 @@
           "name": "cloudinary-url",
           "description": "cloudinary://api_key:api_secret@cloud_name (OAuth 2 also supported)",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "raw"
         }
       ]
     },
@@ -592,7 +877,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://coda.io/v4/api/oauth2/authorize",
+        "token_url": "https://coda.io/v4/api/oauth2/token",
+        "scopes": [
+          "mcp:all"
+        ],
+        "resource": "https://coda.io/apis/mcp"
       },
       "relevance": 55
     },
@@ -616,7 +910,11 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "resource": "https://rube.app/mcp"
       },
       "relevance": 60
     },
@@ -630,7 +928,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.contentful.com/authorize",
+        "token_url": "https://mcp.contentful.com/token",
+        "resource": "https://mcp.contentful.com/mcp"
       },
       "relevance": 60
     },
@@ -664,7 +968,11 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "resource": "https://mcp.customer.io/mcp"
       }
     },
     {
@@ -680,7 +988,8 @@
           "name": "Authorization",
           "description": "Bearer <API key>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ]
     },
@@ -720,7 +1029,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://app.datadoghq.com/oauth2/v1/authorize",
+        "token_url": "https://app.datadoghq.com/oauth2/v1/token",
+        "resource": "https://mcp.datadoghq.com"
       },
       "relevance": 95
     },
@@ -776,7 +1091,8 @@
           "name": "Authorization",
           "description": "Bearer <DigitalOcean API token>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 75
@@ -794,7 +1110,8 @@
           "name": "Authorization",
           "description": "Bearer <DigitalOcean API token>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 75
@@ -812,7 +1129,8 @@
           "name": "Authorization",
           "description": "Bearer <DigitalOcean API token>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 75
@@ -830,7 +1148,8 @@
           "name": "Authorization",
           "description": "Bearer <DigitalOcean API token>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 75
@@ -848,7 +1167,8 @@
           "name": "Authorization",
           "description": "Bearer <DigitalOcean API token>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 75
@@ -863,7 +1183,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://account-d.docusign.com/oauth/auth",
+        "token_url": "https://account-d.docusign.com/oauth/token",
+        "scopes": [
+          "signature",
+          "aow_manage",
+          "manage_app_keys",
+          "adm_store_unified_repo_read"
+        ],
+        "resource": "https://mcp-d.docusign.com/mcp"
       },
       "relevance": 75
     },
@@ -877,7 +1209,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://www.dropbox.com/oauth2/authorize",
+        "token_url": "https://api.dropboxapi.com/oauth2/token",
+        "scopes": [
+          "account_info.read",
+          "file_requests.read",
+          "file_requests.write",
+          "files.content.read",
+          "files.content.write",
+          "files.metadata.read",
+          "sharing.read",
+          "sharing.write"
+        ],
+        "resource": "https://mcp.dropbox.com/mcp"
       },
       "relevance": 80
     },
@@ -901,7 +1249,8 @@
           "name": "Authorization",
           "description": "Bearer <Dynatrace Platform Token> with mcp-gateway:servers:invoke and :read scopes.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ]
     },
@@ -915,7 +1264,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp-oauth.egnyte.com/domain-picker",
+        "token_url": "https://mcp-oauth.egnyte.com/oauth2/token",
+        "resource": "https://mcp-server.egnyte.com"
       }
     },
     {
@@ -938,7 +1293,8 @@
           "name": "Authorization",
           "description": "ApiKey <Elastic API key> with Agent Builder privileges.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "ApiKey"
         }
       ],
       "relevance": 80
@@ -965,7 +1321,8 @@
           "name": "x-api-key",
           "description": "API key",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "raw"
         }
       ],
       "relevance": 55
@@ -989,7 +1346,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.fibery.io/authorize",
+        "token_url": "https://mcp.fibery.io/token",
+        "scopes": [
+          "openid",
+          "offline"
+        ],
+        "resource": "https://mcp.fibery.io/mcp"
       }
     },
     {
@@ -1002,7 +1369,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://www.figma.com/oauth/mcp",
+        "token_url": "https://api.figma.com/v1/oauth/token",
+        "scopes": [
+          "mcp:connect"
+        ],
+        "resource": "https://mcp.figma.com/mcp"
       },
       "relevance": 95
     },
@@ -1016,7 +1392,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://www.firecrawl.dev/api/oauth/authorize",
+        "token_url": "https://www.firecrawl.dev/api/oauth/token",
+        "scopes": [
+          "firecrawl:global"
+        ],
+        "resource": "https://mcp.firecrawl.dev/v2/mcp"
       },
       "relevance": 65
     },
@@ -1033,7 +1418,8 @@
           "name": "Authorization",
           "description": "Bearer <API key>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 50
@@ -1069,7 +1455,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://app.frontapp.com/oauth/authorize",
+        "token_url": "https://app.frontapp.com/oauth/token",
+        "scopes": [
+          "feature:mcp"
+        ],
+        "resource": "https://mcp.frontapp.com"
       },
       "relevance": 55
     },
@@ -1083,7 +1478,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://github.com/login/oauth/authorize",
+        "token_url": "https://github.com/login/oauth/access_token",
+        "scopes": [
+          "repo",
+          "read:org",
+          "read:user",
+          "user:email",
+          "read:packages",
+          "workflow",
+          "notifications",
+          "gist"
+        ],
+        "resource": "https://api.githubcopilot.com/mcp/"
       },
       "relevance": 100
     },
@@ -1097,7 +1508,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://gitlab.com/oauth/authorize",
+        "token_url": "https://gitlab.com/oauth/token",
+        "scopes": [
+          "mcp"
+        ],
+        "resource": "https://gitlab.com/api/v4/mcp"
       },
       "relevance": 95
     },
@@ -1161,7 +1581,8 @@
           "name": "Authorization",
           "description": "Bearer <GoodData API token>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ]
     },
@@ -1175,7 +1596,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/androidmanagement"
+        ],
+        "resource": "https://androidmanagement.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1189,7 +1619,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/bigtable.admin"
+        ],
+        "resource": "https://bigtableadmin.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1210,7 +1649,12 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token"
       },
       "relevance": 90
     },
@@ -1224,7 +1668,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/compute"
+        ],
+        "resource": "https://compute.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1238,7 +1691,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/container"
+        ],
+        "resource": "https://container.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1252,7 +1714,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/cloud-datastream"
+        ],
+        "resource": "https://datastream.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1266,7 +1737,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "resource": "https://design.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1280,7 +1757,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/devprofiles.full_control"
+        ],
+        "resource": "https://developerknowledge.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1294,7 +1780,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "resource": "https://firestore.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1308,7 +1803,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/maps-platform.mapstools"
+        ],
+        "resource": "https://mapstools.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1322,7 +1826,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/memorystore.read-write"
+        ],
+        "resource": "https://memorystore.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1336,7 +1849,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/monitoring.write"
+        ],
+        "resource": "https://monitoring.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1350,7 +1872,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/run"
+        ],
+        "resource": "https://run.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1364,7 +1895,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/cloudsql"
+        ],
+        "resource": "https://sqladmin.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1378,7 +1918,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          "https://www.googleapis.com/auth/aida",
+          "https://www.googleapis.com/auth/cloud-platform"
+        ],
+        "resource": "https://stitch.googleapis.com/mcp"
       },
       "relevance": 90
     },
@@ -1393,13 +1943,30 @@
         {
           "name": "subdomain",
           "description": "Your Gorgias subdomain.",
-          "required": true
+          "required": true,
+          "in": "query"
         }
       ],
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.gorgias.com/authorize",
+        "token_url": "https://mcp.gorgias.com/token",
+        "scopes": [
+          "openid",
+          "email",
+          "profile",
+          "offline",
+          "account:read",
+          "account:write",
+          "tickets:read",
+          "tickets:write"
+        ],
+        "resource": "https://mcp.gorgias.com/mcp"
       },
       "relevance": 50
     },
@@ -1413,7 +1980,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.grafana.com/mcp/oauth/authorize",
+        "token_url": "https://mcp.grafana.com/mcp/oauth/token",
+        "scopes": [
+          "grafana:read",
+          "grafana:write"
+        ],
+        "resource": "https://mcp.grafana.com/mcp"
       },
       "relevance": 80
     },
@@ -1427,7 +2004,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.api.getguru.com/oauth/mcp/authorize",
+        "token_url": "https://mcp.api.getguru.com/oauth/mcp/token",
+        "scopes": [
+          "default"
+        ],
+        "resource": "https://mcp.api.getguru.com/mcp"
       }
     },
     {
@@ -1440,7 +2026,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://auth.app.hex.tech/oauth2/authorize",
+        "token_url": "https://auth.app.hex.tech/oauth2/token",
+        "scopes": [
+          "email",
+          "offline_access",
+          "openid",
+          "profile"
+        ],
+        "resource": "https://app.hex.tech/mcp"
       }
     },
     {
@@ -1453,7 +2051,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://ui.honeycomb.io/oauth/authorize",
+        "token_url": "https://ui.honeycomb.io/oauth/token",
+        "scopes": [
+          "mcp:read",
+          "mcp:write"
+        ],
+        "resource": "https://mcp.honeycomb.io/mcp"
       },
       "relevance": 60
     },
@@ -1467,7 +2075,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://mcp.hubspot.com/oauth/authorize/user",
+        "token_url": "https://mcp.hubspot.com/oauth/v3/token",
+        "resource": "https://mcp.hubspot.com"
       },
       "relevance": 90
     },
@@ -1481,7 +2095,22 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://huggingface.co/oauth/authorize",
+        "token_url": "https://huggingface.co/oauth/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "read-mcp",
+          "read-repos",
+          "jobs",
+          "contribute-repos",
+          "inference-api"
+        ],
+        "resource": "https://huggingface.co/mcp?login"
       },
       "relevance": 80
     },
@@ -1495,7 +2124,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://app.incident.io/auth/plugin/authorize",
+        "token_url": "https://app.incident.io/auth/plugin/token",
+        "resource": "https://mcp.incident.io"
       },
       "relevance": 55
     },
@@ -1512,7 +2147,8 @@
           "name": "Authorization",
           "description": "App <API key> (or OAuth 2.1)",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "App"
         }
       ],
       "relevance": 50
@@ -1527,7 +2163,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.intercom.com/authorize",
+        "token_url": "https://mcp.intercom.com/token",
+        "resource": "https://mcp.intercom.com/mcp"
       },
       "relevance": 75
     },
@@ -1550,7 +2192,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://api.jam.dev/oauth/authorize",
+        "token_url": "https://api.jam.dev/oauth/token",
+        "scopes": [
+          "mcp:read",
+          "mcp:write",
+          "cli:read",
+          "cli:write"
+        ],
+        "resource": "https://mcp.jam.dev/mcp"
       }
     },
     {
@@ -1587,7 +2241,8 @@
           "name": "Authorization",
           "description": "Bearer <API key>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 50
@@ -1605,7 +2260,8 @@
           "name": "Authorization",
           "description": "Bearer <API key>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ]
     },
@@ -1619,7 +2275,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.klaviyo.com/authorize",
+        "token_url": "https://mcp.klaviyo.com/token",
+        "resource": "https://mcp.klaviyo.com"
       },
       "relevance": 65
     },
@@ -1636,7 +2298,8 @@
           "name": "Authorization",
           "description": "Basic <Base64(public_key:secret_key)> project credentials.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Basic"
         }
       ]
     },
@@ -1650,7 +2313,18 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://app.launchdarkly.com/trust/oauth/authorize",
+        "token_url": "https://app.launchdarkly.com/trust/oauth/token",
+        "scopes": [
+          "reader",
+          "writer",
+          "observability"
+        ],
+        "resource": "https://mcp.launchdarkly.com/mcp/launchdarkly"
       },
       "relevance": 65
     },
@@ -1664,7 +2338,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.linear.app/authorize",
+        "token_url": "https://mcp.linear.app/token",
+        "scopes": [
+          "read",
+          "write"
+        ],
+        "resource": "https://mcp.linear.app/mcp"
       },
       "relevance": 95
     },
@@ -1690,7 +2374,8 @@
           "name": "Authorization",
           "description": "Bearer <Mandrill API key>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 70
@@ -1705,7 +2390,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://www.make.com/oauth/v2/authorize",
+        "token_url": "https://www.make.com/oauth/v2/token",
+        "resource": "https://mcp.make.com/"
       },
       "relevance": 70
     },
@@ -1722,7 +2413,8 @@
           "name": "Authorization",
           "description": "Token <Mem0 API key>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Token"
         }
       ]
     },
@@ -1736,7 +2428,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.mercury.com/authorize",
+        "token_url": "https://mcp.mercury.com/token",
+        "scopes": [
+          "read",
+          "offline_access"
+        ],
+        "resource": "https://mcp.mercury.com/mcp"
       },
       "relevance": 55
     },
@@ -1760,7 +2462,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/organizations/oauth2/v2.0/token",
+        "scopes": [
+          "4500ebfb-89b6-4b14-a480-7f749797bfcd/.default"
+        ],
+        "resource": "https://sentinel.microsoft.com/mcp/data-exploration"
       },
       "relevance": 70
     },
@@ -1774,7 +2485,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.miro.com/authorize",
+        "token_url": "https://mcp.miro.com/token",
+        "scopes": [
+          "boards:read",
+          "boards:write"
+        ],
+        "resource": "https://mcp.miro.com/"
       },
       "relevance": 70
     },
@@ -1788,7 +2509,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mixpanel.com/oauth/authorize",
+        "token_url": "https://mixpanel.com/oauth/token/",
+        "scopes": [
+          "projects",
+          "analysis",
+          "events",
+          "insights",
+          "segmentation",
+          "retention",
+          "data:read",
+          "funnels"
+        ],
+        "resource": "https://mcp.mixpanel.com/mcp"
       },
       "relevance": 70
     },
@@ -1814,7 +2551,8 @@
           "name": "Authorization",
           "description": "Bearer <Mollie Advanced access token>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 50
@@ -1829,7 +2567,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.monday.com/authorize",
+        "token_url": "https://mcp.monday.com/token",
+        "resource": "https://mcp.monday.com/mcp"
       },
       "relevance": 75
     },
@@ -1843,7 +2587,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://auth.getmontecarlo.com/oauth2/authorize",
+        "token_url": "https://auth.getmontecarlo.com/oauth2/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access"
+        ],
+        "resource": "https://mcp.getmontecarlo.com/mcp"
       }
     },
     {
@@ -1856,7 +2612,20 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp-auth.motherduck.com/authorize",
+        "token_url": "https://mcp-auth.motherduck.com/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "read:databases",
+          "offline_access"
+        ],
+        "resource": "https://api.motherduck.com/mcp"
       }
     },
     {
@@ -1869,7 +2638,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://auth.mux.com/oauth2/authorize",
+        "token_url": "https://auth.mux.com/oauth2/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access"
+        ],
+        "resource": "https://mcp.mux.com"
       },
       "relevance": 55
     },
@@ -1883,7 +2664,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.neon.tech/api/authorize",
+        "token_url": "https://mcp.neon.tech/api/token",
+        "scopes": [
+          "read",
+          "write"
+        ],
+        "resource": "https://mcp.neon.tech/mcp"
       },
       "relevance": 60
     },
@@ -1918,7 +2709,18 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://login.newrelic.com/login",
+        "token_url": "https://mcp.newrelic.com/oauth2/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "resource": "https://mcp.newrelic.com/mcp/"
       },
       "relevance": 80
     },
@@ -1932,7 +2734,20 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.norman.finance/authorize",
+        "token_url": "https://mcp.norman.finance/token",
+        "scopes": [
+          "read",
+          "write",
+          "mcp:tools",
+          "mcp:resources",
+          "mcp:prompts"
+        ],
+        "resource": "https://mcp.norman.finance/"
       }
     },
     {
@@ -1945,7 +2760,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.notion.com/authorize",
+        "token_url": "https://mcp.notion.com/token",
+        "resource": "https://mcp.notion.com/mcp"
       },
       "relevance": 100
     },
@@ -1962,7 +2783,8 @@
           "name": "Authorization",
           "description": "Bearer <Paddle API key>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 50
@@ -1977,7 +2799,22 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "pkce": true,
+        "authorize_url": "https://app.pagerduty.com/global/oauth/authorize",
+        "token_url": "https://app.pagerduty.com/global/oauth/token",
+        "scopes": [
+          "read",
+          "write",
+          "incidents.read",
+          "oncalls.read",
+          "services.read",
+          "users.read",
+          "openid"
+        ],
+        "resource": "https://mcp.pagerduty.com/mcp"
       },
       "relevance": 80
     },
@@ -1991,7 +2828,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.pandadoc.com/authorize",
+        "token_url": "https://mcp.pandadoc.com/token",
+        "scopes": [
+          "read",
+          "read+write"
+        ],
+        "resource": "https://mcp.pandadoc.com/v1/mcp"
       }
     },
     {
@@ -2004,7 +2851,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.paypal.com/authorize",
+        "token_url": "https://mcp.paypal.com/token",
+        "resource": "https://mcp.paypal.com"
       },
       "relevance": 80
     },
@@ -2018,7 +2871,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://app.pendo.io/oauth/authorize",
+        "token_url": "https://app.pendo.io/oauth/v1/token",
+        "scopes": [
+          "mcp:tools",
+          "mcp:resources"
+        ],
+        "resource": "https://app.pendo.io/mcp/v0/shttp"
       }
     },
     {
@@ -2046,7 +2909,8 @@
           "name": "Authorization",
           "description": "Bearer <Pinecone API key>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 75
@@ -2064,31 +2928,36 @@
           "name": "Authorization",
           "description": "Bearer <OAuth2 client_credentials access token>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         },
         {
           "name": "x-pd-project-id",
           "description": "Pipedream project ID.",
           "required": true,
-          "secret": false
+          "secret": false,
+          "scheme": "raw"
         },
         {
           "name": "x-pd-environment",
           "description": "Project environment, e.g. production.",
           "required": true,
-          "secret": false
+          "secret": false,
+          "scheme": "raw"
         },
         {
           "name": "x-pd-external-user-id",
           "description": "Your end-user identifier for tool calls.",
           "required": true,
-          "secret": false
+          "secret": false,
+          "scheme": "raw"
         },
         {
           "name": "x-pd-app-slug",
           "description": "Target app slug for the tools.",
           "required": true,
-          "secret": false
+          "secret": false,
+          "scheme": "raw"
         }
       ],
       "relevance": 60
@@ -2106,7 +2975,8 @@
           "name": "Authorization",
           "description": "Bearer <OAuth2 client_credentials access token; scope mcp:dashboard>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 75
@@ -2121,7 +2991,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://app.planetscale.com/oauth/authorize",
+        "token_url": "https://auth.planetscale.com/oauth/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "database:read_database",
+          "database:read_branches",
+          "organization:read_databases",
+          "user:read_organizations",
+          "user:read_user"
+        ],
+        "resource": "https://mcp.pscale.dev/mcp/planetscale"
       },
       "relevance": 60
     },
@@ -2135,7 +3021,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.getport.io/v1/authorize",
+        "token_url": "https://mcp.getport.io/v1/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access"
+        ],
+        "resource": "https://mcp.port.io/v1"
       }
     },
     {
@@ -2148,7 +3046,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://oauth.posthog.com/oauth/authorize/",
+        "token_url": "https://oauth.posthog.com/oauth/token/",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "insight:read",
+          "dashboard:read",
+          "feature_flag:read",
+          "experiment:read",
+          "person:read"
+        ],
+        "resource": "https://mcp.posthog.com/mcp"
       },
       "relevance": 70
     },
@@ -2162,7 +3076,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.postman.com/authorize",
+        "token_url": "https://mcp.postman.com/token",
+        "resource": "https://mcp.postman.com/mcp"
       },
       "relevance": 80
     },
@@ -2176,7 +3096,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.prisma.io/oauth/authorize",
+        "token_url": "https://auth.prisma.io/token",
+        "scopes": [
+          "workspace:admin",
+          "offline_access"
+        ],
+        "resource": "https://mcp.prisma.io"
       },
       "relevance": 60
     },
@@ -2190,7 +3120,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.prismic.io/authorize",
+        "token_url": "https://mcp.prismic.io/token",
+        "resource": "https://mcp.prismic.io/mcp"
       }
     },
     {
@@ -2203,7 +3139,20 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://backboard.railway.com/oauth/auth?resource=https%3A%2F%2Fbackboard.railway.com",
+        "token_url": "https://backboard.railway.com/oauth/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access",
+          "workspace:member"
+        ],
+        "resource": "https://mcp.railway.com"
       },
       "relevance": 55
     },
@@ -2217,7 +3166,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.ramp.com/oauth/authorize?auth_level=auto",
+        "token_url": "https://api.ramp.com/developer/v1/token/pkce",
+        "scopes": [
+          "transactions:read",
+          "cards:read",
+          "bills:read",
+          "users:read",
+          "reimbursements:read",
+          "vendors:read",
+          "limits:read",
+          "departments:read"
+        ],
+        "resource": "https://mcp.ramp.com"
       },
       "relevance": 60
     },
@@ -2234,7 +3199,8 @@
           "name": "Authorization",
           "description": "Basic <Base64(key_id:key_secret)> merchant token.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Basic"
         }
       ],
       "relevance": 55
@@ -2252,7 +3218,8 @@
           "name": "Authorization",
           "description": "Bearer <Render API key>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 55
@@ -2267,7 +3234,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.replicate.com/authorize",
+        "token_url": "https://mcp.replicate.com/token",
+        "resource": "https://mcp.replicate.com/"
       },
       "relevance": 60
     },
@@ -2281,7 +3254,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://rootly.com/oauth/authorize",
+        "token_url": "https://rootly.com/oauth/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "all"
+        ],
+        "resource": "https://mcp.rootly.com"
       },
       "relevance": 50
     },
@@ -2316,7 +3301,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.sanity.io/authorize",
+        "token_url": "https://mcp.sanity.io/token",
+        "scopes": [
+          "global"
+        ],
+        "resource": "https://mcp.sanity.io"
       },
       "relevance": 55
     },
@@ -2333,7 +3327,8 @@
           "name": "x-api-key",
           "description": "API key",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "raw"
         }
       ]
     },
@@ -2347,7 +3342,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://login.semgrep.dev/oauth2/authorize",
+        "token_url": "https://login.semgrep.dev/oauth2/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access"
+        ],
+        "resource": "https://mcp.semgrep.ai/"
       },
       "relevance": 60
     },
@@ -2361,7 +3368,18 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://api.semrush.com/apis/v4/auth/v0/oauth2/auth",
+        "token_url": "https://api.semrush.com/apis/v4-raw/auth/v1/oauth2/access_token",
+        "scopes": [
+          "mcp.access",
+          "offline_access",
+          "offline"
+        ],
+        "resource": "https://mcp.semrush.com/v1/mcp"
       },
       "relevance": 55
     },
@@ -2375,7 +3393,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.sentry.dev/oauth/authorize",
+        "token_url": "https://mcp.sentry.dev/oauth/token",
+        "scopes": [
+          "org:read",
+          "project:write",
+          "team:write",
+          "event:write"
+        ],
+        "resource": "https://mcp.sentry.dev/mcp"
       },
       "relevance": 90
     },
@@ -2392,7 +3422,8 @@
           "name": "Authorization",
           "description": "Bearer <API key>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ]
     },
@@ -2449,7 +3480,15 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "authorize_url": "https://api.app.shortcut.com/oauth-authorization-code-flow/code",
+        "token_url": "https://api.app.shortcut.com/oauth-authorization-code-flow/token",
+        "scopes": [
+          "openid"
+        ],
+        "resource": "https://mcp.shortcut.com/mcp"
       }
     },
     {
@@ -2462,7 +3501,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://auth.swaggerhub.com/authorize",
+        "token_url": "https://auth.swaggerhub.com/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access"
+        ],
+        "resource": "https://swagger.mcp.smartbear.com/mcp"
       }
     },
     {
@@ -2478,7 +3529,8 @@
           "name": "Authorization",
           "description": "Bearer <Smartsheet API token> (OAuth available via supported AI clients).",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 55
@@ -2542,13 +3594,15 @@
           "name": "Authorization",
           "description": "Bearer <SonarQube user token>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         },
         {
           "name": "SONARQUBE_ORG",
           "description": "Your SonarQube Cloud organization key.",
           "required": true,
-          "secret": false
+          "secret": false,
+          "scheme": "raw"
         }
       ],
       "relevance": 65
@@ -2566,7 +3620,8 @@
           "name": "Authorization",
           "description": "Bearer <API key>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 55
@@ -2576,12 +3631,28 @@
       "vendor": "Square",
       "category": "Payments",
       "description": "Payments, catalog, orders, and customers via Square.",
-      "transport": "sse",
-      "server_url": "https://mcp.squareup.com/sse",
+      "transport": "streamable-http",
+      "server_url": "https://mcp.squareup.com/mcp",
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.squareup.com/authorize",
+        "token_url": "https://mcp.squareup.com/token",
+        "scopes": [
+          "PAYMENTS_READ",
+          "PAYMENTS_WRITE",
+          "ORDERS_READ",
+          "ORDERS_WRITE",
+          "CUSTOMERS_READ",
+          "CUSTOMERS_WRITE",
+          "ITEMS_READ",
+          "MERCHANT_PROFILE_READ"
+        ],
+        "resource": "https://mcp.squareup.com/mcp"
       },
       "relevance": 70
     },
@@ -2595,7 +3666,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://api.statsig.com/v1/oauth/authorize",
+        "token_url": "https://api.statsig.com/v1/oauth/access_token",
+        "resource": "https://api.statsig.com/v1/mcp"
       },
       "relevance": 55
     },
@@ -2609,7 +3686,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://access.stripe.com/mcp/oauth2/authorize",
+        "token_url": "https://access.stripe.com/mcp/oauth2/token",
+        "scopes": [
+          "mcp"
+        ],
+        "resource": "https://mcp.stripe.com"
       },
       "relevance": 100
     },
@@ -2623,7 +3709,22 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://stytch.com/oauth/authorize",
+        "token_url": "https://rustic-kilogram-6347.customers.stytch.com/v1/oauth2/token",
+        "scopes": [
+          "openid",
+          "email",
+          "profile",
+          "admin:projects",
+          "manage:api_keys",
+          "manage:project_settings",
+          "manage:project_data"
+        ],
+        "resource": "https://mcp.stytch.dev"
       }
     },
     {
@@ -2636,7 +3737,23 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://api.supabase.com/v1/oauth/authorize",
+        "token_url": "https://api.supabase.com/v1/oauth/token",
+        "scopes": [
+          "organizations:read",
+          "projects:read",
+          "projects:write",
+          "database:read",
+          "database:write",
+          "analytics:read",
+          "edge_functions:read",
+          "storage:read"
+        ],
+        "resource": "https://mcp.supabase.com/mcp"
       },
       "relevance": 80
     },
@@ -2650,7 +3767,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.tavily.com/authorize",
+        "token_url": "https://mcp.tavily.com/token",
+        "scopes": [
+          "openid",
+          "offline_access"
+        ],
+        "resource": "https://mcp.tavily.com/mcp"
       },
       "relevance": 60
     },
@@ -2667,7 +3794,8 @@
           "name": "Authorization",
           "description": "Bearer <Teamwork API key>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ]
     },
@@ -2684,7 +3812,8 @@
           "name": "Authorization",
           "description": "Bearer <Telnyx API key>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 50
@@ -2699,7 +3828,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://agent.thoughtspot.app/authorize",
+        "token_url": "https://agent.thoughtspot.app/token",
+        "resource": "https://agent.thoughtspot.app/mcp"
       }
     },
     {
@@ -2713,7 +3848,9 @@
         {
           "name": "token",
           "description": "Tinybird token (includes API host for new tokens).",
-          "required": true
+          "required": true,
+          "secret": true,
+          "in": "query"
         }
       ],
       "requires_auth": true
@@ -2728,7 +3865,21 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://todoist.com/oauth/authorize",
+        "token_url": "https://todoist.com/oauth/access_token",
+        "scopes": [
+          "data:read_write",
+          "data:read",
+          "task:add",
+          "data:delete",
+          "project:delete",
+          "user:read"
+        ],
+        "resource": "https://ai.todoist.net/mcp"
       },
       "relevance": 50
     },
@@ -2752,7 +3903,17 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://app.vanta.com/oauth/authorize",
+        "token_url": "https://api.vanta.com/oauth/token",
+        "scopes": [
+          "mcp-api.all:read",
+          "mcp-api.all:write"
+        ],
+        "resource": "https://mcp.vanta.com"
       },
       "relevance": 65
     },
@@ -2766,7 +3927,19 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://vercel.com/oauth/authorize",
+        "token_url": "https://vercel.com/api/login/oauth/token",
+        "scopes": [
+          "openid",
+          "email",
+          "profile",
+          "offline_access"
+        ],
+        "resource": "https://mcp.vercel.com/"
       },
       "relevance": 85
     },
@@ -2780,7 +3953,21 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.vimeo.com/oauth/authorize",
+        "token_url": "https://mcp.vimeo.com/oauth/token",
+        "scopes": [
+          "public",
+          "private",
+          "stats",
+          "upload",
+          "edit",
+          "create"
+        ],
+        "resource": "https://mcp.vimeo.com"
       }
     },
     {
@@ -2803,7 +3990,13 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.webflow.com/oauth/authorize",
+        "token_url": "https://mcp.webflow.com/oauth/token",
+        "resource": "https://mcp.webflow.com/mcp"
       },
       "relevance": 65
     },
@@ -2820,7 +4013,8 @@
           "name": "Authorization",
           "description": "Bearer <W&B API key>.",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ]
     },
@@ -2834,7 +4028,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.wix.com/authorize",
+        "token_url": "https://mcp.wix.com/token",
+        "scopes": [
+          "offline_access"
+        ],
+        "resource": "https://mcp.wix.com"
       },
       "relevance": 60
     },
@@ -2851,7 +4054,8 @@
           "name": "Authorization",
           "description": "Bearer <Workato API token>",
           "required": true,
-          "secret": true
+          "secret": true,
+          "scheme": "Bearer"
         }
       ],
       "relevance": 60
@@ -2866,7 +4070,18 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "auto",
+        "dcr": true,
+        "pkce": true,
+        "authorize_url": "https://mcp.zapier.com/oauth/authorize",
+        "token_url": "https://mcp.zapier.com/api/v1/oauth/token",
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
+        "resource": "https://mcp.zapier.com/api/mcp"
       },
       "relevance": 80
     },
@@ -2880,7 +4095,16 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "authorize_url": "https://zoom.us/oauth/authorize",
+        "token_url": "https://zoom.us/oauth/token",
+        "scopes": [
+          "docs:write:import",
+          "docs:read:export"
+        ],
+        "resource": "https://mcp.zoom.us"
       },
       "relevance": 90
     },
@@ -2894,7 +4118,22 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "authorize_url": "https://zoom.us/oauth/authorize",
+        "token_url": "https://zoom.us/oauth/token",
+        "scopes": [
+          "zra:read:team",
+          "zra:read:conversations",
+          "zra:read:list_deals",
+          "zra:read:deal",
+          "iq_conversation:read",
+          "iq_deal:read",
+          "iq_comment:read",
+          "iq_coaching:read"
+        ],
+        "resource": "https://mcp.zoom.us"
       },
       "relevance": 90
     },
@@ -2908,7 +4147,21 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "authorize_url": "https://zoom.us/oauth/authorize",
+        "token_url": "https://zoom.us/oauth/token",
+        "scopes": [
+          "chat_channel:read",
+          "chat_channel:write",
+          "team_chat:read:channel",
+          "team_chat:read:list_user_channels",
+          "team_chat:read:list_user_messages",
+          "team_chat:write:user_message",
+          "team_chat:read:list_members"
+        ],
+        "resource": "https://mcp.zoom.us"
       },
       "relevance": 90
     },
@@ -2922,7 +4175,21 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "authorize_url": "https://zoom.us/oauth/authorize",
+        "token_url": "https://zoom.us/oauth/token",
+        "scopes": [
+          "whiteboard:read:whiteboard",
+          "whiteboard:write:whiteboard",
+          "whiteboard:read:list_whiteboards",
+          "whiteboard:write:collaborator",
+          "whiteboard:update:collaborator",
+          "whiteboard:delete:collaborator",
+          "whiteboard:read:list_collaborators"
+        ],
+        "resource": "https://mcp.zoom.us"
       },
       "relevance": 90
     },
@@ -2936,7 +4203,21 @@
       "requires_auth": true,
       "oauth": {
         "required": true,
-        "resource_metadata": true
+        "resource_metadata": true,
+        "registration": "manual",
+        "dcr": false,
+        "authorize_url": "https://zoom.us/oauth/authorize",
+        "token_url": "https://zoom.us/oauth/token",
+        "scopes": [
+          "meeting:read:search",
+          "meeting:read:assets",
+          "cloud_recording:read:content",
+          "cloud_recording:read:list_user_recordings",
+          "docs:read:export",
+          "docs:write:import",
+          "ai_companion:read:search"
+        ],
+        "resource": "https://mcp.zoom.us"
       },
       "relevance": 90
     }

@@ -46,6 +46,10 @@ const (
 	authHintOAuth  = "oauth"
 )
 
+// registrationAuto marks OAuth servers whose client self-registers (DCR), so no
+// operator configuration is needed before connecting.
+const registrationAuto = "auto"
+
 // rawCatalog mirrors the schema of seed/mcp-catalog/enterprise-servers.json.
 type rawCatalog struct {
 	Servers []rawServer `json:"servers"`
@@ -73,20 +77,21 @@ func loadCuratedMCPServers() ([]domain.MCPServer, error) {
 	servers := make([]domain.MCPServer, 0, len(raw.Servers))
 	for _, s := range raw.Servers {
 		servers = append(servers, domain.MCPServer{
-			Code:         s.Name,
-			DisplayName:  s.Vendor,
-			Vendor:       s.Vendor,
-			Category:     s.Category,
-			Description:  s.Description,
-			URL:          s.ServerURL,
-			Transport:    s.Transport,
-			AuthHint:     authHint(s),
-			RequiresAuth: s.RequiresAuth,
-			Relevance:    s.Relevance,
-			URLVariables: s.URLVariables,
-			AuthHeaders:  s.AuthHeaders,
-			OAuth:        s.OAuth,
-			Source:       curatedSource,
+			Code:           s.Name,
+			DisplayName:    s.Vendor,
+			Vendor:         s.Vendor,
+			Category:       s.Category,
+			Description:    s.Description,
+			URL:            s.ServerURL,
+			Transport:      s.Transport,
+			AuthHint:       authHint(s),
+			RequiresAuth:   s.RequiresAuth,
+			RequiresConfig: requiresConfig(s),
+			Relevance:      s.Relevance,
+			URLVariables:   s.URLVariables,
+			AuthHeaders:    s.AuthHeaders,
+			OAuth:          s.OAuth,
+			Source:         curatedSource,
 		})
 	}
 	// Most relevant first; ties broken alphabetically so the order is stable.
@@ -115,5 +120,29 @@ func authHint(s rawServer) string {
 		return authHintStatic
 	default:
 		return authHintNone
+	}
+}
+
+// requiresConfig reports whether the operator must supply input before the
+// server can be connected, so the UI can connect zero-config servers by default
+// and only surface a setup step for the rest. Config is required when a URL
+// variable must be filled (e.g. a tenant host), when a static secret is needed,
+// or when OAuth needs a manual/tenant client. OAuth servers that self-register
+// (registration "auto") need nothing at creation — the user logs in at runtime.
+func requiresConfig(s rawServer) bool {
+	for _, v := range s.URLVariables {
+		if v.Required {
+			return true
+		}
+	}
+	switch authHint(s) {
+	case authHintNone:
+		return false
+	case authHintStatic:
+		return true
+	case authHintOAuth:
+		return s.OAuth.Registration != registrationAuto
+	default:
+		return true
 	}
 }

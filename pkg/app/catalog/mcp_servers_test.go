@@ -50,6 +50,62 @@ func TestListMCPServers_SortedByRelevanceDesc(t *testing.T) {
 	require.Greater(t, servers[0].Relevance, 0, "top entry should be a ranked server")
 }
 
+func TestRequiresConfig_Classification(t *testing.T) {
+	t.Parallel()
+
+	boolPtr := func(b bool) *bool { return &b }
+
+	tests := []struct {
+		name string
+		in   rawServer
+		want bool
+	}{
+		{
+			name: "public, no url vars => connect by default",
+			in:   rawServer{RequiresAuth: false},
+			want: false,
+		},
+		{
+			name: "oauth auto, no url vars => connect by default",
+			in:   rawServer{OAuth: &domain.MCPOAuth{Required: true, Registration: "auto", DCR: boolPtr(true)}},
+			want: false,
+		},
+		{
+			name: "oauth manual => needs config",
+			in:   rawServer{OAuth: &domain.MCPOAuth{Required: true, Registration: "manual", DCR: boolPtr(false)}},
+			want: true,
+		},
+		{
+			name: "oauth unknown registration (tenant) => needs config",
+			in:   rawServer{OAuth: &domain.MCPOAuth{Required: true}},
+			want: true,
+		},
+		{
+			name: "static secret => needs config",
+			in: rawServer{
+				RequiresAuth: true,
+				AuthHeaders:  []domain.MCPAuthHeader{{Name: "Authorization", Required: true, Secret: true}},
+			},
+			want: true,
+		},
+		{
+			name: "oauth auto but required url var (tenant host) => needs config",
+			in: rawServer{
+				OAuth:        &domain.MCPOAuth{Required: true, Registration: "auto", DCR: boolPtr(true)},
+				URLVariables: []domain.MCPURLVariable{{Name: "domain", Required: true}},
+			},
+			want: true,
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, requiresConfig(tc.in))
+		})
+	}
+}
+
 func TestAuthHint_Classification(t *testing.T) {
 	t.Parallel()
 

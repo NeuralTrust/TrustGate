@@ -2963,6 +2963,37 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/mcp-servers-catalog": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the curated catalog of well-known remote MCP servers, used to prefill MCP registry creation.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List the MCP servers catalog",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/pkg_api_handler_http_catalog.ListMCPServersResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_helpers.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/models-catalog": {
             "get": {
                 "security": [
@@ -3647,6 +3678,9 @@ const docTemplate = `{
                 "active": {
                     "type": "boolean"
                 },
+                "fail_mode": {
+                    "type": "string"
+                },
                 "fallback": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest"
                 },
@@ -3682,6 +3716,12 @@ const docTemplate = `{
                 },
                 "routing_mode": {
                     "type": "string"
+                },
+                "toolkit": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ToolkitEntryRequest"
+                    }
                 },
                 "type": {
                     "type": "string"
@@ -3815,11 +3855,34 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ToolkitEntryRequest": {
+            "type": "object",
+            "properties": {
+                "expose_as": {
+                    "type": "string"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.UpdateConsumerRequest": {
             "type": "object",
             "properties": {
                 "active": {
                     "type": "boolean"
+                },
+                "fail_mode": {
+                    "type": "string"
                 },
                 "fallback": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.FallbackRequest"
@@ -3845,6 +3908,12 @@ const docTemplate = `{
                 "routing_mode": {
                     "type": "string"
                 },
+                "toolkit": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.ToolkitEntryRequest"
+                    }
+                },
                 "type": {
                     "type": "string"
                 }
@@ -3863,6 +3932,9 @@ const docTemplate = `{
                     }
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "fail_mode": {
                     "type": "string"
                 },
                 "fallback": {
@@ -3909,6 +3981,12 @@ const docTemplate = `{
                 },
                 "slug": {
                     "type": "string"
+                },
+                "toolkit": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ToolkitEntryResponse"
+                    }
                 },
                 "type": {
                     "type": "string"
@@ -4064,11 +4142,34 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_response.ToolkitEntryResponse": {
+            "type": "object",
+            "properties": {
+                "expose_as": {
+                    "type": "string"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_request.CreateGatewayRequest": {
             "type": "object",
             "properties": {
                 "client_tls": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig"
+                },
+                "domain": {
+                    "type": "string"
                 },
                 "name": {
                     "type": "string"
@@ -4089,6 +4190,9 @@ const docTemplate = `{
             "properties": {
                 "client_tls": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig"
+                },
+                "domain": {
+                    "type": "string"
                 },
                 "name": {
                     "type": "string"
@@ -4114,6 +4218,9 @@ const docTemplate = `{
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig"
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "domain": {
                     "type": "string"
                 },
                 "id": {
@@ -4408,6 +4515,9 @@ const docTemplate = `{
                 "health_checks": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest"
                 },
+                "mcp_target": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPTargetRequest"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -4417,6 +4527,9 @@ const docTemplate = `{
                 "provider_options": {
                     "type": "object",
                     "additionalProperties": {}
+                },
+                "type": {
+                    "type": "string"
                 },
                 "weight": {
                     "type": "integer"
@@ -4443,6 +4556,84 @@ const docTemplate = `{
                 },
                 "threshold": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPAuthRequest": {
+            "type": "object",
+            "properties": {
+                "actor": {
+                    "type": "string"
+                },
+                "audience": {
+                    "type": "string"
+                },
+                "authorize_url": {
+                    "type": "string"
+                },
+                "client_id": {
+                    "type": "string"
+                },
+                "client_secret": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                },
+                "expected_audience": {
+                    "type": "string"
+                },
+                "header": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "registration": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                },
+                "scope": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token_url": {
+                    "type": "string"
+                },
+                "value": {
+                    "description": "#nosec G117",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPTargetRequest": {
+            "type": "object",
+            "properties": {
+                "auth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPAuthRequest"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "transport": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
                 }
             }
         },
@@ -4554,6 +4745,9 @@ const docTemplate = `{
                 },
                 "health_checks": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest"
+                },
+                "mcp_target": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPTargetRequest"
                 },
                 "name": {
                     "type": "string"
@@ -4690,6 +4884,84 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPAuthResponse": {
+            "type": "object",
+            "properties": {
+                "actor": {
+                    "type": "string"
+                },
+                "audience": {
+                    "type": "string"
+                },
+                "authorize_url": {
+                    "type": "string"
+                },
+                "client_id": {
+                    "type": "string"
+                },
+                "client_secret": {
+                    "description": "#nosec G117 -- masked before serialization",
+                    "type": "string"
+                },
+                "expected_audience": {
+                    "type": "string"
+                },
+                "header": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "registration": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                },
+                "scope": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token_url": {
+                    "type": "string"
+                },
+                "value": {
+                    "description": "#nosec G117 -- masked before serialization",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPTargetResponse": {
+            "type": "object",
+            "properties": {
+                "auth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPAuthResponse"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "transport": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.RegistryResponse": {
             "type": "object",
             "properties": {
@@ -4711,6 +4983,9 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "mcp_target": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPTargetResponse"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -4720,6 +4995,9 @@ const docTemplate = `{
                 "provider_options": {
                     "type": "object",
                     "additionalProperties": {}
+                },
+                "type": {
+                    "type": "string"
                 },
                 "updated_at": {
                     "type": "string"
@@ -4825,10 +5103,7 @@ const docTemplate = `{
                     }
                 },
                 "mcp_policies": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest"
                 },
                 "model_policies": {
                     "type": "array",
@@ -4838,6 +5113,20 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest": {
+            "type": "object",
+            "properties": {
+                "fail_mode": {
+                    "type": "string"
+                },
+                "toolkit": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ToolkitEntryRequest"
+                    }
                 }
             }
         },
@@ -4858,6 +5147,26 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.ToolkitEntryRequest": {
+            "type": "object",
+            "properties": {
+                "expose_as": {
+                    "type": "string"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.UpdateRoleRequest": {
             "type": "object",
             "properties": {
@@ -4868,10 +5177,7 @@ const docTemplate = `{
                     }
                 },
                 "mcp_policies": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest"
                 },
                 "model_policies": {
                     "type": "array",
@@ -4940,10 +5246,7 @@ const docTemplate = `{
                     }
                 },
                 "mcp_policies": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_role.MCPPolicies"
                 },
                 "model_policies": {
                     "type": "array",
@@ -5219,6 +5522,190 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPAuthHeader": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "scheme": {
+                    "description": "Scheme is the credential prefix the gateway prepends to the supplied\nsecret when building the header value: Bearer | Token | Basic | ApiKey |\nApp | raw (raw = send the value verbatim, no prefix).",
+                    "type": "string"
+                },
+                "secret": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPOAuth": {
+            "type": "object",
+            "properties": {
+                "authorize_url": {
+                    "description": "AuthorizeURL / TokenURL are required for manual registration\n(Registration == \"manual\"), where the operator supplies a pre-registered\nclient_id/secret; they also serve as a discovery fallback otherwise.",
+                    "type": "string"
+                },
+                "dcr": {
+                    "description": "DCR reports whether the server supports OAuth Dynamic Client Registration\n(RFC 7591). A nil pointer means it could not be determined (e.g. a\ntenant-templated host that must be probed per-instance).",
+                    "type": "boolean"
+                },
+                "pkce": {
+                    "description": "PKCE reports whether the authorization server supports PKCE (S256). A nil\npointer means it could not be determined.",
+                    "type": "boolean"
+                },
+                "registration": {
+                    "description": "Registration is the recommended gateway registration mode derived from\nDCR support: \"auto\" when the server supports Dynamic Client Registration\n(the gateway self-registers and the user just logs in at runtime),\n\"manual\" when an operator must pre-register a client. Empty means the\nserver is tenant-hosted and discovery happens per-instance at connect time.",
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "resource": {
+                    "description": "Resource is the RFC 8707 resource indicator / expected token audience.",
+                    "type": "string"
+                },
+                "resource_metadata": {
+                    "type": "boolean"
+                },
+                "scopes": {
+                    "description": "Scopes are the default/required OAuth scopes for the server.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPServer": {
+            "type": "object",
+            "properties": {
+                "auth_headers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPAuthHeader"
+                    }
+                },
+                "auth_hint": {
+                    "description": "none | static | oauth",
+                    "type": "string"
+                },
+                "category": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "oauth": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPOAuth"
+                },
+                "relevance": {
+                    "description": "Relevance ranks how broadly relevant a server is for enterprises\n(higher = more relevant). Used to sort the catalog; 0 means unranked.",
+                    "type": "integer"
+                },
+                "requires_auth": {
+                    "type": "boolean"
+                },
+                "requires_config": {
+                    "description": "RequiresConfig reports whether the operator must supply input before the\nserver can be connected (a required URL variable, a static secret, or a\nmanual/tenant OAuth client). When false the UI can connect it by default\nwithout a configuration step: public servers, and OAuth servers whose\nclient self-registers (registration \"auto\") where the user simply logs in\nat runtime.",
+                    "type": "boolean"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "source": {
+                    "type": "string"
+                },
+                "transport": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "url_variables": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable"
+                    }
+                },
+                "vendor": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "in": {
+                    "description": "In is where the variable is substituted: \"path\" (default) or \"query\".",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "secret": {
+                    "description": "Secret marks a variable that carries a credential (e.g. a token passed in\nthe query string) so the UI/secret store treats it as sensitive.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.FailMode": {
+            "type": "string",
+            "enum": [
+                "closed",
+                "open"
+            ],
+            "x-enum-varnames": [
+                "FailModeClosed",
+                "FailModeOpen"
+            ]
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.ToolkitEntry": {
+            "type": "object",
+            "properties": {
+                "expose_as": {
+                    "type": "string"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "registry_id": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig": {
             "type": "object",
             "additionalProperties": {
@@ -5271,6 +5758,20 @@ const docTemplate = `{
                 "StagePreResponse",
                 "StagePostResponse"
             ]
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_role.MCPPolicies": {
+            "type": "object",
+            "properties": {
+                "fail_mode": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.FailMode"
+                },
+                "toolkit": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_consumer.ToolkitEntry"
+                    }
+                }
+            }
         },
         "github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.ExporterConfig": {
             "type": "object",
@@ -5333,6 +5834,17 @@ const docTemplate = `{
                 },
                 "version": {
                     "type": "string"
+                }
+            }
+        },
+        "pkg_api_handler_http_catalog.ListMCPServersResponse": {
+            "type": "object",
+            "properties": {
+                "mcp_servers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPServer"
+                    }
                 }
             }
         }
