@@ -929,6 +929,8 @@ definitions:
     properties:
       auth:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPAuthRequest'
+      code:
+        type: string
       headers:
         additionalProperties:
           type: string
@@ -1144,6 +1146,8 @@ definitions:
     properties:
       auth:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPAuthResponse'
+      code:
+        type: string
       headers:
         additionalProperties:
           type: string

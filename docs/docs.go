@@ -4615,6 +4615,9 @@ const docTemplate = `{
                 "auth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPAuthRequest"
                 },
+                "code": {
+                    "type": "string"
+                },
                 "headers": {
                     "type": "object",
                     "additionalProperties": {
@@ -4936,6 +4939,9 @@ const docTemplate = `{
             "properties": {
                 "auth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPAuthResponse"
+                },
+                "code": {
+                    "type": "string"
                 },
                 "headers": {
                     "type": "object",

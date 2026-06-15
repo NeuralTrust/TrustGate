@@ -24,6 +24,7 @@ type RegistryResponse struct {
 }
 
 type MCPTargetResponse struct {
+	Code      string            `json:"code,omitempty"`
 	URL       string            `json:"url"`
 	Transport string            `json:"transport,omitempty"`
 	Headers   map[string]string `json:"headers,omitempty"`
@@ -145,6 +146,7 @@ func fromMCPTarget(t *domain.MCPTarget) *MCPTargetResponse {
 		return nil
 	}
 	out := &MCPTargetResponse{
+		Code:      t.Code,
 		URL:       t.URL,
 		Transport: string(t.Transport),
 		Headers:   t.Headers,

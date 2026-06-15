@@ -34,6 +34,7 @@ Top-level fields relevant to MCP (`CreateRegistryRequest`):
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
+| `code` | string | no | Catalog server code this connection was created from (e.g. `com.asana/mcp`). Omit for custom servers added by raw URL. This is the canonical join key the UI uses to tell whether a catalog server is already connected — see [Connected detection](#connected-detection). |
 | `url` | string | yes | Must be a valid `http`/`https` URL. |
 | `transport` | string | no | Defaults to `streamable-http` (the only supported value). |
 | `headers` | map[string]string | no | Static headers added to upstream requests. |
@@ -179,6 +180,17 @@ The flag is derived server-side so the frontend doesn't re-implement the rule: `
 
 3. **`static` credential** — for the primary secret `auth_headers` entry, build `auth: { mode: "static", header: <name>, value: "<scheme> <secret>" }`, prefixing the user's secret with `scheme` (omit the prefix when `scheme` is `raw`). Any additional **non-secret** required headers go in `mcp_target.headers`.
 4. **`forwarded` (OAuth)** — set `provider` to the catalog `code`. The registry never carries user credentials; the user authenticates at runtime. If `registration` is `auto`, send `{ mode: "forwarded", provider, registration: "auto" }` and nothing else. If `manual`, the operator additionally supplies a one-time pre-registered app `client_id` (+ optional `client_secret`); pass the catalog's `authorize_url`, `token_url`, `scopes`, `resource` through. Either way, end-user login happens at runtime — not at registry creation.
+5. **`code`** — always set `mcp_target.code` to the catalog entry's `code`, regardless of auth mode. This is what lets the UI recognise the connection as belonging to that catalog server later (see below). Custom servers added by raw URL leave it empty.
+
+### Connected detection
+
+This mirrors the LLM provider mechanism: an LLM registry stores its catalog `provider` code in `provider`, and the provider table marks an entry **Active** when a registry exists for that code. MCP works the same way, keyed on `mcp_target.code`:
+
+1. List the gateway's MCP registries (`GET …/registries`, filter `type == "MCP"`).
+2. Build the set of connected codes: `connected = { r.mcp_target.code for r in registries if r.mcp_target.code }`.
+3. For each catalog server, it is **already connected** when `connected.has(server.code)` — render it as connected (and avoid offering a duplicate "Connect"); otherwise offer **Connect**.
+
+Because the code is the stable catalog id (not the URL), matching survives templated URLs, trailing-slash differences, and per-tenant hosts. The `forwarded` `auth.provider` also equals the code, but `mcp_target.code` is the uniform key that works for **every** auth mode (including `none`/`static`, which carry no provider).
 
 ### Worked examples
 

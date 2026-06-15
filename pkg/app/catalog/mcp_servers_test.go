@@ -50,6 +50,43 @@ func TestListMCPServers_SortedByRelevanceDesc(t *testing.T) {
 	require.Greater(t, servers[0].Relevance, 0, "top entry should be a ranked server")
 }
 
+func TestParseCuratedMCPServers_RejectsDuplicateCode(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"servers":[
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"},
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp"}
+	]}`)
+
+	_, err := parseCuratedMCPServers(data)
+	require.ErrorContains(t, err, "duplicate server code")
+	require.ErrorContains(t, err, "com.acme/mcp")
+}
+
+func TestParseCuratedMCPServers_RejectsEmptyName(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"servers":[
+		{"name":"","transport":"streamable-http","server_url":"https://a.example.com/mcp"}
+	]}`)
+
+	_, err := parseCuratedMCPServers(data)
+	require.ErrorContains(t, err, "empty name")
+}
+
+func TestParseCuratedMCPServers_AcceptsUniqueCodes(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"servers":[
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"},
+		{"name":"com.beta/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp"}
+	]}`)
+
+	servers, err := parseCuratedMCPServers(data)
+	require.NoError(t, err)
+	require.Len(t, servers, 2)
+}
+
 func TestRequiresConfig_Classification(t *testing.T) {
 	t.Parallel()
 
