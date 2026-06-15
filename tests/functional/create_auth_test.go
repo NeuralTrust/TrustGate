@@ -67,59 +67,6 @@ func TestCreateAuth_OAuth2(t *testing.T) {
 	assert.Equal(t, "***alue", oauth["client_secret"], "client_secret must be masked with a short tail")
 }
 
-func TestCreateAuth_OAuth2Client(t *testing.T) {
-	defer Track(t, "CreateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-oauth-client")})
-	name := uniqueName("oauth-client")
-
-	status, body := sendRequest(t, http.MethodPost,
-		fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gwID), nil,
-		map[string]any{
-			"name": name,
-			"type": "oauth2_client",
-			"config": map[string]any{
-				"oauth2_client": map[string]any{
-					"token_url":     "https://as.example.com/oauth/token",
-					"client_id":     "client-123",
-					"client_secret": "topsecretclientvalue",
-					"scopes":        []string{"chat"},
-					"audience":      "https://api.example.com",
-				},
-			},
-		},
-	)
-	require.Equal(t, http.StatusCreated, status, "body=%v", body)
-	assert.Equal(t, "oauth2_client", body["type"])
-	cfg, _ := body["config"].(map[string]any)
-	oauthClient, ok := cfg["oauth2_client"].(map[string]any)
-	require.True(t, ok, "oauth2_client config missing: %v", cfg)
-	assert.Equal(t, "https://as.example.com/oauth/token", oauthClient["token_url"])
-	assert.Equal(t, "client-123", oauthClient["client_id"])
-	assert.Equal(t, "***alue", oauthClient["client_secret"], "client_secret must be masked with a short tail")
-}
-
-func TestCreateAuth_OAuth2ClientRequiresHTTPSTokenURL(t *testing.T) {
-	defer Track(t, "CreateAuth")()
-	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-oauth-client-val")})
-
-	status, body := sendRequest(t, http.MethodPost,
-		fmt.Sprintf("%s/v1/gateways/%s/auths", AdminURL, gwID), nil,
-		map[string]any{
-			"name": uniqueName("oauth-client"),
-			"type": "oauth2_client",
-			"config": map[string]any{
-				"oauth2_client": map[string]any{
-					"token_url":     "http://as.example.com/oauth/token",
-					"client_id":     "client-123",
-					"client_secret": "topsecretclientvalue",
-				},
-			},
-		},
-	)
-	require.Equal(t, http.StatusUnprocessableEntity, status, "body=%v", body)
-	assert.Equal(t, "validation_failed", body["error"])
-}
-
 func TestCreateAuth_OAuth2RequiresAudiences(t *testing.T) {
 	defer Track(t, "CreateAuth")()
 	gwID := CreateGateway(t, map[string]any{"name": uniqueName("auth-oauth-aud")})

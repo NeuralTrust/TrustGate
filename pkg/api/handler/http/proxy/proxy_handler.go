@@ -256,7 +256,7 @@ func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.
 
 func isInlineAuthMethod(method appauth.Method) bool {
 	switch method {
-	case appauth.MethodAPIKey, appauth.MethodOAuth2, appauth.MethodOAuth2Client:
+	case appauth.MethodAPIKey, appauth.MethodOAuth2:
 		return true
 	default:
 		return false

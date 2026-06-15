@@ -97,9 +97,6 @@ func writeAuthError(c *fiber.Ctx, err error) error {
 	if errors.Is(err, resolver.ErrForbidden) {
 		return forbidden(c, err)
 	}
-	if errors.Is(err, appauth.ErrTokenAcquisition) {
-		return authUpstreamUnavailable(c)
-	}
 	return unauthenticated(c)
 }
 
@@ -136,13 +133,6 @@ func invalidAuthRequest(c *fiber.Ctx, err error) error {
 func notFound(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusNotFound).JSON(helpers.ErrorBody{
 		Error: "not_found",
-	})
-}
-
-func authUpstreamUnavailable(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusServiceUnavailable).JSON(helpers.ErrorBody{
-		Error:   "auth_upstream_unavailable",
-		Message: appauth.ErrTokenAcquisition.Error(),
 	})
 }
 

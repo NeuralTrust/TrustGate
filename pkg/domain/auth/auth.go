@@ -19,33 +19,22 @@ const apiKeyEntropyBytes = 32
 type Type string
 
 const (
-	TypeAPIKey       Type = "api_key"
-	TypeOAuth2       Type = "oauth2"
-	TypeOAuth2Client Type = "oauth2_client"
-	TypeIDP          Type = "idp"
-	TypeMTLS         Type = "mtls"
+	TypeAPIKey Type = "api_key"
+	TypeOAuth2 Type = "oauth2"
+	TypeIDP    Type = "idp"
+	TypeMTLS   Type = "mtls"
 )
 
 func Types() []Type {
-	return []Type{TypeAPIKey, TypeOAuth2, TypeOAuth2Client, TypeIDP, TypeMTLS}
+	return []Type{TypeAPIKey, TypeOAuth2, TypeIDP, TypeMTLS}
 }
 
 func IsValidType(t Type) bool {
 	switch t {
-	case TypeAPIKey, TypeOAuth2, TypeOAuth2Client, TypeIDP, TypeMTLS:
+	case TypeAPIKey, TypeOAuth2, TypeIDP, TypeMTLS:
 		return true
 	}
 	return false
-}
-
-func ConflictingAttachmentTypes(t Type) []Type {
-	switch t {
-	case TypeOAuth2Client:
-		return []Type{TypeOAuth2Client, TypeOAuth2}
-	case TypeOAuth2:
-		return []Type{TypeOAuth2Client}
-	}
-	return nil
 }
 
 type Auth struct {

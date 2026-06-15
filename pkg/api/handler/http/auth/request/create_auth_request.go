@@ -16,10 +16,9 @@ type CreateAuthRequest struct {
 }
 
 type ConfigRequest struct {
-	OAuth2       *OAuth2ConfigRequest       `json:"oauth2,omitempty"`
-	OAuth2Client *OAuth2ClientConfigRequest `json:"oauth2_client,omitempty"`
-	IDP          *IDPConfigRequest          `json:"idp,omitempty"`
-	MTLS         *MTLSConfigRequest         `json:"mtls,omitempty"`
+	OAuth2 *OAuth2ConfigRequest `json:"oauth2,omitempty"`
+	IDP    *IDPConfigRequest    `json:"idp,omitempty"`
+	MTLS   *MTLSConfigRequest   `json:"mtls,omitempty"`
 }
 
 type OAuth2ConfigRequest struct {
@@ -31,14 +30,6 @@ type OAuth2ConfigRequest struct {
 	ClientSecret     string   `json:"client_secret,omitempty"`
 	RequiredScopes   []string `json:"required_scopes,omitempty"`
 	Algorithms       []string `json:"allowed_algorithms,omitempty"`
-}
-
-type OAuth2ClientConfigRequest struct {
-	TokenURL     string   `json:"token_url"`
-	ClientID     string   `json:"client_id"`
-	ClientSecret string   `json:"client_secret"`
-	Scopes       []string `json:"scopes,omitempty"`
-	Audience     string   `json:"audience,omitempty"`
 }
 
 type IDPConfigRequest struct {
@@ -90,15 +81,6 @@ func (c ConfigRequest) ToDomain() domain.Config {
 			ClientSecret:     c.OAuth2.ClientSecret,
 			RequiredScopes:   c.OAuth2.RequiredScopes,
 			Algorithms:       c.OAuth2.Algorithms,
-		}
-	}
-	if c.OAuth2Client != nil {
-		out.OAuth2Client = &domain.OAuth2ClientConfig{
-			TokenURL:     c.OAuth2Client.TokenURL,
-			ClientID:     c.OAuth2Client.ClientID,
-			ClientSecret: c.OAuth2Client.ClientSecret,
-			Scopes:       c.OAuth2Client.Scopes,
-			Audience:     c.OAuth2Client.Audience,
 		}
 	}
 	if c.IDP != nil {

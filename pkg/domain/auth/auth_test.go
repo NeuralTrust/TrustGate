@@ -22,33 +22,23 @@ func TestConfig_Validate_RejectsRedactedClientSecret(t *testing.T) {
 	}
 }
 
-func TestConfig_Validate_RejectsRedactedOAuth2ClientSecret(t *testing.T) {
+func TestConfig_ResolveSecretsFrom_KeepsOAuth2Secret(t *testing.T) {
 	t.Parallel()
-	cfg := Config{OAuth2Client: &OAuth2ClientConfig{
-		TokenURL:     "https://as.example.com/token",
-		ClientID:     "client-id",
-		ClientSecret: secret.Redacted,
-	}}
-	if err := cfg.Validate(TypeOAuth2Client); err == nil {
-		t.Fatal("Validate() = nil, want rejection of redaction placeholder")
-	}
-}
-
-func TestConfig_ResolveSecretsFrom_KeepsOAuth2ClientSecret(t *testing.T) {
-	t.Parallel()
-	prev := Config{OAuth2Client: &OAuth2ClientConfig{
-		TokenURL:     "https://as.example.com/token",
-		ClientID:     "client-id",
+	prev := Config{OAuth2: &OAuth2Config{
+		Issuer:       "https://issuer.example.com",
+		Audiences:    []string{"gateway"},
+		JWKSURL:      "https://issuer.example.com/jwks",
 		ClientSecret: "stored-secret",
 	}}
-	next := Config{OAuth2Client: &OAuth2ClientConfig{
-		TokenURL:     "https://as.example.com/token",
-		ClientID:     "client-id",
+	next := Config{OAuth2: &OAuth2Config{
+		Issuer:       "https://issuer.example.com",
+		Audiences:    []string{"gateway"},
+		JWKSURL:      "https://issuer.example.com/jwks",
 		ClientSecret: secret.Mask("stored-secret"),
 	}}
 	next.ResolveSecretsFrom(prev)
-	if next.OAuth2Client.ClientSecret != "stored-secret" {
-		t.Fatalf("ClientSecret = %q, want stored value kept", next.OAuth2Client.ClientSecret)
+	if next.OAuth2.ClientSecret != "stored-secret" {
+		t.Fatalf("ClientSecret = %q, want stored value kept", next.OAuth2.ClientSecret)
 	}
 }
 
@@ -221,49 +211,6 @@ func TestNewAuth_Validation(t *testing.T) {
 			config:    Config{OAuth2: &OAuth2Config{Issuer: "https://issuer", JWKSURL: "https://x/jwks"}, MTLS: &MTLSConfig{CACert: "pem"}},
 			wantErr:   ErrInvalidConfig,
 		},
-		{
-			name:      "oauth2_client missing token_url",
-			gatewayID: gwID,
-			authName:  "k",
-			authType:  TypeOAuth2Client,
-			config:    Config{OAuth2Client: &OAuth2ClientConfig{ClientID: "id", ClientSecret: "secret"}},
-			wantErr:   ErrInvalidConfig,
-		},
-		{
-			name:      "oauth2_client non-https token_url",
-			gatewayID: gwID,
-			authName:  "k",
-			authType:  TypeOAuth2Client,
-			config:    Config{OAuth2Client: &OAuth2ClientConfig{TokenURL: "http://as.example.com/token", ClientID: "id", ClientSecret: "secret"}},
-			wantErr:   ErrInvalidConfig,
-		},
-		{
-			name:      "oauth2_client missing client_id",
-			gatewayID: gwID,
-			authName:  "k",
-			authType:  TypeOAuth2Client,
-			config:    Config{OAuth2Client: &OAuth2ClientConfig{TokenURL: "https://as.example.com/token", ClientSecret: "secret"}},
-			wantErr:   ErrInvalidConfig,
-		},
-		{
-			name:      "oauth2_client missing client_secret",
-			gatewayID: gwID,
-			authName:  "k",
-			authType:  TypeOAuth2Client,
-			config:    Config{OAuth2Client: &OAuth2ClientConfig{TokenURL: "https://as.example.com/token", ClientID: "id"}},
-			wantErr:   ErrInvalidConfig,
-		},
-		{
-			name:      "oauth2_client with extra idp payload",
-			gatewayID: gwID,
-			authName:  "k",
-			authType:  TypeOAuth2Client,
-			config: Config{
-				OAuth2Client: &OAuth2ClientConfig{TokenURL: "https://as.example.com/token", ClientID: "id", ClientSecret: "secret"},
-				IDP:          &IDPConfig{Issuer: "https://issuer", Audiences: []string{"gateway"}, JWKSURL: "https://x/jwks"},
-			},
-			wantErr: ErrInvalidConfig,
-		},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -292,13 +239,6 @@ func TestNewAuth_ValidPerType(t *testing.T) {
 			Issuer:    "https://issuer",
 			Audiences: []string{"gateway"},
 			JWKSURL:   "https://issuer/.well-known/jwks.json",
-		}}},
-		"oauth2_client": {TypeOAuth2Client, Config{OAuth2Client: &OAuth2ClientConfig{
-			TokenURL:     "https://as.example.com/oauth/token",
-			ClientID:     "client-id",
-			ClientSecret: "client-secret",
-			Scopes:       []string{"chat"},
-			Audience:     "https://api.example.com",
 		}}},
 		"oauth2 issuer-only (JWKS via OIDC discovery)": {TypeOAuth2, Config{OAuth2: &OAuth2Config{
 			Issuer:    "https://login.microsoftonline.com/tenant-id/v2.0",
