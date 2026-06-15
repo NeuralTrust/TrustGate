@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"log/slog"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
@@ -21,6 +22,7 @@ type AuthMiddleware struct {
 	dataFinder      appconsumer.DataFinder
 	gatewayResolver resolver.GatewayResolver
 	roleResolver    approle.IDPResolver
+	logger          *slog.Logger
 }
 
 func NewAuthMiddleware(
@@ -28,12 +30,14 @@ func NewAuthMiddleware(
 	dataFinder appconsumer.DataFinder,
 	gatewayResolver resolver.GatewayResolver,
 	roleResolver approle.IDPResolver,
+	logger *slog.Logger,
 ) *AuthMiddleware {
 	return &AuthMiddleware{
 		resolver:        identityResolver,
 		dataFinder:      dataFinder,
 		gatewayResolver: gatewayResolver,
 		roleResolver:    roleResolver,
+		logger:          logger,
 	}
 }
 
@@ -61,6 +65,10 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 		c.Locals(resolver.ProxyRouteLocalsKey, route)
 		authCtx, err := m.resolver.Resolve(c, gw, rc)
 		if err != nil {
+			m.debug(c).Debug("identity resolution failed",
+				slog.String("gateway_slug", gw.Slug),
+				slog.String("consumer_slug", route.ConsumerSlug),
+				slog.String("error", err.Error()))
 			if errors.Is(err, resolver.ErrUnauthenticated) && apiKeyAttachedElsewhere(c.Get(resolver.HeaderAPIKey), data, rc) {
 				return forbidden(c, resolver.ErrForbidden)
 			}
@@ -75,16 +83,39 @@ func (m *AuthMiddleware) Middleware() fiber.Handler {
 			}
 			roleIDs, err := m.roleResolver.ResolveIDPRoles(c.UserContext(), data.Roles, authCtx.Claims)
 			if err != nil {
+				m.debug(c).Debug("idp role resolution error",
+					slog.String("subject", authCtx.Subject),
+					slog.String("error", err.Error()))
 				return invalidAuthRequest(c, err)
 			}
 			authCtx.RoleIDs = intersectRoleIDs(roleIDs, rc.Consumer.RoleIDs)
+			m.debug(c).Debug("idp roles resolved",
+				slog.String("subject", authCtx.Subject),
+				slog.Int("gateway_roles_resolved", len(roleIDs)),
+				slog.Int("consumer_roles_assigned", len(rc.Consumer.RoleIDs)),
+				slog.Int("effective_roles", len(authCtx.RoleIDs)),
+				slog.Any("roles_claim", authCtx.Claims["roles"]),
+				slog.Any("groups_claim", authCtx.Claims["groups"]))
 			if len(authCtx.RoleIDs) == 0 {
+				m.debug(c).Debug("idp authorization denied: no matching role between token claims and consumer assignment",
+					slog.String("subject", authCtx.Subject))
 				return forbidden(c, resolver.ErrForbidden)
 			}
 		}
 		m.attach(c, authCtx, gw, data, rc)
 		return c.Next()
 	}
+}
+
+func (m *AuthMiddleware) debug(c *fiber.Ctx) *slog.Logger {
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return logger.With(
+		slog.String("request_id", c.GetRespHeader(fiber.HeaderXRequestID)),
+		slog.String("path", c.Path()),
+	)
 }
 
 func writeAuthError(c *fiber.Ctx, err error) error {

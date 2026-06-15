@@ -25,7 +25,7 @@ Top-level fields relevant to MCP (`CreateRegistryRequest`):
 | `name` | string | yes | Max 255 chars. |
 | `type` | string | yes | Must be `"MCP"` (case-insensitive, normalized to upper). |
 | `description` | string | no | Free text. |
-| `weight` | int | no | Used by `weighted-round-robin` load balancing; must be `>= 0`. |
+| `weight` | int | no | Relative share used by `weighted-round-robin` load balancing, on a `1..100` scale (default `1`). |
 | `mcp_target` | object | yes | Required when `type` is `MCP`. See below. |
 
 > For MCP registries the LLM-only fields (`provider`, `provider_options`, `auth`, `health_checks`) are not used.

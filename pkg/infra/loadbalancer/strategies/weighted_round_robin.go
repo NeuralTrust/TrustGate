@@ -38,7 +38,7 @@ func (wrr *WeightedRoundRobin) effectiveWeight(b *registry.Registry) int {
 	return 1
 }
 
-func (wrr *WeightedRoundRobin) Next(req *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
+func (wrr *WeightedRoundRobin) Next(_ *infracontext.RequestContext, exclude map[ids.RegistryID]struct{}) *registry.Registry {
 	wrr.mu.Lock()
 	defer wrr.mu.Unlock()
 	if len(wrr.registries) == 0 {

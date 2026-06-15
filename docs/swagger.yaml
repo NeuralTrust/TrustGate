@@ -280,7 +280,11 @@ definitions:
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest:
     properties:
       weight:
+        description: Weight is the relative weighted-round-robin share on a 1..100
+          scale.
         example: 1
+        maximum: 100
+        minimum: 1
         type: integer
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.CreateConsumerRequest:
@@ -393,6 +397,11 @@ definitions:
       model_policies:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest'
       weight:
+        description: Weight is the relative weighted-round-robin share on a 1..100
+          scale.
+        example: 1
+        maximum: 100
+        minimum: 1
         type: integer
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest:
