@@ -306,11 +306,11 @@
     },
     {
       "key": "okta_claim",
-      "value": "groups"
+      "value": "scp"
     },
     {
       "key": "okta_group",
-      "value": "mcp-users"
+      "value": "mcp.access"
     },
     {
       "key": "okta_bearer_token",
@@ -3998,7 +3998,7 @@
     },
     {
       "name": "E2E Role-Based Flow (Okta / IDP)",
-      "description": "End-to-end role-based provisioning authenticated with Okta. Same shape as 'E2E Role-Based Flow (Entra ID / IDP)', but the `idp` auth is wired to an Okta authorization server (issuer https://{okta_domain}/oauth2/{okta_auth_server_id} + that server's JWKS). Role-based consumers REQUIRE an `idp` auth: `oauth2` and `api_key` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Okta token claims against the role `idp_mapping`.\n\nSet before running: `okta_domain` (e.g. dev-12345.okta.com, no scheme), `okta_auth_server_id` (e.g. `default`), `okta_client_id`, `okta_client_secret`, `okta_scope` (a scope granted to the app, e.g. `mcp.access`), `okta_audience` (the authorization server audience, e.g. `api://default`), `okta_claim` (claim path the role matches, default `groups`), `okta_group` (the value to match in that claim) and `openai_api_key`.\n\nWhere do roles come from? Okta has no Entra-style App Roles. For a user token (device-code / auth-code) map the `groups` claim (add a Groups claim on the authorization server). For a machine-to-machine token (client_credentials, used here) there is no user, so add a custom claim on the authorization server that emits the role/group value into the access token (set `okta_claim` to that claim name), or set `okta_claim` to `scp` and `okta_group` to a granted scope to match on scopes instead. The gateway only validates the JWT via JWKS; `okta_client_secret` is never used by the gateway.",
+      "description": "End-to-end role-based provisioning authenticated with Okta. Same shape as 'E2E Role-Based Flow (Entra ID / IDP)', but the `idp` auth is wired to an Okta authorization server (issuer https://{okta_domain}/oauth2/{okta_auth_server_id} + that server's JWKS). Role-based consumers REQUIRE an `idp` auth: `oauth2` and `api_key` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Okta token claims against the role `idp_mapping`.\n\nSet before running: `okta_domain` (e.g. dev-12345.okta.com, no scheme), `okta_auth_server_id` (e.g. `default`), `okta_client_id`, `okta_client_secret`, `okta_scope` (a scope granted to the app, e.g. `mcp.access`), `okta_audience` (the authorization server audience, e.g. `api://default`), `okta_claim` (claim path the role matches, default `scp` for the M2M client_credentials flow), `okta_group` (the value to match in that claim) and `openai_api_key`.\n\nWhere do roles come from? Okta has no Entra-style App Roles. For a user token (device-code / auth-code) map the `groups` claim (add a Groups claim on the authorization server). For a machine-to-machine token (client_credentials, used here) there is no user, so add a custom claim on the authorization server that emits the role/group value into the access token (set `okta_claim` to that claim name), or set `okta_claim` to `scp` and `okta_group` to a granted scope to match on scopes instead. The gateway only validates the JWT via JWKS; `okta_client_secret` is never used by the gateway.",
       "item": [
         {
           "name": "0. Get Okta token (M2M)",
@@ -4175,7 +4175,7 @@
                 "value": "application/json"
               }
             ],
-            "description": "idp_mapping matches the Okta token claims. By default it matches the `{{okta_claim}}` claim (groups) against {{okta_group}}. For an M2M token set {{okta_claim}} to the custom claim you added on the authorization server (or to `scp` to match a granted scope). model_policies cannot be set on create; bind registries first, then update the role.",
+            "description": "idp_mapping matches the Okta token claims. By default it matches the `{{okta_claim}}` claim (scp, the granted scope) against {{okta_group}}. For an M2M token set {{okta_claim}} to the custom claim you added on the authorization server (or to `scp` to match a granted scope). model_policies cannot be set on create; bind registries first, then update the role.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"okta-analysts-{{$guid}}\",\n  \"idp_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"{{okta_claim}}\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"{{okta_group}}\"\n        ]\n      }\n    ]\n  }\n}"
