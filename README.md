@@ -47,7 +47,7 @@ cd AgentGateway
 # Copy the env template and adjust as needed
 cp .env.example .env
 
-# One command to bring up everything (Postgres, Redis, Kafka, Zookeeper) + admin & proxy
+# One command to bring up everything (Postgres, Redis, Kafka, Zookeeper) + admin, proxy & mcp
 make up
 
 # Tail the logs / tear everything down
@@ -60,6 +60,7 @@ Then hit the health probes:
 ```bash
 curl localhost:8080/healthz       # admin
 curl localhost:8081/healthz       # proxy
+curl localhost:8082/healthz       # mcp
 curl localhost:8080/__/version    # build info (version, commit, build date)
 ```
 
@@ -80,6 +81,7 @@ make run-all        # applies migrations, starts admin on :8080 and proxy on :80
 # 2b. ...or run each plane in its own terminal (closer to production)
 make run-admin      # terminal 1 — applies migrations, starts admin on :8080
 make run-proxy      # terminal 2 — applies migrations, starts proxy on :8081
+make run-mcp        # terminal 3 — (optional) starts the MCP server on :8082
 
 # 3. Stop the infra (add -v to wipe volumes)
 make compose-down
@@ -196,12 +198,13 @@ PY
 
 AgentGateway ships a **single binary** that boots **one** HTTP server, selected by `argv[1]`
 (default: `proxy`). In production each pod runs one container with the appropriate argument,
-so the **Admin** and **Proxy** planes scale independently.
+so the **Admin**, **Proxy** and **MCP** planes scale independently.
 
 ```bash
 ./trustgate              # → proxy (default)
 ./trustgate proxy        # → proxy
 ./trustgate admin        # → admin
+./trustgate mcp          # → mcp (Model Context Protocol server)
 ./trustgate run          # → admin + proxy together in one process (single-node)
 ```
 
@@ -215,6 +218,7 @@ flowchart LR
         direction TB
         ADMIN["Admin Plane :8080\nGateways · Registries · Consumers\nAuth · Policies · Catalog"]
         PROXY["Proxy Plane :8081\nRouting · Load Balancing\nPolicy Stages · Plugins"]
+        MCP["MCP Plane :8082\nMCP targets & tools for agents"]
     end
 
     subgraph Plugins["Policy Plugins"]
@@ -237,12 +241,15 @@ flowchart LR
     end
 
     APP -->|API key| PROXY
+    APP -->|MCP| MCP
     PROXY --> Plugins
     PROXY -->|load balance| Providers
     ADMIN -. config .-> PROXY
+    ADMIN -. config .-> MCP
     ADMIN --- PG
     PROXY --- PG
     PROXY --- RD
+    MCP --- PG
     PROXY -->|telemetry| KFK
 ```
 
@@ -255,12 +262,13 @@ flowchart LR
 5. The request is forwarded to the selected **provider adapter** (OpenAI, Anthropic, Bedrock, …), streaming when supported.
 6. The response is returned, the semantic cache is populated, and **telemetry** is emitted to Kafka.
 
-### Two planes
+### Planes
 
 | Plane | Port | Responsibilities |
 |-------|------|------------------|
 | **Admin** | `8080` | Gateway, registry, consumer, auth, policy and catalog management. Applies DB migrations. |
 | **Proxy** | `8081` | Request routing, load balancing, policy & plugin execution, provider forwarding, telemetry. |
+| **MCP** | `8082` | Model Context Protocol server: exposes registered MCP targets and tools to agents. |
 
 ## 🔌 Plugins
 
@@ -291,6 +299,7 @@ to `.env` and `godotenv` loads it automatically. Production deployments inject e
 # Server (HTTP listeners)
 SERVER_ADMIN_PORT=8080
 SERVER_PROXY_PORT=8081
+SERVER_MCP_PORT=8082
 
 # Database (Postgres via pgx/pgxpool)
 DB_HOST=localhost
