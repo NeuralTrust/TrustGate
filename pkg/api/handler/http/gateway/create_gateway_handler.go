@@ -46,6 +46,7 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Name:            req.Name,
 		Slug:            req.Slug,
 		Domain:          req.Domain,
+		Metadata:        req.Metadata,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
 		SessionConfig:   req.SessionConfig,

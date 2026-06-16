@@ -34,7 +34,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger())
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:     id,
@@ -74,7 +74,7 @@ func TestUpdater_UpdateSlug_InvalidatesOldSlugCache(t *testing.T) {
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.GatewayTTLName).Set("slug:old", existing)
-	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger())
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
@@ -100,7 +100,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	id := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Name: ptr("x"),
@@ -125,7 +125,7 @@ func TestUpdater_Update_Partial_PreservesStatus(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger())
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Name: ptr("renamed"),
@@ -148,7 +148,7 @@ func TestUpdater_Update_RejectsEmptyName(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	// repo.Update must not be called.
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Name: ptr(""),

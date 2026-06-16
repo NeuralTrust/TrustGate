@@ -41,6 +41,7 @@ func (b *Builder) Build(
 		SchemaVersion: events.SchemaVersion,
 		TraceID:       traceID,
 		GatewayID:     meta.GatewayID,
+		TeamID:        meta.TeamID,
 		Timestamp:     startTime.UTC().Format(time.RFC3339),
 		OccurredOn:    startTime.UnixMilli(),
 		EndTimestamp:  endTime.UnixMilli(),

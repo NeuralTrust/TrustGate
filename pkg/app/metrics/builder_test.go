@@ -48,6 +48,18 @@ func newBuilder(price appcatalog.Pricing) *Builder {
 const openAIRequestBody = `{"model":"gpt-4o","temperature":0.7,"max_tokens":100,"stream":false,` +
 	`"messages":[{"role":"user","content":"hello"}]}`
 
+func TestBuilder_SetsTeamIDFromMetadata(t *testing.T) {
+	rt := trace.New("trace-team", trace.Metadata{GatewayID: "gw-1", TeamID: "team-123"})
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+
+	start := time.UnixMilli(1_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+	assert.Equal(t, "team-123", evt.TeamID)
+}
+
 func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	rt := trace.New("trace-1", trace.Metadata{
 		GatewayID:    "gw-1",

@@ -6,8 +6,11 @@ import (
 	"time"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
 	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
@@ -38,9 +41,11 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 
 		startTime := time.Now()
 		gatewayID := gatewayIDFromContext(c)
+		gw := gatewayFromContext(c)
+		exporters := gatewayExporters(gw)
 
 		traceID := m.resolveTraceID(c)
-		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID))
+		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID, gw))
 		// Gating is set once here, before the trace is shared with any
 		// downstream goroutine (forwarder, plugins, finalizer).
 		requestTrace.SetGating(m.enableRequestTraces, m.enablePluginTraces)
@@ -49,7 +54,7 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 		req := m.buildRequestContext(c, gatewayID)
 
 		streamed := false
-		c.Locals(infracontext.StreamMetricsFinalizerKey, m.streamFinalizer(requestTrace, startTime, gatewayID))
+		c.Locals(infracontext.StreamMetricsFinalizerKey, m.streamFinalizer(requestTrace, startTime, gatewayID, exporters))
 
 		defer func() {
 			if streamed {
@@ -58,7 +63,7 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 			resp := m.buildResponseContext(c, gatewayID)
 			endTime := time.Now()
 			requestTrace.OnComplete(func() {
-				m.worker.Process(requestTrace, req, resp, startTime, endTime)
+				m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
 			})
 			requestTrace.Done()
 		}()
@@ -78,6 +83,7 @@ func (m *MetricsMiddleware) streamFinalizer(
 	requestTrace *trace.RequestTrace,
 	startTime time.Time,
 	gatewayID string,
+	exporters []telemetrydomain.ExporterConfig,
 ) infracontext.StreamMetricsFinalizer {
 	return func(req *infracontext.RequestContext, output []byte, statusCode int, headers map[string][]string) {
 		resp := &infracontext.ResponseContext{
@@ -91,7 +97,7 @@ func (m *MetricsMiddleware) streamFinalizer(
 		}
 		endTime := time.Now()
 		requestTrace.OnComplete(func() {
-			m.worker.Process(requestTrace, req, resp, startTime, endTime)
+			m.worker.Process(requestTrace, req, resp, startTime, endTime, exporters)
 		})
 		requestTrace.Done()
 	}
@@ -113,9 +119,10 @@ func (m *MetricsMiddleware) attachTrace(c *fiber.Ctx, requestTrace *trace.Reques
 	c.SetUserContext(trace.NewContext(c.UserContext(), requestTrace))
 }
 
-func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string) trace.Metadata {
+func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, gw *gatewaydomain.Gateway) trace.Metadata {
 	meta := trace.Metadata{
 		GatewayID: gatewayID,
+		TeamID:    gw.TeamID(),
 		Path:      c.Path(),
 		Method:    c.Method(),
 		IP:        c.IP(),
@@ -157,6 +164,21 @@ func gatewayIDFromContext(c *fiber.Ctx) string {
 		return id.String()
 	}
 	return ""
+}
+
+func gatewayFromContext(c *fiber.Ctx) *gatewaydomain.Gateway {
+	gw, ok := appgateway.FromContext(c.UserContext())
+	if !ok {
+		return nil
+	}
+	return gw
+}
+
+func gatewayExporters(gw *gatewaydomain.Gateway) []telemetrydomain.ExporterConfig {
+	if gw == nil || gw.Telemetry == nil {
+		return nil
+	}
+	return gw.Telemetry.Exporters
 }
 
 func (m *MetricsMiddleware) buildResponseContext(c *fiber.Ctx, gatewayID string) *infracontext.ResponseContext {

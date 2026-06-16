@@ -13,17 +13,27 @@ import (
 	"github.com/google/uuid"
 )
 
+const MetadataTeamIDKey = "team_id"
+
 type Gateway struct {
 	ID              ids.GatewayID        `json:"id"`
 	Name            string               `json:"name"`
 	Slug            string               `json:"slug"`
 	Status          string               `json:"status"`
 	Domain          string               `json:"domain,omitempty"`
+	Metadata        map[string]string    `json:"metadata,omitempty"`
 	Telemetry       *telemetry.Telemetry `json:"telemetry,omitempty"`
 	ClientTLSConfig ClientTLSConfig      `json:"client_tls,omitempty"`
 	SessionConfig   *SessionConfig       `json:"session_config,omitempty"`
 	CreatedAt       time.Time            `json:"created_at"`
 	UpdatedAt       time.Time            `json:"updated_at"`
+}
+
+func (g *Gateway) TeamID() string {
+	if g == nil || g.Metadata == nil {
+		return ""
+	}
+	return g.Metadata[MetadataTeamIDKey]
 }
 
 type SessionConfig struct {

@@ -11,6 +11,7 @@ import (
 
 type Metadata struct {
 	GatewayID     string
+	TeamID        string
 	ConsumerID    string
 	ConsumerName  string
 	Path          string

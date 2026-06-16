@@ -14,6 +14,7 @@ type UpdateGatewayRequest struct {
 	Slug            *string                 `json:"slug,omitempty"`
 	Status          *string                 `json:"status,omitempty"`
 	Domain          *string                 `json:"domain,omitempty"`
+	Metadata        map[string]string       `json:"metadata,omitempty"`
 	Telemetry       *telemetry.Telemetry    `json:"telemetry,omitempty"`
 	ClientTLSConfig *domain.ClientTLSConfig `json:"client_tls,omitempty"`
 	SessionConfig   *domain.SessionConfig   `json:"session_config,omitempty"`

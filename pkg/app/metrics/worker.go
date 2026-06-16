@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 )
@@ -28,6 +29,7 @@ type Worker interface {
 		resp *infracontext.ResponseContext,
 		startTime time.Time,
 		endTime time.Time,
+		exporters []telemetrydomain.ExporterConfig,
 	)
 }
 
@@ -124,12 +126,13 @@ func (w *worker) Process(
 	resp *infracontext.ResponseContext,
 	startTime,
 	endTime time.Time,
+	exporters []telemetrydomain.ExporterConfig,
 ) {
 	if req == nil || resp == nil {
 		return
 	}
 	w.enqueueTask(func() {
-		w.pipeline.publish(requestTrace, req, resp, startTime, endTime)
+		w.pipeline.publish(requestTrace, req, resp, startTime, endTime, exporters)
 	}, req.GatewayID)
 }
 
