@@ -102,6 +102,96 @@ make test-cover      # unit tests with coverage profile
 make test-functional # functional tests against a real admin server
 ```
 
+## 🧪 Your first request
+
+The **Admin** plane (`:8080`) configures gateways, providers and consumers; the
+**Proxy** plane (`:8081`) serves OpenAI-compatible traffic. The proxy resolves
+the gateway from the `X-AG-Gateway-Slug` header and the consumer from its
+`X-AG-API-Key`. End-to-end, from zero to a forwarded completion:
+
+```bash
+make up   # admin :8080, proxy :8081 + Postgres/Redis/Kafka
+
+ADMIN="http://localhost:8080"
+PROXY="http://localhost:8081"
+TOKEN="$ADMIN_TOKEN"   # admin JWT, see "Admin token" below
+
+# 1. Create a gateway (slug becomes its host/subdomain)
+GW=$(curl -s -X POST "$ADMIN/v1/gateways" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"My Gateway","slug":"demo"}')
+GW_ID=$(echo "$GW" | jq -r .id); GW_SLUG=$(echo "$GW" | jq -r .slug)
+
+# 2. Register an upstream LLM provider (OpenAI here)
+REG=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/registries" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"openai-primary","provider":"openai",
+       "auth":{"type":"api_key","api_key":{"api_key":"'"$OPENAI_API_KEY"'"}}}')
+REG_ID=$(echo "$REG" | jq -r .id)
+
+# 3. Create a consumer bound to that registry
+CON=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/consumers" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"my-app","registries":[{"id":"'"$REG_ID"'"}]}')
+CON_ID=$(echo "$CON" | jq -r .id); CON_SLUG=$(echo "$CON" | jq -r .slug)
+
+# 4. Mint a consumer API key (returned in cleartext once)
+AUTH=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/auths" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"my-app-key","type":"api_key"}')
+AUTH_ID=$(echo "$AUTH" | jq -r .id); API_KEY=$(echo "$AUTH" | jq -r .api_key)
+
+# 5. Attach the key to the consumer
+curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/consumers/$CON_ID/auths/$AUTH_ID" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 6. Call the proxy (OpenAI-compatible)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/chat/completions" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+From an application, point any OpenAI SDK at the proxy — no client changes beyond
+the base URL and two headers:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8081/my-app",  # /{consumer_slug}
+    api_key="unused",                          # the provider key lives in the gateway
+    default_headers={
+        "X-AG-Gateway-Slug": "demo",
+        "X-AG-API-Key": "<consumer api key>",
+    },
+)
+
+resp = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(resp.choices[0].message.content)
+```
+
+Other entrypoints follow the same `/{consumer_slug}/...` shape: `/v1/messages`
+(Anthropic format) and `/v1/responses` (OpenAI Responses format).
+
+### Admin token
+
+The Admin API expects a JWT (HS256) signed with `SERVER_SECRET_KEY` from your
+`.env`. Mint a short-lived one for local use:
+
+```bash
+export SERVER_SECRET_KEY="$(grep ^SERVER_SECRET_KEY .env | cut -d= -f2-)"
+export ADMIN_TOKEN=$(python3 - <<'PY'
+import jwt, os, time
+secret = os.environ["SERVER_SECRET_KEY"]
+print(jwt.encode({"sub": "admin", "iat": int(time.time()), "exp": int(time.time()) + 3600}, secret, algorithm="HS256"))
+PY
+)
+```
+
 ## 🏗️ Architecture
 
 AgentGateway ships a **single binary** that boots **one** HTTP server, selected by `argv[1]`
