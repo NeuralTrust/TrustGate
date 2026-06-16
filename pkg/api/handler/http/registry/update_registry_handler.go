@@ -68,6 +68,7 @@ func (h *UpdateRegistryHandler) Handle(c *fiber.Ctx) error {
 		ID:              id,
 		GatewayID:       gatewayID,
 		Name:            req.Name,
+		Enabled:         req.Enabled,
 		Provider:        req.Provider,
 		ProviderOptions: req.ProviderOptions,
 		Description:     req.Description,

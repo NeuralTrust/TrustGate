@@ -24,6 +24,7 @@ import (
 
 type UpdateRegistryRequest struct {
 	Name            *string              `json:"name,omitempty"`
+	Enabled         *bool                `json:"enabled,omitempty"`
 	Provider        *string              `json:"provider,omitempty"`
 	ProviderOptions *map[string]any      `json:"provider_options,omitempty"`
 	Description     *string              `json:"description,omitempty"`

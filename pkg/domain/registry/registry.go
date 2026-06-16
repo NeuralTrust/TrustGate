@@ -26,6 +26,7 @@ type Registry struct {
 	GatewayID   ids.GatewayID  `json:"gateway_id"`
 	Name        string         `json:"name"`
 	Type        Type           `json:"type"`
+	Enabled     bool           `json:"enabled"`
 	Description string         `json:"description,omitempty"`
 	LLMTarget   *LLMTarget     `json:"llm_target,omitempty"`
 	MCPTarget   *MCPTarget     `json:"mcp_target,omitempty"`
@@ -48,6 +49,7 @@ func NewLLMRegistry(
 		GatewayID:   gatewayID,
 		Name:        name,
 		Type:        TypeLLM,
+		Enabled:     true,
 		Description: description,
 		LLMTarget:   target,
 		CreatedAt:   now,
@@ -74,6 +76,7 @@ func NewMCPRegistry(
 		GatewayID:   gatewayID,
 		Name:        name,
 		Type:        TypeMCP,
+		Enabled:     true,
 		Description: description,
 		MCPTarget:   target,
 		CreatedAt:   now,
@@ -122,6 +125,7 @@ type RehydrateParams struct {
 	GatewayID   ids.GatewayID
 	Name        string
 	Type        Type
+	Enabled     bool
 	Description string
 	LLMTarget   *LLMTarget
 	MCPTarget   *MCPTarget
@@ -139,6 +143,7 @@ func Rehydrate(params RehydrateParams) *Registry {
 		GatewayID:   params.GatewayID,
 		Name:        params.Name,
 		Type:        regType,
+		Enabled:     params.Enabled,
 		Description: params.Description,
 		LLMTarget:   params.LLMTarget,
 		MCPTarget:   params.MCPTarget,
