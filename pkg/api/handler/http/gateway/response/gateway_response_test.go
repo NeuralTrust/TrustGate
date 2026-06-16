@@ -27,12 +27,15 @@ func TestFromDomain_IncludesSlug(t *testing.T) {
 	now := time.Now().UTC()
 	gw := domain.RehydrateWithSlug(ids.New[ids.GatewayKind](), "Acme", "acme", "active", nil, nil, nil, now, now)
 
-	got := FromDomain(gw, "gw.neuraltrust.ai")
+	got := FromDomain(gw, "llm.neuraltrust.ai", "mcp.neuraltrust.ai")
 	if got.Slug != "acme" {
 		t.Fatalf("Slug = %q, want acme", got.Slug)
 	}
-	if got.Host != "acme.gw.neuraltrust.ai" {
-		t.Fatalf("Host = %q, want acme.gw.neuraltrust.ai", got.Host)
+	if got.Hosts.Proxy != "acme.llm.neuraltrust.ai" {
+		t.Fatalf("Hosts.Proxy = %q, want acme.llm.neuraltrust.ai", got.Hosts.Proxy)
+	}
+	if got.Hosts.MCP != "acme.mcp.neuraltrust.ai" {
+		t.Fatalf("Hosts.MCP = %q, want acme.mcp.neuraltrust.ai", got.Hosts.MCP)
 	}
 }
 
@@ -42,8 +45,11 @@ func TestFromDomain_CustomDomainHost(t *testing.T) {
 	gw := domain.RehydrateWithSlug(ids.New[ids.GatewayKind](), "Acme", "acme", "active", nil, nil, nil, now, now)
 	gw.Domain = "api.acme.com"
 
-	got := FromDomain(gw, "gw.neuraltrust.ai")
-	if got.Host != "api.acme.com" {
-		t.Fatalf("Host = %q, want api.acme.com", got.Host)
+	got := FromDomain(gw, "llm.neuraltrust.ai", "mcp.neuraltrust.ai")
+	if got.Hosts.Proxy != "api.acme.com" {
+		t.Fatalf("Hosts.Proxy = %q, want api.acme.com", got.Hosts.Proxy)
+	}
+	if got.Hosts.MCP != "acme.mcp.neuraltrust.ai" {
+		t.Fatalf("Hosts.MCP = %q, want acme.mcp.neuraltrust.ai", got.Hosts.MCP)
 	}
 }

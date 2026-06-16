@@ -35,7 +35,8 @@ const (
 	defaultServerReadTimeout  = 60 * time.Second
 	defaultServerWriteTimeout = 60 * time.Second
 	defaultServerIdleTimeout  = 120 * time.Second
-	defaultGatewayBaseDomain  = "gw.neuraltrust.ai"
+	defaultGatewayBaseDomain  = "llm.neuraltrust.ai"
+	defaultMCPBaseDomain      = "mcp.neuraltrust.ai"
 
 	GatewayDiscoveryModeHeader    = "header"
 	GatewayDiscoveryModeSubdomain = "subdomain"
@@ -122,6 +123,7 @@ type ServerConfig struct {
 	// token acceptance (every token is rejected).
 	SecretKey            string
 	GatewayBaseDomain    string
+	MCPBaseDomain        string
 	GatewayDiscoveryMode string
 	STSIssuer            string
 	STSSigningKey        string
@@ -251,6 +253,10 @@ func getServerConfig() ServerConfig {
 		GatewayBaseDomain: getEnv(
 			"GATEWAY_BASE_DOMAIN",
 			defaultGatewayBaseDomain,
+		),
+		MCPBaseDomain: getEnv(
+			"MCP_BASE_DOMAIN",
+			defaultMCPBaseDomain,
 		),
 		GatewayDiscoveryMode: strings.ToLower(strings.TrimSpace(getEnv(
 			"GATEWAY_DISCOVERY_MODE",

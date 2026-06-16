@@ -4218,6 +4218,17 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayHosts": {
+            "type": "object",
+            "properties": {
+                "mcp": {
+                    "type": "string"
+                },
+                "proxy": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse": {
             "type": "object",
             "properties": {
@@ -4230,8 +4241,8 @@ const docTemplate = `{
                 "domain": {
                     "type": "string"
                 },
-                "host": {
-                    "type": "string"
+                "hosts": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayHosts"
                 },
                 "id": {
                     "type": "string"

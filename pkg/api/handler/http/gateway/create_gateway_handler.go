@@ -26,12 +26,13 @@ import (
 )
 
 type CreateGatewayHandler struct {
-	creator    appgateway.Creator
-	baseDomain string
+	creator       appgateway.Creator
+	baseDomain    string
+	mcpBaseDomain string
 }
 
-func NewCreateGatewayHandler(creator appgateway.Creator, baseDomain string) *CreateGatewayHandler {
-	return &CreateGatewayHandler{creator: creator, baseDomain: baseDomain}
+func NewCreateGatewayHandler(creator appgateway.Creator, baseDomain, mcpBaseDomain string) *CreateGatewayHandler {
+	return &CreateGatewayHandler{creator: creator, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain}
 }
 
 // Handle godoc
@@ -68,5 +69,5 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
-	return helpers.WriteCreated(c, response.FromDomain(g, h.baseDomain))
+	return helpers.WriteCreated(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
 }
