@@ -13,6 +13,7 @@ type RegistryResponse struct {
 	GatewayID       ids.GatewayID         `json:"gateway_id"`
 	Name            string                `json:"name"`
 	Type            string                `json:"type"`
+	Enabled         bool                  `json:"enabled"`
 	Provider        string                `json:"provider,omitempty"`
 	ProviderOptions map[string]any        `json:"provider_options,omitempty"`
 	Description     string                `json:"description,omitempty"`
@@ -130,6 +131,7 @@ func FromRegistry(b *domain.Registry) RegistryResponse {
 		GatewayID:       b.GatewayID,
 		Name:            b.Name,
 		Type:            string(regType),
+		Enabled:         b.Enabled,
 		Provider:        b.Provider(),
 		ProviderOptions: b.ProviderOptions(),
 		Description:     b.Description,

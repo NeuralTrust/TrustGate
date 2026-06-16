@@ -4,8 +4,28 @@ import (
 	"testing"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/common/secret"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 )
+
+func TestFromRegistry_IncludesEnabled(t *testing.T) {
+	t.Parallel()
+
+	for _, enabled := range []bool{true, false} {
+		reg := &domain.Registry{
+			ID:        ids.New[ids.RegistryKind](),
+			GatewayID: ids.New[ids.GatewayKind](),
+			Name:      "r",
+			Type:      domain.TypeLLM,
+			Enabled:   enabled,
+			LLMTarget: &domain.LLMTarget{Provider: "openai"},
+		}
+		got := FromRegistry(reg)
+		if got.Enabled != enabled {
+			t.Fatalf("Enabled = %v, want %v", got.Enabled, enabled)
+		}
+	}
+}
 
 func TestFromAuth_MasksAzureSecretsAndReturnsIdentifiers(t *testing.T) {
 	t.Parallel()

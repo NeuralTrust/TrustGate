@@ -159,6 +159,9 @@ func (f *dataFinder) loadBackends(
 	}
 	byID := make(map[ids.RegistryID]*registrydomain.Registry, len(found))
 	for _, b := range found {
+		if !b.Enabled {
+			continue
+		}
 		byID[b.ID] = b
 	}
 	return byID, nil
@@ -256,7 +259,7 @@ func (f *dataFinder) warnUnresolvedFallbackChain(c *domain.Consumer, resolved []
 	if len(chain) == len(resolved) {
 		return
 	}
-	f.logger.Warn("consumer fallback chain references unknown backend(s); skipping them",
+	f.logger.Warn("consumer fallback chain has unresolved or disabled backend(s); skipping them",
 		slog.String("consumer_id", c.ID.String()),
 		slog.Int("chain_size", len(chain)),
 		slog.Int("resolved", len(resolved)),
