@@ -23,12 +23,13 @@ import (
 )
 
 type GetGatewayHandler struct {
-	finder     appgateway.Finder
-	baseDomain string
+	finder        appgateway.Finder
+	baseDomain    string
+	mcpBaseDomain string
 }
 
-func NewGetGatewayHandler(finder appgateway.Finder, baseDomain string) *GetGatewayHandler {
-	return &GetGatewayHandler{finder: finder, baseDomain: baseDomain}
+func NewGetGatewayHandler(finder appgateway.Finder, baseDomain, mcpBaseDomain string) *GetGatewayHandler {
+	return &GetGatewayHandler{finder: finder, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain}
 }
 
 // Handle godoc
@@ -52,5 +53,5 @@ func (h *GetGatewayHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, response.FromDomain(g, h.baseDomain))
+	return helpers.WriteOK(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
 }
