@@ -47,7 +47,7 @@ cd AgentGateway
 # Copy the env template and adjust as needed
 cp .env.example .env
 
-# One command to bring up everything (Postgres, Redis, Kafka, Zookeeper) + admin & proxy
+# One command to bring up everything (Postgres, Redis, Kafka, Zookeeper) + admin, proxy & mcp
 make up
 
 # Tail the logs / tear everything down
@@ -60,6 +60,7 @@ Then hit the health probes:
 ```bash
 curl localhost:8080/healthz       # admin
 curl localhost:8081/healthz       # proxy
+curl localhost:8082/healthz       # mcp
 curl localhost:8080/__/version    # build info (version, commit, build date)
 ```
 
@@ -80,6 +81,7 @@ make run-all        # applies migrations, starts admin on :8080 and proxy on :80
 # 2b. ...or run each plane in its own terminal (closer to production)
 make run-admin      # terminal 1 — applies migrations, starts admin on :8080
 make run-proxy      # terminal 2 — applies migrations, starts proxy on :8081
+make run-mcp        # terminal 3 — (optional) starts the MCP server on :8082
 
 # 3. Stop the infra (add -v to wipe volumes)
 make compose-down
@@ -102,16 +104,107 @@ make test-cover      # unit tests with coverage profile
 make test-functional # functional tests against a real admin server
 ```
 
+## 🧪 Your first request
+
+The **Admin** plane (`:8080`) configures gateways, providers and consumers; the
+**Proxy** plane (`:8081`) serves OpenAI-compatible traffic. The proxy resolves
+the gateway from the `X-AG-Gateway-Slug` header and the consumer from its
+`X-AG-API-Key`. End-to-end, from zero to a forwarded completion:
+
+```bash
+make up   # admin :8080, proxy :8081 + Postgres/Redis/Kafka
+
+ADMIN="http://localhost:8080"
+PROXY="http://localhost:8081"
+TOKEN="$ADMIN_TOKEN"   # admin JWT, see "Admin token" below
+
+# 1. Create a gateway (slug becomes its host/subdomain)
+GW=$(curl -s -X POST "$ADMIN/v1/gateways" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"My Gateway","slug":"demo"}')
+GW_ID=$(echo "$GW" | jq -r .id); GW_SLUG=$(echo "$GW" | jq -r .slug)
+
+# 2. Register an upstream LLM provider (OpenAI here)
+REG=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/registries" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"openai-primary","provider":"openai",
+       "auth":{"type":"api_key","api_key":{"api_key":"'"$OPENAI_API_KEY"'"}}}')
+REG_ID=$(echo "$REG" | jq -r .id)
+
+# 3. Create a consumer bound to that registry
+CON=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/consumers" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"my-app","registries":[{"id":"'"$REG_ID"'"}]}')
+CON_ID=$(echo "$CON" | jq -r .id); CON_SLUG=$(echo "$CON" | jq -r .slug)
+
+# 4. Mint a consumer API key (returned in cleartext once)
+AUTH=$(curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/auths" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"my-app-key","type":"api_key"}')
+AUTH_ID=$(echo "$AUTH" | jq -r .id); API_KEY=$(echo "$AUTH" | jq -r .api_key)
+
+# 5. Attach the key to the consumer
+curl -s -X POST "$ADMIN/v1/gateways/$GW_ID/consumers/$CON_ID/auths/$AUTH_ID" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 6. Call the proxy (OpenAI-compatible)
+curl -s -X POST "$PROXY/$CON_SLUG/v1/chat/completions" \
+  -H "X-AG-Gateway-Slug: $GW_SLUG" -H "X-AG-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+From an application, point any OpenAI SDK at the proxy — no client changes beyond
+the base URL and two headers:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8081/my-app",  # /{consumer_slug}
+    api_key="unused",                          # the provider key lives in the gateway
+    default_headers={
+        "X-AG-Gateway-Slug": "demo",
+        "X-AG-API-Key": "<consumer api key>",
+    },
+)
+
+resp = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(resp.choices[0].message.content)
+```
+
+Other entrypoints follow the same `/{consumer_slug}/...` shape: `/v1/messages`
+(Anthropic format) and `/v1/responses` (OpenAI Responses format).
+
+### Admin token
+
+The Admin API expects a JWT (HS256) signed with `SERVER_SECRET_KEY` from your
+`.env`. Mint a short-lived one for local use:
+
+```bash
+export SERVER_SECRET_KEY="$(grep ^SERVER_SECRET_KEY .env | cut -d= -f2-)"
+export ADMIN_TOKEN=$(python3 - <<'PY'
+import jwt, os, time
+secret = os.environ["SERVER_SECRET_KEY"]
+print(jwt.encode({"sub": "admin", "iat": int(time.time()), "exp": int(time.time()) + 3600}, secret, algorithm="HS256"))
+PY
+)
+```
+
 ## 🏗️ Architecture
 
 AgentGateway ships a **single binary** that boots **one** HTTP server, selected by `argv[1]`
 (default: `proxy`). In production each pod runs one container with the appropriate argument,
-so the **Admin** and **Proxy** planes scale independently.
+so the **Admin**, **Proxy** and **MCP** planes scale independently.
 
 ```bash
 ./trustgate              # → proxy (default)
 ./trustgate proxy        # → proxy
 ./trustgate admin        # → admin
+./trustgate mcp          # → mcp (Model Context Protocol server)
 ./trustgate run          # → admin + proxy together in one process (single-node)
 ```
 
@@ -125,6 +218,7 @@ flowchart LR
         direction TB
         ADMIN["Admin Plane :8080\nGateways · Registries · Consumers\nAuth · Policies · Catalog"]
         PROXY["Proxy Plane :8081\nRouting · Load Balancing\nPolicy Stages · Plugins"]
+        MCP["MCP Plane :8082\nMCP targets & tools for agents"]
     end
 
     subgraph Plugins["Policy Plugins"]
@@ -147,12 +241,15 @@ flowchart LR
     end
 
     APP -->|API key| PROXY
+    APP -->|MCP| MCP
     PROXY --> Plugins
     PROXY -->|load balance| Providers
     ADMIN -. config .-> PROXY
+    ADMIN -. config .-> MCP
     ADMIN --- PG
     PROXY --- PG
     PROXY --- RD
+    MCP --- PG
     PROXY -->|telemetry| KFK
 ```
 
@@ -165,12 +262,13 @@ flowchart LR
 5. The request is forwarded to the selected **provider adapter** (OpenAI, Anthropic, Bedrock, …), streaming when supported.
 6. The response is returned, the semantic cache is populated, and **telemetry** is emitted to Kafka.
 
-### Two planes
+### Planes
 
 | Plane | Port | Responsibilities |
 |-------|------|------------------|
 | **Admin** | `8080` | Gateway, registry, consumer, auth, policy and catalog management. Applies DB migrations. |
 | **Proxy** | `8081` | Request routing, load balancing, policy & plugin execution, provider forwarding, telemetry. |
+| **MCP** | `8082` | Model Context Protocol server: exposes registered MCP targets and tools to agents. |
 
 ## 🔌 Plugins
 
@@ -201,6 +299,7 @@ to `.env` and `godotenv` loads it automatically. Production deployments inject e
 # Server (HTTP listeners)
 SERVER_ADMIN_PORT=8080
 SERVER_PROXY_PORT=8081
+SERVER_MCP_PORT=8082
 
 # Database (Postgres via pgx/pgxpool)
 DB_HOST=localhost
