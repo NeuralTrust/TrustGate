@@ -1,4 +1,4 @@
-.PHONY: help build run run-admin run-proxy run-all run-proxy-sandbox run-servers up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools swagger openapi docs license license-check \
+.PHONY: help build run run-admin run-proxy run-mcp run-all run-proxy-sandbox run-servers up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools swagger openapi docs license license-check \
         install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
@@ -37,6 +37,10 @@ run-admin: build ## Build and run the admin server
 run-proxy: build ## Build and run the proxy server
 	@$(info $(M) Running $(APP_NAME) proxy ...)
 	./bin/$(APP_NAME) proxy
+
+run-mcp: build ## Build and run the MCP server
+	@$(info $(M) Running $(APP_NAME) mcp ...)
+	./bin/$(APP_NAME) mcp
 
 run-all: build ## Build and run admin + proxy together in one process (single-node)
 	@$(info $(M) Running $(APP_NAME) admin + proxy ...)
