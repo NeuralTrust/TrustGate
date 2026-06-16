@@ -52,6 +52,7 @@ func (h *CreateRegistryHandler) Handle(c *fiber.Ctx) error {
 		GatewayID:   gatewayID,
 		Name:        req.Name,
 		Type:        req.ToType(),
+		Enabled:     req.Enabled,
 		Description: req.Description,
 		LLMTarget:   req.ToLLMTarget(),
 		MCPTarget:   req.ToMCPTarget(),

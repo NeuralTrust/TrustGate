@@ -174,9 +174,9 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 			return len(bids) == 3
 		})).
 		Return([]*registrydomain.Registry{
-			{ID: poolID, GatewayID: gwID, LLMTarget: &registrydomain.LLMTarget{Provider: "openai"}},
-			{ID: fb1, GatewayID: gwID, LLMTarget: &registrydomain.LLMTarget{Provider: "anthropic"}},
-			{ID: fb2, GatewayID: gwID, LLMTarget: &registrydomain.LLMTarget{Provider: "mistral"}},
+			{ID: poolID, GatewayID: gwID, Enabled: true, LLMTarget: &registrydomain.LLMTarget{Provider: "openai"}},
+			{ID: fb1, GatewayID: gwID, Enabled: true, LLMTarget: &registrydomain.LLMTarget{Provider: "anthropic"}},
+			{ID: fb2, GatewayID: gwID, Enabled: true, LLMTarget: &registrydomain.LLMTarget{Provider: "mistral"}},
 		}, nil).Once()
 
 	policyRepo := policymocks.NewRepository(t)
@@ -201,6 +201,76 @@ func TestDataFinder_FindByGateway_ResolvesFallbackChainInOrder(t *testing.T) {
 	}
 	if rc.FallbackBackends[0].ID != fb2 || rc.FallbackBackends[1].ID != fb1 {
 		t.Fatal("fallback chain order was not preserved")
+	}
+}
+
+func TestDataFinder_FindByGateway_ExcludesDisabledRegistries(t *testing.T) {
+	t.Parallel()
+	gwID := ids.New[ids.GatewayKind]()
+	poolID := ids.New[ids.RegistryKind]()
+	disabledPoolID := ids.New[ids.RegistryKind]()
+	fbEnabled, fbDisabled := ids.New[ids.RegistryKind](), ids.New[ids.RegistryKind]()
+	now := time.Now().UTC()
+	cons := domain.Rehydrate(domain.RehydrateParams{
+		ID:          ids.New[ids.ConsumerKind](),
+		GatewayID:   gwID,
+		Name:        "c",
+		Type:        domain.TypeLLM,
+		Slug:        "X84Yhsy8",
+		RoutingMode: domain.RoutingModeInline,
+		Fallback: &domain.Fallback{
+			Enabled:  true,
+			Triggers: []domain.FallbackTrigger{domain.TriggerHTTP5xx},
+			Budget:   domain.FallbackBudget{MaxAttempts: 9},
+			Chain:    []ids.RegistryID{fbDisabled, fbEnabled},
+		},
+		Active:      true,
+		RegistryIDs: []ids.RegistryID{poolID, disabledPoolID},
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
+
+	repo := repomocks.NewRepository(t)
+	repo.EXPECT().ListByGateway(mock.Anything, gwID).Return([]*domain.Consumer{cons}, nil).Once()
+
+	registryRepo := backendmocks.NewRepository(t)
+	registryRepo.EXPECT().
+		FindByIDs(mock.Anything, gwID, mock.Anything).
+		Return([]*registrydomain.Registry{
+			{ID: poolID, GatewayID: gwID, Enabled: true, LLMTarget: &registrydomain.LLMTarget{Provider: "openai"}},
+			{ID: disabledPoolID, GatewayID: gwID, Enabled: false, LLMTarget: &registrydomain.LLMTarget{Provider: "anthropic"}},
+			{ID: fbEnabled, GatewayID: gwID, Enabled: true, LLMTarget: &registrydomain.LLMTarget{Provider: "mistral"}},
+			{ID: fbDisabled, GatewayID: gwID, Enabled: false, LLMTarget: &registrydomain.LLMTarget{Provider: "google"}},
+		}, nil).Once()
+
+	policyRepo := policymocks.NewRepository(t)
+	policyRepo.EXPECT().ListByGateway(mock.Anything, gwID).Return(nil, nil).Once()
+
+	finder := appconsumer.NewDataFinder(
+		repo, registryRepo,
+		policyRepo, authmocks.NewRepository(t),
+		nil, nil, newCacheManager(), newTestLogger(),
+	)
+
+	data, err := finder.FindByGateway(context.Background(), gwID)
+	if err != nil {
+		t.Fatalf("FindByGateway error: %v", err)
+	}
+	rc := data.Consumers[0]
+	if len(rc.Registries) != 1 || rc.Registries[0].ID != poolID {
+		t.Fatalf("disabled pool registry not excluded: %+v", rc.Registries)
+	}
+	if len(rc.FallbackBackends) != 1 || rc.FallbackBackends[0].ID != fbEnabled {
+		t.Fatalf("disabled fallback registry not excluded: %+v", rc.FallbackBackends)
+	}
+	if _, ok := data.RegistryByID(disabledPoolID); ok {
+		t.Fatal("disabled registry must not be in the RegistryByID index")
+	}
+	if _, ok := data.RegistryByID(fbDisabled); ok {
+		t.Fatal("disabled fallback registry must not be in the RegistryByID index")
+	}
+	if _, ok := data.RegistryByID(poolID); !ok {
+		t.Fatal("enabled registry must be in the RegistryByID index")
 	}
 }
 

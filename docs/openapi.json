@@ -4972,6 +4972,12 @@
                     "domain": {
                         "type": "string"
                     },
+                    "metadata": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
+                    },
                     "name": {
                         "type": "string"
                     },
@@ -4994,6 +5000,12 @@
                     },
                     "domain": {
                         "type": "string"
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
                     },
                     "name": {
                         "type": "string"
@@ -5024,8 +5036,17 @@
                     "domain": {
                         "type": "string"
                     },
+                    "host": {
+                        "type": "string"
+                    },
                     "id": {
                         "type": "string"
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
                     },
                     "name": {
                         "type": "string"
@@ -5313,6 +5334,9 @@
                     "description": {
                         "type": "string"
                     },
+                    "enabled": {
+                        "type": "boolean"
+                    },
                     "health_checks": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest"
                     },
@@ -5544,6 +5568,9 @@
                     "description": {
                         "type": "string"
                     },
+                    "enabled": {
+                        "type": "boolean"
+                    },
                     "health_checks": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest"
                     },
@@ -5774,6 +5801,9 @@
                     },
                     "description": {
                         "type": "string"
+                    },
+                    "enabled": {
+                        "type": "boolean"
                     },
                     "gateway_id": {
                         "type": "string"

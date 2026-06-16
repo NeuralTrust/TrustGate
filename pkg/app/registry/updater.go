@@ -15,6 +15,7 @@ type UpdateInput struct {
 	ID              ids.RegistryID
 	GatewayID       ids.GatewayID
 	Name            *string
+	Enabled         *bool
 	Provider        *string
 	ProviderOptions *map[string]any
 	Description     *string
@@ -64,6 +65,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Registry,
 	}
 	if in.Description != nil {
 		existing.Description = *in.Description
+	}
+	if in.Enabled != nil {
+		existing.Enabled = *in.Enabled
 	}
 	applyLLMTargetUpdate(existing, in)
 	applyMCPTargetUpdate(existing, in)

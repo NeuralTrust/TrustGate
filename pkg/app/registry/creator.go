@@ -13,6 +13,7 @@ type CreateInput struct {
 	GatewayID   ids.GatewayID
 	Name        string
 	Type        domain.Type
+	Enabled     *bool
 	Description string
 	LLMTarget   *domain.LLMTarget
 	MCPTarget   *domain.MCPTarget
@@ -59,6 +60,9 @@ func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Registry,
 	}
 	if err != nil {
 		return nil, err
+	}
+	if in.Enabled != nil {
+		b.Enabled = *in.Enabled
 	}
 	if err := c.repo.Save(ctx, b); err != nil {
 		return nil, err

@@ -63,6 +63,69 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 }
 
+func TestCreator_Create_EnabledFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		enabled bool
+	}{
+		{name: "enabled", enabled: true},
+		{name: "disabled", enabled: false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := repomocks.NewRepository(t)
+			gwID := ids.New[ids.GatewayKind]()
+			repo.EXPECT().
+				Save(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+					return b.Enabled == tt.enabled
+				})).
+				Return(nil).
+				Once()
+
+			creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger())
+			in := validCreateInput(gwID, "backend-"+tt.name)
+			in.Enabled = ptr(tt.enabled)
+			got, err := creator.Create(context.Background(), in)
+			if err != nil {
+				t.Fatalf("Create error: %v", err)
+			}
+			if got.Enabled != tt.enabled {
+				t.Fatalf("Enabled = %v, want %v", got.Enabled, tt.enabled)
+			}
+		})
+	}
+}
+
+func TestCreator_Create_EnabledDefaultsTrueWhenNil(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	gwID := ids.New[ids.GatewayKind]()
+	repo.EXPECT().
+		Save(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+			return b.Enabled
+		})).
+		Return(nil).
+		Once()
+
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger())
+	in := validCreateInput(gwID, "backend-default")
+	if in.Enabled != nil {
+		t.Fatal("precondition: Enabled should be unset in validCreateInput")
+	}
+	got, err := creator.Create(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if !got.Enabled {
+		t.Fatal("Enabled should default to true when not provided")
+	}
+}
+
 func TestCreator_Create_AzureModes(t *testing.T) {
 	t.Parallel()
 
