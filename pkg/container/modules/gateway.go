@@ -3,6 +3,7 @@ package modules
 import (
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
@@ -31,16 +32,24 @@ func Gateway(c *container.Container) error {
 		return err
 	}
 
-	if err := c.Provide(gatewayhttp.NewCreateGatewayHandler); err != nil {
+	if err := c.Provide(func(creator appgateway.Creator, cfg *config.Config) *gatewayhttp.CreateGatewayHandler {
+		return gatewayhttp.NewCreateGatewayHandler(creator, cfg.Server.GatewayBaseDomain)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(gatewayhttp.NewGetGatewayHandler); err != nil {
+	if err := c.Provide(func(finder appgateway.Finder, cfg *config.Config) *gatewayhttp.GetGatewayHandler {
+		return gatewayhttp.NewGetGatewayHandler(finder, cfg.Server.GatewayBaseDomain)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(gatewayhttp.NewListGatewayHandler); err != nil {
+	if err := c.Provide(func(finder appgateway.Finder, cfg *config.Config) *gatewayhttp.ListGatewayHandler {
+		return gatewayhttp.NewListGatewayHandler(finder, cfg.Server.GatewayBaseDomain)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(gatewayhttp.NewUpdateGatewayHandler); err != nil {
+	if err := c.Provide(func(updater appgateway.Updater, cfg *config.Config) *gatewayhttp.UpdateGatewayHandler {
+		return gatewayhttp.NewUpdateGatewayHandler(updater, cfg.Server.GatewayBaseDomain)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(gatewayhttp.NewDeleteGatewayHandler); err != nil {
