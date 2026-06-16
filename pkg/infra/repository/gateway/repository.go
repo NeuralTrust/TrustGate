@@ -36,6 +36,10 @@ func (r *Repository) Save(ctx context.Context, g *domain.Gateway) error {
 	if g == nil {
 		return errors.New("gateway repository: nil gateway")
 	}
+	metadataBytes, err := marshalJSON(g.Metadata)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal metadata: %w", err)
+	}
 	telemetryBytes, err := marshalJSON(g.Telemetry)
 	if err != nil {
 		return fmt.Errorf("gateway repository: marshal telemetry: %w", err)
@@ -49,11 +53,11 @@ func (r *Repository) Save(ctx context.Context, g *domain.Gateway) error {
 		return fmt.Errorf("gateway repository: marshal session_config: %w", err)
 	}
 	const query = `
-		INSERT INTO gateways (id, name, slug, status, domain, telemetry, client_tls, session_config, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+		INSERT INTO gateways (id, name, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, query,
-			g.ID, g.Name, g.Slug, g.Status, g.Domain, telemetryBytes, clientTLSBytes, sessionBytes, g.CreatedAt, g.UpdatedAt,
+			g.ID, g.Name, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, g.CreatedAt, g.UpdatedAt,
 		); err != nil {
 			return mapPgError(err)
 		}
@@ -64,6 +68,10 @@ func (r *Repository) Save(ctx context.Context, g *domain.Gateway) error {
 func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 	if g == nil {
 		return errors.New("gateway repository: nil gateway")
+	}
+	metadataBytes, err := marshalJSON(g.Metadata)
+	if err != nil {
+		return fmt.Errorf("gateway repository: marshal metadata: %w", err)
 	}
 	telemetryBytes, err := marshalJSON(g.Telemetry)
 	if err != nil {
@@ -83,14 +91,15 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 		       slug           = $3,
 		       status         = $4,
 		       domain         = $5,
-		       telemetry      = $6,
-		       client_tls     = $7,
-		       session_config = $8,
-		       updated_at     = $9
+		       metadata       = $6,
+		       telemetry      = $7,
+		       client_tls     = $8,
+		       session_config = $9,
+		       updated_at     = $10
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
 		cmd, err := tx.Exec(ctx, query,
-			g.ID, g.Name, g.Slug, g.Status, g.Domain, telemetryBytes, clientTLSBytes, sessionBytes, g.UpdatedAt,
+			g.ID, g.Name, g.Slug, g.Status, g.Domain, metadataBytes, telemetryBytes, clientTLSBytes, sessionBytes, g.UpdatedAt,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -118,7 +127,7 @@ func (r *Repository) Delete(ctx context.Context, id ids.GatewayID) error {
 
 func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, name, slug, status, domain, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, name, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
 		  FROM gateways
 		 WHERE id = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, id)
@@ -134,7 +143,7 @@ func (r *Repository) FindByID(ctx context.Context, id ids.GatewayID) (*domain.Ga
 
 func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, name, slug, status, domain, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, name, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
 		  FROM gateways
 		 WHERE domain = $1 AND domain <> ''`
 	row := r.conn.Pool.QueryRow(ctx, query, host)
@@ -150,7 +159,7 @@ func (r *Repository) FindByDomain(ctx context.Context, host string) (*domain.Gat
 
 func (r *Repository) FindBySlug(ctx context.Context, slug string) (*domain.Gateway, error) {
 	const query = `
-		SELECT id, name, slug, status, domain, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, name, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
 		  FROM gateways
 		 WHERE slug = $1`
 	row := r.conn.Pool.QueryRow(ctx, query, domain.NormalizeSlug(slug))
@@ -183,7 +192,7 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) ([]*dom
 	}
 
 	const listQuery = `
-		SELECT id, name, slug, status, domain, telemetry, client_tls, session_config, created_at, updated_at
+		SELECT id, name, slug, status, domain, metadata, telemetry, client_tls, session_config, created_at, updated_at
 		  FROM gateways
 		 WHERE ($1 = '' OR lower(name) LIKE '%' || lower($1) || '%')
 		 ORDER BY created_at DESC, id
@@ -214,15 +223,22 @@ type rowScanner interface {
 
 func scanGateway(s rowScanner) (*domain.Gateway, error) {
 	g := &domain.Gateway{}
-	var telemetryRaw, clientTLSRaw, sessionRaw []byte
+	var metadataRaw, telemetryRaw, clientTLSRaw, sessionRaw []byte
 	if err := s.Scan(
 		&g.ID, &g.Name, &g.Slug, &g.Status, &g.Domain,
-		&telemetryRaw, &clientTLSRaw, &sessionRaw,
+		&metadataRaw, &telemetryRaw, &clientTLSRaw, &sessionRaw,
 		&g.CreatedAt, &g.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
 
+	if len(metadataRaw) > 0 {
+		var m map[string]string
+		if err := json.Unmarshal(metadataRaw, &m); err != nil {
+			return nil, fmt.Errorf("scan metadata: %w", err)
+		}
+		g.Metadata = m
+	}
 	if len(telemetryRaw) > 0 {
 		var t telemetry.Telemetry
 		if err := json.Unmarshal(telemetryRaw, &t); err != nil {
@@ -253,6 +269,10 @@ func marshalJSON(v any) ([]byte, error) {
 		return nil, nil
 	}
 	switch t := v.(type) {
+	case map[string]string:
+		if t == nil {
+			return nil, nil
+		}
 	case *telemetry.Telemetry:
 		if t == nil {
 			return nil, nil

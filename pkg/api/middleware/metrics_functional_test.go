@@ -1,0 +1,216 @@
+package middleware_test
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http/httptest"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
+	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
+	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
+	appcatalog "github.com/NeuralTrust/AgentGateway/pkg/app/catalog"
+	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
+	"github.com/NeuralTrust/AgentGateway/pkg/config"
+	gatewaydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	infratelemetry "github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry"
+	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const defaultTopic = "default-topic"
+
+type eventRecorder struct {
+	mu  sync.Mutex
+	got map[string][]*events.Event
+}
+
+func newEventRecorder() *eventRecorder {
+	return &eventRecorder{got: make(map[string][]*events.Event)}
+}
+
+func (r *eventRecorder) record(key string, evt *events.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.got[key] = append(r.got[key], evt)
+}
+
+func (r *eventRecorder) count(key string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.got[key])
+}
+
+func (r *eventRecorder) first(key string) *events.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.got[key]) == 0 {
+		return nil
+	}
+	return r.got[key][0]
+}
+
+type memExporter struct {
+	name  string
+	topic string
+	rec   *eventRecorder
+	fail  bool
+}
+
+func (e *memExporter) Name() string { return e.name }
+
+func (e *memExporter) Publish(_ context.Context, evt *events.Event) error {
+	if e.fail {
+		return errors.New("memExporter: forced publish failure")
+	}
+	e.rec.record(e.name+"/"+e.topic, evt)
+	return nil
+}
+
+func (e *memExporter) Close() {}
+
+type memTemplate struct {
+	name string
+	rec  *eventRecorder
+	fail bool
+}
+
+func (t *memTemplate) Name() string { return t.name }
+
+func (t *memTemplate) ValidateConfig(settings map[string]interface{}) error {
+	if topicOf(settings) == "" {
+		return errors.New("memTemplate: topic is required")
+	}
+	return nil
+}
+
+func (t *memTemplate) WithSettings(settings map[string]interface{}) (appmetrics.Exporter, error) {
+	return &memExporter{name: t.name, topic: topicOf(settings), rec: t.rec, fail: t.fail}, nil
+}
+
+func topicOf(settings map[string]interface{}) string {
+	topic, _ := settings["topic"].(string)
+	return topic
+}
+
+type zeroPricing struct{}
+
+func (zeroPricing) Resolve(_ context.Context, _ string, _ string) appcatalog.Pricing {
+	return appcatalog.Pricing{}
+}
+
+func newMetricsApp(t *testing.T, gw *gatewaydomain.Gateway, rec *eventRecorder) *fiber.App {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	factory := infratelemetry.NewExporterLocator(
+		infratelemetry.WithExporter("kafka", &memTemplate{name: "kafka", rec: rec}),
+		infratelemetry.WithExporter("memory", &memTemplate{name: "memory", rec: rec}),
+		infratelemetry.WithExporter("broken", &memTemplate{name: "broken", rec: rec, fail: true}),
+	)
+	cache := appmetrics.NewExporterCache(factory, logger)
+	def, err := factory.Build(telemetrydomain.ExporterConfig{
+		Name:     "kafka",
+		Settings: map[string]interface{}{"topic": defaultTopic},
+	})
+	require.NoError(t, err)
+
+	builder := appmetrics.NewBuilder(adapter.NewRegistry(), zeroPricing{})
+	pipeline := appmetrics.NewPipeline(builder, cache, logger, def)
+	worker := appmetrics.NewWorker(logger, pipeline)
+	worker.StartWorkers(2)
+	t.Cleanup(worker.Shutdown)
+
+	cfg := &config.Config{}
+	cfg.Telemetry.Enabled = true
+	mw := middleware.NewMetricsMiddleware(worker, cfg)
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		ctx := appconsumer.WithGatewayID(c.UserContext(), gw.ID)
+		ctx = appgateway.WithGateway(ctx, gw)
+		c.SetUserContext(ctx)
+		return c.Next()
+	})
+	app.Use(mw.Middleware())
+	app.Post("/v1/chat/completions", func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	})
+	return app
+}
+
+func postChat(t *testing.T, app *fiber.App) {
+	t.Helper()
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodPost, "/v1/chat/completions", nil))
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func TestMetricsFunctional_DefaultPlusExtraAndTeamID(t *testing.T) {
+	rec := newEventRecorder()
+	gw := &gatewaydomain.Gateway{
+		ID:       ids.New[ids.GatewayKind](),
+		Metadata: map[string]string{gatewaydomain.MetadataTeamIDKey: "team-9"},
+		Telemetry: &telemetrydomain.Telemetry{
+			Exporters: []telemetrydomain.ExporterConfig{
+				{Name: "memory", Settings: map[string]interface{}{"topic": "team-metrics"}},
+			},
+		},
+	}
+	app := newMetricsApp(t, gw, rec)
+	postChat(t, app)
+
+	require.Eventually(t, func() bool {
+		return rec.count("kafka/"+defaultTopic) == 1 && rec.count("memory/team-metrics") == 1
+	}, 2*time.Second, 10*time.Millisecond)
+
+	assert.Equal(t, "team-9", rec.first("kafka/"+defaultTopic).TeamID)
+	assert.Equal(t, "team-9", rec.first("memory/team-metrics").TeamID)
+}
+
+func TestMetricsFunctional_OverrideByNameRedirectsDefault(t *testing.T) {
+	rec := newEventRecorder()
+	gw := &gatewaydomain.Gateway{
+		ID: ids.New[ids.GatewayKind](),
+		Telemetry: &telemetrydomain.Telemetry{
+			Exporters: []telemetrydomain.ExporterConfig{
+				{Name: "kafka", Settings: map[string]interface{}{"topic": "custom-topic"}},
+			},
+		},
+	}
+	app := newMetricsApp(t, gw, rec)
+	postChat(t, app)
+
+	require.Eventually(t, func() bool {
+		return rec.count("kafka/custom-topic") == 1
+	}, 2*time.Second, 10*time.Millisecond)
+
+	assert.Equal(t, 0, rec.count("kafka/"+defaultTopic), "override by name must redirect the default away from its topic")
+}
+
+func TestMetricsFunctional_FailingExporterDoesNotBreakOthers(t *testing.T) {
+	rec := newEventRecorder()
+	gw := &gatewaydomain.Gateway{
+		ID: ids.New[ids.GatewayKind](),
+		Telemetry: &telemetrydomain.Telemetry{
+			Exporters: []telemetrydomain.ExporterConfig{
+				{Name: "broken", Settings: map[string]interface{}{"topic": "whatever"}},
+			},
+		},
+	}
+	app := newMetricsApp(t, gw, rec)
+	postChat(t, app)
+
+	require.Eventually(t, func() bool {
+		return rec.count("kafka/"+defaultTopic) == 1
+	}, 2*time.Second, 10*time.Millisecond)
+}

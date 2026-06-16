@@ -27,6 +27,8 @@ type captureExporter struct {
 	events []*events.Event
 }
 
+func (c *captureExporter) Name() string { return "capture" }
+
 func (c *captureExporter) Publish(_ context.Context, evt *events.Event) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -58,7 +60,7 @@ func TestWorker_PublishesConsolidatedEvent(t *testing.T) {
 	builder := appmetrics.NewBuilder(adapter.NewRegistry(), stubPricingResolver{
 		price: appcatalog.Pricing{ModelLabel: "GPT-4o", InputPrice: 0.0000025, OutputPrice: 0.00001, Found: true},
 	})
-	pipeline := appmetrics.NewPipeline(builder, capture, newTestLogger())
+	pipeline := appmetrics.NewPipeline(builder, nil, newTestLogger(), capture)
 
 	w := appmetrics.NewWorker(newTestLogger(), pipeline)
 	w.StartWorkers(1)
@@ -90,7 +92,7 @@ func TestWorker_PublishesConsolidatedEvent(t *testing.T) {
 	start := time.UnixMilli(5_000_000)
 	end := start.Add(310 * time.Millisecond)
 
-	w.Process(rt, req, resp, start, end)
+	w.Process(rt, req, resp, start, end, nil)
 
 	require.Eventually(t, func() bool {
 		return len(capture.snapshot()) == 1
@@ -121,8 +123,8 @@ func TestWorker_NilPipelineAndNilArgsAreNoop(t *testing.T) {
 
 	req := &infracontext.RequestContext{GatewayID: "gw-1"}
 	resp := &infracontext.ResponseContext{}
-	w.Process(nil, req, resp, time.Now(), time.Now())
-	w.Process(nil, nil, resp, time.Now(), time.Now())
-	w.Process(nil, req, nil, time.Now(), time.Now())
+	w.Process(nil, req, resp, time.Now(), time.Now(), nil)
+	w.Process(nil, nil, resp, time.Now(), time.Now(), nil)
+	w.Process(nil, req, nil, time.Now(), time.Now(), nil)
 	time.Sleep(20 * time.Millisecond)
 }

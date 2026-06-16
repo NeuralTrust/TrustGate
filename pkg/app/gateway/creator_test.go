@@ -9,6 +9,7 @@ import (
 	"time"
 
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
+	metricsmocks "github.com/NeuralTrust/AgentGateway/pkg/app/metrics/mocks"
 	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway/mocks"
@@ -40,7 +41,7 @@ func TestCreator_Create_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	creator := appgateway.NewCreator(repo, mgr, newTestLogger())
+	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
 
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Name:      "Prod",
@@ -75,7 +76,7 @@ func TestCreator_Create_PreservesExplicitSessionConfig(t *testing.T) {
 	repo.EXPECT().Save(mock.Anything, mock.Anything).Return(nil).Once()
 
 	mgr := newCacheManager()
-	creator := appgateway.NewCreator(repo, mgr, newTestLogger())
+	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
 
 	g, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Name:          "Prod",
@@ -93,13 +94,59 @@ func TestCreator_Create_RejectsEmptyName(t *testing.T) {
 	t.Parallel()
 	repo := repomocks.NewRepository(t)
 	mgr := newCacheManager()
-	creator := appgateway.NewCreator(repo, mgr, newTestLogger())
+	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Name: "",
 	})
 	if err == nil {
 		t.Fatal("expected validation error, got nil")
+	}
+}
+
+func TestCreator_Create_RejectsUnknownExporter(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	factory := metricsmocks.NewExporterFactory(t)
+	factory.EXPECT().
+		Validate(mock.MatchedBy(func(cfg telemetry.ExporterConfig) bool { return cfg.Name == "datadog" })).
+		Return(errors.New("unknown exporter")).
+		Once()
+
+	creator := appgateway.NewCreator(repo, newCacheManager(), factory, newTestLogger())
+
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Name: "Prod",
+		Telemetry: &telemetry.Telemetry{
+			Exporters: []telemetry.ExporterConfig{
+				{Name: "datadog", Settings: map[string]interface{}{}},
+			},
+		},
+	})
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation, got %v", err)
+	}
+}
+
+func TestCreator_Create_RejectsDuplicateExporter(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	factory := metricsmocks.NewExporterFactory(t)
+	factory.EXPECT().Validate(mock.Anything).Return(nil).Maybe()
+
+	creator := appgateway.NewCreator(repo, newCacheManager(), factory, newTestLogger())
+
+	_, err := creator.Create(context.Background(), appgateway.CreateInput{
+		Name: "Prod",
+		Telemetry: &telemetry.Telemetry{
+			Exporters: []telemetry.ExporterConfig{
+				{Name: "kafka", Settings: map[string]interface{}{"topic": "a"}},
+				{Name: "kafka", Settings: map[string]interface{}{"topic": "b"}},
+			},
+		},
+	})
+	if !errors.Is(err, commonerrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation for duplicate exporter, got %v", err)
 	}
 }
 
@@ -112,7 +159,7 @@ func TestCreator_Create_PropagatesRepoError(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	creator := appgateway.NewCreator(repo, mgr, newTestLogger())
+	creator := appgateway.NewCreator(repo, mgr, nil, newTestLogger())
 
 	_, err := creator.Create(context.Background(), appgateway.CreateInput{
 		Name: "Prod",
