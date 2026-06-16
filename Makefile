@@ -1,9 +1,9 @@
-.PHONY: help build run run-admin run-proxy run-proxy-sandbox run-servers local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools swagger openapi docs \
+.PHONY: help build run run-admin run-proxy run-all run-proxy-sandbox run-servers up down logs local-dns test test-race test-cover test-functional test-repositories lint fmt tidy generate gen-mocks tools swagger openapi docs license license-check \
         install-pre-commit \
         docker-build docker-push compose-up compose-down compose-logs
 
 # --- Build metadata injected into the binary via -ldflags ------------------
-APP_NAME      := agentgateway
+APP_NAME      := trustgate
 VERSION       ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev")
 COMMIT        ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -26,7 +26,7 @@ help: ## Show this help message
 build: ## Build the agentgateway binary into ./bin/
 	@$(info $(M) Building $(APP_NAME) $(VERSION) ...)
 	@mkdir -p bin
-	go build -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME) ./cmd/agentgateway
+	go build -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME) ./cmd/trustgate
 
 run: run-proxy ## Build and run the proxy server (alias for run-proxy)
 
@@ -38,6 +38,10 @@ run-proxy: build ## Build and run the proxy server
 	@$(info $(M) Running $(APP_NAME) proxy ...)
 	./bin/$(APP_NAME) proxy
 
+run-all: build ## Build and run admin + proxy together in one process (single-node)
+	@$(info $(M) Running $(APP_NAME) admin + proxy ...)
+	./bin/$(APP_NAME) run
+
 run-proxy-sandbox: build ## Run the proxy resolving gateways from {slug}.gw.neuraltrust.sandbox (see local-dns)
 	@$(info $(M) Running $(APP_NAME) proxy with sandbox base domain ...)
 	GATEWAY_BASE_DOMAIN=gw.neuraltrust.sandbox ./bin/$(APP_NAME) proxy
@@ -46,9 +50,23 @@ local-dns: ## Point *.gw.neuraltrust.sandbox to 127.0.0.1 via dnsmasq (macOS, re
 	@$(info $(M) Configuring local sandbox DNS ...)
 	./scripts/setup-local-subdomains.sh
 
-run-servers: ## Start the full stack + proxy & admin servers in docker
-	@$(info $(M) Starting full stack with proxy + admin servers ...)
+run-servers: up ## Alias for 'up': start the full stack + admin & proxy in docker
+
+up: ## One command to bring up everything (infra + admin & proxy) in Docker
+	@$(info $(M) Bringing up the full AgentGateway stack ...)
 	docker compose -f docker-compose.yaml -f docker-compose.api.yaml up -d --build
+	@echo ""
+	@echo "  AgentGateway is up:"
+	@echo "    Admin  -> http://localhost:8080  (healthz: /healthz)"
+	@echo "    Proxy  -> http://localhost:8081  (healthz: /healthz)"
+	@echo "  Tail logs with 'make logs', tear down with 'make down'."
+
+down: ## Tear down the full stack and remove volumes
+	@$(info $(M) Tearing down the full AgentGateway stack ...)
+	docker compose -f docker-compose.yaml -f docker-compose.api.yaml down -v
+
+logs: ## Tail logs from the full stack
+	docker compose -f docker-compose.yaml -f docker-compose.api.yaml logs -f --tail=200
 
 test: ## Run unit tests
 	@$(info $(M) Running unit tests ...)
@@ -92,13 +110,14 @@ tools: ## Install Go dev tools pinned in tools/tools.go
 	@$(info $(M) Installing dev tools ...)
 	go install github.com/vektra/mockery/v2
 	go install github.com/swaggo/swag/cmd/swag
+	go install github.com/google/addlicense
 
 swagger: ## Generate the Swagger 2.0 spec (docs/swagger.{json,yaml} + docs.go) from handler annotations
 	@$(info $(M) Generating Swagger 2.0 spec ...)
 	@command -v swag >/dev/null 2>&1 || { \
 	  echo "swag not found in PATH; run 'make tools' first" >&2; exit 1; \
 	}
-	swag init -g cmd/agentgateway/main.go --parseDependency --parseInternal --output docs
+	swag init -g cmd/trustgate/main.go --parseDependency --parseInternal --output docs
 
 openapi: swagger ## Convert the Swagger 2.0 spec into an OpenAPI 3 spec (docs/openapi.json)
 	@$(info $(M) Converting Swagger 2.0 -> OpenAPI 3 ...)
@@ -115,6 +134,16 @@ gen-mocks: ## Regenerate all mockery mocks across the codebase
 	  echo "mockery not found in PATH; run 'make tools' first" >&2; exit 1; \
 	}
 	go generate ./...
+
+license: ## Add Apache 2.0 license headers to source files
+	@$(info $(M) Adding Apache 2.0 license headers ...)
+	@command -v addlicense >/dev/null 2>&1 || { echo "addlicense not found in PATH; run 'make tools' first" >&2; exit 1; }
+	addlicense -v -c "NeuralTrust" -y 2026 -l apache -ignore '**/mocks/**' cmd pkg tools
+
+license-check: ## Verify every source file has a license header
+	@$(info $(M) Checking license headers ...)
+	@command -v addlicense >/dev/null 2>&1 || { echo "addlicense not found in PATH; run 'make tools' first" >&2; exit 1; }
+	addlicense -check -c "NeuralTrust" -y 2026 -l apache -ignore '**/mocks/**' cmd pkg tools
 
 install-pre-commit: ## Install the git pre-commit hook
 	@$(info $(M) Installing pre-commit hook ...)

@@ -47,11 +47,12 @@ cd AgentGateway
 # Copy the env template and adjust as needed
 cp .env.example .env
 
-# Build and start the full stack (Postgres, Redis, Kafka, Zookeeper) + admin & proxy
-make run-servers
+# One command to bring up everything (Postgres, Redis, Kafka, Zookeeper) + admin & proxy
+make up
 
-# Tail the logs
-docker compose -f docker-compose.yaml -f docker-compose.api.yaml logs -f
+# Tail the logs / tear everything down
+make logs
+make down
 ```
 
 Then hit the health probes:
@@ -73,7 +74,10 @@ Run the infra in Docker and the binary on your machine so you can attach a debug
 # 1. Boot the local dev infra (Postgres, Redis, Kafka, Zookeeper)
 make compose-up
 
-# 2. Run the admin and the proxy in two separate terminals
+# 2a. Run admin + proxy together in a single process (simplest, single-node)
+make run-all        # applies migrations, starts admin on :8080 and proxy on :8081
+
+# 2b. ...or run each plane in its own terminal (closer to production)
 make run-admin      # terminal 1 — applies migrations, starts admin on :8080
 make run-proxy      # terminal 2 — applies migrations, starts proxy on :8081
 
@@ -105,9 +109,10 @@ AgentGateway ships a **single binary** that boots **one** HTTP server, selected 
 so the **Admin** and **Proxy** planes scale independently.
 
 ```bash
-./agentgateway              # → proxy (default)
-./agentgateway proxy        # → proxy
-./agentgateway admin        # → admin
+./trustgate              # → proxy (default)
+./trustgate proxy        # → proxy
+./trustgate admin        # → admin
+./trustgate run          # → admin + proxy together in one process (single-node)
 ```
 
 ```mermaid
@@ -236,7 +241,7 @@ Specs live under [`docs/`](docs) (`swagger.json`, `swagger.yaml`, `openapi.json`
 ## 🗂️ Repository layout
 
 ```
-cmd/agentgateway/      # entry point (single binary: proxy | admin)
+cmd/trustgate/         # entry point (single binary: proxy | admin | mcp | run)
 pkg/version/           # ldflag-fed build info
 pkg/config/            # env-only config loader (.env via godotenv in dev)
 pkg/domain/            # domain entities, value objects and port interfaces
