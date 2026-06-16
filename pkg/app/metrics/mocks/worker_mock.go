@@ -5,6 +5,8 @@ package mocks
 import (
 	context "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 
+	telemetry "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
+
 	time "time"
 
 	trace "github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
@@ -24,9 +26,9 @@ func (_m *Worker) EXPECT() *Worker_Expecter {
 	return &Worker_Expecter{mock: &_m.Mock}
 }
 
-// Process provides a mock function with given fields: requestTrace, req, resp, startTime, endTime
-func (_m *Worker) Process(requestTrace *trace.RequestTrace, req *context.RequestContext, resp *context.ResponseContext, startTime time.Time, endTime time.Time) {
-	_m.Called(requestTrace, req, resp, startTime, endTime)
+// Process provides a mock function with given fields: requestTrace, req, resp, startTime, endTime, exporters
+func (_m *Worker) Process(requestTrace *trace.RequestTrace, req *context.RequestContext, resp *context.ResponseContext, startTime time.Time, endTime time.Time, exporters []telemetry.ExporterConfig) {
+	_m.Called(requestTrace, req, resp, startTime, endTime, exporters)
 }
 
 // Worker_Process_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Process'
@@ -40,13 +42,14 @@ type Worker_Process_Call struct {
 //   - resp *context.ResponseContext
 //   - startTime time.Time
 //   - endTime time.Time
-func (_e *Worker_Expecter) Process(requestTrace interface{}, req interface{}, resp interface{}, startTime interface{}, endTime interface{}) *Worker_Process_Call {
-	return &Worker_Process_Call{Call: _e.mock.On("Process", requestTrace, req, resp, startTime, endTime)}
+//   - exporters []telemetry.ExporterConfig
+func (_e *Worker_Expecter) Process(requestTrace interface{}, req interface{}, resp interface{}, startTime interface{}, endTime interface{}, exporters interface{}) *Worker_Process_Call {
+	return &Worker_Process_Call{Call: _e.mock.On("Process", requestTrace, req, resp, startTime, endTime, exporters)}
 }
 
-func (_c *Worker_Process_Call) Run(run func(requestTrace *trace.RequestTrace, req *context.RequestContext, resp *context.ResponseContext, startTime time.Time, endTime time.Time)) *Worker_Process_Call {
+func (_c *Worker_Process_Call) Run(run func(requestTrace *trace.RequestTrace, req *context.RequestContext, resp *context.ResponseContext, startTime time.Time, endTime time.Time, exporters []telemetry.ExporterConfig)) *Worker_Process_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(*trace.RequestTrace), args[1].(*context.RequestContext), args[2].(*context.ResponseContext), args[3].(time.Time), args[4].(time.Time))
+		run(args[0].(*trace.RequestTrace), args[1].(*context.RequestContext), args[2].(*context.ResponseContext), args[3].(time.Time), args[4].(time.Time), args[5].([]telemetry.ExporterConfig))
 	})
 	return _c
 }
@@ -56,7 +59,7 @@ func (_c *Worker_Process_Call) Return() *Worker_Process_Call {
 	return _c
 }
 
-func (_c *Worker_Process_Call) RunAndReturn(run func(*trace.RequestTrace, *context.RequestContext, *context.ResponseContext, time.Time, time.Time)) *Worker_Process_Call {
+func (_c *Worker_Process_Call) RunAndReturn(run func(*trace.RequestTrace, *context.RequestContext, *context.ResponseContext, time.Time, time.Time, []telemetry.ExporterConfig)) *Worker_Process_Call {
 	_c.Run(run)
 	return _c
 }

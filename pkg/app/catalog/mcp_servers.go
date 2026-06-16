@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package catalog
 
 import (
@@ -66,16 +80,32 @@ type rawServer struct {
 	RequiresAuth bool                    `json:"requires_auth"`
 	AuthHeaders  []domain.MCPAuthHeader  `json:"auth_headers"`
 	OAuth        *domain.MCPOAuth        `json:"oauth"`
+	Tools        []domain.MCPTool        `json:"tools"`
 	Relevance    int                     `json:"relevance"`
 }
 
 func loadCuratedMCPServers() ([]domain.MCPServer, error) {
+	return parseCuratedMCPServers(mcpcatalog.EnterpriseServersJSON)
+}
+
+func parseCuratedMCPServers(data []byte) ([]domain.MCPServer, error) {
 	var raw rawCatalog
-	if err := json.Unmarshal(mcpcatalog.EnterpriseServersJSON, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, err
 	}
 	servers := make([]domain.MCPServer, 0, len(raw.Servers))
+	seen := make(map[string]struct{}, len(raw.Servers))
 	for _, s := range raw.Servers {
+		// The catalog code (seed "name") is the stable id the UI joins on to
+		// detect already-connected servers, so it must be unique. Reject
+		// duplicates at load time rather than serving an ambiguous catalog.
+		if s.Name == "" {
+			return nil, fmt.Errorf("mcp catalog: server has empty name")
+		}
+		if _, dup := seen[s.Name]; dup {
+			return nil, fmt.Errorf("mcp catalog: duplicate server code %q", s.Name)
+		}
+		seen[s.Name] = struct{}{}
 		servers = append(servers, domain.MCPServer{
 			Code:           s.Name,
 			DisplayName:    s.Vendor,
@@ -91,6 +121,7 @@ func loadCuratedMCPServers() ([]domain.MCPServer, error) {
 			URLVariables:   s.URLVariables,
 			AuthHeaders:    s.AuthHeaders,
 			OAuth:          s.OAuth,
+			Tools:          s.Tools,
 			Source:         curatedSource,
 		})
 	}

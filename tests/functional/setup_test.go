@@ -169,16 +169,16 @@ func buildGatewayBinary(env []string) string {
 	if err != nil {
 		log.Fatalf("failed to create temp dir for gateway binary: %v", err)
 	}
-	binaryPath := filepath.Join(tmpDir, "agentgateway")
+	binaryPath := filepath.Join(tmpDir, "trustgate")
 
-	fmt.Println("Pre-building agentgateway binary...")
+	fmt.Println("Pre-building trustgate binary...")
 	start := time.Now()
-	cmd := exec.Command("go", "build", "-o", binaryPath, "../../cmd/agentgateway") //nolint:gosec // controlled paths
+	cmd := exec.Command("go", "build", "-o", binaryPath, "../../cmd/trustgate") //nolint:gosec // controlled paths
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		log.Fatalf("failed to build agentgateway binary: %v", err)
+		log.Fatalf("failed to build trustgate binary: %v", err)
 	}
 	fmt.Printf("Built agentgateway binary in %s\n", time.Since(start).Round(time.Millisecond))
 	return binaryPath

@@ -277,6 +277,16 @@ definitions:
       param_value:
         type: string
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest:
+    properties:
+      weight:
+        description: Weight is the relative weighted-round-robin share on a 1..100
+          scale.
+        example: 1
+        maximum: 100
+        minimum: 1
+        type: integer
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.CreateConsumerRequest:
     properties:
       active:
@@ -387,6 +397,11 @@ definitions:
       model_policies:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest'
       weight:
+        description: Weight is the relative weighted-round-robin share on a 1..100
+          scale.
+        example: 1
+        maximum: 100
+        minimum: 1
         type: integer
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest:
@@ -616,6 +631,10 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig'
       domain:
         type: string
+      metadata:
+        additionalProperties:
+          type: string
+        type: object
       name:
         type: string
       session_config:
@@ -631,6 +650,10 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_gateway.ClientTLSConfig'
       domain:
         type: string
+      metadata:
+        additionalProperties:
+          type: string
+        type: object
       name:
         type: string
       session_config:
@@ -650,8 +673,14 @@ definitions:
         type: string
       domain:
         type: string
+      host:
+        type: string
       id:
         type: string
+      metadata:
+        additionalProperties:
+          type: string
+        type: object
       name:
         type: string
       session_config:
@@ -842,6 +871,8 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetAuthRequest'
       description:
         type: string
+      enabled:
+        type: boolean
       health_checks:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest'
       mcp_target:
@@ -914,6 +945,8 @@ definitions:
     properties:
       auth:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPAuthRequest'
+      code:
+        type: string
       headers:
         additionalProperties:
           type: string
@@ -994,6 +1027,8 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.TargetAuthRequest'
       description:
         type: string
+      enabled:
+        type: boolean
       health_checks:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest'
       mcp_target:
@@ -1129,6 +1164,8 @@ definitions:
     properties:
       auth:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPAuthResponse'
+      code:
+        type: string
       headers:
         additionalProperties:
           type: string
@@ -1146,6 +1183,8 @@ definitions:
         type: string
       description:
         type: string
+      enabled:
+        type: boolean
       gateway_id:
         type: string
       health_checks:
@@ -1615,6 +1654,16 @@ definitions:
         type: array
       source:
         type: string
+      tools:
+        description: |-
+          Tools is a snapshot of the server's advertised tools, captured by an
+          unauthenticated tools/list where the server allows it. It is a preview for
+          the catalog UI; the authoritative per-connection tool set is discovered at
+          runtime by the gateway's introspector (and may be tenant/user-specific).
+          Empty when the server requires auth to list tools.
+        items:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPTool'
+        type: array
       transport:
         type: string
       url:
@@ -1624,6 +1673,13 @@ definitions:
           $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable'
         type: array
       vendor:
+        type: string
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPTool:
+    properties:
+      description:
+        type: string
+      name:
         type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPURLVariable:
@@ -2607,7 +2663,10 @@ paths:
       tags:
       - consumers
     post:
-      description: Associates a registry with a consumer (idempotent).
+      consumes:
+      - application/json
+      description: Associates a registry with a consumer (idempotent). The optional
+        body sets the registry weight for weighted load balancing.
       parameters:
       - description: Gateway id
         format: uuid
@@ -2627,6 +2686,11 @@ paths:
         name: registry_id
         required: true
         type: string
+      - description: Optional registry weight
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest'
       produces:
       - application/json
       responses:

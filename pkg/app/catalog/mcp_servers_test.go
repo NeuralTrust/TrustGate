@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package catalog
 
 import (
@@ -48,6 +62,43 @@ func TestListMCPServers_SortedByRelevanceDesc(t *testing.T) {
 
 	// The first entry must be a ranked (relevant) server, not an unranked one.
 	require.Greater(t, servers[0].Relevance, 0, "top entry should be a ranked server")
+}
+
+func TestParseCuratedMCPServers_RejectsDuplicateCode(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"servers":[
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"},
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp"}
+	]}`)
+
+	_, err := parseCuratedMCPServers(data)
+	require.ErrorContains(t, err, "duplicate server code")
+	require.ErrorContains(t, err, "com.acme/mcp")
+}
+
+func TestParseCuratedMCPServers_RejectsEmptyName(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"servers":[
+		{"name":"","transport":"streamable-http","server_url":"https://a.example.com/mcp"}
+	]}`)
+
+	_, err := parseCuratedMCPServers(data)
+	require.ErrorContains(t, err, "empty name")
+}
+
+func TestParseCuratedMCPServers_AcceptsUniqueCodes(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"servers":[
+		{"name":"com.acme/mcp","transport":"streamable-http","server_url":"https://a.example.com/mcp"},
+		{"name":"com.beta/mcp","transport":"streamable-http","server_url":"https://b.example.com/mcp"}
+	]}`)
+
+	servers, err := parseCuratedMCPServers(data)
+	require.NoError(t, err)
+	require.Len(t, servers, 2)
 }
 
 func TestRequiresConfig_Classification(t *testing.T) {

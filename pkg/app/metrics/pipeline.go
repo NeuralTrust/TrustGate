@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package metrics
 
 import (
@@ -5,28 +19,32 @@ import (
 	"log/slog"
 	"time"
 
+	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 )
 
-// Exporter publishes a consolidated event to its transport (e.g. Kafka).
 type Exporter interface {
+	Name() string
 	Publish(ctx context.Context, evt *events.Event) error
 	Close()
 }
 
-// Pipeline folds a request trace into a single consolidated event and publishes
-// it. When telemetry is disabled the container injects a nil pipeline and the
-// worker skips it.
 type Pipeline struct {
-	builder  *Builder
-	exporter Exporter
-	logger   *slog.Logger
+	builder          *Builder
+	defaultExporters []Exporter
+	cache            *ExporterCache
+	logger           *slog.Logger
 }
 
-func NewPipeline(builder *Builder, exporter Exporter, logger *slog.Logger) *Pipeline {
-	return &Pipeline{builder: builder, exporter: exporter, logger: logger}
+func NewPipeline(builder *Builder, cache *ExporterCache, logger *slog.Logger, defaults ...Exporter) *Pipeline {
+	return &Pipeline{
+		builder:          builder,
+		defaultExporters: defaults,
+		cache:            cache,
+		logger:           logger,
+	}
 }
 
 func (p *Pipeline) publish(
@@ -34,22 +52,54 @@ func (p *Pipeline) publish(
 	req *infracontext.RequestContext,
 	resp *infracontext.ResponseContext,
 	startTime, endTime time.Time,
+	explicit []telemetrydomain.ExporterConfig,
 ) {
-	if p == nil || p.exporter == nil || p.builder == nil {
+	if p == nil || p.builder == nil || req == nil || resp == nil {
+		return
+	}
+	targets := p.resolveTargets(explicit)
+	if len(targets) == 0 {
 		return
 	}
 	ctx := context.Background()
 	evt := p.builder.Build(ctx, requestTrace, req, resp, startTime, endTime)
-	if err := p.exporter.Publish(ctx, evt); err != nil {
-		p.logger.Error("failed to publish metrics event",
-			slog.String("gateway_id", req.GatewayID),
-			slog.String("error", err.Error()))
+	for _, exporter := range targets {
+		if err := exporter.Publish(ctx, evt); err != nil {
+			p.logger.Error("failed to publish metrics event",
+				slog.String("gateway_id", req.GatewayID),
+				slog.String("exporter", exporter.Name()),
+				slog.String("error", err.Error()))
+		}
 	}
 }
 
+func (p *Pipeline) resolveTargets(explicit []telemetrydomain.ExporterConfig) []Exporter {
+	var resolved []Exporter
+	if len(explicit) > 0 && p.cache != nil {
+		resolved = p.cache.Resolve(explicit)
+	}
+	resolvedNames := make(map[string]struct{}, len(resolved))
+	for _, e := range resolved {
+		resolvedNames[e.Name()] = struct{}{}
+	}
+	targets := make([]Exporter, 0, len(resolved)+len(p.defaultExporters))
+	targets = append(targets, resolved...)
+	for _, d := range p.defaultExporters {
+		if _, replaced := resolvedNames[d.Name()]; !replaced {
+			targets = append(targets, d)
+		}
+	}
+	return targets
+}
+
 func (p *Pipeline) close() {
-	if p == nil || p.exporter == nil {
+	if p == nil {
 		return
 	}
-	p.exporter.Close()
+	for _, d := range p.defaultExporters {
+		d.Close()
+	}
+	if p.cache != nil {
+		p.cache.CloseAll()
+	}
 }

@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package gateway
 
 import (
@@ -5,6 +19,7 @@ import (
 	"log/slog"
 	"time"
 
+	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
@@ -17,6 +32,7 @@ type UpdateInput struct {
 	Slug            *string
 	Status          *string
 	Domain          *string
+	Metadata        map[string]string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig *domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
@@ -30,27 +46,33 @@ type Updater interface {
 var _ Updater = (*updater)(nil)
 
 type updater struct {
-	repo        domain.Repository
-	memoryCache *cache.TTLMap
-	publisher   cache.EventPublisher
-	logger      *slog.Logger
+	repo            domain.Repository
+	memoryCache     *cache.TTLMap
+	publisher       cache.EventPublisher
+	exporterFactory appmetrics.ExporterFactory
+	logger          *slog.Logger
 }
 
 func NewUpdater(
 	repo domain.Repository,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
+	exporterFactory appmetrics.ExporterFactory,
 	logger *slog.Logger,
 ) Updater {
 	return &updater{
-		repo:        repo,
-		memoryCache: manager.GetTTLMap(cache.GatewayTTLName),
-		publisher:   publisher,
-		logger:      logger,
+		repo:            repo,
+		memoryCache:     manager.GetTTLMap(cache.GatewayTTLName),
+		publisher:       publisher,
+		exporterFactory: exporterFactory,
+		logger:          logger,
 	}
 }
 
 func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, error) {
+	if err := validateExporters(u.exporterFactory, in.Telemetry); err != nil {
+		return nil, err
+	}
 	g, err := u.repo.FindByID(ctx, in.ID)
 	if err != nil {
 		return nil, err
@@ -67,6 +89,9 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Gateway, 
 	}
 	if in.Domain != nil {
 		g.Domain = *in.Domain
+	}
+	if in.Metadata != nil {
+		g.Metadata = in.Metadata
 	}
 	if in.Telemetry != nil {
 		g.Telemetry = in.Telemetry

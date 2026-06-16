@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package request
 
 import (
@@ -11,6 +25,7 @@ import (
 type CreateRegistryRequest struct {
 	Name            string               `json:"name"`
 	Type            string               `json:"type,omitempty"`
+	Enabled         *bool                `json:"enabled,omitempty"`
 	Provider        string               `json:"provider,omitempty"`
 	ProviderOptions map[string]any       `json:"provider_options,omitempty"`
 	Description     string               `json:"description,omitempty"`
@@ -20,6 +35,7 @@ type CreateRegistryRequest struct {
 }
 
 type MCPTargetRequest struct {
+	Code      string            `json:"code,omitempty"`
 	URL       string            `json:"url"`
 	Transport string            `json:"transport,omitempty"`
 	Headers   map[string]string `json:"headers,omitempty"`
@@ -163,6 +179,7 @@ func (t *MCPTargetRequest) ToDomain() *domain.MCPTarget {
 		return nil
 	}
 	out := &domain.MCPTarget{
+		Code:      t.Code,
 		URL:       t.URL,
 		Transport: domain.MCPTransport(t.Transport),
 		Headers:   t.Headers,

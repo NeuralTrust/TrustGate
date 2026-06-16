@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package registry_test
 
 import (
@@ -36,6 +50,53 @@ func TestUpdater_Update_Success(t *testing.T) {
 	}
 	if got.Name != "new" {
 		t.Fatalf("Name = %q, want %q", got.Name, "new")
+	}
+}
+
+func TestUpdater_Update_TogglesEnabled(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "openai", Auth: domain.NewAPIKeyAuth("sk-1")})
+	if !existing.Enabled {
+		t.Fatal("precondition: freshly created registry should be enabled")
+	}
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+		return b.ID == existing.ID && !b.Enabled
+	})).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:      existing.ID,
+		Enabled: ptr(false),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if got.Enabled {
+		t.Fatal("Enabled should be false after toggle")
+	}
+}
+
+func TestUpdater_Update_EnabledUnchangedWhenNil(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	existing, _ := domain.NewLLMRegistry(ids.New[ids.GatewayKind](), "old", "", &domain.LLMTarget{Provider: "openai", Auth: domain.NewAPIKeyAuth("sk-1")})
+	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
+	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+		return b.Enabled
+	})).Return(nil).Once()
+
+	updater := appregistry.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	got, err := updater.Update(context.Background(), appregistry.UpdateInput{
+		ID:   existing.ID,
+		Name: ptr("renamed"),
+	})
+	if err != nil {
+		t.Fatalf("Update error: %v", err)
+	}
+	if !got.Enabled {
+		t.Fatal("Enabled should remain true when not provided")
 	}
 }
 

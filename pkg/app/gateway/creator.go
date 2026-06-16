@@ -1,9 +1,24 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package gateway
 
 import (
 	"context"
 	"log/slog"
 
+	appmetrics "github.com/NeuralTrust/AgentGateway/pkg/app/metrics"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
@@ -13,6 +28,7 @@ type CreateInput struct {
 	Name            string
 	Slug            string
 	Domain          string
+	Metadata        map[string]string
 	Telemetry       *telemetry.Telemetry
 	ClientTLSConfig domain.ClientTLSConfig
 	SessionConfig   *domain.SessionConfig
@@ -26,25 +42,36 @@ type Creator interface {
 var _ Creator = (*creator)(nil)
 
 type creator struct {
-	repo        domain.Repository
-	memoryCache *cache.TTLMap
-	logger      *slog.Logger
+	repo            domain.Repository
+	memoryCache     *cache.TTLMap
+	exporterFactory appmetrics.ExporterFactory
+	logger          *slog.Logger
 }
 
-func NewCreator(repo domain.Repository, manager *cache.TTLMapManager, logger *slog.Logger) Creator {
+func NewCreator(
+	repo domain.Repository,
+	manager *cache.TTLMapManager,
+	exporterFactory appmetrics.ExporterFactory,
+	logger *slog.Logger,
+) Creator {
 	return &creator{
-		repo:        repo,
-		memoryCache: manager.GetTTLMap(cache.GatewayTTLName),
-		logger:      logger,
+		repo:            repo,
+		memoryCache:     manager.GetTTLMap(cache.GatewayTTLName),
+		exporterFactory: exporterFactory,
+		logger:          logger,
 	}
 }
 
 func (c *creator) Create(ctx context.Context, in CreateInput) (*domain.Gateway, error) {
+	if err := validateExporters(c.exporterFactory, in.Telemetry); err != nil {
+		return nil, err
+	}
 	g, err := domain.New(in.Name, in.Slug)
 	if err != nil {
 		return nil, err
 	}
 	g.Domain = in.Domain
+	g.Metadata = in.Metadata
 	g.Telemetry = in.Telemetry
 	g.ClientTLSConfig = in.ClientTLSConfig
 	g.SessionConfig = in.SessionConfig

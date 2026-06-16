@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package metrics_test
 
 import (
@@ -26,6 +40,8 @@ type captureExporter struct {
 	mu     sync.Mutex
 	events []*events.Event
 }
+
+func (c *captureExporter) Name() string { return "capture" }
 
 func (c *captureExporter) Publish(_ context.Context, evt *events.Event) error {
 	c.mu.Lock()
@@ -58,7 +74,7 @@ func TestWorker_PublishesConsolidatedEvent(t *testing.T) {
 	builder := appmetrics.NewBuilder(adapter.NewRegistry(), stubPricingResolver{
 		price: appcatalog.Pricing{ModelLabel: "GPT-4o", InputPrice: 0.0000025, OutputPrice: 0.00001, Found: true},
 	})
-	pipeline := appmetrics.NewPipeline(builder, capture, newTestLogger())
+	pipeline := appmetrics.NewPipeline(builder, nil, newTestLogger(), capture)
 
 	w := appmetrics.NewWorker(newTestLogger(), pipeline)
 	w.StartWorkers(1)
@@ -90,7 +106,7 @@ func TestWorker_PublishesConsolidatedEvent(t *testing.T) {
 	start := time.UnixMilli(5_000_000)
 	end := start.Add(310 * time.Millisecond)
 
-	w.Process(rt, req, resp, start, end)
+	w.Process(rt, req, resp, start, end, nil)
 
 	require.Eventually(t, func() bool {
 		return len(capture.snapshot()) == 1
@@ -121,8 +137,8 @@ func TestWorker_NilPipelineAndNilArgsAreNoop(t *testing.T) {
 
 	req := &infracontext.RequestContext{GatewayID: "gw-1"}
 	resp := &infracontext.ResponseContext{}
-	w.Process(nil, req, resp, time.Now(), time.Now())
-	w.Process(nil, nil, resp, time.Now(), time.Now())
-	w.Process(nil, req, nil, time.Now(), time.Now())
+	w.Process(nil, req, resp, time.Now(), time.Now(), nil)
+	w.Process(nil, nil, resp, time.Now(), time.Now(), nil)
+	w.Process(nil, req, nil, time.Now(), time.Now(), nil)
 	time.Sleep(20 * time.Millisecond)
 }

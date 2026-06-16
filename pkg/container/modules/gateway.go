@@ -1,8 +1,23 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package modules
 
 import (
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
 	appgateway "github.com/NeuralTrust/AgentGateway/pkg/app/gateway"
+	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/database"
@@ -31,16 +46,24 @@ func Gateway(c *container.Container) error {
 		return err
 	}
 
-	if err := c.Provide(gatewayhttp.NewCreateGatewayHandler); err != nil {
+	if err := c.Provide(func(creator appgateway.Creator, cfg *config.Config) *gatewayhttp.CreateGatewayHandler {
+		return gatewayhttp.NewCreateGatewayHandler(creator, cfg.Server.GatewayBaseDomain)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(gatewayhttp.NewGetGatewayHandler); err != nil {
+	if err := c.Provide(func(finder appgateway.Finder, cfg *config.Config) *gatewayhttp.GetGatewayHandler {
+		return gatewayhttp.NewGetGatewayHandler(finder, cfg.Server.GatewayBaseDomain)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(gatewayhttp.NewListGatewayHandler); err != nil {
+	if err := c.Provide(func(finder appgateway.Finder, cfg *config.Config) *gatewayhttp.ListGatewayHandler {
+		return gatewayhttp.NewListGatewayHandler(finder, cfg.Server.GatewayBaseDomain)
+	}); err != nil {
 		return err
 	}
-	if err := c.Provide(gatewayhttp.NewUpdateGatewayHandler); err != nil {
+	if err := c.Provide(func(updater appgateway.Updater, cfg *config.Config) *gatewayhttp.UpdateGatewayHandler {
+		return gatewayhttp.NewUpdateGatewayHandler(updater, cfg.Server.GatewayBaseDomain)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(gatewayhttp.NewDeleteGatewayHandler); err != nil {

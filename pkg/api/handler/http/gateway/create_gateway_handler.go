@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package gateway
 
 import (
@@ -12,11 +26,12 @@ import (
 )
 
 type CreateGatewayHandler struct {
-	creator appgateway.Creator
+	creator    appgateway.Creator
+	baseDomain string
 }
 
-func NewCreateGatewayHandler(creator appgateway.Creator) *CreateGatewayHandler {
-	return &CreateGatewayHandler{creator: creator}
+func NewCreateGatewayHandler(creator appgateway.Creator, baseDomain string) *CreateGatewayHandler {
+	return &CreateGatewayHandler{creator: creator, baseDomain: baseDomain}
 }
 
 // Handle godoc
@@ -45,6 +60,7 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 		Name:            req.Name,
 		Slug:            req.Slug,
 		Domain:          req.Domain,
+		Metadata:        req.Metadata,
 		Telemetry:       req.Telemetry,
 		ClientTLSConfig: req.ClientTLSConfig,
 		SessionConfig:   req.SessionConfig,
@@ -52,5 +68,5 @@ func (h *CreateGatewayHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
-	return helpers.WriteCreated(c, response.FromDomain(g))
+	return helpers.WriteCreated(c, response.FromDomain(g, h.baseDomain))
 }

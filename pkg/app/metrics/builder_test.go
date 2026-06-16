@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package metrics
 
 import (
@@ -47,6 +61,18 @@ func newBuilder(price appcatalog.Pricing) *Builder {
 
 const openAIRequestBody = `{"model":"gpt-4o","temperature":0.7,"max_tokens":100,"stream":false,` +
 	`"messages":[{"role":"user","content":"hello"}]}`
+
+func TestBuilder_SetsTeamIDFromMetadata(t *testing.T) {
+	rt := trace.New("trace-team", trace.Metadata{GatewayID: "gw-1", TeamID: "team-123"})
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+
+	start := time.UnixMilli(1_000_000)
+	evt := newBuilder(appcatalog.Pricing{}).Build(context.Background(), rt, req, resp, start, start.Add(time.Millisecond))
+
+	assert.Equal(t, "team-123", evt.TeamID)
+}
 
 func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	rt := trace.New("trace-1", trace.Metadata{

@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package events
 
 const SchemaVersion = 2
@@ -8,9 +22,9 @@ type Event struct {
 	GatewayID     string `json:"gateway_id"`
 	TeamID        string `json:"team_id,omitempty"`
 
-	Timestamp      string `json:"timestamp"`
-	StartTimestamp int64  `json:"start_timestamp"`
-	EndTimestamp   int64  `json:"end_timestamp"`
+	Timestamp    string `json:"timestamp"`
+	OccurredOn   int64  `json:"occurred_on"`
+	EndTimestamp int64  `json:"end_timestamp"`
 
 	Consumer      Consumer `json:"consumer"`
 	SessionID     string   `json:"session_id,omitempty"`

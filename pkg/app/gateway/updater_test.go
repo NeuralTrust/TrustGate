@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package gateway_test
 
 import (
@@ -34,7 +48,7 @@ func TestUpdater_Update_Success(t *testing.T) {
 		Once()
 
 	mgr := newCacheManager()
-	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger())
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:     id,
@@ -74,7 +88,7 @@ func TestUpdater_UpdateSlug_InvalidatesOldSlugCache(t *testing.T) {
 
 	mgr := newCacheManager()
 	mgr.GetTTLMap(cache.GatewayTTLName).Set("slug:old", existing)
-	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, mgr, cachetest.NoopPublisher(), nil, newTestLogger())
 
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
@@ -100,7 +114,7 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	id := ids.New[ids.GatewayKind]()
 	repo.EXPECT().FindByID(mock.Anything, id).Return(nil, domain.ErrNotFound).Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Name: ptr("x"),
@@ -125,7 +139,7 @@ func TestUpdater_Update_Partial_PreservesStatus(t *testing.T) {
 		Return(nil).
 		Once()
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger())
 	got, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Name: ptr("renamed"),
@@ -148,7 +162,7 @@ func TestUpdater_Update_RejectsEmptyName(t *testing.T) {
 	repo.EXPECT().FindByID(mock.Anything, id).Return(existing, nil).Once()
 	// repo.Update must not be called.
 
-	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appgateway.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), nil, newTestLogger())
 	_, err := updater.Update(context.Background(), appgateway.UpdateInput{
 		ID:   id,
 		Name: ptr(""),

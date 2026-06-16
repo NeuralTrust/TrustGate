@@ -1132,7 +1132,10 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Associates a registry with a consumer (idempotent).",
+                "description": "Associates a registry with a consumer (idempotent). The optional body sets the registry weight for weighted load balancing.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -1164,6 +1167,14 @@ const docTemplate = `{
                         "name": "registry_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Optional registry weight",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -3620,6 +3631,18 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.AttachRegistryRequest": {
+            "type": "object",
+            "properties": {
+                "weight": {
+                    "description": "Weight is the relative weighted-round-robin share on a 1..100 scale.",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "example": 1
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.CreateConsumerRequest": {
             "type": "object",
             "properties": {
@@ -3788,7 +3811,11 @@ const docTemplate = `{
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_consumer_request.RegistryModelPolicyRequest"
                 },
                 "weight": {
-                    "type": "integer"
+                    "description": "Weight is the relative weighted-round-robin share on a 1..100 scale.",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "example": 1
                 }
             }
         },
@@ -4139,6 +4166,12 @@ const docTemplate = `{
                 "domain": {
                     "type": "string"
                 },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
                 "name": {
                     "type": "string"
                 },
@@ -4161,6 +4194,12 @@ const docTemplate = `{
                 },
                 "domain": {
                     "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "name": {
                     "type": "string"
@@ -4191,8 +4230,17 @@ const docTemplate = `{
                 "domain": {
                     "type": "string"
                 },
+                "host": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "name": {
                     "type": "string"
@@ -4480,6 +4528,9 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
+                "enabled": {
+                    "type": "boolean"
+                },
                 "health_checks": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest"
                 },
@@ -4587,6 +4638,9 @@ const docTemplate = `{
             "properties": {
                 "auth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.MCPAuthRequest"
+                },
+                "code": {
+                    "type": "string"
                 },
                 "headers": {
                     "type": "object",
@@ -4707,6 +4761,9 @@ const docTemplate = `{
                 },
                 "description": {
                     "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
                 },
                 "health_checks": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_request.HealthChecksRequest"
@@ -4910,6 +4967,9 @@ const docTemplate = `{
                 "auth": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_registry_response.MCPAuthResponse"
                 },
+                "code": {
+                    "type": "string"
+                },
                 "headers": {
                     "type": "object",
                     "additionalProperties": {
@@ -4935,6 +4995,9 @@ const docTemplate = `{
                 },
                 "description": {
                     "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
                 },
                 "gateway_id": {
                     "type": "string"
@@ -5595,6 +5658,13 @@ const docTemplate = `{
                 "source": {
                     "type": "string"
                 },
+                "tools": {
+                    "description": "Tools is a snapshot of the server's advertised tools, captured by an\nunauthenticated tools/list where the server allows it. It is a preview for\nthe catalog UI; the authoritative per-connection tool set is discovered at\nruntime by the gateway's introspector (and may be tenant/user-specific).\nEmpty when the server requires auth to list tools.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPTool"
+                    }
+                },
                 "transport": {
                     "type": "string"
                 },
@@ -5608,6 +5678,17 @@ const docTemplate = `{
                     }
                 },
                 "vendor": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_domain_catalog.MCPTool": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 }
             }

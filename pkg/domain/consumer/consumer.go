@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package consumer
 
 import (
@@ -46,11 +60,11 @@ func (m RoutingMode) IsValid() bool {
 const (
 	// DefaultRegistryWeight is applied when a binding does not specify a weight.
 	DefaultRegistryWeight = 1
-	// MaxRegistryWeight caps per-association weights: the weighted round-robin
-	// scheduler iterates up to len(registries)*(maxWeight+1) times per pick, so an
-	// unbounded weight would let a single request monopolize the lock. It is also
-	// kept well within PostgreSQL's int4 range.
-	MaxRegistryWeight = 1000
+	// MaxRegistryWeight caps per-association weights on a 1..100 relative scale
+	// (read it like a percentage share within a pool). The weighted round-robin
+	// scheduler iterates up to len(registries)*(maxWeight+1) times per pick, so a
+	// bounded weight keeps a single request from monopolizing the lock.
+	MaxRegistryWeight = 100
 )
 
 type Consumer struct {

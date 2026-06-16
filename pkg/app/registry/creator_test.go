@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package registry_test
 
 import (
@@ -60,6 +74,69 @@ func TestCreator_Create_Success(t *testing.T) {
 	}
 	if cached.(*domain.Registry).ID != b.ID {
 		t.Fatal("cached backend ID mismatch")
+	}
+}
+
+func TestCreator_Create_EnabledFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		enabled bool
+	}{
+		{name: "enabled", enabled: true},
+		{name: "disabled", enabled: false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := repomocks.NewRepository(t)
+			gwID := ids.New[ids.GatewayKind]()
+			repo.EXPECT().
+				Save(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+					return b.Enabled == tt.enabled
+				})).
+				Return(nil).
+				Once()
+
+			creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger())
+			in := validCreateInput(gwID, "backend-"+tt.name)
+			in.Enabled = ptr(tt.enabled)
+			got, err := creator.Create(context.Background(), in)
+			if err != nil {
+				t.Fatalf("Create error: %v", err)
+			}
+			if got.Enabled != tt.enabled {
+				t.Fatalf("Enabled = %v, want %v", got.Enabled, tt.enabled)
+			}
+		})
+	}
+}
+
+func TestCreator_Create_EnabledDefaultsTrueWhenNil(t *testing.T) {
+	t.Parallel()
+	repo := repomocks.NewRepository(t)
+	gwID := ids.New[ids.GatewayKind]()
+	repo.EXPECT().
+		Save(mock.Anything, mock.MatchedBy(func(b *domain.Registry) bool {
+			return b.Enabled
+		})).
+		Return(nil).
+		Once()
+
+	creator := appregistry.NewCreator(repo, newCacheManager(), newTestLogger())
+	in := validCreateInput(gwID, "backend-default")
+	if in.Enabled != nil {
+		t.Fatal("precondition: Enabled should be unset in validCreateInput")
+	}
+	got, err := creator.Create(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if !got.Enabled {
+		t.Fatal("Enabled should default to true when not provided")
 	}
 }
 

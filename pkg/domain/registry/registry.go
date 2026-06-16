@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package registry
 
 import (
@@ -12,6 +26,7 @@ type Registry struct {
 	GatewayID   ids.GatewayID  `json:"gateway_id"`
 	Name        string         `json:"name"`
 	Type        Type           `json:"type"`
+	Enabled     bool           `json:"enabled"`
 	Description string         `json:"description,omitempty"`
 	LLMTarget   *LLMTarget     `json:"llm_target,omitempty"`
 	MCPTarget   *MCPTarget     `json:"mcp_target,omitempty"`
@@ -34,6 +49,7 @@ func NewLLMRegistry(
 		GatewayID:   gatewayID,
 		Name:        name,
 		Type:        TypeLLM,
+		Enabled:     true,
 		Description: description,
 		LLMTarget:   target,
 		CreatedAt:   now,
@@ -60,6 +76,7 @@ func NewMCPRegistry(
 		GatewayID:   gatewayID,
 		Name:        name,
 		Type:        TypeMCP,
+		Enabled:     true,
 		Description: description,
 		MCPTarget:   target,
 		CreatedAt:   now,
@@ -108,6 +125,7 @@ type RehydrateParams struct {
 	GatewayID   ids.GatewayID
 	Name        string
 	Type        Type
+	Enabled     bool
 	Description string
 	LLMTarget   *LLMTarget
 	MCPTarget   *MCPTarget
@@ -125,6 +143,7 @@ func Rehydrate(params RehydrateParams) *Registry {
 		GatewayID:   params.GatewayID,
 		Name:        params.Name,
 		Type:        regType,
+		Enabled:     params.Enabled,
 		Description: params.Description,
 		LLMTarget:   params.LLMTarget,
 		MCPTarget:   params.MCPTarget,

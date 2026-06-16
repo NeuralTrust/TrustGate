@@ -83,16 +83,50 @@ export interface HealthChecks {
   interval: number;
 }
 
+export type RegistryType = "LLM" | "MCP";
+
+export type MCPAuthMode = "none" | "static" | "passthrough" | "exchange" | "forwarded";
+
+export interface MCPAuth {
+  mode: MCPAuthMode;
+  header?: string;
+  value?: string;
+  expected_audience?: string;
+  pattern?: string;
+  audience?: string;
+  actor?: string;
+  scope?: string;
+  provider?: string;
+  registration?: string;
+  client_id?: string;
+  client_secret?: string;
+  authorize_url?: string;
+  token_url?: string;
+  scopes?: string[];
+  resource?: string;
+}
+
+export interface MCPTarget {
+  /** Catalog server code this connection was created from (empty for custom servers). */
+  code?: string;
+  url: string;
+  transport?: string;
+  headers?: Record<string, string>;
+  auth?: MCPAuth | null;
+}
+
 export interface Registry {
   id: string;
   gateway_id: string;
   name: string;
+  type?: RegistryType;
   provider: string;
   provider_options?: Record<string, unknown>;
   description?: string;
   weight?: number;
   auth?: TargetAuth | null;
   health_checks?: HealthChecks | null;
+  mcp_target?: MCPTarget | null;
   created_at: string;
   updated_at: string;
 }
@@ -259,4 +293,56 @@ export interface Model {
   display_name?: string;
   context_window?: number;
   enabled: boolean;
+}
+
+export type MCPAuthHint = "none" | "static" | "oauth";
+
+export interface MCPURLVariable {
+  name: string;
+  description?: string;
+  required?: boolean;
+  secret?: boolean;
+  in?: "path" | "query";
+}
+
+export interface MCPAuthHeader {
+  name: string;
+  description?: string;
+  required?: boolean;
+  secret?: boolean;
+  scheme?: "Bearer" | "Token" | "Basic" | "ApiKey" | "App" | "raw";
+}
+
+export interface MCPOAuth {
+  registration?: string;
+  dcr?: boolean;
+  pkce?: boolean;
+  authorize_url?: string;
+  token_url?: string;
+  scopes?: string[];
+  resource?: string;
+}
+
+export interface MCPServer {
+  code: string;
+  display_name: string;
+  vendor?: string;
+  category?: string;
+  description?: string;
+  url: string;
+  transport: string;
+  auth_hint: MCPAuthHint;
+  requires_auth: boolean;
+  requires_config: boolean;
+  relevance?: number;
+  scopes?: string[];
+  url_variables?: MCPURLVariable[];
+  auth_headers?: MCPAuthHeader[];
+  oauth?: MCPOAuth | null;
+  metadata?: Record<string, unknown>;
+  source?: string;
+}
+
+export interface MCPServersResponse {
+  mcp_servers: MCPServer[];
 }

@@ -251,6 +251,16 @@
       "type": "string"
     },
     {
+      "key": "entra_app_role",
+      "value": "mcp.user",
+      "type": "string"
+    },
+    {
+      "key": "entra_bearer_token",
+      "value": "replace-with-entra-issued-jwt",
+      "type": "string"
+    },
+    {
       "key": "connect_ticket",
       "value": "",
       "type": "string"
@@ -269,6 +279,42 @@
       "key": "github_client_secret",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "okta_domain",
+      "value": "dev-12345.okta.com"
+    },
+    {
+      "key": "okta_auth_server_id",
+      "value": "default"
+    },
+    {
+      "key": "okta_client_id",
+      "value": ""
+    },
+    {
+      "key": "okta_client_secret",
+      "value": ""
+    },
+    {
+      "key": "okta_scope",
+      "value": "mcp.access"
+    },
+    {
+      "key": "okta_audience",
+      "value": "api://default"
+    },
+    {
+      "key": "okta_claim",
+      "value": "scp"
+    },
+    {
+      "key": "okta_group",
+      "value": "mcp.access"
+    },
+    {
+      "key": "okta_bearer_token",
+      "value": "replace-with-okta-issued-jwt"
     }
   ],
   "item": [
@@ -3470,6 +3516,967 @@
       ]
     },
     {
+      "name": "E2E Role-Based Flow (Entra ID / IDP)",
+      "description": "End-to-end role-based provisioning authenticated with Microsoft Entra ID. Same shape as 'E2E Role-Based Flow (IDP)', but the auth is an `idp` credential wired to Entra (issuer https://login.microsoftonline.com/<tenant>/v2.0 + the tenant JWKS). Role-based consumers REQUIRE an `idp` auth: `oauth2` and `api_key` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Entra token claims against the role `idp_mapping`.\n\nWhy `idp` and not `oauth2`? `oauth2` is for inline consumers / the MCP brokered OAuth flow; it never resolves roles. For the role-based LLM proxy you need `idp`, and the `client_secret` is NOT used (the gateway only validates the JWT via JWKS, it does not call Entra).\n\nSet before running: `entra_tenant_id`, `entra_client_id`, `openai_api_key`, `entra_app_role` (an App Role value you exposed and assigned in Entra) and `entra_bearer_token` (an Entra-issued JWT carrying that role in its `roles` claim).\n\nEntra prerequisites: App Registration manifest `requestedAccessTokenVersion: 2` (so tokens carry the /v2.0 issuer) and an App Role (appRoles[].value) assigned to the user/service principal so the access token includes a `roles` claim. If you prefer group claims, change the role `idp_mapping` path to `groups` and use the group object IDs.",
+      "item": [
+        {
+          "name": "0. Get Entra token (M2M)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "pm.test('access token issued', () => pm.expect(res.access_token).to.be.a('string'));",
+                  "if (res.access_token) {",
+                  "  pm.environment.set('entra_bearer_token', res.access_token);",
+                  "  let b64 = res.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "  while (b64.length % 4) b64 += '=';",
+                  "  const claims = JSON.parse(atob(b64));",
+                  "  console.log('token claims', { iss: claims.iss, aud: claims.aud, oid: claims.oid, roles: claims.roles });",
+                  "  pm.test('v2.0 issuer (else set requestedAccessTokenVersion=2 in the manifest)', () => pm.expect(claims.iss).to.include('/v2.0'));",
+                  "  const wantRole = pm.variables.get('entra_app_role');",
+                  "  pm.test('roles claim contains ' + wantRole + ' (assign the App Role in Entra)', () => pm.expect(claims.roles || []).to.include(wantRole));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "https://login.microsoftonline.com/{{entra_tenant_id}}/oauth2/v2.0/token",
+              "protocol": "https",
+              "host": [
+                "login",
+                "microsoftonline",
+                "com"
+              ],
+              "path": [
+                "{{entra_tenant_id}}",
+                "oauth2",
+                "v2.0",
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{entra_client_id}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{entra_client_secret}}"
+                },
+                {
+                  "key": "scope",
+                  "value": "api://{{entra_client_id}}/.default"
+                }
+              ]
+            },
+            "description": "Machine-to-machine token (client_credentials) captured into {{entra_bearer_token}} for step 10. The scope MUST be your own app's `.default` (a Graph scope yields a token the gateway cannot validate). client-credentials tokens carry APPLICATION app roles in the `roles` claim (no `scp`): define an App Role with allowedMemberTypes [\"Application\"] and value = {{entra_app_role}}, add it as an application permission of this app and grant admin consent, otherwise `roles` is empty and the role idp_mapping matches nothing.\n\nFor a real USER token instead (delegated, so the user's assigned app roles/groups appear), use the device-code grant: POST /devicecode with scope `api://{client_id}/mcp.access openid offline_access`, open the verification_uri, then POST /token with grant_type urn:ietf:params:oauth:grant-type:device_code."
+          }
+        },
+        {
+          "name": "1. Create Gateway",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('gateway created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('gateway_id', pm.response.json().id);",
+                  "  pm.environment.set('gateway_slug', pm.response.json().slug);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"e2e-entra-gateway-{{$guid}}\",\n  \"slug\": \"entra-team-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways"
+              ]
+            }
+          }
+        },
+        {
+          "name": "2. Create Registry (OpenAI)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
+          }
+        },
+        {
+          "name": "3. Create Role (Entra idp_mapping)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('role created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('role_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "idp_mapping matches the Entra token claims. Here it matches the `roles` claim (Entra App Roles) against {{entra_app_role}}. To use group claims instead, set path to `groups` and values to the group object IDs (and enable group claims on the app). model_policies cannot be set on create; bind registries first, then update the role.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"entra-analysts-{{$guid}}\",\n  \"idp_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"roles\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"{{entra_app_role}}\"\n        ]\n      }\n    ]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles"
+              ]
+            }
+          }
+        },
+        {
+          "name": "4. Attach Registry to Role",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('attach registry to role', () => [200, 201, 204].includes(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles/{{role_id}}/registries/{{registry_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles",
+                "{{role_id}}",
+                "registries",
+                "{{registry_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "5. Update Role (Model Policies)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('role updated', () => pm.response.code === 200);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "model_policies may only reference registries already attached to the role.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\n        \"gpt-4o-mini\"\n      ],\n      \"default\": \"gpt-4o-mini\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles/{{role_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles",
+                "{{role_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "6. Create Auth (IDP - Entra ID)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('idp auth created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('auth_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Role-based consumers MUST use an `idp` auth; `oauth2`/`api_key` are rejected (Forbidden) for role_based. No `client_secret` here: the gateway only validates the Entra JWT via JWKS, it never calls Entra. `audiences` must equal the token `aud` (api://{client_id} or the bare client_id GUID - verify by decoding the token at jwt.ms). `subject_claim` `oid` is Entra's stable per-tenant user id (use `sub` if you prefer the pairwise per-app id).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"entra-idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/v2.0\",\n      \"audiences\": [\n        \"{{entra_client_id}}\",\n        \"api://{{entra_client_id}}\"\n      ],\n      \"jwks_url\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/discovery/v2.0/keys\",\n      \"subject_claim\": \"oid\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths"
+              ]
+            }
+          }
+        },
+        {
+          "name": "7. Create Consumer (Role-Based)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('consumer created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('consumer_id', pm.response.json().id);",
+                  "  pm.environment.set('consumer_slug', pm.response.json().slug);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Role-based consumers authorize through roles and authenticate via IDP. They cannot hold registries, lb_config or fallback.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"e2e-entra-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"role_based\",\n  \"active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers"
+              ]
+            }
+          }
+        },
+        {
+          "name": "8. Attach Role to Consumer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('attach role to consumer', () => [200, 201, 204].includes(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/roles/{{role_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "roles",
+                "{{role_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "9. Attach Auth to Consumer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('attach auth to consumer', () => [200, 201, 204].includes(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "auths",
+                "{{auth_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "10. Run Proxy (Chat Completion)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('proxy returned 200', () => pm.response.code === 200);",
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{entra_bearer_token}}",
+                "description": "Entra-issued JWT whose `roles` (or `groups`) claim satisfies the role idp_mapping. Its `aud` must match the auth `audiences` and `iss` the configured issuer."
+              },
+              {
+                "key": "X-AG-Gateway-Slug",
+                "value": "{{gateway_slug}}",
+                "description": "Gateway discovery in header mode; in subdomain mode use Host {slug}.<GATEWAY_BASE_DOMAIN> instead."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from AgentGateway Entra role-based flow\" }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+              "host": [
+                "{{proxy_url}}"
+              ],
+              "path": [
+                "{{consumer_slug}}",
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "E2E Role-Based Flow (Okta / IDP)",
+      "description": "End-to-end role-based provisioning authenticated with Okta. Same shape as 'E2E Role-Based Flow (Entra ID / IDP)', but the `idp` auth is wired to an Okta authorization server (issuer https://{okta_domain}/oauth2/{okta_auth_server_id} + that server's JWKS). Role-based consumers REQUIRE an `idp` auth: `oauth2` and `api_key` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Okta token claims against the role `idp_mapping`.\n\nSet before running: `okta_domain` (e.g. dev-12345.okta.com, no scheme), `okta_auth_server_id` (e.g. `default`), `okta_client_id`, `okta_client_secret`, `okta_scope` (a scope granted to the app, e.g. `mcp.access`), `okta_audience` (the authorization server audience, e.g. `api://default`), `okta_claim` (claim path the role matches, default `scp` for the M2M client_credentials flow), `okta_group` (the value to match in that claim) and `openai_api_key`.\n\nWhere do roles come from? Okta has no Entra-style App Roles. For a user token (device-code / auth-code) map the `groups` claim (add a Groups claim on the authorization server). For a machine-to-machine token (client_credentials, used here) there is no user, so add a custom claim on the authorization server that emits the role/group value into the access token (set `okta_claim` to that claim name), or set `okta_claim` to `scp` and `okta_group` to a granted scope to match on scopes instead. The gateway only validates the JWT via JWKS; `okta_client_secret` is never used by the gateway.",
+      "item": [
+        {
+          "name": "0. Get Okta token (M2M)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "pm.test('access token issued', () => pm.expect(res.access_token).to.be.a('string'));",
+                  "if (res.access_token) {",
+                  "  pm.environment.set('okta_bearer_token', res.access_token);",
+                  "  let b64 = res.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "  while (b64.length % 4) b64 += '=';",
+                  "  const claims = JSON.parse(atob(b64));",
+                  "  const claimPath = pm.variables.get('okta_claim') || 'groups';",
+                  "  console.log('token claims', { iss: claims.iss, aud: claims.aud, sub: claims.sub, scp: claims.scp, claim: claims[claimPath] });",
+                  "  pm.test('issuer matches Okta authorization server', () => pm.expect(claims.iss).to.include('/oauth2/'));",
+                  "  const wantGroup = pm.variables.get('okta_group');",
+                  "  pm.test('claim ' + claimPath + ' contains ' + wantGroup + ' (add the claim on the Okta authorization server)', () => pm.expect(claims[claimPath] || []).to.include(wantGroup));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}/v1/token",
+              "protocol": "https",
+              "host": [
+                "{{okta_domain}}"
+              ],
+              "path": [
+                "oauth2",
+                "{{okta_auth_server_id}}",
+                "v1",
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{okta_client_id}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{okta_client_secret}}"
+                },
+                {
+                  "key": "scope",
+                  "value": "{{okta_scope}}"
+                }
+              ]
+            },
+            "description": "Machine-to-machine token (client_credentials) captured into {{okta_bearer_token}} for step 10. The scope MUST be a custom scope defined on the authorization server and granted to this app (Okta rejects unknown scopes); openid/profile/email are user-only and won't work for client_credentials. The `aud` equals the authorization server audience ({{okta_audience}}, default api://default). There is no user, so `groups` is empty unless you add a custom claim on the authorization server that emits the role value into the access token (then set {{okta_claim}} to that claim name). Alternatively set {{okta_claim}}=scp and {{okta_group}} to a granted scope to match on scopes.\n\nFor a real USER token instead (so the user's Okta groups appear in `groups`), use the auth-code or device-code grant with scopes `openid profile groups {{okta_scope}}` and a Groups claim configured on the authorization server."
+          }
+        },
+        {
+          "name": "1. Create Gateway",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('gateway created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('gateway_id', pm.response.json().id);",
+                  "  pm.environment.set('gateway_slug', pm.response.json().slug);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"e2e-okta-gateway-{{$guid}}\",\n  \"slug\": \"okta-team-{{$randomInt}}\",\n  \"session_config\": {\n    \"enabled\": true,\n    \"header_name\": \"X-Session-Id\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways"
+              ]
+            }
+          }
+        },
+        {
+          "name": "2. Create Registry (OpenAI)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": { \"api_key\": \"{{openai_api_key}}\" }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
+          }
+        },
+        {
+          "name": "3. Create Role (Okta idp_mapping)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('role created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('role_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "idp_mapping matches the Okta token claims. By default it matches the `{{okta_claim}}` claim (scp, the granted scope) against {{okta_group}}. For an M2M token set {{okta_claim}} to the custom claim you added on the authorization server (or to `scp` to match a granted scope). model_policies cannot be set on create; bind registries first, then update the role.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"okta-analysts-{{$guid}}\",\n  \"idp_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"{{okta_claim}}\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"{{okta_group}}\"\n        ]\n      }\n    ]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles"
+              ]
+            }
+          }
+        },
+        {
+          "name": "4. Attach Registry to Role",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('attach registry to role', () => [200, 201, 204].includes(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles/{{role_id}}/registries/{{registry_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles",
+                "{{role_id}}",
+                "registries",
+                "{{registry_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "5. Update Role (Model Policies)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('role updated', () => pm.response.code === 200);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "model_policies may only reference registries already attached to the role.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model_policies\": [\n    {\n      \"registry_id\": \"{{registry_id}}\",\n      \"allowed\": [\n        \"gpt-4o-mini\"\n      ],\n      \"default\": \"gpt-4o-mini\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles/{{role_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "roles",
+                "{{role_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "6. Create Auth (IDP - Okta)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('idp auth created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('auth_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Role-based consumers MUST use an `idp` auth; `oauth2`/`api_key` are rejected (Forbidden) for role_based. No `client_secret` here: the gateway only validates the Okta JWT via JWKS, it never calls Okta. `issuer` and `jwks_url` come from the authorization server's /.well-known/openid-configuration. `audiences` must equal the token `aud` (the authorization server audience, default api://default; verify by decoding the token). `subject_claim` `sub` is the Okta subject (the client_id for M2M, the user id for user tokens).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"okta-idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}\",\n      \"audiences\": [\n        \"{{okta_audience}}\"\n      ],\n      \"jwks_url\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}/v1/keys\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "auths"
+              ]
+            }
+          }
+        },
+        {
+          "name": "7. Create Consumer (Role-Based)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('consumer created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('consumer_id', pm.response.json().id);",
+                  "  pm.environment.set('consumer_slug', pm.response.json().slug);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Role-based consumers authorize through roles and authenticate via IDP. They cannot hold registries, lb_config or fallback.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"e2e-okta-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"role_based\",\n  \"active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers"
+              ]
+            }
+          }
+        },
+        {
+          "name": "8. Attach Role to Consumer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('attach role to consumer', () => [200, 201, 204].includes(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/roles/{{role_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "roles",
+                "{{role_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "9. Attach Auth to Consumer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('attach auth to consumer', () => [200, 201, 204].includes(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "consumers",
+                "{{consumer_id}}",
+                "auths",
+                "{{auth_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "10. Run Proxy (Chat Completion)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('proxy returned 200', () => pm.response.code === 200);",
+                  "pm.test('selected provider is openai', () => pm.response.headers.get('X-Selected-Provider') === 'openai');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{okta_bearer_token}}",
+                "description": "Okta-issued JWT whose `{{okta_claim}}` claim satisfies the role idp_mapping. Its `aud` must match the auth `audiences` and `iss` the configured issuer."
+              },
+              {
+                "key": "X-AG-Gateway-Slug",
+                "value": "{{gateway_slug}}",
+                "description": "Gateway discovery in header mode; in subdomain mode use Host {slug}.<GATEWAY_BASE_DOMAIN> instead."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Hello from AgentGateway Okta role-based flow\" }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+              "host": [
+                "{{proxy_url}}"
+              ],
+              "path": [
+                "{{consumer_slug}}",
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "MCP Gateway",
       "description": "One folder per flow, every folder SELF-CONTAINED: it creates its own gateway, auths, registries and consumers, exercises the flow, and tears everything down at the end. Run any single folder top to bottom - no cross-folder prerequisites.\n\nFolders:\n1. Flow A - Simple proxy: one upstream (DeepWiki) behind a virtual MCP, API-key auth, JSON-RPC surface, toolkit curation.\n2. Flow B - Composition hub: several upstream MCP servers federated behind one virtual path.\n3. Flow C - Inbound OAuth with Microsoft Entra ID (JWT validation, M2M tokens, anti-downgrade).\n4. Flow D - OAuth 2.1 discovery surface: every step an MCP client (Cursor) performs automatically.\n5. Flow E - Downstream credentials: registry auth modes (static, exchange/STS, forwarded manual/auto).\n6. Flow F - Linear end-to-end: forwarded + auto registration (DCR), consent flow, Cursor walkthrough.\n7. Flow G - Full MCP surface: prompts, resources and resource templates federation, toolkit as per-surface allowlist (needs the local 'everything' reference server).\n8. Diagnostics - admin introspection, catalog, health (standalone utilities).\n\nFolders share collection variable slots (gateway_id, registry_id, consumer_id, ...): run ONE folder at a time, top to bottom, finishing with its Cleanup. Jumping between half-run folders overwrites the ids.\n\nIMPORTANT (Entra folders C, D, F): the admin API rejects (409) a second ENABLED oauth2 auth covering the same (issuer, audience) pair. Run a folder's Cleanup before starting another Entra folder, or the 'Create oauth2 auth' step fails with 409.\n\nCollection variables to set first:\n- admin_url (default http://localhost:8080)\n- mcp_url (default http://localhost:8082)\n- admin_token (mint with: set -a; source .env; set +a; bash scripts/generate_jwt_token.sh)\n\nFor flows C, D and F also set entra_tenant_id / entra_client_id / entra_client_secret. Entra app prerequisites (skipping any causes a silent 'Authenticating...' loop in Cursor):\n1. Expose an API: Application ID URI api://{client_id} and a SCOPE named mcp.access (admins and users) - else AADSTS65005.\n2. API permissions: add the app's own delegated mcp.access permission, grant admin consent.\n3. Manifest: requestedAccessTokenVersion: 2 (tokens must carry the /v2.0 issuer).\n4. Authentication: Web redirect URI {{mcp_url}}/oauth/callback.\n\nMULTI-TENANT (enterprise): multiple gateways/consumers may share the same IdP. Resolution is path-first: the request path picks the consumer(s) and only their ATTACHED auths can authenticate the request. The AS facade is resource-scoped: when several issuers are enabled, clients must send the RFC 8707 'resource' parameter (the virtual MCP URL) on authorize and token requests so the gateway picks the right IdP; with a single issuer the resource is optional. Guardrails: the admin API rejects (409) a second ENABLED oauth2 auth covering the same (issuer, audience) pair - scope each tenant with a distinct audience. Optional host isolation: set 'domain' on a gateway (e.g. tenant-a.gw.example.com) and requests carrying that Host resolve against that gateway only.",
       "item": [
@@ -3484,7 +4491,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3514,8 +4521,8 @@
                   "script": {
                     "exec": [
                       "const res = pm.response.json();",
-                      "pm.collectionVariables.set('auth_id', res.id);",
-                      "pm.collectionVariables.set('api_key', res.api_key);"
+                      "pm.environment.set('auth_id', res.id);",
+                      "pm.environment.set('api_key', res.api_key);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3544,7 +4551,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3572,7 +4579,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3615,7 +4622,7 @@
                   "script": {
                     "exec": [
                       "const sid = pm.response.headers.get('Mcp-Session-Id');",
-                      "if (sid) pm.collectionVariables.set('mcp_session_id', sid);"
+                      "if (sid) pm.environment.set('mcp_session_id', sid);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3890,7 +4897,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3919,8 +4926,8 @@
                   "script": {
                     "exec": [
                       "const res = pm.response.json();",
-                      "pm.collectionVariables.set('auth_id', res.id);",
-                      "pm.collectionVariables.set('api_key', res.api_key);"
+                      "pm.environment.set('auth_id', res.id);",
+                      "pm.environment.set('api_key', res.api_key);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3948,7 +4955,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -3976,7 +4983,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_hf_id', pm.response.json().id);"
+                      "pm.environment.set('registry_hf_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4005,7 +5012,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4229,7 +5236,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4257,7 +5264,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('oauth2_auth_id', pm.response.json().id);"
+                      "pm.environment.set('oauth2_auth_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4287,8 +5294,8 @@
                   "script": {
                     "exec": [
                       "const res = pm.response.json();",
-                      "pm.collectionVariables.set('auth_id', res.id);",
-                      "pm.collectionVariables.set('api_key', res.api_key);"
+                      "pm.environment.set('auth_id', res.id);",
+                      "pm.environment.set('api_key', res.api_key);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4317,7 +5324,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4345,7 +5352,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4397,7 +5404,7 @@
                     "exec": [
                       "const res = pm.response.json();",
                       "pm.test('access token issued', () => pm.expect(res.access_token).to.be.a('string'));",
-                      "pm.collectionVariables.set('entra_token', res.access_token);",
+                      "pm.environment.set('entra_token', res.access_token);",
                       "let b64 = res.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
                       "while (b64.length % 4) b64 += '=';",
                       "const claims = JSON.parse(atob(b64));",
@@ -4587,7 +5594,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4615,7 +5622,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('oauth2_auth_id', pm.response.json().id);"
+                      "pm.environment.set('oauth2_auth_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4644,7 +5651,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4672,7 +5679,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4905,7 +5912,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4933,7 +5940,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5054,7 +6061,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5082,7 +6089,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('oauth2_auth_id', pm.response.json().id);"
+                      "pm.environment.set('oauth2_auth_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5111,7 +6118,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5140,7 +6147,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5202,7 +6209,7 @@
                     "exec": [
                       "const res = pm.response.json();",
                       "pm.test('access token issued', () => pm.expect(res.access_token).to.be.a('string'));",
-                      "pm.collectionVariables.set('entra_token', res.access_token);",
+                      "pm.environment.set('entra_token', res.access_token);",
                       "let b64 = res.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
                       "while (b64.length % 4) b64 += '=';",
                       "const claims = JSON.parse(atob(b64));",
@@ -5253,7 +6260,7 @@
                   "script": {
                     "exec": [
                       "const sid = pm.response.headers.get('Mcp-Session-Id');",
-                      "if (sid) pm.collectionVariables.set('mcp_session_id', sid);"
+                      "if (sid) pm.environment.set('mcp_session_id', sid);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5293,7 +6300,7 @@
                       "if (body.error && body.error.code === -32003) {",
                       "  const url = body.error.data.connect_url;",
                       "  const ticket = (url.split('ticket=')[1] || '').split('&')[0];",
-                      "  pm.collectionVariables.set('connect_ticket', ticket);",
+                      "  pm.environment.set('connect_ticket', ticket);",
                       "  console.log('Open in a browser to link Linear:', url);",
                       "} else if (body.result) {",
                       "  console.log('Linked: ' + body.result.tools.length + ' Linear tools exposed');",
@@ -5428,7 +6435,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('gateway_id', pm.response.json().id);"
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5458,8 +6465,8 @@
                   "script": {
                     "exec": [
                       "const res = pm.response.json();",
-                      "pm.collectionVariables.set('auth_id', res.id);",
-                      "pm.collectionVariables.set('api_key', res.api_key);"
+                      "pm.environment.set('auth_id', res.id);",
+                      "pm.environment.set('api_key', res.api_key);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5488,7 +6495,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('registry_id', pm.response.json().id);"
+                      "pm.environment.set('registry_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5516,7 +6523,7 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.collectionVariables.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);"
                     ],
                     "type": "text/javascript"
                   }

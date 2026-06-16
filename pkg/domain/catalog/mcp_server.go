@@ -1,3 +1,17 @@
+// Copyright 2026 NeuralTrust
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package catalog
 
 // MCPServer is a single entry in the curated catalog of remote MCP servers,
@@ -26,8 +40,21 @@ type MCPServer struct {
 	URLVariables []MCPURLVariable `json:"url_variables,omitempty"`
 	AuthHeaders  []MCPAuthHeader  `json:"auth_headers,omitempty"`
 	OAuth        *MCPOAuth        `json:"oauth,omitempty"`
-	Metadata     map[string]any   `json:"metadata,omitempty"`
-	Source       string           `json:"source"`
+	// Tools is a snapshot of the server's advertised tools, captured by an
+	// unauthenticated tools/list where the server allows it. It is a preview for
+	// the catalog UI; the authoritative per-connection tool set is discovered at
+	// runtime by the gateway's introspector (and may be tenant/user-specific).
+	// Empty when the server requires auth to list tools.
+	Tools    []MCPTool      `json:"tools,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+	Source   string         `json:"source"`
+}
+
+// MCPTool is a single tool advertised by an MCP server (name + description),
+// used as a catalog preview of the server's capabilities.
+type MCPTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 // MCPURLVariable describes a templated segment of an MCP server URL (e.g. a
