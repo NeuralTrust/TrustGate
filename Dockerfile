@@ -42,8 +42,8 @@ RUN go build \
         -X ${MODULE}/pkg/version.Version=${VERSION} \
         -X ${MODULE}/pkg/version.Commit=${COMMIT} \
         -X ${MODULE}/pkg/version.BuildDate=${BUILD_DATE}" \
-    -o /out/agentgateway \
-    ./cmd/agentgateway
+    -o /out/trustgate \
+    ./cmd/trustgate
 
 # --- Runtime stage ---------------------------------------------------------
 # distroless "base" (not "static") because the cgo binary dynamically links glibc.
@@ -51,14 +51,14 @@ FROM gcr.io/distroless/base-debian12:nonroot AS runtime
 
 WORKDIR /app
 
-COPY --from=builder /out/agentgateway /app/agentgateway
+COPY --from=builder /out/trustgate /app/trustgate
 
 # Admin (8080) and Proxy (8081).
 EXPOSE 8080 8081
 
 USER nonroot:nonroot
 
-# Override with `docker run agentgateway admin` (or set `args: ["admin"]` in
+# Override with `docker run <image> admin` (or set `args: ["admin"]` in
 # the k8s manifest) to run the admin server in this container instead.
-ENTRYPOINT ["/app/agentgateway"]
+ENTRYPOINT ["/app/trustgate"]
 CMD ["proxy"]

@@ -23,7 +23,7 @@ Two HTTP servers, one binary:
 | **proxy** | `:8081` | Data-plane traffic forwarder: inspects request/response, applies policies, calls the upstream LLM. |
 
 Each server is meant to run in its **own pod / container** in production
-(`./agentgateway admin` vs `./agentgateway proxy`). They share the same
+(`./trustgate admin` vs `./trustgate proxy`). They share the same
 DI graph and configuration but compose different middleware chains.
 
 ## 2. Boot sequence
@@ -53,7 +53,7 @@ Hexagonal-ish layout. The rule of thumb:
 
 | Directory                        | Owns                                                                                                                                                                                                                                 | Imports                                                                     |
 |----------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
-| `cmd/agentgateway/`              | Binary entry point. Just composition.                                                                                                                                                                                                | `container`, `modules`, `database`, `server`                                |
+| `cmd/trustgate/`                 | Binary entry point. Just composition.                                                                                                                                                                                                | `container`, `modules`, `database`, `server`                                |
 | `pkg/version/`                   | Build info injected via `-ldflags`.                                                                                                                                                                                                  | stdlib only                                                                 |
 | `pkg/common/errors/`             | Cross-package sentinel errors (`ErrNotFound`, `ErrInvalidConfig`, `ErrBoot`).                                                                                                                                                        | stdlib only                                                                 |
 | `pkg/config/`                    | Env-only config loader (`LoadConfig`).                                                                                                                                                                                               | stdlib + `errors`                                                           |
