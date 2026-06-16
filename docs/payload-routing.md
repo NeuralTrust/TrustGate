@@ -4,7 +4,7 @@ The proxy exposes fixed routes per wire format, prefixed by the consumer's auto-
 
 ## Fixed proxy routes
 
-A client points its SDK at `https://{gateway_slug}.gw.neuraltrust.ai/{consumer_slug}` and the SDK completes the path:
+A client points its SDK at `https://{gateway_slug}.llm.neuraltrust.ai/{consumer_slug}` and the SDK completes the path:
 
 | Route | Source format |
 | --- | --- |

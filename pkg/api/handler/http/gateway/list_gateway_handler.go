@@ -24,12 +24,13 @@ import (
 )
 
 type ListGatewayHandler struct {
-	finder     appgateway.Finder
-	baseDomain string
+	finder        appgateway.Finder
+	baseDomain    string
+	mcpBaseDomain string
 }
 
-func NewListGatewayHandler(finder appgateway.Finder, baseDomain string) *ListGatewayHandler {
-	return &ListGatewayHandler{finder: finder, baseDomain: baseDomain}
+func NewListGatewayHandler(finder appgateway.Finder, baseDomain, mcpBaseDomain string) *ListGatewayHandler {
+	return &ListGatewayHandler{finder: finder, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain}
 }
 
 // Handle godoc
@@ -76,7 +77,7 @@ func (h *ListGatewayHandler) Handle(c *fiber.Ctx) error {
 		Total: total,
 	}
 	for _, g := range items {
-		out.Items = append(out.Items, response.FromDomain(g, h.baseDomain))
+		out.Items = append(out.Items, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
 	}
 	return helpers.WriteOK(c, out)
 }

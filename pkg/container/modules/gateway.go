@@ -47,22 +47,22 @@ func Gateway(c *container.Container) error {
 	}
 
 	if err := c.Provide(func(creator appgateway.Creator, cfg *config.Config) *gatewayhttp.CreateGatewayHandler {
-		return gatewayhttp.NewCreateGatewayHandler(creator, cfg.Server.GatewayBaseDomain)
+		return gatewayhttp.NewCreateGatewayHandler(creator, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(finder appgateway.Finder, cfg *config.Config) *gatewayhttp.GetGatewayHandler {
-		return gatewayhttp.NewGetGatewayHandler(finder, cfg.Server.GatewayBaseDomain)
+		return gatewayhttp.NewGetGatewayHandler(finder, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(finder appgateway.Finder, cfg *config.Config) *gatewayhttp.ListGatewayHandler {
-		return gatewayhttp.NewListGatewayHandler(finder, cfg.Server.GatewayBaseDomain)
+		return gatewayhttp.NewListGatewayHandler(finder, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain)
 	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(updater appgateway.Updater, cfg *config.Config) *gatewayhttp.UpdateGatewayHandler {
-		return gatewayhttp.NewUpdateGatewayHandler(updater, cfg.Server.GatewayBaseDomain)
+		return gatewayhttp.NewUpdateGatewayHandler(updater, cfg.Server.GatewayBaseDomain, cfg.Server.MCPBaseDomain)
 	}); err != nil {
 		return err
 	}

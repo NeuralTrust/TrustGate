@@ -29,7 +29,7 @@ type GatewayResponse struct {
 	Slug            string                 `json:"slug"`
 	Status          string                 `json:"status"`
 	Domain          string                 `json:"domain,omitempty"`
-	Host            string                 `json:"host,omitempty"`
+	Hosts           GatewayHosts           `json:"hosts"`
 	Metadata        map[string]string      `json:"metadata,omitempty"`
 	Telemetry       *telemetry.Telemetry   `json:"telemetry,omitempty"`
 	ClientTLSConfig domain.ClientTLSConfig `json:"client_tls,omitempty"`
@@ -38,17 +38,27 @@ type GatewayResponse struct {
 	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
-func FromDomain(g *domain.Gateway, baseDomain string) GatewayResponse {
+// GatewayHosts holds the hostnames clients use to reach the gateway on each
+// plane: Proxy for the LLM proxy and MCP for the Model Context Protocol server.
+type GatewayHosts struct {
+	Proxy string `json:"proxy,omitempty"`
+	MCP   string `json:"mcp,omitempty"`
+}
+
+func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) GatewayResponse {
 	if g == nil {
 		return GatewayResponse{}
 	}
 	return GatewayResponse{
-		ID:              g.ID,
-		Name:            g.Name,
-		Slug:            g.Slug,
-		Status:          g.Status,
-		Domain:          g.Domain,
-		Host:            gatewayHost(g, baseDomain),
+		ID:     g.ID,
+		Name:   g.Name,
+		Slug:   g.Slug,
+		Status: g.Status,
+		Domain: g.Domain,
+		Hosts: GatewayHosts{
+			Proxy: proxyHost(g, proxyBaseDomain),
+			MCP:   subdomainHost(g.Slug, mcpBaseDomain),
+		},
 		Metadata:        g.Metadata,
 		Telemetry:       g.Telemetry,
 		ClientTLSConfig: g.ClientTLSConfig,
@@ -58,15 +68,17 @@ func FromDomain(g *domain.Gateway, baseDomain string) GatewayResponse {
 	}
 }
 
-// gatewayHost returns the hostname clients use to reach the gateway: the custom
-// domain when set, otherwise the {slug}.{baseDomain} subdomain.
-func gatewayHost(g *domain.Gateway, baseDomain string) string {
+func proxyHost(g *domain.Gateway, baseDomain string) string {
 	if g.Domain != "" {
 		return g.Domain
 	}
+	return subdomainHost(g.Slug, baseDomain)
+}
+
+func subdomainHost(slug, baseDomain string) string {
 	baseDomain = strings.Trim(strings.TrimSpace(baseDomain), ".")
-	if baseDomain == "" || g.Slug == "" {
+	if baseDomain == "" || slug == "" {
 		return ""
 	}
-	return g.Slug + "." + baseDomain
+	return slug + "." + baseDomain
 }

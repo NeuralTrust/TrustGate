@@ -37,6 +37,23 @@
 
 ## 🚀 Quick Start
 
+### One-line install
+
+Clones the repo, seeds `.env`, brings up the full stack in Docker and — when Go
+is installed — compiles the `trustgate` binary and installs it on your `PATH`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NeuralTrust/AgentGateway/main/scripts/install.sh | bash
+```
+
+Requires `git`, `docker` and Docker Compose (plus Go to build the CLI). Re-running
+updates the checkout and never overwrites your `.env`. Useful overrides:
+
+- `AG_REF=develop` — install a different branch/tag/commit
+- `AG_DIR=/path/to/dir` — where to clone
+- `AG_BIN_DIR=~/.local/bin` — where to install the `trustgate` CLI
+- `AG_INSTALL_CLI=0` — skip building the CLI · `AG_NO_START=1` — skip `docker compose up`
+
 ### Using Docker Compose
 
 ```bash
@@ -300,6 +317,10 @@ to `.env` and `godotenv` loads it automatically. Production deployments inject e
 SERVER_ADMIN_PORT=8080
 SERVER_PROXY_PORT=8081
 SERVER_MCP_PORT=8082
+
+# Host suffixes returned in the gateway response ({slug}.<base-domain>)
+GATEWAY_BASE_DOMAIN=llm.neuraltrust.ai  # proxy plane host
+MCP_BASE_DOMAIN=mcp.neuraltrust.ai      # mcp plane host
 
 # Database (Postgres via pgx/pgxpool)
 DB_HOST=localhost

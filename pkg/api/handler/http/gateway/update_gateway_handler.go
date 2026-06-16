@@ -27,12 +27,13 @@ import (
 )
 
 type UpdateGatewayHandler struct {
-	updater    appgateway.Updater
-	baseDomain string
+	updater       appgateway.Updater
+	baseDomain    string
+	mcpBaseDomain string
 }
 
-func NewUpdateGatewayHandler(updater appgateway.Updater, baseDomain string) *UpdateGatewayHandler {
-	return &UpdateGatewayHandler{updater: updater, baseDomain: baseDomain}
+func NewUpdateGatewayHandler(updater appgateway.Updater, baseDomain, mcpBaseDomain string) *UpdateGatewayHandler {
+	return &UpdateGatewayHandler{updater: updater, baseDomain: baseDomain, mcpBaseDomain: mcpBaseDomain}
 }
 
 // Handle godoc
@@ -78,5 +79,5 @@ func (h *UpdateGatewayHandler) Handle(c *fiber.Ctx) error {
 	if err != nil {
 		return helpers.WriteError(c, err)
 	}
-	return helpers.WriteOK(c, response.FromDomain(g, h.baseDomain))
+	return helpers.WriteOK(c, response.FromDomain(g, h.baseDomain, h.mcpBaseDomain))
 }

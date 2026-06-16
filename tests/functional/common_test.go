@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const functionalGatewayBaseDomain = "gw.neuraltrust.ai"
+const functionalGatewayBaseDomain = "llm.neuraltrust.ai"
 
 var (
 	gatewayHosts  sync.Map

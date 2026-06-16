@@ -665,6 +665,13 @@ definitions:
       telemetry:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry'
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayHosts:
+    properties:
+      mcp:
+        type: string
+      proxy:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayResponse:
     properties:
       client_tls:
@@ -673,8 +680,8 @@ definitions:
         type: string
       domain:
         type: string
-      host:
-        type: string
+      hosts:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.GatewayHosts'
       id:
         type: string
       metadata:
