@@ -10,11 +10,12 @@ import (
 )
 
 type ListGatewayHandler struct {
-	finder appgateway.Finder
+	finder     appgateway.Finder
+	baseDomain string
 }
 
-func NewListGatewayHandler(finder appgateway.Finder) *ListGatewayHandler {
-	return &ListGatewayHandler{finder: finder}
+func NewListGatewayHandler(finder appgateway.Finder, baseDomain string) *ListGatewayHandler {
+	return &ListGatewayHandler{finder: finder, baseDomain: baseDomain}
 }
 
 // Handle godoc
@@ -61,7 +62,7 @@ func (h *ListGatewayHandler) Handle(c *fiber.Ctx) error {
 		Total: total,
 	}
 	for _, g := range items {
-		out.Items = append(out.Items, response.FromDomain(g))
+		out.Items = append(out.Items, response.FromDomain(g, h.baseDomain))
 	}
 	return helpers.WriteOK(c, out)
 }
