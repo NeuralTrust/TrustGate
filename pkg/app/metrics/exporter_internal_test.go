@@ -82,6 +82,25 @@ func (f *fakeFactory) Build(cfg telemetrydomain.ExporterConfig) (Exporter, error
 
 func (f *fakeFactory) Validate(_ telemetrydomain.ExporterConfig) error { return nil }
 
+type fakePlaygroundStore struct {
+	mu     sync.Mutex
+	events []*events.Event
+}
+
+func (f *fakePlaygroundStore) Save(_ context.Context, _ *infracontext.RequestContext, evt *events.Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, evt)
+}
+
+func (f *fakePlaygroundStore) saved() []*events.Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]*events.Event, len(f.events))
+	copy(out, f.events)
+	return out
+}
+
 func (f *fakeFactory) buildCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -130,7 +149,7 @@ func TestPipeline_ResolveTargetsOverrideByName(t *testing.T) {
 	factory := &fakeFactory{}
 	cache := NewExporterCache(factory, internalTestLogger())
 	defaultKafka := &fakeExporter{name: "kafka"}
-	p := NewPipeline(nil, cache, internalTestLogger(), defaultKafka)
+	p := NewPipeline(nil, cache, nil, internalTestLogger(), defaultKafka)
 
 	overridden := p.resolveTargets([]telemetrydomain.ExporterConfig{
 		{Name: "kafka", Settings: map[string]interface{}{"topic": "other"}},
@@ -149,7 +168,7 @@ func TestPipeline_OverrideFailureKeepsDefault(t *testing.T) {
 	factory := &fakeFactory{buildErr: errors.New("boom")}
 	cache := NewExporterCache(factory, internalTestLogger())
 	defaultKafka := &fakeExporter{name: "kafka"}
-	p := NewPipeline(nil, cache, internalTestLogger(), defaultKafka)
+	p := NewPipeline(nil, cache, nil, internalTestLogger(), defaultKafka)
 
 	targets := p.resolveTargets([]telemetrydomain.ExporterConfig{
 		{Name: "kafka", Settings: map[string]interface{}{"topic": "bad"}},
@@ -163,7 +182,7 @@ func TestPipeline_PublishIsolatesExporterErrors(t *testing.T) {
 	builder := NewBuilder(adapter.NewRegistry(), stubPricing{})
 	bad := &fakeExporter{name: "bad", publishErr: errors.New("boom")}
 	good := &fakeExporter{name: "good"}
-	p := NewPipeline(builder, nil, internalTestLogger(), bad, good)
+	p := NewPipeline(builder, nil, nil, internalTestLogger(), bad, good)
 
 	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
 	resp := &infracontext.ResponseContext{StatusCode: 200}
@@ -172,4 +191,20 @@ func TestPipeline_PublishIsolatesExporterErrors(t *testing.T) {
 
 	assert.Equal(t, 1, bad.publishedCount())
 	assert.Equal(t, 1, good.publishedCount(), "a failing exporter must not prevent the others from publishing")
+}
+
+func TestPipeline_PublishCallsPlaygroundStore(t *testing.T) {
+	builder := NewBuilder(adapter.NewRegistry(), stubPricing{})
+	exporter := &fakeExporter{name: "kafka"}
+	store := &fakePlaygroundStore{}
+	p := NewPipeline(builder, nil, store, internalTestLogger(), exporter)
+
+	req := &infracontext.RequestContext{GatewayID: "gw-1", Method: "POST", Path: "/v1/chat/completions"}
+	resp := &infracontext.ResponseContext{StatusCode: 200}
+
+	p.publish(nil, req, resp, time.Now(), time.Now(), nil)
+
+	assert.Equal(t, 1, exporter.publishedCount())
+	saved := store.saved()
+	require.Len(t, saved, 1, "playground store must receive the event after the exporters run")
 }

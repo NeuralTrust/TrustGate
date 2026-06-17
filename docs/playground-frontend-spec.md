@@ -94,6 +94,34 @@ When `"stream": true`, the response is `text/event-stream` with OpenAI-style `da
 data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upstream_error"}}
 ```
 
+## Retrieving the trace (metrics) of a playground request
+
+Every proxy response carries an `X-Request-Id` header. For playground requests
+(those sent with `X-AG-Playground-Token`) the gateway also stores the full
+metrics Event for that request in Redis, keyed by that same id, with a short TTL
+(default 10 minutes). This lets the dashboard show what happened: latency, token
+usage, cost, the policy chain, security flags, attempts, etc.
+
+1. Read `X-Request-Id` from the proxy response (it equals the trace id). It is
+   already CORS-exposed, so the browser can read it; relay it through the BFF.
+2. From the BFF (server-side, with the admin JWT), fetch the trace from the
+   **admin API** (default port 8080):
+
+```
+GET {ADMIN_API_URL}/v1/playground/traces/{trace_id}
+Authorization: Bearer <admin JWT>
+```
+
+- `200` returns the metrics Event as JSON (schema described in
+  `pkg/infra/metrics/events/event.go`). Sensitive headers (including the
+  playground token) are redacted.
+- `404 not_found` means the trace is unknown or has expired — poll shortly after
+  the response, since the Event is written asynchronously by the metrics worker.
+
+The store is enabled by default and controlled by the deployment via
+`PLAYGROUND_TRACE_STORE_ENABLED` and `PLAYGROUND_TRACE_STORE_TTL`. Non-playground
+requests are never stored.
+
 ## Error contract
 
 All errors are JSON `{ "error": "<code>", "message": "<detail>" }`. Surface `message` to the user where present.

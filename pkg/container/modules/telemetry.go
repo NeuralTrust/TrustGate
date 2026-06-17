@@ -21,6 +21,8 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
 	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
+	infracache "github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/playground"
 	infratelemetry "github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry/kafka"
 	"go.uber.org/dig"
@@ -36,10 +38,25 @@ func Telemetry(c *container.Container) error {
 	if err := c.Provide(appmetrics.NewExporterCache); err != nil {
 		return err
 	}
+	if err := c.Provide(newPlaygroundTraceStore); err != nil {
+		return err
+	}
 	if err := c.Provide(buildPipeline); err != nil {
 		return err
 	}
 	return c.Provide(appmetrics.NewWorker)
+}
+
+// newPlaygroundTraceStore builds the Redis-backed store shared by the proxy
+// plane (writes) and the admin plane (reads). It reuses the cache client's
+// Redis connection rather than the in-process TTL cache so the trace gets a
+// real Redis TTL and is visible across planes.
+func newPlaygroundTraceStore(
+	cc infracache.Client,
+	cfg *config.Config,
+	logger *slog.Logger,
+) *playground.Store {
+	return playground.NewStore(cc.RedisClient(), cfg.Playground, logger)
 }
 
 func newExporterFactory(logger *slog.Logger, cfg *config.Config) appmetrics.ExporterFactory {
@@ -54,6 +71,7 @@ func buildPipeline(
 	builder *appmetrics.Builder,
 	factory appmetrics.ExporterFactory,
 	cache *appmetrics.ExporterCache,
+	playgroundStore *playground.Store,
 ) (*appmetrics.Pipeline, error) {
 	if !cfg.Telemetry.Enabled {
 		return nil, nil
@@ -71,7 +89,7 @@ func buildPipeline(
 			slog.String("topic", cfg.Telemetry.KafkaTopic))
 		defaults = append(defaults, exporter)
 	}
-	return appmetrics.NewPipeline(builder, cache, logger, defaults...), nil
+	return appmetrics.NewPipeline(builder, cache, playgroundStore, logger, defaults...), nil
 }
 
 // MetricsWorkerParams collects everything StartMetricsWorker needs.

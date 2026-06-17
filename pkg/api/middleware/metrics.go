@@ -28,6 +28,7 @@ import (
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/google/uuid"
 )
 
@@ -121,7 +122,14 @@ func (m *MetricsMiddleware) enabled() bool {
 	return m.telemetryEnabled
 }
 
+// resolveTraceID prefers the id set by the requestid middleware (stored in
+// Locals and echoed in the X-Request-Id response header), so the event TraceID
+// matches the X-Request-Id the client receives even when the client did not
+// send the header. It falls back to the request header, then a fresh UUID.
 func (m *MetricsMiddleware) resolveTraceID(c *fiber.Ctx) string {
+	if rid, ok := c.Locals(requestid.ConfigDefault.ContextKey).(string); ok && rid != "" {
+		return rid
+	}
 	traceID := c.Get(fiber.HeaderXRequestID)
 	if traceID == "" {
 		traceID = uuid.New().String()
