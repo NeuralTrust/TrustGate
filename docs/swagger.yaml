@@ -700,6 +700,8 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_telemetry.Telemetry'
       updated_at:
         type: string
+      version:
+        type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_gateway_response.ListGatewayResponse:
     properties:
