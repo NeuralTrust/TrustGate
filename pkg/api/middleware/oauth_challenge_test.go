@@ -41,8 +41,26 @@ func TestOAuthChallengeAddsWWWAuthenticateOn401(t *testing.T) {
 	if !strings.HasPrefix(challenge, "Bearer ") {
 		t.Fatalf("expected Bearer challenge, got %q", challenge)
 	}
+	if !strings.Contains(challenge, `resource_metadata="http://gw.example.com/.well-known/oauth-protected-resource/v1/mcp/dev"`) {
+		t.Fatalf("expected path-scoped resource_metadata pointer, got %q", challenge)
+	}
+}
+
+func TestOAuthChallengeUsesRootMetadataForRootPath(t *testing.T) {
+	t.Parallel()
+	app := fiber.New()
+	app.Use(NewOAuthChallengeMiddleware().Middleware())
+	app.Post("/", func(c *fiber.Ctx) error {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthenticated")
+	})
+
+	res, err := app.Test(httptest.NewRequest(fiber.MethodPost, "http://gw.example.com/", nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	challenge := res.Header.Get(fiber.HeaderWWWAuthenticate)
 	if !strings.Contains(challenge, `resource_metadata="http://gw.example.com/.well-known/oauth-protected-resource"`) {
-		t.Fatalf("expected resource_metadata pointer, got %q", challenge)
+		t.Fatalf("expected root resource_metadata pointer, got %q", challenge)
 	}
 }
 
