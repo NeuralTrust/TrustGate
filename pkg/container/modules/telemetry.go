@@ -23,6 +23,7 @@ import (
 	telemetrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
 	infratelemetry "github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry/kafka"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/telemetry/otlp"
 	"go.uber.org/dig"
 )
 
@@ -45,6 +46,7 @@ func Telemetry(c *container.Container) error {
 func newExporterFactory(logger *slog.Logger, cfg *config.Config) appmetrics.ExporterFactory {
 	return infratelemetry.NewExporterLocator(
 		infratelemetry.WithExporter(kafka.ExporterName, kafka.NewKafkaTemplate(logger, cfg.Kafka)),
+		infratelemetry.WithExporter(otlp.ExporterName, otlp.NewTemplate(logger, cfg.Telemetry.OTLP)),
 	)
 }
 
