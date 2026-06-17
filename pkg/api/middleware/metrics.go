@@ -28,6 +28,7 @@ import (
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/google/uuid"
 )
 
@@ -59,6 +60,7 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 		exporters := gatewayExporters(gw)
 
 		traceID := m.resolveTraceID(c)
+		c.Set(HeaderTraceID, traceID)
 		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID, gw))
 		// Gating is set once here, before the trace is shared with any
 		// downstream goroutine (forwarder, plugins, finalizer).
@@ -122,6 +124,12 @@ func (m *MetricsMiddleware) enabled() bool {
 }
 
 func (m *MetricsMiddleware) resolveTraceID(c *fiber.Ctx) string {
+	if rid, ok := c.Locals(requestid.ConfigDefault.ContextKey).(string); ok && rid != "" {
+		return rid
+	}
+	if tid := c.Get(HeaderTraceID); tid != "" {
+		return tid
+	}
 	traceID := c.Get(fiber.HeaderXRequestID)
 	if traceID == "" {
 		traceID = uuid.New().String()

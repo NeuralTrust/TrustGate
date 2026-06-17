@@ -20,6 +20,7 @@ import (
 	cataloghttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/catalog"
 	consumerhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
+	playgroundhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/playground"
 	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
 	rolehttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/role"
@@ -38,6 +39,7 @@ const (
 	ModelsCatalogPath     = "/v1/models-catalog"
 	PoliciesCatalogPath   = "/v1/policies-catalog"
 	MCPServersCatalogPath = "/v1/mcp-servers-catalog"
+	PlaygroundTracePath   = "/v1/playground/traces/:trace_id"
 )
 
 // AdminRouterDeps groups every handler mounted by the admin plane.
@@ -95,6 +97,8 @@ type AdminRouterDeps struct {
 	ListModelsCatalog     *cataloghttp.ListModelsHandler
 	ListPoliciesCatalog   *cataloghttp.ListPolicyCatalogHandler
 	ListMCPServersCatalog *cataloghttp.ListMCPServersHandler
+
+	GetTrace *playgroundhttp.GetTraceHandler
 }
 
 type adminRouter struct {
@@ -178,6 +182,8 @@ func (r *adminRouter) BuildRoutes(app *fiber.App) error {
 	app.Get(ModelsCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListModelsCatalog.Handle)
 	app.Get(PoliciesCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListPoliciesCatalog.Handle)
 	app.Get(MCPServersCatalogPath, r.deps.AdminAuth.Middleware(), r.deps.ListMCPServersCatalog.Handle)
+
+	app.Get(PlaygroundTracePath, r.deps.AdminAuth.Middleware(), r.deps.GetTrace.Handle)
 
 	return nil
 }

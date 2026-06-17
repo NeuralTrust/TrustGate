@@ -17,6 +17,7 @@ package modules
 import (
 	apihandler "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http"
 	oauthhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/oauth"
+	playgroundhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/playground"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	"github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
@@ -31,6 +32,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/mtls"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/fingerprint"
+	playgroundstore "github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/playground"
 	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
 )
 
@@ -57,6 +59,11 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(middleware.NewMetricsMiddleware); err != nil {
+		return err
+	}
+	if err := c.Provide(func(store *playgroundstore.Store) *playgroundhttp.GetTraceHandler {
+		return playgroundhttp.NewGetTraceHandler(store)
+	}); err != nil {
 		return err
 	}
 	if err := c.Provide(func(cfg *config.Config) jwt.Manager {

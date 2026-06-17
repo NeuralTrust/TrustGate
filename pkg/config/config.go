@@ -78,6 +78,9 @@ const (
 	defaultMetricsWorkerCount   = 1
 	defaultMetricsFlushInterval = 5 * time.Second
 
+	defaultPlaygroundTraceStoreEnabled = true
+	defaultPlaygroundTraceStoreTTL     = 10 * time.Minute
+
 	defaultUpstreamTimeout          = 60 * time.Second
 	defaultUpstreamErrorPassthrough = true
 
@@ -86,8 +89,8 @@ const (
 
 	defaultCORSAllowOrigins     = "*"
 	defaultCORSAllowMethods     = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-	defaultCORSAllowHeaders     = "Content-Type,Authorization,X-Request-Id"
-	defaultCORSExposeHeaders    = "X-Request-Id"
+	defaultCORSAllowHeaders     = "Content-Type,Authorization,X-AG-Trace-Id"
+	defaultCORSExposeHeaders    = "X-AG-Trace-Id"
 	defaultCORSAllowCredentials = false
 	defaultCORSMaxAge           = "600"
 
@@ -105,6 +108,7 @@ type Config struct {
 	Kafka        KafkaConfig
 	Telemetry    TelemetryConfig
 	Metrics      MetricsConfig
+	Playground   PlaygroundConfig
 	Upstream     UpstreamConfig
 	Provider     ProviderConfig
 	Catalog      CatalogConfig
@@ -200,6 +204,14 @@ type MetricsConfig struct {
 	FlushInterval time.Duration
 }
 
+// PlaygroundConfig drives the default Redis-backed trace store that lets the
+// dashboard playground fetch the metrics Event for a request it just made.
+// Only requests carrying the playground token are stored, with a short TTL.
+type PlaygroundConfig struct {
+	TraceStoreEnabled bool
+	TraceStoreTTL     time.Duration
+}
+
 type UpstreamConfig struct {
 	Timeout          time.Duration
 	ErrorPassthrough bool
@@ -241,6 +253,7 @@ func LoadConfig() (*Config, error) {
 		Kafka:        getKafkaConfig(),
 		Telemetry:    getTelemetryConfig(),
 		Metrics:      getMetricsConfig(),
+		Playground:   getPlaygroundConfig(),
 		Upstream:     getUpstreamConfig(),
 		Provider:     getProviderConfig(),
 		Catalog:      getCatalogConfig(),
@@ -402,6 +415,17 @@ func getMetricsConfig() MetricsConfig {
 		QueueSize:     getEnvInt("METRICS_QUEUE_SIZE", defaultMetricsQueueSize),
 		WorkerCount:   getEnvInt("METRICS_WORKER_COUNT", defaultMetricsWorkerCount),
 		FlushInterval: getEnvDuration("METRICS_FLUSH_INTERVAL", defaultMetricsFlushInterval),
+	}
+}
+
+func getPlaygroundConfig() PlaygroundConfig {
+	ttl := getEnvDuration("PLAYGROUND_TRACE_STORE_TTL", defaultPlaygroundTraceStoreTTL)
+	if ttl <= 0 {
+		ttl = defaultPlaygroundTraceStoreTTL
+	}
+	return PlaygroundConfig{
+		TraceStoreEnabled: getEnvBool("PLAYGROUND_TRACE_STORE_ENABLED", defaultPlaygroundTraceStoreEnabled),
+		TraceStoreTTL:     ttl,
 	}
 }
 

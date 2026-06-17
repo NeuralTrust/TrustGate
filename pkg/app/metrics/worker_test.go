@@ -74,7 +74,7 @@ func TestWorker_PublishesConsolidatedEvent(t *testing.T) {
 	builder := appmetrics.NewBuilder(adapter.NewRegistry(), stubPricingResolver{
 		price: appcatalog.Pricing{ModelLabel: "GPT-4o", InputPrice: 0.0000025, OutputPrice: 0.00001, Found: true},
 	})
-	pipeline := appmetrics.NewPipeline(builder, nil, newTestLogger(), capture)
+	pipeline := appmetrics.NewPipeline(builder, nil, nil, newTestLogger(), capture)
 
 	w := appmetrics.NewWorker(newTestLogger(), pipeline)
 	w.StartWorkers(1)
