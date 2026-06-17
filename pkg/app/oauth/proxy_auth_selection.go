@@ -22,11 +22,24 @@ import (
 	"net/url"
 
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 func (p *authProxy) authForResource(ctx context.Context, resource string) (*authdomain.Auth, error) {
-	if a := p.resourceAuth(ctx, resource); a != nil {
-		return a, nil
+	auth, gatewayID, matched := p.resourceAuth(ctx, resource)
+	if auth != nil {
+		return auth, nil
+	}
+	// The resource pinned a consumer but it has no OAuth2 identity provider of
+	// its own: fall back to the single IdP configured on that consumer's
+	// gateway instead of scanning every tenant on the platform.
+	if matched {
+		a, err := p.singleOAuth2AuthForGateway(ctx, gatewayID)
+		if errors.Is(err, ErrAmbiguousAuthorizationServer) {
+			return nil, oauthErr("invalid_target",
+				"multiple identity providers configured for this gateway; attach a single oauth2 identity provider to the MCP consumer")
+		}
+		return a, err
 	}
 	a, err := p.singleOAuth2Auth(ctx)
 	if errors.Is(err, ErrAmbiguousAuthorizationServer) {
@@ -36,28 +49,35 @@ func (p *authProxy) authForResource(ctx context.Context, resource string) (*auth
 	return a, err
 }
 
-func (p *authProxy) resourceAuth(ctx context.Context, resource string) *authdomain.Auth {
+// resourceAuth resolves the RFC 8707 resource indicator to the OAuth2 auth
+// attached to the addressed consumer. When the consumer is found but exposes no
+// usable OAuth2 auth, it still reports the consumer's gateway so the caller can
+// scope the identity-provider fallback to that tenant.
+func (p *authProxy) resourceAuth(ctx context.Context, resource string) (*authdomain.Auth, ids.GatewayID, bool) {
 	if p.paths == nil || resource == "" {
-		return nil
+		return nil, ids.GatewayID{}, false
 	}
 	u, err := url.Parse(resource)
 	if err != nil || u.Path == "" {
-		return nil
+		return nil, ids.GatewayID{}, false
 	}
 	matches, err := p.paths.Match(ctx, u.Host, u.Path)
 	if err != nil {
 		slog.Warn("oauth: resource lookup failed; falling back to single-issuer selection",
 			"resource", resource, "error", err)
-		return nil
+		return nil, ids.GatewayID{}, false
 	}
 	for _, m := range matches {
 		for _, a := range m.Auths {
 			if a.Enabled && a.Type == authdomain.TypeOAuth2 && a.Config.OAuth2 != nil {
-				return a
+				return a, m.GatewayID, true
 			}
 		}
 	}
-	return nil
+	if len(matches) > 0 {
+		return nil, matches[0].GatewayID, true
+	}
+	return nil, ids.GatewayID{}, false
 }
 
 func (p *authProxy) pendingAuth(ctx context.Context, pending *PendingAuthorization) (*authdomain.Auth, error) {
@@ -75,7 +95,6 @@ func (p *authProxy) pendingAuth(ctx context.Context, pending *PendingAuthorizati
 	}
 	return p.authForResource(ctx, pending.Resource)
 }
-
 
 func (p *authProxy) validateClientRedirect(ctx context.Context, clientID, redirectURI string) error {
 	if clientID != "" && p.store != nil {
@@ -128,6 +147,18 @@ func (p *authProxy) singleOAuth2Auth(ctx context.Context) (*authdomain.Auth, err
 	if err != nil {
 		return nil, fmt.Errorf("oauth: load oauth2 auths: %w", err)
 	}
+	return pickSingleOAuth2(auths)
+}
+
+func (p *authProxy) singleOAuth2AuthForGateway(ctx context.Context, gatewayID ids.GatewayID) (*authdomain.Auth, error) {
+	auths, err := p.credentials.OAuth2AuthsForGateway(ctx, gatewayID)
+	if err != nil {
+		return nil, fmt.Errorf("oauth: load oauth2 auths for gateway: %w", err)
+	}
+	return pickSingleOAuth2(auths)
+}
+
+func pickSingleOAuth2(auths []*authdomain.Auth) (*authdomain.Auth, error) {
 	issuers := issuersOf(auths)
 	if len(issuers) == 0 {
 		return nil, ErrNoAuthorizationServer

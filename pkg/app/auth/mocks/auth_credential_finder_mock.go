@@ -6,6 +6,7 @@ import (
 	context "context"
 
 	auth "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	ids "github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -108,6 +109,65 @@ func (_m *CredentialFinder) OAuth2Auths(ctx context.Context) ([]*auth.Auth, erro
 	}
 
 	return r0, r1
+}
+
+// OAuth2AuthsForGateway provides a mock function with given fields: ctx, gatewayID
+func (_m *CredentialFinder) OAuth2AuthsForGateway(ctx context.Context, gatewayID ids.GatewayID) ([]*auth.Auth, error) {
+	ret := _m.Called(ctx, gatewayID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for OAuth2AuthsForGateway")
+	}
+
+	var r0 []*auth.Auth
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.GatewayID) ([]*auth.Auth, error)); ok {
+		return rf(ctx, gatewayID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.GatewayID) []*auth.Auth); ok {
+		r0 = rf(ctx, gatewayID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*auth.Auth)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.GatewayID) error); ok {
+		r1 = rf(ctx, gatewayID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// CredentialFinder_OAuth2AuthsForGateway_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OAuth2AuthsForGateway'
+type CredentialFinder_OAuth2AuthsForGateway_Call struct {
+	*mock.Call
+}
+
+// OAuth2AuthsForGateway is a helper method to define mock.On call
+//   - ctx context.Context
+//   - gatewayID ids.GatewayID
+func (_e *CredentialFinder_Expecter) OAuth2AuthsForGateway(ctx interface{}, gatewayID interface{}) *CredentialFinder_OAuth2AuthsForGateway_Call {
+	return &CredentialFinder_OAuth2AuthsForGateway_Call{Call: _e.mock.On("OAuth2AuthsForGateway", ctx, gatewayID)}
+}
+
+func (_c *CredentialFinder_OAuth2AuthsForGateway_Call) Run(run func(ctx context.Context, gatewayID ids.GatewayID)) *CredentialFinder_OAuth2AuthsForGateway_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.GatewayID))
+	})
+	return _c
+}
+
+func (_c *CredentialFinder_OAuth2AuthsForGateway_Call) Return(_a0 []*auth.Auth, _a1 error) *CredentialFinder_OAuth2AuthsForGateway_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *CredentialFinder_OAuth2AuthsForGateway_Call) RunAndReturn(run func(context.Context, ids.GatewayID) ([]*auth.Auth, error)) *CredentialFinder_OAuth2AuthsForGateway_Call {
+	_c.Call.Return(run)
+	return _c
 }
 
 // CredentialFinder_OAuth2Auths_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OAuth2Auths'
