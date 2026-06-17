@@ -31,6 +31,7 @@ const (
 	ProviderAzure            = "azure"
 	ProviderMistral          = "mistral"
 	ProviderGroq             = "groq"
+	ProviderDeepSeek         = "deepseek"
 )
 
 // SupportedProviders returns every provider name the gateway can route to.
@@ -45,6 +46,7 @@ func SupportedProviders() []string {
 		ProviderAzure,
 		ProviderMistral,
 		ProviderGroq,
+		ProviderDeepSeek,
 	}
 }
 
@@ -59,7 +61,8 @@ func IsValidProvider(name string) bool {
 		ProviderBedrock,
 		ProviderAzure,
 		ProviderMistral,
-		ProviderGroq:
+		ProviderGroq,
+		ProviderDeepSeek:
 		return true
 	default:
 		return false

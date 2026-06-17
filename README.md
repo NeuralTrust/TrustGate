@@ -26,7 +26,7 @@
 ## ✨ Features
 
 - 🚀 **High Performance** — Built in Go on top of [Fiber](https://gofiber.io), tuned for low latency and high concurrency.
-- 🌍 **Multi-Provider** — First-class adapters for OpenAI, Anthropic, Azure OpenAI, AWS Bedrock, Google Gemini, Vertex AI, Groq and Mistral.
+- 🌍 **Multi-Provider** — First-class adapters for OpenAI, Anthropic, Azure OpenAI, AWS Bedrock, Google Gemini, Vertex AI, Groq, Mistral and DeepSeek.
 - 🧭 **Smart Routing & Load Balancing** — Round-robin, weighted round-robin and IP-hash strategies with health checks and fallback targets.
 - 🔌 **Plugin System** — Policy stages with built-in plugins: rate limiting, token rate limiting, request size guard, semantic cache and CORS.
 - 🧠 **Semantic Cache** — Embedding-based response caching to cut cost and latency on repeated prompts.
@@ -305,6 +305,7 @@ Plugins run inside ordered **policy stages** and can execute sequentially or in 
 |----------|----------|----------|----------|
 | OpenAI | Anthropic | Azure OpenAI | AWS Bedrock |
 | Google Gemini | Vertex AI | Groq | Mistral |
+| DeepSeek | | | |
 
 ## ⚙️ Configuration
 

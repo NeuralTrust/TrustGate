@@ -96,6 +96,7 @@ func NewRegistry() *Registry {
 	}
 	r.Register(FormatOpenAI, &OpenAIAdapter{})
 	r.Register(FormatGroq, &OpenAIAdapter{})
+	r.Register(FormatDeepSeek, &OpenAIAdapter{})
 	r.Register(FormatOpenAIResponses, &OpenAIResponsesAdapter{})
 	r.Register(FormatAnthropic, &AnthropicAdapter{})
 	r.Register(FormatGemini, &GeminiAdapter{})
