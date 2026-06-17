@@ -198,8 +198,7 @@ type ProviderConfig struct {
 }
 
 type CatalogConfig struct {
-	OpenRouterAPIKey  string
-	OpenRouterBaseURL string
+	ModelsDevBaseURL string
 }
 
 // CORSConfig drives the CORSMiddleware applied by both admin and proxy.
@@ -350,8 +349,7 @@ func getProviderConfig() ProviderConfig {
 
 func getCatalogConfig() CatalogConfig {
 	return CatalogConfig{
-		OpenRouterAPIKey:  getEnv("OPENROUTER_API_KEY", ""),
-		OpenRouterBaseURL: getEnv("OPENROUTER_BASE_URL", ""),
+		ModelsDevBaseURL: getEnv("MODELS_DEV_BASE_URL", ""),
 	}
 }
 
