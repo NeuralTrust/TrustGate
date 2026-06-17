@@ -23,6 +23,7 @@ import (
 
 	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -32,6 +33,16 @@ type fakeCredentialFinder struct {
 
 func (f *fakeCredentialFinder) OAuth2Auths(context.Context) ([]*authdomain.Auth, error) {
 	return f.oauth2, nil
+}
+
+func (f *fakeCredentialFinder) OAuth2AuthsForGateway(_ context.Context, gatewayID ids.GatewayID) ([]*authdomain.Auth, error) {
+	out := make([]*authdomain.Auth, 0, len(f.oauth2))
+	for _, a := range f.oauth2 {
+		if a.GatewayID == gatewayID {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeCredentialFinder) MTLSAuths(context.Context) ([]*authdomain.Auth, error) {

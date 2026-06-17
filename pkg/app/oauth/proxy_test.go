@@ -461,6 +461,79 @@ func TestResourceScopedFacadeSelectsIdPPerTenant(t *testing.T) {
 	}
 }
 
+// When the resource pins a consumer that has no OAuth2 auth of its own, the
+// fallback is scoped to that consumer's gateway: a different tenant's IdP must
+// not turn the lookup ambiguous.
+func TestAuthorizeResourceFallsBackToGatewayScopedIdP(t *testing.T) {
+	t.Parallel()
+	idpGateway, _ := fakeIdP(t)
+	idpOtherTenant, capturedOther := fakeIdP(t)
+	gatewayID := ids.New[ids.GatewayKind]()
+
+	gatewayAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpGateway.URL, ClientID: "client-gw"})
+	gatewayAuth.GatewayID = gatewayID
+	otherTenantAuth := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: idpOtherTenant.URL, ClientID: "client-other"})
+
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{gatewayAuth, otherTenantAuth}}
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
+	}}
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil)
+
+	location, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "client-gw",
+		RedirectURI:         "cursor://anysphere.cursor-mcp/oauth/callback",
+		CodeChallenge:       s256("v"),
+		CodeChallengeMethod: "S256",
+		Resource:            "http://gw.example.com/cons/mcp",
+	})
+	if err != nil {
+		t.Fatalf("authorize must resolve the gateway's single IdP, got %v", err)
+	}
+	loc, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse redirect: %v", err)
+	}
+	if got := loc.Scheme + "://" + loc.Host; got != idpGateway.URL {
+		t.Fatalf("authorize must redirect to the gateway IdP, got %s (want %s)", got, idpGateway.URL)
+	}
+	if len(*capturedOther) != 0 {
+		t.Fatalf("another tenant's IdP must never be contacted, got %v", *capturedOther)
+	}
+}
+
+// A consumer without its own OAuth2 auth on a gateway that hosts several IdPs
+// is genuinely ambiguous: the client gets invalid_target, not a cross-tenant
+// leak.
+func TestAuthorizeResourceAmbiguousWithinGateway(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	authA := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-a.example.com", ClientID: "client-a"})
+	authA.GatewayID = gatewayID
+	authB := enabledOAuth2Auth(t, authdomain.OAuth2Config{Issuer: "https://idp-b.example.com", ClientID: "client-b"})
+	authB.GatewayID = gatewayID
+
+	finder := &fakeCredentialFinder{oauth2: []*authdomain.Auth{authA, authB}}
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
+	}}
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil)
+
+	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "client-a",
+		RedirectURI:         "cursor://cb",
+		CodeChallenge:       s256("v"),
+		CodeChallengeMethod: "S256",
+		Resource:            "http://gw.example.com/cons/mcp",
+	})
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_target" {
+		t.Fatalf("expected invalid_target within an ambiguous gateway, got %v", err)
+	}
+}
+
 // Multiple IdPs without a resource indicator cannot be disambiguated: the
 // client gets a structured invalid_target error.
 func TestAuthorizeMultiIssuerRequiresResource(t *testing.T) {

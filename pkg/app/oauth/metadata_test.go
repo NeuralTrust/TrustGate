@@ -22,6 +22,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
 
 type fakeCredentialFinder struct {
@@ -31,6 +32,19 @@ type fakeCredentialFinder struct {
 
 func (f *fakeCredentialFinder) OAuth2Auths(context.Context) ([]*authdomain.Auth, error) {
 	return f.oauth2, f.err
+}
+
+func (f *fakeCredentialFinder) OAuth2AuthsForGateway(_ context.Context, gatewayID ids.GatewayID) ([]*authdomain.Auth, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make([]*authdomain.Auth, 0, len(f.oauth2))
+	for _, a := range f.oauth2 {
+		if a.GatewayID == gatewayID {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeCredentialFinder) MTLSAuths(context.Context) ([]*authdomain.Auth, error) {
