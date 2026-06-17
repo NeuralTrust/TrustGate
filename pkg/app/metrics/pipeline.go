@@ -31,10 +31,9 @@ type Exporter interface {
 	Close()
 }
 
-// PlaygroundTraceStore persists the metrics Event of playground-originated
-// requests so the dashboard can fetch it by TraceID. It is invoked after the
-// exporters and is a best-effort side channel: it must never block or fail the
-// pipeline.
+// PlaygroundTraceStore persists the metrics Event of playground requests so the
+// dashboard can fetch it by TraceID. It runs after the exporters as a
+// best-effort side channel and must never block or fail the pipeline.
 type PlaygroundTraceStore interface {
 	Save(ctx context.Context, req *infracontext.RequestContext, evt *events.Event)
 }

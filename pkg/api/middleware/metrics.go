@@ -60,6 +60,7 @@ func (m *MetricsMiddleware) Middleware() fiber.Handler {
 		exporters := gatewayExporters(gw)
 
 		traceID := m.resolveTraceID(c)
+		c.Set(HeaderTraceID, traceID)
 		requestTrace := trace.New(traceID, m.buildTraceMetadata(c, gatewayID, gw))
 		// Gating is set once here, before the trace is shared with any
 		// downstream goroutine (forwarder, plugins, finalizer).
@@ -122,13 +123,12 @@ func (m *MetricsMiddleware) enabled() bool {
 	return m.telemetryEnabled
 }
 
-// resolveTraceID prefers the id set by the requestid middleware (stored in
-// Locals and echoed in the X-Request-Id response header), so the event TraceID
-// matches the X-Request-Id the client receives even when the client did not
-// send the header. It falls back to the request header, then a fresh UUID.
 func (m *MetricsMiddleware) resolveTraceID(c *fiber.Ctx) string {
 	if rid, ok := c.Locals(requestid.ConfigDefault.ContextKey).(string); ok && rid != "" {
 		return rid
+	}
+	if tid := c.Get(HeaderTraceID); tid != "" {
+		return tid
 	}
 	traceID := c.Get(fiber.HeaderXRequestID)
 	if traceID == "" {

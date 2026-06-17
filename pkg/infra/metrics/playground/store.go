@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package playground stores the metrics Event of playground-originated proxy
-// requests in Redis so the dashboard can fetch the trace it just produced,
-// keyed by TraceID (the X-Request-Id echoed in the proxy response).
+// Package playground stores the metrics Event of playground proxy requests in
+// Redis so the dashboard can fetch the trace by TraceID (the X-AG-Trace-Id
+// echoed in the proxy response).
 package playground
 
 import (
@@ -32,15 +32,12 @@ import (
 	"github.com/go-redis/redis/v8"
 )
 
-// headerPlaygroundToken marks a request as originating from the dashboard
-// playground. It mirrors resolver.HeaderPlaygroundToken; duplicated here so the
-// infra layer does not depend on the api layer.
+// headerPlaygroundToken mirrors resolver.HeaderPlaygroundToken, duplicated so
+// the infra layer does not depend on the api layer.
 const headerPlaygroundToken = "x-ag-playground-token"
 
 const traceKeyPrefix = "playground:trace:"
 
-// saveTimeout bounds the Redis write so a slow store never blocks the metrics
-// worker goroutine.
 const saveTimeout = 2 * time.Second
 
 type Store struct {
@@ -60,8 +57,7 @@ func NewStore(rdb *redis.Client, cfg config.PlaygroundConfig, logger *slog.Logge
 }
 
 // Save persists evt under its TraceID when the store is enabled and the request
-// carries the playground token. It is best-effort: failures are logged, never
-// returned, so telemetry export is unaffected.
+// carries the playground token. Best-effort: failures are logged, not returned.
 func (s *Store) Save(ctx context.Context, req *infracontext.RequestContext, evt *events.Event) {
 	if s == nil || !s.enabled || s.rdb == nil || req == nil || evt == nil {
 		return
@@ -90,7 +86,7 @@ func (s *Store) Save(ctx context.Context, req *infracontext.RequestContext, evt 
 // Find returns the stored Event for traceID, or (nil, nil) when no trace exists
 // (expired or never stored).
 func (s *Store) Find(ctx context.Context, traceID string) (*events.Event, error) {
-	if s.rdb == nil {
+	if s == nil || !s.enabled || s.rdb == nil {
 		return nil, nil
 	}
 	raw, err := s.rdb.Get(ctx, traceKey(traceID)).Bytes()

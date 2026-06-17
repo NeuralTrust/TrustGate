@@ -91,7 +91,7 @@ func TestMetricsMiddleware_ProcessesNonStreamingRequest(t *testing.T) {
 	assert.Equal(t, fiber.StatusOK, gotResp.StatusCode)
 }
 
-func TestMetricsMiddleware_TraceIDMatchesRequestIDHeader(t *testing.T) {
+func TestMetricsMiddleware_TraceIDMatchesTraceIDHeader(t *testing.T) {
 	worker := appmetricsmocks.NewWorker(t)
 
 	var (
@@ -116,8 +116,6 @@ func TestMetricsMiddleware_TraceIDMatchesRequestIDHeader(t *testing.T) {
 
 	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()
-	// requestid runs before metrics on the proxy plane: it mints the id, stores
-	// it in Locals and echoes it in the X-Request-Id response header.
 	app.Use(requestid.New())
 	app.Use(func(c *fiber.Ctx) error {
 		c.SetUserContext(appconsumer.WithGatewayID(c.UserContext(), gatewayID))
@@ -133,13 +131,15 @@ func TestMetricsMiddleware_TraceIDMatchesRequestIDHeader(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fiber.StatusOK, resp.StatusCode)
 
-	respRequestID := resp.Header.Get(fiber.HeaderXRequestID)
-	require.NotEmpty(t, respRequestID, "requestid middleware must echo X-Request-Id")
+	respTraceID := resp.Header.Get(middleware.HeaderTraceID)
+	require.NotEmpty(t, respTraceID, "metrics middleware must echo X-AG-Trace-Id")
+	assert.Equal(t, resp.Header.Get(fiber.HeaderXRequestID), respTraceID,
+		"the echoed trace id must equal the request id so logs and traces share it")
 
 	mu.Lock()
 	defer mu.Unlock()
 	require.Equal(t, 1, processCalls)
-	assert.Equal(t, respRequestID, gotTraceID, "event TraceID must equal the X-Request-Id returned to the client")
+	assert.Equal(t, respTraceID, gotTraceID, "event TraceID must equal the X-AG-Trace-Id returned to the client")
 }
 
 func TestMetricsMiddleware_StreamingEmitsViaFinalizer(t *testing.T) {

@@ -47,10 +47,9 @@ func Telemetry(c *container.Container) error {
 	return c.Provide(appmetrics.NewWorker)
 }
 
-// newPlaygroundTraceStore builds the Redis-backed store shared by the proxy
-// plane (writes) and the admin plane (reads). It reuses the cache client's
-// Redis connection rather than the in-process TTL cache so the trace gets a
-// real Redis TTL and is visible across planes.
+// newPlaygroundTraceStore uses the raw Redis client (not the in-process TTL
+// cache) so traces get a real Redis TTL and are visible across the proxy and
+// admin planes.
 func newPlaygroundTraceStore(
 	cc infracache.Client,
 	cfg *config.Config,
@@ -74,6 +73,9 @@ func buildPipeline(
 	playgroundStore *playground.Store,
 ) (*appmetrics.Pipeline, error) {
 	if !cfg.Telemetry.Enabled {
+		if cfg.Playground.TraceStoreEnabled {
+			logger.Warn("playground trace store enabled but telemetry is disabled; no traces will be stored")
+		}
 		return nil, nil
 	}
 	var defaults []appmetrics.Exporter

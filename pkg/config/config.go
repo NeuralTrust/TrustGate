@@ -89,8 +89,8 @@ const (
 
 	defaultCORSAllowOrigins     = "*"
 	defaultCORSAllowMethods     = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-	defaultCORSAllowHeaders     = "Content-Type,Authorization,X-Request-Id"
-	defaultCORSExposeHeaders    = "X-Request-Id"
+	defaultCORSAllowHeaders     = "Content-Type,Authorization,X-AG-Trace-Id"
+	defaultCORSExposeHeaders    = "X-AG-Trace-Id"
 	defaultCORSAllowCredentials = false
 	defaultCORSMaxAge           = "600"
 
@@ -347,9 +347,13 @@ func getMetricsConfig() MetricsConfig {
 }
 
 func getPlaygroundConfig() PlaygroundConfig {
+	ttl := getEnvDuration("PLAYGROUND_TRACE_STORE_TTL", defaultPlaygroundTraceStoreTTL)
+	if ttl <= 0 {
+		ttl = defaultPlaygroundTraceStoreTTL
+	}
 	return PlaygroundConfig{
 		TraceStoreEnabled: getEnvBool("PLAYGROUND_TRACE_STORE_ENABLED", defaultPlaygroundTraceStoreEnabled),
-		TraceStoreTTL:     getEnvDuration("PLAYGROUND_TRACE_STORE_TTL", defaultPlaygroundTraceStoreTTL),
+		TraceStoreTTL:     ttl,
 	}
 }
 

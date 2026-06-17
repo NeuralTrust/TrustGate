@@ -23,7 +23,7 @@ import (
 )
 
 // TraceFinder retrieves a stored playground trace by its TraceID (the
-// X-Request-Id the proxy echoed to the client).
+// X-AG-Trace-Id the proxy echoed to the client).
 type TraceFinder interface {
 	Find(ctx context.Context, traceID string) (*events.Event, error)
 }
@@ -38,11 +38,11 @@ func NewGetTraceHandler(finder TraceFinder) *GetTraceHandler {
 
 // Handle godoc
 // @Summary      Get a playground trace
-// @Description  Returns the metrics Event captured for a playground request, keyed by the X-Request-Id returned in the proxy response. Traces expire after a short TTL.
+// @Description  Returns the metrics Event captured for a playground request, keyed by the X-AG-Trace-Id returned in the proxy response. Traces expire after a short TTL.
 // @Tags         playground
 // @Produce      json
 // @Security     BearerAuth
-// @Param        trace_id  path      string  true  "Trace id (X-Request-Id from the proxy response)"
+// @Param        trace_id  path      string  true  "Trace id (X-AG-Trace-Id from the proxy response)"
 // @Success      200       {object}  events.Event
 // @Failure      401       {object}  helpers.ErrorBody
 // @Failure      404       {object}  helpers.ErrorBody

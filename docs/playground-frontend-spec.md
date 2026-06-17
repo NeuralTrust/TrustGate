@@ -96,13 +96,15 @@ data: {"error":{"message":"upstream stream terminated unexpectedly","type":"upst
 
 ## Retrieving the trace (metrics) of a playground request
 
-Every proxy response carries an `X-Request-Id` header. For playground requests
-(those sent with `X-AG-Playground-Token`) the gateway also stores the full
-metrics Event for that request in Redis, keyed by that same id, with a short TTL
-(default 10 minutes). This lets the dashboard show what happened: latency, token
-usage, cost, the policy chain, security flags, attempts, etc.
+Every proxy response carries an `X-AG-Trace-Id` header (a gateway-specific name
+to avoid colliding with the `X-Request-Id` some upstream providers emit). For
+playground requests (those sent with `X-AG-Playground-Token`) the gateway also
+stores the full metrics Event for that request in Redis, keyed by that same id,
+with a short TTL (default 10 minutes). This lets the dashboard show what
+happened: latency, token usage, cost, the policy chain, security flags,
+attempts, etc.
 
-1. Read `X-Request-Id` from the proxy response (it equals the trace id). It is
+1. Read `X-AG-Trace-Id` from the proxy response (it equals the trace id). It is
    already CORS-exposed, so the browser can read it; relay it through the BFF.
 2. From the BFF (server-side, with the admin JWT), fetch the trace from the
    **admin API** (default port 8080):
