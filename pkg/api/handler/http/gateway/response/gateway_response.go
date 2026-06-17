@@ -21,6 +21,7 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/gateway"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/telemetry"
+	"github.com/NeuralTrust/AgentGateway/pkg/version"
 )
 
 type GatewayResponse struct {
@@ -28,6 +29,7 @@ type GatewayResponse struct {
 	Name            string                 `json:"name"`
 	Slug            string                 `json:"slug"`
 	Status          string                 `json:"status"`
+	Version         string                 `json:"version"`
 	Domain          string                 `json:"domain,omitempty"`
 	Hosts           GatewayHosts           `json:"hosts"`
 	Metadata        map[string]string      `json:"metadata,omitempty"`
@@ -50,11 +52,12 @@ func FromDomain(g *domain.Gateway, proxyBaseDomain, mcpBaseDomain string) Gatewa
 		return GatewayResponse{}
 	}
 	return GatewayResponse{
-		ID:     g.ID,
-		Name:   g.Name,
-		Slug:   g.Slug,
-		Status: g.Status,
-		Domain: g.Domain,
+		ID:      g.ID,
+		Name:    g.Name,
+		Slug:    g.Slug,
+		Status:  g.Status,
+		Version: version.Version,
+		Domain:  g.Domain,
 		Hosts: GatewayHosts{
 			Proxy: proxyHost(g, proxyBaseDomain),
 			MCP:   subdomainHost(g.Slug, mcpBaseDomain),
