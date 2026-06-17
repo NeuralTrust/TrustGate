@@ -139,6 +139,26 @@ func TestEventToRecord_Severity(t *testing.T) {
 	}
 }
 
+func TestEventToRecord_StatusFields(t *testing.T) {
+	t.Parallel()
+	evt := fullEvent()
+	evt.Status = events.Status{Code: 504, IsTimeout: true, Outcome: "timeout", Reason: "upstream deadline"}
+	rec := eventToRecord(evt, 4096)
+	attrs := attrsOf(rec)
+
+	assert.Equal(t, "timeout", attrs["agentgateway.status.outcome"].AsString())
+	assert.Equal(t, "upstream deadline", attrs["agentgateway.status.reason"].AsString())
+	assert.True(t, attrs["agentgateway.status.is_timeout"].AsBool())
+}
+
+func TestEventToRecord_StatusTimeoutOmittedWhenFalse(t *testing.T) {
+	t.Parallel()
+	rec := eventToRecord(fullEvent(), 4096)
+	attrs := attrsOf(rec)
+	_, ok := attrs["agentgateway.status.is_timeout"]
+	assert.False(t, ok)
+}
+
 func TestEventToRecord_NoUsage(t *testing.T) {
 	t.Parallel()
 	evt := fullEvent()

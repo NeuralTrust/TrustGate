@@ -32,6 +32,9 @@ const genAIRequestStreamKey = "gen_ai.request.stream"
 
 const (
 	attrSchemaVersion        = "agentgateway.schema_version"
+	attrStatusOutcome        = "agentgateway.status.outcome"
+	attrStatusReason         = "agentgateway.status.reason"
+	attrStatusIsTimeout      = "agentgateway.status.is_timeout"
 	attrTraceID              = "agentgateway.trace_id"
 	attrGatewayID            = "agentgateway.gateway_id"
 	attrTeamID               = "agentgateway.team_id"
@@ -128,6 +131,11 @@ func eventToRecord(evt *events.Event, maxBodyBytes int) otellog.Record {
 	appendStr(attrIP, evt.IP)
 	appendStr(attrRequestedModel, evt.Request.RequestedModel)
 	appendStr(attrModelLabel, evt.Request.ModelLabel)
+	appendStr(attrStatusOutcome, evt.Status.Outcome)
+	appendStr(attrStatusReason, evt.Status.Reason)
+	if evt.Status.IsTimeout {
+		attrs = append(attrs, otellog.Bool(attrStatusIsTimeout, true))
+	}
 	if evt.Cost != nil {
 		attrs = append(attrs,
 			otellog.Float64(attrCostTotalUsd, evt.Cost.TotalUsd),

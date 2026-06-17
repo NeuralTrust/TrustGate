@@ -343,10 +343,31 @@ func getOTLPConfig() OTLPConfig {
 		Endpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		Headers:     parseOTLPHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS", "")),
 		Protocol:    getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", ""),
-		Timeout:     getEnvDuration("OTEL_EXPORTER_OTLP_TIMEOUT", 0),
+		Timeout:     getOTLPTimeout(),
 		Insecure:    getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
 		Compression: getEnv("OTEL_EXPORTER_OTLP_COMPRESSION", ""),
 	}
+}
+
+// getOTLPTimeout reads OTEL_EXPORTER_OTLP_TIMEOUT. Per the OpenTelemetry spec the
+// value is an integer number of milliseconds; a Go duration string (such as
+// "10s") is also accepted for convenience. Returns 0 when unset or invalid so
+// the exporter applies its own default.
+func getOTLPTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_TIMEOUT"))
+	if raw == "" {
+		return 0
+	}
+	if ms, err := strconv.Atoi(raw); err == nil {
+		if ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	} else if parsed, perr := time.ParseDuration(raw); perr == nil && parsed > 0 {
+		return parsed
+	}
+	slog.Warn("invalid OTEL_EXPORTER_OTLP_TIMEOUT, falling back to default",
+		slog.String("value", sanitizeLogValue(raw)))
+	return 0
 }
 
 // parseOTLPHeaders parses the standard OTEL_EXPORTER_OTLP_HEADERS format

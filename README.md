@@ -397,8 +397,9 @@ Any key absent from a gateway's settings falls back to the process-level
 `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
 `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TIMEOUT`,
 `OTEL_EXPORTER_OTLP_INSECURE`, and `OTEL_EXPORTER_OTLP_COMPRESSION` env vars
-(per-gateway settings win). `OTEL_EXPORTER_OTLP_TIMEOUT` uses Go duration format
-(e.g. `10s`). Settings are validated structurally on gateway create/update with
+(per-gateway settings win). `OTEL_EXPORTER_OTLP_TIMEOUT` accepts an integer of
+milliseconds per the OpenTelemetry spec (e.g. `10000`); a Go duration string
+(e.g. `10s`) is also accepted. Settings are validated structurally on gateway create/update with
 no network I/O; export is non-blocking (bounded queue, drop-on-full) so a slow
 or unreachable Collector never affects request latency or the Kafka path.
 

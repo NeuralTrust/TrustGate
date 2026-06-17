@@ -175,6 +175,22 @@ func TestSettingsValidate(t *testing.T) {
 			},
 			wantErr: "tls file",
 		},
+		{
+			name: "tls cert without key",
+			raw: map[string]interface{}{
+				"endpoint": "collector:4317",
+				"tls":      map[string]interface{}{"cert_file": "/does/not/exist/cert.pem"},
+			},
+			wantErr: "together",
+		},
+		{
+			name: "tls key without cert",
+			raw: map[string]interface{}{
+				"endpoint": "collector:4317",
+				"tls":      map[string]interface{}{"key_file": "/does/not/exist/key.pem"},
+			},
+			wantErr: "together",
+		},
 	}
 
 	for _, tc := range tests {

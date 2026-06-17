@@ -156,6 +156,9 @@ func (s Settings) validate() error {
 		return errors.New("otlp: insecure cannot be combined with tls settings")
 	}
 	if s.TLS != nil {
+		if (s.TLS.CertFile == "") != (s.TLS.KeyFile == "") {
+			return errors.New("otlp: tls cert_file and key_file must be provided together")
+		}
 		for _, file := range []string{s.TLS.CAFile, s.TLS.CertFile, s.TLS.KeyFile} {
 			if file == "" {
 				continue
