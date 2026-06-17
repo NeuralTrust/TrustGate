@@ -21,6 +21,7 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/anthropic"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/azure"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/bedrock"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/deepseek"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/google"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/groq"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/mistral"
@@ -41,6 +42,7 @@ const (
 	ProviderAzure            = providers.ProviderAzure
 	ProviderMistral          = providers.ProviderMistral
 	ProviderGroq             = providers.ProviderGroq
+	ProviderDeepSeek         = providers.ProviderDeepSeek
 )
 
 //go:generate mockery --name=ProviderLocator --dir=. --output=./mocks --filename=provider_locator_mock.go --case=underscore --with-expecter
@@ -70,6 +72,7 @@ func NewProviderLocator() ProviderLocator {
 			ProviderAzure:            azure.NewAzureClient(),
 			ProviderMistral:          mistral.NewMistralClient(),
 			ProviderGroq:             groq.NewGroqClient(),
+			ProviderDeepSeek:         deepseek.NewDeepSeekClient(),
 			ProviderVertex:           vertex.NewVertexClient(),
 		},
 	}

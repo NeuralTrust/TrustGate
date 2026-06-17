@@ -116,6 +116,11 @@
       "type": "string"
     },
     {
+      "key": "deepseek_api_key",
+      "value": "replace-with-real-deepseek-api-key",
+      "type": "string"
+    },
+    {
       "key": "aws_region",
       "value": "us-east-1",
       "type": "string"
@@ -2446,6 +2451,49 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"groq-primary-{$guid}\",\n  \"provider\": \"groq\",\n  \"description\": \"Groq registry\",\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{groq_api_key}}\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "gateways",
+                "{{gateway_id}}",
+                "registries"
+              ]
+            }
+          },
+          "description": "Optional provider payload. Does not overwrite registry_id used by later E2E steps.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registry created', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  pm.environment.set('registry_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2j. Create Registry (DeepSeek)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"deepseek-primary-{$guid}\",\n  \"provider\": \"deepseek\",\n  \"description\": \"DeepSeek registry\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{deepseek_api_key}}\"\n    }\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
