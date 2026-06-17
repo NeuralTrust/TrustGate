@@ -22,6 +22,7 @@ import (
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	repomocks "github.com/NeuralTrust/AgentGateway/pkg/domain/auth/mocks"
+	consumermocks "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer/mocks"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache/cachetest"
 	"github.com/stretchr/testify/mock"
@@ -147,7 +148,7 @@ func TestUpdater_RejectsEnablingConflictingAuth(t *testing.T) {
 	repo.EXPECT().FindEnabledByTypes(mock.Anything, []domain.Type{domain.TypeOAuth2}).
 		Return([]*domain.Auth{other}, nil).Once()
 
-	updater := appauth.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:      existing.ID,
 		Enabled: ptr(true),
@@ -167,7 +168,7 @@ func TestUpdater_AllowsUpdatingSameEntry(t *testing.T) {
 		Return([]*domain.Auth{existing}, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil).Once()
 
-	updater := appauth.NewUpdater(repo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
+	updater := appauth.NewUpdater(repo, consumermocks.NewRepository(t), newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:   existing.ID,
 		Name: ptr("renamed"),

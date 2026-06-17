@@ -700,6 +700,65 @@ func (_c *Repository_List_Call) RunAndReturn(run func(context.Context, consumer.
 	return _c
 }
 
+// ListByAuthID provides a mock function with given fields: ctx, authID
+func (_m *Repository) ListByAuthID(ctx context.Context, authID ids.ID[ids.AuthKind]) ([]*consumer.Consumer, error) {
+	ret := _m.Called(ctx, authID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListByAuthID")
+	}
+
+	var r0 []*consumer.Consumer
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.AuthKind]) ([]*consumer.Consumer, error)); ok {
+		return rf(ctx, authID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ids.ID[ids.AuthKind]) []*consumer.Consumer); ok {
+		r0 = rf(ctx, authID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*consumer.Consumer)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ids.ID[ids.AuthKind]) error); ok {
+		r1 = rf(ctx, authID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Repository_ListByAuthID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListByAuthID'
+type Repository_ListByAuthID_Call struct {
+	*mock.Call
+}
+
+// ListByAuthID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - authID ids.ID[ids.AuthKind]
+func (_e *Repository_Expecter) ListByAuthID(ctx interface{}, authID interface{}) *Repository_ListByAuthID_Call {
+	return &Repository_ListByAuthID_Call{Call: _e.mock.On("ListByAuthID", ctx, authID)}
+}
+
+func (_c *Repository_ListByAuthID_Call) Run(run func(ctx context.Context, authID ids.ID[ids.AuthKind])) *Repository_ListByAuthID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ids.ID[ids.AuthKind]))
+	})
+	return _c
+}
+
+func (_c *Repository_ListByAuthID_Call) Return(_a0 []*consumer.Consumer, _a1 error) *Repository_ListByAuthID_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Repository_ListByAuthID_Call) RunAndReturn(run func(context.Context, ids.ID[ids.AuthKind]) ([]*consumer.Consumer, error)) *Repository_ListByAuthID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ListByGateway provides a mock function with given fields: ctx, gatewayID
 func (_m *Repository) ListByGateway(ctx context.Context, gatewayID ids.ID[ids.GatewayKind]) ([]*consumer.Consumer, error) {
 	ret := _m.Called(ctx, gatewayID)

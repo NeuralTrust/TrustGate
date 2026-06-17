@@ -149,8 +149,11 @@ func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, co
 	if err != nil {
 		return err
 	}
+	if err := domain.ValidateAuthType(cons.Type, cons.RoutingMode, au.Type); err != nil {
+		return err
+	}
 	if cons.RoutingMode == domain.RoutingModeRoleBased {
-		if err := validateRoleBasedAuth(cons, au); err != nil {
+		if err := validateRoleBasedAuthCount(cons, au.ID); err != nil {
 			return err
 		}
 	}
@@ -161,18 +164,9 @@ func (a *associator) AttachAuth(ctx context.Context, gatewayID ids.GatewayID, co
 	return nil
 }
 
-// validateRoleBasedAuth enforces that a role_based consumer is backed by exactly
-// one identity-provider credential: the IdP whose token claims map to the
-// consumer's roles. Re-attaching the already-linked auth stays idempotent.
-func validateRoleBasedAuth(cons *domain.Consumer, au *authdomain.Auth) error {
-	if !au.Type.IsIdentityProvider() {
-		return fmt.Errorf(
-			"%w: a role_based consumer requires an identity-provider auth (oauth2 or idp), got %q",
-			commonerrors.ErrConflict, au.Type,
-		)
-	}
+func validateRoleBasedAuthCount(cons *domain.Consumer, authID ids.AuthID) error {
 	for _, existing := range cons.AuthIDs {
-		if existing != au.ID {
+		if existing != authID {
 			return fmt.Errorf(
 				"%w: a role_based consumer can have at most one auth",
 				commonerrors.ErrConflict,

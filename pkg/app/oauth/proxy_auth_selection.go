@@ -35,9 +35,13 @@ func (p *authProxy) authForResource(ctx context.Context, resource string) (*auth
 	// gateway instead of scanning every tenant on the platform.
 	if matched {
 		a, err := p.singleOAuth2AuthForGateway(ctx, gatewayID)
-		if errors.Is(err, ErrAmbiguousAuthorizationServer) {
+		switch {
+		case errors.Is(err, ErrAmbiguousAuthorizationServer):
 			return nil, oauthErr("invalid_target",
 				"multiple identity providers configured for this gateway; attach a single oauth2 identity provider to the MCP consumer")
+		case errors.Is(err, ErrNoAuthorizationServer):
+			return nil, oauthErr("invalid_request",
+				"this MCP server has no oauth2 identity provider; interactive login requires an oauth2 auth with a pre-registered client at your identity provider")
 		}
 		return a, err
 	}

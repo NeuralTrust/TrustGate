@@ -18,8 +18,93 @@ import (
 	"context"
 	"fmt"
 
+	commonerrors "github.com/NeuralTrust/AgentGateway/pkg/common/errors"
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 )
+
+func referencingConsumers(ctx context.Context, consumers consumerdomain.Repository, authID ids.AuthID) ([]*consumerdomain.Consumer, error) {
+	refs, err := consumers.ListByAuthID(ctx, authID)
+	if err != nil {
+		return nil, fmt.Errorf("auth: list consumers referencing auth: %w", err)
+	}
+	return refs, nil
+}
+
+func guardAuthTypeChange(ctx context.Context, consumers consumerdomain.Repository, authID ids.AuthID, newType domain.Type) error {
+	refs, err := referencingConsumers(ctx, consumers, authID)
+	if err != nil {
+		return err
+	}
+	for _, c := range refs {
+		if err := consumerdomain.ValidateAuthType(c.Type, c.RoutingMode, newType); err != nil {
+			return fmt.Errorf("%w (referenced by consumer %q)", err, c.Slug)
+		}
+	}
+	return nil
+}
+
+func guardAuthDisable(ctx context.Context, consumers consumerdomain.Repository, auths domain.Repository, authID ids.AuthID) error {
+	refs, err := referencingConsumers(ctx, consumers, authID)
+	if err != nil {
+		return err
+	}
+	for _, c := range refs {
+		switch {
+		case c.RoutingMode == consumerdomain.RoutingModeRoleBased:
+			return fmt.Errorf(
+				"%w: auth is the only identity provider of role_based consumer %q; reassign it before disabling",
+				commonerrors.ErrConflict, c.Slug,
+			)
+		case c.Type == consumerdomain.TypeMCP:
+			hasAlternative, err := consumerHasOtherUsableAuth(ctx, auths, c, authID)
+			if err != nil {
+				return err
+			}
+			if !hasAlternative {
+				return fmt.Errorf(
+					"%w: auth is the only usable identity provider of MCP consumer %q; reassign it before disabling",
+					commonerrors.ErrConflict, c.Slug,
+				)
+			}
+		}
+	}
+	return nil
+}
+
+func consumerHasOtherUsableAuth(ctx context.Context, auths domain.Repository, c *consumerdomain.Consumer, excluded ids.AuthID) (bool, error) {
+	if len(c.AuthIDs) <= 1 {
+		return false, nil
+	}
+	siblings, err := auths.FindByIDs(ctx, c.GatewayID, c.AuthIDs)
+	if err != nil {
+		return false, fmt.Errorf("auth: load consumer auths: %w", err)
+	}
+	for _, s := range siblings {
+		if s.ID == excluded || !s.Enabled {
+			continue
+		}
+		if consumerdomain.ValidateAuthType(c.Type, c.RoutingMode, s.Type) == nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func guardAuthDelete(ctx context.Context, consumers consumerdomain.Repository, authID ids.AuthID) error {
+	refs, err := referencingConsumers(ctx, consumers, authID)
+	if err != nil {
+		return err
+	}
+	if len(refs) > 0 {
+		return fmt.Errorf(
+			"%w: auth is referenced by %d consumer(s); detach it from them before deleting",
+			commonerrors.ErrConflict, len(refs),
+		)
+	}
+	return nil
+}
 
 func ensureNoOAuth2Conflict(ctx context.Context, repo domain.Repository, candidate *domain.Auth) error {
 	if candidate.Type != domain.TypeOAuth2 || !candidate.Enabled || candidate.Config.OAuth2 == nil {
