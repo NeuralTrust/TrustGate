@@ -85,6 +85,9 @@ func main() {
 	}
 
 	if serverType() == serverMCP {
+		if err := c.Invoke(modules.StartMetricsWorker); err != nil {
+			log.Fatalf("failed to start metrics worker: %v", err)
+		}
 		if err := c.Invoke(runMCP); err != nil {
 			log.Fatalf("failed to start application: %v", err)
 		}
@@ -144,7 +147,8 @@ type proxyParam struct {
 
 type mcpParam struct {
 	dig.In
-	Srv server.Server `name:"mcp"`
+	Srv    server.Server `name:"mcp"`
+	Worker appmetrics.Worker
 }
 
 type allParam struct {
@@ -159,6 +163,7 @@ func runAdmin(p adminParam, logger *slog.Logger) {
 }
 
 func runMCP(p mcpParam, logger *slog.Logger) {
+	defer p.Worker.Shutdown()
 	runServer(p.Srv, serverMCP, logger)
 }
 

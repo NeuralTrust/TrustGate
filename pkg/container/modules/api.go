@@ -60,6 +60,9 @@ func API(c *container.Container) error {
 	if err := c.Provide(middleware.NewMetricsMiddleware); err != nil {
 		return err
 	}
+	if err := c.Provide(middleware.NewMCPMetricsMiddleware); err != nil {
+		return err
+	}
 	if err := c.Provide(func(store *playgroundstore.Store) *playgroundhttp.GetTraceHandler {
 		return playgroundhttp.NewGetTraceHandler(store)
 	}); err != nil {

@@ -54,6 +54,7 @@ func (b *Builder) Build(
 
 	evt := &events.Event{
 		SchemaVersion: events.SchemaVersion,
+		Kind:          events.KindLLM,
 		TraceID:       traceID,
 		GatewayID:     meta.GatewayID,
 		TeamID:        meta.TeamID,
@@ -63,6 +64,10 @@ func (b *Builder) Build(
 		Consumer:  events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
 		SessionID: meta.SessionID,
 		IP:        meta.IP,
+	}
+
+	if meta.Kind == events.KindMCP {
+		return b.buildMCP(evt, req, resp, requestTrace, startTime, endTime)
 	}
 
 	served, attempts := b.foldLLMSpans(requestTrace)
@@ -167,6 +172,70 @@ func (b *Builder) foldPluginSpans(requestTrace *trace.RequestTrace) ([]events.Po
 		})
 	}
 	return chain, pluginsMs, anyFlagged, security
+}
+
+func (b *Builder) buildMCP(
+	evt *events.Event,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+	requestTrace *trace.RequestTrace,
+	startTime, endTime time.Time,
+) *events.Event {
+	evt.Kind = events.KindMCP
+
+	mcp, upstreamMs := b.foldMCPSpans(requestTrace)
+	if mcp != nil {
+		mcp.UpstreamLatencyMs = upstreamMs
+	}
+	evt.MCP = mcp
+
+	totalMs := endTime.Sub(startTime).Milliseconds()
+	gatewayMs := maxInt64(0, totalMs-upstreamMs)
+	evt.Latency = events.Latency{
+		TotalMs:    totalMs,
+		ProviderMs: upstreamMs,
+		GatewayMs:  gatewayMs,
+	}
+
+	b.fillRequest(evt, req, nil)
+	b.fillResponse(evt, resp, nil, totalMs)
+	b.fillStatus(evt, resp, nil, requestTrace)
+	return evt
+}
+
+func (b *Builder) foldMCPSpans(requestTrace *trace.RequestTrace) (*events.MCP, int64) {
+	if requestTrace == nil {
+		return nil, 0
+	}
+	var mcp *events.MCP
+	var upstreamMs int64
+	for _, span := range requestTrace.Spans() {
+		if span.Type != trace.SpanMCP {
+			continue
+		}
+		attrs, ok := span.MCPAttrsCopy()
+		if !ok {
+			continue
+		}
+		upstreamMs += span.Latency().Milliseconds()
+		mcp = &events.MCP{
+			Method:         attrs.Method,
+			Operation:      attrs.Operation,
+			ServerName:     attrs.ServerName,
+			RegistryID:     attrs.RegistryID,
+			Host:           attrs.Host,
+			CatalogCode:    attrs.CatalogCode,
+			Transport:      attrs.Transport,
+			Tool:           attrs.Tool,
+			UpstreamTool:   attrs.UpstreamTool,
+			Prompt:         attrs.Prompt,
+			ResourceURI:    attrs.ResourceURI,
+			Targets:        attrs.Targets,
+			UpstreamStatus: attrs.UpstreamStatus,
+			RPCErrorCode:   attrs.RPCErrorCode,
+		}
+	}
+	return mcp, upstreamMs
 }
 
 func (b *Builder) fillRequest(evt *events.Event, req *infracontext.RequestContext, served *trace.LLMAttrs) {

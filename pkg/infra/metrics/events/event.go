@@ -14,10 +14,16 @@
 
 package events
 
-const SchemaVersion = 2
+const SchemaVersion = 3
+
+const (
+	KindLLM = "llm"
+	KindMCP = "mcp"
+)
 
 type Event struct {
 	SchemaVersion int    `json:"schema_version"`
+	Kind          string `json:"kind"`
 	TraceID       string `json:"trace_id"`
 	GatewayID     string `json:"gateway_id"`
 	TeamID        string `json:"team_id,omitempty"`
@@ -43,6 +49,26 @@ type Event struct {
 
 	Attempts    []Attempt     `json:"attempts,omitempty"`
 	PolicyChain []PolicyEntry `json:"policy_chain,omitempty"`
+
+	MCP *MCP `json:"mcp,omitempty"`
+}
+
+type MCP struct {
+	Method            string `json:"method"`
+	Operation         string `json:"operation,omitempty"`
+	ServerName        string `json:"server_name,omitempty"`
+	RegistryID        string `json:"registry_id,omitempty"`
+	Host              string `json:"host,omitempty"`
+	CatalogCode       string `json:"catalog_code,omitempty"`
+	Transport         string `json:"transport,omitempty"`
+	Tool              string `json:"tool,omitempty"`
+	UpstreamTool      string `json:"upstream_tool,omitempty"`
+	Prompt            string `json:"prompt,omitempty"`
+	ResourceURI       string `json:"resource_uri,omitempty"`
+	Targets           int    `json:"targets,omitempty"`
+	UpstreamStatus    string `json:"upstream_status,omitempty"`
+	UpstreamLatencyMs int64  `json:"upstream_latency_ms,omitempty"`
+	RPCErrorCode      int    `json:"rpc_error_code,omitempty"`
 }
 
 type Consumer struct {

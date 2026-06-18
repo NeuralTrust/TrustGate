@@ -19,10 +19,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"time"
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 )
 
 //go:generate mockery --name=Composer --dir=. --output=./mocks --filename=mcp_composer_mock.go --case=underscore --with-expecter
@@ -61,6 +64,7 @@ type binding struct {
 }
 
 func (c *composer) ListTools(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Tool, error) {
+	annotateTargets(ctx, len(mcpRegistries(rc)))
 	bindings, err := c.compose(ctx, rc)
 	if err != nil {
 		return nil, err
@@ -87,6 +91,8 @@ func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsume
 		if err != nil {
 			return nil, err
 		}
+		stop := annotateUpstream(ctx, b.registry, b.tool.Name)
+		defer stop()
 		up, err := c.dialer.Connect(ctx, target)
 		if err != nil {
 			return nil, err
@@ -95,6 +101,41 @@ func (c *composer) CallTool(ctx context.Context, rc *appconsumer.RoutableConsume
 		return up.CallTool(ctx, b.tool.Name, arguments)
 	}
 	return nil, fmt.Errorf("%w: %s", ErrToolNotFound, name)
+}
+
+// annotateUpstream records the resolved upstream registry on the active MCP
+// span and returns a stop function that captures the upstream call latency.
+func annotateUpstream(ctx context.Context, reg *registrydomain.Registry, upstreamTool string) func() {
+	span := trace.SpanFromContext(ctx)
+	if span == nil {
+		return func() {}
+	}
+	var host, catalog, transport string
+	if reg.MCPTarget != nil {
+		host = hostFromURL(reg.MCPTarget.URL)
+		catalog = reg.MCPTarget.Code
+		transport = string(reg.MCPTarget.Transport)
+	}
+	span.SetMCPUpstream(reg.Name, reg.ID.String(), host, catalog, transport, upstreamTool, "")
+	start := time.Now()
+	return func() { span.SetLatency(time.Since(start)) }
+}
+
+func annotateTargets(ctx context.Context, count int) {
+	if span := trace.SpanFromContext(ctx); span != nil {
+		span.SetMCPTargets(count)
+	}
+}
+
+func hostFromURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	return u.Host
 }
 
 func (c *composer) compose(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]binding, error) {

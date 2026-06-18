@@ -30,4 +30,8 @@ const (
 	UserIDContextKey ContextKey = "user_id"
 	// UserEmailContextKey holds the user email decoded from an admin JWT.
 	UserEmailContextKey ContextKey = "user_email"
+	// MCPSkipMetricsKey is set by the MCP handler to tell the MCP metrics
+	// middleware not to publish an event for the current request (e.g. ping,
+	// notifications, or pre-dispatch failures).
+	MCPSkipMetricsKey ContextKey = "__mcp_skip_metrics"
 )

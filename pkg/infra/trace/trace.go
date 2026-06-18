@@ -32,6 +32,7 @@ type Metadata struct {
 	Method        string
 	IP        string
 	SessionID string
+	Kind      string
 }
 
 type RequestTrace struct {
