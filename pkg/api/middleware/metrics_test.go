@@ -33,7 +33,6 @@ import (
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -116,7 +115,6 @@ func TestMetricsMiddleware_TraceIDMatchesTraceIDHeader(t *testing.T) {
 
 	gatewayID := ids.New[ids.GatewayKind]()
 	app := fiber.New()
-	app.Use(requestid.New())
 	app.Use(func(c *fiber.Ctx) error {
 		c.SetUserContext(appconsumer.WithGatewayID(c.UserContext(), gatewayID))
 		return c.Next()
@@ -133,8 +131,7 @@ func TestMetricsMiddleware_TraceIDMatchesTraceIDHeader(t *testing.T) {
 
 	respTraceID := resp.Header.Get(middleware.HeaderTraceID)
 	require.NotEmpty(t, respTraceID, "metrics middleware must echo X-AG-Trace-Id")
-	assert.Equal(t, resp.Header.Get(fiber.HeaderXRequestID), respTraceID,
-		"the echoed trace id must equal the request id so logs and traces share it")
+	assert.Empty(t, resp.Header.Get(fiber.HeaderXRequestID), "proxy must not set X-Request-Id")
 
 	mu.Lock()
 	defer mu.Unlock()

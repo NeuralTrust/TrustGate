@@ -29,10 +29,24 @@ import (
 
 type stubPricing struct {
 	price appcatalog.Pricing
+	byKey map[string]appcatalog.Pricing
 }
 
-func (s stubPricing) Resolve(_ context.Context, _ string, _ string) appcatalog.Pricing {
+func (s stubPricing) Resolve(_ context.Context, providerCode, slug string) appcatalog.Pricing {
+	if s.byKey != nil {
+		if p, ok := s.byKey[providerCode+":"+slug]; ok {
+			return p
+		}
+	}
 	return s.price
+}
+
+func newBuilder(price appcatalog.Pricing) *Builder {
+	return NewBuilder(adapter.NewRegistry(), stubPricing{price: price})
+}
+
+func newBuilderWithPricing(byKey map[string]appcatalog.Pricing) *Builder {
+	return NewBuilder(adapter.NewRegistry(), stubPricing{byKey: byKey})
 }
 
 func llmSpan(name string, attrs *trace.LLMAttrs, statusCode int, latency time.Duration, errMsg string) *trace.Span {
@@ -53,10 +67,6 @@ func pluginSpan(name string, attrs *trace.PluginAttrs, statusCode int, latency t
 		span.SetError(errMsg)
 	}
 	return span
-}
-
-func newBuilder(price appcatalog.Pricing) *Builder {
-	return NewBuilder(adapter.NewRegistry(), stubPricing{price: price})
 }
 
 const openAIRequestBody = `{"model":"gpt-4o","temperature":0.7,"max_tokens":100,"stream":false,` +
@@ -145,9 +155,9 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	assert.Equal(t, 30, evt.Usage.TotalTokens)
 
 	require.NotNil(t, evt.Cost)
-	assert.InDelta(t, 10*0.0000025, evt.Cost.PromptUsd, 1e-12)
-	assert.InDelta(t, 20*0.00001, evt.Cost.CompletionUsd, 1e-12)
-	assert.InDelta(t, 10*0.0000025+20*0.00001, evt.Cost.TotalUsd, 1e-12)
+	assert.InDelta(t, 10*0.0000025, float64(evt.Cost.PromptUsd), 1e-12)
+	assert.InDelta(t, 20*0.00001, float64(evt.Cost.CompletionUsd), 1e-12)
+	assert.InDelta(t, 10*0.0000025+20*0.00001, float64(evt.Cost.TotalUsd), 1e-12)
 	assert.Equal(t, "USD", evt.Cost.Currency)
 
 	assert.Equal(t, int64(320), evt.Latency.TotalMs)
@@ -162,6 +172,118 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	assert.Equal(t, "rate_limiter", evt.PolicyChain[0].Name)
 	assert.False(t, evt.PolicyChain[0].Flagged)
 	assert.False(t, evt.IsFlagged)
+}
+
+func TestBuilder_CostUsesRequestedModelForPricingLookup(t *testing.T) {
+	rt := trace.New("trace-pricing", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(llmSpan("openai",
+		&trace.LLMAttrs{
+			Provider:       "openai",
+			Model:          "gpt-4o-mini-2024-07-18",
+			RequestedModel: "gpt-4o-mini",
+			FinishReason:   "stop",
+			Attempt:        1,
+			Outcome:        "success",
+			Usage:          &adapter.CanonicalUsage{InputTokens: 11, OutputTokens: 12, TotalTokens: 23},
+		}, 200, 300*time.Millisecond, ""))
+
+	req := &infracontext.RequestContext{
+		GatewayID:      "gw-1",
+		Method:         "POST",
+		Path:           "/v1/chat/completions",
+		RequestedModel: "gpt-4o-mini",
+		Body:           []byte(openAIRequestBody),
+		SourceFormat:   string(adapter.FormatOpenAI),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+	start := time.UnixMilli(1_000_000)
+	end := start.Add(320 * time.Millisecond)
+
+	b := newBuilder(appcatalog.Pricing{
+		InputPrice:  0.00000015,
+		OutputPrice: 0.0000006,
+		Found:       true,
+	})
+	evt := b.Build(context.Background(), rt, req, resp, start, end)
+
+	require.NotNil(t, evt.Cost)
+	assert.InDelta(t, 11*0.00000015, float64(evt.Cost.PromptUsd), 1e-12)
+	assert.InDelta(t, 12*0.0000006, float64(evt.Cost.CompletionUsd), 1e-12)
+	assert.Equal(t, "gpt-4o-mini-2024-07-18", evt.Request.Model)
+	assert.Equal(t, "gpt-4o-mini", evt.Request.RequestedModel)
+}
+
+func TestBuilder_CostUsesServedModelWhenLBChangesModel(t *testing.T) {
+	rt := trace.New("trace-lb", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(llmSpan("openai",
+		&trace.LLMAttrs{
+			Provider:       "openai",
+			Model:          "gpt-4o-2024-08-06",
+			RequestedModel: "gpt-4o-mini",
+			FinishReason:   "stop",
+			Attempt:        1,
+			Outcome:        "success",
+			Usage:          &adapter.CanonicalUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
+		}, 200, 300*time.Millisecond, ""))
+
+	req := &infracontext.RequestContext{
+		GatewayID:      "gw-1",
+		RequestedModel: "gpt-4o-mini",
+		Body:           []byte(openAIRequestBody),
+		SourceFormat:   string(adapter.FormatOpenAI),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+	b := newBuilderWithPricing(map[string]appcatalog.Pricing{
+		"openai:gpt-4o-mini": {Found: false},
+		"openai:gpt-4o-2024-08-06": {
+			Found:       true,
+			InputPrice:  0.0000025,
+			OutputPrice: 0.00001,
+		},
+	})
+	evt := b.Build(context.Background(), rt, req, resp, time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Cost)
+	assert.InDelta(t, 10*0.0000025, float64(evt.Cost.PromptUsd), 1e-12)
+	assert.InDelta(t, 20*0.00001, float64(evt.Cost.CompletionUsd), 1e-12)
+}
+
+func TestBuilder_CostUsesServedModelForPoolRouting(t *testing.T) {
+	rt := trace.New("trace-pool", trace.Metadata{GatewayID: "gw-1"})
+	_ = rt.AddSpan(llmSpan("openai",
+		&trace.LLMAttrs{
+			Provider:       "openai",
+			Model:          "gpt-4o-mini-2024-07-18",
+			RequestedModel: "pool:fast-chat",
+			FinishReason:   "stop",
+			Attempt:        1,
+			Outcome:        "success",
+			Usage:          &adapter.CanonicalUsage{InputTokens: 11, OutputTokens: 12, TotalTokens: 23},
+		}, 200, 300*time.Millisecond, ""))
+
+	req := &infracontext.RequestContext{
+		GatewayID:      "gw-1",
+		RequestedModel: "pool:fast-chat",
+		Body:           []byte(openAIRequestBody),
+		SourceFormat:   string(adapter.FormatOpenAI),
+	}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: []byte(`{"id":"x","choices":[]}`)}
+
+	b := newBuilderWithPricing(map[string]appcatalog.Pricing{
+		"openai:pool:fast-chat": {Found: false},
+		"openai:gpt-4o-mini-2024-07-18": {Found: false},
+		"openai:gpt-4o-mini": {
+			Found:       true,
+			InputPrice:  0.00000015,
+			OutputPrice: 0.0000006,
+		},
+	})
+	evt := b.Build(context.Background(), rt, req, resp, time.UnixMilli(1), time.UnixMilli(2))
+
+	require.NotNil(t, evt.Cost)
+	assert.InDelta(t, 11*0.00000015, float64(evt.Cost.PromptUsd), 1e-12)
 }
 
 func TestBuilder_TimeoutHasNilBody(t *testing.T) {

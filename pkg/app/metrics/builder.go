@@ -17,9 +17,11 @@ package metrics
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	appcatalog "github.com/NeuralTrust/AgentGateway/pkg/app/catalog"
+	routingdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/routing"
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/events"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
@@ -262,10 +264,16 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 	evt.Request.PromptTokens = u.InputTokens
 	evt.Response.CompletionTokens = u.OutputTokens
 
-	if b.pricing == nil || served.Provider == "" || evt.Request.Model == "" {
+	if b.pricing == nil || served.Provider == "" {
 		return
 	}
-	price := b.pricing.Resolve(ctx, served.Provider, evt.Request.Model)
+	var price appcatalog.Pricing
+	for _, slug := range pricingSlugs(evt, served) {
+		price = b.pricing.Resolve(ctx, served.Provider, slug)
+		if price.Found {
+			break
+		}
+	}
 	if !price.Found {
 		return
 	}
@@ -275,11 +283,104 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 	promptUsd := float64(u.InputTokens) * price.InputPrice
 	completionUsd := float64(u.OutputTokens) * price.OutputPrice
 	evt.Cost = &events.Cost{
-		PromptUsd:     promptUsd,
-		CompletionUsd: completionUsd,
-		TotalUsd:      promptUsd + completionUsd,
+		PromptUsd:     events.DecimalFloat(promptUsd),
+		CompletionUsd: events.DecimalFloat(completionUsd),
+		TotalUsd:      events.DecimalFloat(promptUsd + completionUsd),
 		Currency:      costCurrencyUSD,
 	}
+}
+
+func pricingSlugs(evt *events.Event, served *trace.LLMAttrs) []string {
+	requestedRef := requestedModelRef(evt, served)
+	resolved := servedModel(evt, served)
+
+	intent, _ := routingdomain.ParseModelRef(requestedRef)
+	var slugs []string
+	switch {
+	case intent.IsPool() || (intent.IsZero() && requestedRef == ""):
+		slugs = []string{resolved}
+	case intent.Model == "":
+		slugs = []string{resolved, requestedRef}
+	case resolved == "" || modelsCompatibleForPricing(intent.Model, resolved):
+		slugs = []string{intent.Model, resolved}
+	default:
+		slugs = []string{resolved, intent.Model}
+	}
+	return expandDeploymentPricingSlugs(slugs...)
+}
+
+func requestedModelRef(evt *events.Event, served *trace.LLMAttrs) string {
+	if evt != nil && evt.Request.RequestedModel != "" {
+		return evt.Request.RequestedModel
+	}
+	if served != nil {
+		return served.RequestedModel
+	}
+	return ""
+}
+
+func servedModel(evt *events.Event, served *trace.LLMAttrs) string {
+	if evt != nil && evt.Request.Model != "" {
+		return evt.Request.Model
+	}
+	if served != nil {
+		return served.Model
+	}
+	return ""
+}
+
+func modelsCompatibleForPricing(requested, served string) bool {
+	if requested == "" || served == "" {
+		return false
+	}
+	if requested == served {
+		return true
+	}
+	return strings.HasPrefix(served, requested+"-")
+}
+
+func expandDeploymentPricingSlugs(slugs ...string) []string {
+	expanded := make([]string, 0, len(slugs)*2)
+	expanded = append(expanded, slugs...)
+	for _, slug := range slugs {
+		if base := deploymentCatalogSlug(slug); base != slug {
+			expanded = append(expanded, base)
+		}
+	}
+	return uniqueNonEmptySlugs(expanded...)
+}
+
+func deploymentCatalogSlug(model string) string {
+	const dateSuffixLen = 10
+	if len(model) <= dateSuffixLen+1 {
+		return model
+	}
+	suffix := model[len(model)-dateSuffixLen:]
+	if suffix[4] != '-' || suffix[7] != '-' {
+		return model
+	}
+	for _, ch := range suffix {
+		if ch != '-' && (ch < '0' || ch > '9') {
+			return model
+		}
+	}
+	return model[:len(model)-dateSuffixLen-1]
+}
+
+func uniqueNonEmptySlugs(slugs ...string) []string {
+	seen := make(map[string]struct{}, len(slugs))
+	out := make([]string, 0, len(slugs))
+	for _, slug := range slugs {
+		if slug == "" {
+			continue
+		}
+		if _, dup := seen[slug]; dup {
+			continue
+		}
+		seen[slug] = struct{}{}
+		out = append(out, slug)
+	}
+	return out
 }
 
 func sumAttemptLatency(attempts []events.Attempt) int64 {

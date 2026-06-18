@@ -36,6 +36,9 @@ func (m *AccessLogMiddleware) Middleware() fiber.Handler {
 		start := time.Now()
 		err := c.Next()
 		requestID, _ := c.Locals(requestid.ConfigDefault.ContextKey).(string)
+		if requestID == "" {
+			requestID = c.Get(HeaderTraceID)
+		}
 
 		// For streamed responses the body is a lazy fasthttp body stream
 		// (registered via SetBodyStreamWriter). Calling Response.Body() here

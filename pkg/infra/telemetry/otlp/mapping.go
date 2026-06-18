@@ -138,9 +138,9 @@ func eventToRecord(evt *events.Event, maxBodyBytes int) otellog.Record {
 	}
 	if evt.Cost != nil {
 		attrs = append(attrs,
-			otellog.Float64(attrCostTotalUsd, evt.Cost.TotalUsd),
-			otellog.Float64(attrCostPromptUsd, evt.Cost.PromptUsd),
-			otellog.Float64(attrCostCompletionUsd, evt.Cost.CompletionUsd),
+			otellog.Float64(attrCostTotalUsd, float64(evt.Cost.TotalUsd)),
+			otellog.Float64(attrCostPromptUsd, float64(evt.Cost.PromptUsd)),
+			otellog.Float64(attrCostCompletionUsd, float64(evt.Cost.CompletionUsd)),
 		)
 		appendStr(attrCostCurrency, evt.Cost.Currency)
 	}

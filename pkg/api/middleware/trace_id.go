@@ -17,3 +17,8 @@ package middleware
 // HeaderTraceID is the response header the proxy sets with the request trace id.
 // A gateway-specific name avoids the upstream X-Request-Id some providers emit.
 const HeaderTraceID = "X-AG-Trace-Id"
+
+// StrippedProxyResponseHeaders lists upstream headers that must not be forwarded to clients.
+var StrippedProxyResponseHeaders = map[string]struct{}{
+	"X-Request-Id": {},
+}

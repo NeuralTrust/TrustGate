@@ -22,6 +22,7 @@ import (
 	"net/url"
 
 	"github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/helpers"
+	"github.com/NeuralTrust/AgentGateway/pkg/api/middleware"
 	apiresolver "github.com/NeuralTrust/AgentGateway/pkg/api/resolver"
 	appauth "github.com/NeuralTrust/AgentGateway/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
@@ -131,7 +132,11 @@ func (h *ForwardedHandler) Handle(c *fiber.Ctx) error {
 
 func relayHeaders(c *fiber.Ctx, headers map[string][]string) {
 	for name, values := range headers {
-		if _, skip := hopByHopHeaders[textproto.CanonicalMIMEHeaderKey(name)]; skip {
+		canonical := textproto.CanonicalMIMEHeaderKey(name)
+		if _, skip := hopByHopHeaders[canonical]; skip {
+			continue
+		}
+		if _, skip := middleware.StrippedProxyResponseHeaders[canonical]; skip {
 			continue
 		}
 		for _, v := range values {

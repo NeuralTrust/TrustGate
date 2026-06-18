@@ -379,6 +379,7 @@ func TestHandle_Success_RelaysResponse(t *testing.T) {
 			Headers: map[string][]string{
 				"Content-Type":        {"application/json"},
 				"X-Selected-Provider": {"openai"},
+				"X-Request-Id":        {"upstream-request-id"},
 				"Transfer-Encoding":   {"chunked"},
 			},
 			Body: []byte(`{"ok":true}`),
@@ -394,6 +395,9 @@ func TestHandle_Success_RelaysResponse(t *testing.T) {
 	}
 	if got := resp.Header.Get("X-Selected-Provider"); got != "openai" {
 		t.Fatalf("X-Selected-Provider = %q, want openai", got)
+	}
+	if got := resp.Header.Get("X-Request-Id"); got != "" {
+		t.Fatalf("X-Request-Id = %q, want empty", got)
 	}
 	if got := resp.Header.Get("Transfer-Encoding"); got == "chunked" {
 		t.Fatal("hop-by-hop Transfer-Encoding header should not be relayed")
