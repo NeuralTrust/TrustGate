@@ -42,7 +42,7 @@ const (
 )
 
 const roleSelectColumns = `
-		SELECT r.id, r.gateway_id, r.name, r.model_policies, r.mcp_policies, r.idp_mapping, r.created_at, r.updated_at,
+		SELECT r.id, r.gateway_id, r.name, r.model_policies, r.mcp_policies, r.oidc_mapping, r.created_at, r.updated_at,
 		       COALESCE((SELECT array_agg(rr.registry_id ORDER BY rr.registry_id)
 		                   FROM role_registry rr WHERE rr.role_id = r.id), '{}')::uuid[] AS registry_ids`
 
@@ -69,10 +69,10 @@ func (r *Repository) Save(ctx context.Context, role *domain.Role) error {
 		return fmt.Errorf("role repository: marshal mcp_policies: %w", err)
 	}
 	const query = `
-		INSERT INTO roles (id, gateway_id, name, model_policies, mcp_policies, idp_mapping, created_at, updated_at)
+		INSERT INTO roles (id, gateway_id, name, model_policies, mcp_policies, oidc_mapping, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	if _, err := r.conn.Pool.Exec(ctx, query,
-		role.ID, role.GatewayID, role.Name, modelPoliciesBytes, nullableJSON(mcpPoliciesBytes), nullableJSON(role.IDPMapping),
+		role.ID, role.GatewayID, role.Name, modelPoliciesBytes, nullableJSON(mcpPoliciesBytes), nullableJSON(role.OIDCMapping),
 		role.CreatedAt, role.UpdatedAt,
 	); err != nil {
 		return mapPgError(err)
@@ -97,7 +97,7 @@ func (r *Repository) Update(ctx context.Context, role *domain.Role) error {
 		   SET name           = $2,
 		       model_policies = $3,
 		       mcp_policies   = $4,
-		       idp_mapping    = $5,
+		       oidc_mapping    = $5,
 		       updated_at     = $6
 		 WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
@@ -108,7 +108,7 @@ func (r *Repository) Update(ctx context.Context, role *domain.Role) error {
 			return err
 		}
 		cmd, err := tx.Exec(ctx, query,
-			role.ID, role.Name, modelPoliciesBytes, nullableJSON(mcpPoliciesBytes), nullableJSON(role.IDPMapping), role.UpdatedAt,
+			role.ID, role.Name, modelPoliciesBytes, nullableJSON(mcpPoliciesBytes), nullableJSON(role.OIDCMapping), role.UpdatedAt,
 		)
 		if err != nil {
 			return mapPgError(err)
@@ -448,7 +448,7 @@ func scanRole(s rowScanner) (*domain.Role, error) {
 		return nil, err
 	}
 	role.MCPPolicies = mcpPolicies
-	role.IDPMapping = idpMappingRaw
+	role.OIDCMapping = idpMappingRaw
 	role.RegistryIDs = ids.FromUUIDs[ids.RegistryKind](registryIDs)
 	if role.RegistryIDs == nil {
 		role.RegistryIDs = []ids.RegistryID{}

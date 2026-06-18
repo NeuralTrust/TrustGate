@@ -113,7 +113,7 @@ func authStubRoleBased(gatewayID ids.GatewayID, slug string, consumerRoles, effe
 		}},
 	})
 	return func(c *fiber.Ctx) error {
-		authCtx := &appauth.AuthContext{Method: appauth.MethodIDP, GatewayID: gatewayID, Subject: "user-1", RoleIDs: effectiveRoles}
+		authCtx := &appauth.AuthContext{Method: appauth.MethodOIDC, GatewayID: gatewayID, Subject: "user-1", RoleIDs: effectiveRoles}
 		ctx := appauth.WithAuthContext(c.UserContext(), authCtx)
 		ctx = appconsumer.WithGatewayID(ctx, gatewayID)
 		ctx = appconsumer.WithData(ctx, data)

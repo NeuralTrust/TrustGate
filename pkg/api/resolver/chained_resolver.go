@@ -29,20 +29,20 @@ type ChainedIdentityResolver struct {
 	playground IdentityResolver
 	apiKey     IdentityResolver
 	oauth2     IdentityResolver
-	idp        IdentityResolver
+	oidc       IdentityResolver
 }
 
 func NewIdentityResolver(
 	playground *PlaygroundIdentityResolver,
 	apiKey *APIKeyIdentityResolver,
 	oauth2 *OAuth2IdentityResolver,
-	idp *IDPIdentityResolver,
+	oidc *OIDCIdentityResolver,
 ) IdentityResolver {
 	return ChainedIdentityResolver{
 		playground: playground,
 		apiKey:     apiKey,
 		oauth2:     oauth2,
-		idp:        idp,
+		oidc:       oidc,
 	}
 }
 
@@ -63,8 +63,8 @@ func (r ChainedIdentityResolver) Resolve(
 	if rc != nil && rc.Consumer != nil && rc.Consumer.RoutingMode == consumerdomain.RoutingModeInline {
 		return r.oauth2.Resolve(c, gw, rc)
 	}
-	if hasAttachedAuthType(rc, authdomain.TypeOAuth2) && !hasAttachedAuthType(rc, authdomain.TypeIDP) {
+	if hasAttachedAuthType(rc, authdomain.TypeOAuth2) && !hasAttachedAuthType(rc, authdomain.TypeOIDC) {
 		return nil, ErrForbidden
 	}
-	return r.idp.Resolve(c, gw, rc)
+	return r.oidc.Resolve(c, gw, rc)
 }

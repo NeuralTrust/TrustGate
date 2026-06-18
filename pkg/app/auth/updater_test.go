@@ -181,8 +181,8 @@ func TestUpdater_Update_NotFound(t *testing.T) {
 	}
 }
 
-func idpConfig() domain.Config {
-	return domain.Config{IDP: &domain.IDPConfig{
+func oidcConfig() domain.Config {
+	return domain.Config{OIDC: &domain.OIDCConfig{
 		Issuer:    "https://idp.example.com",
 		Audiences: []string{"api://gateway"},
 		JWKSURL:   "https://idp.example.com/jwks",
@@ -208,11 +208,11 @@ func TestUpdater_Update_RejectsTypeChangeBreakingMCPConsumer(t *testing.T) {
 	_, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
-		Type:      ptr(domain.TypeIDP),
-		Config:    ptr(idpConfig()),
+		Type:      ptr(domain.TypeOIDC),
+		Config:    ptr(oidcConfig()),
 	})
 	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (idp breaks the MCP consumer referencing this auth)", err)
+		t.Fatalf("err = %v, want ErrConflict (oidc breaks the MCP consumer referencing this auth)", err)
 	}
 }
 
@@ -223,7 +223,7 @@ func TestUpdater_Update_AllowsTypeChangeWithoutReferences(t *testing.T) {
 	existing := existingOAuth2Auth(gwID)
 	repo.EXPECT().FindByID(mock.Anything, existing.ID).Return(existing, nil).Once()
 	repo.EXPECT().Update(mock.Anything, mock.MatchedBy(func(a *domain.Auth) bool {
-		return a.Type == domain.TypeIDP
+		return a.Type == domain.TypeOIDC
 	})).Return(nil).Once()
 
 	consumerRepo := consumermocks.NewRepository(t)
@@ -233,8 +233,8 @@ func TestUpdater_Update_AllowsTypeChangeWithoutReferences(t *testing.T) {
 	if _, err := updater.Update(context.Background(), appauth.UpdateInput{
 		ID:        existing.ID,
 		GatewayID: gwID,
-		Type:      ptr(domain.TypeIDP),
-		Config:    ptr(idpConfig()),
+		Type:      ptr(domain.TypeOIDC),
+		Config:    ptr(oidcConfig()),
 	}); err != nil {
 		t.Fatalf("Update error: %v", err)
 	}

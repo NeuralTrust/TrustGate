@@ -43,7 +43,7 @@ type PendingAuthorization struct {
 	CodeChallenge       string `json:"code_challenge"`
 	CodeChallengeMethod string `json:"code_challenge_method"`
 	Scope               string `json:"scope"`
-	IDPVerifier         string `json:"idp_verifier"`
+	CodeVerifier         string `json:"code_verifier"`
 	Resource            string `json:"resource,omitempty"`
 	AuthID              string `json:"auth_id,omitempty"`
 }

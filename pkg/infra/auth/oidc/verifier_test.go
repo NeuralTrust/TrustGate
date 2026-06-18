@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package idp
+package oidc
 
 import (
 	"context"
@@ -52,7 +52,7 @@ func TestVerifier_VerifyJWKSRS256(t *testing.T) {
 		"nbf":    time.Now().Add(-time.Minute).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	got, err := verifier.Verify(context.Background(), token, domain.IDPConfig{
+	got, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
 		Issuer:            "https://issuer.example.com",
 		Audiences:         []string{"gateway"},
 		JWKSURL:           server.URL,
@@ -87,7 +87,7 @@ func TestVerifier_VerifySelectsMatchingKID(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	got, err := verifier.Verify(context.Background(), token, domain.IDPConfig{
+	got, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -117,7 +117,7 @@ func TestVerifier_VerifyWithoutKIDTriesCompatibleKeys(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	got, err := verifier.Verify(context.Background(), token, domain.IDPConfig{
+	got, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -148,7 +148,7 @@ func TestVerifier_VerifyRefreshesJWKSOnKIDMiss(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	_, err := verifier.Verify(context.Background(), token, domain.IDPConfig{
+	_, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -180,7 +180,7 @@ func TestVerifier_VerifyRefreshesJWKSOnSignatureFailure(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(server.Client(), time.Minute))
-	_, err := verifier.Verify(context.Background(), token, domain.IDPConfig{
+	_, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
 		Issuer:    "https://issuer.example.com",
 		Audiences: []string{"gateway"},
 		JWKSURL:   server.URL,
@@ -201,7 +201,7 @@ func TestVerifier_VerifyRejectsInvalidIssuer(t *testing.T) {
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	verifier := NewVerifierWithCache(NewJWKSCache(nil, time.Minute))
-	_, err := verifier.Verify(context.Background(), token, domain.IDPConfig{
+	_, err := verifier.Verify(context.Background(), token, domain.OIDCConfig{
 		Issuer:            "https://issuer.example.com",
 		Audiences:         []string{"gateway"},
 		PublicKeys:        []string{publicKeyPEM(t, &key.PublicKey)},

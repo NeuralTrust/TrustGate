@@ -86,7 +86,7 @@ func NewForwardedHandler(forwarder appproxy.Forwarder) *ForwardedHandler {
 // @Produce      json
 // @Param        consumer_slug      path   string  true   "Consumer slug"
 // @Param        X-AG-API-Key       header string  false  "API key for inline consumers"
-// @Param        Authorization      header string  false  "Bearer token for OAuth2 or IDP consumers"
+// @Param        Authorization      header string  false  "Bearer token for OAuth2 or OIDC consumers"
 // @Param        X-AG-Gateway-Slug  header string  false  "Gateway slug when using header-based gateway discovery"
 // @Param        body               body   object  true   "OpenAI Chat Completions request body"
 // @Success      200                {object}  map[string]interface{}
@@ -262,7 +262,7 @@ func isAuthorizedForConsumer(rc *appconsumer.RoutableConsumer, authCtx *appauth.
 	case "", domainconsumer.RoutingModeInline:
 		return isInlineAuthMethod(authCtx.Method) && consumerHasAuth(rc, authCtx.AuthID)
 	case domainconsumer.RoutingModeRoleBased:
-		return authCtx.Method == appauth.MethodIDP && consumerHasRole(rc, authCtx.RoleIDs)
+		return authCtx.Method == appauth.MethodOIDC && consumerHasRole(rc, authCtx.RoleIDs)
 	default:
 		return false
 	}

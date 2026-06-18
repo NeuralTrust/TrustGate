@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package idp_test
+package oidc_test
 
 import (
 	"context"
@@ -27,24 +27,24 @@ import (
 	"time"
 
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/idp"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oidc"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-type idpStub struct {
+type oidcStub struct {
 	key    *rsa.PrivateKey
 	kid    string
 	issuer string
 	server *httptest.Server
 }
 
-func newIDPStub(t *testing.T) *idpStub {
+func newOIDCStub(t *testing.T) *oidcStub {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	s := &idpStub{key: key, kid: "kid-1"}
+	s := &oidcStub{key: key, kid: "kid-1"}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -66,7 +66,7 @@ func newIDPStub(t *testing.T) *idpStub {
 	return s
 }
 
-func (s *idpStub) sign(t *testing.T, claims jwt.MapClaims) string {
+func (s *oidcStub) sign(t *testing.T, claims jwt.MapClaims) string {
 	t.Helper()
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = s.kid
@@ -77,7 +77,7 @@ func (s *idpStub) sign(t *testing.T, claims jwt.MapClaims) string {
 	return raw
 }
 
-func (s *idpStub) baseClaims() jwt.MapClaims {
+func (s *oidcStub) baseClaims() jwt.MapClaims {
 	return jwt.MapClaims{
 		"iss": s.issuer,
 		"sub": "user-1",
@@ -88,7 +88,7 @@ func (s *idpStub) baseClaims() jwt.MapClaims {
 	}
 }
 
-func (s *idpStub) config() *authdomain.OAuth2Config {
+func (s *oidcStub) config() *authdomain.OAuth2Config {
 	return &authdomain.OAuth2Config{
 		Issuer:    s.issuer,
 		JWKSURL:   s.server.URL + "/jwks",
@@ -96,12 +96,12 @@ func (s *idpStub) config() *authdomain.OAuth2Config {
 	}
 }
 
-func newValidator() *idp.OAuth2TokenValidator {
-	return idp.NewOAuth2TokenValidator(idp.NewVerifier(), nil)
+func newValidator() *oidc.OAuth2TokenValidator {
+	return oidc.NewOAuth2TokenValidator(oidc.NewVerifier(), nil)
 }
 
 func TestOAuth2TokenValidator_ValidToken(t *testing.T) {
-	stub := newIDPStub(t)
+	stub := newOIDCStub(t)
 	v := newValidator()
 
 	principal, err := v.Validate(context.Background(), stub.sign(t, stub.baseClaims()), stub.config())
@@ -120,7 +120,7 @@ func TestOAuth2TokenValidator_ValidToken(t *testing.T) {
 }
 
 func TestOAuth2TokenValidator_DiscoversJWKSWhenURLNotConfigured(t *testing.T) {
-	stub := newIDPStub(t)
+	stub := newOIDCStub(t)
 	v := newValidator()
 	cfg := stub.config()
 	cfg.JWKSURL = ""
@@ -131,7 +131,7 @@ func TestOAuth2TokenValidator_DiscoversJWKSWhenURLNotConfigured(t *testing.T) {
 }
 
 func TestOAuth2TokenValidator_RejectsWrongIssuer(t *testing.T) {
-	stub := newIDPStub(t)
+	stub := newOIDCStub(t)
 	v := newValidator()
 	claims := stub.baseClaims()
 	claims["iss"] = "https://evil.example.com"
@@ -142,7 +142,7 @@ func TestOAuth2TokenValidator_RejectsWrongIssuer(t *testing.T) {
 }
 
 func TestOAuth2TokenValidator_RejectsWrongAudience(t *testing.T) {
-	stub := newIDPStub(t)
+	stub := newOIDCStub(t)
 	v := newValidator()
 	claims := stub.baseClaims()
 	claims["aud"] = "someone-else"
@@ -153,7 +153,7 @@ func TestOAuth2TokenValidator_RejectsWrongAudience(t *testing.T) {
 }
 
 func TestOAuth2TokenValidator_RejectsExpiredToken(t *testing.T) {
-	stub := newIDPStub(t)
+	stub := newOIDCStub(t)
 	v := newValidator()
 	claims := stub.baseClaims()
 	claims["exp"] = time.Now().Add(-time.Hour).Unix()
@@ -164,7 +164,7 @@ func TestOAuth2TokenValidator_RejectsExpiredToken(t *testing.T) {
 }
 
 func TestOAuth2TokenValidator_RejectsMissingRequiredScopes(t *testing.T) {
-	stub := newIDPStub(t)
+	stub := newOIDCStub(t)
 	v := newValidator()
 	cfg := stub.config()
 	cfg.RequiredScopes = []string{"mcp.admin"}
@@ -175,7 +175,7 @@ func TestOAuth2TokenValidator_RejectsMissingRequiredScopes(t *testing.T) {
 }
 
 func TestOAuth2TokenValidator_AcceptsScopesFromPermissionsClaim(t *testing.T) {
-	stub := newIDPStub(t)
+	stub := newOIDCStub(t)
 	v := newValidator()
 	cfg := stub.config()
 	cfg.RequiredScopes = []string{"mcp.admin"}
@@ -192,10 +192,9 @@ func TestOAuth2TokenValidator_AcceptsScopesFromPermissionsClaim(t *testing.T) {
 }
 
 func TestOAuth2TokenValidator_AudienceResourceURIEquivalence(t *testing.T) {
-	stub := newIDPStub(t)
+	stub := newOIDCStub(t)
 	v := newValidator()
 
-	// Entra v2.0: token aud is the bare client id, config uses the api:// URI.
 	cfg := stub.config()
 	cfg.Audiences = []string{"api://client-guid"}
 	claims := stub.baseClaims()
@@ -204,7 +203,6 @@ func TestOAuth2TokenValidator_AudienceResourceURIEquivalence(t *testing.T) {
 		t.Fatalf("bare-guid aud must satisfy api:// audience config: %v", err)
 	}
 
-	// Entra v1.0: token aud is the api:// URI, config uses the bare client id.
 	cfg.Audiences = []string{"client-guid"}
 	claims["aud"] = "api://client-guid"
 	if _, err := v.Validate(context.Background(), stub.sign(t, claims), cfg); err != nil {
@@ -218,7 +216,7 @@ func TestOAuth2TokenValidator_AudienceResourceURIEquivalence(t *testing.T) {
 }
 
 func TestOAuth2TokenValidator_RejectsUnsignedToken(t *testing.T) {
-	stub := newIDPStub(t)
+	stub := newOIDCStub(t)
 	v := newValidator()
 	token := jwt.NewWithClaims(jwt.SigningMethodNone, stub.baseClaims())
 	raw, err := token.SignedString(jwt.UnsafeAllowNoneSignatureType)
@@ -232,7 +230,7 @@ func TestOAuth2TokenValidator_RejectsUnsignedToken(t *testing.T) {
 }
 
 func TestOAuth2TokenValidator_EntraStyleOIDSubject(t *testing.T) {
-	stub := newIDPStub(t)
+	stub := newOIDCStub(t)
 	v := newValidator()
 	claims := stub.baseClaims()
 	claims["oid"] = "object-id-42"

@@ -25,16 +25,16 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-type IDPIdentityResolver struct {
-	finder   appauth.IDPFinder
-	verifier appauth.IDPVerifier
+type OIDCIdentityResolver struct {
+	finder   appauth.OIDCFinder
+	verifier appauth.OIDCVerifier
 }
 
-func NewIDPIdentityResolver(finder appauth.IDPFinder, verifier appauth.IDPVerifier) *IDPIdentityResolver {
-	return &IDPIdentityResolver{finder: finder, verifier: verifier}
+func NewOIDCIdentityResolver(finder appauth.OIDCFinder, verifier appauth.OIDCVerifier) *OIDCIdentityResolver {
+	return &OIDCIdentityResolver{finder: finder, verifier: verifier}
 }
 
-func (r *IDPIdentityResolver) Resolve(
+func (r *OIDCIdentityResolver) Resolve(
 	c *fiber.Ctx,
 	gw *gatewaydomain.Gateway,
 	rc *appconsumer.RoutableConsumer,
@@ -46,19 +46,19 @@ func (r *IDPIdentityResolver) Resolve(
 	if rc == nil || rc.Consumer == nil || rc.Consumer.RoutingMode != consumerdomain.RoutingModeRoleBased {
 		return nil, ErrForbidden
 	}
-	a, err := r.finder.FindIDPAuth(c.UserContext(), rc.Auths, token)
+	a, err := r.finder.FindOIDCAuth(c.UserContext(), rc.Auths, token)
 	if err != nil {
 		return nil, err
 	}
-	if a.Config.IDP == nil {
-		return nil, fmt.Errorf("%w: selected auth has no idp config", appauth.ErrInvalidAuthRequest)
+	if a.Config.OIDC == nil {
+		return nil, fmt.Errorf("%w: selected auth has no oidc config", appauth.ErrInvalidAuthRequest)
 	}
-	verified, err := r.verifier.Verify(c.UserContext(), token, *a.Config.IDP)
+	verified, err := r.verifier.Verify(c.UserContext(), token, *a.Config.OIDC)
 	if err != nil {
 		return nil, err
 	}
 	return &appauth.AuthContext{
-		Method:      appauth.MethodIDP,
+		Method:      appauth.MethodOIDC,
 		GatewayID:   gw.ID,
 		GatewaySlug: gw.Slug,
 		ConsumerID:  rc.Consumer.ID,

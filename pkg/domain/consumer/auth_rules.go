@@ -22,15 +22,15 @@ import (
 )
 
 func ValidateAuthType(consType Type, mode RoutingMode, authType authdomain.Type) error {
-	if consType == TypeMCP && authType == authdomain.TypeIDP {
+	if consType == TypeMCP && authType == authdomain.TypeOIDC {
 		return fmt.Errorf(
-			"%w: an MCP consumer cannot use an idp auth; interactive MCP clients need the gateway to broker the login, which requires an oauth2 auth with a pre-registered client",
+			"%w: an MCP consumer cannot use an oidc auth; interactive MCP clients need the gateway to broker the login, which requires an oauth2 auth with a pre-registered client",
 			commonerrors.ErrConflict,
 		)
 	}
 	if mode == RoutingModeRoleBased && !authType.IsIdentityProvider() {
 		return fmt.Errorf(
-			"%w: a role_based consumer requires an identity-provider auth (oauth2 or idp), got %q",
+			"%w: a role_based consumer requires an identity-provider auth (oauth2 or oidc), got %q",
 			commonerrors.ErrConflict, authType,
 		)
 	}

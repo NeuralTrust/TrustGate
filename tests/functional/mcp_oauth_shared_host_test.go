@@ -176,7 +176,7 @@ func TestMCPOAuth_SharedHostScopesChallengeAndResolvesConsumerIdP(t *testing.T) 
 
 	roleID := CreateRole(t, gatewayID, map[string]any{
 		"name": uniqueName("mcp-role"),
-		"idp_mapping": map[string]any{
+		"oidc_mapping": map[string]any{
 			"match": "any",
 			"claims": []map[string]any{
 				{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},

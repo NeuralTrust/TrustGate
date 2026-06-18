@@ -3976,7 +3976,7 @@
                         }
                     },
                     {
-                        "description": "Bearer token for OAuth2 or IDP consumers",
+                        "description": "Bearer token for OAuth2 or OIDC consumers",
                         "name": "Authorization",
                         "in": "header",
                         "schema": {
@@ -4086,14 +4086,14 @@
             "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest": {
                 "type": "object",
                 "properties": {
-                    "idp": {
-                        "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest"
-                    },
                     "mtls": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest"
                     },
                     "oauth2": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest"
+                    },
+                    "oidc": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OIDCConfigRequest"
                     }
                 }
             },
@@ -4110,44 +4110,6 @@
                         "type": "string"
                     },
                     "type": {
-                        "type": "string"
-                    }
-                }
-            },
-            "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest": {
-                "type": "object",
-                "properties": {
-                    "allowed_algorithms": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "audiences": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "issuer": {
-                        "type": "string"
-                    },
-                    "jwks_url": {
-                        "type": "string"
-                    },
-                    "public_keys": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "required_scopes": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "subject_claim": {
                         "type": "string"
                     }
                 }
@@ -4216,6 +4178,44 @@
                     }
                 }
             },
+            "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OIDCConfigRequest": {
+                "type": "object",
+                "properties": {
+                    "allowed_algorithms": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "audiences": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "issuer": {
+                        "type": "string"
+                    },
+                    "jwks_url": {
+                        "type": "string"
+                    },
+                    "public_keys": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "required_scopes": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "subject_claim": {
+                        "type": "string"
+                    }
+                }
+            },
             "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.UpdateAuthRequest": {
                 "type": "object",
                 "properties": {
@@ -4269,52 +4269,14 @@
             "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse": {
                 "type": "object",
                 "properties": {
-                    "idp": {
-                        "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse"
-                    },
                     "mtls": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse"
                     },
                     "oauth2": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse"
-                    }
-                }
-            },
-            "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse": {
-                "type": "object",
-                "properties": {
-                    "allowed_algorithms": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
                     },
-                    "audiences": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "issuer": {
-                        "type": "string"
-                    },
-                    "jwks_url": {
-                        "type": "string"
-                    },
-                    "public_keys": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "required_scopes": {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        }
-                    },
-                    "subject_claim": {
-                        "type": "string"
+                    "oidc": {
+                        "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OIDCConfigResponse"
                     }
                 }
             },
@@ -4399,6 +4361,44 @@
                         "items": {
                             "type": "string"
                         }
+                    }
+                }
+            },
+            "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OIDCConfigResponse": {
+                "type": "object",
+                "properties": {
+                    "allowed_algorithms": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "audiences": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "issuer": {
+                        "type": "string"
+                    },
+                    "jwks_url": {
+                        "type": "string"
+                    },
+                    "public_keys": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "required_scopes": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "subject_claim": {
+                        "type": "string"
                     }
                 }
             },
@@ -6005,12 +6005,6 @@
             "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.CreateRoleRequest": {
                 "type": "object",
                 "properties": {
-                    "idp_mapping": {
-                        "type": "array",
-                        "items": {
-                            "type": "integer"
-                        }
-                    },
                     "mcp_policies": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest"
                     },
@@ -6022,6 +6016,12 @@
                     },
                     "name": {
                         "type": "string"
+                    },
+                    "oidc_mapping": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer"
+                        }
                     }
                 }
             },
@@ -6079,12 +6079,6 @@
             "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.UpdateRoleRequest": {
                 "type": "object",
                 "properties": {
-                    "idp_mapping": {
-                        "type": "array",
-                        "items": {
-                            "type": "integer"
-                        }
-                    },
                     "mcp_policies": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest"
                     },
@@ -6096,6 +6090,12 @@
                     },
                     "name": {
                         "type": "string"
+                    },
+                    "oidc_mapping": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer"
+                        }
                     }
                 }
             },
@@ -6148,12 +6148,6 @@
                     "id": {
                         "type": "string"
                     },
-                    "idp_mapping": {
-                        "type": "array",
-                        "items": {
-                            "type": "integer"
-                        }
-                    },
                     "mcp_policies": {
                         "$ref": "#/components/schemas/github_com_NeuralTrust_AgentGateway_pkg_domain_role.MCPPolicies"
                     },
@@ -6165,6 +6159,12 @@
                     },
                     "name": {
                         "type": "string"
+                    },
+                    "oidc_mapping": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer"
+                        }
                     },
                     "registry_ids": {
                         "type": "array",

@@ -45,7 +45,7 @@ func Role(c *container.Container) error {
 	if err := c.Provide(approle.NewAssociator); err != nil {
 		return err
 	}
-	if err := c.Provide(approle.NewIDPResolver); err != nil {
+	if err := c.Provide(approle.NewOIDCResolver); err != nil {
 		return err
 	}
 

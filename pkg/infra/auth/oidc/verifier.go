@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package idp
+package oidc
 
 import (
 	"context"
@@ -36,7 +36,7 @@ type verificationKey struct {
 	value any
 }
 
-func NewVerifier() appauth.IDPVerifier {
+func NewVerifier() appauth.OIDCVerifier {
 	return &Verifier{
 		cache: NewJWKSCache(nil, 5*time.Minute),
 		now:   time.Now,
@@ -63,7 +63,7 @@ func (v *Verifier) Peek(token string) (appauth.TokenHints, error) {
 	}, nil
 }
 
-func (v *Verifier) Verify(ctx context.Context, token string, cfg domain.IDPConfig) (*appauth.VerifiedClaims, error) {
+func (v *Verifier) Verify(ctx context.Context, token string, cfg domain.OIDCConfig) (*appauth.VerifiedClaims, error) {
 	headerToken, _, err := jwt.NewParser().ParseUnverified(token, jwt.MapClaims{})
 	if err != nil {
 		return nil, fmt.Errorf("%w: parse token", ErrInvalidToken)
@@ -115,7 +115,7 @@ func (v *Verifier) Verify(ctx context.Context, token string, cfg domain.IDPConfi
 
 func (v *Verifier) verifyWithCandidates(
 	token string,
-	cfg domain.IDPConfig,
+	cfg domain.OIDCConfig,
 	candidates []verificationKey,
 ) (*appauth.VerifiedClaims, bool, error) {
 	signatureFailure := false
@@ -163,7 +163,7 @@ func (v *Verifier) keyCandidates(
 	ctx context.Context,
 	kid string,
 	alg string,
-	cfg domain.IDPConfig,
+	cfg domain.OIDCConfig,
 	refreshJWKS bool,
 ) ([]verificationKey, error) {
 	keys := make([]verificationKey, 0, len(cfg.PublicKeys)+1)
@@ -213,7 +213,7 @@ func (v *Verifier) keyCandidates(
 	return keys, nil
 }
 
-func (v *Verifier) validateClaims(claims jwt.MapClaims, cfg domain.IDPConfig) error {
+func (v *Verifier) validateClaims(claims jwt.MapClaims, cfg domain.OIDCConfig) error {
 	issuer, err := claims.GetIssuer()
 	if err != nil || issuer != cfg.Issuer {
 		return fmt.Errorf("%w: issuer", ErrInvalidToken)

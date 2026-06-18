@@ -32,7 +32,7 @@ type UpdateInput struct {
 	ModelPolicies  *domain.ModelPolicies
 	MCPPolicies    *domain.MCPPolicies
 	MCPPoliciesSet bool
-	IDPMapping     *json.RawMessage
+	OIDCMapping     *json.RawMessage
 }
 
 //go:generate mockery --name=Updater --dir=. --output=./mocks --filename=role_updater_mock.go --case=underscore --with-expecter
@@ -80,8 +80,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Role, err
 	if in.MCPPoliciesSet {
 		existing.MCPPolicies = in.MCPPolicies
 	}
-	if in.IDPMapping != nil {
-		existing.IDPMapping = *in.IDPMapping
+	if in.OIDCMapping != nil {
+		existing.OIDCMapping = *in.OIDCMapping
 	}
 	existing.UpdatedAt = time.Now().UTC()
 	if err := existing.Validate(); err != nil {

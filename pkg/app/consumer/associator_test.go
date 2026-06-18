@@ -326,12 +326,12 @@ func TestAssociator_AttachAuth_MCPRejectsIdP(t *testing.T) {
 
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().FindByID(mock.Anything, authID).
-		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeIDP}, nil).Once()
+		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}, nil).Once()
 
 	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t))
 	err := a.AttachAuth(context.Background(), gwID, consumerID, authID)
 	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (idp cannot broker for an MCP consumer)", err)
+		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
 	}
 }
 
@@ -374,7 +374,7 @@ func TestAssociator_AttachAuth_RoleBasedReattachIsIdempotent(t *testing.T) {
 
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().FindByID(mock.Anything, authID).
-		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeIDP}, nil).Once()
+		Return(&authdomain.Auth{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}, nil).Once()
 
 	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t))
 	if err := a.AttachAuth(context.Background(), gwID, consumerID, authID); err != nil {

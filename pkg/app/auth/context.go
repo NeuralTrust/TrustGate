@@ -25,7 +25,7 @@ type Method string
 const (
 	MethodAPIKey     Method = "api_key"
 	MethodOAuth2     Method = "oauth2"
-	MethodIDP        Method = "idp"
+	MethodOIDC       Method = "oidc"
 	MethodPlayground Method = "playground"
 )
 

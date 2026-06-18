@@ -21,25 +21,25 @@ import (
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/role"
 )
 
-type IDPResolver interface {
-	ResolveIDPRoles(ctx context.Context, roles []*domain.Role, claims map[string]any) ([]ids.RoleID, error)
+type OIDCResolver interface {
+	ResolveOIDCRoles(ctx context.Context, roles []*domain.Role, claims map[string]any) ([]ids.RoleID, error)
 }
 
-var _ IDPResolver = (*idpResolver)(nil)
+var _ OIDCResolver = (*oidcResolver)(nil)
 
-type idpResolver struct{}
+type oidcResolver struct{}
 
-func NewIDPResolver() IDPResolver {
-	return idpResolver{}
+func NewOIDCResolver() OIDCResolver {
+	return oidcResolver{}
 }
 
-func (r idpResolver) ResolveIDPRoles(_ context.Context, roles []*domain.Role, claims map[string]any) ([]ids.RoleID, error) {
+func (r oidcResolver) ResolveOIDCRoles(_ context.Context, roles []*domain.Role, claims map[string]any) ([]ids.RoleID, error) {
 	roleIDs := make([]ids.RoleID, 0, len(roles))
 	for _, gatewayRole := range roles {
-		if gatewayRole == nil || len(gatewayRole.IDPMapping) == 0 {
+		if gatewayRole == nil || len(gatewayRole.OIDCMapping) == 0 {
 			continue
 		}
-		mapping, err := domain.ParseIDPMapping(gatewayRole.IDPMapping)
+		mapping, err := domain.ParseOIDCMapping(gatewayRole.OIDCMapping)
 		if err != nil {
 			return nil, err
 		}

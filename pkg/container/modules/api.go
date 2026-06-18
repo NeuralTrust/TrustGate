@@ -26,7 +26,7 @@ import (
 	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	idpauth "github.com/NeuralTrust/AgentGateway/pkg/infra/auth/idp"
+	oidcauth "github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oidc"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/introspection"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/mtls"
@@ -84,14 +84,14 @@ func API(c *container.Container) error {
 		apiKeys appauth.APIKeyFinder,
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
-		verifier appauth.IDPVerifier,
+		verifier appauth.OIDCVerifier,
 		cfg *config.Config,
 	) middleware.IdentityResolver {
 		return middleware.NewChainIdentityResolver(
 			apiKeys,
 			credentials,
 			paths,
-			idpauth.NewOAuth2TokenValidator(verifier, nil),
+			oidcauth.NewOAuth2TokenValidator(verifier, nil),
 			introspection.NewValidator(nil),
 			mtls.NewValidator(),
 			mtls.NewXFCCExtractor(),
@@ -103,7 +103,7 @@ func API(c *container.Container) error {
 	if err := c.Provide(middleware.NewMCPAuthMiddleware); err != nil {
 		return err
 	}
-	if err := c.Provide(idpauth.NewVerifier); err != nil {
+	if err := c.Provide(oidcauth.NewVerifier); err != nil {
 		return err
 	}
 	if err := c.Provide(func(cfg *config.Config, finder appgateway.Finder) resolver.GatewayResolver {
@@ -120,7 +120,7 @@ func API(c *container.Container) error {
 	if err := c.Provide(resolver.NewOAuth2IdentityResolver); err != nil {
 		return err
 	}
-	if err := c.Provide(resolver.NewIDPIdentityResolver); err != nil {
+	if err := c.Provide(resolver.NewOIDCIdentityResolver); err != nil {
 		return err
 	}
 	if err := c.Provide(resolver.NewIdentityResolver); err != nil {
