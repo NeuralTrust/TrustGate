@@ -27,10 +27,9 @@ type Event struct {
 	EndTimestamp int64  `json:"end_timestamp"`
 
 	Consumer      Consumer `json:"consumer"`
-	SessionID     string   `json:"session_id,omitempty"`
-	TurnID        string   `json:"turn_id,omitempty"`
-	FingerprintID string   `json:"fingerprint_id,omitempty"`
-	IP            string   `json:"ip,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	TurnID    string `json:"turn_id,omitempty"`
+	IP        string `json:"ip,omitempty"`
 
 	Status    Status   `json:"status"`
 	IsFlagged bool     `json:"is_flagged"`

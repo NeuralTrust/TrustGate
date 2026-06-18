@@ -26,12 +26,11 @@ import (
 	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 	"github.com/NeuralTrust/AgentGateway/pkg/config"
 	"github.com/NeuralTrust/AgentGateway/pkg/container"
-	oidcauth "github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oidc"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/introspection"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/jwt"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/auth/mtls"
+	oidcauth "github.com/NeuralTrust/AgentGateway/pkg/infra/auth/oidc"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/fingerprint"
 	playgroundstore "github.com/NeuralTrust/AgentGateway/pkg/infra/metrics/playground"
 	infraoauth "github.com/NeuralTrust/AgentGateway/pkg/infra/oauth"
 )
@@ -72,9 +71,6 @@ func API(c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(middleware.NewAdminAuthMiddleware); err != nil {
-		return err
-	}
-	if err := c.Provide(fingerprint.NewFingerPrintTracker); err != nil {
 		return err
 	}
 	if err := c.Provide(middleware.NewSessionMiddleware); err != nil {

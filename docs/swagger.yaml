@@ -1856,8 +1856,6 @@ definitions:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_infra_metrics_events.Cost'
       end_timestamp:
         type: integer
-      fingerprint_id:
-        type: string
       gateway_id:
         type: string
       ip:
