@@ -51,6 +51,14 @@ func IsValidType(t Type) bool {
 	return false
 }
 
+func (t Type) IsIdentityProvider() bool {
+	switch t {
+	case TypeOAuth2, TypeIDP:
+		return true
+	}
+	return false
+}
+
 type Auth struct {
 	ID        ids.AuthID    `json:"id"`
 	GatewayID ids.GatewayID `json:"gateway_id"`

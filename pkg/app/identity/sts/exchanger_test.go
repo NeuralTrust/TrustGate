@@ -25,6 +25,7 @@ import (
 
 	authdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
+	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	registrydomain "github.com/NeuralTrust/AgentGateway/pkg/domain/registry"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -35,6 +36,16 @@ type stubCredentials struct {
 
 func (s *stubCredentials) OAuth2Auths(context.Context) ([]*authdomain.Auth, error) {
 	return s.auths, nil
+}
+
+func (s *stubCredentials) OAuth2AuthsForGateway(_ context.Context, gatewayID ids.GatewayID) ([]*authdomain.Auth, error) {
+	out := make([]*authdomain.Auth, 0, len(s.auths))
+	for _, a := range s.auths {
+		if a.GatewayID == gatewayID {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 func (s *stubCredentials) MTLSAuths(context.Context) ([]*authdomain.Auth, error) { return nil, nil }

@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
@@ -31,25 +32,28 @@ type Deleter interface {
 var _ Deleter = (*deleter)(nil)
 
 type deleter struct {
-	repo        domain.Repository
-	memoryCache *cache.TTLMap
-	keyCache    *cache.TTLMap
-	publisher   cache.EventPublisher
-	logger      *slog.Logger
+	repo         domain.Repository
+	consumerRepo consumerdomain.Repository
+	memoryCache  *cache.TTLMap
+	keyCache     *cache.TTLMap
+	publisher    cache.EventPublisher
+	logger       *slog.Logger
 }
 
 func NewDeleter(
 	repo domain.Repository,
+	consumerRepo consumerdomain.Repository,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 ) Deleter {
 	return &deleter{
-		repo:        repo,
-		memoryCache: manager.GetTTLMap(cache.AuthTTLName),
-		keyCache:    manager.GetTTLMap(cache.AuthKeyTTLName),
-		publisher:   publisher,
-		logger:      logger,
+		repo:         repo,
+		consumerRepo: consumerRepo,
+		memoryCache:  manager.GetTTLMap(cache.AuthTTLName),
+		keyCache:     manager.GetTTLMap(cache.AuthKeyTTLName),
+		publisher:    publisher,
+		logger:       logger,
 	}
 }
 
@@ -60,6 +64,9 @@ func (d *deleter) Delete(ctx context.Context, gatewayID ids.GatewayID, id ids.Au
 	}
 	if existing.GatewayID != gatewayID {
 		return domain.ErrNotFound
+	}
+	if err := guardAuthDelete(ctx, d.consumerRepo, id); err != nil {
+		return err
 	}
 	if err := d.repo.Delete(ctx, id); err != nil {
 		return err

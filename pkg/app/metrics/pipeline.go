@@ -31,18 +31,33 @@ type Exporter interface {
 	Close()
 }
 
+// PlaygroundTraceStore persists the metrics Event of playground requests so the
+// dashboard can fetch it by TraceID. It runs after the exporters as a
+// best-effort side channel and must never block or fail the pipeline.
+type PlaygroundTraceStore interface {
+	Save(ctx context.Context, req *infracontext.RequestContext, evt *events.Event)
+}
+
 type Pipeline struct {
 	builder          *Builder
 	defaultExporters []Exporter
 	cache            *ExporterCache
+	playgroundStore  PlaygroundTraceStore
 	logger           *slog.Logger
 }
 
-func NewPipeline(builder *Builder, cache *ExporterCache, logger *slog.Logger, defaults ...Exporter) *Pipeline {
+func NewPipeline(
+	builder *Builder,
+	cache *ExporterCache,
+	playgroundStore PlaygroundTraceStore,
+	logger *slog.Logger,
+	defaults ...Exporter,
+) *Pipeline {
 	return &Pipeline{
 		builder:          builder,
 		defaultExporters: defaults,
 		cache:            cache,
+		playgroundStore:  playgroundStore,
 		logger:           logger,
 	}
 }
@@ -58,7 +73,7 @@ func (p *Pipeline) publish(
 		return
 	}
 	targets := p.resolveTargets(explicit)
-	if len(targets) == 0 {
+	if len(targets) == 0 && p.playgroundStore == nil {
 		return
 	}
 	ctx := context.Background()
@@ -70,6 +85,9 @@ func (p *Pipeline) publish(
 				slog.String("exporter", exporter.Name()),
 				slog.String("error", err.Error()))
 		}
+	}
+	if p.playgroundStore != nil {
+		p.playgroundStore.Save(ctx, req, evt)
 	}
 }
 

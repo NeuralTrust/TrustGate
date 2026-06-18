@@ -510,6 +510,31 @@ func (r *Repository) ListByGateway(ctx context.Context, gatewayID ids.GatewayID)
 	return items, nil
 }
 
+func (r *Repository) ListByAuthID(ctx context.Context, authID ids.AuthID) ([]*domain.Consumer, error) {
+	query := consumerSelectColumns + `
+		  FROM consumers c
+		 WHERE EXISTS (SELECT 1 FROM consumer_auth ca WHERE ca.consumer_id = c.id AND ca.auth_id = $1)
+		 ORDER BY c.created_at DESC, c.id`
+	rows, err := r.conn.Pool.Query(ctx, query, authID)
+	if err != nil {
+		return nil, fmt.Errorf("consumer repository: list by auth: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]*domain.Consumer, 0)
+	for rows.Next() {
+		c, err := scanConsumer(rows)
+		if err != nil {
+			return nil, fmt.Errorf("consumer repository: scan: %w", err)
+		}
+		items = append(items, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("consumer repository: iter: %w", err)
+	}
+	return items, nil
+}
+
 func lockConsumerRoutingReferences(ctx context.Context, tx pgx.Tx, consumerID ids.ConsumerID) (*domain.Consumer, error) {
 	const query = `
 		SELECT id, gateway_id, fallback, model_policies, lb_config

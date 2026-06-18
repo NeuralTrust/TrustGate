@@ -76,6 +76,9 @@ const (
 	defaultMetricsWorkerCount   = 1
 	defaultMetricsFlushInterval = 5 * time.Second
 
+	defaultPlaygroundTraceStoreEnabled = true
+	defaultPlaygroundTraceStoreTTL     = 10 * time.Minute
+
 	defaultUpstreamTimeout          = 60 * time.Second
 	defaultUpstreamErrorPassthrough = true
 
@@ -84,8 +87,8 @@ const (
 
 	defaultCORSAllowOrigins     = "*"
 	defaultCORSAllowMethods     = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-	defaultCORSAllowHeaders     = "Content-Type,Authorization,X-Request-Id"
-	defaultCORSExposeHeaders    = "X-Request-Id"
+	defaultCORSAllowHeaders     = "Content-Type,Authorization,X-AG-Trace-Id"
+	defaultCORSExposeHeaders    = "X-AG-Trace-Id"
 	defaultCORSAllowCredentials = false
 	defaultCORSMaxAge           = "600"
 
@@ -103,6 +106,7 @@ type Config struct {
 	Kafka        KafkaConfig
 	Telemetry    TelemetryConfig
 	Metrics      MetricsConfig
+	Playground   PlaygroundConfig
 	Upstream     UpstreamConfig
 	Provider     ProviderConfig
 	Catalog      CatalogConfig
@@ -174,6 +178,19 @@ type TelemetryConfig struct {
 	KafkaTopic          string
 	EnableRequestTraces bool
 	EnablePluginTraces  bool
+	OTLP                OTLPConfig
+}
+
+// OTLPConfig holds process-level OTLP exporter defaults read from the standard
+// OTEL_EXPORTER_OTLP_* environment variables. Per-gateway telemetry settings
+// override any field present in the gateway configuration.
+type OTLPConfig struct {
+	Endpoint    string
+	Headers     map[string]string
+	Protocol    string
+	Timeout     time.Duration
+	Insecure    bool
+	Compression string
 }
 
 type MetricsConfig struct {
@@ -181,6 +198,14 @@ type MetricsConfig struct {
 	QueueSize     int
 	WorkerCount   int
 	FlushInterval time.Duration
+}
+
+// PlaygroundConfig drives the default Redis-backed trace store that lets the
+// dashboard playground fetch the metrics Event for a request it just made.
+// Only requests carrying the playground token are stored, with a short TTL.
+type PlaygroundConfig struct {
+	TraceStoreEnabled bool
+	TraceStoreTTL     time.Duration
 }
 
 type UpstreamConfig struct {
@@ -224,6 +249,7 @@ func LoadConfig() (*Config, error) {
 		Kafka:        getKafkaConfig(),
 		Telemetry:    getTelemetryConfig(),
 		Metrics:      getMetricsConfig(),
+		Playground:   getPlaygroundConfig(),
 		Upstream:     getUpstreamConfig(),
 		Provider:     getProviderConfig(),
 		Catalog:      getCatalogConfig(),
@@ -315,7 +341,66 @@ func getTelemetryConfig() TelemetryConfig {
 		KafkaTopic:          getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
 		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
 		EnablePluginTraces:  getEnvBool("TELEMETRY_ENABLE_PLUGIN_TRACES", defaultTelemetryEnablePluginTraces),
+		OTLP:                getOTLPConfig(),
 	}
+}
+
+func getOTLPConfig() OTLPConfig {
+	return OTLPConfig{
+		Endpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		Headers:     parseOTLPHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS", "")),
+		Protocol:    getEnv("OTEL_EXPORTER_OTLP_PROTOCOL", ""),
+		Timeout:     getOTLPTimeout(),
+		Insecure:    getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", false),
+		Compression: getEnv("OTEL_EXPORTER_OTLP_COMPRESSION", ""),
+	}
+}
+
+// getOTLPTimeout reads OTEL_EXPORTER_OTLP_TIMEOUT. Per the OpenTelemetry spec the
+// value is an integer number of milliseconds; a Go duration string (such as
+// "10s") is also accepted for convenience. Returns 0 when unset or invalid so
+// the exporter applies its own default.
+func getOTLPTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_TIMEOUT"))
+	if raw == "" {
+		return 0
+	}
+	if ms, err := strconv.Atoi(raw); err == nil {
+		if ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	} else if parsed, perr := time.ParseDuration(raw); perr == nil && parsed > 0 {
+		return parsed
+	}
+	slog.Warn("invalid OTEL_EXPORTER_OTLP_TIMEOUT, falling back to default",
+		slog.String("value", sanitizeLogValue(raw)))
+	return 0
+}
+
+// parseOTLPHeaders parses the standard OTEL_EXPORTER_OTLP_HEADERS format
+// ("key1=value1,key2=value2") into a map. Malformed pairs are skipped.
+func parseOTLPHeaders(raw string) map[string]string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	out := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			continue
+		}
+		out[key] = strings.TrimSpace(value)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func getMetricsConfig() MetricsConfig {
@@ -324,6 +409,17 @@ func getMetricsConfig() MetricsConfig {
 		QueueSize:     getEnvInt("METRICS_QUEUE_SIZE", defaultMetricsQueueSize),
 		WorkerCount:   getEnvInt("METRICS_WORKER_COUNT", defaultMetricsWorkerCount),
 		FlushInterval: getEnvDuration("METRICS_FLUSH_INTERVAL", defaultMetricsFlushInterval),
+	}
+}
+
+func getPlaygroundConfig() PlaygroundConfig {
+	ttl := getEnvDuration("PLAYGROUND_TRACE_STORE_TTL", defaultPlaygroundTraceStoreTTL)
+	if ttl <= 0 {
+		ttl = defaultPlaygroundTraceStoreTTL
+	}
+	return PlaygroundConfig{
+		TraceStoreEnabled: getEnvBool("PLAYGROUND_TRACE_STORE_ENABLED", defaultPlaygroundTraceStoreEnabled),
+		TraceStoreTTL:     ttl,
 	}
 }
 

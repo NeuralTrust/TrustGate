@@ -23,6 +23,7 @@ import (
 	cataloghttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/catalog"
 	consumerhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/consumer"
 	gatewayhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/gateway"
+	playgroundhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/playground"
 	policyhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/policy"
 	registryhttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/registry"
 	rolehttp "github.com/NeuralTrust/AgentGateway/pkg/api/handler/http/role"
@@ -106,6 +107,8 @@ type adminRouterParams struct {
 	ListModelsCatalog     *cataloghttp.ListModelsHandler
 	ListPoliciesCatalog   *cataloghttp.ListPolicyCatalogHandler
 	ListMCPServersCatalog *cataloghttp.ListMCPServersHandler
+
+	GetTrace *playgroundhttp.GetTraceHandler
 }
 
 type adminServerParams struct {
@@ -167,6 +170,8 @@ func ServerAdmin(c *container.Container) error {
 				ListModelsCatalog:     p.ListModelsCatalog,
 				ListPoliciesCatalog:   p.ListPoliciesCatalog,
 				ListMCPServersCatalog: p.ListMCPServersCatalog,
+
+				GetTrace: p.GetTrace,
 			})
 		},
 		dig.Name("admin"),

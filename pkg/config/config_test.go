@@ -202,6 +202,102 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_OTLPDefaultsAndOverrides(t *testing.T) {
+	minimumEnv(t)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Telemetry.OTLP.Endpoint != "" {
+		t.Errorf("OTLP.Endpoint default = %q, want empty", cfg.Telemetry.OTLP.Endpoint)
+	}
+	if cfg.Telemetry.OTLP.Timeout != 0 {
+		t.Errorf("OTLP.Timeout default = %v, want 0", cfg.Telemetry.OTLP.Timeout)
+	}
+
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "collector:4317")
+	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "authorization=Bearer x,team=core")
+	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+	t.Setenv("OTEL_EXPORTER_OTLP_TIMEOUT", "15000")
+	t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "true")
+	t.Setenv("OTEL_EXPORTER_OTLP_COMPRESSION", "gzip")
+
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig with OTLP overrides: %v", err)
+	}
+	otlp := cfg.Telemetry.OTLP
+	if otlp.Endpoint != "collector:4317" {
+		t.Errorf("OTLP.Endpoint = %q", otlp.Endpoint)
+	}
+	if otlp.Protocol != "http/protobuf" {
+		t.Errorf("OTLP.Protocol = %q", otlp.Protocol)
+	}
+	if otlp.Timeout != 15*time.Second {
+		t.Errorf("OTLP.Timeout = %v, want 15s", otlp.Timeout)
+	}
+	if !otlp.Insecure {
+		t.Errorf("OTLP.Insecure = false, want true")
+	}
+	if otlp.Compression != "gzip" {
+		t.Errorf("OTLP.Compression = %q", otlp.Compression)
+	}
+	if otlp.Headers["authorization"] != "Bearer x" || otlp.Headers["team"] != "core" {
+		t.Errorf("OTLP.Headers = %v", otlp.Headers)
+	}
+}
+
+func TestParseOTLPHeaders(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want map[string]string
+	}{
+		{"empty", "", nil},
+		{"single", "a=1", map[string]string{"a": "1"}},
+		{"multi with spaces", " a = 1 , b=2 ", map[string]string{"a": "1", "b": "2"}},
+		{"skips malformed", "a=1,noequals,=novalue,b=2", map[string]string{"a": "1", "b": "2"}},
+		{"empty value kept", "a=", map[string]string{"a": ""}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseOTLPHeaders(tc.raw)
+			if len(got) != len(tc.want) {
+				t.Fatalf("parseOTLPHeaders(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+			for k, v := range tc.want {
+				if got[k] != v {
+					t.Errorf("key %q = %q, want %q", k, got[k], v)
+				}
+			}
+		})
+	}
+}
+
+func TestGetOTLPTimeout(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  time.Duration
+	}{
+		{"unset", "", 0},
+		{"milliseconds", "15000", 15 * time.Second},
+		{"go duration", "5s", 5 * time.Second},
+		{"zero", "0", 0},
+		{"negative ms", "-5", 0},
+		{"garbage", "abc", 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OTEL_EXPORTER_OTLP_TIMEOUT", tc.value)
+			if got := getOTLPTimeout(); got != tc.want {
+				t.Errorf("getOTLPTimeout(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_KafkaBrokersAllBlankFailsValidation(t *testing.T) {
 	minimumEnv(t)
 	t.Setenv("KAFKA_BROKERS", " , , ")
