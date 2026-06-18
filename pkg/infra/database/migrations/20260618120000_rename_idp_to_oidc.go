@@ -27,12 +27,12 @@ func init() {
 		Name: "rename idp to oidc",
 		Up: func(ctx context.Context, tx pgx.Tx) error {
 			const ddl = `
+				ALTER TABLE auths DROP CONSTRAINT IF EXISTS auths_type_check;
 				UPDATE auths SET type = 'oidc' WHERE type = 'idp';
 				UPDATE auths
 				SET config = (config - 'idp') || jsonb_build_object('oidc', config->'idp')
 				WHERE config ? 'idp';
 				ALTER TABLE roles RENAME COLUMN idp_mapping TO oidc_mapping;
-				ALTER TABLE auths DROP CONSTRAINT IF EXISTS auths_type_check;
 				ALTER TABLE auths ADD CONSTRAINT auths_type_check CHECK (type IN ('api_key','oauth2','oidc','mtls'));`
 			_, err := tx.Exec(ctx, ddl)
 			return err
