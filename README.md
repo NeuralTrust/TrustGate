@@ -31,7 +31,7 @@
 - 🔌 **Plugin System** — Policy stages with built-in plugins: rate limiting, token rate limiting, request size guard, semantic cache and CORS.
 - 🧠 **Semantic Cache** — Embedding-based response caching to cut cost and latency on repeated prompts.
 - 🔒 **Security & Multi-Tenancy** — Per-gateway consumers, API-key auth, and policies scoped globally or per consumer.
-- 📊 **Observability** — Built-in metrics, request telemetry streamed to Kafka by default, with an opt-in per-gateway [OpenTelemetry](https://opentelemetry.io) (OTLP) exporter and optional [TrustLens](https://neuraltrust.ai) integration.
+- 📊 **Observability** — Built-in metrics, request telemetry streamed to Kafka by default, with an opt-in per-gateway [OpenTelemetry](https://opentelemetry.io) (OTLP) exporter.
 - ⚙️ **Two Independent Planes** — Admin and Proxy run as separate processes so you can scale them independently.
 - ☁️ **Cloud Agnostic** — Single static binary, Docker image and Kubernetes manifests. Deploy anywhere.
 
@@ -254,7 +254,7 @@ flowchart LR
     subgraph Infra["Infrastructure"]
         PG[("Postgres")]
         RD[("Redis")]
-        KFK[["Kafka → TrustLens"]]
+        KFK[["Kafka"]]
     end
 
     APP -->|API key| PROXY
@@ -435,7 +435,7 @@ pkg/infra/providers/   # provider adapters (openai, anthropic, bedrock, …)
 pkg/infra/plugins/     # policy plugins (ratelimit, semanticcache, …)
 pkg/infra/loadbalancer/# routing strategies + health checks
 pkg/infra/database/    # pgxpool + in-code Go migrations registry
-pkg/infra/telemetry/   # Kafka (default) + OTLP exporters; TrustLens flag
+pkg/infra/telemetry/   # Kafka (default) + OTLP exporters
 pkg/api/handler/http/  # per-route HTTP handlers
 pkg/server/            # Server interface + admin / proxy routers
 pkg/container/         # dig DI container + one module per context

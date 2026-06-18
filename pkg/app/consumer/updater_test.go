@@ -340,7 +340,7 @@ func TestUpdater_Update_RejectsIdPAuthOnSwitchToMCP(t *testing.T) {
 		Type:      ptr(domain.TypeMCP),
 	})
 	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (idp cannot broker for an MCP consumer)", err)
+		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
 	}
 }
 

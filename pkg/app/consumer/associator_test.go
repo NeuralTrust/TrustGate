@@ -331,7 +331,7 @@ func TestAssociator_AttachAuth_MCPRejectsIdP(t *testing.T) {
 	a := newAssociator(repo, backendmocks.NewRepository(t), authRepo, policymocks.NewRepository(t))
 	err := a.AttachAuth(context.Background(), gwID, consumerID, authID)
 	if !errors.Is(err, commonerrors.ErrConflict) {
-		t.Fatalf("err = %v, want ErrConflict (idp cannot broker for an MCP consumer)", err)
+		t.Fatalf("err = %v, want ErrConflict (oidc cannot broker for an MCP consumer)", err)
 	}
 }
 
