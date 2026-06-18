@@ -30,9 +30,8 @@ type Metadata struct {
 	ConsumerName  string
 	Path          string
 	Method        string
-	IP            string
-	SessionID     string
-	FingerprintID string
+	IP        string
+	SessionID string
 }
 
 type RequestTrace struct {

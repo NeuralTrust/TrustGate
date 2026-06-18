@@ -41,9 +41,8 @@ const (
 	attrConsumerID           = "agentgateway.consumer.id"
 	attrConsumerName         = "agentgateway.consumer.name"
 	attrSessionID            = "agentgateway.session_id"
-	attrTurnID               = "agentgateway.turn_id"
-	attrFingerprintID        = "agentgateway.fingerprint_id"
-	attrIP                   = "agentgateway.ip"
+	attrTurnID = "agentgateway.turn_id"
+	attrIP     = "agentgateway.ip"
 	attrRequestedModel       = "agentgateway.requested_model"
 	attrModelLabel           = "agentgateway.model_label"
 	attrUsageTotalTokens     = "agentgateway.usage.total_tokens"
@@ -127,7 +126,6 @@ func eventToRecord(evt *events.Event, maxBodyBytes int) otellog.Record {
 	appendStr(attrConsumerName, evt.Consumer.Name)
 	appendStr(attrSessionID, evt.SessionID)
 	appendStr(attrTurnID, evt.TurnID)
-	appendStr(attrFingerprintID, evt.FingerprintID)
 	appendStr(attrIP, evt.IP)
 	appendStr(attrRequestedModel, evt.Request.RequestedModel)
 	appendStr(attrModelLabel, evt.Request.ModelLabel)

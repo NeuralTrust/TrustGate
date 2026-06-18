@@ -144,9 +144,6 @@ func (m *MetricsMiddleware) buildTraceMetadata(c *fiber.Ctx, gatewayID string, g
 	if sessionID, ok := c.Locals(string(infracontext.SessionContextKey)).(string); ok {
 		meta.SessionID = sessionID
 	}
-	if fpID, ok := c.Locals(string(infracontext.FingerprintIDContextKey)).(string); ok {
-		meta.FingerprintID = fpID
-	}
 	return meta
 }
 

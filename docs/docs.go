@@ -5998,9 +5998,6 @@ const docTemplate = `{
                 "end_timestamp": {
                     "type": "integer"
                 },
-                "fingerprint_id": {
-                    "type": "string"
-                },
                 "gateway_id": {
                     "type": "string"
                 },

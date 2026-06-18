@@ -60,10 +60,9 @@ func (b *Builder) Build(
 		Timestamp:     startTime.UTC().Format(time.RFC3339),
 		OccurredOn:    startTime.UnixMilli(),
 		EndTimestamp:  endTime.UnixMilli(),
-		Consumer:      events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
-		SessionID:     meta.SessionID,
-		FingerprintID: meta.FingerprintID,
-		IP:            meta.IP,
+		Consumer:  events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
+		SessionID: meta.SessionID,
+		IP:        meta.IP,
 	}
 
 	served, attempts := b.foldLLMSpans(requestTrace)
