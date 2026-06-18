@@ -27,6 +27,11 @@
       "type": "string"
     },
     {
+      "key": "trace_id",
+      "value": "",
+      "type": "string"
+    },
+    {
       "key": "admin_token",
       "value": "",
       "type": "string"
@@ -382,6 +387,31 @@
                 "version"
               ]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Playground",
+      "item": [
+        {
+          "name": "Get Playground Trace",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/playground/traces/{{trace_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "playground",
+                "traces",
+                "{{trace_id}}"
+              ]
+            },
+            "description": "Fetch the metrics Event stored for a playground request, keyed by the X-AG-Trace-Id header returned in the proxy response. Requires an admin Bearer token. Traces expire after a short TTL (default 10m)."
           }
         }
       ]

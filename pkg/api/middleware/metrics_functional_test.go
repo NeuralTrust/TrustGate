@@ -139,7 +139,7 @@ func newMetricsApp(t *testing.T, gw *gatewaydomain.Gateway, rec *eventRecorder) 
 	require.NoError(t, err)
 
 	builder := appmetrics.NewBuilder(adapter.NewRegistry(), zeroPricing{})
-	pipeline := appmetrics.NewPipeline(builder, cache, logger, def)
+	pipeline := appmetrics.NewPipeline(builder, cache, nil, logger, def)
 	worker := appmetrics.NewWorker(logger, pipeline)
 	worker.StartWorkers(2)
 	t.Cleanup(worker.Shutdown)
