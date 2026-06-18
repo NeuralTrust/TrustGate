@@ -37,11 +37,11 @@ type RoleScoper interface {
 var _ RoleScoper = (*roleScoper)(nil)
 
 type roleScoper struct {
-	idpResolver approle.IDPResolver
+	oidcResolver approle.OIDCResolver
 }
 
-func NewRoleScoper(idpResolver approle.IDPResolver) RoleScoper {
-	return &roleScoper{idpResolver: idpResolver}
+func NewRoleScoper(oidcResolver approle.OIDCResolver) RoleScoper {
+	return &roleScoper{oidcResolver: oidcResolver}
 }
 
 // Scope returns the consumer view the MCP plane should operate on. Inline
@@ -63,7 +63,7 @@ func (s *roleScoper) Scope(
 	if principal == nil || len(principal.Claims) == 0 {
 		return nil, ErrNoRoleAccess
 	}
-	resolved, err := s.idpResolver.ResolveIDPRoles(ctx, data.Roles, principal.Claims)
+	resolved, err := s.oidcResolver.ResolveOIDCRoles(ctx, data.Roles, principal.Claims)
 	if err != nil {
 		return nil, err
 	}

@@ -33,8 +33,8 @@ type VerifiedClaims struct {
 	Scopes  []string
 }
 
-//go:generate mockery --name=IDPVerifier --dir=. --output=./mocks --filename=idp_verifier_mock.go --case=underscore --with-expecter
-type IDPVerifier interface {
+//go:generate mockery --name=OIDCVerifier --dir=. --output=./mocks --filename=oidc_verifier_mock.go --case=underscore --with-expecter
+type OIDCVerifier interface {
 	Peek(token string) (TokenHints, error)
-	Verify(ctx context.Context, token string, cfg domain.IDPConfig) (*VerifiedClaims, error)
+	Verify(ctx context.Context, token string, cfg domain.OIDCConfig) (*VerifiedClaims, error)
 }

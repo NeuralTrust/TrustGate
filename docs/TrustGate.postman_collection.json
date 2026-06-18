@@ -1,8 +1,8 @@
 {
   "info": {
-    "_postman_id": "a1b2c3d4-0001-4a00-9000-agentgatewayadm",
-    "name": "AgentGateway",
-    "description": "Admin API for AgentGateway. Manage gateways and their registries, policies, consumers, roles and auth credentials. Set the `base_url` and `admin_token` collection variables before running. IDs captured from create responses are stored automatically into `gateway_id`, `registry_id`, `policy_id`, `consumer_id`, `role_id` and `auth_id`. Creating an `api_key` auth returns the generated key exactly once; it is captured into `consumer_api_key`. Use `E2E Flow` for inline + API key, `E2E Flow (OAuth2 JWT)` for inline + classic OAuth Bearer JWT, and `E2E Role-Based Flow (IDP)` for roles + IDP auth.",
+    "_postman_id": "39f29039-8ebc-4efe-bf98-1ee457c76ec6",
+    "name": "TrustGate",
+    "description": "Admin API for AgentGateway. Manage gateways and their registries, policies, consumers, roles and auth credentials. Set the `base_url` and `admin_token` collection variables before running. IDs captured from create responses are stored automatically into `gateway_id`, `registry_id`, `policy_id`, `consumer_id`, `role_id` and `auth_id`. Creating an `api_key` auth returns the generated key exactly once; it is captured into `consumer_api_key`. Use `E2E Flow` for inline + API key, `E2E Flow (OAuth2 JWT)` for inline + classic OAuth Bearer JWT, and `E2E Role-Based Flow (OIDC)` for roles + OIDC auth.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -1597,10 +1597,10 @@
                 "value": "application/json"
               }
             ],
-            "description": "`model_policies` cannot be set on create: bind registries first, then update the role. `idp_mapping` grants the role to IDP tokens whose claims match.",
+            "description": "`model_policies` cannot be set on create: bind registries first, then update the role. `oidc_mapping` grants the role to OIDC tokens whose claims match.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"analysts-{{$guid}}\",\n  \"idp_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"groups\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"ai-analysts\"\n        ]\n      },\n      {\n        \"path\": \"scope\",\n        \"op\": \"contains_all\",\n        \"values\": [\n          \"llm:read\"\n        ]\n      }\n    ]\n  }\n}"
+              "raw": "{\n  \"name\": \"analysts-{{$guid}}\",\n  \"oidc_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"groups\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"ai-analysts\"\n        ]\n      },\n      {\n        \"path\": \"scope\",\n        \"op\": \"contains_all\",\n        \"values\": [\n          \"llm:read\"\n        ]\n      }\n    ]\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles",
@@ -1851,7 +1851,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('idp auth created', () => pm.response.code === 201);",
+                  "pm.test('oidc auth created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('auth_id', pm.response.json().id);",
                   "}"
@@ -1867,7 +1867,7 @@
                 "value": "application/json"
               }
             ],
-            "description": "Validates IDP-issued JWTs; claims are matched against role idp_mapping rules. Role-based consumers only.",
+            "description": "Validates OIDC-issued JWTs; claims are matched against role oidc_mapping rules. Role-based consumers only.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"agentgateway\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
@@ -2032,7 +2032,7 @@
           }
         }
       ],
-      "description": "Gateway auth credentials. `api_key` and `oauth2` apply to inline consumers; `idp` applies to role_based consumers. `oauth2` is classic OAuth (Bearer JWT validation via JWKS/introspection); `mtls` authenticates via client certificate."
+      "description": "Gateway auth credentials. `api_key` and `oauth2` apply to inline consumers; `oidc` applies to role_based consumers. `oauth2` is classic OAuth (Bearer JWT validation via JWKS/introspection); `mtls` authenticates via client certificate."
     },
     {
       "name": "Catalog",
@@ -3182,8 +3182,8 @@
       ]
     },
     {
-      "name": "E2E Role-Based Flow (IDP)",
-      "description": "End-to-end role-based provisioning: OpenAI registry, role with idp_mapping and model_policies, IDP auth credential, role_based consumer, then a proxy call authenticated with a Bearer JWT. Set `openai_api_key`, `idp_issuer`, `idp_jwks_url` and `idp_bearer_token` (JWT whose claims match the role idp_mapping) before running.",
+      "name": "E2E Role-Based Flow (OIDC)",
+      "description": "End-to-end role-based provisioning: OpenAI registry, role with oidc_mapping and model_policies, OIDC auth credential, role_based consumer, then a proxy call authenticated with a Bearer JWT. Set `openai_api_key`, `idp_issuer`, `idp_jwks_url` and `idp_bearer_token` (JWT whose claims match the role oidc_mapping) before running.",
       "item": [
         {
           "name": "1. Create Gateway",
@@ -3295,7 +3295,7 @@
             "description": "model_policies cannot be set on create; bind registries first, then update the role.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"analysts-{{$guid}}\",\n  \"idp_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"groups\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"ai-analysts\"\n        ]\n      }\n    ]\n  }\n}"
+              "raw": "{\n  \"name\": \"analysts-{{$guid}}\",\n  \"oidc_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"groups\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"ai-analysts\"\n        ]\n      }\n    ]\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles",
@@ -3393,7 +3393,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('idp auth created', () => pm.response.code === 201);",
+                  "pm.test('oidc auth created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('auth_id', pm.response.json().id);",
                   "}"
@@ -3409,7 +3409,7 @@
                 "value": "application/json"
               }
             ],
-            "description": "Validates IDP-issued JWTs; claims are matched against role idp_mapping rules. Role-based consumers only.",
+            "description": "Validates OIDC-issued JWTs; claims are matched against role oidc_mapping rules. Role-based consumers only.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"{{idp_issuer}}\",\n      \"audiences\": [\n        \"agentgateway\"\n      ],\n      \"jwks_url\": \"{{idp_jwks_url}}\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
@@ -3565,7 +3565,7 @@
               {
                 "key": "Authorization",
                 "value": "Bearer {{idp_bearer_token}}",
-                "description": "IDP-issued JWT whose claims satisfy the role idp_mapping."
+                "description": "OIDC-issued JWT whose claims satisfy the role oidc_mapping."
               },
               {
                 "key": "X-AG-Gateway-Slug",
@@ -3594,8 +3594,8 @@
       ]
     },
     {
-      "name": "E2E Role-Based Flow (Entra ID / IDP)",
-      "description": "End-to-end role-based provisioning authenticated with Microsoft Entra ID. Same shape as 'E2E Role-Based Flow (IDP)', but the auth is an `idp` credential wired to Entra (issuer https://login.microsoftonline.com/<tenant>/v2.0 + the tenant JWKS). Role-based consumers REQUIRE an `idp` auth: `oauth2` and `api_key` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Entra token claims against the role `idp_mapping`.\n\nWhy `idp` and not `oauth2`? `oauth2` is for inline consumers / the MCP brokered OAuth flow; it never resolves roles. For the role-based LLM proxy you need `idp`, and the `client_secret` is NOT used (the gateway only validates the JWT via JWKS, it does not call Entra).\n\nSet before running: `entra_tenant_id`, `entra_client_id`, `openai_api_key`, `entra_app_role` (an App Role value you exposed and assigned in Entra) and `entra_bearer_token` (an Entra-issued JWT carrying that role in its `roles` claim).\n\nEntra prerequisites: App Registration manifest `requestedAccessTokenVersion: 2` (so tokens carry the /v2.0 issuer) and an App Role (appRoles[].value) assigned to the user/service principal so the access token includes a `roles` claim. If you prefer group claims, change the role `idp_mapping` path to `groups` and use the group object IDs.",
+      "name": "E2E Role-Based Flow (Entra ID / OIDC)",
+      "description": "End-to-end role-based provisioning authenticated with Microsoft Entra ID. Same shape as 'E2E Role-Based Flow (OIDC)', but the auth is an `oidc` credential wired to Entra (issuer https://login.microsoftonline.com/<tenant>/v2.0 + the tenant JWKS). Role-based consumers REQUIRE an `oidc` auth: `oauth2` and `api_key` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Entra token claims against the role `oidc_mapping`.\n\nWhy `oidc` and not `oauth2`? `oauth2` is for inline consumers / the MCP brokered OAuth flow; it never resolves roles. For the role-based LLM proxy you need `oidc`, and the `client_secret` is NOT used (the gateway only validates the JWT via JWKS, it does not call Entra).\n\nSet before running: `entra_tenant_id`, `entra_client_id`, `openai_api_key`, `entra_app_role` (an App Role value you exposed and assigned in Entra) and `entra_bearer_token` (an Entra-issued JWT carrying that role in its `roles` claim).\n\nEntra prerequisites: App Registration manifest `requestedAccessTokenVersion: 2` (so tokens carry the /v2.0 issuer) and an App Role (appRoles[].value) assigned to the user/service principal so the access token includes a `roles` claim. If you prefer group claims, change the role `oidc_mapping` path to `groups` and use the group object IDs.",
       "item": [
         {
           "name": "0. Get Entra token (M2M)",
@@ -3663,7 +3663,7 @@
                 }
               ]
             },
-            "description": "Machine-to-machine token (client_credentials) captured into {{entra_bearer_token}} for step 10. The scope MUST be your own app's `.default` (a Graph scope yields a token the gateway cannot validate). client-credentials tokens carry APPLICATION app roles in the `roles` claim (no `scp`): define an App Role with allowedMemberTypes [\"Application\"] and value = {{entra_app_role}}, add it as an application permission of this app and grant admin consent, otherwise `roles` is empty and the role idp_mapping matches nothing.\n\nFor a real USER token instead (delegated, so the user's assigned app roles/groups appear), use the device-code grant: POST /devicecode with scope `api://{client_id}/mcp.access openid offline_access`, open the verification_uri, then POST /token with grant_type urn:ietf:params:oauth:grant-type:device_code."
+            "description": "Machine-to-machine token (client_credentials) captured into {{entra_bearer_token}} for step 10. The scope MUST be your own app's `.default` (a Graph scope yields a token the gateway cannot validate). client-credentials tokens carry APPLICATION app roles in the `roles` claim (no `scp`): define an App Role with allowedMemberTypes [\"Application\"] and value = {{entra_app_role}}, add it as an application permission of this app and grant admin consent, otherwise `roles` is empty and the role oidc_mapping matches nothing.\n\nFor a real USER token instead (delegated, so the user's assigned app roles/groups appear), use the device-code grant: POST /devicecode with scope `api://{client_id}/mcp.access openid offline_access`, open the verification_uri, then POST /token with grant_type urn:ietf:params:oauth:grant-type:device_code."
           }
         },
         {
@@ -3750,7 +3750,7 @@
           }
         },
         {
-          "name": "3. Create Role (Entra idp_mapping)",
+          "name": "3. Create Role (Entra oidc_mapping)",
           "event": [
             {
               "listen": "test",
@@ -3773,10 +3773,10 @@
                 "value": "application/json"
               }
             ],
-            "description": "idp_mapping matches the Entra token claims. Here it matches the `roles` claim (Entra App Roles) against {{entra_app_role}}. To use group claims instead, set path to `groups` and values to the group object IDs (and enable group claims on the app). model_policies cannot be set on create; bind registries first, then update the role.",
+            "description": "oidc_mapping matches the Entra token claims. Here it matches the `roles` claim (Entra App Roles) against {{entra_app_role}}. To use group claims instead, set path to `groups` and values to the group object IDs (and enable group claims on the app). model_policies cannot be set on create; bind registries first, then update the role.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"entra-analysts-{{$guid}}\",\n  \"idp_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"roles\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"{{entra_app_role}}\"\n        ]\n      }\n    ]\n  }\n}"
+              "raw": "{\n  \"name\": \"entra-analysts-{{$guid}}\",\n  \"oidc_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"roles\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"{{entra_app_role}}\"\n        ]\n      }\n    ]\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles",
@@ -3874,7 +3874,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('idp auth created', () => pm.response.code === 201);",
+                  "pm.test('oidc auth created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('auth_id', pm.response.json().id);",
                   "}"
@@ -3890,7 +3890,7 @@
                 "value": "application/json"
               }
             ],
-            "description": "Role-based consumers MUST use an `idp` auth; `oauth2`/`api_key` are rejected (Forbidden) for role_based. No `client_secret` here: the gateway only validates the Entra JWT via JWKS, it never calls Entra. `audiences` must equal the token `aud` (api://{client_id} or the bare client_id GUID - verify by decoding the token at jwt.ms). `subject_claim` `oid` is Entra's stable per-tenant user id (use `sub` if you prefer the pairwise per-app id).",
+            "description": "Role-based consumers MUST use an `oidc` auth; `oauth2`/`api_key` are rejected (Forbidden) for role_based. No `client_secret` here: the gateway only validates the Entra JWT via JWKS, it never calls Entra. `audiences` must equal the token `aud` (api://{client_id} or the bare client_id GUID - verify by decoding the token at jwt.ms). `subject_claim` `oid` is Entra's stable per-tenant user id (use `sub` if you prefer the pairwise per-app id).",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"entra-idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/v2.0\",\n      \"audiences\": [\n        \"{{entra_client_id}}\",\n        \"api://{{entra_client_id}}\"\n      ],\n      \"jwks_url\": \"https://login.microsoftonline.com/{{entra_tenant_id}}/discovery/v2.0/keys\",\n      \"subject_claim\": \"oid\"\n    }\n  }\n}"
@@ -4046,7 +4046,7 @@
               {
                 "key": "Authorization",
                 "value": "Bearer {{entra_bearer_token}}",
-                "description": "Entra-issued JWT whose `roles` (or `groups`) claim satisfies the role idp_mapping. Its `aud` must match the auth `audiences` and `iss` the configured issuer."
+                "description": "Entra-issued JWT whose `roles` (or `groups`) claim satisfies the role oidc_mapping. Its `aud` must match the auth `audiences` and `iss` the configured issuer."
               },
               {
                 "key": "X-AG-Gateway-Slug",
@@ -4076,7 +4076,7 @@
     },
     {
       "name": "E2E Role-Based Flow (Okta / IDP)",
-      "description": "End-to-end role-based provisioning authenticated with Okta. Same shape as 'E2E Role-Based Flow (Entra ID / IDP)', but the `idp` auth is wired to an Okta authorization server (issuer https://{okta_domain}/oauth2/{okta_auth_server_id} + that server's JWKS). Role-based consumers REQUIRE an `idp` auth: `oauth2` and `api_key` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Okta token claims against the role `idp_mapping`.\n\nSet before running: `okta_domain` (e.g. dev-12345.okta.com, no scheme), `okta_auth_server_id` (e.g. `default`), `okta_client_id`, `okta_client_secret`, `okta_scope` (a scope granted to the app, e.g. `mcp.access`), `okta_audience` (the authorization server audience, e.g. `api://default`), `okta_claim` (claim path the role matches, default `scp` for the M2M client_credentials flow), `okta_group` (the value to match in that claim) and `openai_api_key`.\n\nWhere do roles come from? Okta has no Entra-style App Roles. For a user token (device-code / auth-code) map the `groups` claim (add a Groups claim on the authorization server). For a machine-to-machine token (client_credentials, used here) there is no user, so add a custom claim on the authorization server that emits the role/group value into the access token (set `okta_claim` to that claim name), or set `okta_claim` to `scp` and `okta_group` to a granted scope to match on scopes instead. The gateway only validates the JWT via JWKS; `okta_client_secret` is never used by the gateway.",
+      "description": "End-to-end role-based provisioning authenticated with Okta. Same shape as 'E2E Role-Based Flow (Entra ID / OIDC)', but the `oidc` auth is wired to an Okta authorization server (issuer https://{okta_domain}/oauth2/{okta_auth_server_id} + that server's JWKS). Role-based consumers REQUIRE an `oidc` auth: `oauth2` and `api_key` are rejected (Forbidden) for `role_based`. Roles are resolved by matching the Okta token claims against the role `oidc_mapping`.\n\nSet before running: `okta_domain` (e.g. dev-12345.okta.com, no scheme), `okta_auth_server_id` (e.g. `default`), `okta_client_id`, `okta_client_secret`, `okta_scope` (a scope granted to the app, e.g. `mcp.access`), `okta_audience` (the authorization server audience, e.g. `api://default`), `okta_claim` (claim path the role matches, default `scp` for the M2M client_credentials flow), `okta_group` (the value to match in that claim) and `openai_api_key`.\n\nWhere do roles come from? Okta has no Entra-style App Roles. For a user token (device-code / auth-code) map the `groups` claim (add a Groups claim on the authorization server). For a machine-to-machine token (client_credentials, used here) there is no user, so add a custom claim on the authorization server that emits the role/group value into the access token (set `okta_claim` to that claim name), or set `okta_claim` to `scp` and `okta_group` to a granted scope to match on scopes instead. The gateway only validates the JWT via JWKS; `okta_client_secret` is never used by the gateway.",
       "item": [
         {
           "name": "0. Get Okta token (M2M)",
@@ -4230,7 +4230,7 @@
           }
         },
         {
-          "name": "3. Create Role (Okta idp_mapping)",
+          "name": "3. Create Role (Okta oidc_mapping)",
           "event": [
             {
               "listen": "test",
@@ -4253,10 +4253,10 @@
                 "value": "application/json"
               }
             ],
-            "description": "idp_mapping matches the Okta token claims. By default it matches the `{{okta_claim}}` claim (scp, the granted scope) against {{okta_group}}. For an M2M token set {{okta_claim}} to the custom claim you added on the authorization server (or to `scp` to match a granted scope). model_policies cannot be set on create; bind registries first, then update the role.",
+            "description": "oidc_mapping matches the Okta token claims. By default it matches the `{{okta_claim}}` claim (scp, the granted scope) against {{okta_group}}. For an M2M token set {{okta_claim}} to the custom claim you added on the authorization server (or to `scp` to match a granted scope). model_policies cannot be set on create; bind registries first, then update the role.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"okta-analysts-{{$guid}}\",\n  \"idp_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"{{okta_claim}}\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"{{okta_group}}\"\n        ]\n      }\n    ]\n  }\n}"
+              "raw": "{\n  \"name\": \"okta-analysts-{{$guid}}\",\n  \"oidc_mapping\": {\n    \"match\": \"any\",\n    \"claims\": [\n      {\n        \"path\": \"{{okta_claim}}\",\n        \"op\": \"contains_any\",\n        \"values\": [\n          \"{{okta_group}}\"\n        ]\n      }\n    ]\n  }\n}"
             },
             "url": {
               "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/roles",
@@ -4354,7 +4354,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('idp auth created', () => pm.response.code === 201);",
+                  "pm.test('oidc auth created', () => pm.response.code === 201);",
                   "if (pm.response.code === 201) {",
                   "  pm.environment.set('auth_id', pm.response.json().id);",
                   "}"
@@ -4370,7 +4370,7 @@
                 "value": "application/json"
               }
             ],
-            "description": "Role-based consumers MUST use an `idp` auth; `oauth2`/`api_key` are rejected (Forbidden) for role_based. No `client_secret` here: the gateway only validates the Okta JWT via JWKS, it never calls Okta. `issuer` and `jwks_url` come from the authorization server's /.well-known/openid-configuration. `audiences` must equal the token `aud` (the authorization server audience, default api://default; verify by decoding the token). `subject_claim` `sub` is the Okta subject (the client_id for M2M, the user id for user tokens).",
+            "description": "Role-based consumers MUST use an `oidc` auth; `oauth2`/`api_key` are rejected (Forbidden) for role_based. No `client_secret` here: the gateway only validates the Okta JWT via JWKS, it never calls Okta. `issuer` and `jwks_url` come from the authorization server's /.well-known/openid-configuration. `audiences` must equal the token `aud` (the authorization server audience, default api://default; verify by decoding the token). `subject_claim` `sub` is the Okta subject (the client_id for M2M, the user id for user tokens).",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"okta-idp-{{$guid}}\",\n  \"type\": \"idp\",\n  \"enabled\": true,\n  \"config\": {\n    \"idp\": {\n      \"issuer\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}\",\n      \"audiences\": [\n        \"{{okta_audience}}\"\n      ],\n      \"jwks_url\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}/v1/keys\",\n      \"subject_claim\": \"sub\"\n    }\n  }\n}"
@@ -4526,7 +4526,7 @@
               {
                 "key": "Authorization",
                 "value": "Bearer {{okta_bearer_token}}",
-                "description": "Okta-issued JWT whose `{{okta_claim}}` claim satisfies the role idp_mapping. Its `aud` must match the auth `audiences` and `iss` the configured issuer."
+                "description": "Okta-issued JWT whose `{{okta_claim}}` claim satisfies the role oidc_mapping. Its `aud` must match the auth `audiences` and `iss` the configured issuer."
               },
               {
                 "key": "X-AG-Gateway-Slug",
@@ -4560,7 +4560,7 @@
       "item": [
         {
           "name": "1. Flow A - Simple proxy (API key + DeepWiki)",
-          "description": "Self-contained. One upstream MCP server behind one virtual path with API-key auth: gateway -> auth -> registry -> consumer -> attach -> JSON-RPC surface -> toolkit curation -> cleanup. DeepWiki needs no upstream auth, so this flow works out of the box.\n\nVirtual MCP path: /mcp-simple.",
+          "description": "Self-contained. One upstream MCP server behind one virtual path with API-key auth: gateway -> auth -> registry -> consumer -> attach -> JSON-RPC surface -> toolkit curation -> cleanup. DeepWiki needs no upstream auth, so this flow works out of the box.\n\nMCP endpoint: {{mcp_url}}/{{consumer_slug}}/mcp - the consumer slug is generated on creation and captured by the create request.",
           "item": [
             {
               "name": "Create gateway",
@@ -4651,13 +4651,14 @@
               }
             },
             {
-              "name": "Create MCP consumer (/mcp-simple)",
+              "name": "Create MCP consumer",
               "event": [
                 {
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.environment.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);",
+                      "pm.environment.set('consumer_slug', pm.response.json().slug);"
                     ],
                     "type": "text/javascript"
                   }
@@ -4674,7 +4675,7 @@
                 "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-a-simple\",\n  \"type\": \"MCP\",\n  \"path\": \"/mcp-simple\",\n  \"fail_mode\": \"closed\"\n}"
+                  "raw": "{\n  \"name\": \"flow-a-simple\",\n  \"type\": \"MCP\",\n  \"fail_mode\": \"closed\"\n}"
                 }
               }
             },
@@ -4721,7 +4722,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-simple",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"initialize\",\n  \"params\": {\n    \"protocolVersion\": \"2025-06-18\",\n    \"capabilities\": {},\n    \"clientInfo\": { \"name\": \"postman\", \"version\": \"1.0\" }\n  }\n}"
@@ -4745,7 +4746,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-simple",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"notifications/initialized\"\n}"
@@ -4769,7 +4770,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-simple",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"ping\"\n}"
@@ -4793,7 +4794,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-simple",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"tools/list\"\n}"
@@ -4817,7 +4818,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-simple",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"read_wiki_structure\",\n    \"arguments\": { \"repoName\": \"gofiber/fiber\" }\n  }\n}"
@@ -4859,7 +4860,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-simple",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 5,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"deepwiki_ask\",\n    \"arguments\": {\n      \"repoName\": \"gofiber/fiber\",\n      \"question\": \"How does routing work?\"\n    }\n  }\n}"
@@ -4900,7 +4901,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-simple",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 6,\n  \"method\": \"resources/list\"\n}"
@@ -4925,7 +4926,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-simple",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"method\": \"prompts/list\"\n}"
@@ -4966,7 +4967,7 @@
         },
         {
           "name": "2. Flow B - Composition hub (many servers, one MCP)",
-          "description": "Self-contained. Federate several upstream MCP servers behind ONE virtual path: builds /mcp-hub from DeepWiki and Hugging Face, proves federation through a single tools/list and per-upstream routing, then curates a cross-server toolkit, then cleans up.\n\nNaming: tools keep their upstream name unless two registries expose the same name, in which case the composer auto-prefixes them with the registry name ({registry}_{tool}). The toolkit shows the curated alternative: cherry-pick and rename explicitly.",
+          "description": "Self-contained. Federate several upstream MCP servers behind ONE consumer: builds it from DeepWiki and Hugging Face, proves federation through a single tools/list and per-upstream routing, then curates a cross-server toolkit, then cleans up.\n\nNaming: tools keep their upstream name unless two registries expose the same name, in which case the composer auto-prefixes them with the registry name ({registry}_{tool}). The toolkit shows the curated alternative: cherry-pick and rename explicitly.",
           "item": [
             {
               "name": "Create gateway",
@@ -5084,13 +5085,14 @@
               }
             },
             {
-              "name": "Create composed MCP consumer (/mcp-hub)",
+              "name": "Create composed MCP consumer",
               "event": [
                 {
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.environment.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);",
+                      "pm.environment.set('consumer_slug', pm.response.json().slug);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5107,7 +5109,7 @@
                 "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-b-hub\",\n  \"type\": \"MCP\",\n  \"path\": \"/mcp-hub\",\n  \"fail_mode\": \"open\"\n}"
+                  "raw": "{\n  \"name\": \"flow-b-hub\",\n  \"type\": \"MCP\",\n  \"fail_mode\": \"open\"\n}"
                 },
                 "description": "fail_mode=open: if one upstream is unreachable, the hub still serves the tools of the healthy ones (closed would fail the whole consumer)."
               }
@@ -5165,7 +5167,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-hub",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/list\"\n}"
@@ -5190,7 +5192,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-hub",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"ask_question\",\n    \"arguments\": {\n      \"repoName\": \"gofiber/fiber\",\n      \"question\": \"How does middleware chaining work?\"\n    }\n  }\n}"
@@ -5215,7 +5217,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-hub",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"hub_repo_search\",\n    \"arguments\": {\n      \"query\": \"llama\",\n      \"repo_type\": \"model\",\n      \"limit\": 3\n    }\n  }\n}"
@@ -5258,7 +5260,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-hub",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"hf_models\",\n    \"arguments\": {\n      \"query\": \"whisper\",\n      \"repo_type\": \"model\",\n      \"limit\": 3\n    }\n  }\n}"
@@ -5305,7 +5307,7 @@
         },
         {
           "name": "3. Flow C - Inbound OAuth (Entra ID)",
-          "description": "Self-contained. JWT validation with Microsoft Entra ID: gateway -> oauth2 auth -> DeepWiki registry -> consumer -> M2M token -> authenticated JSON-RPC -> anti-downgrade -> cleanup. See the collection description for the Entra app prerequisites.\n\nVirtual MCP path: /mcp-entra.\n\nNOTE: only one ENABLED oauth2 auth may cover the same (issuer, audience) pair - run another Entra folder's Cleanup first or 'Create oauth2 auth' answers 409.",
+          "description": "Self-contained. JWT validation with Microsoft Entra ID: gateway -> oauth2 auth -> DeepWiki registry -> consumer -> M2M token -> authenticated JSON-RPC -> anti-downgrade -> cleanup. See the collection description for the Entra app prerequisites.\n\nMCP endpoint: {{mcp_url}}/{{consumer_slug}}/mcp - the consumer slug is generated on creation and captured by the create request.\n\nNOTE: only one ENABLED oauth2 auth may cover the same (issuer, audience) pair - run another Entra folder's Cleanup first or 'Create oauth2 auth' answers 409.",
           "item": [
             {
               "name": "Create gateway",
@@ -5424,13 +5426,14 @@
               }
             },
             {
-              "name": "Create MCP consumer (/mcp-entra)",
+              "name": "Create MCP consumer",
               "event": [
                 {
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.environment.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);",
+                      "pm.environment.set('consumer_slug', pm.response.json().slug);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5447,7 +5450,7 @@
                 "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-c-entra\",\n  \"type\": \"MCP\",\n  \"path\": \"/mcp-entra\",\n  \"fail_mode\": \"closed\"\n}"
+                  "raw": "{\n  \"name\": \"flow-c-entra\",\n  \"type\": \"MCP\",\n  \"fail_mode\": \"closed\"\n}"
                 }
               }
             },
@@ -5456,7 +5459,7 @@
               "request": {
                 "method": "POST",
                 "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{oauth2_auth_id}}",
-                "description": "Path-first resolution: only auths ATTACHED to the consumer on this path can authenticate requests to /mcp-entra."
+                "description": "Consumer-first resolution: only auths ATTACHED to this consumer can authenticate requests to its MCP endpoint ({{mcp_url}}/{{consumer_slug}}/mcp)."
               }
             },
             {
@@ -5545,7 +5548,7 @@
                     "value": "application/json"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-entra",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/list\"\n}"
@@ -5573,7 +5576,7 @@
                     "value": "application/json"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-entra",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"read_wiki_structure\",\n    \"arguments\": { \"repoName\": \"gofiber/fiber\" }\n  }\n}"
@@ -5615,7 +5618,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-entra",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"ping\"\n}"
@@ -5663,7 +5666,7 @@
         },
         {
           "name": "4. Flow D - OAuth 2.1 discovery (what MCP clients do)",
-          "description": "Self-contained. Sets up a protected virtual MCP (/mcp-discovery) with an Entra oauth2 auth, then replays every step an MCP client (Cursor) performs automatically: 401 challenge -> protected-resource metadata (RFC 9728) -> AS metadata (RFC 8414) -> DCR (RFC 7591) -> brokered authorize -> cleanup.\n\nNOTE: only one ENABLED oauth2 auth may cover the same (issuer, audience) pair - run another Entra folder's Cleanup first or 'Create oauth2 auth' answers 409.",
+          "description": "Self-contained. Sets up a protected MCP consumer (addressed by its generated slug, {{mcp_url}}/{{consumer_slug}}/mcp) with an Entra oauth2 auth, then replays every step an MCP client (Cursor) performs automatically: 401 challenge -> protected-resource metadata (RFC 9728) -> AS metadata (RFC 8414) -> DCR (RFC 7591) -> brokered authorize -> cleanup.\n\nNOTE: only one ENABLED oauth2 auth may cover the same (issuer, audience) pair - run another Entra folder's Cleanup first or 'Create oauth2 auth' answers 409.",
           "item": [
             {
               "name": "Create gateway",
@@ -5751,13 +5754,14 @@
               }
             },
             {
-              "name": "Create MCP consumer (/mcp-discovery)",
+              "name": "Create MCP consumer",
               "event": [
                 {
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.environment.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);",
+                      "pm.environment.set('consumer_slug', pm.response.json().slug);"
                     ],
                     "type": "text/javascript"
                   }
@@ -5774,7 +5778,7 @@
                 "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-d-discovery\",\n  \"type\": \"MCP\",\n  \"path\": \"/mcp-discovery\",\n  \"fail_mode\": \"closed\"\n}"
+                  "raw": "{\n  \"name\": \"flow-d-discovery\",\n  \"type\": \"MCP\",\n  \"fail_mode\": \"closed\"\n}"
                 }
               }
             },
@@ -5819,7 +5823,7 @@
                     "value": "application/json"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-discovery",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"ping\"\n}"
@@ -5848,7 +5852,7 @@
                   "type": "noauth"
                 },
                 "method": "GET",
-                "url": "{{mcp_url}}/mcp-discovery",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "description": "Streamable HTTP clients probe GET for the optional server-initiated SSE stream. The gateway does not offer one and must answer 405 per spec - a 401/404 here makes clients misread it as a credential problem and loop on re-authentication. Same for DELETE (session termination)."
               }
             },
@@ -5870,7 +5874,7 @@
                   "type": "noauth"
                 },
                 "method": "GET",
-                "url": "{{mcp_url}}/.well-known/oauth-protected-resource/mcp-discovery",
+                "url": "{{mcp_url}}/.well-known/oauth-protected-resource/{{consumer_slug}}/mcp",
                 "description": "Same document scoped to a specific virtual MCP path, per the MCP authorization spec: scopes_supported reflects only the auths attached to the consumer on this path."
               }
             },
@@ -5934,7 +5938,7 @@
                   "type": "noauth"
                 },
                 "method": "GET",
-                "url": "{{mcp_url}}/oauth/authorize?response_type=code&client_id={{entra_client_id}}&redirect_uri=http%3A%2F%2Flocalhost%3A1234%2Fcallback&state=sanity&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&resource={{mcp_url}}%2Fmcp-discovery",
+                "url": "{{mcp_url}}/oauth/authorize?response_type=code&client_id={{entra_client_id}}&redirect_uri=http%3A%2F%2Flocalhost%3A1234%2Fcallback&state=sanity&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&resource={{mcp_url}}%2F{{consumer_slug}}%2Fmcp",
                 "description": "Replays the first leg of the browser flow without a browser. The Location header must point at login.microsoftonline.com AND carry a scope parameter (api://{client_id}/mcp.access). The resource parameter (RFC 8707, the virtual MCP URL) selects which consumer's IdP brokers the flow - required when several issuers are enabled on the plane, optional with one. The same parameter is honored on POST /oauth/token (refresh grants). A redirect without scope means the facade picked a stale oauth2 auth entry without required_scopes - find and delete it."
               }
             },
@@ -6130,7 +6134,7 @@
         },
         {
           "name": "6. Flow F - Linear end-to-end (forwarded + auto, Cursor)",
-          "description": "Self-contained. The full story on real services: inbound Entra ID, downstream Linear with forwarded mode + auto registration - no Linear OAuth app or client secret needed.\n\nRun the admin requests top to bottom, then 'Get Entra token', then the MCP plane requests. The first tools/list returns -32003 with data.connect_url: open it in a browser, click Connect Linear, approve, re-run. Finish with the Cleanup requests.\n\nVirtual MCP path: /v1/mcp/linear.\n\nIn Cursor you skip the Postman token entirely: add {{mcp_url}}/v1/mcp/linear to mcp.json and Cursor bootstraps the OAuth flow from the 401 challenge (Flow D shows every step it performs). After the Entra login, if you have unlinked providers the browser detours to the connect page (chained consent) - link Linear, click Continue, done. Already linked? The browser hands the code straight back to Cursor via its cursor:// deep link ('Open Cursor?' dialog; tick 'Always allow' to never see it again).\n\nNote (M2M): the Postman client-credentials token links Linear to the service principal. Real users in Cursor each link their own Linear account.\n\nNOTE: only one ENABLED oauth2 auth may cover the same (issuer, audience) pair - run another Entra folder's Cleanup first or 'Create oauth2 auth' answers 409.",
+          "description": "Self-contained. The full story on real services: inbound Entra ID, downstream Linear with forwarded mode + auto registration - no Linear OAuth app or client secret needed.\n\nRun the admin requests top to bottom, then 'Get Entra token', then the MCP plane requests. The first tools/list returns -32003 with data.connect_url: open it in a browser, click Connect Linear, approve, re-run. Finish with the Cleanup requests.\n\nMCP endpoint: {{mcp_url}}/{{consumer_slug}}/mcp - the consumer slug is generated on creation and captured by the create request.\n\nIn Cursor you skip the Postman token entirely: add {{mcp_url}}/{{consumer_slug}}/mcp to mcp.json and Cursor bootstraps the OAuth flow from the 401 challenge (Flow D shows every step it performs). After the Entra login, if you have unlinked providers the browser detours to the connect page (chained consent) - link Linear, click Continue, done. Already linked? The browser hands the code straight back to Cursor via its cursor:// deep link ('Open Cursor?' dialog; tick 'Always allow' to never see it again).\n\nNote (M2M): the Postman client-credentials token links Linear to the service principal. Real users in Cursor each link their own Linear account.\n\nNOTE: only one ENABLED oauth2 auth may cover the same (issuer, audience) pair - run another Entra folder's Cleanup first or 'Create oauth2 auth' answers 409.",
           "item": [
             {
               "name": "Create gateway",
@@ -6219,13 +6223,14 @@
               }
             },
             {
-              "name": "Create Linear MCP consumer (/v1/mcp/linear)",
+              "name": "Create Linear MCP consumer",
               "event": [
                 {
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.environment.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);",
+                      "pm.environment.set('consumer_slug', pm.response.json().slug);"
                     ],
                     "type": "text/javascript"
                   }
@@ -6242,7 +6247,7 @@
                 "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-f-linear\",\n  \"type\": \"MCP\",\n  \"path\": \"/v1/mcp/linear\",\n  \"fail_mode\": \"closed\"\n}"
+                  "raw": "{\n  \"name\": \"flow-f-linear\",\n  \"type\": \"MCP\",\n  \"fail_mode\": \"closed\"\n}"
                 }
               }
             },
@@ -6359,7 +6364,7 @@
                     "value": "Bearer {{entra_token}}"
                   }
                 ],
-                "url": "{{mcp_url}}/v1/mcp/linear",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"initialize\",\n  \"params\": {\n    \"protocolVersion\": \"2025-06-18\",\n    \"capabilities\": {},\n    \"clientInfo\": { \"name\": \"postman\", \"version\": \"1.0\" }\n  }\n}"
@@ -6403,7 +6408,7 @@
                     "value": "Bearer {{entra_token}}"
                   }
                 ],
-                "url": "{{mcp_url}}/v1/mcp/linear",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"tools/list\"\n}"
@@ -6418,7 +6423,7 @@
                   "type": "noauth"
                 },
                 "method": "GET",
-                "url": "{{mcp_url}}/v1/mcp/linear/connect?ticket={{connect_ticket}}",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp/connect?ticket={{connect_ticket}}",
                 "description": "The ticket-authenticated consent page: one button per forwarded provider behind this virtual MCP, with linked/unlinked status. Normally opened in a browser via the connect_url from the -32003 error, or automatically right after the Entra leg (chained consent). Tickets expire after 15 minutes."
               }
             },
@@ -6439,7 +6444,7 @@
                     "value": "Bearer {{entra_token}}"
                   }
                 ],
-                "url": "{{mcp_url}}/v1/mcp/linear",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"list_issues\",\n    \"arguments\": {}\n  }\n}"
@@ -6490,7 +6495,7 @@
         },
         {
           "name": "7. Flow G - Full MCP surface (prompts, resources, toolkit governance)",
-          "description": "Self-contained. Demonstrates the full federated MCP surface - tools, prompts, resources, resource templates - and the toolkit as a per-surface allowlist.\n\nPREREQUISITE - start the reference 'everything' MCP server locally (it exposes tools, prompts AND resources):\n\n    npx -y @modelcontextprotocol/server-everything streamableHttp\n\nIt listens on http://localhost:3001/mcp. The registry below uses host.docker.internal:3001 so the dockerized gateway can reach it; change it to localhost:3001 if you run the gateway natively.\n\nFlow: full surface first (everything exposed - empty toolkit), then curate the toolkit and watch each surface shrink to the allowlist: one tool, one renamed prompt, one resource URI. Reads outside the allowlist fail with the spec error -32002.\n\nToolkit semantics: an EMPTY toolkit exposes every tool, prompt and resource. A NON-EMPTY toolkit is an allowlist per surface - a registry with only tool entries exposes NO prompts and NO resources. Resource selectors accept exact URIs, trailing-asterisk prefixes (repo://github/*) or *.\n\nVirtual MCP path: /mcp-surface.",
+          "description": "Self-contained. Demonstrates the full federated MCP surface - tools, prompts, resources, resource templates - and the toolkit as a per-surface allowlist.\n\nPREREQUISITE - start the reference 'everything' MCP server locally (it exposes tools, prompts AND resources):\n\n    npx -y @modelcontextprotocol/server-everything streamableHttp\n\nIt listens on http://localhost:3001/mcp. The registry below uses host.docker.internal:3001 so the dockerized gateway can reach it; change it to localhost:3001 if you run the gateway natively.\n\nFlow: full surface first (everything exposed - empty toolkit), then curate the toolkit and watch each surface shrink to the allowlist: one tool, one renamed prompt, one resource URI. Reads outside the allowlist fail with the spec error -32002.\n\nToolkit semantics: an EMPTY toolkit exposes every tool, prompt and resource. A NON-EMPTY toolkit is an allowlist per surface - a registry with only tool entries exposes NO prompts and NO resources. Resource selectors accept exact URIs, trailing-asterisk prefixes (repo://github/*) or *.\n\nMCP endpoint: {{mcp_url}}/{{consumer_slug}}/mcp - the consumer slug is generated on creation and captured by the create request.",
           "item": [
             {
               "name": "Create gateway",
@@ -6581,7 +6586,7 @@
               ]
             },
             {
-              "name": "Create MCP consumer (/mcp-surface)",
+              "name": "Create MCP consumer",
               "request": {
                 "method": "POST",
                 "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
@@ -6593,7 +6598,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"flow-g-surface\",\n  \"type\": \"MCP\",\n  \"path\": \"/mcp-surface\",\n  \"fail_mode\": \"closed\"\n}"
+                  "raw": "{\n  \"name\": \"flow-g-surface\",\n  \"type\": \"MCP\",\n  \"fail_mode\": \"closed\"\n}"
                 }
               },
               "event": [
@@ -6601,7 +6606,8 @@
                   "listen": "test",
                   "script": {
                     "exec": [
-                      "pm.environment.set('consumer_id', pm.response.json().id);"
+                      "pm.environment.set('consumer_id', pm.response.json().id);",
+                      "pm.environment.set('consumer_slug', pm.response.json().slug);"
                     ],
                     "type": "text/javascript"
                   }
@@ -6639,7 +6645,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"initialize\",\n  \"params\": {\n    \"protocolVersion\": \"2025-06-18\",\n    \"capabilities\": {},\n    \"clientInfo\": {\n      \"name\": \"postman\",\n      \"version\": \"1.0\"\n    }\n  }\n}"
@@ -6664,7 +6670,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"method\": \"notifications/initialized\"\n}"
@@ -6688,7 +6694,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"tools/list\"\n}"
@@ -6713,7 +6719,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"prompts/list\"\n}"
@@ -6738,7 +6744,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"prompts/get\",\n  \"params\": {\n    \"name\": \"simple_prompt\"\n  }\n}"
@@ -6763,7 +6769,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 5,\n  \"method\": \"resources/list\"\n}"
@@ -6788,7 +6794,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 6,\n  \"method\": \"resources/templates/list\"\n}"
@@ -6812,7 +6818,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"method\": \"resources/read\",\n  \"params\": {\n    \"uri\": \"test://static/resource/1\"\n  }\n}"
@@ -6855,7 +6861,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 8,\n  \"method\": \"tools/list\"\n}"
@@ -6880,7 +6886,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 9,\n  \"method\": \"prompts/list\"\n}"
@@ -6905,7 +6911,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 10,\n  \"method\": \"prompts/get\",\n  \"params\": {\n    \"name\": \"demo_prompt\"\n  }\n}"
@@ -6930,7 +6936,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 11,\n  \"method\": \"resources/list\"\n}"
@@ -6955,7 +6961,7 @@
                     "value": "{{api_key}}"
                   }
                 ],
-                "url": "{{mcp_url}}/mcp-surface",
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
                 "body": {
                   "mode": "raw",
                   "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 12,\n  \"method\": \"resources/read\",\n  \"params\": {\n    \"uri\": \"test://static/resource/2\"\n  }\n}"
@@ -7011,7 +7017,482 @@
           ]
         },
         {
-          "name": "8. Diagnostics (standalone)",
+          "name": "8. Flow H - Inbound OAuth + discovery (Okta)",
+          "description": "Self-contained. Interactive MCP login brokered through Okta as the identity provider: gateway -> oauth2 auth (Okta) -> DeepWiki registry -> MCP consumer -> the OAuth 2.1 discovery surface an MCP client (Cursor) replays automatically -> M2M-authenticated JSON-RPC -> anti-downgrade -> cleanup.\n\nConsumers have NO path field: the server assigns a random slug on create and the virtual MCP endpoint is {{mcp_url}}/{slug}/mcp. The 'Create MCP consumer' step captures it into {{consumer_slug}}.\n\nWhy `oauth2` and not `oidc`? For MCP, the gateway BROKERS the browser authorization-code flow (the client has no Okta token yet): it needs client_id + client_secret to drive Okta, which only the `oauth2` auth type carries. An `oidc` auth only VALIDATES a token the caller already has (LLM proxy), so an MCP consumer is rejected if you attach an `oidc` auth. 'Okta as IDP' here means Okta is the identity provider behind an `oauth2` auth.\n\nRole-based variant: an MCP consumer may also be role_based; it still requires exactly one `oauth2` auth, plus a role whose oidc_mapping matches the Okta token claims (see 'E2E Role-Based Flow (Okta / IDP)' for the role + oidc_mapping shape). This folder uses an inline MCP consumer to keep the OAuth surface front and center.\n\nSet before running: `okta_domain` (e.g. dev-12345.okta.com, no scheme), `okta_auth_server_id` (e.g. `default`), `okta_client_id`, `okta_client_secret`, `okta_scope` (a custom scope exposed AND granted on the authorization server, e.g. `mcp.access`) and `okta_audience` (the authorization server audience, e.g. `api://default`).\n\nOkta app prerequisites (skipping any makes Cursor loop on 'Authenticating...'): 1) an Authorization Server (Security > API) with a custom scope = {{okta_scope}} and audience = {{okta_audience}}; 2) an OIDC app with the Authorization Code grant and a Web redirect URI {{mcp_url}}/oauth/callback; 3) for the M2M test step below, the Client Credentials grant enabled and the scope granted to the app. The gateway validates the Okta JWT via JWKS; the client_secret is only used to broker the browser flow.\n\nNOTE: only one ENABLED oauth2 auth may cover the same (issuer, audience) pair on the plane - run another oauth2 folder's Cleanup first or 'Create oauth2 auth (Okta)' answers 409.",
+          "item": [
+            {
+              "name": "Create gateway",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.environment.set('gateway_id', pm.response.json().id);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{admin_url}}/v1/gateways",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"flow-h-okta\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Create oauth2 auth (Okta)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test('oauth2 auth created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) pm.environment.set('oauth2_auth_id', pm.response.json().id);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"okta\",\n  \"type\": \"oauth2\",\n  \"config\": {\n    \"oauth2\": {\n      \"issuer\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}\",\n      \"audiences\": [\"{{okta_audience}}\"],\n      \"jwks_url\": \"https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}/v1/keys\",\n      \"client_id\": \"{{okta_client_id}}\",\n      \"client_secret\": \"{{okta_client_secret}}\",\n      \"required_scopes\": [\"{{okta_scope}}\"]\n    }\n  }\n}"
+                },
+                "description": "issuer must equal the token's iss claim exactly (the authorization server base URL, https://{domain}/oauth2/{authServerId}). jwks_url is the server's signing keys ({issuer}/v1/keys); it can be omitted to let the gateway resolve it via OIDC discovery. client_id + client_secret let the AS facade broker the browser authorization-code flow against Okta (redirect URI {{mcp_url}}/oauth/callback must be a Web redirect on the Okta app). required_scopes must be a custom scope EXPOSED on the authorization server (Okta rejects unknown scopes; openid/profile/email are user-only). audiences must match the token aud (the authorization server audience, default api://default). 409 means another ENABLED oauth2 auth already covers this (issuer, audience): run that folder's Cleanup or scope this one with a distinct audience."
+              }
+            },
+            {
+              "name": "Create api_key auth (for anti-downgrade demo)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const res = pm.response.json();",
+                      "pm.environment.set('auth_id', res.id);",
+                      "pm.environment.set('api_key', res.api_key);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"flow-h-key\",\n  \"type\": \"api_key\",\n  \"config\": {}\n}"
+                },
+                "description": "Used only by 'Invalid JWT is rejected' to prove the chain never falls back from a failed Bearer to a valid API key."
+              }
+            },
+            {
+              "name": "Create MCP registry (DeepWiki, auth none)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.environment.set('registry_id', pm.response.json().id);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"deepwiki\",\n  \"type\": \"MCP\",\n  \"mcp_target\": {\n    \"url\": \"https://mcp.deepwiki.com/mcp\",\n    \"transport\": \"streamable-http\"\n  }\n}"
+                }
+              }
+            },
+            {
+              "name": "Create MCP consumer (captures slug)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const res = pm.response.json();",
+                      "pm.environment.set('consumer_id', res.id);",
+                      "pm.environment.set('consumer_slug', res.slug);",
+                      "console.log('MCP endpoint:', pm.variables.get('mcp_url') + '/' + res.slug + '/mcp');"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"flow-h-okta\",\n  \"type\": \"MCP\",\n  \"fail_mode\": \"closed\"\n}"
+                },
+                "description": "Consumers have no path: the server assigns a random slug and the MCP endpoint is {{mcp_url}}/{slug}/mcp. The test captures the slug into {{consumer_slug}}; every MCP call below addresses {{mcp_url}}/{{consumer_slug}}/mcp.\n\nFor the role-based variant add \"routing_mode\": \"role_based\" here, then create a role with an oidc_mapping over the Okta claims and attach it - the oauth2 auth stays the same."
+              }
+            },
+            {
+              "name": "Attach oauth2 auth to consumer",
+              "request": {
+                "method": "POST",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{oauth2_auth_id}}",
+                "description": "Path-first resolution: only auths ATTACHED to the consumer can authenticate or broker requests to {{mcp_url}}/{{consumer_slug}}/mcp."
+              }
+            },
+            {
+              "name": "Attach api_key auth to consumer",
+              "request": {
+                "method": "POST",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}"
+              }
+            },
+            {
+              "name": "Attach registry to consumer",
+              "request": {
+                "method": "POST",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/registries/{{registry_id}}"
+              }
+            },
+            {
+              "name": "401 challenge carries WWW-Authenticate",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test('401 with resource_metadata challenge', () => {",
+                      "  pm.response.to.have.status(401);",
+                      "  pm.expect(pm.response.headers.get('WWW-Authenticate')).to.include('resource_metadata=');",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"ping\"\n}"
+                },
+                "description": "No credential on purpose: the MCP plane answers 401 + WWW-Authenticate: Bearer resource_metadata=\"...\" so MCP clients bootstrap the OAuth flow."
+              }
+            },
+            {
+              "name": "Protected resource metadata, path-scoped (RFC 9728)",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "GET",
+                "url": "{{mcp_url}}/.well-known/oauth-protected-resource/{{consumer_slug}}/mcp",
+                "description": "Document scoped to this virtual MCP path ({{consumer_slug}}/mcp): authorization_servers lists the Okta issuer of the oauth2 auth attached to the consumer, and scopes_supported reflects only that auth."
+              }
+            },
+            {
+              "name": "Authorization server metadata (RFC 8414)",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "GET",
+                "url": "{{mcp_url}}/.well-known/oauth-authorization-server",
+                "description": "The gateway advertises itself as the authorization server (AS facade): authorize/token/register point at the gateway, which brokers to Okta. With several distinct issuers enabled, clients must pass the RFC 8707 resource parameter (the virtual MCP URL) on authorize/token so the facade picks the right IdP."
+              }
+            },
+            {
+              "name": "Dynamic client registration (RFC 7591)",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{mcp_url}}/oauth/register",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"client_name\": \"postman\",\n  \"redirect_uris\": [\"http://localhost:1234/callback\"],\n  \"grant_types\": [\"authorization_code\"],\n  \"response_types\": [\"code\"],\n  \"token_endpoint_auth_method\": \"none\"\n}"
+                },
+                "description": "Returns the registered public client (PKCE). 400 if the resolved oauth2 auth has no client_id configured."
+              }
+            },
+            {
+              "name": "Authorize redirects to Okta (sanity check)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test('302 to Okta with scope and PKCE', () => {",
+                      "  pm.response.to.have.status(302);",
+                      "  const loc = pm.response.headers.get('Location') || '';",
+                      "  pm.expect(loc).to.include(pm.variables.get('okta_domain'));",
+                      "  pm.expect(loc).to.include('scope=');",
+                      "  pm.expect(loc).to.include('code_challenge=');",
+                      "});",
+                      "console.log('Location:', pm.response.headers.get('Location'));"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "protocolProfileBehavior": {
+                "followRedirects": false
+              },
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "GET",
+                "url": "{{mcp_url}}/oauth/authorize?response_type=code&client_id={{okta_client_id}}&redirect_uri=http%3A%2F%2Flocalhost%3A1234%2Fcallback&state=sanity&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&resource={{mcp_url}}%2F{{consumer_slug}}%2Fmcp",
+                "description": "Replays the first leg of the browser flow without a browser. The Location header must point at the Okta authorization server AND carry a scope parameter ({{okta_scope}}) and the PKCE code_challenge. The resource parameter (RFC 8707, the virtual MCP URL) selects which consumer's IdP brokers the flow - required when several issuers are enabled, optional with one."
+              }
+            },
+            {
+              "name": "Get Okta token (client credentials)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "const res = pm.response.json();",
+                      "pm.test('access token issued', () => pm.expect(res.access_token).to.be.a('string'));",
+                      "if (res.access_token) {",
+                      "  pm.environment.set('okta_bearer_token', res.access_token);",
+                      "  let b64 = res.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                      "  while (b64.length % 4) b64 += '=';",
+                      "  const claims = JSON.parse(atob(b64));",
+                      "  console.log('token claims', { iss: claims.iss, aud: claims.aud, sub: claims.sub, scp: claims.scp });",
+                      "  pm.test('issuer matches the Okta authorization server', () => pm.expect(claims.iss).to.include('/oauth2/'));",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [],
+                "url": "https://{{okta_domain}}/oauth2/{{okta_auth_server_id}}/v1/token",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "client_credentials"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{okta_client_id}}"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{okta_client_secret}}"
+                    },
+                    {
+                      "key": "scope",
+                      "value": "{{okta_scope}}"
+                    }
+                  ]
+                },
+                "description": "M2M token for Postman testing, captured into {{okta_bearer_token}}. The scope MUST be a custom scope defined on the authorization server and granted to this app; openid/profile/email are user-only and won't work for client_credentials. The aud equals the authorization server audience ({{okta_audience}}). For a real USER token (browser/device-code) the same token validates - this step only avoids the interactive browser leg in Postman."
+              }
+            },
+            {
+              "name": "tools/list with Okta JWT",
+              "request": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{okta_bearer_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"tools/list\"\n}"
+                },
+                "description": "Path-first: the request path resolves the consumer, then the token is validated against the consumer's ATTACHED oauth2 auth (signature via JWKS, issuer, audience, required_scopes)."
+              }
+            },
+            {
+              "name": "tools/call with Okta JWT",
+              "request": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{okta_bearer_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"read_wiki_structure\",\n    \"arguments\": { \"repoName\": \"gofiber/fiber\" }\n  }\n}"
+                }
+              }
+            },
+            {
+              "name": "Invalid JWT is rejected (anti-downgrade)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "pm.test('401 with challenge, no API-key fallback', () => {",
+                      "  pm.response.to.have.status(401);",
+                      "  pm.expect(pm.response.headers.get('WWW-Authenticate')).to.include('resource_metadata=');",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJodHRwczovL2V2aWwuZXhhbXBsZS5jb20ifQ.invalid"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{api_key}}"
+                  }
+                ],
+                "url": "{{mcp_url}}/{{consumer_slug}}/mcp",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"ping\"\n}"
+                },
+                "description": "Sends a bogus Bearer token AND a valid API key: the chain takes the Bearer path first and fails without falling back to the API key (anti-downgrade by design)."
+              }
+            },
+            {
+              "name": "Cleanup: delete consumer",
+              "request": {
+                "method": "DELETE",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}"
+              }
+            },
+            {
+              "name": "Cleanup: delete registry",
+              "request": {
+                "method": "DELETE",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/registries/{{registry_id}}"
+              }
+            },
+            {
+              "name": "Cleanup: delete oauth2 auth",
+              "request": {
+                "method": "DELETE",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths/{{oauth2_auth_id}}",
+                "description": "Frees the (issuer, audience) pair so other oauth2 folders can create their own Okta auth without a 409. Detach order: consumer first (else the auth is still referenced)."
+              }
+            },
+            {
+              "name": "Cleanup: delete api_key auth",
+              "request": {
+                "method": "DELETE",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}/auths/{{auth_id}}"
+              }
+            },
+            {
+              "name": "Cleanup: delete gateway",
+              "request": {
+                "method": "DELETE",
+                "url": "{{admin_url}}/v1/gateways/{{gateway_id}}",
+                "description": "Children first, gateway last (else 409)."
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. Diagnostics (standalone)",
           "description": "Utilities that need no setup of their own. The id-based requests (introspect/get) read whatever {{gateway_id}}/{{registry_id}}/{{consumer_id}} the last-run flow stored - run them mid-flow, before that flow's Cleanup.",
           "item": [
             {

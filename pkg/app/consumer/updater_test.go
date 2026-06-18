@@ -331,7 +331,7 @@ func TestUpdater_Update_RejectsIdPAuthOnSwitchToMCP(t *testing.T) {
 
 	authRepo := authmocks.NewRepository(t)
 	authRepo.EXPECT().FindByIDs(mock.Anything, gwID, existing.AuthIDs).
-		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeIDP}}, nil).Once()
+		Return([]*authdomain.Auth{{ID: authID, GatewayID: gwID, Type: authdomain.TypeOIDC}}, nil).Once()
 
 	updater := appconsumer.NewUpdater(repo, authRepo, newCacheManager(), cachetest.NoopPublisher(), newTestLogger())
 	_, err := updater.Update(context.Background(), appconsumer.UpdateInput{

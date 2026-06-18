@@ -29,14 +29,14 @@ type CreateRoleRequest struct {
 	Name          string               `json:"name"`
 	ModelPolicies []ModelPolicyRequest `json:"model_policies,omitempty"`
 	McpPolicies   *MCPPoliciesRequest  `json:"mcp_policies,omitempty"`
-	IDPMapping    json.RawMessage      `json:"idp_mapping,omitempty"`
+	OIDCMapping    json.RawMessage      `json:"oidc_mapping,omitempty"`
 }
 
 type UpdateRoleRequest struct {
 	Name          *string               `json:"name,omitempty"`
 	ModelPolicies *[]ModelPolicyRequest `json:"model_policies,omitempty"`
 	McpPolicies   *MCPPoliciesRequest   `json:"mcp_policies,omitempty"`
-	IDPMapping    *json.RawMessage      `json:"idp_mapping,omitempty"`
+	OIDCMapping    *json.RawMessage      `json:"oidc_mapping,omitempty"`
 }
 
 type MCPPoliciesRequest struct {
@@ -74,7 +74,7 @@ func (r CreateRoleRequest) Validate() error {
 	if r.McpPolicies != nil {
 		return fmt.Errorf("mcp_policies cannot be set on create; bind registries first and update the role: %w", commonerrors.ErrValidation)
 	}
-	if err := domain.ValidateIDPMapping(r.IDPMapping); err != nil {
+	if err := domain.ValidateOIDCMapping(r.OIDCMapping); err != nil {
 		return fmt.Errorf("%v: %w", err, commonerrors.ErrValidation)
 	}
 	return nil
@@ -84,8 +84,8 @@ func (r UpdateRoleRequest) Validate() error {
 	if r.Name != nil && strings.TrimSpace(*r.Name) == "" {
 		return fmt.Errorf("name is required: %w", commonerrors.ErrValidation)
 	}
-	if r.IDPMapping != nil {
-		if err := domain.ValidateIDPMapping(*r.IDPMapping); err != nil {
+	if r.OIDCMapping != nil {
+		if err := domain.ValidateOIDCMapping(*r.OIDCMapping); err != nil {
 			return fmt.Errorf("%v: %w", err, commonerrors.ErrValidation)
 		}
 	}

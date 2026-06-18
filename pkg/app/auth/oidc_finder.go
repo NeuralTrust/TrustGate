@@ -22,36 +22,36 @@ import (
 )
 
 var (
-	ErrInvalidAuthRequest = errors.New("invalid auth request")
-	ErrAmbiguousIDPConfig = errors.New("ambiguous idp auth config")
+	ErrInvalidAuthRequest  = errors.New("invalid auth request")
+	ErrAmbiguousOIDCConfig = errors.New("ambiguous oidc auth config")
 )
 
-//go:generate mockery --name=IDPFinder --dir=. --output=./mocks --filename=idp_finder_mock.go --case=underscore --with-expecter
-type IDPFinder interface {
-	FindIDPAuth(ctx context.Context, auths []*domain.Auth, token string) (*domain.Auth, error)
+//go:generate mockery --name=OIDCFinder --dir=. --output=./mocks --filename=oidc_finder_mock.go --case=underscore --with-expecter
+type OIDCFinder interface {
+	FindOIDCAuth(ctx context.Context, auths []*domain.Auth, token string) (*domain.Auth, error)
 }
 
-var _ IDPFinder = (*idpFinder)(nil)
+var _ OIDCFinder = (*oidcFinder)(nil)
 
-type idpFinder struct {
-	verifier IDPVerifier
+type oidcFinder struct {
+	verifier OIDCVerifier
 }
 
-func NewIDPFinder(verifier IDPVerifier) IDPFinder {
-	return &idpFinder{verifier: verifier}
+func NewOIDCFinder(verifier OIDCVerifier) OIDCFinder {
+	return &oidcFinder{verifier: verifier}
 }
 
-func (f *idpFinder) FindIDPAuth(_ context.Context, auths []*domain.Auth, token string) (*domain.Auth, error) {
+func (f *oidcFinder) FindOIDCAuth(_ context.Context, auths []*domain.Auth, token string) (*domain.Auth, error) {
 	hints, err := f.verifier.Peek(token)
 	if err != nil {
 		return nil, err
 	}
 	matches := make([]*domain.Auth, 0, len(auths))
 	for _, a := range auths {
-		if a == nil || !a.Enabled || a.Type != domain.TypeIDP || a.Config.IDP == nil {
+		if a == nil || !a.Enabled || a.Type != domain.TypeOIDC || a.Config.OIDC == nil {
 			continue
 		}
-		if idpConfigMatchesHints(*a.Config.IDP, hints) {
+		if oidcConfigMatchesHints(*a.Config.OIDC, hints) {
 			matches = append(matches, a)
 		}
 	}
@@ -61,11 +61,11 @@ func (f *idpFinder) FindIDPAuth(_ context.Context, auths []*domain.Auth, token s
 	case 1:
 		return matches[0], nil
 	default:
-		return nil, ErrAmbiguousIDPConfig
+		return nil, ErrAmbiguousOIDCConfig
 	}
 }
 
-func idpConfigMatchesHints(cfg domain.IDPConfig, hints TokenHints) bool {
+func oidcConfigMatchesHints(cfg domain.OIDCConfig, hints TokenHints) bool {
 	if cfg.Issuer != "" && hints.Issuer != "" && cfg.Issuer != hints.Issuer {
 		return false
 	}

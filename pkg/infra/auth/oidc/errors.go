@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package idp
+package oidc
 
 import "errors"
 
 var (
-	ErrInvalidToken         = errors.New("invalid idp token")
+	ErrInvalidToken         = errors.New("invalid oidc token")
 	ErrJWKSFetch            = errors.New("jwks fetch failed")
-	ErrUnsupportedKey       = errors.New("unsupported idp key")
-	ErrUnsupportedAlg       = errors.New("unsupported idp signing algorithm")
-	ErrMissingKey           = errors.New("missing idp signing key")
-	ErrMissingRequiredScope = errors.New("missing required idp scope")
+	ErrUnsupportedKey       = errors.New("unsupported oidc key")
+	ErrUnsupportedAlg       = errors.New("unsupported oidc signing algorithm")
+	ErrMissingKey           = errors.New("missing oidc signing key")
+	ErrMissingRequiredScope = errors.New("missing required oidc scope")
 )

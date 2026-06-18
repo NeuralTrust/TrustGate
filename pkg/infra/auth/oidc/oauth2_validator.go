@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package idp
+package oidc
 
 import (
 	"context"
@@ -25,18 +25,18 @@ import (
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/identity"
 )
 
-// OAuth2TokenValidator adapts the shared IDP verifier to the MCP-plane
+// OAuth2TokenValidator adapts the shared OIDC verifier to the MCP-plane
 // JWTValidator port: it resolves key material via OIDC discovery when the
 // config has no explicit JWKS URL and yields an identity.Principal carrying
 // the raw token for downstream exchange/passthrough.
 type OAuth2TokenValidator struct {
-	verifier  appauth.IDPVerifier
+	verifier  appauth.OIDCVerifier
 	discovery *discovery
 }
 
 var _ appauth.JWTValidator = (*OAuth2TokenValidator)(nil)
 
-func NewOAuth2TokenValidator(verifier appauth.IDPVerifier, client *http.Client) *OAuth2TokenValidator {
+func NewOAuth2TokenValidator(verifier appauth.OIDCVerifier, client *http.Client) *OAuth2TokenValidator {
 	return &OAuth2TokenValidator{verifier: verifier, discovery: newDiscovery(client)}
 }
 
@@ -52,7 +52,7 @@ func (v *OAuth2TokenValidator) Validate(ctx context.Context, raw string, cfg *do
 		}
 		jwksURL = discovered
 	}
-	verified, err := v.verifier.Verify(ctx, raw, domain.IDPConfig{
+	verified, err := v.verifier.Verify(ctx, raw, domain.OIDCConfig{
 		Issuer:            cfg.Issuer,
 		Audiences:         cfg.Audiences,
 		JWKSURL:           jwksURL,

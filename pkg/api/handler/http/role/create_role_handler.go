@@ -63,7 +63,7 @@ func (h *CreateRoleHandler) Handle(c *fiber.Ctx) error {
 	role, err := h.creator.Create(c.UserContext(), approle.CreateInput{
 		GatewayID:  gatewayID,
 		Name:       req.Name,
-		IDPMapping: req.IDPMapping,
+		OIDCMapping: req.OIDCMapping,
 	})
 	if err != nil {
 		return helpers.WriteError(c, err)

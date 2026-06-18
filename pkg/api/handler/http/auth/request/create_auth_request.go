@@ -31,7 +31,7 @@ type CreateAuthRequest struct {
 
 type ConfigRequest struct {
 	OAuth2 *OAuth2ConfigRequest `json:"oauth2,omitempty"`
-	IDP    *IDPConfigRequest    `json:"idp,omitempty"`
+	OIDC   *OIDCConfigRequest    `json:"oidc,omitempty"`
 	MTLS   *MTLSConfigRequest   `json:"mtls,omitempty"`
 }
 
@@ -46,7 +46,7 @@ type OAuth2ConfigRequest struct {
 	Algorithms       []string `json:"allowed_algorithms,omitempty"`
 }
 
-type IDPConfigRequest struct {
+type OIDCConfigRequest struct {
 	Issuer            string   `json:"issuer"`
 	Audiences         []string `json:"audiences"`
 	JWKSURL           string   `json:"jwks_url,omitempty"`
@@ -97,15 +97,15 @@ func (c ConfigRequest) ToDomain() domain.Config {
 			Algorithms:       c.OAuth2.Algorithms,
 		}
 	}
-	if c.IDP != nil {
-		out.IDP = &domain.IDPConfig{
-			Issuer:            c.IDP.Issuer,
-			Audiences:         c.IDP.Audiences,
-			JWKSURL:           c.IDP.JWKSURL,
-			PublicKeys:        c.IDP.PublicKeys,
-			RequiredScopes:    c.IDP.RequiredScopes,
-			AllowedAlgorithms: c.IDP.AllowedAlgorithms,
-			SubjectClaim:      c.IDP.SubjectClaim,
+	if c.OIDC != nil {
+		out.OIDC = &domain.OIDCConfig{
+			Issuer:            c.OIDC.Issuer,
+			Audiences:         c.OIDC.Audiences,
+			JWKSURL:           c.OIDC.JWKSURL,
+			PublicKeys:        c.OIDC.PublicKeys,
+			RequiredScopes:    c.OIDC.RequiredScopes,
+			AllowedAlgorithms: c.OIDC.AllowedAlgorithms,
+			SubjectClaim:      c.OIDC.SubjectClaim,
 		}
 	}
 	if c.MTLS != nil {

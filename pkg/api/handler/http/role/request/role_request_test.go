@@ -39,12 +39,12 @@ func TestCreateRoleRequest_ValidateRejectsModelPolicies(t *testing.T) {
 	}
 }
 
-func TestRoleRequest_ValidateRejectsInvalidIDPMapping(t *testing.T) {
+func TestRoleRequest_ValidateRejectsInvalidOIDCMapping(t *testing.T) {
 	t.Parallel()
 
 	req := CreateRoleRequest{
 		Name:       "analyst",
-		IDPMapping: json.RawMessage(`{"match":"all","claims":[{"path":"groups","op":"unknown","values":["admin"]}]}`),
+		OIDCMapping: json.RawMessage(`{"match":"all","claims":[{"path":"groups","op":"unknown","values":["admin"]}]}`),
 	}
 
 	err := req.Validate()

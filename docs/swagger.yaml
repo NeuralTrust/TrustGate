@@ -2,12 +2,12 @@ basePath: /
 definitions:
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest:
     properties:
-      idp:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest'
       mtls:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest'
       oauth2:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest'
+      oidc:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OIDCConfigRequest'
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.CreateAuthRequest:
     properties:
@@ -18,31 +18,6 @@ definitions:
       name:
         type: string
       type:
-        type: string
-    type: object
-  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest:
-    properties:
-      allowed_algorithms:
-        items:
-          type: string
-        type: array
-      audiences:
-        items:
-          type: string
-        type: array
-      issuer:
-        type: string
-      jwks_url:
-        type: string
-      public_keys:
-        items:
-          type: string
-        type: array
-      required_scopes:
-        items:
-          type: string
-        type: array
-      subject_claim:
         type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest:
@@ -87,6 +62,31 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OIDCConfigRequest:
+    properties:
+      allowed_algorithms:
+        items:
+          type: string
+        type: array
+      audiences:
+        items:
+          type: string
+        type: array
+      issuer:
+        type: string
+      jwks_url:
+        type: string
+      public_keys:
+        items:
+          type: string
+        type: array
+      required_scopes:
+        items:
+          type: string
+        type: array
+      subject_claim:
+        type: string
+    type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.UpdateAuthRequest:
     properties:
       config:
@@ -122,37 +122,12 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse:
     properties:
-      idp:
-        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse'
       mtls:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse'
       oauth2:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse'
-    type: object
-  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse:
-    properties:
-      allowed_algorithms:
-        items:
-          type: string
-        type: array
-      audiences:
-        items:
-          type: string
-        type: array
-      issuer:
-        type: string
-      jwks_url:
-        type: string
-      public_keys:
-        items:
-          type: string
-        type: array
-      required_scopes:
-        items:
-          type: string
-        type: array
-      subject_claim:
-        type: string
+      oidc:
+        $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OIDCConfigResponse'
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ListAuthResponse:
     properties:
@@ -208,6 +183,31 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OIDCConfigResponse:
+    properties:
+      allowed_algorithms:
+        items:
+          type: string
+        type: array
+      audiences:
+        items:
+          type: string
+        type: array
+      issuer:
+        type: string
+      jwks_url:
+        type: string
+      public_keys:
+        items:
+          type: string
+        type: array
+      required_scopes:
+        items:
+          type: string
+        type: array
+      subject_claim:
+        type: string
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_catalog_response.ModelResponse:
     properties:
@@ -1273,10 +1273,6 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.CreateRoleRequest:
     properties:
-      idp_mapping:
-        items:
-          type: integer
-        type: array
       mcp_policies:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest'
       model_policies:
@@ -1285,6 +1281,10 @@ definitions:
         type: array
       name:
         type: string
+      oidc_mapping:
+        items:
+          type: integer
+        type: array
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest:
     properties:
@@ -1321,10 +1321,6 @@ definitions:
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.UpdateRoleRequest:
     properties:
-      idp_mapping:
-        items:
-          type: integer
-        type: array
       mcp_policies:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest'
       model_policies:
@@ -1333,6 +1329,10 @@ definitions:
         type: array
       name:
         type: string
+      oidc_mapping:
+        items:
+          type: integer
+        type: array
     type: object
   github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_response.ListRoleResponse:
     properties:
@@ -1366,10 +1366,6 @@ definitions:
         type: string
       id:
         type: string
-      idp_mapping:
-        items:
-          type: integer
-        type: array
       mcp_policies:
         $ref: '#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_role.MCPPolicies'
       model_policies:
@@ -1378,6 +1374,10 @@ definitions:
         type: array
       name:
         type: string
+      oidc_mapping:
+        items:
+          type: integer
+        type: array
       registry_ids:
         items:
           type: string
@@ -2072,7 +2072,7 @@ paths:
         in: header
         name: X-AG-API-Key
         type: string
-      - description: Bearer token for OAuth2 or IDP consumers
+      - description: Bearer token for OAuth2 or OIDC consumers
         in: header
         name: Authorization
         type: string

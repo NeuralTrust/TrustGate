@@ -3199,7 +3199,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Bearer token for OAuth2 or IDP consumers",
+                        "description": "Bearer token for OAuth2 or OIDC consumers",
                         "name": "Authorization",
                         "in": "header"
                     },
@@ -3265,14 +3265,14 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.ConfigRequest": {
             "type": "object",
             "properties": {
-                "idp": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest"
-                },
                 "mtls": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.MTLSConfigRequest"
                 },
                 "oauth2": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OAuth2ConfigRequest"
+                },
+                "oidc": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OIDCConfigRequest"
                 }
             }
         },
@@ -3289,44 +3289,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.IDPConfigRequest": {
-            "type": "object",
-            "properties": {
-                "allowed_algorithms": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "audiences": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "issuer": {
-                    "type": "string"
-                },
-                "jwks_url": {
-                    "type": "string"
-                },
-                "public_keys": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "required_scopes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "subject_claim": {
                     "type": "string"
                 }
             }
@@ -3395,6 +3357,44 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.OIDCConfigRequest": {
+            "type": "object",
+            "properties": {
+                "allowed_algorithms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "audiences": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "issuer": {
+                    "type": "string"
+                },
+                "jwks_url": {
+                    "type": "string"
+                },
+                "public_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "required_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "subject_claim": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_request.UpdateAuthRequest": {
             "type": "object",
             "properties": {
@@ -3448,52 +3448,14 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.ConfigResponse": {
             "type": "object",
             "properties": {
-                "idp": {
-                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse"
-                },
                 "mtls": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.MTLSConfigResponse"
                 },
                 "oauth2": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OAuth2ConfigResponse"
-                }
-            }
-        },
-        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.IDPConfigResponse": {
-            "type": "object",
-            "properties": {
-                "allowed_algorithms": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
-                "audiences": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "issuer": {
-                    "type": "string"
-                },
-                "jwks_url": {
-                    "type": "string"
-                },
-                "public_keys": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "required_scopes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "subject_claim": {
-                    "type": "string"
+                "oidc": {
+                    "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OIDCConfigResponse"
                 }
             }
         },
@@ -3578,6 +3540,44 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_auth_response.OIDCConfigResponse": {
+            "type": "object",
+            "properties": {
+                "allowed_algorithms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "audiences": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "issuer": {
+                    "type": "string"
+                },
+                "jwks_url": {
+                    "type": "string"
+                },
+                "public_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "required_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "subject_claim": {
+                    "type": "string"
                 }
             }
         },
@@ -5184,12 +5184,6 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.CreateRoleRequest": {
             "type": "object",
             "properties": {
-                "idp_mapping": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
                 "mcp_policies": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest"
                 },
@@ -5201,6 +5195,12 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "oidc_mapping": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 }
             }
         },
@@ -5258,12 +5258,6 @@ const docTemplate = `{
         "github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.UpdateRoleRequest": {
             "type": "object",
             "properties": {
-                "idp_mapping": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
                 "mcp_policies": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_api_handler_http_role_request.MCPPoliciesRequest"
                 },
@@ -5275,6 +5269,12 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "oidc_mapping": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 }
             }
         },
@@ -5327,12 +5327,6 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "idp_mapping": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
                 "mcp_policies": {
                     "$ref": "#/definitions/github_com_NeuralTrust_AgentGateway_pkg_domain_role.MCPPolicies"
                 },
@@ -5344,6 +5338,12 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "oidc_mapping": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
                 "registry_ids": {
                     "type": "array",

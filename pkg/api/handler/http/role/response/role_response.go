@@ -29,7 +29,7 @@ type RoleResponse struct {
 	Name          string                `json:"name"`
 	ModelPolicies []ModelPolicyResponse `json:"model_policies,omitempty"`
 	McpPolicies   *domain.MCPPolicies   `json:"mcp_policies,omitempty"`
-	IDPMapping    json.RawMessage       `json:"idp_mapping,omitempty"`
+	OIDCMapping    json.RawMessage       `json:"oidc_mapping,omitempty"`
 	RegistryIDs   []ids.RegistryID      `json:"registry_ids"`
 	CreatedAt     time.Time             `json:"created_at"`
 	UpdatedAt     time.Time             `json:"updated_at"`
@@ -62,7 +62,7 @@ func FromRole(role *domain.Role) RoleResponse {
 		Name:          role.Name,
 		ModelPolicies: fromModelPolicies(role.ModelPolicies),
 		McpPolicies:   role.MCPPolicies,
-		IDPMapping:    role.IDPMapping,
+		OIDCMapping:    role.OIDCMapping,
 		RegistryIDs:   registryIDs,
 		CreatedAt:     role.CreatedAt,
 		UpdatedAt:     role.UpdatedAt,

@@ -20,39 +20,39 @@ import (
 	"strings"
 )
 
-type IDPMatchMode string
+type OIDCMatchMode string
 
 const (
-	IDPMatchAny IDPMatchMode = "any"
-	IDPMatchAll IDPMatchMode = "all"
+	OIDCMatchAny OIDCMatchMode = "any"
+	OIDCMatchAll OIDCMatchMode = "all"
 )
 
-type IDPClaimOp string
+type OIDCClaimOp string
 
 const (
-	IDPClaimEquals      IDPClaimOp = "equals"
-	IDPClaimContainsAny IDPClaimOp = "contains_any"
-	IDPClaimContainsAll IDPClaimOp = "contains_all"
+	OIDCClaimEquals      OIDCClaimOp = "equals"
+	OIDCClaimContainsAny OIDCClaimOp = "contains_any"
+	OIDCClaimContainsAll OIDCClaimOp = "contains_all"
 )
 
-type IDPMapping struct {
-	Match  IDPMatchMode   `json:"match"`
-	Claims []IDPClaimRule `json:"claims"`
+type OIDCMapping struct {
+	Match  OIDCMatchMode   `json:"match"`
+	Claims []OIDCClaimRule `json:"claims"`
 }
 
-type IDPClaimRule struct {
+type OIDCClaimRule struct {
 	Path   string     `json:"path"`
-	Op     IDPClaimOp `json:"op"`
+	Op     OIDCClaimOp `json:"op"`
 	Values []string   `json:"values"`
 }
 
-func ParseIDPMapping(raw json.RawMessage) (*IDPMapping, error) {
+func ParseOIDCMapping(raw json.RawMessage) (*OIDCMapping, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
-	var mapping IDPMapping
+	var mapping OIDCMapping
 	if err := json.Unmarshal(raw, &mapping); err != nil {
-		return nil, fmt.Errorf("%w: idp_mapping", ErrInvalidJSON)
+		return nil, fmt.Errorf("%w: oidc_mapping", ErrInvalidJSON)
 	}
 	if err := mapping.Validate(); err != nil {
 		return nil, err
@@ -60,19 +60,19 @@ func ParseIDPMapping(raw json.RawMessage) (*IDPMapping, error) {
 	return &mapping, nil
 }
 
-func ValidateIDPMapping(raw json.RawMessage) error {
-	_, err := ParseIDPMapping(raw)
+func ValidateOIDCMapping(raw json.RawMessage) error {
+	_, err := ParseOIDCMapping(raw)
 	return err
 }
 
-func (m IDPMapping) Validate() error {
+func (m OIDCMapping) Validate() error {
 	switch m.Match {
-	case IDPMatchAny, IDPMatchAll:
+	case OIDCMatchAny, OIDCMatchAll:
 	default:
-		return fmt.Errorf("%w: idp_mapping.match must be any or all", ErrInvalidJSON)
+		return fmt.Errorf("%w: oidc_mapping.match must be any or all", ErrInvalidJSON)
 	}
 	if len(m.Claims) == 0 {
-		return fmt.Errorf("%w: idp_mapping.claims is required", ErrInvalidJSON)
+		return fmt.Errorf("%w: oidc_mapping.claims is required", ErrInvalidJSON)
 	}
 	for i, rule := range m.Claims {
 		if err := rule.validate(i); err != nil {
@@ -82,26 +82,26 @@ func (m IDPMapping) Validate() error {
 	return nil
 }
 
-func (r IDPClaimRule) validate(index int) error {
+func (r OIDCClaimRule) validate(index int) error {
 	if strings.TrimSpace(r.Path) == "" || strings.Contains(r.Path, "..") {
-		return fmt.Errorf("%w: idp_mapping.claims[%d].path is invalid", ErrInvalidJSON, index)
+		return fmt.Errorf("%w: oidc_mapping.claims[%d].path is invalid", ErrInvalidJSON, index)
 	}
 	switch r.Op {
-	case IDPClaimEquals, IDPClaimContainsAny, IDPClaimContainsAll:
+	case OIDCClaimEquals, OIDCClaimContainsAny, OIDCClaimContainsAll:
 	default:
-		return fmt.Errorf("%w: idp_mapping.claims[%d].op is invalid", ErrInvalidJSON, index)
+		return fmt.Errorf("%w: oidc_mapping.claims[%d].op is invalid", ErrInvalidJSON, index)
 	}
 	if len(trimStrings(r.Values)) == 0 {
-		return fmt.Errorf("%w: idp_mapping.claims[%d].values is required", ErrInvalidJSON, index)
+		return fmt.Errorf("%w: oidc_mapping.claims[%d].values is required", ErrInvalidJSON, index)
 	}
 	return nil
 }
 
-func (m *IDPMapping) Matches(claims map[string]any) bool {
+func (m *OIDCMapping) Matches(claims map[string]any) bool {
 	if m == nil || len(m.Claims) == 0 {
 		return false
 	}
-	if m.Match == IDPMatchAll {
+	if m.Match == OIDCMatchAll {
 		for _, rule := range m.Claims {
 			if !rule.matches(claims) {
 				return false
@@ -117,23 +117,23 @@ func (m *IDPMapping) Matches(claims map[string]any) bool {
 	return false
 }
 
-func (r IDPClaimRule) matches(claims map[string]any) bool {
+func (r OIDCClaimRule) matches(claims map[string]any) bool {
 	values, ok := claimValues(claims, r.Path)
 	if !ok {
 		return false
 	}
 	expected := stringSet(r.Values)
 	switch r.Op {
-	case IDPClaimEquals:
+	case OIDCClaimEquals:
 		return len(values) == 1 && expected[values[0]]
-	case IDPClaimContainsAny:
+	case OIDCClaimContainsAny:
 		for _, value := range values {
 			if expected[value] {
 				return true
 			}
 		}
 		return false
-	case IDPClaimContainsAll:
+	case OIDCClaimContainsAll:
 		actual := stringSet(values)
 		for expectedValue := range expected {
 			if !actual[expectedValue] {

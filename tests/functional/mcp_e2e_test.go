@@ -450,7 +450,7 @@ func TestMCPServer_RoleBasedConsumerAppliesRoleMCPPolicies(t *testing.T) {
 
 	roleID := CreateRole(t, gatewayID, map[string]any{
 		"name": uniqueName("mcp-role"),
-		"idp_mapping": map[string]any{
+		"oidc_mapping": map[string]any{
 			"match": "any",
 			"claims": []map[string]any{
 				{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},
@@ -516,7 +516,7 @@ func TestMCPServer_RoleBasedConsumerEmptyToolkitDeniesAll(t *testing.T) {
 
 	roleID := CreateRole(t, gatewayID, map[string]any{
 		"name": uniqueName("mcp-role"),
-		"idp_mapping": map[string]any{
+		"oidc_mapping": map[string]any{
 			"match": "any",
 			"claims": []map[string]any{
 				{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},
@@ -568,7 +568,7 @@ func TestMCPServer_RoleBasedConsumerRejectsIdentityWithoutMatchingRole(t *testin
 
 	roleID := CreateRole(t, gatewayID, map[string]any{
 		"name": uniqueName("mcp-role"),
-		"idp_mapping": map[string]any{
+		"oidc_mapping": map[string]any{
 			"match": "any",
 			"claims": []map[string]any{
 				{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},
@@ -630,14 +630,14 @@ func TestMCPServer_RoleBasedConsumerMergesMultipleRoles(t *testing.T) {
 			{"path": "groups", "op": "contains_any", "values": []string{"mcp-users"}},
 		},
 	}
-	roleA := CreateRole(t, gatewayID, map[string]any{"name": uniqueName("role-a"), "idp_mapping": mapping})
+	roleA := CreateRole(t, gatewayID, map[string]any{"name": uniqueName("role-a"), "oidc_mapping": mapping})
 	AttachRoleRegistry(t, gatewayID, roleA, registryA)
 	UpdateRole(t, gatewayID, roleA, map[string]any{
 		"mcp_policies": map[string]any{
 			"toolkit": []map[string]any{{"registry_id": registryA, "tool": "alpha"}},
 		},
 	})
-	roleB := CreateRole(t, gatewayID, map[string]any{"name": uniqueName("role-b"), "idp_mapping": mapping})
+	roleB := CreateRole(t, gatewayID, map[string]any{"name": uniqueName("role-b"), "oidc_mapping": mapping})
 	AttachRoleRegistry(t, gatewayID, roleB, registryB)
 
 	oauthAuthID := CreateAuth(t, gatewayID, map[string]any{
