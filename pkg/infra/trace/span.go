@@ -35,6 +35,7 @@ type LLMAttrs struct {
 	RegistryID     string
 	Provider       string
 	Model          string
+	SentModel      string
 	RequestedModel string
 	FinishReason   string
 	TurnID         string

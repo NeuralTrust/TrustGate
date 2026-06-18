@@ -93,10 +93,10 @@ type Usage struct {
 }
 
 type Cost struct {
-	PromptUsd     float64 `json:"prompt_usd"`
-	CompletionUsd float64 `json:"completion_usd"`
-	TotalUsd      float64 `json:"total_usd"`
-	Currency      string  `json:"currency"`
+	PromptUsd     DecimalFloat `json:"prompt_usd"`
+	CompletionUsd DecimalFloat `json:"completion_usd"`
+	TotalUsd      DecimalFloat `json:"total_usd"`
+	Currency      string       `json:"currency"`
 }
 
 type Latency struct {

@@ -28,7 +28,6 @@ import (
 	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/google/uuid"
 )
 
@@ -124,17 +123,10 @@ func (m *MetricsMiddleware) enabled() bool {
 }
 
 func (m *MetricsMiddleware) resolveTraceID(c *fiber.Ctx) string {
-	if rid, ok := c.Locals(requestid.ConfigDefault.ContextKey).(string); ok && rid != "" {
-		return rid
-	}
 	if tid := c.Get(HeaderTraceID); tid != "" {
 		return tid
 	}
-	traceID := c.Get(fiber.HeaderXRequestID)
-	if traceID == "" {
-		traceID = uuid.New().String()
-	}
-	return traceID
+	return uuid.New().String()
 }
 
 func (m *MetricsMiddleware) attachTrace(c *fiber.Ctx, requestTrace *trace.RequestTrace) {

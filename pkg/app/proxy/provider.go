@@ -61,9 +61,15 @@ type ProviderResponse struct {
 	// adapted to the client's source format. The consumer writes each line + "\n"
 	// and is responsible for draining the sequence (which closes the backend
 	// body). The second value carries mid-stream errors.
-	Stream       iter.Seq2[[]byte, error]
-	Usage        *adapter.CanonicalUsage
-	Model        string
+	Stream iter.Seq2[[]byte, error]
+	Usage  *adapter.CanonicalUsage
+	// Model is the model echoed by the provider in its response. Some providers
+	// (e.g. Bedrock Titan/Llama/Mistral) leave it empty.
+	Model string
+	// SentModel is the model the gateway actually put on the outbound request to
+	// the provider, after routing-ref parsing, pool/LB resolution and model
+	// enforcement. It is the most reliable identifier for cost attribution.
+	SentModel    string
 	FinishReason string
 	ResponseID   string
 }
@@ -101,6 +107,7 @@ type preparedInvocation struct {
 	client       providers.Client
 	cfg          *providers.Config
 	body         []byte
+	sentModel    string
 	sourceFormat adapter.Format
 	targetFormat adapter.Format
 	crossFormat  bool
@@ -148,6 +155,7 @@ func (p *providerInvoker) Invoke(
 		Body:         respBody,
 		Usage:        usage,
 		Model:        model,
+		SentModel:    prep.sentModel,
 		FinishReason: finishReason,
 		ResponseID:   responseID,
 	}, nil
@@ -199,6 +207,7 @@ func (p *providerInvoker) InvokeStream(
 		StatusCode: http.StatusOK,
 		Headers:    streamHeaders(bk.Provider()),
 		Stream:     stream,
+		SentModel:  prep.sentModel,
 	}, nil
 }
 
@@ -251,6 +260,8 @@ func (p *providerInvoker) prepare(
 
 	body = injectPreviousResponseID(body, targetFormat, req.PreviousResponseID)
 
+	sentModel, _ := adapter.ExtractModel(body)
+
 	return &preparedInvocation{
 		client: client,
 		cfg: &providers.Config{
@@ -258,6 +269,7 @@ func (p *providerInvoker) prepare(
 			Credentials: bk.Auth().ProviderCredentials(),
 		},
 		body:         body,
+		sentModel:    sentModel,
 		sourceFormat: sourceFormat,
 		targetFormat: targetFormat,
 		crossFormat:  crossFormat,

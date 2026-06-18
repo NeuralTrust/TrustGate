@@ -12,13 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package middleware
+package events
 
-// HeaderTraceID is the response header the proxy sets with the request trace id.
-// A gateway-specific name avoids the upstream X-Request-Id some providers emit.
-const HeaderTraceID = "X-AG-Trace-Id"
+import (
+	"encoding/json"
+	"strconv"
+)
 
-// StrippedProxyResponseHeaders lists upstream headers that must not be forwarded to clients.
-var StrippedProxyResponseHeaders = map[string]struct{}{
-	"X-Request-Id": {},
+// DecimalFloat is a float64 that JSON-encodes as a decimal number, never in scientific notation.
+type DecimalFloat float64
+
+func (f DecimalFloat) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.FormatFloat(float64(f), 'f', -1, 64)), nil
+}
+
+func (f *DecimalFloat) UnmarshalJSON(data []byte) error {
+	var v float64
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*f = DecimalFloat(v)
+	return nil
 }

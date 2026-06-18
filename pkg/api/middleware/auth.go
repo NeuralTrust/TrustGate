@@ -127,7 +127,7 @@ func (m *AuthMiddleware) debug(c *fiber.Ctx) *slog.Logger {
 		logger = slog.Default()
 	}
 	return logger.With(
-		slog.String("request_id", c.GetRespHeader(fiber.HeaderXRequestID)),
+		slog.String("trace_id", c.Get(HeaderTraceID)),
 		slog.String("path", c.Path()),
 	)
 }

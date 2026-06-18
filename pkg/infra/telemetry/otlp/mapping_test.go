@@ -66,7 +66,7 @@ func fullEvent() *events.Event {
 			CachedInputTokens:     2,
 			ReasoningOutputTokens: 1,
 		},
-		Cost:    &events.Cost{PromptUsd: 0.002, CompletionUsd: 0.008, TotalUsd: 0.01, Currency: "USD"},
+		Cost:    &events.Cost{PromptUsd: events.DecimalFloat(0.002), CompletionUsd: events.DecimalFloat(0.008), TotalUsd: events.DecimalFloat(0.01), Currency: "USD"},
 		Latency: events.Latency{TotalMs: 120, ProviderMs: 100, PoliciesMs: 10, RoutingMs: 5, GatewayMs: 5},
 		Attempts: []events.Attempt{
 			{Provider: "openai", Attempt: 1, StatusCode: 200},
