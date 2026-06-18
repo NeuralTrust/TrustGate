@@ -61,9 +61,9 @@ func (b *Builder) Build(
 		Timestamp:     startTime.UTC().Format(time.RFC3339),
 		OccurredOn:    startTime.UnixMilli(),
 		EndTimestamp:  endTime.UnixMilli(),
-		Consumer:  events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
-		SessionID: meta.SessionID,
-		IP:        meta.IP,
+		Consumer:      events.Consumer{ID: meta.ConsumerID, Name: meta.ConsumerName},
+		SessionID:     meta.SessionID,
+		IP:            meta.IP,
 	}
 
 	if meta.Kind == events.KindMCP {

@@ -24,15 +24,15 @@ import (
 )
 
 type Metadata struct {
-	GatewayID     string
-	TeamID        string
-	ConsumerID    string
-	ConsumerName  string
-	Path          string
-	Method        string
-	IP        string
-	SessionID string
-	Kind      string
+	GatewayID    string
+	TeamID       string
+	ConsumerID   string
+	ConsumerName string
+	Path         string
+	Method       string
+	IP           string
+	SessionID    string
+	Kind         string
 }
 
 type RequestTrace struct {
