@@ -20,6 +20,7 @@ import (
 	"time"
 
 	domain "github.com/NeuralTrust/AgentGateway/pkg/domain/auth"
+	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
 	"github.com/NeuralTrust/AgentGateway/pkg/infra/cache"
 )
@@ -41,25 +42,28 @@ type Updater interface {
 var _ Updater = (*updater)(nil)
 
 type updater struct {
-	repo        domain.Repository
-	memoryCache *cache.TTLMap
-	keyCache    *cache.TTLMap
-	publisher   cache.EventPublisher
-	logger      *slog.Logger
+	repo         domain.Repository
+	consumerRepo consumerdomain.Repository
+	memoryCache  *cache.TTLMap
+	keyCache     *cache.TTLMap
+	publisher    cache.EventPublisher
+	logger       *slog.Logger
 }
 
 func NewUpdater(
 	repo domain.Repository,
+	consumerRepo consumerdomain.Repository,
 	manager *cache.TTLMapManager,
 	publisher cache.EventPublisher,
 	logger *slog.Logger,
 ) Updater {
 	return &updater{
-		repo:        repo,
-		memoryCache: manager.GetTTLMap(cache.AuthTTLName),
-		keyCache:    manager.GetTTLMap(cache.AuthKeyTTLName),
-		publisher:   publisher,
-		logger:      logger,
+		repo:         repo,
+		consumerRepo: consumerRepo,
+		memoryCache:  manager.GetTTLMap(cache.AuthTTLName),
+		keyCache:     manager.GetTTLMap(cache.AuthKeyTTLName),
+		publisher:    publisher,
+		logger:       logger,
 	}
 }
 
@@ -71,6 +75,8 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	if !in.GatewayID.IsNil() && in.GatewayID != existing.GatewayID {
 		return nil, domain.ErrInvalidGatewayID
 	}
+	previousType := existing.Type
+	previousEnabled := existing.Enabled
 	if in.Name != nil {
 		existing.Name = *in.Name
 	}
@@ -90,6 +96,16 @@ func (u *updater) Update(ctx context.Context, in UpdateInput) (*domain.Auth, err
 	}
 	if err := ensureNoOAuth2Conflict(ctx, u.repo, existing); err != nil {
 		return nil, err
+	}
+	if existing.Type != previousType {
+		if err := guardAuthTypeChange(ctx, u.consumerRepo, existing.ID, existing.Type); err != nil {
+			return nil, err
+		}
+	}
+	if previousEnabled && !existing.Enabled {
+		if err := guardAuthDisable(ctx, u.consumerRepo, u.repo, existing.ID); err != nil {
+			return nil, err
+		}
 	}
 	if err := u.repo.Update(ctx, existing); err != nil {
 		return nil, err

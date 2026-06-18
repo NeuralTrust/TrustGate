@@ -534,6 +534,29 @@ func TestAuthorizeResourceAmbiguousWithinGateway(t *testing.T) {
 	}
 }
 
+func TestAuthorizeResourceNoOAuth2GivesClearError(t *testing.T) {
+	t.Parallel()
+	gatewayID := ids.New[ids.GatewayKind]()
+	finder := &fakeCredentialFinder{}
+	paths := &fakePathResolver{byPath: map[string][]appconsumer.PathMatch{
+		"/cons/mcp": {{GatewayID: gatewayID, Auths: nil}},
+	}}
+	proxy := NewAuthProxy(finder, paths, http.DefaultClient, newMemFlowStore(), nil)
+
+	_, err := proxy.Authorize(context.Background(), "http://gw.example.com", AuthorizeRequest{
+		ResponseType:        "code",
+		ClientID:            "cli",
+		RedirectURI:         "cursor://cb",
+		CodeChallenge:       s256("v"),
+		CodeChallengeMethod: "S256",
+		Resource:            "http://gw.example.com/cons/mcp",
+	})
+	var oe *OAuthError
+	if !errors.As(err, &oe) || oe.Code != "invalid_request" {
+		t.Fatalf("expected invalid_request for a consumer without oauth2, got %v", err)
+	}
+}
+
 // Multiple IdPs without a resource indicator cannot be disambiguated: the
 // client gets a structured invalid_target error.
 func TestAuthorizeMultiIssuerRequiresResource(t *testing.T) {
