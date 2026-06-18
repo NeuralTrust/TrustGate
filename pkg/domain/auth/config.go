@@ -141,7 +141,7 @@ func (c *OAuth2Config) validate() error {
 	return nil
 }
 
-func (c OIDCConfig) validate() error {
+func (c *OIDCConfig) validate() error {
 	if strings.TrimSpace(c.Issuer) == "" {
 		return fmt.Errorf("%w: oidc.issuer is required", ErrInvalidConfig)
 	}
