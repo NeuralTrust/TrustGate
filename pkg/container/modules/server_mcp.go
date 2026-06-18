@@ -37,6 +37,7 @@ type mcpMiddlewares struct {
 	SecurityHeaders *middleware.SecurityHeadersMiddleware
 	OAuthChallenge  *middleware.OAuthChallengeMiddleware
 	Auth            *middleware.MCPAuthMiddleware
+	Metrics         *middleware.MCPMetricsMiddleware
 }
 
 func mcpBaseTransport(m mcpMiddlewares) *middleware.Transport {
@@ -52,6 +53,7 @@ func mcpAuthTransport(m mcpMiddlewares) *middleware.Transport {
 	return middleware.NewTransport(
 		m.OAuthChallenge,
 		m.Auth,
+		m.Metrics,
 	)
 }
 

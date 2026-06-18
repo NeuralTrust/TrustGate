@@ -22,6 +22,7 @@ import (
 
 	appconsumer "github.com/NeuralTrust/AgentGateway/pkg/app/consumer"
 	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 )
 
 var ErrMethodNotFound = errors.New("mcp: method not found")
@@ -41,6 +42,79 @@ func NewRPCGateway(composer appmcp.Composer) *RPCGateway {
 }
 
 func (g *RPCGateway) Dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
+	span, ctx := g.startSpan(ctx, method, params)
+	result, err := g.dispatch(ctx, rc, method, params)
+	g.finishSpan(span, err)
+	return result, err
+}
+
+func (g *RPCGateway) startSpan(ctx context.Context, method string, params json.RawMessage) (*trace.Span, context.Context) {
+	rt := trace.FromContext(ctx)
+	if rt == nil {
+		return nil, ctx
+	}
+	span := rt.StartSpan(trace.SpanMCP, method)
+	operation, tool, prompt, resourceURI := mcpRequestAttrs(method, params)
+	span.SetMCPRequest(method, operation, tool, prompt, resourceURI)
+	return span, trace.NewSpanContext(ctx, span)
+}
+
+func (g *RPCGateway) finishSpan(span *trace.Span, err error) {
+	if span == nil {
+		return
+	}
+	defer span.End()
+	if err == nil {
+		span.SetMCPStatus("ok", 0)
+		return
+	}
+	span.SetError(err.Error())
+	var rpcErr *appmcp.RPCError
+	switch {
+	case errors.As(err, &rpcErr):
+		span.SetMCPStatus("error", int(rpcErr.Code))
+	case errors.Is(err, appmcp.ErrToolNotFound), errors.Is(err, appmcp.ErrPromptNotFound),
+		errors.Is(err, appmcp.ErrResourceNotFound):
+		span.SetMCPStatus("not_found", 0)
+	default:
+		span.SetMCPStatus("error", 0)
+	}
+}
+
+// mcpRequestAttrs derives the operation classification and the parsed
+// tool/prompt/resource identifiers from the JSON-RPC method and params.
+func mcpRequestAttrs(method string, params json.RawMessage) (operation, tool, prompt, resourceURI string) {
+	switch method {
+	case "tools/list":
+		return "discovery", "", "", ""
+	case "tools/call":
+		var p struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(params, &p)
+		return "tool", p.Name, "", ""
+	case "resources/list", "resources/templates/list":
+		return "discovery", "", "", ""
+	case "resources/read":
+		var p struct {
+			URI string `json:"uri"`
+		}
+		_ = json.Unmarshal(params, &p)
+		return "resource", "", "", p.URI
+	case "prompts/list":
+		return "discovery", "", "", ""
+	case "prompts/get":
+		var p struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(params, &p)
+		return "prompt", "", p.Name, ""
+	default:
+		return "", "", "", ""
+	}
+}
+
+func (g *RPCGateway) dispatch(ctx context.Context, rc *appconsumer.RoutableConsumer, method string, params json.RawMessage) (any, error) {
 	switch method {
 	case "tools/list":
 		tools, err := g.composer.ListTools(ctx, rc)

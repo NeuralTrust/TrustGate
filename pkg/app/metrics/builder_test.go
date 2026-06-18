@@ -127,7 +127,7 @@ func TestBuilder_SyncSuccessFoldsCostAndLatency(t *testing.T) {
 	})
 	evt := b.Build(context.Background(), rt, req, resp, start, end)
 
-	assert.Equal(t, 2, evt.SchemaVersion)
+	assert.Equal(t, 3, evt.SchemaVersion)
 	assert.Equal(t, "trace-1", evt.TraceID)
 	assert.Equal(t, "gw-1", evt.GatewayID)
 	assert.Equal(t, "c-1", evt.Consumer.ID)

@@ -25,6 +25,7 @@ import (
 )
 
 func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Resource, error) {
+	annotateTargets(ctx, len(mcpRegistries(rc)))
 	toolkit := rc.Consumer.Toolkit()
 	return federate(c, ctx, rc, "resources",
 		func(ctx context.Context, up Upstream) ([]Resource, error) {
@@ -45,6 +46,7 @@ func (c *composer) ListResources(ctx context.Context, rc *appconsumer.RoutableCo
 }
 
 func (c *composer) ListResourceTemplates(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]ResourceTemplate, error) {
+	annotateTargets(ctx, len(mcpRegistries(rc)))
 	toolkit := rc.Consumer.Toolkit()
 	return federate(c, ctx, rc, "resource-templates",
 		func(ctx context.Context, up Upstream) ([]ResourceTemplate, error) {
@@ -113,6 +115,8 @@ func (c *composer) readFrom(ctx context.Context, rc *appconsumer.RoutableConsume
 	if err != nil {
 		return nil, err
 	}
+	stop := annotateUpstream(ctx, reg, "")
+	defer stop()
 	up, err := c.dialer.Connect(ctx, target)
 	if err != nil {
 		return nil, err

@@ -115,9 +115,8 @@ func TestObserveLLMResult_NoopWithoutLLMSpanOrEmpty(t *testing.T) {
 	_ = rt.StartSpan(trace.SpanMCP, "tool")
 	rt.ObserveLLMResult("gpt-4o", "stop")
 	rt.ObserveLLMResult("", "")
-	mcp, ok := rt.Spans()[0].LLMAttrsCopy()
-	require.True(t, ok)
-	assert.Empty(t, mcp.Model)
+	_, ok := rt.Spans()[0].LLMAttrsCopy()
+	assert.False(t, ok)
 }
 
 func TestSpan_SetLLMResultIgnoresEmptyValues(t *testing.T) {

@@ -24,6 +24,8 @@ import (
 	appmcp "github.com/NeuralTrust/AgentGateway/pkg/app/mcp"
 	consumerdomain "github.com/NeuralTrust/AgentGateway/pkg/domain/consumer"
 	"github.com/NeuralTrust/AgentGateway/pkg/domain/ids"
+	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	"github.com/NeuralTrust/AgentGateway/pkg/infra/trace"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -89,29 +91,40 @@ func (h *Handler) MethodNotAllowed(c *fiber.Ctx) error {
 func (h *Handler) Handle(c *fiber.Ctx) error {
 	rc, err := resolveMCPConsumer(c)
 	if err != nil {
+		skipMetrics(c)
 		return err
 	}
 	rc, err = h.scopeByRoles(c, rc)
 	if err != nil {
+		skipMetrics(c)
 		return err
+	}
+
+	if rt := trace.FromContext(c.UserContext()); rt != nil {
+		rt.SetConsumer(rc.Consumer.ID.String(), rc.Consumer.Name)
 	}
 
 	var req rpcRequest
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
+		skipMetrics(c)
 		return writeRPCError(c, nil, codeParseError, "parse error")
 	}
 	if req.JSONRPC != "2.0" || req.Method == "" {
+		skipMetrics(c)
 		return writeRPCError(c, req.ID, codeInvalidRequest, "invalid request")
 	}
 
 	if isNotification(req) {
+		skipMetrics(c)
 		return c.SendStatus(fiber.StatusAccepted)
 	}
 
 	switch req.Method {
 	case "initialize":
+		h.recordInitialize(c)
 		return h.handleInitialize(c, req)
 	case "ping":
+		skipMetrics(c)
 		return writeRPCResult(c, req.ID, struct{}{})
 	}
 
@@ -123,6 +136,23 @@ func (h *Handler) Handle(c *fiber.Ctx) error {
 		return writeRawRPCResult(c, req.ID, raw)
 	}
 	return writeRPCResult(c, req.ID, result)
+}
+
+// skipMetrics tells the MCP metrics middleware not to publish an event for the
+// current request (ping, notifications, or pre-dispatch failures).
+func skipMetrics(c *fiber.Ctx) {
+	c.Locals(string(infracontext.MCPSkipMetricsKey), true)
+}
+
+func (h *Handler) recordInitialize(c *fiber.Ctx) {
+	rt := trace.FromContext(c.UserContext())
+	if rt == nil {
+		return
+	}
+	span := rt.StartSpan(trace.SpanMCP, "initialize")
+	span.SetMCPRequest("initialize", "initialize", "", "", "")
+	span.SetMCPStatus("ok", 0)
+	span.End()
 }
 
 type initializeParams struct {

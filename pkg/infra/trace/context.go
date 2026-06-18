@@ -19,6 +19,7 @@ import "context"
 type contextKey string
 
 const traceContextKey contextKey = "__request_trace"
+const spanContextKey contextKey = "__active_span"
 
 func NewContext(ctx context.Context, t *RequestTrace) context.Context {
 	return context.WithValue(ctx, traceContextKey, t)
@@ -30,4 +31,18 @@ func FromContext(ctx context.Context) *RequestTrace {
 	}
 	t, _ := ctx.Value(traceContextKey).(*RequestTrace)
 	return t
+}
+
+// NewSpanContext carries an active span so downstream code (e.g. the MCP
+// composer) can annotate it without re-discovering it from the trace.
+func NewSpanContext(ctx context.Context, s *Span) context.Context {
+	return context.WithValue(ctx, spanContextKey, s)
+}
+
+func SpanFromContext(ctx context.Context) *Span {
+	if ctx == nil {
+		return nil
+	}
+	s, _ := ctx.Value(spanContextKey).(*Span)
+	return s
 }

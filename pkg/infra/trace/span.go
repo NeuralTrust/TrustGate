@@ -56,6 +56,23 @@ type PluginAttrs struct {
 	Extras     any
 }
 
+type MCPAttrs struct {
+	Method         string
+	Operation      string
+	ServerName     string
+	RegistryID     string
+	Host           string
+	CatalogCode    string
+	Transport      string
+	Tool           string
+	UpstreamTool   string
+	Prompt         string
+	ResourceURI    string
+	Targets        int
+	UpstreamStatus string
+	RPCErrorCode   int
+}
+
 type Span struct {
 	ID        string
 	ParentID  string
@@ -65,6 +82,7 @@ type Span struct {
 
 	LLM    *LLMAttrs
 	Plugin *PluginAttrs
+	MCP    *MCPAttrs
 
 	mu         sync.Mutex
 	endedAt    time.Time
@@ -81,9 +99,12 @@ func newSpan(spanType SpanType, name string) *Span {
 		Name:      name,
 		StartedAt: time.Now(),
 	}
-	if spanType == SpanPlugin {
+	switch spanType {
+	case SpanPlugin:
 		s.Plugin = &PluginAttrs{}
-	} else {
+	case SpanMCP:
+		s.MCP = &MCPAttrs{}
+	default:
 		s.LLM = &LLMAttrs{}
 	}
 	return s
@@ -257,4 +278,58 @@ func (s *Span) PluginAttrsCopy() PluginAttrs {
 		return PluginAttrs{}
 	}
 	return *s.Plugin
+}
+
+func (s *Span) ensureMCP() {
+	if s.MCP == nil {
+		s.MCP = &MCPAttrs{}
+	}
+}
+
+func (s *Span) SetMCPRequest(method, operation, tool, prompt, resourceURI string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	s.MCP.Method = method
+	s.MCP.Operation = operation
+	s.MCP.Tool = tool
+	s.MCP.Prompt = prompt
+	s.MCP.ResourceURI = resourceURI
+}
+
+func (s *Span) SetMCPUpstream(serverName, registryID, host, catalogCode, transport, upstreamTool, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	s.MCP.ServerName = serverName
+	s.MCP.RegistryID = registryID
+	s.MCP.Host = host
+	s.MCP.CatalogCode = catalogCode
+	s.MCP.Transport = transport
+	s.MCP.UpstreamTool = upstreamTool
+	s.MCP.UpstreamStatus = status
+}
+
+func (s *Span) SetMCPTargets(targets int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	s.MCP.Targets = targets
+}
+
+func (s *Span) SetMCPStatus(status string, rpcErrorCode int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureMCP()
+	s.MCP.UpstreamStatus = status
+	s.MCP.RPCErrorCode = rpcErrorCode
+}
+
+func (s *Span) MCPAttrsCopy() (MCPAttrs, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.MCP == nil {
+		return MCPAttrs{}, false
+	}
+	return *s.MCP, true
 }

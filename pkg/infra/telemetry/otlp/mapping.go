@@ -32,6 +32,22 @@ const genAIRequestStreamKey = "gen_ai.request.stream"
 
 const (
 	attrSchemaVersion        = "agentgateway.schema_version"
+	attrKind                 = "agentgateway.kind"
+	attrMCPMethod            = "agentgateway.mcp.method"
+	attrMCPOperation         = "agentgateway.mcp.operation"
+	attrMCPServerName        = "agentgateway.mcp.server_name"
+	attrMCPRegistryID        = "agentgateway.mcp.registry_id"
+	attrMCPHost              = "agentgateway.mcp.host"
+	attrMCPCatalogCode       = "agentgateway.mcp.catalog_code"
+	attrMCPTransport         = "agentgateway.mcp.transport"
+	attrMCPTool              = "agentgateway.mcp.tool"
+	attrMCPUpstreamTool      = "agentgateway.mcp.upstream_tool"
+	attrMCPPrompt            = "agentgateway.mcp.prompt"
+	attrMCPResourceURI       = "agentgateway.mcp.resource_uri"
+	attrMCPTargets           = "agentgateway.mcp.targets"
+	attrMCPUpstreamStatus    = "agentgateway.mcp.upstream_status"
+	attrMCPUpstreamLatencyMs = "agentgateway.mcp.upstream_latency_ms"
+	attrMCPRPCErrorCode      = "agentgateway.mcp.rpc_error_code"
 	attrStatusOutcome        = "agentgateway.status.outcome"
 	attrStatusReason         = "agentgateway.status.reason"
 	attrStatusIsTimeout      = "agentgateway.status.is_timeout"
@@ -41,8 +57,8 @@ const (
 	attrConsumerID           = "agentgateway.consumer.id"
 	attrConsumerName         = "agentgateway.consumer.name"
 	attrSessionID            = "agentgateway.session_id"
-	attrTurnID = "agentgateway.turn_id"
-	attrIP     = "agentgateway.ip"
+	attrTurnID               = "agentgateway.turn_id"
+	attrIP                   = "agentgateway.ip"
 	attrRequestedModel       = "agentgateway.requested_model"
 	attrModelLabel           = "agentgateway.model_label"
 	attrUsageTotalTokens     = "agentgateway.usage.total_tokens"
@@ -119,6 +135,30 @@ func eventToRecord(evt *events.Event, maxBodyBytes int) otellog.Record {
 	}
 
 	attrs = append(attrs, otellog.Int(attrSchemaVersion, evt.SchemaVersion))
+	appendStr(attrKind, evt.Kind)
+	if evt.MCP != nil {
+		appendStr(attrMCPMethod, evt.MCP.Method)
+		appendStr(attrMCPOperation, evt.MCP.Operation)
+		appendStr(attrMCPServerName, evt.MCP.ServerName)
+		appendStr(attrMCPRegistryID, evt.MCP.RegistryID)
+		appendStr(attrMCPHost, evt.MCP.Host)
+		appendStr(attrMCPCatalogCode, evt.MCP.CatalogCode)
+		appendStr(attrMCPTransport, evt.MCP.Transport)
+		appendStr(attrMCPTool, evt.MCP.Tool)
+		appendStr(attrMCPUpstreamTool, evt.MCP.UpstreamTool)
+		appendStr(attrMCPPrompt, evt.MCP.Prompt)
+		appendStr(attrMCPResourceURI, evt.MCP.ResourceURI)
+		appendStr(attrMCPUpstreamStatus, evt.MCP.UpstreamStatus)
+		if evt.MCP.Targets > 0 {
+			attrs = append(attrs, otellog.Int(attrMCPTargets, evt.MCP.Targets))
+		}
+		if evt.MCP.UpstreamLatencyMs > 0 {
+			attrs = append(attrs, otellog.Int64(attrMCPUpstreamLatencyMs, evt.MCP.UpstreamLatencyMs))
+		}
+		if evt.MCP.RPCErrorCode != 0 {
+			attrs = append(attrs, otellog.Int(attrMCPRPCErrorCode, evt.MCP.RPCErrorCode))
+		}
+	}
 	appendStr(attrTraceID, evt.TraceID)
 	appendStr(attrGatewayID, evt.GatewayID)
 	appendStr(attrTeamID, evt.TeamID)

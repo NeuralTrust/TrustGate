@@ -25,6 +25,7 @@ import (
 )
 
 func (c *composer) ListPrompts(ctx context.Context, rc *appconsumer.RoutableConsumer) ([]Prompt, error) {
+	annotateTargets(ctx, len(mcpRegistries(rc)))
 	bindings, err := c.composePrompts(ctx, rc)
 	if err != nil {
 		return nil, err
@@ -51,6 +52,8 @@ func (c *composer) GetPrompt(ctx context.Context, rc *appconsumer.RoutableConsum
 		if err != nil {
 			return nil, err
 		}
+		stop := annotateUpstream(ctx, b.registry, b.prompt.Name)
+		defer stop()
 		up, err := c.dialer.Connect(ctx, target)
 		if err != nil {
 			return nil, err
