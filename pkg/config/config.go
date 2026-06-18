@@ -68,8 +68,6 @@ const (
 
 	defaultTelemetryEnabled             = true
 	defaultTelemetryKafkaTopic          = "agentgateway.requests"
-	defaultTelemetryTrustLensEnabled    = false
-	defaultTelemetryTrustLensURL        = ""
 	defaultTelemetryEnableRequestTraces = true
 	defaultTelemetryEnablePluginTraces  = true
 
@@ -178,8 +176,6 @@ type KafkaConfig struct {
 type TelemetryConfig struct {
 	Enabled             bool
 	KafkaTopic          string
-	TrustLensEnabled    bool
-	TrustLensURL        string
 	EnableRequestTraces bool
 	EnablePluginTraces  bool
 	OTLP                OTLPConfig
@@ -343,8 +339,6 @@ func getTelemetryConfig() TelemetryConfig {
 	return TelemetryConfig{
 		Enabled:             getEnvBool("TELEMETRY_ENABLED", defaultTelemetryEnabled),
 		KafkaTopic:          getEnv("TELEMETRY_KAFKA_TOPIC", defaultTelemetryKafkaTopic),
-		TrustLensEnabled:    getEnvBool("TELEMETRY_TRUSTLENS_ENABLED", defaultTelemetryTrustLensEnabled),
-		TrustLensURL:        getEnv("TELEMETRY_TRUSTLENS_URL", defaultTelemetryTrustLensURL),
 		EnableRequestTraces: getEnvBool("TELEMETRY_ENABLE_REQUEST_TRACES", defaultTelemetryEnableRequestTraces),
 		EnablePluginTraces:  getEnvBool("TELEMETRY_ENABLE_PLUGIN_TRACES", defaultTelemetryEnablePluginTraces),
 		OTLP:                getOTLPConfig(),
@@ -507,9 +501,6 @@ func (c *Config) Validate() error {
 	}
 	if c.Telemetry.Enabled && c.Telemetry.KafkaTopic == "" {
 		return fmt.Errorf("%w: TELEMETRY_KAFKA_TOPIC is required when telemetry is enabled", errors.ErrInvalidConfig)
-	}
-	if c.Telemetry.TrustLensEnabled && c.Telemetry.TrustLensURL == "" {
-		return fmt.Errorf("%w: TELEMETRY_TRUSTLENS_URL is required when TrustLens telemetry is enabled", errors.ErrInvalidConfig)
 	}
 	if c.Metrics.Enabled && c.Metrics.QueueSize <= 0 {
 		return fmt.Errorf("%w: METRICS_QUEUE_SIZE must be greater than zero", errors.ErrInvalidConfig)

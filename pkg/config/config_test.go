@@ -173,8 +173,6 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	t.Setenv("REDIS_TLS_ENABLED", "true")
 	t.Setenv("REDIS_TLS_INSECURE_VERIFY", "true")
 	t.Setenv("TELEMETRY_KAFKA_TOPIC", "custom.requests")
-	t.Setenv("TELEMETRY_TRUSTLENS_ENABLED", "true")
-	t.Setenv("TELEMETRY_TRUSTLENS_URL", "https://trustlens.example")
 	t.Setenv("METRICS_QUEUE_SIZE", "42")
 	t.Setenv("METRICS_WORKER_COUNT", "3")
 	t.Setenv("METRICS_FLUSH_INTERVAL", "250ms")
@@ -190,11 +188,8 @@ func TestLoadConfig_B1RuntimeDefaultsAndOverrides(t *testing.T) {
 	if !cfg.Redis.TLSEnabled || !cfg.Redis.TLSInsecureVerify {
 		t.Errorf("Redis TLS override not applied: %+v", cfg.Redis)
 	}
-	if cfg.Telemetry.KafkaTopic != "custom.requests" || !cfg.Telemetry.TrustLensEnabled {
+	if cfg.Telemetry.KafkaTopic != "custom.requests" {
 		t.Errorf("Telemetry override not applied: %+v", cfg.Telemetry)
-	}
-	if cfg.Telemetry.TrustLensURL != "https://trustlens.example" {
-		t.Errorf("Telemetry.TrustLensURL = %q", cfg.Telemetry.TrustLensURL)
 	}
 	if cfg.Metrics.QueueSize != 42 || cfg.Metrics.WorkerCount != 3 || cfg.Metrics.FlushInterval != 250*time.Millisecond {
 		t.Errorf("Metrics override not applied: %+v", cfg.Metrics)
