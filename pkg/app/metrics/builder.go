@@ -17,7 +17,6 @@ package metrics
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 
 	appcatalog "github.com/NeuralTrust/AgentGateway/pkg/app/catalog"
@@ -290,23 +289,40 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 	}
 }
 
+// pricingSlugs returns catalog lookup candidates, against served.Provider,
+// ordered by how reliably each identifies the model that was actually billed:
+//
+//  1. SentModel: the model the gateway put on the outbound request after
+//     routing-ref parsing, pool/LB resolution and model enforcement. It already
+//     matches the models.dev catalog slug, so it is the primary source.
+//  2. Model: the model echoed by the provider response (precise, may carry a
+//     date suffix that is stripped to match the catalog; empty for providers
+//     such as Bedrock Titan/Llama/Mistral that do not echo it).
+//  3. The client-requested model (qualified @provider/model or a bare string;
+//     pools contribute nothing) as a last resort.
+//
+// Each candidate is tried raw and with its -YYYY-MM-DD deployment suffix stripped.
 func pricingSlugs(evt *events.Event, served *trace.LLMAttrs) []string {
-	requestedRef := requestedModelRef(evt, served)
-	resolved := servedModel(evt, served)
-
-	intent, _ := routingdomain.ParseModelRef(requestedRef)
 	var slugs []string
-	switch {
-	case intent.IsPool() || (intent.IsZero() && requestedRef == ""):
-		slugs = []string{resolved}
-	case intent.Model == "":
-		slugs = []string{resolved, requestedRef}
-	case resolved == "" || modelsCompatibleForPricing(intent.Model, resolved):
-		slugs = []string{intent.Model, resolved}
-	default:
-		slugs = []string{resolved, intent.Model}
+	if served != nil {
+		slugs = appendModelSlugs(slugs, served.SentModel)
+		slugs = appendModelSlugs(slugs, served.Model)
 	}
-	return expandDeploymentPricingSlugs(slugs...)
+	slugs = appendModelSlugs(slugs, servedModel(evt, served))
+	intent, _ := routingdomain.ParseModelRef(requestedModelRef(evt, served))
+	slugs = appendModelSlugs(slugs, intent.Model)
+	return uniqueNonEmptySlugs(slugs...)
+}
+
+func appendModelSlugs(dst []string, model string) []string {
+	if model == "" {
+		return dst
+	}
+	dst = append(dst, model)
+	if base := deploymentCatalogSlug(model); base != model {
+		dst = append(dst, base)
+	}
+	return dst
 }
 
 func requestedModelRef(evt *events.Event, served *trace.LLMAttrs) string {
@@ -327,27 +343,6 @@ func servedModel(evt *events.Event, served *trace.LLMAttrs) string {
 		return served.Model
 	}
 	return ""
-}
-
-func modelsCompatibleForPricing(requested, served string) bool {
-	if requested == "" || served == "" {
-		return false
-	}
-	if requested == served {
-		return true
-	}
-	return strings.HasPrefix(served, requested+"-")
-}
-
-func expandDeploymentPricingSlugs(slugs ...string) []string {
-	expanded := make([]string, 0, len(slugs)*2)
-	expanded = append(expanded, slugs...)
-	for _, slug := range slugs {
-		if base := deploymentCatalogSlug(slug); base != slug {
-			expanded = append(expanded, base)
-		}
-	}
-	return uniqueNonEmptySlugs(expanded...)
 }
 
 func deploymentCatalogSlug(model string) string {
