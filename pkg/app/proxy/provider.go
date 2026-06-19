@@ -189,6 +189,10 @@ func (p *providerInvoker) InvokeStream(
 		body = injectStreamTrue(body)
 	}
 
+	if adapter.IsSameWireFormat(prep.targetFormat, adapter.FormatOpenAI) {
+		body = injectStreamIncludeUsage(body)
+	}
+
 	seq, err := prep.client.CompletionsStream(ctx, prep.cfg, body)
 	if err != nil {
 		if be, ok := registry.IsBackendError(err); ok {

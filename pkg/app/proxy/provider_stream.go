@@ -45,6 +45,34 @@ func injectStreamTrue(body []byte) []byte {
 	return out
 }
 
+// injectStreamIncludeUsage forces "stream_options.include_usage": true on an
+// OpenAI Chat Completions request body. Without it OpenAI-wire backends omit the
+// final usage chunk while streaming, leaving the request metrics without token
+// usage. Existing stream_options keys are preserved. It must only be applied to
+// the OpenAI Chat Completions wire format: the Responses API, Anthropic and
+// Mistral stream usage by default and reject (or ignore) this field.
+func injectStreamIncludeUsage(body []byte) []byte {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	opts := map[string]json.RawMessage{}
+	if raw, ok := m["stream_options"]; ok {
+		_ = json.Unmarshal(raw, &opts)
+	}
+	opts["include_usage"] = json.RawMessage("true")
+	encodedOpts, err := json.Marshal(opts)
+	if err != nil {
+		return body
+	}
+	m["stream_options"] = encodedOpts
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
 // toolCallEntry holds accumulated tool call data for a single index.
 type toolCallEntry struct {
 	ID   string
