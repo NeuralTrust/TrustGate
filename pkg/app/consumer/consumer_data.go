@@ -78,6 +78,41 @@ func (d *Data) indexRegistries() {
 	}
 }
 
+func (d *Data) EffectiveRegistries(rc *RoutableConsumer) []*registrydomain.Registry {
+	if rc == nil || rc.Consumer == nil {
+		return nil
+	}
+	if rc.Consumer.RoutingMode != domain.RoutingModeRoleBased {
+		return rc.Registries
+	}
+	assigned := make(map[ids.RoleID]struct{}, len(rc.Consumer.RoleIDs))
+	for _, id := range rc.Consumer.RoleIDs {
+		assigned[id] = struct{}{}
+	}
+	seen := make(map[ids.RegistryID]struct{})
+	out := make([]*registrydomain.Registry, 0)
+	for _, role := range d.Roles {
+		if role == nil {
+			continue
+		}
+		if _, ok := assigned[role.ID]; !ok {
+			continue
+		}
+		for _, id := range role.RegistryIDs {
+			reg, ok := d.RegistryByID(id)
+			if !ok || !reg.IsMCP() {
+				continue
+			}
+			if _, dup := seen[reg.ID]; dup {
+				continue
+			}
+			seen[reg.ID] = struct{}{}
+			out = append(out, reg)
+		}
+	}
+	return out
+}
+
 func (d *Data) MatchSlug(slug string) (*RoutableConsumer, bool) {
 	if d == nil || d.bySlug == nil {
 		return nil, false

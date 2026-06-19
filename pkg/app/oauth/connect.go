@@ -65,12 +65,12 @@ func (s *connectService) mintTicket(ctx context.Context, t ConnectTicket) (strin
 }
 
 func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPage, error) {
-	ticket, gatewayID, rc, err := s.resolve(ctx, ticketID)
+	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return nil, err
 	}
 	page := &ConnectPage{ConsumerPath: ticket.ConsumerPath, ResumeURL: ticket.ResumeURL}
-	for _, reg := range rc.Registries {
+	for _, reg := range data.EffectiveRegistries(rc) {
 		cfg := forwardedAuth(reg)
 		if cfg == nil {
 			continue
@@ -91,11 +91,11 @@ func (s *connectService) Page(ctx context.Context, ticketID string) (*ConnectPag
 }
 
 func (s *connectService) Start(ctx context.Context, baseURL, ticketID, provider string) (string, error) {
-	ticket, gatewayID, rc, err := s.resolve(ctx, ticketID)
+	ticket, gatewayID, data, rc, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return "", err
 	}
-	reg := providerRegistry(rc, provider)
+	reg := providerRegistry(data.EffectiveRegistries(rc), provider)
 	if reg == nil {
 		return "", ErrProviderNotFound
 	}
@@ -133,11 +133,11 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 	if errCode != "" {
 		return st.TicketID, oauthErr(errCode, errDesc)
 	}
-	gatewayID, rc, err := s.routable(ctx, &st.Ticket)
+	gatewayID, data, rc, err := s.routable(ctx, &st.Ticket)
 	if err != nil {
 		return st.TicketID, err
 	}
-	reg := providerRegistry(rc, provider)
+	reg := providerRegistry(data.EffectiveRegistries(rc), provider)
 	if reg == nil {
 		return st.TicketID, ErrProviderNotFound
 	}
@@ -163,42 +163,42 @@ func (s *connectService) Callback(ctx context.Context, baseURL, provider, state,
 }
 
 func (s *connectService) Disconnect(ctx context.Context, ticketID, provider string) error {
-	ticket, gatewayID, _, err := s.resolve(ctx, ticketID)
+	ticket, gatewayID, _, _, err := s.resolve(ctx, ticketID)
 	if err != nil {
 		return err
 	}
 	return s.vault.Delete(ctx, gatewayID, ticket.PrincipalSub, provider)
 }
 
-func (s *connectService) resolve(ctx context.Context, ticketID string) (*ConnectTicket, ids.GatewayID, *appconsumer.RoutableConsumer, error) {
+func (s *connectService) resolve(ctx context.Context, ticketID string) (*ConnectTicket, ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
 	ticket, err := s.store.GetTicket(ctx, ticketID)
 	if err != nil {
-		return nil, ids.GatewayID{}, nil, err
+		return nil, ids.GatewayID{}, nil, nil, err
 	}
 	if ticket == nil {
-		return nil, ids.GatewayID{}, nil, ErrTicketNotFound
+		return nil, ids.GatewayID{}, nil, nil, ErrTicketNotFound
 	}
-	gatewayID, rc, err := s.routable(ctx, ticket)
+	gatewayID, data, rc, err := s.routable(ctx, ticket)
 	if err != nil {
-		return nil, ids.GatewayID{}, nil, err
+		return nil, ids.GatewayID{}, nil, nil, err
 	}
-	return ticket, gatewayID, rc, nil
+	return ticket, gatewayID, data, rc, nil
 }
 
-func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (ids.GatewayID, *appconsumer.RoutableConsumer, error) {
+func (s *connectService) routable(ctx context.Context, ticket *ConnectTicket) (ids.GatewayID, *appconsumer.Data, *appconsumer.RoutableConsumer, error) {
 	gatewayID, err := ids.Parse[ids.GatewayKind](ticket.GatewayID)
 	if err != nil {
-		return ids.GatewayID{}, nil, fmt.Errorf("oauth connect: bad gateway id in ticket: %w", err)
+		return ids.GatewayID{}, nil, nil, fmt.Errorf("oauth connect: bad gateway id in ticket: %w", err)
 	}
 	data, err := s.consumers.FindByGateway(ctx, gatewayID)
 	if err != nil {
-		return ids.GatewayID{}, nil, err
+		return ids.GatewayID{}, nil, nil, err
 	}
 	rc, ok := data.MatchPath(ticket.ConsumerPath)
 	if !ok {
-		return ids.GatewayID{}, nil, fmt.Errorf("oauth connect: consumer path %s no longer exists", ticket.ConsumerPath)
+		return ids.GatewayID{}, nil, nil, fmt.Errorf("oauth connect: consumer path %s no longer exists", ticket.ConsumerPath)
 	}
-	return gatewayID, rc, nil
+	return gatewayID, data, rc, nil
 }
 
 func forwardedAuth(reg *registrydomain.Registry) *registrydomain.MCPAuth {
@@ -211,8 +211,8 @@ func forwardedAuth(reg *registrydomain.Registry) *registrydomain.MCPAuth {
 	return reg.MCPTarget.Auth
 }
 
-func providerRegistry(rc *appconsumer.RoutableConsumer, provider string) *registrydomain.Registry {
-	for _, reg := range rc.Registries {
+func providerRegistry(regs []*registrydomain.Registry, provider string) *registrydomain.Registry {
+	for _, reg := range regs {
 		if cfg := forwardedAuth(reg); cfg != nil && cfg.Provider == provider {
 			return reg
 		}
