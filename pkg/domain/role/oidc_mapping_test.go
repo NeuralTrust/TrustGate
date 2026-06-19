@@ -25,6 +25,7 @@ func TestOIDCMapping_Matches(t *testing.T) {
 	claims := map[string]any{
 		"email":  "admin@example.com",
 		"groups": []any{"gateway-admin", "billing"},
+		"scp":    "mcp.access openid profile",
 		"realm": map[string]any{
 			"roles": []any{"writer", "reader"},
 		},
@@ -52,6 +53,26 @@ func TestOIDCMapping_Matches(t *testing.T) {
 		{
 			name:    "missing required all",
 			mapping: OIDCMapping{Match: OIDCMatchAll, Claims: []OIDCClaimRule{{Path: "groups", Op: OIDCClaimContainsAll, Values: []string{"gateway-admin", "ops"}}}},
+			want:    false,
+		},
+		{
+			name:    "space delimited scope contains any",
+			mapping: OIDCMapping{Match: OIDCMatchAll, Claims: []OIDCClaimRule{{Path: "scp", Op: OIDCClaimContainsAny, Values: []string{"mcp.access"}}}},
+			want:    true,
+		},
+		{
+			name:    "space delimited scope contains all",
+			mapping: OIDCMapping{Match: OIDCMatchAll, Claims: []OIDCClaimRule{{Path: "scp", Op: OIDCClaimContainsAll, Values: []string{"mcp.access", "openid"}}}},
+			want:    true,
+		},
+		{
+			name:    "space delimited scope missing",
+			mapping: OIDCMapping{Match: OIDCMatchAll, Claims: []OIDCClaimRule{{Path: "scp", Op: OIDCClaimContainsAny, Values: []string{"mcp.admin"}}}},
+			want:    false,
+		},
+		{
+			name:    "scope equals requires single scope",
+			mapping: OIDCMapping{Match: OIDCMatchAll, Claims: []OIDCClaimRule{{Path: "scp", Op: OIDCClaimEquals, Values: []string{"mcp.access"}}}},
 			want:    false,
 		},
 	}
