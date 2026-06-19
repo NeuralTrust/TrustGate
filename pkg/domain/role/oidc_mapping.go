@@ -147,8 +147,9 @@ func (r OIDCClaimRule) matches(claims map[string]any) bool {
 }
 
 func claimValues(claims map[string]any, path string) ([]string, bool) {
+	segments := strings.Split(path, ".")
 	var current any = claims
-	for _, segment := range strings.Split(path, ".") {
+	for _, segment := range segments {
 		obj, ok := current.(map[string]any)
 		if !ok {
 			return nil, false
@@ -160,6 +161,13 @@ func claimValues(claims map[string]any, path string) ([]string, bool) {
 	}
 	switch value := current.(type) {
 	case string:
+		// OAuth2 scope claims (scope/scp/scopes) are space-delimited sets;
+		// tokenize them so contains_any/contains_all match individual scopes,
+		// consistent with how the OIDC verifier derives Principal.Scopes.
+		if isScopeClaimPath(segments[len(segments)-1]) {
+			fields := strings.Fields(value)
+			return fields, len(fields) > 0
+		}
 		return []string{value}, true
 	case []string:
 		return append([]string(nil), value...), true
@@ -175,6 +183,15 @@ func claimValues(claims map[string]any, path string) ([]string, bool) {
 		return values, len(values) > 0
 	default:
 		return nil, false
+	}
+}
+
+func isScopeClaimPath(leaf string) bool {
+	switch leaf {
+	case "scope", "scp", "scopes":
+		return true
+	default:
+		return false
 	}
 }
 

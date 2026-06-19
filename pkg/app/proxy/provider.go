@@ -41,18 +41,11 @@ const (
 	fieldPreviousResponse = "previous_response_id"
 )
 
-// ErrInvalidRequestPayload signals that the inbound body could not be decoded
-// while adapting it to the target provider format. The handler maps it to a
-// 400 Bad Request.
 var ErrInvalidRequestPayload = errors.New("invalid request payload")
 
 var ErrModelNotAllowed = errors.New("model not allowed")
 
-// ProviderResponse is the backend LLM response. On the synchronous path it
-// carries Body; on the streaming path it carries Stream. It is relayed to the
-// client verbatim, including non-2xx backend statuses: a 4xx/5xx from the
-// backend is carried here (not as a Go error) so the backend error reaches the
-// client unchanged.
+
 type ProviderResponse struct {
 	StatusCode int
 	Headers    map[string][]string
@@ -324,8 +317,6 @@ func (p *providerInvoker) streamObserver(ctx context.Context) func(*adapter.Cano
 	}
 }
 
-// streamHeaders returns the SSE response headers for a streamed provider
-// response.
 func streamHeaders(provider string) map[string][]string {
 	return map[string][]string{
 		headerContentType:      {"text/event-stream"},
@@ -336,9 +327,6 @@ func streamHeaders(provider string) map[string][]string {
 	}
 }
 
-// sourceFormatFromRequest returns the client request wire format as stamped
-// by the proxy path resolver. Requests without a stamped format (internal
-// callers) default to OpenAI.
 func sourceFormatFromRequest(req *infracontext.RequestContext) adapter.Format {
 	if req.SourceFormat == "" {
 		return adapter.FormatOpenAI
