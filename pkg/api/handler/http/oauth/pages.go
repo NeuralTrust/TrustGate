@@ -111,7 +111,7 @@ var connectPageTmpl = template.Must(template.New("connect").Parse(`<!doctype htm
 {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
 {{if not .Providers}}<p class="empty">No third-party providers are configured for this virtual MCP.</p>{{end}}
 {{range .Providers}}<div class="row">
-  <div><div class="name">{{.Provider}}</div><div class="reg">{{.Registry}}</div></div>
+  <div><div class="name">{{.Registry}}</div><div class="reg">{{.Provider}}</div></div>
   <div class="actions">{{if .Linked}}
     <span class="status"><span class="dot"></span>Connected</span>
     <form method="post" action="/oauth/disconnect/{{.Provider}}?ticket={{$.Ticket}}"><button class="btn revoke">Revoke</button></form>

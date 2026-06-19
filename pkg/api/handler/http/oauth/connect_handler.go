@@ -16,15 +16,18 @@ package oauth
 
 import (
 	"errors"
+	"strings"
 
 	appoauth "github.com/NeuralTrust/AgentGateway/pkg/app/oauth"
 	"github.com/gofiber/fiber/v2"
 )
 
+// Provider keys can contain slashes (e.g. "app.linear/mcp"), so these routes
+// use a greedy wildcard segment instead of a single-segment :provider param.
 const (
-	ConnectStartPath    = "/oauth/connect/:provider"
-	ConnectCallbackPath = "/oauth/callback/:provider"
-	DisconnectPath      = "/oauth/disconnect/:provider"
+	ConnectStartPath    = "/oauth/connect/*"
+	ConnectCallbackPath = "/oauth/callback/*"
+	DisconnectPath      = "/oauth/disconnect/*"
 )
 
 type ConnectHandler struct {
@@ -44,7 +47,7 @@ func (h *ConnectHandler) Page(c *fiber.Ctx) error {
 }
 
 func (h *ConnectHandler) Start(c *fiber.Ctx) error {
-	location, err := h.connect.Start(c.UserContext(), c.BaseURL(), c.Query("ticket"), c.Params("provider"))
+	location, err := h.connect.Start(c.UserContext(), c.BaseURL(), c.Query("ticket"), providerParam(c))
 	if err != nil {
 		return h.pageError(c, err)
 	}
@@ -53,7 +56,7 @@ func (h *ConnectHandler) Start(c *fiber.Ctx) error {
 
 func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
 	ticketID, err := h.connect.Callback(
-		c.UserContext(), c.BaseURL(), c.Params("provider"),
+		c.UserContext(), c.BaseURL(), providerParam(c),
 		c.Query("state"), c.Query("code"), c.Query("error"), c.Query("error_description"),
 	)
 	if err != nil {
@@ -67,10 +70,14 @@ func (h *ConnectHandler) Callback(c *fiber.Ctx) error {
 
 func (h *ConnectHandler) Disconnect(c *fiber.Ctx) error {
 	ticket := c.Query("ticket")
-	if err := h.connect.Disconnect(c.UserContext(), ticket, c.Params("provider")); err != nil {
+	if err := h.connect.Disconnect(c.UserContext(), ticket, providerParam(c)); err != nil {
 		return h.pageError(c, err)
 	}
 	return h.showPage(c, ticket, "")
+}
+
+func providerParam(c *fiber.Ctx) string {
+	return strings.TrimPrefix(c.Params("*"), "/")
 }
 
 func (h *ConnectHandler) showPage(c *fiber.Ctx, ticket, flash string) error {
