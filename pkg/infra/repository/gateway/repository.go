@@ -125,10 +125,29 @@ func (r *Repository) Update(ctx context.Context, g *domain.Gateway) error {
 	})
 }
 
+// cascadeDeleteStatements removes every resource that belongs to the gateway
+// before the gateway row itself. The order respects the ON DELETE RESTRICT
+// foreign keys on the junction tables (consumer_auth.auth_id,
+// consumer_policy.policy_id, role_registry.registry_id, consumer_registry.registry_id):
+// consumers and roles are deleted first so their junction rows cascade away,
+// leaving auths, policies and registries free to be removed.
+var cascadeDeleteStatements = []string{
+	`DELETE FROM consumers  WHERE gateway_id = $1`,
+	`DELETE FROM roles      WHERE gateway_id = $1`,
+	`DELETE FROM policies   WHERE gateway_id = $1`,
+	`DELETE FROM auths      WHERE gateway_id = $1`,
+	`DELETE FROM registries WHERE gateway_id = $1`,
+}
+
 func (r *Repository) Delete(ctx context.Context, id ids.GatewayID) error {
-	const query = `DELETE FROM gateways WHERE id = $1`
+	const deleteGateway = `DELETE FROM gateways WHERE id = $1`
 	return database.WithTx(ctx, r.conn, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, query, id)
+		for _, stmt := range cascadeDeleteStatements {
+			if _, err := tx.Exec(ctx, stmt, id); err != nil {
+				return mapPgError(err)
+			}
+		}
+		cmd, err := tx.Exec(ctx, deleteGateway, id)
 		if err != nil {
 			return mapPgError(err)
 		}
