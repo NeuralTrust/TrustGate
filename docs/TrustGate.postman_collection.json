@@ -9180,6 +9180,1696 @@
               }
             }
           ]
+        },
+        {
+          "name": "Rate limiter",
+          "description": "Exercises the `rate_limiter` plugin at `pre_request`. The policy allows 2 requests per 1m window, counted per consumer. Steps 8-9 stay within the limit (200, with `X-RateLimit-consumer-*` headers). Step 10 exceeds it and asserts the `429` short-circuit with a `Retry-After` header; upstream is never contacted.",
+          "item": [
+            {
+              "name": "1. Create Gateway",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('gateway created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('gateway_id', pm.response.json().id);",
+                      "  pm.environment.set('gateway_slug', pm.response.json().slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-rate-limiter-{{$guid}}\",\n  \"slug\": \"rate-limiter-{{$randomInt}}\"\n}"
+                }
+              }
+            },
+            {
+              "name": "2. Create Registry (OpenAI)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('registry created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('registry_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "registries"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{openai_api_key}}\"\n    }\n  }\n}"
+                }
+              }
+            },
+            {
+              "name": "3. Create Policy",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('policy_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"rate-limiter-{{$guid}}\",\n  \"slug\": \"rate_limiter\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\n    \"pre_request\"\n  ],\n  \"settings\": {\n    \"limit\": 2,\n    \"window\": \"1m\",\n    \"retry_after\": \"60\"\n  }\n}"
+                },
+                "description": "The policy `slug` must equal the plugin catalog name."
+              }
+            },
+            {
+              "name": "4. Create Auth API Key",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth created', () => pm.response.code === 201);",
+                      "pm.test('api key returned once', () => !!pm.response.json().api_key);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('auth_id', body.id);",
+                      "  pm.environment.set('consumer_api_key', body.api_key);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "auths"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"client-key-{{$guid}}\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+                }
+              }
+            },
+            {
+              "name": "5. Create Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('consumer created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('consumer_id', body.id);",
+                      "  pm.environment.set('consumer_slug', body.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
+                }
+              }
+            },
+            {
+              "name": "6. Attach Policy to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "7. Attach Auth to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "auths",
+                    "{{auth_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "8. Proxy - request 1 within limit -> 200",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Rate limit probe 1\"\n    }\n  ]\n}"
+                },
+                "description": "First request inside the window: counted and forwarded to OpenAI."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('first request allowed', () => pm.response.code === 200);",
+                      "pm.test('limit header present', () => pm.response.headers.get('X-RateLimit-consumer-Limit') === '2');"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "9. Proxy - request 2 within limit -> 200",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Rate limit probe 2\"\n    }\n  ]\n}"
+                },
+                "description": "Second (last) allowed request inside the window."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('second request allowed', () => pm.response.code === 200);",
+                      "pm.test('remaining header present', () => pm.response.headers.has('X-RateLimit-consumer-Remaining'));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "10. Proxy - request 3 over limit -> 429",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Rate limit probe 3\"\n    }\n  ]\n}"
+                },
+                "description": "Third request exceeds the 2-per-window limit: the plugin short-circuits with `429` and a `Retry-After` header before reaching upstream."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('third request throttled', () => pm.response.code === 429);",
+                      "pm.test('retry-after header set', () => pm.response.headers.get('Retry-After') === '60');"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Request size limiter",
+          "description": "Exercises the `request_size_limiter` plugin at `pre_request`. The policy caps the body at 1 kilobyte. Step 8 sends a tiny body (200, forwarded to OpenAI). Step 9 sends a body larger than 1 KB and asserts the `413` rejection with a `request size limit exceeded` message; upstream is never contacted.",
+          "item": [
+            {
+              "name": "1. Create Gateway",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('gateway created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('gateway_id', pm.response.json().id);",
+                      "  pm.environment.set('gateway_slug', pm.response.json().slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-request-size-{{$guid}}\",\n  \"slug\": \"request-size-{{$randomInt}}\"\n}"
+                }
+              }
+            },
+            {
+              "name": "2. Create Registry (OpenAI)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('registry created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('registry_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "registries"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{openai_api_key}}\"\n    }\n  }\n}"
+                }
+              }
+            },
+            {
+              "name": "3. Create Policy",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('policy_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"request-size-limiter-{{$guid}}\",\n  \"slug\": \"request_size_limiter\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\n    \"pre_request\"\n  ],\n  \"settings\": {\n    \"allowed_payload_size\": 1,\n    \"size_unit\": \"kilobytes\",\n    \"max_chars_per_request\": 50000,\n    \"require_content_length\": false\n  }\n}"
+                },
+                "description": "The policy `slug` must equal the plugin catalog name."
+              }
+            },
+            {
+              "name": "4. Create Auth API Key",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth created', () => pm.response.code === 201);",
+                      "pm.test('api key returned once', () => !!pm.response.json().api_key);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('auth_id', body.id);",
+                      "  pm.environment.set('consumer_api_key', body.api_key);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "auths"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"client-key-{{$guid}}\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+                }
+              }
+            },
+            {
+              "name": "5. Create Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('consumer created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('consumer_id', body.id);",
+                      "  pm.environment.set('consumer_slug', body.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
+                }
+              }
+            },
+            {
+              "name": "6. Attach Policy to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "7. Attach Auth to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "auths",
+                    "{{auth_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "8. Proxy - small body -> 200",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"hi\"\n    }\n  ]\n}"
+                },
+                "description": "Body is well under 1 KB, so it passes and is forwarded to OpenAI."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('small body allowed', () => pm.response.code === 200);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "9. Proxy - oversized body -> 413",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. Lorem ipsum dolor sit amet consectetur adipiscing elit. \"\n    }\n  ]\n}"
+                },
+                "description": "Body exceeds the 1 KB limit, so the plugin short-circuits with `413` before reaching upstream."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('oversized body rejected', () => pm.response.code === 413);",
+                      "pm.test('message mentions size limit', () => pm.response.text().indexOf('request size limit exceeded') !== -1);"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "CORS",
+          "description": "Exercises the `cors` plugin at `pre_request`. The policy allows only `https://allowed.example.com` for `GET/POST/OPTIONS`. Step 8 sends an allowed `Origin` (200 with `Access-Control-Allow-Origin`, forwarded to OpenAI). Step 9 sends a disallowed `Origin` (`403`). Step 10 is an `OPTIONS` preflight that the plugin short-circuits with `204` and the negotiated CORS headers. Note: the plugin rejects requests with no `Origin` header, so every step sets one.",
+          "item": [
+            {
+              "name": "1. Create Gateway",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('gateway created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('gateway_id', pm.response.json().id);",
+                      "  pm.environment.set('gateway_slug', pm.response.json().slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-cors-{{$guid}}\",\n  \"slug\": \"cors-{{$randomInt}}\"\n}"
+                }
+              }
+            },
+            {
+              "name": "2. Create Registry (OpenAI)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('registry created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('registry_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "registries"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{openai_api_key}}\"\n    }\n  }\n}"
+                }
+              }
+            },
+            {
+              "name": "3. Create Policy",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('policy_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"cors-{{$guid}}\",\n  \"slug\": \"cors\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\n    \"pre_request\"\n  ],\n  \"settings\": {\n    \"allowed_origins\": [\n      \"https://allowed.example.com\"\n    ],\n    \"allowed_methods\": [\n      \"GET\",\n      \"POST\",\n      \"OPTIONS\"\n    ],\n    \"allow_credentials\": false,\n    \"max_age\": \"1h\"\n  }\n}"
+                },
+                "description": "The policy `slug` must equal the plugin catalog name."
+              }
+            },
+            {
+              "name": "4. Create Auth API Key",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth created', () => pm.response.code === 201);",
+                      "pm.test('api key returned once', () => !!pm.response.json().api_key);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('auth_id', body.id);",
+                      "  pm.environment.set('consumer_api_key', body.api_key);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "auths"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"client-key-{{$guid}}\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+                }
+              }
+            },
+            {
+              "name": "5. Create Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('consumer created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('consumer_id', body.id);",
+                      "  pm.environment.set('consumer_slug', body.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
+                }
+              }
+            },
+            {
+              "name": "6. Attach Policy to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "7. Attach Auth to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "auths",
+                    "{{auth_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "8. Proxy - allowed origin -> 200",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  },
+                  {
+                    "key": "Origin",
+                    "value": "https://allowed.example.com"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"CORS allowed origin\"\n    }\n  ]\n}"
+                },
+                "description": "Allowed origin on a POST: the plugin adds CORS headers and forwards to OpenAI."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('allowed origin passes', () => pm.response.code === 200);",
+                      "pm.test('allow-origin echoed', () => pm.response.headers.get('Access-Control-Allow-Origin') === 'https://allowed.example.com');"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "9. Proxy - disallowed origin -> 403",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  },
+                  {
+                    "key": "Origin",
+                    "value": "https://evil.example.com"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"CORS disallowed origin\"\n    }\n  ]\n}"
+                },
+                "description": "Disallowed origin: the plugin short-circuits with `403` before reaching upstream."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('disallowed origin blocked', () => pm.response.code === 403);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "10. Preflight - OPTIONS allowed -> 204",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "OPTIONS",
+                "header": [
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  },
+                  {
+                    "key": "Origin",
+                    "value": "https://allowed.example.com"
+                  },
+                  {
+                    "key": "Access-Control-Request-Method",
+                    "value": "POST"
+                  },
+                  {
+                    "key": "Access-Control-Request-Headers",
+                    "value": "Content-Type"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "description": "An `OPTIONS` preflight with an allowed origin and method: the plugin returns `204` with the negotiated CORS headers and never contacts upstream."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('preflight short-circuited', () => pm.response.code === 204);",
+                      "pm.test('allow-methods negotiated', () => (pm.response.headers.get('Access-Control-Allow-Methods') || '').indexOf('POST') !== -1);"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Semantic cache",
+          "description": "Exercises the `semantic_cache` plugin at `pre_request` (lookup) and `post_response` (store). Step 8 sends a question (cache MISS, forwarded to OpenAI; the answer is embedded and stored asynchronously). Step 9 sends the same question after a short wait and asserts a cache HIT (`X-Cache-Status: HIT` plus `X-Cache-Similarity`) served without contacting upstream. Requires a Redis Stack (RediSearch) vector store and a valid `openai_api_key` for embeddings.",
+          "item": [
+            {
+              "name": "1. Create Gateway",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('gateway created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('gateway_id', pm.response.json().id);",
+                      "  pm.environment.set('gateway_slug', pm.response.json().slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-semantic-cache-{{$guid}}\",\n  \"slug\": \"semantic-cache-{{$randomInt}}\"\n}"
+                }
+              }
+            },
+            {
+              "name": "2. Create Registry (OpenAI)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('registry created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('registry_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/registries",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "registries"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"openai-primary-{{$guid}}\",\n  \"provider\": \"openai\",\n  \"description\": \"OpenAI chat completions\",\n  \"provider_options\": {},\n  \"auth\": {\n    \"type\": \"api_key\",\n    \"api_key\": {\n      \"api_key\": \"{{openai_api_key}}\"\n    }\n  }\n}"
+                }
+              }
+            },
+            {
+              "name": "3. Create Policy",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  pm.environment.set('policy_id', pm.response.json().id);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/policies",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "policies"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"semantic-cache-{{$guid}}\",\n  \"slug\": \"semantic_cache\",\n  \"enabled\": true,\n  \"priority\": 10,\n  \"parallel\": false,\n  \"stages\": [\n    \"pre_request\",\n    \"post_response\"\n  ],\n  \"settings\": {\n    \"similarity_threshold\": 0.85,\n    \"ttl\": \"10m\",\n    \"embedding\": {\n      \"provider\": \"openai\",\n      \"model\": \"text-embedding-ada-002\",\n      \"api_key\": \"{{openai_api_key}}\"\n    }\n  }\n}"
+                },
+                "description": "The policy `slug` must equal the plugin catalog name."
+              }
+            },
+            {
+              "name": "4. Create Auth API Key",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth created', () => pm.response.code === 201);",
+                      "pm.test('api key returned once', () => !!pm.response.json().api_key);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('auth_id', body.id);",
+                      "  pm.environment.set('consumer_api_key', body.api_key);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/auths",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "auths"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"client-key-{{$guid}}\",\n  \"type\": \"api_key\",\n  \"enabled\": true\n}"
+                }
+              }
+            },
+            {
+              "name": "5. Create Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('consumer created', () => pm.response.code === 201);",
+                      "if (pm.response.code === 201) {",
+                      "  const body = pm.response.json();",
+                      "  pm.environment.set('consumer_id', body.id);",
+                      "  pm.environment.set('consumer_slug', body.slug);",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"e2e-consumer-{{$guid}}\",\n  \"type\": \"LLM\",\n  \"routing_mode\": \"inline\",\n  \"active\": true,\n  \"headers\": {},\n  \"registries\": [\n    {\n      \"id\": \"{{registry_id}}\",\n      \"weight\": 1,\n      \"model_policies\": {\n        \"allowed\": [\n          \"gpt-4o-mini\"\n        ],\n        \"default\": \"gpt-4o-mini\"\n      }\n    }\n  ]\n}"
+                }
+              }
+            },
+            {
+              "name": "6. Attach Policy to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('policy attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/policies/{{policy_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "policies",
+                    "{{policy_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "7. Attach Auth to Consumer",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('auth attached', () => [200, 201, 204].includes(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/v1/gateways/{{gateway_id}}/consumers/{{consumer_id}}/auths/{{auth_id}}",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "gateways",
+                    "{{gateway_id}}",
+                    "consumers",
+                    "{{consumer_id}}",
+                    "auths",
+                    "{{auth_id}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "8. Proxy - first call (MISS, stores)",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"What is the capital of France? Answer with a single word.\"\n    }\n  ]\n}"
+                },
+                "description": "First call: no semantically similar entry exists, so it forwards to OpenAI and the answer is stored on `post_response`."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('first call returns 200', () => pm.response.code === 200);",
+                      "pm.test('first call is not a cache hit', () => pm.response.headers.get('X-Cache-Status') !== 'HIT');"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "9. Proxy - identical call (HIT)",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-AG-API-Key",
+                    "value": "{{consumer_api_key}}"
+                  },
+                  {
+                    "key": "X-AG-Gateway-Slug",
+                    "value": "{{gateway_slug}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{agentgateway_proxy_url}}/{{consumer_slug}}/v1/chat/completions",
+                  "host": [
+                    "{{agentgateway_proxy_url}}"
+                  ],
+                  "path": [
+                    "{{consumer_slug}}",
+                    "v1",
+                    "chat",
+                    "completions"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"What is the capital of France? Answer with a single word.\"\n    }\n  ]\n}"
+                },
+                "description": "Identical question after a short wait: the lookup finds the stored answer above the similarity threshold and serves it from cache without contacting upstream."
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// Give the async post_response store time to persist the first answer.",
+                      "const until = Date.now() + 2500;",
+                      "while (Date.now() < until) { /* busy wait */ }"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('second call returns 200', () => pm.response.code === 200);",
+                      "pm.test('served from cache', () => pm.response.headers.get('X-Cache-Status') === 'HIT');",
+                      "pm.test('similarity header present', () => pm.response.headers.has('X-Cache-Similarity'));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
         }
       ]
     }
