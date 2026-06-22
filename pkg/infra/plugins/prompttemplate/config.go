@@ -155,6 +155,18 @@ func (c *config) validate() error {
 		return fmt.Errorf("prompt_template: template_engine %q is not supported", c.TemplateEngine)
 	}
 
+	switch c.OnMissingContextVariable {
+	case onMissingContextError, onMissingContextEmptyString, onMissingContextSkip:
+	default:
+		return fmt.Errorf("prompt_template: on_missing_context_variable %q must be error, empty_string, or skip_injection", c.OnMissingContextVariable)
+	}
+
+	switch c.OnMissingClientVariable {
+	case onMissingClientError, onMissingClientEmptyString:
+	default:
+		return fmt.Errorf("prompt_template: on_missing_client_variable %q must be error or empty_string", c.OnMissingClientVariable)
+	}
+
 	if err := c.validateContextVariables(); err != nil {
 		return err
 	}

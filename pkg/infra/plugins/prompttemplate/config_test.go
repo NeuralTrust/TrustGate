@@ -118,6 +118,22 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "bad on_missing_context_variable rejected",
+			settings: map[string]any{
+				"on_missing_context_variable": "errors",
+				"inject_templates":            []any{map[string]any{"id": "t1", "content": "hi"}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "bad on_missing_client_variable rejected",
+			settings: map[string]any{
+				"on_missing_client_variable": "skip_injection",
+				"inject_templates":           []any{map[string]any{"id": "t1", "content": "hi"}},
+			},
+			wantErr: true,
+		},
+		{
 			name: "blank context variable name rejected",
 			settings: map[string]any{
 				"context_variables": map[string]any{
