@@ -159,6 +159,14 @@ post_response:
 rewrite is read downstream by `provider.go` (`body := req.Body` →
 `AdaptRequest` → `EnforceModel`).
 
+**`stream_usage_injection` caveat**: the wire-level injection of
+`stream_options.include_usage` is owned by the proxy (`provider_stream.go`,
+always-on for OpenAI Chat Completions) and the metrics pipeline populates
+`req.Metadata[usage]`. The plugin consumes that injected usage for streaming
+accrual; the config flag is therefore advisory and the plugin does not itself
+mutate the body to opt into stream usage. Wiring the flag through to the proxy
+is left out of scope to avoid duplicating platform behavior across packages.
+
 **Mode × behavior**: `observe` (Mode) overrides every `behavior_on_*` →
 record-only, no block, no rewrite. `throttle` (Mode) applies only to the budget
 gate (delay); cost cap has no throttle and is skipped under throttle/observe for

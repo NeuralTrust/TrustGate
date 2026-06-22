@@ -135,7 +135,7 @@ func (c *config) normalize() {
 	if len(c.Rules) > 0 {
 		c.PerModel = true
 	}
-	if len(c.Rules) == 0 && c.Aggregate == nil && c.Window.Max > 0 {
+	if c.Aggregate == nil && c.Window.Max > 0 {
 		c.Aggregate = &aggregateConfig{Max: float64(c.Window.Max)}
 	}
 }

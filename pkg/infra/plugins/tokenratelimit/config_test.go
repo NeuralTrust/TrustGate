@@ -68,10 +68,21 @@ func TestConfigNormalizeDoesNotOverrideExistingAggregate(t *testing.T) {
 	assert.Equal(t, "30m", c.Aggregate.TimeWindow)
 }
 
-func TestConfigNormalizeDoesNotSynthesizeWhenRulesPresent(t *testing.T) {
+func TestConfigNormalizeLegacyWindowCapsAlongsideRules(t *testing.T) {
 	c := &config{
 		PerModel: true,
 		Window:   windowConfig{Unit: "hour", Max: 1000},
+		Rules:    []budgetRule{{Model: "gpt-5", Max: 100, TimeWindow: "1h"}},
+	}
+	c.normalize()
+
+	require.NotNil(t, c.Aggregate, "a legacy window must stay a catch-all aggregate so non-rule models are not left uncapped")
+	assert.Equal(t, float64(1000), c.Aggregate.Max)
+}
+
+func TestConfigNormalizeRulesWithoutLegacyWindowHaveNoAggregate(t *testing.T) {
+	c := &config{
+		PerModel: true,
 		Rules:    []budgetRule{{Model: "gpt-5", Max: 100, TimeWindow: "1h"}},
 	}
 	c.normalize()
