@@ -36,6 +36,7 @@ type fakePlugin struct {
 	delay     time.Duration
 	calls     *int32
 	onExec    func()
+	execFn    func(in ExecInput) (*Result, error)
 	writeMeta bool
 	validErr  error
 	mutReq    bool
@@ -74,6 +75,9 @@ func (f *fakePlugin) Execute(ctx context.Context, in ExecInput) (*Result, error)
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
+	}
+	if f.execFn != nil {
+		return f.execFn(in)
 	}
 	return f.result, f.err
 }
@@ -467,4 +471,168 @@ func TestExecutor_RunStage_RecordsPluginSpanOnTrace(t *testing.T) {
 	require.NotNil(t, spans[0].Plugin)
 	assert.Equal(t, string(policy.StagePreRequest), spans[0].Plugin.Stage)
 	assert.Equal(t, 200, spans[0].StatusCode())
+}
+
+func touchMetadata(m map[string]interface{}) {
+	for _, v := range m {
+		if inner, ok := v.(map[string]interface{}); ok {
+			for _, iv := range inner {
+				_ = iv
+			}
+		}
+	}
+}
+
+func TestExecutor_RunStage_ParallelReqBodyMutatorsSplitNoLostUpdate(t *testing.T) {
+	calls := int32(0)
+	mk := func(name, body string) *fakePlugin {
+		return &fakePlugin{
+			name:   name,
+			stages: []policy.Stage{policy.StagePreRequest},
+			result: &Result{StatusCode: 200, RequestBody: []byte(body)},
+			calls:  &calls,
+			mutReq: true,
+		}
+	}
+	reg := newRegistry(t, mk("a_req", `{"mutator":"a"}`), mk("b_req", `{"mutator":"b"}`))
+	exec := NewExecutor(reg, nil)
+
+	req := &infracontext.RequestContext{Body: []byte(`{"mutator":"none"}`)}
+	pols := policies(t,
+		polSpec{slug: "a_req", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "b_req", enabled: true, priority: 1, parallel: true},
+	)
+	out, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Request:  req,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.NoError(t, err)
+	require.False(t, out.ShortCircuit)
+	assert.Equal(t, int32(2), atomic.LoadInt32(&calls), "both request-body mutators must run; the planner splits them so neither write is dropped")
+	assert.Equal(t, []byte(`{"mutator":"b"}`), req.Body, "two same-priority request-body mutators are forced sequential; the last block in priority,slug order wins deterministically")
+}
+
+func TestExecutor_RunStage_SequentialBlocksFoldRequestBody(t *testing.T) {
+	mk := func(name, suffix string) *fakePlugin {
+		return &fakePlugin{
+			name:   name,
+			stages: []policy.Stage{policy.StagePreRequest},
+			mutReq: true,
+			execFn: func(in ExecInput) (*Result, error) {
+				folded := append(append([]byte(nil), in.Request.Body...), suffix...)
+				return &Result{StatusCode: 200, RequestBody: folded}, nil
+			},
+		}
+	}
+	reg := newRegistry(t, mk("a_req", "+a"), mk("b_req", "+b"))
+	exec := NewExecutor(reg, nil)
+
+	req := &infracontext.RequestContext{Body: []byte("start")}
+	pols := policies(t,
+		polSpec{slug: "a_req", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "b_req", enabled: true, priority: 1, parallel: true},
+	)
+	_, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Request:  req,
+		Response: &infracontext.ResponseContext{},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("start+a+b"), req.Body, "the later sequential block must observe the earlier block's folded body, not the original request body")
+}
+
+func TestExecutor_RunStage_DeterministicBatchOrdering(t *testing.T) {
+	mk := func(name string) *fakePlugin {
+		return &fakePlugin{name: name, stages: []policy.Stage{policy.StagePreRequest}, result: &Result{StatusCode: 200}}
+	}
+	reg := newRegistry(t, mk("c"), mk("a"), mk("b"))
+
+	pols := policies(t,
+		polSpec{slug: "c", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "a", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "b", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "a", enabled: true, priority: 1, parallel: true},
+	)
+
+	var first [][]string
+	for run := 0; run < 5; run++ {
+		plan := NewStagePlan(reg, pols, nil)
+		batches := plan.batchesFor(policy.StagePreRequest)
+		require.Len(t, batches, 1, "non-mutating parallel entries at equal priority collapse into one batch")
+
+		slugs := batchSlugs(batches)
+		if run == 0 {
+			assert.Equal(t, [][]string{{"a", "a", "b", "c"}}, slugs, "entries must order by priority then slug")
+			first = slugs
+		}
+		assert.Equal(t, first, slugs, "batch composition must be identical across repeated planning")
+
+		var aIDs []string
+		for _, entry := range batches[0] {
+			if entry.config.Slug == "a" {
+				aIDs = append(aIDs, entry.config.ID)
+			}
+		}
+		require.Len(t, aIDs, 2)
+		assert.Less(t, aIDs[0], aIDs[1], "ties at equal priority and slug break by ascending id")
+	}
+}
+
+func TestExecutor_RunStage_ParallelMetadataWriterReadersRaceSafe(t *testing.T) {
+	writer := &fakePlugin{
+		name:    "a_meta",
+		stages:  []policy.Stage{policy.StagePreRequest},
+		mutMeta: true,
+		delay:   5 * time.Millisecond,
+		execFn: func(in ExecInput) (*Result, error) {
+			if in.Response.Metadata == nil {
+				in.Response.Metadata = make(map[string]interface{})
+			}
+			in.Response.Metadata["written"] = map[string]interface{}{"by": "a_meta"}
+			return &Result{StatusCode: 200}, nil
+		},
+	}
+	reader := func(name string) *fakePlugin {
+		return &fakePlugin{
+			name:   name,
+			stages: []policy.Stage{policy.StagePreRequest},
+			delay:  5 * time.Millisecond,
+			execFn: func(in ExecInput) (*Result, error) {
+				touchMetadata(in.Response.Metadata)
+				return &Result{StatusCode: 200}, nil
+			},
+		}
+	}
+	bodyMutator := &fakePlugin{
+		name:   "d_body",
+		stages: []policy.Stage{policy.StagePreRequest},
+		mutReq: true,
+		delay:  5 * time.Millisecond,
+		result: &Result{StatusCode: 200, RequestBody: []byte(`{"mutated":true}`)},
+	}
+	reg := newRegistry(t, writer, reader("b_read"), reader("c_read"), bodyMutator)
+	exec := NewExecutor(reg, nil)
+
+	req := &infracontext.RequestContext{Body: []byte(`{"mutated":false}`)}
+	resp := &infracontext.ResponseContext{Metadata: map[string]interface{}{"shared": map[string]interface{}{"k": "v"}}}
+	pols := policies(t,
+		polSpec{slug: "a_meta", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "b_read", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "c_read", enabled: true, priority: 1, parallel: true},
+		polSpec{slug: "d_body", enabled: true, priority: 1, parallel: true},
+	)
+	out, err := exec.RunStage(context.Background(), StageInput{
+		Stage:    policy.StagePreRequest,
+		Policies: pols,
+		Request:  req,
+		Response: resp,
+	})
+	require.NoError(t, err)
+	require.False(t, out.ShortCircuit)
+	assert.Equal(t, []byte(`{"mutated":true}`), req.Body, "the single body mutator's write is folded into the request")
+	assert.Equal(t, map[string]interface{}{"by": "a_meta"}, resp.Metadata["written"], "the single metadata writer's nested write is merged back")
+	assert.Equal(t, map[string]interface{}{"k": "v"}, resp.Metadata["shared"], "pre-existing nested metadata read concurrently must survive untouched")
 }

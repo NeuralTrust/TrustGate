@@ -62,10 +62,10 @@ Chain strategy: pending
 
 ## Phase 4: Tests + docs (verification)
 
-- [ ] 4.1 `executor_test.go`: lost-update (direct→Result) — two req-body fakes in one parallel batch → final `req.Body` reflects the planned single mutator, no drop.
-- [ ] 4.2 `executor_test.go`: lost-update via `Result.RequestBody` — planner splits 2 req-body mutators into sequential blocks; later sees earlier output.
-- [ ] 4.3 `executor_test.go`: determinism — unordered slugs/ids at equal priority → stable batch composition (`priority→slug→id`).
-- [ ] 4.4 `executor_test.go`: `-race` incl. nested metadata — parallel batch with a single `semanticcache`-style meta writer + readers + a body mutator (`make test-race`).
-- [ ] 4.5 Confirm `modelallowlist`/`tokenratelimit` behavior asserted via `Result.RequestBody` (cross-check Phase 2 coverage).
-- [ ] 4.6 Rewrite `.agents/AGENT.md` §14.2 with the single-writer/≤1-mutator-per-batch invariant text from `design.md`.
-- [ ] 4.7 Final green-gate: build, vet, lint, `go test -race ./...` for all touched packages.
+- [x] 4.1 `executor_test.go`: lost-update (direct→Result) — two req-body fakes in one parallel batch → final `req.Body` reflects the planned single mutator, no drop.
+- [x] 4.2 `executor_test.go`: lost-update via `Result.RequestBody` — planner splits 2 req-body mutators into sequential blocks; later sees earlier output.
+- [x] 4.3 `executor_test.go`: determinism — unordered slugs/ids at equal priority → stable batch composition (`priority→slug→id`).
+- [x] 4.4 `executor_test.go`: `-race` incl. nested metadata — parallel batch with a single `semanticcache`-style meta writer + readers + a body mutator (`make test-race`).
+- [x] 4.5 Confirm `modelallowlist`/`tokenratelimit` behavior asserted via `Result.RequestBody` (cross-check Phase 2 coverage).
+- [x] 4.6 Rewrite `.agents/AGENT.md` §14.2 with the single-writer/≤1-mutator-per-batch invariant text from `design.md`.
+- [x] 4.7 Final green-gate: build, vet, lint, `go test -race ./...` for all touched packages.
