@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -30,10 +31,15 @@ import (
 
 func newTestPlugin(t *testing.T) *Plugin {
 	t.Helper()
+	return newTestPluginWithPricing(t, nil)
+}
+
+func newTestPluginWithPricing(t *testing.T, pricing appcatalog.PricingResolver) *Plugin {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	return New(rdb, adapter.NewRegistry())
+	return New(rdb, adapter.NewRegistry(), pricing)
 }
 
 func input(stage policy.Stage, settings map[string]any, req *infracontext.RequestContext, resp *infracontext.ResponseContext) appplugins.ExecInput {
@@ -47,7 +53,7 @@ func input(stage policy.Stage, settings map[string]any, req *infracontext.Reques
 }
 
 func TestPlugin_Stages(t *testing.T) {
-	p := New(nil, nil)
+	p := New(nil, nil, nil)
 	assert.Equal(t, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, p.MandatoryStages())
 	assert.Equal(t, []policy.Stage{policy.StagePreRequest, policy.StagePostResponse}, p.SupportedStages())
 	assert.Equal(t, PluginName, p.Name())
@@ -63,7 +69,7 @@ func TestPlugin_ValidateConfig(t *testing.T) {
 		{name: "zero max", settings: map[string]any{"window": map[string]any{"unit": "minute", "max": 0}}, wantErr: true},
 		{name: "bad unit", settings: map[string]any{"window": map[string]any{"unit": "fortnight", "max": 100}}, wantErr: true},
 	}
-	p := New(nil, nil)
+	p := New(nil, nil, nil)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := p.ValidateConfig(tt.settings)

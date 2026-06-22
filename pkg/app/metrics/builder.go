@@ -357,40 +357,15 @@ func (b *Builder) fillUsageAndCost(ctx context.Context, evt *events.Event, serve
 	}
 }
 
-// pricingSlugs returns catalog lookup candidates, against served.Provider,
-// ordered by how reliably each identifies the model that was actually billed:
-//
-//  1. SentModel: the model the gateway put on the outbound request after
-//     routing-ref parsing, pool/LB resolution and model enforcement. It already
-//     matches the models.dev catalog slug, so it is the primary source.
-//  2. Model: the model echoed by the provider response (precise, may carry a
-//     date suffix that is stripped to match the catalog; empty for providers
-//     such as Bedrock Titan/Llama/Mistral that do not echo it).
-//  3. The client-requested model (qualified @provider/model or a bare string;
-//     pools contribute nothing) as a last resort.
-//
-// Each candidate is tried raw and with its -YYYY-MM-DD deployment suffix stripped.
 func pricingSlugs(evt *events.Event, served *trace.LLMAttrs) []string {
-	var slugs []string
+	var models []string
 	if served != nil {
-		slugs = appendModelSlugs(slugs, served.SentModel)
-		slugs = appendModelSlugs(slugs, served.Model)
+		models = append(models, served.SentModel, served.Model)
 	}
-	slugs = appendModelSlugs(slugs, servedModel(evt, served))
+	models = append(models, servedModel(evt, served))
 	intent, _ := routingdomain.ParseModelRef(requestedModelRef(evt, served))
-	slugs = appendModelSlugs(slugs, intent.Model)
-	return uniqueNonEmptySlugs(slugs...)
-}
-
-func appendModelSlugs(dst []string, model string) []string {
-	if model == "" {
-		return dst
-	}
-	dst = append(dst, model)
-	if base := deploymentCatalogSlug(model); base != model {
-		dst = append(dst, base)
-	}
-	return dst
+	models = append(models, intent.Model)
+	return appcatalog.SlugCandidates(models...)
 }
 
 func requestedModelRef(evt *events.Event, served *trace.LLMAttrs) string {
@@ -411,39 +386,6 @@ func servedModel(evt *events.Event, served *trace.LLMAttrs) string {
 		return served.Model
 	}
 	return ""
-}
-
-func deploymentCatalogSlug(model string) string {
-	const dateSuffixLen = 10
-	if len(model) <= dateSuffixLen+1 {
-		return model
-	}
-	suffix := model[len(model)-dateSuffixLen:]
-	if suffix[4] != '-' || suffix[7] != '-' {
-		return model
-	}
-	for _, ch := range suffix {
-		if ch != '-' && (ch < '0' || ch > '9') {
-			return model
-		}
-	}
-	return model[:len(model)-dateSuffixLen-1]
-}
-
-func uniqueNonEmptySlugs(slugs ...string) []string {
-	seen := make(map[string]struct{}, len(slugs))
-	out := make([]string, 0, len(slugs))
-	for _, slug := range slugs {
-		if slug == "" {
-			continue
-		}
-		if _, dup := seen[slug]; dup {
-			continue
-		}
-		seen[slug] = struct{}{}
-		out = append(out, slug)
-	}
-	return out
 }
 
 func sumAttemptLatency(attempts []events.Attempt) int64 {

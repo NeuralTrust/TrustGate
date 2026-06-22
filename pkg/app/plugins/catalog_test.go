@@ -138,6 +138,126 @@ func TestCatalogService_UnknownPluginFallsBackToOther(t *testing.T) {
 	assert.Equal(t, "mystery", entry.Name)
 }
 
+func fieldByKey(fields []Field, key string) (Field, bool) {
+	for _, f := range fields {
+		if f.Key == key {
+			return f, true
+		}
+	}
+	return Field{}, false
+}
+
+func TestTokenRateLimiterSchema_BudgetTree(t *testing.T) {
+	meta, ok := pluginCatalogMeta["token_rate_limiter"]
+	require.True(t, ok)
+	assert.Equal(t, "Token & Dollar Budget + Cost Cap", meta.name)
+	assert.Contains(t, meta.description, "cost cap")
+
+	fields := meta.schema.Fields
+
+	unit, ok := fieldByKey(fields, "unit")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, unit.Type)
+	assert.Equal(t, []string{"tokens", "dollars"}, unit.Enum)
+
+	perModel, ok := fieldByKey(fields, "per_model")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeBoolean, perModel.Type)
+
+	counting, ok := fieldByKey(fields, "counting")
+	require.True(t, ok)
+	assert.Equal(t, []string{"total", "input", "output"}, counting.Enum)
+
+	behavior, ok := fieldByKey(fields, "behavior_on_exceeded")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeEnum, behavior.Type)
+	assert.Equal(t, []string{"reject", "throttle", "downgrade_model", "alert_only"}, behavior.Enum)
+	assert.Contains(t, behavior.Enum, "alert_only")
+
+	pricingTable, ok := fieldByKey(fields, "pricing_table")
+	require.True(t, ok)
+	assert.Equal(t, []string{"builtin", "custom"}, pricingTable.Enum)
+
+	for _, k := range []string{"downgrade_to", "stream_usage_injection", "count_cache_reads", "group_by_header"} {
+		_, ok := fieldByKey(fields, k)
+		assert.Truef(t, ok, "missing top-level field %q", k)
+	}
+}
+
+func TestTokenRateLimiterSchema_RulesAndAggregate(t *testing.T) {
+	fields := pluginCatalogMeta["token_rate_limiter"].schema.Fields
+
+	rules, ok := fieldByKey(fields, "rules")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeArray, rules.Type)
+	require.NotNil(t, rules.Item)
+	assert.Equal(t, FieldTypeObject, rules.Item.Type)
+	for _, k := range []string{"model", "max", "time_window"} {
+		_, ok := fieldByKey(rules.Item.Fields, k)
+		assert.Truef(t, ok, "rules item missing %q", k)
+	}
+
+	aggregate, ok := fieldByKey(fields, "aggregate")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeObject, aggregate.Type)
+	for _, k := range []string{"max", "time_window"} {
+		_, ok := fieldByKey(aggregate.Fields, k)
+		assert.Truef(t, ok, "aggregate missing %q", k)
+	}
+}
+
+func TestTokenRateLimiterSchema_CostCapAndPricingMaps(t *testing.T) {
+	fields := pluginCatalogMeta["token_rate_limiter"].schema.Fields
+
+	costCap, ok := fieldByKey(fields, "cost_cap")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeObject, costCap.Type)
+
+	behaviorOnViolation, ok := fieldByKey(costCap.Fields, "behavior_on_violation")
+	require.True(t, ok)
+	assert.Equal(t, []string{"reject", "downgrade"}, behaviorOnViolation.Enum)
+
+	unknownModel, ok := fieldByKey(costCap.Fields, "unknown_model")
+	require.True(t, ok)
+	assert.Equal(t, []string{"reject", "pass_through", "assume_max"}, unknownModel.Enum)
+
+	overrides, ok := fieldByKey(costCap.Fields, "per_model_overrides")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeMap, overrides.Type)
+	require.NotNil(t, overrides.Value)
+	assert.Equal(t, FieldTypeObject, overrides.Value.Type)
+	for _, k := range []string{"max_input_cost_per_1k_tokens", "max_output_cost_per_1k_tokens"} {
+		_, ok := fieldByKey(overrides.Value.Fields, k)
+		assert.Truef(t, ok, "override missing %q", k)
+	}
+
+	customPricing, ok := fieldByKey(fields, "custom_pricing")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeMap, customPricing.Type)
+	require.NotNil(t, customPricing.Value)
+	assert.Equal(t, FieldTypeObject, customPricing.Value.Type)
+	for _, k := range []string{"input", "output"} {
+		_, ok := fieldByKey(customPricing.Value.Fields, k)
+		assert.Truef(t, ok, "custom_pricing missing %q", k)
+	}
+}
+
+func TestTokenRateLimiterSchema_LegacyWindowPreserved(t *testing.T) {
+	fields := pluginCatalogMeta["token_rate_limiter"].schema.Fields
+
+	window, ok := fieldByKey(fields, "window")
+	require.True(t, ok)
+	assert.Equal(t, FieldTypeObject, window.Type)
+	assert.False(t, window.Required)
+
+	unit, ok := fieldByKey(window.Fields, "unit")
+	require.True(t, ok)
+	assert.Equal(t, []string{"second", "minute", "hour", "day"}, unit.Enum)
+
+	_, ok = fieldByKey(window.Fields, "max")
+	assert.True(t, ok)
+}
+
 func TestPluginCatalogMeta_CoversBuiltins(t *testing.T) {
 	validGroups := map[string]struct{}{}
 	for _, g := range groupOrder {

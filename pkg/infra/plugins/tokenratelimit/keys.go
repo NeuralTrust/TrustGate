@@ -12,28 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plugins
+package tokenratelimit
 
-import "errors"
+const counterKeyPrefix = "trl"
 
-// PluginError is returned by a plugin to reject a request and short-circuit the
-// chain with a specific HTTP status (e.g. rate limit 429, CORS preflight 204).
-type PluginError struct {
-	StatusCode int
-	Message    string
-	Headers    map[string][]string
-	Body       []byte
-}
-
-func (e *PluginError) Error() string {
-	return e.Message
-}
-
-// AsPluginError reports whether err is (or wraps) a *PluginError and returns it.
-func AsPluginError(err error) (*PluginError, bool) {
-	var pe *PluginError
-	if errors.As(err, &pe) {
-		return pe, true
+func aggregateKey(cfgID, dimension, subject, headerValue string) string {
+	key := counterKeyPrefix + ":" + cfgID + ":" + dimension + ":" + subject
+	if headerValue != "" {
+		key += ":hdr:" + headerValue
 	}
-	return nil, false
+	return key
+}
+
+func modelKey(base, slug string) string {
+	return base + ":model:" + slug
 }
