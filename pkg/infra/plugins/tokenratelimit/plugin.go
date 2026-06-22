@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"time"
 
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
 	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
@@ -36,10 +37,11 @@ var _ appplugins.Plugin = (*Plugin)(nil)
 type Plugin struct {
 	redis    *redis.Client
 	registry *adapter.Registry
+	pricing  appcatalog.PricingResolver
 }
 
-func New(redisClient *redis.Client, registry *adapter.Registry) *Plugin {
-	return &Plugin{redis: redisClient, registry: registry}
+func New(redisClient *redis.Client, registry *adapter.Registry, pricing appcatalog.PricingResolver) *Plugin {
+	return &Plugin{redis: redisClient, registry: registry, pricing: pricing}
 }
 
 func (p *Plugin) Name() string { return PluginName }

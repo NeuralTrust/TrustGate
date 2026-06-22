@@ -135,6 +135,33 @@ func TestPluginE2E_TokenRateLimiter_AggregateBudget(t *testing.T) {
 		"an aggregate token budget must reject the next request once accrual lands")
 }
 
+func TestPluginE2E_TokenRateLimiter_AggregateDollarBudget(t *testing.T) {
+	defer Track(t, "PluginTokenRateLimiter")()
+
+	up := newUsageUpstream(t, "token-dollars", 8)
+	gatewayID, backendID := setupGatewayBackend(t, up)
+	tok := createScopedPolicy(t, gatewayID, "token_rate_limiter", map[string]any{
+		"unit":          "dollars",
+		"pricing_table": "custom",
+		"custom_pricing": map[string]any{
+			"gpt-4o-mini": map[string]any{"input": 0.001, "output": 0},
+		},
+		"aggregate": map[string]any{"max": 0.005, "time_window": "1m"},
+	}, 0, false)
+	path, apiKey := addConsumerRoute(t, gatewayID, backendID, tok)
+
+	body := mustJSON(t, chatRequest(false))
+
+	status, _, raw := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+	require.Equal(t, http.StatusOK, status, "the crossing request must pass, body: %s", raw)
+
+	require.Eventually(t, func() bool {
+		s, _, _ := proxyRequest(t, http.MethodPost, apiKey, path, nil, body)
+		return s == http.StatusTooManyRequests
+	}, 5*time.Second, 100*time.Millisecond,
+		"a dollar budget must reject the next request once the micro-USD accrual crosses the scaled max")
+}
+
 func TestPluginE2E_TokenRateLimiter_LegacyBackCompat(t *testing.T) {
 	defer Track(t, "PluginTokenRateLimiter")()
 

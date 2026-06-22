@@ -58,12 +58,12 @@ churn because phases are strictly dependent. Prefer the chain.)
 
 ## Phase 3: Pricing plumbing + dollar budget
 
-- [ ] 3.1 Extract `appcatalog.SlugCandidates(...string)` in `pkg/app/catalog` (from `deploymentCatalogSlug`/`appendModelSlugs`/`uniqueNonEmptySlugs`).
-- [ ] 3.2 Refactor `pkg/app/metrics/builder.go::pricingSlugs` to call `SlugCandidates` (behavior-preserving); keep metrics tests green.
-- [ ] 3.3 Inject `appcatalog.PricingResolver` into `pluginParams` (`pkg/container/modules/plugins.go`); change `tokenratelimit.New(redis, registry, pricing)`.
-- [ ] 3.4 Implement `pricing.go`: `priceFor` (custom overlay→resolver), `per1k`, `microUSD`; `count_cache_reads` toggle.
-- [ ] 3.5 Dollar accrual in `accrue`: scaled-integer micro-USD via `recordScript`; unknown model accrues 0 + warn.
-- [ ] 3.6 Unit tests (pricing overlay, per-1k, micro-USD, resolver mock via `go generate` mockery) + functional dollar-budget test.
+- [x] 3.1 Extract `appcatalog.SlugCandidates(...string)` in `pkg/app/catalog` (from `deploymentCatalogSlug`/`appendModelSlugs`/`uniqueNonEmptySlugs`).
+- [x] 3.2 Refactor `pkg/app/metrics/builder.go::pricingSlugs` to call `SlugCandidates` (behavior-preserving); keep metrics tests green.
+- [x] 3.3 Inject `appcatalog.PricingResolver` into `pluginParams` (`pkg/container/modules/plugins.go`); change `tokenratelimit.New(redis, registry, pricing)`.
+- [x] 3.4 Implement `pricing.go`: `priceFor` (custom overlay→resolver), `per1k`, `microUSD`; `count_cache_reads` toggle.
+- [x] 3.5 Dollar accrual in `accrue`: scaled-integer micro-USD via `recordScript`; unknown model accrues 0 + warn.
+- [x] 3.6 Unit tests (pricing overlay, per-1k, micro-USD, resolver mock via `go generate` mockery) + functional dollar-budget test.
 
 **Verify**: `go generate ./...` ; `go test -race ./pkg/app/metrics/... ./pkg/infra/plugins/tokenratelimit/... ./tests/functional/...`.
 **Rollback**: revert injection + `pricing.go`; keep token-only accrual.

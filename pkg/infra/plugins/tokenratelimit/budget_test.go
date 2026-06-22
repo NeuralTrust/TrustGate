@@ -17,8 +17,8 @@ package tokenratelimit
 import (
 	"testing"
 
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -128,6 +128,27 @@ func TestRuleWindowSeconds_FallsBackToLegacy(t *testing.T) {
 func TestAggregateWindowSeconds(t *testing.T) {
 	assert.Equal(t, 1800, aggregateWindowSeconds(&config{Aggregate: &aggregateConfig{Max: 1, TimeWindow: "30m"}}))
 	assert.Equal(t, 60, aggregateWindowSeconds(&config{Window: windowConfig{Unit: "minute"}, Aggregate: &aggregateConfig{Max: 1}}))
+}
+
+func TestCounterMax(t *testing.T) {
+	dollars := &config{Unit: unitDollars}
+	tokens := &config{Unit: unitTokens}
+	tests := []struct {
+		name string
+		cfg  *config
+		raw  float64
+		want float64
+	}{
+		{name: "tiny positive dollar max never scales to zero", cfg: dollars, raw: 0.0000004, want: 1},
+		{name: "zero dollar max stays zero", cfg: dollars, raw: 0, want: 0},
+		{name: "dollar max scales to micro-USD", cfg: dollars, raw: 0.025, want: 25000},
+		{name: "token max is unscaled", cfg: tokens, raw: 1000, want: 1000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, counterMax(tt.cfg, tt.raw))
+		})
+	}
 }
 
 func TestCountedTokens(t *testing.T) {

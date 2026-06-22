@@ -18,16 +18,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
 	"time"
 
-	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/metrics"
-	"github.com/NeuralTrust/AgentGateway/pkg/infra/providers/adapter"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/metrics"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/providers/adapter"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -74,7 +75,7 @@ func windowsFor(cfg *config, base, model string) []budgetWindow {
 		if r, ok := selectRule(cfg, model); ok {
 			windows = append(windows, budgetWindow{
 				key:       modelKey(base, r.Model),
-				max:       r.Max,
+				max:       counterMax(cfg, r.Max),
 				windowSec: ruleWindowSeconds(cfg, r),
 				model:     r.Model,
 			})
@@ -83,12 +84,23 @@ func windowsFor(cfg *config, base, model string) []budgetWindow {
 	if cfg.Aggregate != nil {
 		windows = append(windows, budgetWindow{
 			key:       base,
-			max:       cfg.Aggregate.Max,
+			max:       counterMax(cfg, cfg.Aggregate.Max),
 			windowSec: aggregateWindowSeconds(cfg),
 			aggregate: true,
 		})
 	}
 	return windows
+}
+
+func counterMax(cfg *config, raw float64) float64 {
+	if cfg.Unit == unitDollars {
+		scaled := microUSD(raw)
+		if scaled == 0 && raw > 0 {
+			scaled = 1
+		}
+		return float64(scaled)
+	}
+	return raw
 }
 
 func primaryWindowIndex(windows []budgetWindow) int {
@@ -141,10 +153,6 @@ func (p *Plugin) budgetGate(
 	mode policy.Mode,
 	event *metrics.EventContext,
 ) (*appplugins.Result, error) {
-	if cfg.Unit == unitDollars {
-		return &appplugins.Result{StatusCode: http.StatusOK}, nil
-	}
-
 	windows := windowsFor(cfg, base, model)
 	if len(windows) == 0 {
 		return &appplugins.Result{StatusCode: http.StatusOK}, nil
@@ -230,7 +238,7 @@ func (p *Plugin) accrue(
 		return &appplugins.Result{}, nil
 	}
 	if cfg.Unit == unitDollars {
-		return &appplugins.Result{}, nil
+		return p.accrueDollars(ctx, cfg, base, model, req, resp, event)
 	}
 
 	tokens := countedTokens(cfg.Counting, p.extractUsage(req, resp))
@@ -281,31 +289,106 @@ func (p *Plugin) accrue(
 	return &appplugins.Result{StatusCode: http.StatusOK, Headers: headers}, nil
 }
 
+func (p *Plugin) accrueDollars(
+	ctx context.Context,
+	cfg *config,
+	base, model string,
+	req *infracontext.RequestContext,
+	resp *infracontext.ResponseContext,
+	event *metrics.EventContext,
+) (*appplugins.Result, error) {
+	provider, requested := "", ""
+	if req != nil {
+		provider = req.Provider
+		requested = req.RequestedModel
+	}
+
+	usage, servedModel := p.extractUsageAndModel(req, resp)
+
+	inputRate, outputRate, found := p.priceFor(ctx, cfg, provider, model, servedModel, requested)
+	if !found {
+		slog.Warn("token_rate_limiter: unpriced model in dollar budget, accruing zero",
+			slog.String("provider", provider),
+			slog.String("model", model),
+			slog.String("served_model", servedModel))
+		setTokenExtras(event, TokenRateLimiterData{
+			Stage:    string(policy.StagePostResponse),
+			Provider: provider,
+			Model:    model,
+			Unit:     unitDollars,
+			Unpriced: true,
+		})
+		return &appplugins.Result{}, nil
+	}
+
+	if usage == nil {
+		return &appplugins.Result{}, nil
+	}
+	cost := float64(billableInputTokens(cfg, usage))*inputRate + float64(usage.OutputTokens)*outputRate
+	micros := microUSD(cost)
+	if micros <= 0 {
+		return &appplugins.Result{}, nil
+	}
+
+	windows := windowsFor(cfg, base, model)
+	if len(windows) == 0 {
+		return &appplugins.Result{}, nil
+	}
+	primary := windows[primaryWindowIndex(windows)]
+
+	var primaryTotal int64
+	for _, w := range windows {
+		total, err := recordScript.Run(ctx, p.redis, []string{w.key}, micros, w.windowSec).Int64()
+		if err != nil {
+			return nil, fmt.Errorf("token_rate_limiter: record cost: %w", err)
+		}
+		if w.key == primary.key {
+			primaryTotal = total
+		}
+	}
+
+	setTokenExtras(event, TokenRateLimiterData{
+		Stage:            string(policy.StagePostResponse),
+		CounterKey:       primary.key,
+		Provider:         provider,
+		Model:            model,
+		Unit:             unitDollars,
+		CostMicroUSD:     micros,
+		ConsumedMicroUSD: primaryTotal,
+	})
+	return &appplugins.Result{StatusCode: http.StatusOK}, nil
+}
+
 func (p *Plugin) extractUsage(req *infracontext.RequestContext, resp *infracontext.ResponseContext) *adapter.CanonicalUsage {
+	usage, _ := p.extractUsageAndModel(req, resp)
+	return usage
+}
+
+func (p *Plugin) extractUsageAndModel(req *infracontext.RequestContext, resp *infracontext.ResponseContext) (*adapter.CanonicalUsage, string) {
 	if resp == nil {
-		return nil
+		return nil, ""
 	}
 	if resp.Streaming {
 		if req != nil && req.Metadata != nil {
 			if cu, ok := req.Metadata[adapter.MetadataUsageKey].(*adapter.CanonicalUsage); ok {
-				return cu
+				return cu, ""
 			}
 		}
-		return nil
+		return nil, ""
 	}
 
 	if len(resp.Body) == 0 || p.registry == nil {
-		return nil
+		return nil, ""
 	}
 	format := responseFormat(req)
 	if format == "" {
-		return nil
+		return nil, ""
 	}
 	canonical, err := p.registry.DecodeResponseFor(resp.Body, adapter.Format(format))
 	if err != nil || canonical == nil {
-		return nil
+		return nil, ""
 	}
-	return canonical.Usage
+	return canonical.Usage, canonical.Model
 }
 
 func responseFormat(req *infracontext.RequestContext) string {

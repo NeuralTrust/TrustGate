@@ -18,10 +18,13 @@ import (
 	"context"
 	"testing"
 
-	appplugins "github.com/NeuralTrust/AgentGateway/pkg/app/plugins"
-	"github.com/NeuralTrust/AgentGateway/pkg/domain/policy"
-	infracontext "github.com/NeuralTrust/AgentGateway/pkg/infra/context"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
+	catalogmocks "github.com/NeuralTrust/TrustGate/pkg/app/catalog/mocks"
+	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
+	"github.com/NeuralTrust/TrustGate/pkg/domain/policy"
+	infracontext "github.com/NeuralTrust/TrustGate/pkg/infra/context"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,6 +79,74 @@ func TestPlugin_PerModel_HeadersReflectBreachedWindow(t *testing.T) {
 	assert.Equal(t, []string{"5"}, pe.Headers["X-Ratelimit-Limit-Tokens"],
 		"headers must reflect the breached per-model window (max 5), not the aggregate (max 1000)")
 	assert.Equal(t, []string{"0"}, pe.Headers["X-Ratelimit-Remaining-Tokens"])
+}
+
+func TestPlugin_DollarBudget_AccrualAndGate(t *testing.T) {
+	p := newTestPlugin(t)
+	settings := map[string]any{
+		"unit":          "dollars",
+		"pricing_table": "custom",
+		"custom_pricing": map[string]any{
+			"gpt-4o-mini": map[string]any{"input": 0.001, "output": 0},
+		},
+		"aggregate": map[string]any{"max": 0.005, "time_window": "1m"},
+	}
+	req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4o-mini"}`)}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: usageResponseBody()}
+
+	_, err := p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}))
+	require.NoError(t, err, "the first request must pass while the dollar counter is empty")
+
+	_, err = p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
+	require.NoError(t, err)
+
+	_, err = p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}))
+	require.Error(t, err, "10 input tokens * $0.001 = $0.01 exceeds the $0.005 dollar budget")
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok)
+	assert.Equal(t, 429, pe.StatusCode)
+}
+
+func TestPlugin_DollarBudget_PricesServedModelFromResponse(t *testing.T) {
+	resolver := catalogmocks.NewPricingResolver(t)
+	resolver.EXPECT().Resolve(mock.Anything, "openai", "gpt-4o-mini").
+		Return(appcatalog.Pricing{}).Once()
+	resolver.EXPECT().Resolve(mock.Anything, "openai", "gpt-4o-2024-08-06").
+		Return(appcatalog.Pricing{Found: true, InputPrice: 0.001}).Once()
+	p := newTestPluginWithPricing(t, resolver)
+
+	settings := map[string]any{
+		"unit":      "dollars",
+		"aggregate": map[string]any{"max": 0.005, "time_window": "1m"},
+	}
+	req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4o-mini"}`)}
+	respBody := []byte(`{"id":"x","model":"gpt-4o-2024-08-06","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":0,"total_tokens":10}}`)
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: respBody}
+
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
+	require.NoError(t, err)
+
+	_, err = p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}))
+	require.Error(t, err, "cost must accrue against the served response model (gpt-4o-2024-08-06), not be treated as unpriced")
+	pe, ok := appplugins.AsPluginError(err)
+	require.True(t, ok)
+	assert.Equal(t, 429, pe.StatusCode)
+}
+
+func TestPlugin_DollarBudget_UnpricedModelAccruesZero(t *testing.T) {
+	p := newTestPlugin(t)
+	settings := map[string]any{
+		"unit":      "dollars",
+		"aggregate": map[string]any{"max": 0.005, "time_window": "1m"},
+	}
+	req := &infracontext.RequestContext{Provider: "openai", SourceFormat: "openai", Body: []byte(`{"model":"gpt-4o-mini"}`)}
+	resp := &infracontext.ResponseContext{StatusCode: 200, Body: usageResponseBody()}
+
+	_, err := p.Execute(context.Background(), input(policy.StagePostResponse, settings, req, resp))
+	require.NoError(t, err)
+
+	_, err = p.Execute(context.Background(), input(policy.StagePreRequest, settings, req, &infracontext.ResponseContext{}))
+	require.NoError(t, err, "an unpriced model must accrue zero so the dollar gate never trips")
 }
 
 func TestPlugin_PerModel_CountingOutput(t *testing.T) {

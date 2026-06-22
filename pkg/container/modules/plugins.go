@@ -18,6 +18,7 @@ import (
 	"log/slog"
 
 	cataloghttp "github.com/NeuralTrust/TrustGate/pkg/api/handler/http/catalog"
+	appcatalog "github.com/NeuralTrust/TrustGate/pkg/app/catalog"
 	appplugins "github.com/NeuralTrust/TrustGate/pkg/app/plugins"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache"
@@ -39,6 +40,7 @@ type pluginParams struct {
 	Adapters *adapter.Registry
 	Locator  embeddingfactory.EmbeddingServiceLocator
 	Logger   *slog.Logger
+	Pricing  appcatalog.PricingResolver
 }
 
 func Plugins(c *container.Container) error {
@@ -65,7 +67,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 
 	catalog := []appplugins.Plugin{
 		ratelimit.New(redisClient),
-		tokenratelimit.New(redisClient, p.Adapters),
+		tokenratelimit.New(redisClient, p.Adapters, p.Pricing),
 		requestsize.New(),
 		cors.New(),
 		semanticcache.New(store, p.Locator, p.Adapters),

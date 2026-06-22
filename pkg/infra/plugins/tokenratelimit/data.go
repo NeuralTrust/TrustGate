@@ -15,14 +15,18 @@
 package tokenratelimit
 
 type TokenRateLimiterData struct {
-	Stage           string `json:"stage"`
-	CounterKey      string `json:"counter_key"`
-	Provider        string `json:"provider,omitempty"`
-	Model           string `json:"model,omitempty"`
-	WindowUnit      string `json:"window_unit"`
-	WindowMax       int    `json:"window_max"`
-	TokensConsumed  int    `json:"tokens_consumed"`
-	TokensActual    int    `json:"tokens_actual,omitempty"`
-	TokensRemaining int    `json:"tokens_remaining"`
-	LimitExceeded   bool   `json:"limit_exceeded"`
+	Stage            string `json:"stage"`
+	CounterKey       string `json:"counter_key"`
+	Provider         string `json:"provider,omitempty"`
+	Model            string `json:"model,omitempty"`
+	WindowUnit       string `json:"window_unit"`
+	WindowMax        int    `json:"window_max"`
+	TokensConsumed   int    `json:"tokens_consumed"`
+	TokensActual     int    `json:"tokens_actual,omitempty"`
+	TokensRemaining  int    `json:"tokens_remaining"`
+	LimitExceeded    bool   `json:"limit_exceeded"`
+	Unit             string `json:"unit,omitempty"`
+	CostMicroUSD     int64  `json:"cost_micro_usd,omitempty"`
+	ConsumedMicroUSD int64  `json:"consumed_micro_usd,omitempty"`
+	Unpriced         bool   `json:"unpriced,omitempty"`
 }
