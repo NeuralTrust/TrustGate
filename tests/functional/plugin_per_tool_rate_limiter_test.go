@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newToolCallUpstream(t *testing.T, toolName string) *fakeUpstream {
+func newPerToolUpstream(t *testing.T, toolName string) *fakeUpstream {
 	t.Helper()
 	u := &fakeUpstream{}
 	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +102,7 @@ func forwardedToolNames(t *testing.T, raw []byte) []string {
 func TestPluginE2E_PerToolRateLimiter_RejectResponse(t *testing.T) {
 	defer Track(t, "PluginPerToolRateLimiter")()
 
-	up := newToolCallUpstream(t, "get_weather")
+	up := newPerToolUpstream(t, "get_weather")
 	apiKey, path := setupPolicyRoute(t, up,
 		policyPlugin("per_tool_rate_limiter", map[string]any{
 			"rules": []any{perToolRule("get_weather", 1, "reject_response")},
@@ -133,7 +133,7 @@ func TestPluginE2E_PerToolRateLimiter_RejectResponse(t *testing.T) {
 func TestPluginE2E_PerToolRateLimiter_InjectErrorResult(t *testing.T) {
 	defer Track(t, "PluginPerToolRateLimiter")()
 
-	up := newToolCallUpstream(t, "get_weather")
+	up := newPerToolUpstream(t, "get_weather")
 	apiKey, path := setupPolicyRoute(t, up,
 		policyPlugin("per_tool_rate_limiter", map[string]any{
 			"rules": []any{perToolRule("get_weather", 1, "inject_error_result")},
@@ -170,7 +170,7 @@ func TestPluginE2E_PerToolRateLimiter_InjectErrorResult(t *testing.T) {
 func TestPluginE2E_PerToolRateLimiter_StripToolFromRequest(t *testing.T) {
 	defer Track(t, "PluginPerToolRateLimiter")()
 
-	up := newToolCallUpstream(t, "get_weather")
+	up := newPerToolUpstream(t, "get_weather")
 	apiKey, path := setupPolicyRoute(t, up,
 		policyPlugin("per_tool_rate_limiter", map[string]any{
 			"rules": []any{perToolRule("get_weather", 1, "strip_tool_from_request")},
@@ -193,7 +193,7 @@ func TestPluginE2E_PerToolRateLimiter_StripToolFromRequest(t *testing.T) {
 func TestPluginE2E_PerToolRateLimiter_GlobMatchUsesDefaultBehavior(t *testing.T) {
 	defer Track(t, "PluginPerToolRateLimiter")()
 
-	up := newToolCallUpstream(t, "get_weather")
+	up := newPerToolUpstream(t, "get_weather")
 	apiKey, path := setupPolicyRoute(t, up,
 		policyPlugin("per_tool_rate_limiter", map[string]any{
 			"rules":            []any{perToolRule("get_*", 1, "")},
