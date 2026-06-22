@@ -29,9 +29,11 @@ const (
 	pendingPrefix       = "oauth:pending:"
 	codePrefix          = "oauth:code:"
 	gatewayClientPrefix = "oauth:gwclient:"
+	sessionPrefix       = "oauth:session:"
 	pendingTTL          = 10 * time.Minute
 	codeTTL             = 5 * time.Minute
 	gatewayClientTTL    = 30 * 24 * time.Hour
+	sessionTTL          = 30 * 24 * time.Hour
 )
 
 var _ appoauth.FlowStore = (*Store)(nil)
@@ -88,6 +90,32 @@ func (s *Store) GetGatewayClient(ctx context.Context, clientID string) (*appoaut
 	}
 	_ = s.rdb.Expire(ctx, gatewayClientPrefix+clientID, gatewayClientTTL).Err()
 	return &c, nil
+}
+
+func (s *Store) SaveSession(ctx context.Context, refreshToken string, rec appoauth.SessionRecord) error {
+	return s.save(ctx, sessionPrefix+refreshToken, rec, sessionTTL)
+}
+
+func (s *Store) GetSession(ctx context.Context, refreshToken string) (*appoauth.SessionRecord, error) {
+	raw, err := s.rdb.Get(ctx, sessionPrefix+refreshToken).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("oauth flow store: get session: %w", err)
+	}
+	var rec appoauth.SessionRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return nil, fmt.Errorf("oauth flow store: decode session: %w", err)
+	}
+	return &rec, nil
+}
+
+func (s *Store) DeleteSession(ctx context.Context, refreshToken string) error {
+	if err := s.rdb.Del(ctx, sessionPrefix+refreshToken).Err(); err != nil {
+		return fmt.Errorf("oauth flow store: delete session: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) save(ctx context.Context, key string, v any, ttl time.Duration) error {

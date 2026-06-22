@@ -23,6 +23,7 @@ import (
 	appauth "github.com/NeuralTrust/TrustGate/pkg/app/auth"
 	appconsumer "github.com/NeuralTrust/TrustGate/pkg/app/consumer"
 	appgateway "github.com/NeuralTrust/TrustGate/pkg/app/gateway"
+	"github.com/NeuralTrust/TrustGate/pkg/app/identity/sts"
 	appoauth "github.com/NeuralTrust/TrustGate/pkg/app/oauth"
 	"github.com/NeuralTrust/TrustGate/pkg/config"
 	"github.com/NeuralTrust/TrustGate/pkg/container"
@@ -141,13 +142,20 @@ func API(c *container.Container) error {
 	}); err != nil {
 		return err
 	}
+	if err := c.Provide(func() appoauth.UserInfoClient {
+		return infraoauth.NewUserInfoClient(nil)
+	}); err != nil {
+		return err
+	}
 	if err := c.Provide(func(
 		credentials appauth.CredentialFinder,
 		paths appconsumer.PathResolver,
 		store appoauth.FlowStore,
 		connect appoauth.ConnectService,
+		signer sts.TokenSigner,
+		userinfo appoauth.UserInfoClient,
 	) appoauth.AuthProxy {
-		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect)
+		return appoauth.NewAuthProxy(credentials, paths, nil, store, connect, signer, userinfo)
 	}); err != nil {
 		return err
 	}

@@ -82,44 +82,44 @@ Goal: capture the subject once at `Callback`, mint the gateway session JWT at `e
 `SessionMode`, and persist a rotatable session record. Updates `NewAuthProxy` + its DI site in the same
 phase.
 
-- [ ] **3.1** Create `pkg/app/oauth/userinfo.go`: port
+- [x] **3.1** Create `pkg/app/oauth/userinfo.go`: port
   `UserInfoClient interface { Fetch(ctx context.Context, userInfoURL, accessToken string) (map[string]any, error) }`
   with `//go:generate mockery --name=UserInfoClient --dir=. --output=./mocks --filename=oauth_userinfo_client_mock.go --case=underscore --with-expecter`.
-- [ ] **3.2** Create `pkg/infra/oauth/userinfo_client.go`: HTTP `GET` adapter — `Authorization: Bearer
+- [x] **3.2** Create `pkg/infra/oauth/userinfo_client.go`: HTTP `GET` adapter — `Authorization: Bearer
   <accessToken>`, `Accept: application/json`, JSON-decode under `io.LimitReader` (1<<20), non-2xx →
   wrapped error. Default `*http.Client` timeout like `NewAuthProxy` (15s).
-- [ ] **3.3** `pkg/app/oauth/proxy_types.go`: extend `CodeGrant` with `Subject string`, `AuthID string`,
+- [x] **3.3** `pkg/app/oauth/proxy_types.go`: extend `CodeGrant` with `Subject string`, `AuthID string`,
   `Audience string` (or keep audiences from cfg), `Scopes []string`, `SessionMode bool` (json-tagged).
   Add `SessionRecord{Subject string; Scopes []string; GatewayID string; AuthID string; Audience string}`
   (json-tagged per `design.md`). Extend the `FlowStore` interface with `SaveSession(ctx, refreshToken
   string, rec SessionRecord) error`, `GetSession(ctx, refreshToken string) (*SessionRecord, error)`,
   `DeleteSession(ctx, refreshToken string) error`.
-- [ ] **3.4** `pkg/infra/oauth/store.go`: implement all three session methods to keep
+- [x] **3.4** `pkg/infra/oauth/store.go`: implement all three session methods to keep
   `var _ appoauth.FlowStore` satisfied. Add `sessionPrefix = "oauth:session:"` and
   `sessionTTL = 30 * 24 * time.Hour`. `SaveSession` = `save(...)`; `GetSession` = read **without** consume
   (plain `Get`, `redis.Nil`→`nil,nil`); `DeleteSession` = `Del`. (Rotation = caller deletes old + saves new.)
-- [ ] **3.5** `pkg/app/oauth/proxy.go`: add fields `signer appsts.TokenSigner` and `userinfo UserInfoClient`
+- [x] **3.5** `pkg/app/oauth/proxy.go`: add fields `signer appsts.TokenSigner` and `userinfo UserInfoClient`
   to `authProxy`; extend `NewAuthProxy(...)` with both params. Add `captureSubject(ctx, cfg, token)` with
   precedence: (1) `id_token` in token map → `jwt.ParseUnverified`, read `cfg.SubjectClaim` (default `sub`,
   fallback `oid`); (2) else `cfg.UserInfoURL != ""` → `userinfo.Fetch`, read `cfg.SubjectClaim`; (3) else
   legacy `subjectFromToken`. Coerce non-string claims via `fmt.Sprintf("%v", v)` (GitHub numeric `id`).
   In session mode an empty subject → `oauthErr("access_denied","could not determine subject")`.
-- [ ] **3.6** `pkg/app/oauth/proxy.go` `Callback`: when `cfg.SessionMode`, call `captureSubject`, store the
+- [x] **3.6** `pkg/app/oauth/proxy.go` `Callback`: when `cfg.SessionMode`, call `captureSubject`, store the
   captured subject + `AuthID` + `Audiences` + granted `Scopes` + `SessionMode` into `CodeGrant`, and pass
   the captured subject to `consentDetour` (so the vault **write** key == captured subject). Keep OFF path
   byte-for-byte (still `subjectFromToken`).
-- [ ] **3.7** `pkg/app/oauth/proxy.go`: add `mintSession(cfg, grant)` building claims `sub`=captured
+- [x] **3.7** `pkg/app/oauth/proxy.go`: add `mintSession(cfg, grant)` building claims `sub`=captured
   subject, `aud`=**all** `cfg.Audiences` (Resolution #2; string vs array shape per `AudiencesFromClaim`
   conventions), `scope`=space-joined granted scopes, `authid`=`grant.AuthID`, `token_use`="mcp_session";
   call `signer.MintClaims(claims, 1*time.Hour)` (Resolution #3). In `exchangeCode`, when
   `grant.SessionMode`: mint the access token, generate an opaque `refresh_token` via `randomToken()`,
   `SaveSession(refresh → SessionRecord)`, and return `{access_token, token_type:"Bearer",
   expires_in:3600, refresh_token, scope}`. When OFF: return `grant.Token` verbatim (Okta untouched).
-- [ ] **3.8** `pkg/container/modules/api.go`: add a `UserInfoClient` provider
+- [x] **3.8** `pkg/container/modules/api.go`: add a `UserInfoClient` provider
   (`infraoauth.NewUserInfoClient(nil)`) and update the `NewAuthProxy` provider to inject
   `sts.TokenSigner` (cross-module from `mcp.go`) and `UserInfoClient`.
-- [ ] **3.9** `go generate ./pkg/app/oauth/...` to emit `pkg/app/oauth/mocks/oauth_userinfo_client_mock.go`.
-- [ ] **3.10** Tests:
+- [x] **3.9** `go generate ./pkg/app/oauth/...` to emit `pkg/app/oauth/mocks/oauth_userinfo_client_mock.go`.
+- [x] **3.10** Tests:
   - `pkg/app/oauth/proxy_test.go`: `captureSubject` id_token path, userinfo path (mock `UserInfoClient`,
     GitHub numeric `id`→string), empty→`access_denied`.
   - `exchangeCode`: `SessionMode=true` → returned `access_token` verifies against a real signer +
