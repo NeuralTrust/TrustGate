@@ -268,4 +268,41 @@ var pluginCatalogMeta = map[string]catalogMeta{
 			},
 		},
 	},
+	"model_allowlist": {
+		name:        "Model Allowlist",
+		group:       groupRouting,
+		description: "Restrict which models a consumer or gateway may call, matching by name with glob patterns. Reject disallowed models with a 403 or transparently substitute them.",
+		schema: SettingsSchema{
+			Fields: []Field{
+				{
+					Key:         "allowed_models",
+					Label:       "Allowed Models",
+					Type:        FieldTypeArray,
+					Description: "Model name patterns permitted. Use * as a wildcard (e.g. gpt-5*).",
+					Required:    true,
+					Item:        &Field{Key: "model", Label: "Model", Type: FieldTypeString},
+				},
+				{
+					Key:         "behavior_on_disallowed",
+					Label:       "Behavior On Disallowed",
+					Type:        FieldTypeEnum,
+					Description: "Action taken when a requested model is not in the allowlist.",
+					Enum:        []string{"reject", "substitute"},
+					Default:     "reject",
+				},
+				{
+					Key:         "substitute_with",
+					Label:       "Substitute With",
+					Type:        FieldTypeString,
+					Description: "Model written back when behavior is substitute. Must match the allowlist.",
+				},
+				{
+					Key:         "default_model",
+					Label:       "Default Model",
+					Type:        FieldTypeString,
+					Description: "Model injected when the request omits one. Must match the allowlist.",
+				},
+			},
+		},
+	},
 }

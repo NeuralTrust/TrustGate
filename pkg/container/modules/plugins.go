@@ -24,6 +24,7 @@ import (
 	"github.com/NeuralTrust/TrustGate/pkg/infra/cache/semantic"
 	embeddingfactory "github.com/NeuralTrust/TrustGate/pkg/infra/embedding/factory"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/cors"
+	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/modelallowlist"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/ratelimit"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/requestsize"
 	"github.com/NeuralTrust/TrustGate/pkg/infra/plugins/semanticcache"
@@ -68,6 +69,7 @@ func newPluginRegistry(p pluginParams) (appplugins.Registry, error) {
 		requestsize.New(),
 		cors.New(),
 		semanticcache.New(store, p.Locator, p.Adapters),
+		modelallowlist.New(),
 	}
 	for _, plugin := range catalog {
 		if err := reg.Register(plugin); err != nil {
